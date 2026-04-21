@@ -8,8 +8,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::CanonicalisedSource;
-use crate::openhuman::memory::tree::types::{Metadata, SourceKind, SourceRef};
+use super::{normalize_source_ref, CanonicalisedSource};
+use crate::openhuman::memory::tree::types::{Metadata, SourceKind};
 
 /// Adapter input for a single document.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,7 +52,7 @@ pub fn canonicalise(
             timestamp: doc.modified_at,
             time_range: (doc.modified_at, doc.modified_at),
             tags: tags.to_vec(),
-            source_ref: doc.source_ref.map(SourceRef::new),
+            source_ref: normalize_source_ref(doc.source_ref),
         },
     }))
 }
@@ -118,5 +118,13 @@ mod tests {
             "notion://page/abc"
         );
         assert_eq!(out.metadata.tags, vec!["proj"]);
+    }
+
+    #[test]
+    fn blank_source_ref_is_dropped() {
+        let mut input = doc("x", "y");
+        input.source_ref = Some(" \n ".into());
+        let out = canonicalise("d1", "alice", &[], input).unwrap().unwrap();
+        assert!(out.metadata.source_ref.is_none());
     }
 }

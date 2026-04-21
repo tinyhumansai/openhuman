@@ -10,12 +10,16 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::time::Duration;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::types::{Chunk, Metadata, SourceKind, SourceRef};
 
 const DB_DIR: &str = "memory_tree";
 const DB_FILE: &str = "chunks.db";
+const DEFAULT_LIST_LIMIT: usize = 100;
+const MAX_LIST_LIMIT: usize = 10_000;
+const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
@@ -156,9 +160,9 @@ pub fn list_chunks(config: &Config, query: &ListChunksQuery) -> Result<Vec<Chunk
             sql.push_str(" AND timestamp_ms <= ?");
             bound.push(Box::new(until_ms));
         }
-        let limit = query.limit.unwrap_or(100);
-        sql.push_str(" ORDER BY timestamp_ms DESC LIMIT ?");
-        bound.push(Box::new(limit as i64));
+        let limit = normalized_limit(query.limit);
+        sql.push_str(" ORDER BY timestamp_ms DESC, seq_in_source ASC LIMIT ?");
+        bound.push(Box::new(limit));
 
         let mut stmt = conn.prepare(&sql)?;
         let param_refs: Vec<&dyn rusqlite::ToSql> = bound
@@ -241,9 +245,20 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
     let db_path = dir.join(DB_FILE);
     let conn = Connection::open(&db_path)
         .with_context(|| format!("Failed to open memory_tree DB: {}", db_path.display()))?;
+    conn.busy_timeout(SQLITE_BUSY_TIMEOUT)
+        .context("Failed to configure memory_tree busy timeout")?;
+    conn.execute_batch("PRAGMA journal_mode=WAL;")
+        .context("Failed to enable memory_tree WAL mode")?;
     conn.execute_batch(SCHEMA)
         .context("Failed to initialize memory_tree schema")?;
     f(&conn)
+}
+
+fn normalized_limit(requested: Option<usize>) -> i64 {
+    let clamped = requested
+        .unwrap_or(DEFAULT_LIST_LIMIT)
+        .clamp(1, MAX_LIST_LIMIT);
+    i64::try_from(clamped).unwrap_or(MAX_LIST_LIMIT as i64)
 }
 
 #[cfg(test)]
@@ -341,6 +356,47 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].id, b.id); // newest first
         assert_eq!(rows[1].id, a.id);
+    }
+
+    #[test]
+    fn list_orders_equal_timestamps_by_sequence() {
+        let (_tmp, cfg) = test_config();
+        let a = sample_chunk("s", 0, 1_700_000_000_000);
+        let b = sample_chunk("s", 1, 1_700_000_000_000);
+        upsert_chunks(&cfg, &[b.clone(), a.clone()]).unwrap();
+        let rows = list_chunks(&cfg, &ListChunksQuery::default()).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].seq_in_source, 0);
+        assert_eq!(rows[1].seq_in_source, 1);
+    }
+
+    #[test]
+    fn list_limit_is_clamped_to_sane_range() {
+        let (_tmp, cfg) = test_config();
+        let chunks = (0..3)
+            .map(|idx| sample_chunk("s", idx, 1_700_000_000_000 + i64::from(idx)))
+            .collect::<Vec<_>>();
+        upsert_chunks(&cfg, &chunks).unwrap();
+
+        let zero_limit = list_chunks(
+            &cfg,
+            &ListChunksQuery {
+                limit: Some(0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(zero_limit.len(), 1);
+
+        let huge_limit = list_chunks(
+            &cfg,
+            &ListChunksQuery {
+                limit: Some(usize::MAX),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(huge_limit.len(), 3);
     }
 
     #[test]

@@ -87,6 +87,7 @@ pub fn chunk_markdown(input: &ChunkerInput, opts: &ChunkerOptions) -> Vec<Chunk>
 /// 4. Word boundary (` `)
 /// 5. Hard character cut (last resort; preserves UTF-8 code points)
 fn split_by_token_budget(text: &str, max_tokens: u32) -> Vec<String> {
+    let max_tokens = max_tokens.max(1);
     if text.is_empty() {
         return vec![String::new()];
     }
@@ -329,5 +330,20 @@ mod tests {
         // Rejoining must equal the original.
         let rejoined: String = chunks.iter().map(|c| c.content.as_str()).collect();
         assert_eq!(rejoined, text);
+    }
+
+    #[test]
+    fn zero_token_budget_is_clamped_without_empty_leading_chunk() {
+        let input = ChunkerInput {
+            source_kind: SourceKind::Document,
+            source_id: "d".into(),
+            markdown: "abcdef".into(),
+            metadata: meta(),
+        };
+        let chunks = chunk_markdown(&input, &ChunkerOptions { max_tokens: 0 });
+        assert!(!chunks.is_empty());
+        assert!(chunks.iter().all(|chunk| !chunk.content.is_empty()));
+        let rejoined: String = chunks.iter().map(|c| c.content.as_str()).collect();
+        assert_eq!(rejoined, "abcdef");
     }
 }

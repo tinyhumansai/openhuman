@@ -18,8 +18,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::CanonicalisedSource;
-use crate::openhuman::memory::tree::types::{Metadata, SourceKind, SourceRef};
+use super::{normalize_source_ref, CanonicalisedSource};
+use crate::openhuman::memory::tree::types::{Metadata, SourceKind};
 
 /// One chat message in a channel/group.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -82,10 +82,7 @@ pub fn canonicalise(
 
     // Provenance points at the batch's first message by default (or whatever
     // the caller passed on the first message).
-    let source_ref = messages
-        .first()
-        .and_then(|m| m.source_ref.clone())
-        .map(SourceRef::new);
+    let source_ref = normalize_source_ref(messages.first().and_then(|m| m.source_ref.clone()));
 
     let metadata = Metadata {
         source_kind: SourceKind::Chat,
@@ -204,5 +201,20 @@ mod tests {
         assert_eq!(out.metadata.owner, "alice@example.com");
         assert_eq!(out.metadata.tags, vec!["eng", "on-call"]);
         assert_eq!(out.metadata.source_kind, SourceKind::Chat);
+    }
+
+    #[test]
+    fn blank_source_ref_is_dropped() {
+        let mut first = msg(1000, "alice", "hi");
+        first.source_ref = Some("   ".into());
+        let b = ChatBatch {
+            platform: "slack".into(),
+            channel_label: "#eng".into(),
+            messages: vec![first],
+        };
+        let out = canonicalise("slack:#eng", "alice", &[], b)
+            .unwrap()
+            .unwrap();
+        assert!(out.metadata.source_ref.is_none());
     }
 }

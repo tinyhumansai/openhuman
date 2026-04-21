@@ -96,10 +96,12 @@ pub fn ingest_document(
     tags: Vec<String>,
     doc: DocumentInput,
 ) -> Result<IngestResult> {
+    let title_len = doc.title.chars().count();
     log::debug!(
-        "[memory_tree::ingest] document source_id={} title={:?}",
+        "[memory_tree::ingest] document source_id={} has_title={} title_len={}",
         source_id,
-        doc.title
+        !doc.title.trim().is_empty(),
+        title_len
     );
     let canonical =
         match document::canonicalise(source_id, owner, &tags, doc).map_err(anyhow::Error::msg)? {
