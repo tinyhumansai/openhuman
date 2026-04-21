@@ -456,6 +456,14 @@ jobs:
           # OAuth guardrails (#365): block openhuman://oauth/success on outdated desktop builds.
           VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
+          # Sentry release tracking (#405): baked into the bundle so every event
+          # groups under the same release, and @sentry/vite-plugin uploads the
+          # matching source maps when SENTRY_AUTH_TOKEN is present.
+          VITE_BUILD_SHA: ${{ needs.prepare-build.outputs.sha }}
+          SENTRY_RELEASE: openhuman@${{ needs.prepare-build.outputs.version }}+${{ needs.prepare-build.outputs.sha }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_FRONTEND }}
 
       - name: Resolve core manifest and binary names
         id: core-paths
@@ -498,6 +506,10 @@ jobs:
           CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
           OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
           OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_SENTRY_DSN }}
+          # Sentry release tracking (#405): `option_env!("OPENHUMAN_BUILD_SHA")`
+          # in src/main.rs bakes the short SHA into the release tag
+          # (`openhuman@<version>+<sha>`) so core events match the frontend.
+          OPENHUMAN_BUILD_SHA: ${{ needs.prepare-build.outputs.sha }}
 
       - name: Stage sidecar for Tauri bundler
         shell: bash
@@ -544,6 +556,14 @@ jobs:
           # rebuild triggered here would strip them and ship a DSN-less UI.
           VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
           VITE_DEBUG: ${{ vars.VITE_DEBUG }}
+          # Sentry release tracking (#405) — must match the first `yarn build`
+          # so source maps uploaded there still resolve against the final bundle
+          # produced by the tauri-driven rebuild.
+          VITE_BUILD_SHA: ${{ needs.prepare-build.outputs.sha }}
+          SENTRY_RELEASE: openhuman@${{ needs.prepare-build.outputs.version }}+${{ needs.prepare-build.outputs.sha }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_FRONTEND }}
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}

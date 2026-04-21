@@ -21,7 +21,7 @@
 import * as Sentry from '@sentry/react';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
-import { IS_DEV, SENTRY_DSN } from '../utils/config';
+import { APP_ENVIRONMENT, IS_DEV, SENTRY_DSN, SENTRY_RELEASE } from '../utils/config';
 import { enqueueError, registerSentrySender, type SanitizedSentryEvent } from './errorReportQueue';
 
 // ---------------------------------------------------------------------------
@@ -87,7 +87,12 @@ export function initSentry(): void {
 
   Sentry.init({
     dsn: SENTRY_DSN,
-    environment: IS_DEV ? 'development' : 'production',
+    environment: APP_ENVIRONMENT,
+    // Canonical release tag shared with the core sidecar and source-map
+    // upload (see @sentry/vite-plugin in app/vite.config.ts). Lets events
+    // from all surfaces group under a single Sentry release with
+    // symbolicated stack traces.
+    release: SENTRY_RELEASE,
     enabled: !IS_DEV, // disable in dev builds
 
     // -----------------------------------------------------------------------
