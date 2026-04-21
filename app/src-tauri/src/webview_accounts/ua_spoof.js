@@ -98,24 +98,38 @@
     delete window.safari;
   } catch (_) {}
 
-  // navigator.permissions.query — return "granted" for notifications so apps
-  // like Slack don't show a "needs permission" banner. CEF's internal
-  // permission store hasn't recorded a grant at this point, so the native
-  // query returns "prompt" even though we intercept the actual Notification
-  // constructor in the render process. Patching here (via frame.execute_java_script
-  // in on_load_end) is more reliable than the V8 API approach in
-  // on_context_created because execute_java_script runs in the fully-
-  // initialised JS context where navigator.permissions is writable.
+  // navigator.permissions — return "granted" for notifications queries.
+  // Simple property assignment on Blink platform objects (like Permissions)
+  // is silently ignored; Object.defineProperty on the navigator itself works
+  // because navigator exposes configurable getters (same mechanism used above
+  // for navigator.userAgent).
   try {
-    var _perms = navigator && navigator.permissions;
-    if (_perms && typeof _perms.query === 'function') {
-      var _origPermsQuery = _perms.query.bind(_perms);
-      _perms.query = function (descriptor) {
-        if (descriptor && descriptor.name === 'notifications') {
-          return Promise.resolve({ state: 'granted', onchange: null });
-        }
-        return _origPermsQuery(descriptor);
+    var _rp = navigator && navigator.permissions;
+    if (_rp && typeof _rp.query === 'function') {
+      var _rq = _rp.query.bind(_rp);
+      var _fp = {
+        query: function (d) {
+          if (d && d.name === 'notifications') {
+            return Promise.resolve({ state: 'granted', onchange: null });
+          }
+          return _rq(d);
+        },
       };
+      Object.defineProperty(navigator, 'permissions', {
+        get: function () { return _fp; },
+        configurable: true,
+      });
+    }
+  } catch (_) {}
+
+  // Notification.permission — ensure it reads "granted" even if the V8-level
+  // shim in cef-helper is overwritten or not yet in place for this context.
+  try {
+    if (window.Notification) {
+      Object.defineProperty(window.Notification, 'permission', {
+        get: function () { return 'granted'; },
+        configurable: true,
+      });
     }
   } catch (_) {}
 })();
