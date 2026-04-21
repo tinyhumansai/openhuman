@@ -73,6 +73,60 @@ interface RawSkillsReadResourceResult {
   bytes: number;
 }
 
+/**
+ * Parameters accepted by `openhuman.skills_create`.
+ *
+ * Matches the wire shape defined in `src/openhuman/skills/schemas.rs`
+ * (`SkillsCreateParams`) — `allowedTools` is rekeyed to `allowed-tools` on
+ * the JSON-RPC envelope per SKILL.md frontmatter convention (with
+ * `allowed_tools` accepted as an alias by the Rust deserializer).
+ */
+export interface CreateSkillInput {
+  name: string;
+  description: string;
+  scope?: SkillScope;
+  license?: string;
+  author?: string;
+  tags?: string[];
+  allowedTools?: string[];
+}
+
+interface RawSkillsCreateResult {
+  skill: SkillSummary;
+}
+
+/**
+ * Parameters accepted by `openhuman.skills_install_from_url`.
+ *
+ * `timeoutSecs` is optional — the Rust side defaults to 60s and caps at
+ * 600s. Values outside that range are clamped server-side.
+ */
+export interface InstallSkillFromUrlInput {
+  url: string;
+  timeoutSecs?: number;
+}
+
+/**
+ * Result of `openhuman.skills_install_from_url`.
+ *
+ * `newSkills` lists skill ids that appeared post-install (diff vs the
+ * pre-install snapshot). `stdout` and `stderr` are captured verbatim from
+ * the `npx skills add …` subprocess so the UI can surface progress/errors.
+ */
+export interface InstallSkillFromUrlResult {
+  url: string;
+  stdout: string;
+  stderr: string;
+  newSkills: string[];
+}
+
+interface RawInstallSkillFromUrlResult {
+  url: string;
+  stdout: string;
+  stderr: string;
+  new_skills: string[];
+}
+
 interface Envelope<T> {
   data?: T;
 }
@@ -127,6 +181,69 @@ export const skillsApi = {
       bytes: raw.bytes,
     };
     log('readSkillResource: response bytes=%d', normalized.bytes);
+    return normalized;
+  },
+
+  /**
+   * Scaffold a new SKILL.md skill via `openhuman.skills_create`.
+   *
+   * The Rust side slugifies the name, writes `SKILL.md` with the supplied
+   * frontmatter, and returns the freshly-discovered `SkillSummary` so the
+   * caller can insert the new row into the grid without a full refetch.
+   */
+  createSkill: async (input: CreateSkillInput): Promise<SkillSummary> => {
+    log('createSkill: request name=%s scope=%s', input.name, input.scope ?? 'default');
+    const response = await callCoreRpc<Envelope<RawSkillsCreateResult> | RawSkillsCreateResult>({
+      method: 'openhuman.skills_create',
+      params: {
+        name: input.name,
+        description: input.description,
+        ...(input.scope !== undefined ? { scope: input.scope } : {}),
+        ...(input.license !== undefined ? { license: input.license } : {}),
+        ...(input.author !== undefined ? { author: input.author } : {}),
+        ...(input.tags !== undefined ? { tags: input.tags } : {}),
+        ...(input.allowedTools !== undefined ? { 'allowed-tools': input.allowedTools } : {}),
+      },
+    });
+    const raw = unwrapEnvelope(response);
+    log('createSkill: response id=%s', raw.skill.id);
+    return raw.skill;
+  },
+
+  /**
+   * Install a published skill package by URL via `openhuman.skills_install_from_url`.
+   *
+   * The Rust side shells out to `npx --yes skills add <url>` under the
+   * managed Node toolchain, with an allow-list on the URL (https only,
+   * no private/loopback/link-local/multicast/cloud-metadata hosts) and a
+   * wall-clock timeout (default 60s, max 600s).
+   */
+  installSkillFromUrl: async (
+    input: InstallSkillFromUrlInput
+  ): Promise<InstallSkillFromUrlResult> => {
+    log('installSkillFromUrl: request url=%s', input.url);
+    const response = await callCoreRpc<
+      Envelope<RawInstallSkillFromUrlResult> | RawInstallSkillFromUrlResult
+    >({
+      method: 'openhuman.skills_install_from_url',
+      params: {
+        url: input.url,
+        ...(input.timeoutSecs !== undefined ? { timeout_secs: input.timeoutSecs } : {}),
+      },
+    });
+    const raw = unwrapEnvelope(response);
+    const normalized: InstallSkillFromUrlResult = {
+      url: raw.url,
+      stdout: raw.stdout,
+      stderr: raw.stderr,
+      newSkills: raw.new_skills ?? [],
+    };
+    log(
+      'installSkillFromUrl: response new=%d stdout=%d stderr=%d',
+      normalized.newSkills.length,
+      normalized.stdout.length,
+      normalized.stderr.length
+    );
     return normalized;
   },
 };
