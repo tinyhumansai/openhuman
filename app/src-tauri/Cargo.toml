@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.52.26"
+version = "0.52.27"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -60,6 +60,10 @@ semver = "1"
 log = "0.4"
 env_logger = "0.11"
 
+# Used by the imessage_scanner module.
+anyhow = "1.0"
+parking_lot = "0.12"
+chrono = "0.4"
 # Direct CEF + tauri-runtime-cef dependencies (used only with `--features cef`).
 # `tauri-runtime-cef::notification::register` is how we hook native Web
 # Notification interception per webview, and `cef::Browser` is what we downcast
@@ -75,6 +79,9 @@ nix = { version = "0.29", default-features = false, features = ["signal"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = "0.3.2"
+
+# iMessage scanner reads ~/Library/Messages/chat.db read-only on macOS.
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [features]
 # Default runtime is CEF (bundled Chromium). The `wry` feature swaps in the

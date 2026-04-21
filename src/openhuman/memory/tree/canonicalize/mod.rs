@@ -15,7 +15,7 @@ pub mod email;
 
 use serde::{Deserialize, Serialize};
 
-use crate::openhuman::memory::tree::types::Metadata;
+use crate::openhuman::memory::tree::types::{Metadata, SourceRef};
 
 /// Output of a canonicaliser — one per logical source record
 /// (a chat batch, an email, a document).
@@ -41,4 +41,16 @@ pub struct CanonicaliseRequest<P> {
     /// Optional tags carried through.
     #[serde(default)]
     pub tags: Vec<String>,
+}
+
+/// Trim provider-specific source references and drop blank pointers.
+pub fn normalize_source_ref(source_ref: Option<String>) -> Option<SourceRef> {
+    source_ref.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(SourceRef::new(trimmed.to_string()))
+        }
+    })
 }

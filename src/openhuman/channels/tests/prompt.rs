@@ -173,6 +173,7 @@ fn prompt_skills_compact_list() {
         tools: vec![],
         prompts: vec!["Long prompt content that should NOT appear in system prompt".into()],
         location: None,
+        ..Default::default()
     }];
 
     let prompt = build_system_prompt(ws.path(), "model", &[], &skills, None, Some("Discord"));

@@ -29,10 +29,11 @@
 ## Product
 
 * [Platform & Availability](product/platform.md)
+* [The Chat Interface](product/the-chat-interface.md)
+* [Rewards & Achievements](product/rewards-and-achievements.md)
 * [Skills & Integrations](product/skills-and-integrations.md)
 * [Teams & Organizations](product/teams.md)
 * [Intelligence](product/intelligence.md)
-* [Rewards](product/rewards.md)
 * [Messaging Channels](product/messaging-channels.md)
 * [Privacy & Security](product/privacy-and-security.md)
 * [Pricing](product/pricing.md)

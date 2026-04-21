@@ -6,6 +6,8 @@ icon: rotate
 
 Inline Autocomplete suggests text completions while you type in any application. Powered by your local AI model and your memory context.
 
+<figure><img src="../.gitbook/assets/6. Inline Autocomplete@2x.png" alt=""><figcaption></figcaption></figure>
+
 #### How It Works
 
 As you type, OpenHuman watches for pauses (controlled by debounce). After you pause, it generates a completion based on what you have typed plus relevant context from memory. Press Tab to accept.

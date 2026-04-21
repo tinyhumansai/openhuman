@@ -7,8 +7,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::CanonicalisedSource;
-use crate::openhuman::memory::tree::types::{Metadata, SourceKind, SourceRef};
+use super::{normalize_source_ref, CanonicalisedSource};
+use crate::openhuman::memory::tree::types::{Metadata, SourceKind};
 
 /// One email in a thread.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -75,10 +75,7 @@ pub fn canonicalise(
         md.push_str("\n\n");
     }
 
-    let source_ref = messages
-        .first()
-        .and_then(|m| m.source_ref.clone())
-        .map(SourceRef::new);
+    let source_ref = normalize_source_ref(messages.first().and_then(|m| m.source_ref.clone()));
 
     Ok(Some(CanonicalisedSource {
         markdown: md,
@@ -170,5 +167,18 @@ mod tests {
             out.metadata.source_ref.as_ref().unwrap().value,
             "<msg-1000@example.com>"
         );
+    }
+
+    #[test]
+    fn blank_source_ref_is_dropped() {
+        let mut first = email(1000, "a", "y", "b");
+        first.source_ref = Some("".into());
+        let t = EmailThread {
+            provider: "gmail".into(),
+            thread_subject: "x".into(),
+            messages: vec![first],
+        };
+        let out = canonicalise("gmail:t1", "a", &[], t).unwrap().unwrap();
+        assert!(out.metadata.source_ref.is_none());
     }
 }

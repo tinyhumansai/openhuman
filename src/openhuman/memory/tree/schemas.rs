@@ -69,8 +69,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "owner",
                     ty: TypeSchema::String,
-                    comment: "Account / user this content belongs to.",
-                    required: true,
+                    comment: "Optional account / user this content belongs to.",
+                    required: false,
                 },
                 FieldSchema {
                     name: "tags",
@@ -88,33 +88,32 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: true,
                 },
             ],
-            outputs: vec![FieldSchema {
-                name: "result",
-                ty: TypeSchema::Object {
-                    fields: vec![
-                        FieldSchema {
-                            name: "source_id",
-                            ty: TypeSchema::String,
-                            comment: "Logical source id the ingest was scoped to.",
-                            required: true,
-                        },
-                        FieldSchema {
-                            name: "chunks_written",
-                            ty: TypeSchema::U64,
-                            comment: "Number of chunks persisted (including idempotent rewrites).",
-                            required: true,
-                        },
-                        FieldSchema {
-                            name: "chunk_ids",
-                            ty: TypeSchema::Array(Box::new(TypeSchema::String)),
-                            comment: "IDs of all chunks produced.",
-                            required: true,
-                        },
-                    ],
+            outputs: vec![
+                FieldSchema {
+                    name: "source_id",
+                    ty: TypeSchema::String,
+                    comment: "Logical source id the ingest was scoped to.",
+                    required: true,
                 },
-                comment: "Ingest outcome.",
-                required: true,
-            }],
+                FieldSchema {
+                    name: "chunks_written",
+                    ty: TypeSchema::U64,
+                    comment: "Number of chunks persisted after admission.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "chunks_dropped",
+                    ty: TypeSchema::U64,
+                    comment: "Number of chunks rejected by the admission gate.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "chunk_ids",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "IDs of all chunks persisted after admission.",
+                    required: true,
+                },
+            ],
         },
         "list_chunks" => ControllerSchema {
             namespace: NAMESPACE,

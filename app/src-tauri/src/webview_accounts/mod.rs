@@ -43,6 +43,7 @@ const GMAIL_RECIPE_JS: &str = include_str!("../../recipes/gmail/recipe.js");
 const SLACK_RECIPE_JS: &str = include_str!("../../recipes/slack/recipe.js");
 const DISCORD_RECIPE_JS: &str = include_str!("../../recipes/discord/recipe.js");
 const GOOGLE_MEET_RECIPE_JS: &str = include_str!("../../recipes/google-meet/recipe.js");
+const TELEGRAM_TARGET_MARKER_PREFIX: &str = "[openhuman-telegram:";
 /// Dev-only bot-detection sandbox. Exposed through the UI only when
 /// `import.meta.env.DEV` is true, but registered here unconditionally so
 /// debug/release test builds behave the same if invoked directly.
@@ -156,6 +157,37 @@ fn url_is_internal(provider: &str, url: &Url) -> bool {
         .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
 }
 
+/// `true` if the provider needs `window.open(url)` to return a live
+/// window-handle (i.e. the calling site reads the return value and aborts
+/// on falsey). Slack Huddles go through `openManagedChildWindow` which
+/// calls `window.open("about:blank", …)` and then programmatically
+/// navigates the returned popup to the huddle UI. Denying the popup
+/// makes the huddle call fail silently with a `beacon/error`. For these
+/// cases we allow the default popup so CEF spawns an in-app child window
+/// and returns a real handle to the caller.
+///
+/// Match is intentionally narrow — only the popup URLs the provider
+/// actually needs in-app pass. Cmd/Ctrl-click and `target="_blank"`
+/// on ordinary links (which carry a concrete URL) still route out to
+/// the user's default browser.
+fn popup_should_stay_in_app(provider: &str, url: &Url) -> bool {
+    match provider {
+        "slack" => {
+            // Slack's huddle flow opens `about:blank` first, then navigates
+            // the popup to the huddle URL — at popup-creation time there is
+            // no host yet. Also accept same-origin slack.com hosts so direct
+            // `window.open("https://app.slack.com/...")` calls stay in-app.
+            if url.scheme() == "about" {
+                return true;
+            }
+            match url.host_str() {
+                Some(host) => host == "app.slack.com" || host.ends_with(".slack.com"),
+                None => false,
+            }
+        }
+        _ => false,
+    }
+}
 /// Fire-and-forget handoff to the OS default URL handler. Any error is
 /// logged but not propagated — we've already cancelled the in-app
 /// navigation so there's nowhere to surface a failure to.
@@ -352,13 +384,61 @@ fn build_init_script(account_id: &str, provider: &str, recipe_js: &str) -> Strin
     } else {
         ""
     };
+    let target_marker = telegram_target_marker(account_id, provider);
+    let title_marker_script = if provider == "telegram" {
+        r#"
+(function () {
+  const marker = window.__OPENHUMAN_TARGET_MARKER__;
+  if (!marker || window.__OPENHUMAN_TITLE_MARKER_INSTALLED__) return;
+  window.__OPENHUMAN_TITLE_MARKER_INSTALLED__ = true;
+  function applyMarker() {
+    try {
+      const current = String(document.title || "");
+      if (!current.includes(marker)) {
+        document.title = current ? current + " " + marker : marker;
+      }
+    } catch (_) {}
+  }
+  applyMarker();
+  try {
+    const obs = new MutationObserver(applyMarker);
+    const start = function () {
+      if (document.querySelector("title")) obs.observe(document.querySelector("title"), {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+      applyMarker();
+    };
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", start, { once: true });
+    } else {
+      start();
+    }
+    window.addEventListener("focus", applyMarker);
+    setInterval(applyMarker, 2000);
+  } catch (_) {}
+})();
+"#
+    } else {
+        ""
+    };
     format!(
-        "{spoof}\n\nwindow.__OPENHUMAN_RECIPE_CTX__ = {ctx};\n\n{runtime}\n\n{recipe}\n",
+        "{spoof}\n\nwindow.__OPENHUMAN_RECIPE_CTX__ = {ctx};\nwindow.__OPENHUMAN_TARGET_MARKER__ = {target_marker};\n\n{title_marker_script}\n\n{runtime}\n\n{recipe}\n",
         spoof = spoof,
         ctx = ctx,
+        target_marker = serde_json::to_string(&target_marker).unwrap_or_else(|_| "null".to_string()),
+        title_marker_script = title_marker_script,
         runtime = RUNTIME_JS,
         recipe = recipe_js
     )
+}
+
+fn telegram_target_marker(account_id: &str, provider: &str) -> Option<String> {
+    if provider != "telegram" {
+        return None;
+    }
+    Some(format!("{TELEGRAM_TARGET_MARKER_PREFIX}{account_id}]"))
 }
 
 /// Spawn (or focus) the embedded webview for an account.
@@ -456,16 +536,31 @@ pub async fn webview_account_open<R: Runtime>(
     });
 
     // Cmd/Ctrl-click and `target="_blank"` / `window.open(...)` trigger a
-    // new-window request. Denying all of them and handing the URL to the
-    // system browser matches user intent: "open in new tab" outside the
-    // app, not "spawn a rootless OpenHuman window".
+    // new-window request. Default policy: deny and hand the URL to the
+    // system browser — matches user intent of "open in new tab outside
+    // the app".
+    //
+    // Exception: some providers (Slack Huddles) spawn popups via
+    // `window.open()` and abort the flow if the return value is falsey.
+    // For those URLs we allow CEF's default popup handling so an in-app
+    // child window opens and the caller gets a real window handle.
+    let popup_provider = args.provider.clone();
     builder = builder.on_new_window(move |url, _features| {
-        log::info!(
-            "[webview-accounts] new-window request {} → system browser",
-            url
-        );
-        open_in_system_browser(url.as_str());
-        NewWindowResponse::Deny
+        if popup_should_stay_in_app(&popup_provider, &url) {
+            log::info!(
+                "[webview-accounts] new-window request {} → in-app popup (provider={})",
+                url,
+                popup_provider
+            );
+            NewWindowResponse::Allow
+        } else {
+            log::info!(
+                "[webview-accounts] new-window request {} → system browser",
+                url
+            );
+            open_in_system_browser(url.as_str());
+            NewWindowResponse::Deny
+        }
     });
 
     // Enable devtools on child webviews in debug builds only so recipe
@@ -544,6 +639,25 @@ pub async fn webview_account_open<R: Runtime>(
                     });
                 } else {
                     log::warn!("[webview-accounts] slack ScannerRegistry not in app state");
+                }
+            }
+        } else if args.provider == "telegram" {
+            if let Some(prefix) = provider_url(&args.provider) {
+                let registry = app
+                    .try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
+                    .map(|s| s.inner().clone());
+                if let Some(registry) = registry {
+                    let app_clone = app.clone();
+                    let acct = args.account_id.clone();
+                    let prefix = prefix.to_string();
+                    let target_marker = telegram_target_marker(&args.account_id, &args.provider);
+                    tokio::spawn(async move {
+                        registry
+                            .ensure_scanner(app_clone, acct, prefix, target_marker)
+                            .await;
+                    });
+                } else {
+                    log::warn!("[webview-accounts] telegram ScannerRegistry not in app state");
                 }
             }
         } else if args.provider == "discord" {
@@ -673,6 +787,13 @@ pub async fn webview_account_close<R: Runtime>(
             let acct = args.account_id.clone();
             tokio::spawn(async move { registry.forget(&acct).await });
         }
+        if let Some(registry) =
+            app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
+        {
+            let registry = registry.inner().clone();
+            let acct = args.account_id.clone();
+            tokio::spawn(async move { registry.forget(&acct).await });
+        }
         if let Some(browser_id) = state.browser_ids.lock().unwrap().remove(&args.account_id) {
             tauri_runtime_cef::notification::unregister(browser_id);
             log::debug!(
@@ -725,6 +846,13 @@ pub async fn webview_account_purge<R: Runtime>(
         }
         if let Some(registry) =
             app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
+        {
+            let registry = registry.inner().clone();
+            let acct = args.account_id.clone();
+            tokio::spawn(async move { registry.forget(&acct).await });
+        }
+        if let Some(registry) =
+            app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
         {
             let registry = registry.inner().clone();
             let acct = args.account_id.clone();

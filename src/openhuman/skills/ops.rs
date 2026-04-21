@@ -1,34 +1,177 @@
-//! High-level operations for managing skills.
+//! Discovery and parsing of agentskills.io-style skills.
 //!
-//! This module provides functions for initializing the skills directory,
-//! loading skills from disk, and parsing legacy skill manifests (`skill.json`)
-//! and documentation (`SKILL.md`).
+//! A skill is a directory containing a `SKILL.md` file with YAML frontmatter
+//! (`name`, `description`, …) followed by Markdown instructions. Optional
+//! bundled resources live in sibling subdirectories (`scripts/`, `references/`,
+//! `assets/`).
+//!
+//! Skills can be installed at two scopes:
+//! - **User**: `~/.openhuman/skills/<name>/` or `~/.agents/skills/<name>/`
+//! - **Project**: `<workspace>/.openhuman/skills/<name>/` or
+//!   `<workspace>/.agents/skills/<name>/`
+//!
+//! Project-scope skills are only loaded when a trust marker
+//! (`<workspace>/.openhuman/trust`) is present. When a skill name collides
+//! across scopes, the project-scope copy wins.
+//!
+//! Legacy `skill.json` manifests and the flat `<workspace>/skills/<name>/`
+//! layout are still supported for backward compatibility.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Represents a skill in the system.
+const TRUST_MARKER: &str = "trust";
+const SKILL_MD: &str = "SKILL.md";
+const SKILL_JSON: &str = "skill.json";
+const MAX_NAME_LEN: usize = 64;
+const MAX_DESCRIPTION_LEN: usize = 1024;
+const RESOURCE_DIRS: &[&str] = &["scripts", "references", "assets"];
+
+/// Where the skill was discovered. Determines precedence on name collision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillScope {
+    /// Skill shipped with the user's global config (`~/.openhuman/skills/...`).
+    User,
+    /// Skill shipped with the current workspace (`<ws>/.openhuman/skills/...`).
+    /// Requires the trust marker to be loaded.
+    Project,
+    /// Skill discovered under the legacy `<workspace>/skills/` layout.
+    Legacy,
+}
+
+impl Default for SkillScope {
+    fn default() -> Self {
+        Self::User
+    }
+}
+
+/// Parsed frontmatter of a `SKILL.md` file.
 ///
-/// This structure holds metadata about a skill, including its name,
-/// description, version, and location on disk.
+/// Matches the agentskills.io SKILL.md spec: `name` and `description` are
+/// required; `license`, `compatibility`, `metadata`, and `allowed-tools` are
+/// optional. Spec additions land in [`Self::extra`] via `#[serde(flatten)]`.
+///
+/// Version, author, tags, and other non-required fields belong under
+/// [`Self::metadata`]. Writers that still put them at the top level are
+/// accepted with a migration warning.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SkillFrontmatter {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub license: Option<String>,
+    #[serde(default)]
+    pub compatibility: Option<String>,
+    /// Spec-compliant metadata map. Version, author, tags, and other
+    /// non-required fields live here.
+    #[serde(default)]
+    pub metadata: HashMap<String, serde_yaml::Value>,
+    /// Tools the skill author asserts their instructions rely on
+    /// (non-binding hint; the host decides what to expose).
+    #[serde(default, rename = "allowed-tools", alias = "allowed_tools")]
+    pub allowed_tools: Vec<String>,
+    /// Forward-compat hatch for spec additions. Non-spec top-level keys
+    /// (including legacy `version`, `author`, `tags`) land here and trigger
+    /// a migration warning when read.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_yaml::Value>,
+}
+
+fn metadata_string(fm: &SkillFrontmatter, key: &str) -> Option<String> {
+    fm.metadata
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+fn metadata_string_seq(value: &serde_yaml::Value) -> Vec<String> {
+    value
+        .as_sequence()
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|t| t.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn extract_version(fm: &SkillFrontmatter, warnings: &mut Vec<String>) -> String {
+    if let Some(v) = metadata_string(fm, "version") {
+        return v;
+    }
+    if let Some(v) = fm.extra.get("version").and_then(|v| v.as_str()) {
+        log::warn!("[skills] top-level 'version' is deprecated; move under 'metadata.version'");
+        warnings
+            .push("top-level 'version' is deprecated; move under 'metadata.version'".to_string());
+        return v.to_string();
+    }
+    String::new()
+}
+
+fn extract_author(fm: &SkillFrontmatter, warnings: &mut Vec<String>) -> Option<String> {
+    if let Some(v) = metadata_string(fm, "author") {
+        return Some(v);
+    }
+    if let Some(v) = fm.extra.get("author").and_then(|v| v.as_str()) {
+        log::warn!("[skills] top-level 'author' is deprecated; move under 'metadata.author'");
+        warnings.push("top-level 'author' is deprecated; move under 'metadata.author'".to_string());
+        return Some(v.to_string());
+    }
+    None
+}
+
+fn extract_tags(fm: &SkillFrontmatter, warnings: &mut Vec<String>) -> Vec<String> {
+    if let Some(v) = fm.metadata.get("tags") {
+        return metadata_string_seq(v);
+    }
+    if let Some(v) = fm.extra.get("tags") {
+        log::warn!("[skills] top-level 'tags' is deprecated; move under 'metadata.tags'");
+        warnings.push("top-level 'tags' is deprecated; move under 'metadata.tags'".to_string());
+        return metadata_string_seq(v);
+    }
+    Vec::new()
+}
+
+/// A discovered skill.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Skill {
-    /// Human-readable name of the skill.
+    /// Display name (from frontmatter, falls back to directory name).
     pub name: String,
-    /// Detailed description of what the skill does.
+    /// Short description used in the catalog summary.
     pub description: String,
-    /// Version string of the skill.
+    /// Version string, if declared.
     pub version: String,
-    /// Optional author of the skill.
+    /// Author string, if declared.
     pub author: Option<String>,
-    /// List of tags associated with the skill for categorization.
+    /// Tags declared in frontmatter.
     pub tags: Vec<String>,
-    /// List of tools provided by the skill.
+    /// Tool hint declared in frontmatter (`allowed-tools`).
+    #[serde(default)]
     pub tools: Vec<String>,
-    /// List of prompt templates associated with the skill.
+    /// Prompt files declared in legacy `skill.json`. Unused for SKILL.md skills.
+    #[serde(default)]
     pub prompts: Vec<String>,
-    /// Optional filesystem path to the skill's primary file (e.g., `SKILL.md`).
+    /// Path to the `SKILL.md` (or `skill.json`) file.
     pub location: Option<PathBuf>,
+    /// Full parsed frontmatter when sourced from `SKILL.md`.
+    #[serde(default)]
+    pub frontmatter: SkillFrontmatter,
+    /// Bundled resource files (relative to the skill directory).
+    #[serde(default)]
+    pub resources: Vec<PathBuf>,
+    /// Where the skill came from.
+    #[serde(default)]
+    pub scope: SkillScope,
+    /// True when loaded from the legacy `skill.json` / `<ws>/skills/` layout.
+    #[serde(default)]
+    pub legacy: bool,
+    /// Non-fatal parse warnings, surfaced in the catalog for user debugging.
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 /// Internal structure for parsing legacy `skill.json` manifests.
@@ -50,9 +193,12 @@ struct LegacySkillManifest {
     prompts: Vec<String>,
 }
 
-/// Initialize the skills directory in the specified workspace.
+/// Initialize the legacy skills directory in the specified workspace.
 ///
-/// It creates the `skills` folder and a default `README.md` if they don't exist.
+/// Creates `<workspace>/skills/` and a placeholder `README.md` so the folder
+/// is visible to the user. New-style skills should live under
+/// `<workspace>/.openhuman/skills/` instead, but this directory is kept for
+/// backward compatibility.
 pub fn init_skills_dir(workspace_dir: &Path) -> Result<(), String> {
     let skills_dir = workspace_dir.join("skills");
     std::fs::create_dir_all(&skills_dir).map_err(|e| {
@@ -72,96 +218,450 @@ pub fn init_skills_dir(workspace_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Discover and load all skills from the `skills` directory in the workspace.
+/// Backwards-compatible shim for callers that only have a workspace path.
 ///
-/// It scans subdirectories, parses manifests (`skill.json`), and reads
-/// descriptions from `SKILL.md` if necessary.
+/// Delegates to [`discover_skills`] with the current user's home directory
+/// so user-scope skills (`~/.openhuman/skills/`, `~/.agents/skills/`) are
+/// surfaced for existing production callers (`agent::harness::session::builder`,
+/// `channels::runtime::startup`). Previously this shim passed `None` for the
+/// home directory, which silently dropped user-installed skills from the
+/// main runtime path.
+///
+/// Project-scope (workspace) skills still take precedence over user-scope
+/// on name collisions.
 pub fn load_skills(workspace_dir: &Path) -> Vec<Skill> {
-    let skills_dir = workspace_dir.join("skills");
-    let entries = match std::fs::read_dir(&skills_dir) {
+    let trusted = is_workspace_trusted(workspace_dir);
+    let home = dirs::home_dir();
+    discover_skills_inner(home.as_deref(), Some(workspace_dir), trusted)
+}
+
+/// Discover skills from every supported location.
+///
+/// * `home_dir` — user home (typically `dirs::home_dir()`), scanned for
+///   `~/.openhuman/skills/` and `~/.agents/skills/`.
+/// * `workspace_dir` — current workspace, scanned for project-scope paths.
+/// * `trusted` — whether the caller has verified the project trust marker.
+///   Project-scope skills are silently skipped when `false`.
+///
+/// On name collisions, project-scope wins over user-scope and a warning is
+/// attached to the retained skill.
+pub fn discover_skills(
+    home_dir: Option<&Path>,
+    workspace_dir: Option<&Path>,
+    trusted: bool,
+) -> Vec<Skill> {
+    discover_skills_inner(home_dir, workspace_dir, trusted)
+}
+
+/// Whether the workspace has opted into loading project-scope skills.
+///
+/// Looks for `<workspace>/.openhuman/trust`. The marker file's contents are
+/// ignored — presence is sufficient.
+pub fn is_workspace_trusted(workspace_dir: &Path) -> bool {
+    workspace_dir.join(".openhuman").join(TRUST_MARKER).exists()
+}
+
+fn discover_skills_inner(
+    home_dir: Option<&Path>,
+    workspace_dir: Option<&Path>,
+    trusted: bool,
+) -> Vec<Skill> {
+    // Scan order matters for collision resolution: the last scope to register
+    // a name wins, so we scan user first, then project, then legacy.
+    let mut by_name: HashMap<String, Skill> = HashMap::new();
+
+    if let Some(home) = home_dir {
+        for root in user_roots(home) {
+            absorb(&mut by_name, scan_root(&root, SkillScope::User));
+        }
+    }
+
+    if let Some(ws) = workspace_dir {
+        if trusted {
+            for root in project_roots(ws) {
+                absorb(&mut by_name, scan_root(&root, SkillScope::Project));
+            }
+        }
+        // Legacy `<workspace>/skills/` is always scanned so existing setups
+        // keep working without requiring users to move files or add the trust
+        // marker. Flagged with `legacy = true` so the UI can nudge migration.
+        absorb(
+            &mut by_name,
+            scan_root(&ws.join("skills"), SkillScope::Legacy),
+        );
+    }
+
+    let mut out: Vec<Skill> = by_name.into_values().collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+fn user_roots(home: &Path) -> Vec<PathBuf> {
+    vec![
+        home.join(".openhuman").join("skills"),
+        home.join(".agents").join("skills"),
+    ]
+}
+
+fn project_roots(workspace: &Path) -> Vec<PathBuf> {
+    vec![
+        workspace.join(".openhuman").join("skills"),
+        workspace.join(".agents").join("skills"),
+    ]
+}
+
+fn absorb(by_name: &mut HashMap<String, Skill>, incoming: Vec<Skill>) {
+    for mut skill in incoming {
+        let key = skill.name.clone();
+        if let Some(existing) = by_name.remove(&key) {
+            // Higher-precedence scope wins; lower loses and is dropped.
+            let (winner, loser) = if precedence(skill.scope) >= precedence(existing.scope) {
+                (&mut skill, existing)
+            } else {
+                // Put existing back; discard incoming.
+                let mut kept = existing;
+                kept.warnings.push(format!(
+                    "name '{}' also declared in {:?} scope at {} (ignored)",
+                    kept.name,
+                    skill.scope,
+                    skill
+                        .location
+                        .as_deref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string())
+                ));
+                by_name.insert(key, kept);
+                continue;
+            };
+            winner.warnings.push(format!(
+                "shadowed {:?}-scope skill at {} with same name",
+                loser.scope,
+                loser
+                    .location
+                    .as_deref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<unknown>".to_string())
+            ));
+        }
+        by_name.insert(key, skill);
+    }
+}
+
+fn precedence(scope: SkillScope) -> u8 {
+    match scope {
+        SkillScope::Legacy => 0,
+        SkillScope::User => 1,
+        SkillScope::Project => 2,
+    }
+}
+
+fn scan_root(root: &Path, scope: SkillScope) -> Vec<Skill> {
+    let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
         Err(_) => return Vec::new(),
     };
 
-    entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            if !path.is_dir() {
-                return None;
-            }
+    // `read_dir` order is unspecified. When two sibling directories declare
+    // the same logical `frontmatter.name` (which can differ from the folder
+    // name), cross-scope/same-scope deduplication downstream would otherwise
+    // pick a non-deterministic winner across runs. Sort by on-disk directory
+    // name for a stable, reproducible order.
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|entry| entry.file_name());
 
-            // Skip hidden directories (starting with '.')
-            let dir_name = entry.file_name().to_string_lossy().to_string();
-            if dir_name.starts_with('.') {
-                return None;
-            }
-
-            let manifest_path = path.join("skill.json");
-            let skill_md_path = path.join("SKILL.md");
-
-            // Attempt to parse manifest if it exists, otherwise use directory name as fallback
-            let mut skill = if manifest_path.exists() {
-                parse_skill_manifest(&manifest_path, &dir_name)
-            } else {
-                Skill {
-                    name: dir_name.clone(),
-                    ..Skill::default()
-                }
-            };
-
-            // Fallback to SKILL.md for description if missing in manifest
-            if skill.description.is_empty() {
-                skill.description = read_skill_md_description(&skill_md_path)
-                    .unwrap_or_else(|| "No description provided".to_string());
-            }
-
-            if skill.name.is_empty() {
-                skill.name = dir_name;
-            }
-
-            // Link to the SKILL.md location if it exists
-            if skill.location.is_none() && skill_md_path.exists() {
-                skill.location = Some(skill_md_path);
-            }
-
-            Some(skill)
-        })
-        .collect()
+    let mut out = Vec::new();
+    for entry in entries {
+        // Use `file_type()` rather than `path.is_dir()` so a symlinked
+        // child cannot be loaded as a skill. `is_dir()` dereferences
+        // symlinks, which would re-open out-of-tree loading even though
+        // `walk_files` already rejects symlinks deeper in the resource
+        // walker. Skip both symlinks and non-directory entries here; if
+        // the `file_type()` call itself fails (rare — transient I/O),
+        // treat it as "not safe to traverse" and skip.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() || !file_type.is_dir() {
+            continue;
+        }
+        let path = entry.path();
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        if dir_name.starts_with('.') {
+            continue;
+        }
+        if let Some(skill) = load_skill_dir(&path, &dir_name, scope) {
+            out.push(skill);
+        }
+    }
+    out
 }
 
-/// Parse a legacy `skill.json` manifest from the given path.
-fn parse_skill_manifest(path: &Path, fallback_name: &str) -> Skill {
-    let manifest = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<LegacySkillManifest>(&content).ok());
+fn load_skill_dir(dir: &Path, dir_name: &str, scope: SkillScope) -> Option<Skill> {
+    let skill_md = dir.join(SKILL_MD);
+    let legacy_manifest = dir.join(SKILL_JSON);
 
-    match manifest {
-        Some(manifest) => Skill {
-            name: if manifest.name.trim().is_empty() {
-                fallback_name.to_string()
-            } else {
-                manifest.name
-            },
-            description: manifest.description,
-            version: manifest.version,
-            author: manifest.author,
-            tags: manifest.tags,
-            tools: manifest.tools,
-            prompts: manifest.prompts,
-            location: None,
-        },
-        None => Skill {
-            name: fallback_name.to_string(),
-            ..Skill::default()
-        },
+    if skill_md.exists() {
+        return Some(load_from_skill_md(&skill_md, dir, dir_name, scope));
+    }
+    if legacy_manifest.exists() {
+        return Some(load_from_legacy_manifest(
+            &legacy_manifest,
+            dir,
+            dir_name,
+            scope,
+        ));
+    }
+    None
+}
+
+fn load_from_skill_md(skill_md: &Path, dir: &Path, dir_name: &str, scope: SkillScope) -> Skill {
+    let mut warnings = Vec::new();
+    let (frontmatter, body) = match parse_skill_md(skill_md) {
+        Some((fm, body, parse_warnings)) => {
+            warnings.extend(parse_warnings);
+            (fm, body)
+        }
+        None => {
+            warnings.push(format!(
+                "could not parse {} — exposing directory as placeholder",
+                skill_md.display()
+            ));
+            (SkillFrontmatter::default(), String::new())
+        }
+    };
+
+    let name = if frontmatter.name.trim().is_empty() {
+        warnings.push("frontmatter missing 'name'; using directory name".to_string());
+        dir_name.to_string()
+    } else {
+        if frontmatter.name != dir_name {
+            warnings.push(format!(
+                "frontmatter name '{}' does not match directory '{}'",
+                frontmatter.name, dir_name
+            ));
+        }
+        if frontmatter.name.len() > MAX_NAME_LEN {
+            warnings.push(format!(
+                "frontmatter name is {} chars (max recommended: {})",
+                frontmatter.name.len(),
+                MAX_NAME_LEN
+            ));
+        }
+        frontmatter.name.clone()
+    };
+
+    let description = if frontmatter.description.trim().is_empty() {
+        warnings
+            .push("frontmatter missing 'description'; falling back to first body line".to_string());
+        first_body_line(&body).unwrap_or_else(|| "No description provided".to_string())
+    } else {
+        if frontmatter.description.len() > MAX_DESCRIPTION_LEN {
+            warnings.push(format!(
+                "description is {} chars (max recommended: {})",
+                frontmatter.description.len(),
+                MAX_DESCRIPTION_LEN
+            ));
+        }
+        frontmatter.description.clone()
+    };
+
+    let version = extract_version(&frontmatter, &mut warnings);
+    let author = extract_author(&frontmatter, &mut warnings);
+    let tags = extract_tags(&frontmatter, &mut warnings);
+    let tools = frontmatter.allowed_tools.clone();
+
+    Skill {
+        name,
+        description,
+        version,
+        author,
+        tags,
+        tools,
+        prompts: Vec::new(),
+        location: Some(skill_md.to_path_buf()),
+        frontmatter,
+        resources: inventory_resources(dir),
+        scope,
+        legacy: false,
+        warnings,
     }
 }
 
-/// Extract the first non-empty, non-header line from a `SKILL.md` file as the description.
-fn read_skill_md_description(path: &Path) -> Option<String> {
+fn load_from_legacy_manifest(
+    manifest_path: &Path,
+    dir: &Path,
+    dir_name: &str,
+    scope: SkillScope,
+) -> Skill {
+    let mut warnings = vec![format!(
+        "skill uses legacy skill.json; migrate to SKILL.md frontmatter"
+    )];
+    let parsed = std::fs::read_to_string(manifest_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<LegacySkillManifest>(&content).ok());
+
+    let manifest = parsed.unwrap_or_else(|| {
+        warnings.push(format!(
+            "could not parse {} as JSON; using directory name",
+            manifest_path.display()
+        ));
+        LegacySkillManifest {
+            name: dir_name.to_string(),
+            description: String::new(),
+            version: String::new(),
+            author: None,
+            tags: Vec::new(),
+            tools: Vec::new(),
+            prompts: Vec::new(),
+        }
+    });
+
+    let name = if manifest.name.trim().is_empty() {
+        dir_name.to_string()
+    } else {
+        manifest.name
+    };
+
+    // `load_from_legacy_manifest` is only called when SKILL.md is absent
+    // (see load_skill_dir), so there is no SKILL.md to fall back to here.
+    let description = if manifest.description.is_empty() {
+        "No description provided".to_string()
+    } else {
+        manifest.description
+    };
+
+    let location = Some(manifest_path.to_path_buf());
+
+    Skill {
+        name,
+        description,
+        version: manifest.version,
+        author: manifest.author,
+        tags: manifest.tags,
+        tools: manifest.tools,
+        prompts: manifest.prompts,
+        location,
+        frontmatter: SkillFrontmatter::default(),
+        resources: inventory_resources(dir),
+        scope,
+        legacy: true,
+        warnings,
+    }
+}
+
+/// Split a `SKILL.md` file into parsed frontmatter and the remaining body.
+///
+/// Accepts frontmatter delimited by leading `---` lines. Returns `None` when
+/// the file cannot be read or the frontmatter block is unterminated.
+///
+/// The third element of the tuple carries parse-level diagnostics — for now
+/// just the YAML deserialisation error when frontmatter exists but is
+/// malformed. Callers merge these into the skill's user-visible warnings so
+/// the catalog surfaces the real cause instead of a generic "could not parse"
+/// placeholder.
+pub fn parse_skill_md(path: &Path) -> Option<(SkillFrontmatter, String, Vec<String>)> {
     let content = std::fs::read_to_string(path).ok()?;
-    for line in content.lines() {
+    let mut lines = content.lines();
+    let first = lines.next()?;
+    if first.trim() != "---" {
+        // No frontmatter — treat whole file as body.
+        return Some((SkillFrontmatter::default(), content, Vec::new()));
+    }
+
+    let mut yaml = String::new();
+    let mut terminated = false;
+    let mut body = String::new();
+    for line in lines {
+        if line.trim() == "---" {
+            terminated = true;
+            continue;
+        }
+        if !terminated {
+            yaml.push_str(line);
+            yaml.push('\n');
+        } else {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+
+    if !terminated {
+        return None;
+    }
+
+    let mut parse_warnings = Vec::new();
+    let frontmatter = match serde_yaml::from_str::<SkillFrontmatter>(&yaml) {
+        Ok(fm) => fm,
+        Err(err) => {
+            log::warn!(
+                "[skills] failed to parse frontmatter in {}: {err}",
+                path.display()
+            );
+            parse_warnings.push(format!("frontmatter parse error: {err}"));
+            SkillFrontmatter::default()
+        }
+    };
+
+    Some((frontmatter, body, parse_warnings))
+}
+
+/// Shallow-scan a skill directory for bundled resources.
+///
+/// Returns every file (relative to `dir`) under any of the conventional
+/// resource subdirectories (`scripts/`, `references/`, `assets/`). Deeper
+/// nesting is walked recursively.
+pub fn inventory_resources(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for sub in RESOURCE_DIRS {
+        let root = dir.join(sub);
+        // `root.is_dir()` follows symlinks, so a `scripts -> /some/other/tree`
+        // symlink would still pass and `walk_files` would inventory the
+        // external tree. Use `symlink_metadata` for a non-dereferencing check
+        // and reject symlinked roots outright; `walk_files` already guards
+        // deeper symlinks inside the tree.
+        let meta = match std::fs::symlink_metadata(&root) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            continue;
+        }
+        walk_files(&root, dir, &mut out);
+    }
+    out.sort();
+    out
+}
+
+fn walk_files(current: &Path, base: &Path, out: &mut Vec<PathBuf>) {
+    let entries = match std::fs::read_dir(current) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        // Use `file_type()` — not `is_dir()` / `is_file()` — so we can detect and
+        // skip symlinks before traversing. `is_dir()`/`is_file()` follow symlinks
+        // and would cause unbounded recursion on a cycle (e.g. `resources/self ->
+        // resources/`) or silent leakage outside the skill directory when a
+        // symlink points at `/`, `/etc`, or another skill's tree.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if file_type.is_dir() {
+            walk_files(&path, base, out);
+        } else if file_type.is_file() {
+            if let Ok(rel) = path.strip_prefix(base) {
+                out.push(rel.to_path_buf());
+            }
+        }
+    }
+}
+
+fn first_body_line(body: &str) -> Option<String> {
+    for line in body.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
@@ -175,6 +675,24 @@ fn read_skill_md_description(path: &Path) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn write(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, content).unwrap();
+    }
+
+    /// Workspace-only variant of [`load_skills`] used by tests that care only
+    /// about project-scope semantics. The production [`load_skills`] now
+    /// consults `dirs::home_dir()`; in unit tests that would non-deterministically
+    /// pick up whatever skills the developer has installed under their real
+    /// home. Tests exercising user-scope delegation drive a tempdir through
+    /// [`discover_skills`] explicitly (see `load_skills_surfaces_user_scope`).
+    fn load_skills_ws(workspace_dir: &Path) -> Vec<Skill> {
+        let trusted = is_workspace_trusted(workspace_dir);
+        discover_skills_inner(None, Some(workspace_dir), trusted)
+    }
+
     #[test]
     fn init_skills_dir_creates_dir_and_readme() {
         let dir = tempfile::tempdir().unwrap();
@@ -183,79 +701,328 @@ mod tests {
         assert!(skills_dir.is_dir());
         let readme = skills_dir.join("README.md");
         assert!(readme.exists());
-        let content = std::fs::read_to_string(&readme).unwrap();
-        assert!(content.contains("Skills"));
     }
 
     #[test]
-    fn init_skills_dir_idempotent() {
-        let dir = tempfile::tempdir().unwrap();
-        init_skills_dir(dir.path()).unwrap();
-        init_skills_dir(dir.path()).unwrap(); // should not fail
-    }
-
-    #[test]
-    fn load_skills_empty_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        init_skills_dir(dir.path()).unwrap();
-        let skills = load_skills(dir.path());
-        assert!(skills.is_empty());
-    }
-
-    #[test]
-    fn load_skills_with_manifest() {
+    fn load_skills_legacy_json_still_works() {
         let dir = tempfile::tempdir().unwrap();
         init_skills_dir(dir.path()).unwrap();
         let skill_dir = dir.path().join("skills").join("my-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("skill.json"),
+        write(
+            &skill_dir.join("skill.json"),
             r#"{"name":"My Skill","description":"A test","version":"1.0"}"#,
-        )
-        .unwrap();
-        let skills = load_skills(dir.path());
+        );
+        let skills = load_skills_ws(dir.path());
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "My Skill");
         assert_eq!(skills[0].description, "A test");
-        assert_eq!(skills[0].version, "1.0");
+        assert!(skills[0].legacy);
+        assert_eq!(skills[0].scope, SkillScope::Legacy);
     }
 
     #[test]
-    fn load_skills_fallback_name_from_dir() {
+    fn load_skills_parses_skill_md_frontmatter() {
         let dir = tempfile::tempdir().unwrap();
-        init_skills_dir(dir.path()).unwrap();
-        let skill_dir = dir.path().join("skills").join("fallback-name");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        // No skill.json, but has a SKILL.md
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "# Title\n\nThis is the description.",
-        )
-        .unwrap();
-        let skills = load_skills(dir.path());
+        let ws = dir.path();
+        // Trust marker enables project-scope loading.
+        write(&ws.join(".openhuman").join("trust"), "");
+        let skill_dir = ws.join(".openhuman").join("skills").join("hello-world");
+        write(
+            &skill_dir.join("SKILL.md"),
+            "---\nname: hello-world\ndescription: Say hi\nmetadata:\n  version: 0.1.0\n  tags: [demo, greeting]\n---\n\nSay hello to the user.\n",
+        );
+        let skills = load_skills_ws(ws);
         assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].name, "fallback-name");
-        assert_eq!(skills[0].description, "This is the description.");
+        let s = &skills[0];
+        assert_eq!(s.name, "hello-world");
+        assert_eq!(s.description, "Say hi");
+        assert_eq!(s.version, "0.1.0");
+        assert_eq!(s.tags, vec!["demo", "greeting"]);
+        assert_eq!(s.scope, SkillScope::Project);
+        assert!(!s.legacy);
+        assert!(s.warnings.is_empty(), "warnings: {:?}", s.warnings);
     }
 
     #[test]
-    fn load_skills_ignores_hidden_dirs() {
+    fn deprecated_top_level_fields_load_with_migration_warning() {
         let dir = tempfile::tempdir().unwrap();
-        init_skills_dir(dir.path()).unwrap();
-        let hidden = dir.path().join("skills").join(".hidden");
-        std::fs::create_dir_all(&hidden).unwrap();
-        let skills = load_skills(dir.path());
+        let ws = dir.path();
+        write(&ws.join(".openhuman").join("trust"), "");
+        let skill_dir = ws.join(".openhuman").join("skills").join("legacy-fm");
+        write(
+            &skill_dir.join("SKILL.md"),
+            "---\nname: legacy-fm\ndescription: uses deprecated top-level fields\nversion: 0.2.0\nauthor: Jane\ntags: [old, school]\n---\n",
+        );
+        let skills = load_skills_ws(ws);
+        assert_eq!(skills.len(), 1);
+        let s = &skills[0];
+        assert_eq!(s.version, "0.2.0");
+        assert_eq!(s.author.as_deref(), Some("Jane"));
+        assert_eq!(s.tags, vec!["old", "school"]);
+        let warnings = s.warnings.join("\n");
+        assert!(warnings.contains("'version' is deprecated"), "{}", warnings);
+        assert!(warnings.contains("'author' is deprecated"), "{}", warnings);
+        assert!(warnings.contains("'tags' is deprecated"), "{}", warnings);
+    }
+
+    #[test]
+    fn spec_compliant_fields_parse_into_metadata_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("SKILL.md");
+        write(
+            &path,
+            "---\nname: s\ndescription: d\nlicense: MIT\ncompatibility: \"node>=18\"\nmetadata:\n  version: 1.0.0\n  author: Alice\n  tags: [a, b]\n---\n",
+        );
+        let (fm, _body, _warnings) = parse_skill_md(&path).unwrap();
+        assert_eq!(fm.license.as_deref(), Some("MIT"));
+        assert_eq!(fm.compatibility.as_deref(), Some("node>=18"));
+        assert_eq!(
+            fm.metadata.get("version").and_then(|v| v.as_str()),
+            Some("1.0.0")
+        );
+        assert_eq!(
+            fm.metadata.get("author").and_then(|v| v.as_str()),
+            Some("Alice")
+        );
+        assert!(fm.extra.is_empty(), "extras leaked: {:?}", fm.extra);
+    }
+
+    #[test]
+    fn project_skills_skipped_when_not_trusted() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        // No trust marker.
+        let skill_dir = ws.join(".openhuman").join("skills").join("unsafe");
+        write(
+            &skill_dir.join("SKILL.md"),
+            "---\nname: unsafe\ndescription: should not load\n---\n",
+        );
+        let skills = load_skills_ws(ws);
+        assert!(skills.is_empty(), "got {skills:?}");
+    }
+
+    #[test]
+    fn frontmatter_missing_name_warns_and_falls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        write(&ws.join(".openhuman").join("trust"), "");
+        let skill_dir = ws.join(".openhuman").join("skills").join("mystery");
+        write(
+            &skill_dir.join("SKILL.md"),
+            "---\ndescription: no name here\n---\n\nbody\n",
+        );
+        let skills = load_skills_ws(ws);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "mystery");
+        assert!(skills[0]
+            .warnings
+            .iter()
+            .any(|w| w.contains("missing 'name'")));
+    }
+
+    #[test]
+    fn frontmatter_missing_description_uses_first_body_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        write(&ws.join(".openhuman").join("trust"), "");
+        let skill_dir = ws.join(".openhuman").join("skills").join("s");
+        write(
+            &skill_dir.join("SKILL.md"),
+            "---\nname: s\n---\n\n# Heading\n\nActual first line.\n",
+        );
+        let skills = load_skills_ws(ws);
+        assert_eq!(skills[0].description, "Actual first line.");
+    }
+
+    #[test]
+    fn directory_name_mismatch_warns_but_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        write(&ws.join(".openhuman").join("trust"), "");
+        let skill_dir = ws.join(".openhuman").join("skills").join("dir-name");
+        write(
+            &skill_dir.join("SKILL.md"),
+            "---\nname: other-name\ndescription: mismatch\n---\n",
+        );
+        let skills = load_skills_ws(ws);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "other-name");
+        assert!(skills[0]
+            .warnings
+            .iter()
+            .any(|w| w.contains("does not match directory")));
+    }
+
+    #[test]
+    fn project_scope_shadows_user_scope_on_collision() {
+        let user_dir = tempfile::tempdir().unwrap();
+        let ws_dir = tempfile::tempdir().unwrap();
+        write(&ws_dir.path().join(".openhuman").join("trust"), "");
+
+        let user_skill = user_dir
+            .path()
+            .join(".openhuman")
+            .join("skills")
+            .join("greet");
+        write(
+            &user_skill.join("SKILL.md"),
+            "---\nname: greet\ndescription: USER COPY\n---\n",
+        );
+
+        let proj_skill = ws_dir
+            .path()
+            .join(".openhuman")
+            .join("skills")
+            .join("greet");
+        write(
+            &proj_skill.join("SKILL.md"),
+            "---\nname: greet\ndescription: PROJECT COPY\n---\n",
+        );
+
+        let skills = discover_skills(Some(user_dir.path()), Some(ws_dir.path()), true);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].description, "PROJECT COPY");
+        assert!(skills[0].warnings.iter().any(|w| w.contains("shadowed")));
+    }
+
+    #[test]
+    fn inventory_resources_lists_scripts_and_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join("s");
+        write(
+            &skill.join("SKILL.md"),
+            "---\nname: s\ndescription: d\n---\n",
+        );
+        write(&skill.join("scripts").join("run.sh"), "echo hi");
+        write(&skill.join("references").join("notes.md"), "notes");
+        write(&skill.join("assets").join("logo.png"), "");
+        write(&skill.join("unrelated").join("x.txt"), "ignored");
+
+        let mut res = inventory_resources(&skill);
+        res.sort();
+        assert_eq!(res.len(), 3);
+        assert!(res.iter().any(|p| p.ends_with("run.sh")));
+        assert!(res.iter().any(|p| p.ends_with("notes.md")));
+        assert!(res.iter().any(|p| p.ends_with("logo.png")));
+        assert!(!res.iter().any(|p| p.ends_with("x.txt")));
+    }
+
+    #[test]
+    fn parse_skill_md_without_frontmatter_returns_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("SKILL.md");
+        write(&path, "just a markdown body\n");
+        let (fm, body, _warnings) = parse_skill_md(&path).unwrap();
+        assert!(fm.name.is_empty());
+        assert!(body.contains("markdown body"));
+    }
+
+    #[test]
+    fn parse_skill_md_unterminated_frontmatter_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("SKILL.md");
+        write(&path, "---\nname: bad\n\nbody without closing marker\n");
+        assert!(parse_skill_md(&path).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_skill_dirs_are_skipped() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        write(&ws.join(".openhuman").join("trust"), "");
+
+        // A real out-of-tree skill that would load fine if linked.
+        let external = tempfile::tempdir().unwrap();
+        let external_skill = external.path().join("evil");
+        write(
+            &external_skill.join("SKILL.md"),
+            "---\nname: evil\ndescription: should not load via symlink\n---\n",
+        );
+
+        // Symlink <ws>/.openhuman/skills/evil -> external/evil
+        let skills_root = ws.join(".openhuman").join("skills");
+        std::fs::create_dir_all(&skills_root).unwrap();
+        symlink(&external_skill, skills_root.join("evil")).unwrap();
+
+        let skills = load_skills_ws(ws);
+        assert!(
+            skills.is_empty(),
+            "symlinked skill dir should be skipped, got: {skills:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_resource_roots_are_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join("s");
+        write(
+            &skill.join("SKILL.md"),
+            "---\nname: s\ndescription: d\n---\n",
+        );
+
+        // External directory that must not be inventoried.
+        let external = tempfile::tempdir().unwrap();
+        write(&external.path().join("leaked.txt"), "should not appear");
+
+        // Symlink <skill>/assets -> external
+        std::fs::create_dir_all(&skill).unwrap();
+        symlink(external.path(), skill.join("assets")).unwrap();
+
+        let res = inventory_resources(&skill);
+        assert!(
+            res.is_empty(),
+            "symlinked resource root must be rejected, got: {res:?}"
+        );
+    }
+
+    #[test]
+    fn load_skills_surfaces_user_scope() {
+        // load_skills now delegates to discover_skills with dirs::home_dir(),
+        // so user-scope skills reach production callers that still hit the
+        // backwards-compat shim. Simulate this with an explicit tempdir home
+        // via discover_skills — we can't safely override the process HOME in
+        // unit tests.
+        let user_dir = tempfile::tempdir().unwrap();
+        let ws_dir = tempfile::tempdir().unwrap();
+
+        let user_skill = user_dir
+            .path()
+            .join(".openhuman")
+            .join("skills")
+            .join("user-only");
+        write(
+            &user_skill.join("SKILL.md"),
+            "---\nname: user-only\ndescription: from user home\n---\n",
+        );
+
+        let skills = discover_skills(
+            Some(user_dir.path()),
+            Some(ws_dir.path()),
+            is_workspace_trusted(ws_dir.path()),
+        );
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "user-only");
+        assert_eq!(skills[0].scope, SkillScope::User);
+    }
+
+    #[test]
+    fn hidden_dirs_are_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        write(&ws.join(".openhuman").join("trust"), "");
+        let hidden = ws.join(".openhuman").join("skills").join(".hidden");
+        write(
+            &hidden.join("SKILL.md"),
+            "---\nname: hidden\ndescription: nope\n---\n",
+        );
+        let skills = load_skills_ws(ws);
         assert!(skills.is_empty());
-    }
-
-    #[test]
-    fn parse_skill_manifest_missing_fields_uses_defaults() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("skill.json");
-        std::fs::write(&path, "{}").unwrap();
-        let skill = parse_skill_manifest(&path, "fallback");
-        assert_eq!(skill.name, "fallback");
-        assert!(skill.description.is_empty());
-        assert!(skill.tags.is_empty());
     }
 }

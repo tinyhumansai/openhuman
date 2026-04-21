@@ -21,6 +21,25 @@ fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
     Ok((config_dir.clone(), config_dir.join("workspace")))
 }
 
+/// Parse a boolean env-var value. Accepts the usual truthy/falsy tokens
+/// (`1/true/yes/on` and `0/false/no/off`, case-insensitive). Returns `None`
+/// on unrecognised values and logs a warning so silent mis-spellings don't
+/// invisibly leave the config unchanged.
+fn parse_env_bool(name: &str, raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => {
+            tracing::warn!(
+                env = %name,
+                value = %raw,
+                "invalid boolean env override ignored; expected 1/true/yes/on or 0/false/no/off"
+            );
+            None
+        }
+    }
+}
+
 const ACTIVE_WORKSPACE_STATE_FILE: &str = "active_workspace.toml";
 static WARNED_WORLD_READABLE_CONFIGS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
@@ -790,6 +809,30 @@ impl Config {
                         "ignoring invalid OPENHUMAN_LOCAL_AI_TIER (valid: ram_1gb, ram_2_4gb, ram_4_8gb, ram_8_16gb, ram_16_plus_gb)"
                     );
                 }
+            }
+        }
+
+        // Node runtime overrides
+        if let Ok(flag) = std::env::var("OPENHUMAN_NODE_ENABLED") {
+            if let Some(enabled) = parse_env_bool("OPENHUMAN_NODE_ENABLED", &flag) {
+                self.node.enabled = enabled;
+            }
+        }
+        if let Ok(version) = std::env::var("OPENHUMAN_NODE_VERSION") {
+            let trimmed = version.trim();
+            if !trimmed.is_empty() {
+                self.node.version = trimmed.to_string();
+            }
+        }
+        if let Ok(dir) = std::env::var("OPENHUMAN_NODE_CACHE_DIR") {
+            let trimmed = dir.trim();
+            if !trimmed.is_empty() {
+                self.node.cache_dir = trimmed.to_string();
+            }
+        }
+        if let Ok(flag) = std::env::var("OPENHUMAN_NODE_PREFER_SYSTEM") {
+            if let Some(prefer_system) = parse_env_bool("OPENHUMAN_NODE_PREFER_SYSTEM", &flag) {
+                self.node.prefer_system = prefer_system;
             }
         }
 

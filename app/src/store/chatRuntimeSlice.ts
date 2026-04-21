@@ -36,6 +36,14 @@ export interface StreamingAssistantState {
  */
 export type InferenceTurnLifecycle = 'started' | 'streaming';
 
+/** Running per-session totals accumulated from `chat:done` events (#703). */
+export interface SessionTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  turns: number;
+  lastUpdated: number;
+}
+
 /**
  * Per-thread UI state for an in-flight agent turn (socket events while the user
  * may navigate away from Conversations). The thread slice keeps `activeThreadId`
@@ -47,6 +55,7 @@ interface ChatRuntimeState {
   streamingAssistantByThread: Record<string, StreamingAssistantState>;
   toolTimelineByThread: Record<string, ToolTimelineEntry[]>;
   inferenceTurnLifecycleByThread: Record<string, InferenceTurnLifecycle>;
+  sessionTokenUsage: SessionTokenUsage;
 }
 
 const initialState: ChatRuntimeState = {
@@ -54,6 +63,7 @@ const initialState: ChatRuntimeState = {
   streamingAssistantByThread: {},
   toolTimelineByThread: {},
   inferenceTurnLifecycleByThread: {},
+  sessionTokenUsage: { inputTokens: 0, outputTokens: 0, turns: 0, lastUpdated: 0 },
 };
 
 const chatRuntimeSlice = createSlice({
@@ -110,6 +120,18 @@ const chatRuntimeSlice = createSlice({
       state.toolTimelineByThread = {};
       state.inferenceTurnLifecycleByThread = {};
     },
+    recordChatTurnUsage: (
+      state,
+      action: PayloadAction<{ inputTokens: number; outputTokens: number }>
+    ) => {
+      state.sessionTokenUsage.inputTokens += Math.max(0, action.payload.inputTokens);
+      state.sessionTokenUsage.outputTokens += Math.max(0, action.payload.outputTokens);
+      state.sessionTokenUsage.turns += 1;
+      state.sessionTokenUsage.lastUpdated = Date.now();
+    },
+    resetSessionTokenUsage: state => {
+      state.sessionTokenUsage = { inputTokens: 0, outputTokens: 0, turns: 0, lastUpdated: 0 };
+    },
   },
 });
 
@@ -125,6 +147,8 @@ export const {
   endInferenceTurn,
   clearRuntimeForThread,
   clearAllChatRuntime,
+  recordChatTurnUsage,
+  resetSessionTokenUsage,
 } = chatRuntimeSlice.actions;
 
 export default chatRuntimeSlice.reducer;

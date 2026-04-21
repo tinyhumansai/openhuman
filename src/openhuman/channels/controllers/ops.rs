@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use crate::api::config::{app_env_from_env, effective_api_url, is_staging_app_env};
 use crate::api::jwt::get_session_token;
 use crate::api::rest::BackendOAuthClient;
-use crate::openhuman::config::{Config, DiscordConfig, TelegramConfig};
+use crate::openhuman::config::{Config, DiscordConfig, IMessageConfig, TelegramConfig};
 use crate::openhuman::credentials;
 use crate::rpc::RpcOutcome;
 
@@ -159,6 +159,38 @@ pub async fn connect_channel(
         .ok_or("credentials must be a JSON object")?;
 
     def.validate_credentials(auth_mode, creds_map)?;
+
+    // iMessage is local-only (no credentials): persist channels_config + return connected.
+    if channel_id == "imessage" && auth_mode == ChannelAuthMode::ManagedDm {
+        let allowed_contacts = parse_allowed_users(creds_map.get("allowed_contacts"));
+        let allowed_contacts_count = allowed_contacts.len();
+
+        let mut persisted = config.clone();
+        persisted.channels_config.imessage = Some(IMessageConfig { allowed_contacts });
+
+        persisted
+            .save()
+            .await
+            .map_err(|e| format!("failed to persist imessage config.toml: {e}"))?;
+
+        tracing::info!(
+            target: "openhuman::channels",
+            allowed_contacts_count,
+            "[imessage] connect_channel: wrote channels_config.imessage; restart core for AppleScript bridge to load"
+        );
+
+        return Ok(RpcOutcome::single_log(
+            ChannelConnectionResult {
+                status: "connected".to_string(),
+                restart_required: true,
+                auth_action: None,
+                message: Some(
+                    "iMessage channel configured. Grant Full Disk Access and restart the service to activate.".to_string(),
+                ),
+            },
+            "stored imessage channel config (local-only)".to_string(),
+        ));
+    }
 
     // Store credentials via the credentials domain.
     let provider_key = credential_provider(channel_id, auth_mode);
@@ -320,9 +352,12 @@ pub async fn disconnect_channel(
 
     let provider_key = credential_provider(channel_id, auth_mode);
 
-    credentials::ops::remove_provider_credentials(config, &provider_key, None)
-        .await
-        .map_err(|e| format!("failed to remove credentials: {e}"))?;
+    // iMessage has no stored credentials (local-only); skip credential removal.
+    if !(channel_id == "imessage" && auth_mode == ChannelAuthMode::ManagedDm) {
+        credentials::ops::remove_provider_credentials(config, &provider_key, None)
+            .await
+            .map_err(|e| format!("failed to remove credentials: {e}"))?;
+    }
 
     if channel_id == "telegram" && auth_mode == ChannelAuthMode::BotToken {
         let mut persisted = config.clone();
@@ -346,6 +381,18 @@ pub async fn disconnect_channel(
             tracing::info!(
                 target: "openhuman::channels",
                 "[discord] disconnect_channel: cleared channels_config.discord"
+            );
+        }
+    } else if channel_id == "imessage" && auth_mode == ChannelAuthMode::ManagedDm {
+        let mut persisted = config.clone();
+        if persisted.channels_config.imessage.take().is_some() {
+            persisted
+                .save()
+                .await
+                .map_err(|e| format!("failed to clear imessage config.toml: {e}"))?;
+            tracing::info!(
+                target: "openhuman::channels",
+                "[imessage] disconnect_channel: cleared channels_config.imessage"
             );
         }
     }
@@ -1286,5 +1333,81 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.contains("credentials must be a JSON object"));
+    }
+
+    // ── iMessage channel ───────────────────────────────────────────
+    #[tokio::test]
+    async fn connect_imessage_persists_allowed_contacts() {
+        let (_tmp, config) = isolated_test_config();
+        let result = connect_channel(
+            &config,
+            "imessage",
+            ChannelAuthMode::ManagedDm,
+            serde_json::json!({
+                "allowed_contacts": "+15551234567, user@icloud.com"
+            }),
+        )
+        .await
+        .expect("imessage connect should succeed");
+        assert_eq!(result.value.status, "connected");
+        assert!(result.value.restart_required);
+
+        let raw = tokio::fs::read_to_string(&config.config_path)
+            .await
+            .expect("saved config should exist");
+        let parsed: toml::Value = toml::from_str(&raw).expect("saved config should parse");
+        let im = parsed
+            .get("channels_config")
+            .and_then(|v| v.get("imessage"))
+            .and_then(toml::Value::as_table)
+            .expect("channels_config.imessage should be persisted");
+        let contacts: Vec<&str> = im
+            .get("allowed_contacts")
+            .and_then(toml::Value::as_array)
+            .expect("allowed_contacts array")
+            .iter()
+            .filter_map(toml::Value::as_str)
+            .collect();
+        assert!(contacts.iter().any(|c| *c == "+15551234567"));
+        assert!(contacts.iter().any(|c| *c == "user@icloud.com"));
+    }
+
+    #[tokio::test]
+    async fn connect_imessage_allows_empty_contacts() {
+        let (_tmp, config) = isolated_test_config();
+        let result = connect_channel(
+            &config,
+            "imessage",
+            ChannelAuthMode::ManagedDm,
+            serde_json::json!({}),
+        )
+        .await
+        .expect("imessage connect with no contacts should succeed");
+        assert_eq!(result.value.status, "connected");
+    }
+
+    #[tokio::test]
+    async fn disconnect_imessage_clears_runtime_config() {
+        let (_tmp, mut config) = isolated_test_config();
+        config.channels_config.imessage = Some(IMessageConfig {
+            allowed_contacts: vec!["+15551234567".to_string()],
+        });
+        config
+            .save()
+            .await
+            .expect("preloaded config should be persisted");
+
+        disconnect_channel(&config, "imessage", ChannelAuthMode::ManagedDm)
+            .await
+            .expect("imessage disconnect should succeed");
+
+        let raw = tokio::fs::read_to_string(&config.config_path)
+            .await
+            .expect("saved config should exist");
+        let parsed: toml::Value = toml::from_str(&raw).expect("saved config should parse");
+        let im_entry = parsed
+            .get("channels_config")
+            .and_then(|v| v.get("imessage"));
+        assert!(im_entry.is_none(), "imessage config should be cleared");
     }
 }

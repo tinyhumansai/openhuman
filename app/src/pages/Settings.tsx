@@ -114,38 +114,7 @@ const featuresSettingsItems = [
       </svg>
     ),
   },
-  {
-    id: 'autocomplete',
-    title: 'Autocomplete',
-    description: 'Inline text completion style and app preferences',
-    route: 'autocomplete',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 7h16M4 12h10m-10 5h7m10 0l3 3m0 0l3-3m-3 3v-8"
-        />
-      </svg>
-    ),
-  },
-  {
-    id: 'voice',
-    title: 'Voice Dictation',
-    description: 'Hotkey, activation mode, writing style, and custom dictionary',
-    route: 'voice',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zm-7 9a7 7 0 0014 0m-7 7v2m-4 0h8"
-        />
-      </svg>
-    ),
-  },
+  // Autocomplete + Voice Dictation hidden per #717 (routes retained for re-enable).
   {
     id: 'messaging',
     title: 'Messaging Channels',
@@ -246,7 +215,7 @@ const Settings = () => {
           element={wrapSettingsPage(
             <SettingsSectionPage
               title="Features"
-              description="Screen awareness, autocomplete, voice, messaging, and tools."
+              description="Screen awareness, messaging, and tools."
               items={featuresSettingsItems}
             />
           )}

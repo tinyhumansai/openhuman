@@ -23,7 +23,6 @@ const AddAccountModal = ({ open, onClose, onPick, connectedProviders }: AddAccou
     closeBtnRef.current?.focus();
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
-
   if (!open) return null;
 
   const available = connectedProviders

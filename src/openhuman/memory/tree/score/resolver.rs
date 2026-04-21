@@ -63,6 +63,7 @@ pub fn canonical_id_for(kind: EntityKind, surface: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::memory::tree::score::extract::ExtractedEntity;
 
     fn entity(kind: EntityKind, text: &str) -> ExtractedEntity {
         ExtractedEntity {

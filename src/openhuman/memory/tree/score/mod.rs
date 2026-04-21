@@ -172,7 +172,7 @@ pub fn persist_score(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::tree::types::{chunk_id, Chunk, SourceKind};
+    use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind};
     use chrono::Utc;
 
     fn test_chunk(content: &str) -> Chunk {

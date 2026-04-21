@@ -4,6 +4,7 @@ import Markdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
+import TokenUsagePill from '../components/chat/TokenUsagePill';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
@@ -1114,6 +1115,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             <h3 className="text-sm font-medium text-stone-700 truncate flex-1">
               {threads.find(t => t.id === selectedThreadId)?.title ?? 'Select a thread'}
             </h3>
+            <TokenUsagePill />
             <button
               onClick={() => void handleCreateNewThread()}
               className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
@@ -1579,22 +1581,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                   disabled={isSending || !rustChat}
                   className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 placeholder:text-stone-400 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
-                {/* Mic icon inside input */}
-                <button
-                  type="button"
-                  onClick={() => setInputMode('voice')}
-                  disabled={isRecording || isTranscribing || !rustChat}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 z-20 text-stone-400 hover:text-stone-600 transition-colors disabled:opacity-40"
-                  title="Switch to voice input">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.8}
-                      d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-                    />
-                  </svg>
-                </button>
+                {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
               </div>
               <button
                 onClick={() => {

@@ -67,38 +67,7 @@ const developerItems = [
       </svg>
     ),
   },
-  {
-    id: 'autocomplete-debug',
-    title: 'Autocomplete Debug',
-    description: 'Timing, test harness, focus debug, activity logs, and history',
-    route: 'autocomplete-debug',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 7h16M4 12h10m-10 5h7m10 0l3 3m0 0l3-3m-3 3v-8"
-        />
-      </svg>
-    ),
-  },
-  {
-    id: 'voice-debug',
-    title: 'Voice Debug',
-    description: 'Runtime status, silence threshold, and recording diagnostics',
-    route: 'voice-debug',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zm-7 9a7 7 0 0014 0m-7 7v2m-4 0h8"
-        />
-      </svg>
-    ),
-  },
+  // Autocomplete Debug + Voice Debug hidden per #717 (routes retained for re-enable).
   {
     id: 'local-model-debug',
     title: 'Local Model Debug',

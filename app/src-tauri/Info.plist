@@ -3,6 +3,8 @@
 <plist version="1.0">
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>OpenHuman uses the microphone for voice dictation — press the hotkey to record speech and transcribe it to text.</string>
+	<string>OpenHuman uses the microphone for voice dictation and for voice/video calls and huddles inside embedded apps (Google Meet, Discord, Slack).</string>
+	<key>NSCameraUsageDescription</key>
+	<string>OpenHuman uses the camera for video calls and huddles inside embedded apps (Google Meet, Discord, Slack).</string>
 </dict>
 </plist>

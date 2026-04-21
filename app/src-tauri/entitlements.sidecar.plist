@@ -10,6 +10,8 @@
     <true/>
     <key>com.apple.security.device.audio-input</key>
     <true/>
+    <key>com.apple.security.device.camera</key>
+    <true/>
     <!-- Required for the core sidecar to make outbound HTTPS calls (registry fetch,
          skill manifest + JS bundle downloads) under the macOS Hardened Runtime.
          Without this, reqwest connections are silently blocked by the OS in signed

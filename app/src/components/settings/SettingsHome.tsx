@@ -96,7 +96,7 @@ const SettingsHome = () => {
     {
       id: 'features',
       title: 'Features',
-      description: 'Screen awareness, autocomplete, voice, messaging, and tools',
+      description: 'Screen awareness, messaging, and tools',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path

@@ -5,9 +5,9 @@
 //! [`SourceRef`]. These types feed into later phases (#708 scoring, #709
 //! summary trees, #710 retrieval) but are self-contained at Phase 1.
 //!
-//! All chunk IDs are deterministic: `blake3(source_kind | source_id | seq)`
-//! truncated to 32 hex chars so re-ingest of the same source material yields
-//! stable IDs and idempotent upserts.
+//! All chunk IDs are deterministic: `sha256(source_kind | "\0" | source_id |
+//! "\0" | seq)` truncated to 32 hex chars so re-ingest of the same source
+//! material yields stable IDs and idempotent upserts.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

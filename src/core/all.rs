@@ -233,6 +233,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "service" => Some("Desktop service lifecycle management."),
         "socket" => Some("Skills runtime socket bridge controls."),
         "memory" => Some("Document storage, vector search, key-value store, and knowledge graph."),
+        "memory_tree" => Some(
+            "Canonical chunk ingestion, provenance capture, and chunk retrieval for source-grounded memory.",
+        ),
         "referral" => Some("Referral codes, stats, and apply flows via the hosted backend API."),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "team" => Some("Team member management, invites, and role changes via the backend."),
@@ -514,6 +517,7 @@ mod tests {
     #[test]
     fn namespace_description_known_namespaces() {
         assert!(namespace_description("memory").is_some());
+        assert!(namespace_description("memory_tree").is_some());
         assert!(namespace_description("billing").is_some());
         assert!(namespace_description("config").is_some());
         assert!(namespace_description("health").is_some());
