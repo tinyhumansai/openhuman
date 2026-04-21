@@ -44,6 +44,9 @@ hmac = "0.12"
 tar = "0.4"
 xz2 = { version = "0.1", features = ["static"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Real timeout for `node --version` probes in the runtime resolver. Guards
+# against a broken shim on PATH hanging the bootstrap forever.
+wait-timeout = "0.2"
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1.0"
 async-trait = "0.1"

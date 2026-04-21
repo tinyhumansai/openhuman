@@ -4512,6 +4512,7 @@ dependencies = [
  "wa-rs-proto",
  "wa-rs-tokio-transport",
  "wa-rs-ureq-http",
+ "wait-timeout",
  "webpki-roots 1.0.6",
  "whisper-rs",
  "xz2",
@@ -7664,6 +7665,15 @@ dependencies = [
  "tokio",
  "ureq",
  "wa-rs-core",
+]
+
+[[package]]
+name = "wait-timeout"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

@@ -125,38 +125,58 @@ fn which_node() -> Option<PathBuf> {
     None
 }
 
-/// Invoke `<path> --version` with a 5-second timeout and return the raw
-/// version string on success. The timeout is a belt-and-braces guard against
-/// a broken shim sitting on `PATH`.
+/// Invoke `<path> --version` with a real 5-second timeout and return the raw
+/// version string on success. The timeout guards against a broken shim on
+/// `PATH` hanging the bootstrap indefinitely.
 fn probe_node_version(path: &std::path::Path) -> Option<String> {
-    let output = Command::new(path)
+    use std::io::Read;
+    use wait_timeout::ChildExt;
+
+    let mut child = Command::new(path)
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        // `Command` has no native timeout; the CLI is expected to return in
-        // well under 5 s, so we rely on process exit and keep the duration
-        // here as a documentation anchor for future refactors toward
-        // `wait_timeout` if needed.
-        .output()
+        .spawn()
         .ok()?;
 
-    let _ = Duration::from_secs(5);
+    let timeout = Duration::from_secs(5);
+    let status = match child.wait_timeout(timeout).ok()? {
+        Some(s) => s,
+        None => {
+            tracing::warn!(
+                path = %path.display(),
+                timeout_secs = 5,
+                "[node_runtime::resolver] `node --version` timed out; killing process"
+            );
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+    };
 
-    if !output.status.success() {
+    if !status.success() {
+        let mut stderr_buf = String::new();
+        if let Some(mut s) = child.stderr.take() {
+            let _ = s.read_to_string(&mut stderr_buf);
+        }
         tracing::debug!(
-            status = ?output.status,
-            stderr = %String::from_utf8_lossy(&output.stderr),
+            status = ?status,
+            stderr = %stderr_buf,
             "[node_runtime::resolver] `node --version` exited non-zero"
         );
         return None;
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() {
+    let mut stdout_buf = String::new();
+    if let Some(mut s) = child.stdout.take() {
+        let _ = s.read_to_string(&mut stdout_buf);
+    }
+    let trimmed = stdout_buf.trim().to_string();
+    if trimmed.is_empty() {
         return None;
     }
-    Some(stdout)
+    Some(trimmed)
 }
 
 #[cfg(test)]
