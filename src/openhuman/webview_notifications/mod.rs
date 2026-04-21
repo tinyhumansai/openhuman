@@ -20,7 +20,6 @@ pub mod types;
 
 pub use dispatch::{format_title, OPENHUMAN_TITLE_PREFIX};
 pub use schemas::{
-    all_webview_notifications_controller_schemas,
-    all_webview_notifications_registered_controllers,
+    all_webview_notifications_controller_schemas, all_webview_notifications_registered_controllers,
 };
 pub use types::{NotificationSettings, WebviewNotificationEvent};
