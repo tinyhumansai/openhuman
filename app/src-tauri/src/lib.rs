@@ -6,9 +6,10 @@ mod core_update;
 #[cfg(feature = "cef")]
 mod discord_scanner;
 #[cfg(feature = "cef")]
+mod imessage_scanner;
+#[cfg(feature = "cef")]
 mod slack_scanner;
 mod webview_accounts;
-#[cfg(feature = "cef")]
 mod whatsapp_scanner;
 
 use std::sync::Mutex;
@@ -574,6 +575,7 @@ pub fn run() {
         .manage(DictationHotkeyState(Mutex::new(Vec::new())))
         .manage(webview_accounts::WebviewAccountsState::default());
     #[cfg(feature = "cef")]
+    let builder = builder.manage(std::sync::Arc::new(imessage_scanner::ScannerRegistry::new()));
     let builder = builder.manage(whatsapp_scanner::ScannerRegistry::new());
     #[cfg(feature = "cef")]
     let builder = builder.manage(slack_scanner::ScannerRegistry::new());
@@ -796,6 +798,17 @@ pub fn run() {
                             ),
                         }
                     });
+                }
+            }
+
+            #[cfg(all(target_os = "macos", feature = "cef"))]
+            {
+                use std::sync::Arc;
+                if let Some(registry) = app.try_state::<Arc<imessage_scanner::ScannerRegistry>>() {
+                    let registry = registry.inner().clone();
+                    let app_handle = app.handle().clone();
+                    registry.ensure_scanner(app_handle, "default".to_string());
+                    log::info!("[imessage] scanner scheduled on startup");
                 }
             }
 
