@@ -110,6 +110,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     );
     // Bridge to external skill runtimes
     controllers.extend(crate::openhuman::socket::all_socket_registered_controllers());
+    // Discovered SKILL.md skills and their bundled resources
+    controllers.extend(crate::openhuman::skills::all_skills_registered_controllers());
     // User workspace and file management
     controllers.extend(crate::openhuman::workspace::all_workspace_registered_controllers());
     // Skill tool registry
@@ -177,6 +179,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
         crate::openhuman::screen_intelligence::all_screen_intelligence_controller_schemas(),
     );
     schemas.extend(crate::openhuman::socket::all_socket_controller_schemas());
+    schemas.extend(crate::openhuman::skills::all_skills_controller_schemas());
     schemas.extend(crate::openhuman::workspace::all_workspace_controller_schemas());
     schemas.extend(crate::openhuman::tools::all_tools_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());
@@ -239,6 +242,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "migrate" => Some("Data migration utilities."),
         "screen_intelligence" => Some("Screen capture, permissions, and accessibility automation."),
         "service" => Some("Desktop service lifecycle management."),
+        "skills" => Some("Discovered SKILL.md skills and their bundled resources."),
         "socket" => Some("Skills runtime socket bridge controls."),
         "memory" => Some("Document storage, vector search, key-value store, and knowledge graph."),
         "memory_tree" => Some(
