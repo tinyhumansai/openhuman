@@ -460,9 +460,8 @@ fn handle_skills_install_from_url(params: Map<String, Value>) -> ControllerFutur
         );
         let config = resolve_config().await;
         let workspace = config.workspace_dir.clone();
-        let node_config = config.node.clone();
         let payload: InstallSkillFromUrlParams = wire.into();
-        match install_skill_from_url(workspace.as_path(), node_config, payload).await {
+        match install_skill_from_url(workspace.as_path(), payload).await {
             Ok(outcome) => {
                 tracing::debug!(
                     url = %outcome.url,

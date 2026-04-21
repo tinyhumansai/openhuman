@@ -571,11 +571,19 @@ fn load_from_legacy_manifest(
 /// placeholder.
 pub fn parse_skill_md(path: &Path) -> Option<(SkillFrontmatter, String, Vec<String>)> {
     let content = std::fs::read_to_string(path).ok()?;
+    parse_skill_md_str(&content)
+}
+
+/// Content-only variant of [`parse_skill_md`] used when the SKILL.md has been
+/// fetched over HTTPS (see [`install_skill_from_url`]) and has not yet landed
+/// on disk. Returns `None` when the frontmatter block is opened with `---` but
+/// never terminated — the same failure mode the file-based parser rejects.
+pub fn parse_skill_md_str(content: &str) -> Option<(SkillFrontmatter, String, Vec<String>)> {
     let mut lines = content.lines();
     let first = lines.next()?;
     if first.trim() != "---" {
         // No frontmatter — treat whole file as body.
-        return Some((SkillFrontmatter::default(), content, Vec::new()));
+        return Some((SkillFrontmatter::default(), content.to_string(), Vec::new()));
     }
 
     let mut yaml = String::new();
@@ -603,10 +611,7 @@ pub fn parse_skill_md(path: &Path) -> Option<(SkillFrontmatter, String, Vec<Stri
     let frontmatter = match serde_yaml::from_str::<SkillFrontmatter>(&yaml) {
         Ok(fm) => fm,
         Err(err) => {
-            log::warn!(
-                "[skills] failed to parse frontmatter in {}: {err}",
-                path.display()
-            );
+            log::warn!("[skills] failed to parse frontmatter: {err}");
             parse_warnings.push(format!("frontmatter parse error: {err}"));
             SkillFrontmatter::default()
         }
@@ -1124,19 +1129,24 @@ fn yaml_scalar(s: &str) -> String {
     format!("\"{escaped}\"")
 }
 
-/// Default wall-clock budget for the `npx skills add` install path.
+/// Default wall-clock budget for the SKILL.md fetch.
 pub const DEFAULT_INSTALL_TIMEOUT_SECS: u64 = 60;
 /// Hard ceiling callers can request via `timeout_secs`.
 pub const MAX_INSTALL_TIMEOUT_SECS: u64 = 600;
 /// Upper bound on raw URL length accepted by [`validate_install_url`].
 pub const MAX_INSTALL_URL_LEN: usize = 2048;
+/// Upper bound on the fetched SKILL.md body. Single-file skills rarely exceed
+/// a few KB; the 1 MiB cap here is a defensive limit against a hostile or
+/// misconfigured host streaming an unbounded response into memory.
+pub const MAX_SKILL_MD_BYTES: usize = 1024 * 1024;
 
 /// Input for [`install_skill_from_url`]. Mirrors the `skills.install_from_url`
 /// JSON-RPC payload.
 #[derive(Debug, Clone, Deserialize)]
 pub struct InstallSkillFromUrlParams {
-    /// Remote skill package URL. Must be `https://` and resolve to a
-    /// non-private host (see [`validate_install_url`]).
+    /// Remote SKILL.md URL. Must be `https://`, resolve to a non-private host
+    /// (see [`validate_install_url`]), and point at a `.md` file after
+    /// github.com `/blob/` normalization.
     pub url: String,
     /// Optional wall-clock budget override, in seconds. Defaults to
     /// [`DEFAULT_INSTALL_TIMEOUT_SECS`] and is capped at
@@ -1146,54 +1156,80 @@ pub struct InstallSkillFromUrlParams {
 }
 
 /// Outcome of a successful install. `new_skills` is the set of skill slugs
-/// that appeared in the catalog as a result of the CLI run (post-discovery
+/// that appeared in the catalog since the start of the call (post-discovery
 /// minus pre-discovery).
 #[derive(Debug, Clone, Serialize)]
 pub struct InstallSkillFromUrlOutcome {
+    /// The URL the caller submitted, trimmed.
     pub url: String,
+    /// Human-readable install log — typically `Fetched N bytes from <url>\n
+    /// Installed to <path>`. Repurposed from the old npx stdout field so the
+    /// UI success panel keeps the same `<details>` layout.
     pub stdout: String,
+    /// Non-fatal warnings surfaced during parse (e.g. deprecated top-level
+    /// `version`/`author`/`tags`). Empty on the happy path. Repurposed from
+    /// the old npx stderr field.
     pub stderr: String,
+    /// Slugs that appeared in the workspace skill catalog as a result of the
+    /// install. Usually one, empty only when the SKILL.md could not be
+    /// enumerated by discovery (rare — indicates workspace trust mismatch).
     pub new_skills: Vec<String>,
 }
 
-/// Install a skill from a remote registry URL by shelling out to
-/// `npx --yes skills add <url>` through the managed Node.js toolchain.
+/// Install a skill by fetching its `SKILL.md` directly over HTTPS and writing
+/// it to `<workspace>/.openhuman/skills/<slug>/SKILL.md`.
 ///
-/// Validation applied before spawning anything:
+/// Design rationale: openhuman's skill discovery scans
+/// `<workspace>/.openhuman/skills/` (plus `~/.openhuman/skills/` and legacy
+/// paths), **not** the per-agent subdirectories that the vercel-labs `skills`
+/// CLI writes to (`./claude-code/skills/`, `./cursor/skills/`, …). The CLI's
+/// agent ecosystem is incompatible with openhuman's skill layout, so we fetch
+/// the SKILL.md file directly and install it into a layout discovery sees.
+///
+/// Validation applied before any network I/O:
 /// * URL length, scheme (`https` only), and host safety via
 ///   [`validate_install_url`] — rejects loopback, private, link-local,
 ///   multicast, shared-address ranges, `localhost`, and `.local` / `.localhost`
 ///   mDNS-style hostnames.
+/// * `github.com/<o>/<r>/blob/<b>/<p>` is rewritten to the raw
+///   `raw.githubusercontent.com/<o>/<r>/<b>/<p>` equivalent so humans can
+///   paste the URL they see in the browser.
+/// * The path must end in `.md` (case-insensitive). Repo/tree URLs and
+///   tarballs are rejected with `unsupported url form:`.
 /// * `timeout_secs` is clamped to [`MAX_INSTALL_TIMEOUT_SECS`].
 ///
 /// Runtime:
-/// * Reuses [`NodeBootstrap`] for toolchain resolution (same code path as
-///   `npm_exec`), so the user sees the same bootstrap / download behavior.
-/// * Clears the host env before spawn and rebuilds `PATH` with
-///   `resolved.bin_dir` prepended — `npx`, `node`, and anything the CLI
-///   shells out to stay on the managed toolchain.
-/// * Child runs in `workspace_dir` so the installer lands packages in the
-///   current project by default.
+/// * Body size is capped by [`MAX_SKILL_MD_BYTES`] (1 MiB). The advertised
+///   `Content-Length` is checked up front; the buffered body length is
+///   checked again after the download as defense against a lying header.
+/// * Frontmatter is validated — `name` and `description` are required per
+///   the agentskills.io spec.
+/// * The slug is derived from `metadata.id` when present, otherwise the
+///   sanitized `name` field. Collision with an existing directory is fatal
+///   (no silent overwrite).
+/// * Write is atomic: `SKILL.md.tmp` in the target dir, then `rename` on
+///   success.
 ///
 /// On success the full post-install skills catalog is re-discovered and the
 /// outcome includes the list of skill slugs that appeared since the start of
-/// the call (i.e. the skill(s) produced by `skills add`).
+/// the call.
 pub async fn install_skill_from_url(
     workspace_dir: &Path,
-    node_config: crate::openhuman::config::schema::NodeConfig,
     params: InstallSkillFromUrlParams,
 ) -> Result<InstallSkillFromUrlOutcome, String> {
-    let url = params.url.trim();
-    validate_install_url(url)?;
+    let raw_url = params.url.trim().to_string();
+    validate_install_url(&raw_url)?;
 
     let timeout_secs = params
         .timeout_secs
         .unwrap_or(DEFAULT_INSTALL_TIMEOUT_SECS)
-        .min(MAX_INSTALL_TIMEOUT_SECS)
-        .max(1);
+        .clamp(1, MAX_INSTALL_TIMEOUT_SECS);
+
+    let fetch_url = normalize_install_url(&raw_url)?;
 
     tracing::debug!(
-        url = %url,
+        raw_url = %raw_url,
+        fetch_url = %fetch_url,
         workspace = %workspace_dir.display(),
         timeout_secs = timeout_secs,
         "[skills] install_skill_from_url: entry"
@@ -1207,85 +1243,110 @@ pub async fn install_skill_from_url(
             .map(|s| s.name)
             .collect();
 
-    let bootstrap = crate::openhuman::node_runtime::NodeBootstrap::new(
-        node_config,
-        workspace_dir.to_path_buf(),
-        reqwest::Client::new(),
-    );
-    let resolved = bootstrap
-        .resolve()
-        .await
-        .map_err(|e| format!("node runtime unavailable: {e}"))?;
-
-    let npx_bin = if cfg!(windows) {
-        resolved.bin_dir.join("npx.cmd")
-    } else {
-        resolved.bin_dir.join("npx")
-    };
-    if !npx_bin.exists() {
-        return Err(format!(
-            "npx binary not found at {} (resolved toolchain {} is missing the npx launcher)",
-            npx_bin.display(),
-            resolved.version,
-        ));
-    }
-
-    let mut cmd = tokio::process::Command::new(&npx_bin);
-    cmd.arg("--yes").arg("skills").arg("add").arg(url);
-    cmd.current_dir(workspace_dir);
-    cmd.env_clear();
-
-    let host_path = std::env::var("PATH").unwrap_or_default();
-    let sep = if cfg!(windows) { ";" } else { ":" };
-    let new_path = if host_path.is_empty() {
-        resolved.bin_dir.to_string_lossy().into_owned()
-    } else {
-        format!("{}{}{}", resolved.bin_dir.display(), sep, host_path)
-    };
-    cmd.env("PATH", &new_path);
-    for var in &[
-        "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR",
-    ] {
-        if let Ok(v) = std::env::var(var) {
-            cmd.env(var, v);
-        }
-    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("fetch failed: build http client: {e}"))?;
 
     tracing::info!(
-        version = %resolved.version,
-        source = ?resolved.source,
-        npx = %npx_bin.display(),
-        url = %url,
-        "[skills] install_skill_from_url: spawning `npx --yes skills add <url>`"
+        fetch_url = %fetch_url,
+        "[skills] install_skill_from_url: fetching SKILL.md"
     );
 
-    let spawn_result =
-        tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), cmd.output()).await;
-
-    let output = match spawn_result {
-        Ok(Ok(out)) => out,
-        Ok(Err(e)) => return Err(format!("failed to execute npx: {e}")),
-        Err(_) => {
-            return Err(format!(
-                "install timed out after {timeout_secs}s and was killed"
-            ));
+    let response = match client.get(&fetch_url).send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            if e.is_timeout() {
+                return Err(format!("fetch timed out after {timeout_secs}s"));
+            }
+            return Err(format!("fetch failed: {e}"));
         }
     };
 
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-
-    if !output.status.success() {
-        let trimmed = stderr.trim();
-        let detail = if trimmed.is_empty() {
-            stdout.trim().to_string()
-        } else {
-            trimmed.to_string()
-        };
+    let status = response.status();
+    if !status.is_success() {
         return Err(format!(
-            "`npx skills add {url}` exited with status {}: {detail}",
-            output.status
+            "fetch failed: {fetch_url} returned status {}",
+            status.as_u16()
         ));
+    }
+
+    if let Some(len) = response.content_length() {
+        if len > MAX_SKILL_MD_BYTES as u64 {
+            return Err(format!(
+                "fetch too large: {} bytes exceeds {MAX_SKILL_MD_BYTES} limit",
+                len
+            ));
+        }
+    }
+
+    let bytes = match response.bytes().await {
+        Ok(b) => b,
+        Err(e) => {
+            if e.is_timeout() {
+                return Err(format!("fetch timed out after {timeout_secs}s"));
+            }
+            return Err(format!("fetch failed: reading body: {e}"));
+        }
+    };
+
+    if bytes.len() > MAX_SKILL_MD_BYTES {
+        return Err(format!(
+            "fetch too large: {} bytes exceeds {MAX_SKILL_MD_BYTES} limit",
+            bytes.len()
+        ));
+    }
+
+    let content = String::from_utf8(bytes.to_vec())
+        .map_err(|e| format!("invalid SKILL.md: body is not valid utf-8: {e}"))?;
+
+    let (frontmatter, _body, parse_warnings) = parse_skill_md_str(&content).ok_or_else(|| {
+        "invalid SKILL.md: frontmatter block opened with `---` but never terminated".to_string()
+    })?;
+
+    if frontmatter.name.trim().is_empty() {
+        return Err("invalid SKILL.md: missing required field 'name'".to_string());
+    }
+    if frontmatter.description.trim().is_empty() {
+        return Err("invalid SKILL.md: missing required field 'description'".to_string());
+    }
+
+    let slug = derive_install_slug(&frontmatter)?;
+
+    let skills_root = workspace_dir.join(".openhuman").join("skills");
+    let target_dir = skills_root.join(&slug);
+    if target_dir.exists() {
+        return Err(format!(
+            "skill already installed as {slug:?} at {}",
+            target_dir.display()
+        ));
+    }
+
+    std::fs::create_dir_all(&target_dir).map_err(|e| {
+        format!(
+            "write failed: create directory {}: {e}",
+            target_dir.display()
+        )
+    })?;
+
+    let target_file = target_dir.join(SKILL_MD);
+    let temp_file = target_dir.join("SKILL.md.tmp");
+    std::fs::write(&temp_file, &content)
+        .map_err(|e| format!("write failed: {}: {e}", temp_file.display()))?;
+    std::fs::rename(&temp_file, &target_file)
+        .map_err(|e| format!("write failed: rename {}: {e}", target_file.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o644);
+        if let Err(e) = std::fs::set_permissions(&target_file, perms) {
+            tracing::warn!(
+                target = %target_file.display(),
+                error = %e,
+                "[skills] install_skill_from_url: chmod 0644 failed (non-fatal)"
+            );
+        }
     }
 
     let trusted_after = is_workspace_trusted(workspace_dir);
@@ -1297,17 +1358,131 @@ pub async fn install_skill_from_url(
         .collect();
 
     tracing::info!(
-        url = %url,
+        raw_url = %raw_url,
+        fetch_url = %fetch_url,
+        slug = %slug,
+        bytes = content.len(),
         new_count = new_skills.len(),
         "[skills] install_skill_from_url: completed"
     );
 
+    let stdout = format!(
+        "Fetched {} bytes from {fetch_url}\nInstalled to {}",
+        content.len(),
+        target_file.display()
+    );
+    let stderr = parse_warnings.join("\n");
+
     Ok(InstallSkillFromUrlOutcome {
-        url: url.to_string(),
+        url: raw_url,
         stdout,
         stderr,
         new_skills,
     })
+}
+
+/// Rewrite `github.com/<o>/<r>/blob/<branch>/<path>` into its raw counterpart
+/// so a URL copied from a browser's GitHub page resolves to the file body
+/// instead of the HTML wrapper. Any other host is returned unchanged.
+///
+/// Also enforces that the final path ends in `.md` (case-insensitive). Tree,
+/// commit, and whole-repo URLs are rejected here — they require a
+/// fundamentally different install path (recursive fetch / tarball) that is
+/// out of scope for single-file SKILL.md installs.
+fn normalize_install_url(raw: &str) -> Result<String, String> {
+    let parsed =
+        url::Url::parse(raw).map_err(|e| format!("unsupported url form: parse {raw:?}: {e}"))?;
+    let host = parsed.host_str().unwrap_or("").to_ascii_lowercase();
+
+    let normalized = if host == "github.com" {
+        let segments: Vec<&str> = parsed
+            .path_segments()
+            .map(|it| it.collect())
+            .unwrap_or_default();
+        if segments.len() >= 5 && segments[2] == "blob" {
+            let owner = segments[0];
+            let repo = segments[1];
+            let branch = segments[3];
+            let rest = segments[4..].join("/");
+            format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{rest}")
+        } else if segments.len() >= 3 && (segments[2] == "tree" || segments[2] == "raw") {
+            return Err(format!(
+                "unsupported url form: only direct SKILL.md links are supported, got {raw:?} (tree/dir URLs are not yet supported)"
+            ));
+        } else if segments.len() <= 2 {
+            return Err(format!(
+                "unsupported url form: only direct SKILL.md links are supported, got {raw:?} (whole-repo URLs are not yet supported)"
+            ));
+        } else {
+            raw.to_string()
+        }
+    } else {
+        raw.to_string()
+    };
+
+    let check = url::Url::parse(&normalized)
+        .map_err(|e| format!("unsupported url form: parse normalized {normalized:?}: {e}"))?;
+    let path_lower = check.path().to_ascii_lowercase();
+    if !path_lower.ends_with(".md") {
+        return Err(format!(
+            "unsupported url form: path must end in .md, got {normalized:?}"
+        ));
+    }
+
+    Ok(normalized)
+}
+
+/// Derive the install directory slug from the SKILL.md frontmatter.
+///
+/// Prefers `metadata.id` (the spec-aligned identifier) when present. Falls
+/// back to a sanitized form of `name`:
+///   * lowercase ASCII
+///   * non-alphanumeric runs collapsed to a single `-`
+///   * leading/trailing `-` trimmed
+///
+/// Rejects the empty string and paths that would escape the skills root
+/// (`..`, `/`, `\`). Max length is [`MAX_NAME_LEN`].
+fn derive_install_slug(fm: &SkillFrontmatter) -> Result<String, String> {
+    let candidate = fm
+        .metadata
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| fm.name.clone());
+
+    let mut out = String::with_capacity(candidate.len());
+    let mut last_dash = false;
+    for ch in candidate.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+
+    if out.is_empty() {
+        return Err(
+            "invalid SKILL.md: cannot derive slug from empty name/id — set a value in frontmatter"
+                .to_string(),
+        );
+    }
+    if out.len() > MAX_NAME_LEN {
+        return Err(format!(
+            "invalid SKILL.md: derived slug {out:?} exceeds {MAX_NAME_LEN} chars"
+        ));
+    }
+    if out.contains("..") || out.contains('/') || out.contains('\\') {
+        return Err(format!(
+            "invalid SKILL.md: derived slug {out:?} contains forbidden path components"
+        ));
+    }
+
+    Ok(out)
 }
 
 /// Validate a remote skill install URL. Returns `Ok(())` when the URL is
@@ -2216,5 +2391,170 @@ mod tests {
         assert!(validate_install_url("ftp://example.com/x").is_err());
         // unparseable bracketed host
         assert!(validate_install_url("https://[not-an-ip]/x").is_err());
+    }
+
+    #[test]
+    fn normalize_install_url_rewrites_github_blob_to_raw() {
+        let out = normalize_install_url("https://github.com/owner/repo/blob/main/path/to/SKILL.md")
+            .unwrap();
+        assert_eq!(
+            out,
+            "https://raw.githubusercontent.com/owner/repo/main/path/to/SKILL.md"
+        );
+    }
+
+    #[test]
+    fn normalize_install_url_rewrites_github_blob_nested_path() {
+        let out =
+            normalize_install_url("https://github.com/owner/repo/blob/feat/x/dir/sub/SKILL.md")
+                .unwrap();
+        assert_eq!(
+            out,
+            "https://raw.githubusercontent.com/owner/repo/feat/x/dir/sub/SKILL.md"
+        );
+    }
+
+    #[test]
+    fn normalize_install_url_passes_raw_github_through() {
+        let raw = "https://raw.githubusercontent.com/owner/repo/main/SKILL.md";
+        assert_eq!(normalize_install_url(raw).unwrap(), raw);
+    }
+
+    #[test]
+    fn normalize_install_url_rejects_tree_urls() {
+        let err =
+            normalize_install_url("https://github.com/owner/repo/tree/main/path").unwrap_err();
+        assert!(err.contains("unsupported url form"), "{err}");
+        assert!(err.contains("tree/dir"), "{err}");
+    }
+
+    #[test]
+    fn normalize_install_url_rejects_whole_repo() {
+        let err = normalize_install_url("https://github.com/owner/repo").unwrap_err();
+        assert!(err.contains("unsupported url form"), "{err}");
+        assert!(err.contains("whole-repo"), "{err}");
+    }
+
+    #[test]
+    fn normalize_install_url_rejects_non_md_suffix() {
+        let err = normalize_install_url("https://example.com/skill.txt").unwrap_err();
+        assert!(err.contains("unsupported url form"), "{err}");
+        assert!(err.contains(".md"), "{err}");
+    }
+
+    #[test]
+    fn normalize_install_url_accepts_uppercase_md_suffix() {
+        let raw = "https://example.com/SKILL.MD";
+        assert_eq!(normalize_install_url(raw).unwrap(), raw);
+    }
+
+    #[test]
+    fn derive_install_slug_prefers_metadata_id() {
+        let mut fm = SkillFrontmatter {
+            name: "My Skill".to_string(),
+            description: "x".to_string(),
+            ..Default::default()
+        };
+        fm.metadata.insert(
+            "id".to_string(),
+            serde_yaml::Value::String("canonical-id".to_string()),
+        );
+        assert_eq!(derive_install_slug(&fm).unwrap(), "canonical-id");
+    }
+
+    #[test]
+    fn derive_install_slug_sanitizes_name_fallback() {
+        let fm = SkillFrontmatter {
+            name: "My Cool Skill!!".to_string(),
+            description: "x".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(derive_install_slug(&fm).unwrap(), "my-cool-skill");
+    }
+
+    #[test]
+    fn derive_install_slug_collapses_runs_and_trims_edges() {
+        let fm = SkillFrontmatter {
+            name: "---foo__bar  baz---".to_string(),
+            description: "x".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(derive_install_slug(&fm).unwrap(), "foo-bar-baz");
+    }
+
+    #[test]
+    fn derive_install_slug_rejects_empty_after_sanitize() {
+        let fm = SkillFrontmatter {
+            name: "!!!".to_string(),
+            description: "x".to_string(),
+            ..Default::default()
+        };
+        let err = derive_install_slug(&fm).unwrap_err();
+        assert!(err.contains("invalid SKILL.md"), "{err}");
+    }
+
+    #[test]
+    fn derive_install_slug_rejects_oversized() {
+        let fm = SkillFrontmatter {
+            name: "a".repeat(MAX_NAME_LEN + 1),
+            description: "x".to_string(),
+            ..Default::default()
+        };
+        let err = derive_install_slug(&fm).unwrap_err();
+        assert!(err.contains("invalid SKILL.md"), "{err}");
+        assert!(err.contains("exceeds"), "{err}");
+    }
+
+    #[test]
+    fn derive_install_slug_sanitizes_path_escape_attempts() {
+        // `..` and `/` are non-alphanumeric so they collapse to `-` during
+        // sanitization — verify no path-escape characters survive.
+        let fm = SkillFrontmatter {
+            name: "../etc/passwd".to_string(),
+            description: "x".to_string(),
+            ..Default::default()
+        };
+        let slug = derive_install_slug(&fm).unwrap();
+        assert!(!slug.contains(".."), "slug leaked ..: {slug}");
+        assert!(!slug.contains('/'), "slug leaked /: {slug}");
+        assert!(!slug.contains('\\'), "slug leaked \\: {slug}");
+    }
+
+    #[test]
+    fn parse_skill_md_str_happy_path() {
+        let content = "---\nname: demo\ndescription: a demo skill\n---\n\n# Body\n";
+        let (fm, body, warnings) = parse_skill_md_str(content).unwrap();
+        assert_eq!(fm.name, "demo");
+        assert_eq!(fm.description, "a demo skill");
+        assert!(body.contains("# Body"));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn parse_skill_md_str_unterminated_frontmatter_returns_none() {
+        let content = "---\nname: demo\ndescription: missing close\n# Body\n";
+        assert!(parse_skill_md_str(content).is_none());
+    }
+
+    #[test]
+    fn parse_skill_md_str_no_frontmatter_treats_whole_as_body() {
+        let content = "# Just a body\nno frontmatter here\n";
+        let (fm, body, warnings) = parse_skill_md_str(content).unwrap();
+        assert!(fm.name.is_empty());
+        assert_eq!(body, content);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn parse_skill_md_str_bad_yaml_returns_empty_frontmatter_with_warning() {
+        let content = "---\nname: [unterminated\ndescription: also bad\n---\n";
+        let (fm, _body, warnings) = parse_skill_md_str(content).unwrap();
+        assert!(fm.name.is_empty());
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("frontmatter parse error")),
+            "expected warning, got {warnings:?}"
+        );
     }
 }
