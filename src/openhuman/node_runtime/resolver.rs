@@ -97,11 +97,35 @@ pub fn detect_system_node(target_version: &str) -> Option<SystemNode> {
         return None;
     }
 
+    // `npm_exec` rides on the same resolved toolchain. On distros that
+    // package `nodejs` and `npm` separately (Debian/Ubuntu default,
+    // Alpine's `nodejs-current`, some NixOS setups) the `node` binary can
+    // be present without `npm`. If we cached `NodeSource::System` here
+    // every `npm_exec` call would break with an obscure error. Require a
+    // usable `npm --version` probe before accepting the system toolchain;
+    // on failure, return `None` so the managed download path takes over.
+    let Some(npm_path) = which_npm() else {
+        tracing::info!(
+            node_path = %path.display(),
+            "[node_runtime::resolver] compatible system node found but `npm` is missing on PATH — falling back to managed runtime"
+        );
+        return None;
+    };
+
+    if probe_subcommand_version(&npm_path, "npm").is_none() {
+        tracing::warn!(
+            npm_path = %npm_path.display(),
+            "[node_runtime::resolver] `npm --version` failed; falling back to managed runtime"
+        );
+        return None;
+    }
+
     let normalized = version.trim_start_matches('v').trim().to_string();
     tracing::info!(
         path = %path.display(),
+        npm_path = %npm_path.display(),
         version = %normalized,
-        "[node_runtime::resolver] reusing compatible system node"
+        "[node_runtime::resolver] reusing compatible system node (npm verified)"
     );
     Some(SystemNode {
         path,
@@ -121,9 +145,34 @@ pub fn detect_system_node(target_version: &str) -> Option<SystemNode> {
 /// the execute bit before returning.
 fn which_node() -> Option<PathBuf> {
     let exe_name = format!("node{}", std::env::consts::EXE_SUFFIX);
+    which_exe(&exe_name)
+}
+
+/// Locate an `npm` binary on `PATH`. Applies the same execute-bit filter
+/// as [`which_node`]. On Windows we look for `npm.cmd` first (the official
+/// installer ships a batch shim; there is no `npm.exe`) and fall back to
+/// `npm` for unusual setups that expose a bare binary.
+fn which_npm() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        if let Some(p) = which_exe("npm.cmd") {
+            return Some(p);
+        }
+        which_exe("npm")
+    }
+    #[cfg(not(windows))]
+    {
+        which_exe("npm")
+    }
+}
+
+/// `PATH` search helper shared by `which_node` / `which_npm`. Applies the
+/// platform-specific executability check so a non-executable placeholder
+/// earlier in `PATH` doesn't shadow a valid later entry.
+fn which_exe(exe_name: &str) -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(&exe_name);
+        let candidate = dir.join(exe_name);
         if is_executable_candidate(&candidate) {
             return Some(candidate);
         }
@@ -150,6 +199,12 @@ fn is_executable_candidate(path: &std::path::Path) -> bool {
 /// version string on success. The timeout guards against a broken shim on
 /// `PATH` hanging the bootstrap indefinitely.
 fn probe_node_version(path: &std::path::Path) -> Option<String> {
+    probe_subcommand_version(path, "node")
+}
+
+/// Same semantics as [`probe_node_version`], but usable for arbitrary
+/// toolchain binaries. `label` is only used for log attribution.
+fn probe_subcommand_version(path: &std::path::Path, label: &str) -> Option<String> {
     use std::io::Read;
     use wait_timeout::ChildExt;
 
@@ -167,8 +222,9 @@ fn probe_node_version(path: &std::path::Path) -> Option<String> {
         None => {
             tracing::warn!(
                 path = %path.display(),
+                label,
                 timeout_secs = 5,
-                "[node_runtime::resolver] `node --version` timed out; killing process"
+                "[node_runtime::resolver] `<bin> --version` timed out; killing process"
             );
             let _ = child.kill();
             let _ = child.wait();
@@ -183,8 +239,9 @@ fn probe_node_version(path: &std::path::Path) -> Option<String> {
         }
         tracing::debug!(
             status = ?status,
+            label,
             stderr = %stderr_buf,
-            "[node_runtime::resolver] `node --version` exited non-zero"
+            "[node_runtime::resolver] `<bin> --version` exited non-zero"
         );
         return None;
     }
