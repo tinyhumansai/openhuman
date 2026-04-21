@@ -113,13 +113,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         &config.memory,
         Some(&config.storage.provider.config),
         &config.workspace_dir,
-        None,
     )?);
-    let composio_entity_id = if config.composio.enabled {
-        Some(config.composio.entity_id.as_str())
-    } else {
-        None
-    };
     // Build system prompt from workspace identity files + skills
     let workspace = config.workspace_dir.clone();
     let tools_registry = Arc::new(tools::all_tools_with_runtime(
@@ -127,8 +121,6 @@ pub async fn start_channels(config: Config) -> Result<()> {
         &security,
         runtime,
         Arc::clone(&mem),
-        None,
-        composio_entity_id,
         &config.browser,
         &config.http_request,
         &workspace,

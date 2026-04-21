@@ -155,7 +155,7 @@ fn build_minimal_agent_with_definition_name(definition_name: Option<&str>) -> Ag
         ..crate::openhuman::config::MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap(),
     );
 
     let mut builder = Agent::builder()
@@ -261,7 +261,7 @@ async fn turn_without_tools_returns_text() {
         ..crate::openhuman::config::MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap(),
     );
 
     let mut agent = Agent::builder()
@@ -306,7 +306,7 @@ async fn turn_with_native_dispatcher_handles_tool_results_variant() {
         ..crate::openhuman::config::MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap(),
     );
 
     let mut agent = Agent::builder()
@@ -354,7 +354,7 @@ async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
         ..crate::openhuman::config::MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap(),
     );
 
     let mut agent = Agent::builder()
@@ -440,7 +440,7 @@ async fn turn_dispatches_spawn_subagent_through_full_path() {
         ..crate::openhuman::config::MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap(),
     );
 
     // Tools include SpawnSubagentTool so the parent can call it.
@@ -550,7 +550,7 @@ async fn turn_dispatches_spawn_subagent_in_fork_mode() {
         ..crate::openhuman::config::MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap(),
     );
 
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(SpawnSubagentTool::new())];
@@ -638,7 +638,7 @@ async fn system_prompt_and_model_are_byte_stable_across_turns() {
         ..crate::openhuman::config::MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap(),
     );
 
     let mut agent = Agent::builder()

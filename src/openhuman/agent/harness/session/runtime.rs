@@ -432,7 +432,7 @@ mod tests {
             ..crate::openhuman::config::MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> = Arc::from(
-            crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+            crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap(),
         );
 
         Agent::builder()
