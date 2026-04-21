@@ -192,13 +192,34 @@ pub async fn atomic_install(staged: &Path, final_dest: &Path) -> Result<PathBuf>
             backup = Some(candidate);
         }
 
-        fs::rename(&staged, &final_dest).with_context(|| {
+        if let Err(err) = fs::rename(&staged, &final_dest).with_context(|| {
             format!(
                 "renaming staged {} -> {}",
                 staged.display(),
                 final_dest.display()
             )
-        })?;
+        }) {
+            // Stage->final rename failed; restore the previous install from
+            // backup so the working runtime stays in place. Surface any
+            // restore failure separately (as a warning) but always return
+            // the original error.
+            if let Some(backup_path) = backup.as_ref() {
+                if let Err(restore_err) = fs::rename(backup_path, &final_dest) {
+                    tracing::warn!(
+                        backup = %backup_path.display(),
+                        final_dest = %final_dest.display(),
+                        error = %restore_err,
+                        "[node_runtime::extractor] failed to restore backup after staged rename failure"
+                    );
+                } else {
+                    tracing::info!(
+                        final_dest = %final_dest.display(),
+                        "[node_runtime::extractor] restored previous install after staged rename failure"
+                    );
+                }
+            }
+            return Err(err);
+        }
 
         if let Some(path) = backup {
             let _ = fs::remove_dir_all(&path);
