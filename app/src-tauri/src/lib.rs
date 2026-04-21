@@ -789,11 +789,16 @@ pub fn run() {
             #[cfg(all(target_os = "macos", feature = "cef"))]
             {
                 use std::sync::Arc;
+                // The scanner task self-gates on `channels_config.imessage` via
+                // JSON-RPC each tick — it stays idle until the user connects
+                // iMessage and stops ingesting as soon as they disconnect. We
+                // spawn it here just so the loop is live and picks up state
+                // changes without requiring an app restart.
                 if let Some(registry) = app.try_state::<Arc<imessage_scanner::ScannerRegistry>>() {
                     let registry = registry.inner().clone();
                     let app_handle = app.handle().clone();
                     registry.ensure_scanner(app_handle, "default".to_string());
-                    log::info!("[imessage] scanner scheduled on startup");
+                    log::info!("[imessage] scanner scheduled (gates on config each tick)");
                 }
             }
 

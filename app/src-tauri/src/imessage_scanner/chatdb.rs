@@ -70,6 +70,7 @@ pub fn read_since(db_path: &Path, since_rowid: i64, limit: usize) -> anyhow::Res
         LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
         LEFT JOIN chat c ON c.ROWID = cmj.chat_id
         WHERE m.ROWID > ?1
+          AND m.service = 'iMessage'
         ORDER BY m.ROWID ASC
         LIMIT ?2
         "#,
@@ -130,6 +131,7 @@ pub fn read_chat_day(
         LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
         LEFT JOIN chat c ON c.ROWID = cmj.chat_id
         WHERE c.chat_identifier = ?1
+          AND m.service = 'iMessage'
           AND m.date >= ?2
           AND m.date <  ?3
         ORDER BY m.date ASC

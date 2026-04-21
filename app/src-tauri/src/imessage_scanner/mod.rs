@@ -110,13 +110,29 @@ async fn run_scanner<R: Runtime>(app: AppHandle<R>, account_id: String) {
     );
 
     loop {
+        // Gate every tick on explicit iMessage connection state: no ingestion
+        // before opt-in, and stops immediately when the user disconnects.
+        let gate = match fetch_imessage_gate().await {
+            Ok(g) => g,
+            Err(e) => {
+                log::debug!("[imessage] config fetch failed (will retry): {}", e);
+                sleep(SCAN_INTERVAL).await;
+                continue;
+            }
+        };
+        let Some(allowed_contacts) = gate else {
+            log::debug!("[imessage] not connected — skipping tick");
+            sleep(SCAN_INTERVAL).await;
+            continue;
+        };
+
         match chatdb::read_since(&db_path, last_rowid, MAX_MESSAGES_PER_TICK) {
             Ok(messages) if messages.is_empty() => {
                 log::debug!("[imessage] no new messages since rowid={}", last_rowid);
             }
             Ok(messages) => {
-                // Remember max rowid we observed in THIS tick so cursor
-                // advances even if full-day rebuild fails partway.
+                // Remember max rowid we observed in THIS tick so the cursor
+                // can advance if all groups ingest successfully.
                 let tick_max_rowid = messages.iter().map(|m| m.rowid).max().unwrap_or(last_rowid);
 
                 // Collect unique (chat_identifier, apple_ns_within_day)
@@ -132,7 +148,15 @@ async fn run_scanner<R: Runtime>(app: AppHandle<R>, account_id: String) {
                     tick_max_rowid
                 );
 
+                let mut had_group_failure = false;
                 for (chat_id, anchor_secs) in day_keys {
+                    if !chat_allowed(&chat_id, &allowed_contacts) {
+                        log::debug!(
+                            "[imessage] skipping chat={} — not in allowed_contacts",
+                            chat_id
+                        );
+                        continue;
+                    }
                     let (start_ns, end_ns) = local_day_bounds_apple_ns(anchor_secs);
                     let full_day = match chatdb::read_chat_day(
                         &db_path,
@@ -148,6 +172,7 @@ async fn run_scanner<R: Runtime>(app: AppHandle<R>, account_id: String) {
                                 chat_id,
                                 e
                             );
+                            had_group_failure = true;
                             continue;
                         }
                     };
@@ -159,12 +184,20 @@ async fn run_scanner<R: Runtime>(app: AppHandle<R>, account_id: String) {
                     let transcript = format_transcript(&full_day);
                     if let Err(e) = ingest_group(&account_id, &key, transcript).await {
                         log::warn!("[imessage] memory write failed key={} err={}", key, e);
+                        had_group_failure = true;
                     }
                 }
 
-                last_rowid = tick_max_rowid;
-                if let Err(e) = write_cursor(&cursor_path, last_rowid) {
-                    log::warn!("[imessage] cursor persist failed err={}", e);
+                if had_group_failure {
+                    log::warn!(
+                        "[imessage] keeping cursor at rowid={} so failed groups retry",
+                        last_rowid
+                    );
+                } else {
+                    last_rowid = tick_max_rowid;
+                    if let Err(e) = write_cursor(&cursor_path, last_rowid) {
+                        log::warn!("[imessage] cursor persist failed err={}", e);
+                    }
                 }
             }
             Err(e) => {
@@ -174,6 +207,68 @@ async fn run_scanner<R: Runtime>(app: AppHandle<R>, account_id: String) {
 
         sleep(SCAN_INTERVAL).await;
     }
+}
+
+/// Match a chat identifier against the user-configured allowlist.
+///
+/// Semantics:
+/// - empty list → allow everything (no filter configured)
+/// - contains `*` → allow everything
+/// - otherwise → exact match on `chat_id` against any entry (whitespace-trimmed)
+#[cfg(target_os = "macos")]
+fn chat_allowed(chat_id: &str, allowed: &[String]) -> bool {
+    if allowed.is_empty() {
+        return true;
+    }
+    let chat_trim = chat_id.trim();
+    allowed
+        .iter()
+        .map(|s| s.trim())
+        .any(|entry| entry == "*" || entry.eq_ignore_ascii_case(chat_trim))
+}
+
+/// Ask the core for the current iMessage config via JSON-RPC.
+///
+/// Returns:
+/// - `Ok(Some(allowed_contacts))` when iMessage is connected (allow-list may
+///   be empty = "all chats")
+/// - `Ok(None)` when iMessage is not connected / config absent
+/// - `Err(_)` on transport or parse errors (caller should retry next tick)
+#[cfg(target_os = "macos")]
+async fn fetch_imessage_gate() -> anyhow::Result<Option<Vec<String>>> {
+    let url = std::env::var("OPENHUMAN_CORE_RPC_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".into());
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "openhuman.config_get",
+        "params": {}
+    });
+    let res = http_client().post(&url).json(&body).send().await?;
+    if !res.status().is_success() {
+        anyhow::bail!("config_get http {}", res.status());
+    }
+    let v: serde_json::Value = res.json().await?;
+    let imessage = v
+        .pointer("/result/config/channels_config/imessage")
+        .cloned();
+    let Some(imessage) = imessage else {
+        return Ok(None);
+    };
+    if imessage.is_null() {
+        return Ok(None);
+    }
+    let contacts = imessage
+        .get("allowed_contacts")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(Some(contacts))
 }
 
 /// Collect `(chat_identifier, anchor_unix_seconds)` pairs touched by a set
@@ -485,6 +580,24 @@ mod tests {
         };
         let body = message_body(&m2);
         assert!(body.contains("fallback body"), "got {:?}", body);
+    }
+
+    #[test]
+    fn chat_allowed_empty_list_allows_all() {
+        assert!(chat_allowed("+15551234567", &[]));
+    }
+
+    #[test]
+    fn chat_allowed_wildcard_allows_all() {
+        assert!(chat_allowed("+15551234567", &["*".to_string()]));
+    }
+
+    #[test]
+    fn chat_allowed_matches_exact_entry_case_insensitive() {
+        let allowed = vec!["+15551234567".to_string(), "USER@Example.com".to_string()];
+        assert!(chat_allowed("+15551234567", &allowed));
+        assert!(chat_allowed("user@example.com", &allowed));
+        assert!(!chat_allowed("+15550000000", &allowed));
     }
 
     #[test]
