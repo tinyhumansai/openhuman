@@ -21,6 +21,25 @@ fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
     Ok((config_dir.clone(), config_dir.join("workspace")))
 }
 
+/// Parse a boolean env-var value. Accepts the usual truthy/falsy tokens
+/// (`1/true/yes/on` and `0/false/no/off`, case-insensitive). Returns `None`
+/// on unrecognised values and logs a warning so silent mis-spellings don't
+/// invisibly leave the config unchanged.
+fn parse_env_bool(name: &str, raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => {
+            tracing::warn!(
+                env = %name,
+                value = %raw,
+                "invalid boolean env override ignored; expected 1/true/yes/on or 0/false/no/off"
+            );
+            None
+        }
+    }
+}
+
 const ACTIVE_WORKSPACE_STATE_FILE: &str = "active_workspace.toml";
 static WARNED_WORLD_READABLE_CONFIGS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
@@ -795,11 +814,8 @@ impl Config {
 
         // Node runtime overrides
         if let Ok(flag) = std::env::var("OPENHUMAN_NODE_ENABLED") {
-            let normalized = flag.trim().to_ascii_lowercase();
-            match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.node.enabled = true,
-                "0" | "false" | "no" | "off" => self.node.enabled = false,
-                _ => {}
+            if let Some(enabled) = parse_env_bool("OPENHUMAN_NODE_ENABLED", &flag) {
+                self.node.enabled = enabled;
             }
         }
         if let Ok(version) = std::env::var("OPENHUMAN_NODE_VERSION") {
@@ -815,11 +831,8 @@ impl Config {
             }
         }
         if let Ok(flag) = std::env::var("OPENHUMAN_NODE_PREFER_SYSTEM") {
-            let normalized = flag.trim().to_ascii_lowercase();
-            match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.node.prefer_system = true,
-                "0" | "false" | "no" | "off" => self.node.prefer_system = false,
-                _ => {}
+            if let Some(prefer_system) = parse_env_bool("OPENHUMAN_NODE_PREFER_SYSTEM", &flag) {
+                self.node.prefer_system = prefer_system;
             }
         }
 
