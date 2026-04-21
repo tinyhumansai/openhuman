@@ -538,6 +538,12 @@ jobs:
           OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
           VITE_OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
           VITE_BACKEND_URL: ${{ needs.prepare-build.outputs.base_url }}
+          # Re-declare Vite env so tauri.conf.json's `beforeBuildCommand`
+          # (`vite build`) bakes Sentry + debug flags into the final bundle.
+          # The earlier explicit `yarn build` step ran with these, but the
+          # rebuild triggered here would strip them and ship a DSN-less UI.
+          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+          VITE_DEBUG: ${{ vars.VITE_DEBUG }}
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
