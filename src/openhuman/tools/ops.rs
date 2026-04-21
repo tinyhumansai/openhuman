@@ -285,13 +285,6 @@ pub fn all_tools_with_runtime(
     tools
 }
 
-/// Hardware peripheral tools — always empty (boards removed); config kept for compatibility.
-pub async fn create_peripheral_tools(
-    _config: &crate::openhuman::config::PeripheralsConfig,
-) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    Ok(Vec::new())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

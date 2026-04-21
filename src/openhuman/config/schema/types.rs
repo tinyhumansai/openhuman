@@ -71,9 +71,6 @@ pub struct Config {
     pub embedding_routes: Vec<EmbeddingRouteConfig>,
 
     #[serde(default)]
-    pub query_classification: QueryClassificationConfig,
-
-    #[serde(default)]
     pub heartbeat: HeartbeatConfig,
 
     #[serde(default)]
@@ -116,9 +113,6 @@ pub struct Config {
     pub computer_control: ComputerControlConfig,
 
     #[serde(default)]
-    pub peripherals: PeripheralsConfig,
-
-    #[serde(default)]
     pub agents: HashMap<String, DelegateAgentConfig>,
 
     #[serde(default)]
@@ -132,9 +126,6 @@ pub struct Config {
 
     #[serde(default)]
     pub learning: LearningConfig,
-
-    #[serde(default)]
-    pub orchestrator: OrchestratorConfig,
 
     #[serde(default)]
     pub update: UpdateConfig,
@@ -244,14 +235,11 @@ impl Default for Config {
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),
             computer_control: ComputerControlConfig::default(),
-            peripherals: PeripheralsConfig::default(),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),
             voice_server: VoiceServerConfig::default(),
-            query_classification: QueryClassificationConfig::default(),
             integrations: IntegrationsConfig::default(),
             learning: LearningConfig::default(),
-            orchestrator: OrchestratorConfig::default(),
             update: UpdateConfig::default(),
             dictation: DictationConfig::default(),
             onboarding_completed: false,
