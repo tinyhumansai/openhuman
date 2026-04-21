@@ -4,6 +4,7 @@ import Markdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
+import TokenUsagePill from '../components/chat/TokenUsagePill';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
@@ -1114,6 +1115,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             <h3 className="text-sm font-medium text-stone-700 truncate flex-1">
               {threads.find(t => t.id === selectedThreadId)?.title ?? 'Select a thread'}
             </h3>
+            <TokenUsagePill />
             <button
               onClick={() => void handleCreateNewThread()}
               className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
