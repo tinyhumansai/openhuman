@@ -104,9 +104,7 @@ const NotificationCard = ({ notification: n, onMarkRead }: Props) => {
           <p className="text-sm font-medium text-stone-900 truncate">{n.title}</p>
 
           {/* Body preview */}
-          {n.body && (
-            <p className="text-xs text-stone-500 mt-0.5 line-clamp-2">{n.body}</p>
-          )}
+          {n.body && <p className="text-xs text-stone-500 mt-0.5 line-clamp-2">{n.body}</p>}
         </div>
       </div>
     </button>

@@ -9,12 +9,7 @@ interface NotificationsState {
   error: string | null;
 }
 
-const initialState: NotificationsState = {
-  items: [],
-  unreadCount: 0,
-  loading: false,
-  error: null,
-};
+const initialState: NotificationsState = { items: [], unreadCount: 0, loading: false, error: null };
 
 export const notificationsSlice = createSlice({
   name: 'notifications',

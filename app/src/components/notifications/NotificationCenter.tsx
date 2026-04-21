@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 
+import { fetchNotifications, markNotificationRead } from '../../services/notificationService';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { markRead as markReadAction, setNotifications } from '../../store/notificationsSlice';
-import { fetchNotifications, markNotificationRead } from '../../services/notificationService';
 import NotificationCard from './NotificationCard';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,10 +19,7 @@ const NotificationCenter = () => {
     let cancelled = false;
     const load = async () => {
       try {
-        const result = await fetchNotifications({
-          provider: selectedProvider,
-          limit: 100,
-        });
+        const result = await fetchNotifications({ provider: selectedProvider, limit: 100 });
         if (!cancelled) {
           dispatch(setNotifications(result));
         }
@@ -74,7 +71,9 @@ const NotificationCenter = () => {
         </div>
         {unreadCount > 0 && (
           <button
-            onClick={() => { void handleMarkAllRead(); }}
+            onClick={() => {
+              void handleMarkAllRead();
+            }}
             className="text-xs text-primary-600 hover:text-primary-700 font-medium transition-colors">
             Mark all read
           </button>
@@ -149,7 +148,9 @@ const NotificationCenter = () => {
               <NotificationCard
                 key={n.id}
                 notification={n}
-                onMarkRead={id => { void handleMarkRead(id); }}
+                onMarkRead={id => {
+                  void handleMarkRead(id);
+                }}
               />
             ))}
           </div>

@@ -9,9 +9,7 @@ use chrono::Utc;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::openhuman::agent::triage::{
-    apply_decision, run_triage, TriggerEnvelope, TriggerSource,
-};
+use crate::openhuman::agent::triage::{apply_decision, run_triage, TriggerEnvelope, TriggerSource};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
 
@@ -163,22 +161,13 @@ pub async fn handle_list(params: Map<String, Value>) -> Result<Value, String> {
         .and_then(|v| v.as_f64())
         .map(|v| v as f32);
 
-    let items = store::list(
-        &config,
-        limit,
-        offset,
-        provider.as_deref(),
-        min_score,
-    )
-    .map_err(|e| format!("[notifications::rpc] list failed: {e}"))?;
+    let items = store::list(&config, limit, offset, provider.as_deref(), min_score)
+        .map_err(|e| format!("[notifications::rpc] list failed: {e}"))?;
 
     let unread = store::unread_count(&config)
         .map_err(|e| format!("[notifications::rpc] unread_count failed: {e}"))?;
 
-    let outcome = RpcOutcome::new(
-        json!({ "items": items, "unread_count": unread }),
-        vec![],
-    );
+    let outcome = RpcOutcome::new(json!({ "items": items, "unread_count": unread }), vec![]);
     outcome.into_cli_compatible_json()
 }
 

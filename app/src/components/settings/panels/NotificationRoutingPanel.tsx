@@ -39,8 +39,8 @@ const NotificationRoutingPanel = () => {
               <p className="font-medium text-blue-800 text-sm">Notification Intelligence</p>
               <p className="text-blue-700 text-xs mt-1 leading-relaxed">
                 Every notification from your connected accounts is scored by a local AI model.
-                High-importance notifications are automatically routed to your orchestrator agent
-                so nothing critical slips through.
+                High-importance notifications are automatically routed to your orchestrator agent so
+                nothing critical slips through.
               </p>
             </div>
           </div>
@@ -88,8 +88,8 @@ const NotificationRoutingPanel = () => {
         {/* Placeholder for per-provider settings */}
         <div className="p-4 bg-stone-50 border border-stone-200 rounded-xl text-center">
           <p className="text-xs text-stone-500">
-            Per-provider importance thresholds will appear here once you connect accounts via
-            the Accounts screen.
+            Per-provider importance thresholds will appear here once you connect accounts via the
+            Accounts screen.
           </p>
         </div>
       </div>

@@ -1195,10 +1195,7 @@ pub async fn webview_notification_permission_request<R: Runtime>(
 /// Set or clear the global Do Not Disturb flag. When enabled, all OS
 /// notification toasts from embedded webview accounts are suppressed.
 #[tauri::command]
-pub fn webview_notification_set_dnd(
-    state: tauri::State<WebviewAccountsState>,
-    enabled: bool,
-) {
+pub fn webview_notification_set_dnd(state: tauri::State<WebviewAccountsState>, enabled: bool) {
     let mut prefs = state.notification_bypass.lock().unwrap();
     prefs.global_dnd = enabled;
     log::debug!("[notify-bypass] global DND set to {}", enabled);

@@ -196,11 +196,12 @@ pub fn unread_count(config: &Config) -> Result<i64> {
 // Row conversion helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn rows_to_notifications(
-    mut rows: rusqlite::Rows<'_>,
-) -> Result<Vec<IntegrationNotification>> {
+fn rows_to_notifications(mut rows: rusqlite::Rows<'_>) -> Result<Vec<IntegrationNotification>> {
     let mut out = Vec::new();
-    while let Some(row) = rows.next().context("[notifications::store] row iteration failed")? {
+    while let Some(row) = rows
+        .next()
+        .context("[notifications::store] row iteration failed")?
+    {
         out.push(row_to_notification(row)?);
     }
     Ok(out)
@@ -220,9 +221,7 @@ fn row_to_notification(row: &rusqlite::Row<'_>) -> Result<IntegrationNotificatio
     };
 
     let received_at_str: String = row.get(10)?;
-    let received_at: DateTime<Utc> = received_at_str
-        .parse()
-        .unwrap_or_else(|_| Utc::now());
+    let received_at: DateTime<Utc> = received_at_str.parse().unwrap_or_else(|_| Utc::now());
 
     let scored_at_str: Option<String> = row.get(11)?;
     let scored_at: Option<DateTime<Utc>> = scored_at_str.and_then(|s| s.parse().ok());

@@ -13,11 +13,7 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
-    vec![
-        schemas("ingest"),
-        schemas("list"),
-        schemas("mark_read"),
-    ]
+    vec![schemas("ingest"), schemas("list"), schemas("mark_read")]
 }
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
@@ -214,7 +210,12 @@ mod tests {
     fn schemas_ingest_requires_provider_title_body_raw_payload() {
         let s = schemas("ingest");
         assert_eq!(s.namespace, "notification");
-        let required: Vec<_> = s.inputs.iter().filter(|f| f.required).map(|f| f.name).collect();
+        let required: Vec<_> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
         assert!(required.contains(&"provider"));
         assert!(required.contains(&"title"));
         assert!(required.contains(&"body"));

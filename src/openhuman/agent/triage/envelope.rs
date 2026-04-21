@@ -23,7 +23,10 @@ pub enum TriggerSource {
     /// (WhatsApp Web, Gmail, Slack, …) via the recipe event pipeline.
     /// `provider` is the slug like `"gmail"`; `account_id` is the
     /// webview account identifier.
-    WebviewIntegration { provider: String, account_id: String },
+    WebviewIntegration {
+        provider: String,
+        account_id: String,
+    },
     // Cron / Webhook / … variants will be added in later commits as
     // those callers wire up the triage pipeline.
 }
