@@ -786,7 +786,7 @@ pub fn run() {
                 }
             }
 
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "cef"))]
             {
                 use std::sync::Arc;
                 if let Some(registry) = app.try_state::<Arc<imessage_scanner::ScannerRegistry>>() {
