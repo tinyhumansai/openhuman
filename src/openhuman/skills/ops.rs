@@ -371,10 +371,20 @@ fn scan_root(root: &Path, scope: SkillScope) -> Vec<Skill> {
 
     let mut out = Vec::new();
     for entry in entries {
-        let path = entry.path();
-        if !path.is_dir() {
+        // Use `file_type()` rather than `path.is_dir()` so a symlinked
+        // child cannot be loaded as a skill. `is_dir()` dereferences
+        // symlinks, which would re-open out-of-tree loading even though
+        // `walk_files` already rejects symlinks deeper in the resource
+        // walker. Skip both symlinks and non-directory entries here; if
+        // the `file_type()` call itself fails (rare — transient I/O),
+        // treat it as "not safe to traverse" and skip.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() || !file_type.is_dir() {
             continue;
         }
+        let path = entry.path();
         let dir_name = entry.file_name().to_string_lossy().to_string();
         if dir_name.starts_with('.') {
             continue;
@@ -905,6 +915,35 @@ mod tests {
         let path = dir.path().join("SKILL.md");
         write(&path, "---\nname: bad\n\nbody without closing marker\n");
         assert!(parse_skill_md(&path).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_skill_dirs_are_skipped() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        write(&ws.join(".openhuman").join("trust"), "");
+
+        // A real out-of-tree skill that would load fine if linked.
+        let external = tempfile::tempdir().unwrap();
+        let external_skill = external.path().join("evil");
+        write(
+            &external_skill.join("SKILL.md"),
+            "---\nname: evil\ndescription: should not load via symlink\n---\n",
+        );
+
+        // Symlink <ws>/.openhuman/skills/evil -> external/evil
+        let skills_root = ws.join(".openhuman").join("skills");
+        std::fs::create_dir_all(&skills_root).unwrap();
+        symlink(&external_skill, skills_root.join("evil")).unwrap();
+
+        let skills = load_skills_ws(ws);
+        assert!(
+            skills.is_empty(),
+            "symlinked skill dir should be skipped, got: {skills:?}"
+        );
     }
 
     #[test]
