@@ -83,9 +83,7 @@ pub fn chunk_markdown(input: &ChunkerInput, opts: &ChunkerOptions) -> Vec<Chunk>
 /// Preference order for split boundaries:
 /// 1. Paragraph (`\n\n`)
 /// 2. Line (`\n`)
-/// 3. Sentence boundary (`. `, `? `, `! `)
-/// 4. Word boundary (` `)
-/// 5. Hard character cut (last resort; preserves UTF-8 code points)
+/// 3. Hard character cut (last resort; preserves UTF-8 code points)
 fn split_by_token_budget(text: &str, max_tokens: u32) -> Vec<String> {
     let max_tokens = max_tokens.max(1);
     if text.is_empty() {

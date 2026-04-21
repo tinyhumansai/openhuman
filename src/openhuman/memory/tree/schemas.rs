@@ -69,8 +69,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "owner",
                     ty: TypeSchema::String,
-                    comment: "Account / user this content belongs to.",
-                    required: true,
+                    comment: "Optional account / user this content belongs to.",
+                    required: false,
                 },
                 FieldSchema {
                     name: "tags",

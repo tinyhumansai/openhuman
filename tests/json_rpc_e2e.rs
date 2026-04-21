@@ -15,11 +15,8 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tempfile::tempdir;
 
-use openhuman_core::core::all::rpc_method_name;
 use openhuman_core::core::jsonrpc::build_core_http_router;
-use openhuman_core::openhuman::memory::{
-    all_memory_tree_registered_controllers, tree::schemas::schemas as memory_tree_schema,
-};
+use openhuman_core::openhuman::memory::all_memory_tree_registered_controllers;
 
 struct EnvVarGuard {
     key: &'static str,
@@ -791,9 +788,9 @@ async fn json_rpc_memory_tree_end_to_end() {
 
     let controllers = all_memory_tree_registered_controllers();
     let expected_methods = vec![
-        rpc_method_name(&memory_tree_schema("ingest")),
-        rpc_method_name(&memory_tree_schema("list_chunks")),
-        rpc_method_name(&memory_tree_schema("get_chunk")),
+        "openhuman.memory_tree_ingest".to_string(),
+        "openhuman.memory_tree_list_chunks".to_string(),
+        "openhuman.memory_tree_get_chunk".to_string(),
     ];
     assert_eq!(controllers.len(), expected_methods.len());
     for method in &expected_methods {
