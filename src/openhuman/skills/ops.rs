@@ -617,10 +617,21 @@ fn walk_files(current: &Path, base: &Path, out: &mut Vec<PathBuf>) {
         Err(_) => return,
     };
     for entry in entries.flatten() {
+        // Use `file_type()` — not `is_dir()` / `is_file()` — so we can detect and
+        // skip symlinks before traversing. `is_dir()`/`is_file()` follow symlinks
+        // and would cause unbounded recursion on a cycle (e.g. `resources/self ->
+        // resources/`) or silent leakage outside the skill directory when a
+        // symlink points at `/`, `/etc`, or another skill's tree.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             walk_files(&path, base, out);
-        } else if path.is_file() {
+        } else if file_type.is_file() {
             if let Ok(rel) = path.strip_prefix(base) {
                 out.push(rel.to_path_buf());
             }
