@@ -113,16 +113,37 @@ pub fn detect_system_node(target_version: &str) -> Option<SystemNode> {
 /// Locate a `node` binary on `PATH`. Cross-platform: appends the host
 /// executable suffix (`.exe` on Windows) so callers receive a path that can
 /// be invoked directly.
+///
+/// Unix command lookup skips non-executable entries. A non-executable
+/// placeholder earlier in `PATH` (e.g. an unprivileged `node` shim left by
+/// a failed install) would otherwise mask a valid later install and force
+/// the managed runtime download. We mirror the shell behaviour by checking
+/// the execute bit before returning.
 fn which_node() -> Option<PathBuf> {
     let exe_name = format!("node{}", std::env::consts::EXE_SUFFIX);
     let path_var = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path_var) {
         let candidate = dir.join(&exe_name);
-        if candidate.is_file() {
+        if is_executable_candidate(&candidate) {
             return Some(candidate);
         }
     }
     None
+}
+
+#[cfg(unix)]
+fn is_executable_candidate(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|meta| meta.is_file() && (meta.permissions().mode() & 0o111 != 0))
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_candidate(path: &std::path::Path) -> bool {
+    // On Windows, the `.exe` suffix already encodes executability for the
+    // loader; any regular file matching `node.exe` is a valid candidate.
+    path.is_file()
 }
 
 /// Invoke `<path> --version` with a real 5-second timeout and return the raw
