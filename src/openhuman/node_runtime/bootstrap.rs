@@ -243,13 +243,23 @@ fn build_resolved(bin_dir: PathBuf, version: String, source: NodeSource) -> Resu
 }
 
 /// Wrap a detected system node in a [`ResolvedNode`].
+///
+/// `detect_system_node` already strips the leading `v` from the probed
+/// version, but we re-normalise here so the `ResolvedNode::version`
+/// contract (no leading `v`) cannot be violated by any future code path
+/// that constructs a `SystemNode` differently.
 fn resolve_from_system(system: SystemNode) -> Result<ResolvedNode> {
     let bin_dir = system
         .path
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    build_resolved(bin_dir, system.version, NodeSource::System)
+    let version = system
+        .version
+        .trim_start_matches(|c: char| c == 'v' || c == 'V')
+        .trim()
+        .to_string();
+    build_resolved(bin_dir, version, NodeSource::System)
 }
 
 /// Check whether `install_dir` already contains a usable managed install
