@@ -829,6 +829,7 @@ pub fn run() {
             webview_accounts::webview_notification_mute_account,
             webview_accounts::webview_notification_get_bypass_prefs,
             webview_accounts::webview_set_focused_account,
+            webview_accounts::webview_notification_emit_click_for_route,
             activate_main_window
         ])
         .build(tauri::generate_context!())

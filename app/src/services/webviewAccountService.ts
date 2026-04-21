@@ -9,10 +9,12 @@ import {
   setAccountStatus,
   setActiveAccount,
 } from '../store/accountsSlice';
+import { addNotification } from '../store/notificationsSlice';
 import type { AccountProvider, IngestedMessage } from '../types/accounts';
 import { threadApi } from './api/threadApi';
 import { chatSend } from './chatService';
 import { callCoreRpc } from './coreRpcClient';
+import { ingestNotification } from './notificationService';
 
 const MEET_ORCHESTRATOR_MODEL = 'reasoning-v1';
 
@@ -54,6 +56,15 @@ interface IngestPayload {
 interface NotificationClickPayload {
   account_id: string;
   provider: string;
+}
+
+interface RecipeNotifyPayload {
+  title?: string;
+  body?: string;
+  icon?: string | null;
+  tag?: string | null;
+  silent?: boolean;
+  [key: string]: unknown;
 }
 
 let unlisten: UnlistenFn | null = null;
@@ -178,6 +189,38 @@ function handleRecipeEvent(evt: RecipeEventPayload) {
     // Namespace mirrors the skill-sync convention so the recall pipeline
     // can find these alongside other ingested context.
     void persistIngestToMemory(accountId, evt.provider, ingest, messages);
+    return;
+  }
+
+  if (evt.kind === 'notify') {
+    const payload = evt.payload as RecipeNotifyPayload;
+    const title = String(payload.title ?? '').trim();
+    const body = String(payload.body ?? '').trim();
+    if (!title && !body) return;
+    void ingestNotification({
+      provider: evt.provider,
+      account_id: accountId,
+      title: title || `${evt.provider} notification`,
+      body,
+      raw_payload: payload as Record<string, unknown>,
+    })
+      .then(({ id }) => {
+        store.dispatch(
+          addNotification({
+            id,
+            provider: evt.provider,
+            account_id: accountId,
+            title: title || `${evt.provider} notification`,
+            body,
+            raw_payload: payload as Record<string, unknown>,
+            status: 'unread',
+            received_at: new Date().toISOString(),
+          })
+        );
+      })
+      .catch(err => {
+        errLog('notify ingest failed account=%s provider=%s: %o', accountId, evt.provider, err);
+      });
     return;
   }
 

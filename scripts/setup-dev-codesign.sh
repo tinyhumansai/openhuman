@@ -66,6 +66,7 @@ openssl req \
 
 # ── Bundle to PKCS12 ─────────────────────────────────────────────────────────
 openssl pkcs12 \
+  -legacy \
   -export \
   -out "$P12" \
   -inkey "$KEY" \

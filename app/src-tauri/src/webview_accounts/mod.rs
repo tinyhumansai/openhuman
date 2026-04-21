@@ -194,7 +194,6 @@ pub fn provider_display_name(provider: &str) -> &'static str {
 pub struct NotificationRoute {
     pub account_id: String,
     // Read by the click-dispatch emit path; kept until that wires up.
-    #[allow(dead_code)]
     pub provider: String,
 }
 
@@ -265,6 +264,12 @@ fn clear_notification_routes(state: &WebviewAccountsState, account_id: &str) {
             account_id
         );
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NotificationClickEvent {
+    pub account_id: String,
+    pub provider: String,
 }
 
 /// Translate a `tauri-runtime-cef` notification payload into a native OS
@@ -1237,4 +1242,44 @@ pub fn webview_set_focused_account(
     let mut focused = state.focused_account_id.lock().unwrap();
     *focused = account_id.clone();
     log::debug!("[notify-bypass] focused account set to {:?}", account_id);
+}
+
+/// Emit a `notification:click` event for a stored route key.
+///
+/// Platform notification click delegates can call this command with the route
+/// key to route focus to the source account in the React shell.
+#[tauri::command]
+pub fn webview_notification_emit_click_for_route<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<WebviewAccountsState>,
+    route_key: String,
+) -> Result<bool, String> {
+    #[cfg(feature = "cef")]
+    {
+        let route = state
+            .notification_routes
+            .lock()
+            .unwrap()
+            .get(&route_key)
+            .cloned();
+        if let Some(route) = route {
+            app.emit(
+                "notification:click",
+                NotificationClickEvent {
+                    account_id: route.account_id,
+                    provider: route.provider,
+                },
+            )
+            .map_err(|e| format!("emit notification:click failed: {e}"))?;
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+    #[cfg(not(feature = "cef"))]
+    {
+        let _ = app;
+        let _ = state;
+        let _ = route_key;
+        Ok(false)
+    }
 }

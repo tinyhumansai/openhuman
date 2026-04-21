@@ -14,6 +14,7 @@ import LocalModelPanel from '../components/settings/panels/LocalModelPanel';
 import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MessagingPanel from '../components/settings/panels/MessagingPanel';
+import NotificationRoutingPanel from '../components/settings/panels/NotificationRoutingPanel';
 import NotificationsPanel from '../components/settings/panels/NotificationsPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
 import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePanel';
@@ -286,6 +287,10 @@ const Settings = () => {
         <Route path="voice" element={wrapSettingsPage(<VoicePanel />)} />
         <Route path="messaging" element={wrapSettingsPage(<MessagingPanel />)} />
         <Route path="notifications" element={wrapSettingsPage(<NotificationsPanel />)} />
+        <Route
+          path="notification-routing"
+          element={wrapSettingsPage(<NotificationRoutingPanel />)}
+        />
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
         {/* AI & Models leaf panels */}
         <Route path="local-model" element={wrapSettingsPage(<LocalModelPanel />)} />

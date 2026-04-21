@@ -39,6 +39,7 @@ pub mod learning;
 pub mod local_ai;
 pub mod memory;
 pub mod migration;
+pub mod notifications;
 pub mod overlay;
 pub mod providers;
 pub mod referral;
