@@ -17,11 +17,7 @@
  * UI assertion — we already have login-flow.spec.ts for that.
  */
 import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/app-helpers';
-import {
-  captureCheckpoint,
-  getArtifactDir,
-  saveMockRequestLog,
-} from '../helpers/artifacts';
+import { captureCheckpoint, getArtifactDir, saveMockRequestLog } from '../helpers/artifacts';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
   clickText,
@@ -90,9 +86,7 @@ describe('Agent review — canonical onboarding + privacy flow', () => {
 
   it('02 advances past welcome step', async () => {
     const clicked =
-      (await tryClick("Let's Start")) ||
-      (await tryClick('Continue')) ||
-      (await tryClick('Skip'));
+      (await tryClick("Let's Start")) || (await tryClick('Continue')) || (await tryClick('Skip'));
     // eslint-disable-next-line no-console
     console.log(`[agent-review] welcome advance clicked=${clicked}`);
     await browser.pause(2_000);

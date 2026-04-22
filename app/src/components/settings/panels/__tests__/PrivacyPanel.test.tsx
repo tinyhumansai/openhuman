@@ -5,15 +5,10 @@ import { renderWithProviders } from '../../../../test/test-utils';
 import { type Capability, listCapabilities } from '../../../../utils/tauriCommands/aboutApp';
 import PrivacyPanel from '../PrivacyPanel';
 
-vi.mock('../../../../utils/tauriCommands/aboutApp', () => ({
-  listCapabilities: vi.fn(),
-}));
+vi.mock('../../../../utils/tauriCommands/aboutApp', () => ({ listCapabilities: vi.fn() }));
 
 vi.mock('../../../../providers/CoreStateProvider', () => ({
-  useCoreState: () => ({
-    snapshot: { analyticsEnabled: false },
-    setAnalyticsEnabled: vi.fn(),
-  }),
+  useCoreState: () => ({ snapshot: { analyticsEnabled: false }, setAnalyticsEnabled: vi.fn() }),
 }));
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({

@@ -5,8 +5,8 @@ import { useCoreState } from '../../../providers/CoreStateProvider';
 import {
   type Capability,
   type CapabilityPrivacy,
-  type PrivacyDataKind,
   listCapabilities,
+  type PrivacyDataKind,
 } from '../../../utils/tauriCommands/aboutApp';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -94,9 +94,7 @@ const PrivacyPanel = () => {
                 <p className="p-4 text-xs text-stone-500">Loading privacy details&hellip;</p>
               )}
               {loadState === 'error' && (
-                <p
-                  className="p-4 text-xs text-stone-500"
-                  data-testid="privacy-load-error">
+                <p className="p-4 text-xs text-stone-500" data-testid="privacy-load-error">
                   Couldn&rsquo;t load the live privacy list. Analytics controls below still work.
                 </p>
               )}
@@ -106,14 +104,9 @@ const PrivacyPanel = () => {
                 </p>
               )}
               {loadState === 'ready' && capabilities.length > 0 && (
-                <ul
-                  className="divide-y divide-stone-100"
-                  data-testid="privacy-capability-list">
+                <ul className="divide-y divide-stone-100" data-testid="privacy-capability-list">
                   {capabilities.map(cap => (
-                    <li
-                      key={cap.id}
-                      className="p-4"
-                      data-testid={`privacy-row-${cap.id}`}>
+                    <li key={cap.id} className="p-4" data-testid={`privacy-row-${cap.id}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-stone-900">{cap.name}</p>

@@ -108,7 +108,7 @@ export const config: Options.Testrunner & Record<string, unknown> = {
   afterTest: async function (
     test: { title: string; parent?: string },
     _context: unknown,
-    result: { passed: boolean; error?: Error },
+    result: { passed: boolean; error?: Error }
   ) {
     if (result.passed) return;
     const name = [test.parent, test.title].filter(Boolean).join(' ').trim() || test.title;
