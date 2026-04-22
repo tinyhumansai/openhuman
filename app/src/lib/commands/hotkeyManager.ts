@@ -1,0 +1,157 @@
+import type { ActiveBinding, HotkeyBinding, ScopeFrame, ScopeKind } from './types';
+import { matchEvent, parseShortcut } from './shortcut';
+
+interface FrameInternal extends ScopeFrame {
+  bindings: Map<symbol, { binding: HotkeyBinding; parsed: ReturnType<typeof parseShortcut> }>;
+}
+
+function isEditableTarget(e: KeyboardEvent): boolean {
+  const path = (e.composedPath && e.composedPath()) || [];
+  const nodes = path.length ? path : [e.target as EventTarget | null];
+  for (const node of nodes) {
+    if (!node || !(node as HTMLElement).tagName) continue;
+    const el = node as HTMLElement;
+    const tag = el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (el.isContentEditable === true) return true;
+  }
+  return false;
+}
+
+export interface HotkeyManager {
+  init: () => void;
+  teardown: () => void;
+  pushFrame: (kind: ScopeKind, id: string) => symbol;
+  popFrame: (sym: symbol) => void;
+  bind: (frame: symbol, binding: HotkeyBinding) => symbol;
+  unbind: (frame: symbol, bindingSymbol: symbol) => void;
+  getStackSymbols: () => symbol[];
+  getActiveBindings: () => ActiveBinding[];
+  subscribe: (listener: () => void) => () => void;
+}
+
+export function createHotkeyManager(): HotkeyManager {
+  const stack: FrameInternal[] = [];
+  const listeners = new Set<() => void>();
+  let initialized = false;
+
+  function notify(): void {
+    for (const l of listeners) l();
+  }
+
+  function onKeyDown(e: KeyboardEvent): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const composing = (e as any).isComposing === true || (e as any).keyCode === 229;
+    if (composing) return;
+
+    const inEditable = isEditableTarget(e);
+
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const frame = stack[i];
+      const entries = [...frame.bindings.entries()];
+      for (let j = entries.length - 1; j >= 0; j--) {
+        const [, { binding, parsed }] = entries[j];
+        if (!matchEvent(parsed, e)) continue;
+        if (e.repeat && !binding.repeat) continue;
+        if (inEditable && !binding.allowInInput) continue;
+        if (binding.enabled && !binding.enabled()) continue;
+        if (binding.preventDefault !== false) e.preventDefault();
+        try {
+          const r = binding.handler();
+          if (r && typeof (r as Promise<unknown>).catch === 'function') {
+            (r as Promise<unknown>).catch((err) =>
+              console.error('[hotkey] handler rejected', err),
+            );
+          }
+        } catch (err) {
+          console.error('[hotkey] handler threw', err);
+        }
+        return;
+      }
+    }
+  }
+
+  function init(): void {
+    if (initialized) return;
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    initialized = true;
+  }
+
+  function teardown(): void {
+    if (!initialized) return;
+    window.removeEventListener('keydown', onKeyDown, { capture: true });
+    initialized = false;
+    stack.length = 0;
+    listeners.clear();
+  }
+
+  function pushFrame(kind: ScopeKind, id: string): symbol {
+    const sym = Symbol(`${kind}:${id}`);
+    stack.push({ symbol: sym, id, kind, bindings: new Map() });
+    notify();
+    return sym;
+  }
+
+  function popFrame(sym: symbol): void {
+    const idx = stack.findIndex((f) => f.symbol === sym);
+    if (idx === -1) return;
+    stack.splice(idx, 1);
+    notify();
+  }
+
+  function bind(frameSym: symbol, binding: HotkeyBinding): symbol {
+    const frame = stack.find((f) => f.symbol === frameSym);
+    if (!frame) throw new Error('hotkeyManager.bind: unknown frame');
+    const parsed = parseShortcut(binding.shortcut);
+    const sym = Symbol(binding.id ?? binding.shortcut);
+    frame.bindings.set(sym, { binding, parsed });
+    notify();
+    return sym;
+  }
+
+  function unbind(frameSym: symbol, bindingSym: symbol): void {
+    const frame = stack.find((f) => f.symbol === frameSym);
+    if (!frame) return;
+    if (frame.bindings.delete(bindingSym)) notify();
+  }
+
+  function getStackSymbols(): symbol[] {
+    return stack.map((f) => f.symbol);
+  }
+
+  function getActiveBindings(): ActiveBinding[] {
+    const out: ActiveBinding[] = [];
+    for (const frame of stack) {
+      for (const { binding, parsed } of frame.bindings.values()) {
+        if (binding.enabled && !binding.enabled()) continue;
+        out.push({
+          frame: { symbol: frame.symbol, id: frame.id, kind: frame.kind },
+          binding,
+          parsed,
+        });
+      }
+    }
+    return out;
+  }
+
+  function subscribe(listener: () => void): () => void {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }
+
+  return {
+    init,
+    teardown,
+    pushFrame,
+    popFrame,
+    bind,
+    unbind,
+    getStackSymbols,
+    getActiveBindings,
+    subscribe,
+  };
+}
+
+export const hotkeyManager = createHotkeyManager();
