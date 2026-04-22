@@ -546,6 +546,22 @@ jobs:
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
           MATRIX_ARGS: ${{ matrix.settings.args }}
+          # Sentry: tauri's beforeBuildCommand re-runs `vite build`, so the
+          # DSN + source-map upload credentials must be present on THIS step.
+          # Without these here, the bundle shipped to users has no DSN even
+          # though the earlier standalone "Build frontend" step set it. (#626)
+          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+          OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_SENTRY_DSN }}
+          # Source map upload (#627). Plugin is a no-op when auth token is
+          # absent, so local builds and PRs without access to the org token
+          # still work — only tagged releases upload maps.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_RELEASE: ${{ needs.prepare-build.outputs.tag }}
+          # vite emits a ~20 MB sourcemap when Sentry upload is enabled;
+          # bump Node heap so the bundler doesn't OOM.
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: |
           cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
 

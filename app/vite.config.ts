@@ -1,9 +1,20 @@
-import { defineConfig } from "vite";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 import react from "@vitejs/plugin-react";
-
+import { defineConfig } from "vite";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
 
 const host = process.env.TAURI_DEV_HOST;
+
+// Only upload source maps when CI provides the Sentry auth token. Local
+// `yarn build` and PRs without secret access are unaffected — the plugin
+// is simply not registered.
+const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN;
+const sentryOrg = process.env.SENTRY_ORG;
+const sentryProject = process.env.SENTRY_PROJECT;
+const sentryRelease = process.env.SENTRY_RELEASE;
+const shouldUploadSourceMaps = Boolean(
+  sentryAuthToken && sentryOrg && sentryProject
+);
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -12,6 +23,10 @@ export default defineConfig(async () => ({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
+    // Emit source maps only when uploading to Sentry. Keeps local / PR
+    // builds fast and avoids the ~20 MB map files pushing Node past its
+    // default heap.
+    sourcemap: shouldUploadSourceMaps,
   },
   plugins: [
     nodePolyfills({
@@ -23,6 +38,18 @@ export default defineConfig(async () => ({
       },
     }),
     react(),
+    shouldUploadSourceMaps
+      ? sentryVitePlugin({
+          authToken: sentryAuthToken,
+          org: sentryOrg,
+          project: sentryProject,
+          release: sentryRelease ? { name: sentryRelease } : undefined,
+          sourcemaps: {
+            filesToDeleteAfterUpload: ["../dist/**/*.map"],
+          },
+          telemetry: false,
+        })
+      : null,
   ],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

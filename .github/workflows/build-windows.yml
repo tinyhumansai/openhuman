@@ -157,6 +157,10 @@ jobs:
           VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
+          # tauri's beforeBuildCommand re-runs `vite build`; the DSN must
+          # be set on THIS step or the bundle ships with no Sentry DSN. (#626)
+          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+          OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_SENTRY_DSN }}
         run: |
           cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --target x86_64-pc-windows-msvc
 
