@@ -1,0 +1,39 @@
+)]}'
+[
+  [
+    "1a2b3c4d5e6f7890",
+    "1a2b3c4d5e6f7890",
+    1700000000000,
+    [
+      ["From", "Alice Sender <alice@example.com>"],
+      ["To", "bob@example.com"],
+      ["Subject", "Meeting notes from yesterday"]
+    ],
+    ["INBOX", "UNREAD"],
+    ["Please find attached the notes from our meeting. We discussed the Q4 roadmap and budget allocation."]
+  ],
+  [
+    "2b3c4d5e6f7a8901",
+    "2b3c4d5e6f7a8901",
+    1700100000000,
+    [
+      ["From", "Bob Recipient <bob@example.com>"],
+      ["To", "alice@example.com"],
+      ["Subject", "Re: Meeting notes from yesterday"]
+    ],
+    ["SENT"],
+    ["Thanks for sending these over, Alice. I will review and follow up by end of week."]
+  ],
+  [
+    "3c4d5e6f7a8b9012",
+    "3c4d5e6f7a8b9012",
+    1700200000000,
+    [
+      ["From", "Newsletter Service <noreply@newsletter.example.com>"],
+      ["To", "bob@example.com"],
+      ["Subject", "Your weekly digest is ready"]
+    ],
+    ["INBOX", "CATEGORY_PROMOTIONS"],
+    ["Here is your weekly digest with the top stories from this week."]
+  ]
+]

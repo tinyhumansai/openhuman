@@ -6,6 +6,8 @@ mod core_update;
 #[cfg(feature = "cef")]
 mod discord_scanner;
 #[cfg(feature = "cef")]
+mod gmail_scanner;
+#[cfg(feature = "cef")]
 mod imessage_scanner;
 #[cfg(feature = "cef")]
 mod slack_scanner;
@@ -583,6 +585,8 @@ pub fn run() {
     #[cfg(feature = "cef")]
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
     #[cfg(feature = "cef")]
+    let builder = builder.manage(gmail_scanner::ScannerRegistry::new());
+    #[cfg(feature = "cef")]
     let builder = builder.manage(telegram_scanner::ScannerRegistry::new());
     builder
         .setup(move |app| {
@@ -884,7 +888,9 @@ pub fn run() {
             webview_accounts::webview_account_show,
             webview_accounts::webview_recipe_event,
             webview_accounts::webview_account_eval,
-            activate_main_window
+            activate_main_window,
+            #[cfg(feature = "cef")]
+            gmail_scanner::gmail_scanner_backfill
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

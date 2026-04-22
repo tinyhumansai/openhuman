@@ -686,6 +686,24 @@ pub async fn webview_account_open<R: Runtime>(
                     log::warn!("[webview-accounts] discord ScannerRegistry not in app state");
                 }
             }
+        } else if args.provider == "gmail" {
+            // Gmail MITM scanner: CDP Network.* on mail.google.com sync
+            // endpoints + IDB backfill. See `gmail_scanner/mod.rs`.
+            if let Some(prefix) = provider_url(&args.provider) {
+                let registry = app
+                    .try_state::<std::sync::Arc<crate::gmail_scanner::ScannerRegistry>>()
+                    .map(|s| s.inner().clone());
+                if let Some(registry) = registry {
+                    let app_clone = app.clone();
+                    let acct = args.account_id.clone();
+                    let prefix = prefix.to_string();
+                    tokio::spawn(async move {
+                        registry.ensure_scanner(app_clone, acct, prefix).await;
+                    });
+                } else {
+                    log::warn!("[webview-accounts] gmail ScannerRegistry not in app state");
+                }
+            }
         }
 
         // Browser Notification interception, native CEF path. The renderer
@@ -788,6 +806,13 @@ pub async fn webview_account_close<R: Runtime>(
             tokio::spawn(async move { registry.forget(&acct).await });
         }
         if let Some(registry) =
+            app.try_state::<std::sync::Arc<crate::gmail_scanner::ScannerRegistry>>()
+        {
+            let registry = registry.inner().clone();
+            let acct = args.account_id.clone();
+            tokio::spawn(async move { registry.forget(&acct).await });
+        }
+        if let Some(registry) =
             app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
         {
             let registry = registry.inner().clone();
@@ -846,6 +871,13 @@ pub async fn webview_account_purge<R: Runtime>(
         }
         if let Some(registry) =
             app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
+        {
+            let registry = registry.inner().clone();
+            let acct = args.account_id.clone();
+            tokio::spawn(async move { registry.forget(&acct).await });
+        }
+        if let Some(registry) =
+            app.try_state::<std::sync::Arc<crate::gmail_scanner::ScannerRegistry>>()
         {
             let registry = registry.inner().clone();
             let acct = args.account_id.clone();

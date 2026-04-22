@@ -134,6 +134,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::webhooks::all_webhooks_registered_controllers());
     // Core binary update management
     controllers.extend(crate::openhuman::update::all_update_registered_controllers());
+    // Native Gmail integration (browser-driven scanner → memory ingestion)
+    controllers.extend(crate::openhuman::gmail::all_gmail_registered_controllers());
     // Hierarchical knowledge summarization
     controllers
         .extend(crate::openhuman::tree_summarizer::all_tree_summarizer_registered_controllers());
@@ -185,6 +187,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::subconscious::all_subconscious_controller_schemas());
     schemas.extend(crate::openhuman::webhooks::all_webhooks_controller_schemas());
     schemas.extend(crate::openhuman::update::all_update_controller_schemas());
+    schemas.extend(crate::openhuman::gmail::all_gmail_controller_schemas());
     schemas.extend(crate::openhuman::tree_summarizer::all_tree_summarizer_controller_schemas());
     schemas.extend(crate::openhuman::learning::all_learning_controller_schemas());
     // Conversation thread and message management
@@ -245,6 +248,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "webhooks" => {
             Some("Webhook tunnel registrations and captured request/response debug logs.")
         }
+        "gmail" => Some(
+            "Native Gmail integration — browser-driven ingestion of email into local memory."
+        ),
         "update" => {
             Some("Self-update: check GitHub Releases for newer core binary and stage updates.")
         }

@@ -204,6 +204,16 @@ pub enum DomainEvent {
         error: Option<String>,
     },
 
+    // ── Gmail ───────────────────────────────────────────────────────────
+    /// Gmail messages were ingested into the memory layer for an account.
+    GmailMessagesIngested {
+        /// The account_id that was synced.
+        account_id: String,
+        /// Number of messages successfully ingested in this pass (0 for
+        /// a trigger-only event where the scanner hasn't run yet).
+        count: usize,
+    },
+
     // ── Composio ────────────────────────────────────────────────────────
     /// A Composio trigger webhook arrived via the backend socket.io bridge
     /// and is ready for domain-specific dispatch.
@@ -352,6 +362,8 @@ impl DomainEvent {
             | Self::WebhookRegistered { .. }
             | Self::WebhookUnregistered { .. }
             | Self::WebhookProcessed { .. } => "webhook",
+
+            Self::GmailMessagesIngested { .. } => "gmail",
 
             Self::ComposioTriggerReceived { .. }
             | Self::ComposioConnectionCreated { .. }
@@ -653,6 +665,14 @@ mod tests {
                     error: None,
                 },
                 "webhook",
+            ),
+            // Gmail
+            (
+                DomainEvent::GmailMessagesIngested {
+                    account_id: "acct-1".into(),
+                    count: 5,
+                },
+                "gmail",
             ),
             // Composio
             (

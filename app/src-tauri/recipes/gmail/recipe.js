@@ -1,61 +1,55 @@
-// Gmail recipe. Scrapes the inbox row list (tr.zA).
-// Note: Google may block embedded WebViews with a "browser not supported"
-// page. That's an auth problem, not a recipe problem — once the user is
-// signed in, this scraper picks up the rows.
+// Gmail recipe — lightweight inbox-change signal emitter.
+//
+// This recipe's only job is to detect when the Gmail inbox list mutates
+// (new message appears, read-state changes, label changes) and emit a
+// minimal signal to the Rust side so it knows to run a targeted
+// network / IDB scan pass. All heavy data extraction happens in the
+// Rust-side `gmail_scanner` over CDP — this file deliberately contains
+// no scraping logic.
 (function (api) {
   if (!api) return;
-  api.log('info', '[gmail-recipe] starting');
+  api.log('info', '[gmail-recipe] starting inbox signal emitter');
 
-  let last = '';
+  var inboxNode = null;
+  var observer = null;
 
-  function textOf(el) {
-    return (el && el.textContent ? el.textContent : '').trim();
+  function startObserver() {
+    // Gmail renders its inbox list as <tbody> or <div role="grid"> rows
+    // inside a container with class 'ae4 UI'. We observe the closest
+    // stable ancestor that wraps the thread-list. If the DOM structure
+    // changes across Gmail redesigns this selector falls back to the body
+    // so we still get *some* mutation signal.
+    var target =
+      document.querySelector('[role="main"]') ||
+      document.querySelector('.ae4') ||
+      document.body;
+
+    if (!target || target === inboxNode) return; // already observing same node
+
+    if (observer) observer.disconnect();
+    inboxNode = target;
+
+    observer = new MutationObserver(function () {
+      api.log('debug', '[gmail-recipe] inbox mutation detected — emitting signal');
+      api.ingest({ kind: 'signal', event: 'inbox_changed' });
+    });
+
+    observer.observe(target, { childList: true, subtree: true });
+    api.log('info', '[gmail-recipe] observer attached to inbox container');
   }
 
-  api.loop(function () {
-    const rows = document.querySelectorAll('tr.zA');
-    if (!rows || rows.length === 0) return;
+  // Attempt to attach on first load and re-attach on SPA navigations.
+  function tryAttach() {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', startObserver, { once: true });
+    } else {
+      startObserver();
+    }
+  }
 
-    const messages = [];
-    let totalUnread = 0;
+  tryAttach();
 
-    rows.forEach(function (row, idx) {
-      const stableId =
-        (row.getAttribute && row.getAttribute('data-legacy-message-id')) || null;
-      const fromEl =
-        row.querySelector('.yW span[email]') ||
-        row.querySelector('.yW .yP') ||
-        row.querySelector('.yW .zF') ||
-        row.querySelector('.yW span');
-      const subjEl = row.querySelector('.y6 span.bog') || row.querySelector('.y6 span');
-      const snippetEl = row.querySelector('.y2');
-
-      const from = fromEl
-        ? (fromEl.getAttribute && fromEl.getAttribute('name')) || textOf(fromEl)
-        : '';
-      const subject = textOf(subjEl);
-      const snippet = textOf(snippetEl);
-      const isUnread = row.classList && row.classList.contains('zE');
-      if (isUnread) totalUnread += 1;
-
-      if (from || subject) {
-        messages.push({
-          id: 'gm:' + (stableId || (from + '|' + subject).slice(0, 120) || idx),
-          from: from || null,
-          body: subject + (snippet ? ' — ' + snippet : ''),
-          unread: isUnread ? 1 : 0,
-        });
-      }
-    });
-
-    const key = JSON.stringify({
-      n: messages.length,
-      u: totalUnread,
-      first: messages.slice(0, 5).map(function (m) { return m.from + '|' + m.body; }),
-    });
-    if (key === last) return;
-    last = key;
-
-    api.ingest({ messages: messages, unread: totalUnread, snapshotKey: key });
-  });
+  // Gmail is a SPA — re-check the target node every 5 s so the observer
+  // stays valid across soft navigations (compose → inbox → label).
+  setInterval(startObserver, 5000);
 })(window.__openhumanRecipe);
