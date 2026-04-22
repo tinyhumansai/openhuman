@@ -118,10 +118,7 @@ mod macos {
         fn CGMainDisplayID() -> u32;
         fn CGDisplayPixelsWide(display: u32) -> usize;
         fn CGDisplayPixelsHigh(display: u32) -> usize;
-        fn CGWindowListCopyWindowInfo(
-            option: u32,
-            relative_to_window: u32,
-        ) -> *const c_void; // CFArrayRef
+        fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> *const c_void; // CFArrayRef
         fn CGDisplayCreateImage(display: u32) -> *const c_void; // CGImageRef
         fn CGWindowListCreateImage(
             screen_bounds: CGRect,
@@ -177,17 +174,32 @@ mod macos {
 
     #[repr(C)]
     #[derive(Copy, Clone)]
-    struct CGPoint { x: f64, y: f64 }
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
     #[repr(C)]
     #[derive(Copy, Clone)]
-    struct CGSize { width: f64, height: f64 }
+    struct CGSize {
+        width: f64,
+        height: f64,
+    }
     #[repr(C)]
     #[derive(Copy, Clone)]
-    struct CGRect { origin: CGPoint, size: CGSize }
+    struct CGRect {
+        origin: CGPoint,
+        size: CGSize,
+    }
 
     const CG_RECT_NULL: CGRect = CGRect {
-        origin: CGPoint { x: f64::INFINITY, y: f64::INFINITY },
-        size: CGSize { width: 0.0, height: 0.0 },
+        origin: CGPoint {
+            x: f64::INFINITY,
+            y: f64::INFINITY,
+        },
+        size: CGSize {
+            width: 0.0,
+            height: 0.0,
+        },
     };
     // kCGWindowListOptionIncludingWindow.
     const K_CG_WINDOW_LIST_OPTION_INCLUDING_WINDOW: u32 = 1 << 3;
@@ -320,8 +332,8 @@ mod macos {
     fn window_thumbnail_b64(window_id: u32) -> String {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         unsafe {
-            let opts = K_CG_WINDOW_IMAGE_BOUNDS_IGNORE_FRAMING
-                | K_CG_WINDOW_IMAGE_NOMINAL_RESOLUTION;
+            let opts =
+                K_CG_WINDOW_IMAGE_BOUNDS_IGNORE_FRAMING | K_CG_WINDOW_IMAGE_NOMINAL_RESOLUTION;
             let image = CGWindowListCreateImage(
                 CG_RECT_NULL,
                 K_CG_WINDOW_LIST_OPTION_INCLUDING_WINDOW,
@@ -409,9 +421,7 @@ mod macos {
                 continue;
             }
             // Skip microscopic windows (tooltips, hidden panels).
-            if let Some(bounds_dict) = unsafe {
-                CFDictionaryGetValue(dict, key_bounds).as_ref()
-            } {
+            if let Some(bounds_dict) = unsafe { CFDictionaryGetValue(dict, key_bounds).as_ref() } {
                 // kCGWindowBounds is actually a CFDictionary with Width/Height
                 // keys. Cheap filter: if the dict has a "Width" key and it's
                 // < 50, skip. Implementing full parse isn't worth it for the
