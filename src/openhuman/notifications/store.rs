@@ -50,6 +50,11 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
         .join("notifications")
         .join("notifications.db");
 
+    tracing::trace!(
+        path = %db_path.display(),
+        "[notifications::store] opening DB connection"
+    );
+
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).with_context(|| {
             format!(
@@ -69,6 +74,7 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
     conn.execute_batch(SCHEMA)
         .context("[notifications::store] schema migration failed")?;
 
+    tracing::trace!("[notifications::store] schema migration applied, running operation");
     f(&conn)
 }
 
@@ -162,13 +168,31 @@ pub fn update_triage(
 ) -> Result<()> {
     with_connection(config, |conn| {
         let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "UPDATE integration_notifications
+        let updated = conn
+            .execute(
+                "UPDATE integration_notifications
              SET importance_score = ?1, triage_action = ?2, triage_reason = ?3, scored_at = ?4
              WHERE id = ?5",
-            params![score, action, reason, now, id],
-        )
-        .context("[notifications::store] update_triage failed")?;
+                params![score, action, reason, now, id],
+            )
+            .context("[notifications::store] update_triage failed")?;
+        if updated == 0 {
+            // The row may have been deleted between ingest and scoring.
+            // Surface it at warn level so orphaned triage runs don't fail
+            // silently.
+            tracing::warn!(
+                id = %id,
+                action = %action,
+                "[notifications::store] update_triage matched no rows"
+            );
+        } else {
+            tracing::debug!(
+                id = %id,
+                action = %action,
+                score = score,
+                "[notifications::store] update_triage applied"
+            );
+        }
         Ok(())
     })
 }
@@ -176,11 +200,20 @@ pub fn update_triage(
 /// Transition a notification from `unread` to `read`.
 pub fn mark_read(config: &Config, id: &str) -> Result<()> {
     with_connection(config, |conn| {
-        conn.execute(
-            "UPDATE integration_notifications SET status = 'read' WHERE id = ?1",
-            params![id],
-        )
-        .context("[notifications::store] mark_read failed")?;
+        let updated = conn
+            .execute(
+                "UPDATE integration_notifications SET status = 'read' WHERE id = ?1",
+                params![id],
+            )
+            .context("[notifications::store] mark_read failed")?;
+        if updated == 0 {
+            tracing::warn!(
+                id = %id,
+                "[notifications::store] mark_read matched no rows"
+            );
+        } else {
+            tracing::debug!(id = %id, "[notifications::store] mark_read applied");
+        }
         Ok(())
     })
 }
@@ -291,7 +324,17 @@ fn row_to_notification(row: &rusqlite::Row<'_>) -> Result<IntegrationNotificatio
     });
 
     let scored_at_str: Option<String> = row.get(11)?;
-    let scored_at: Option<DateTime<Utc>> = scored_at_str.and_then(|s| s.parse().ok());
+    let scored_at: Option<DateTime<Utc>> = scored_at_str.and_then(|s| match s.parse() {
+        Ok(t) => Some(t),
+        Err(e) => {
+            tracing::warn!(
+                raw = %s,
+                error = %e,
+                "[notifications::store] invalid scored_at, treating as unscored"
+            );
+            None
+        }
+    });
 
     Ok(IntegrationNotification {
         id: row.get(0)?,
