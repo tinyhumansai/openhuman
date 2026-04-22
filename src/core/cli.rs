@@ -68,7 +68,7 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
         }
         "text-input" => crate::openhuman::text_input::cli::run_text_input_command(&args[1..]),
         "tree-summarizer" => {
-            crate::core::tree_summarizer_cli::run_tree_summarizer_command(&args[1..])
+            crate::openhuman::tree_summarizer::cli::run_tree_summarizer_command(&args[1..])
         }
         "memory" => crate::core::memory_cli::run_memory_command(&args[1..]),
         "agent" => {
