@@ -14,17 +14,11 @@ const mockStartDaemon = vi.fn();
 const mockRestartDaemon = vi.fn();
 
 vi.mock('../useDaemonHealth', () => ({
-  useDaemonHealth: () => ({
-    startDaemon: mockStartDaemon,
-    restartDaemon: mockRestartDaemon,
-  }),
+  useDaemonHealth: () => ({ startDaemon: mockStartDaemon, restartDaemon: mockRestartDaemon }),
 }));
 
 const setVisibility = (value: 'visible' | 'hidden'): void => {
-  Object.defineProperty(document, 'visibilityState', {
-    configurable: true,
-    get: () => value,
-  });
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value });
   document.dispatchEvent(new Event('visibilitychange'));
 };
 
