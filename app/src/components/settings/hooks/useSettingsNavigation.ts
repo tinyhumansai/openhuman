@@ -29,7 +29,8 @@ export type SettingsRoute =
   | 'screen-awareness-debug'
   | 'autocomplete-debug'
   | 'voice-debug'
-  | 'local-model-debug';
+  | 'local-model-debug'
+  | 'call-transcription';
 
 export interface BreadcrumbItem {
   label: string;
@@ -96,6 +97,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/webhooks-debug')) return 'webhooks-debug';
     if (path.includes('/settings/recovery-phrase')) return 'recovery-phrase';
     if (path.includes('/settings/agent-chat')) return 'agent-chat';
+    if (path.includes('/settings/call-transcription')) return 'call-transcription';
     return 'home';
   };
 
@@ -179,6 +181,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'voice':
       case 'messaging':
       case 'tools':
+      case 'call-transcription':
         return [settingsCrumb, featuresCrumb];
 
       // Leaf panels under AI & Models

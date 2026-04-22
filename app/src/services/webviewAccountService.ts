@@ -104,6 +104,32 @@ function handleRecipeEvent(evt: RecipeEventPayload) {
     return;
   }
 
+  // ── Voice call lifecycle (Slack Huddle, Discord VC, WhatsApp calls) ────────
+  // These events are emitted by the CDP DOM scanners in the Rust Tauri shell.
+  // On call-started we ask the shell to begin audio capture + transcription;
+  // on call-ended we stop capture and the shell emits `call_transcript` when
+  // Whisper finishes. The transcript is then persisted to memory.
+  if (
+    evt.kind === 'slack_call_started' ||
+    evt.kind === 'discord_call_started' ||
+    evt.kind === 'whatsapp_call_started'
+  ) {
+    void handleVoiceCallStarted(accountId, evt.provider, evt.kind, evt.payload);
+    return;
+  }
+  if (
+    evt.kind === 'slack_call_ended' ||
+    evt.kind === 'discord_call_ended' ||
+    evt.kind === 'whatsapp_call_ended'
+  ) {
+    void handleVoiceCallEnded(accountId, evt.provider, evt.kind, evt.payload);
+    return;
+  }
+  if (evt.kind === 'call_transcript') {
+    void handleCallTranscript(accountId, evt.payload as unknown as CallTranscriptPayload);
+    return;
+  }
+
   if (evt.kind === 'ingest') {
     const ingest = evt.payload as IngestPayload;
     const messages: IngestedMessage[] = (ingest.messages ?? []).map((m, idx) => ({
@@ -660,6 +686,7 @@ export async function closeWebviewAccount(accountId: string): Promise<void> {
   if (!isTauri()) return;
   log('close account=%s', accountId);
   await flushMeetingIfAny(accountId, 'webview-closed');
+  await flushCallSessionIfAny(accountId, 'webview-closed');
   try {
     await invoke('webview_account_close', { args: { account_id: accountId } });
     store.dispatch(setAccountStatus({ accountId, status: 'closed' }));
@@ -676,6 +703,7 @@ export async function purgeWebviewAccount(accountId: string): Promise<void> {
   if (!isTauri()) return;
   log('purge account=%s', accountId);
   await flushMeetingIfAny(accountId, 'webview-purged');
+  await flushCallSessionIfAny(accountId, 'webview-purged');
   try {
     await invoke('webview_account_purge', { args: { account_id: accountId } });
     store.dispatch(setAccountStatus({ accountId, status: 'closed' }));
@@ -690,4 +718,258 @@ async function flushMeetingIfAny(accountId: string, reason: string): Promise<voi
   if (!session) return;
   activeMeetings.delete(accountId);
   await flushMeetingSession(accountId, session, Date.now(), reason);
+}
+
+async function flushCallSessionIfAny(accountId: string, reason: string): Promise<void> {
+  try {
+    const result = await invoke<{ active: boolean }>('call_transcription_status', {
+      account_id: accountId,
+    });
+    const active = result?.active ?? false;
+    if (!active) return;
+    log('flushing call session for account=%s reason=%s', accountId, reason);
+    await invoke('call_transcription_stop', { account_id: accountId, reason });
+  } catch (err) {
+    errLog('flushCallSessionIfAny failed for account=%s: %o', accountId, err);
+  }
+}
+
+// ────────────────────────────── Voice Call STT ──────────────────────────────
+//
+// Handles Slack Huddle, Discord VC, and WhatsApp call lifecycle events.
+// On call-start we invoke the Tauri `call_transcription_start` command so the
+// shell begins collecting CEF audio from the ring buffer.
+// On call-end we invoke `call_transcription_stop` which causes the shell to
+// assemble the captured audio, send it to the Whisper STT pipeline via the
+// core RPC, and emit a `call_transcript` event when done.
+// That transcript event triggers `handleCallTranscript` which persists the
+// text to memory and hands it to the orchestrator.
+
+/** Check whether call transcription is enabled for a given provider. */
+function isCallTranscriptionEnabled(provider: string): boolean {
+  const STORAGE_KEY = 'openhuman:call_transcription_settings';
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return true; // default: enabled
+    const settings = JSON.parse(raw) as { enabled?: boolean; providers?: Record<string, boolean> };
+    if (settings.enabled === false) return false;
+    // Map event provider names to settings keys
+    const providerKey = provider === 'google-meet' ? 'google_meet' : provider.replace(/-/g, '_');
+    if (settings.providers && settings.providers[providerKey] === false) return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+interface CallTranscriptPayload {
+  provider: string;
+  channelName?: string | null;
+  transcript: string;
+  durationSecs: number;
+  reason?: string;
+  startedAt: number;
+  endedAt: number;
+}
+
+async function handleVoiceCallStarted(
+  accountId: string,
+  provider: string,
+  kind: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const channel =
+    (payload.channel as string | undefined) ||
+    (payload.channelName as string | undefined) ||
+    (payload.contact as string | undefined) ||
+    null;
+  log(
+    'voice call started account=%s provider=%s kind=%s channel=%s',
+    accountId,
+    provider,
+    kind,
+    channel
+  );
+
+  if (!isCallTranscriptionEnabled(provider)) {
+    log('call transcription disabled for provider=%s, skipping', provider);
+    return;
+  }
+
+  store.dispatch(
+    appendLog({
+      accountId,
+      entry: {
+        ts: (payload.startedAt as number | undefined) ?? Date.now(),
+        level: 'info',
+        msg: `[${provider}] call started${channel ? ` in ${channel}` : ''} — capturing audio`,
+      },
+    })
+  );
+  try {
+    await invoke('call_transcription_start', {
+      account_id: accountId,
+      provider,
+      channel_name: channel,
+    });
+    log('call_transcription_start invoked account=%s', accountId);
+  } catch (err) {
+    errLog('call_transcription_start failed for account=%s: %o', accountId, err);
+  }
+}
+
+async function handleVoiceCallEnded(
+  accountId: string,
+  provider: string,
+  kind: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const reason = (payload.reason as string | undefined) || 'ended';
+  log(
+    'voice call ended account=%s provider=%s kind=%s reason=%s',
+    accountId,
+    provider,
+    kind,
+    reason
+  );
+  store.dispatch(
+    appendLog({
+      accountId,
+      entry: {
+        ts: (payload.endedAt as number | undefined) ?? Date.now(),
+        level: 'info',
+        msg: `[${provider}] call ended (${reason}) — transcribing audio…`,
+      },
+    })
+  );
+  try {
+    await invoke('call_transcription_stop', { account_id: accountId, reason });
+    log('call_transcription_stop invoked account=%s', accountId);
+  } catch (err) {
+    errLog('call_transcription_stop failed for account=%s: %o', accountId, err);
+  }
+}
+
+async function handleCallTranscript(
+  accountId: string,
+  payload: CallTranscriptPayload
+): Promise<void> {
+  const { provider, channelName, transcript, durationSecs, startedAt, endedAt, reason } = payload;
+  log(
+    'call transcript received account=%s provider=%s channel=%s duration=%ds len=%d',
+    accountId,
+    provider,
+    channelName,
+    durationSecs,
+    transcript.length
+  );
+
+  if (!transcript.trim()) {
+    log('call transcript empty, skipping persistence for account=%s', accountId);
+    return;
+  }
+
+  const startDate = new Date(startedAt).toISOString();
+  const endDate = new Date(endedAt).toISOString();
+  const durationMin = Math.max(1, Math.round(durationSecs / 60));
+  const channelLabel = channelName || 'unknown channel';
+
+  // Build a structured memory doc matching the Google Meet format so the
+  // recall pipeline treats all call transcripts consistently.
+  const title = `${provider} call — ${channelLabel} — ${startDate.slice(0, 10)}`;
+  const content = [
+    `# ${provider.charAt(0).toUpperCase() + provider.slice(1)} Call Transcript`,
+    `**Channel / Contact:** ${channelLabel}`,
+    `**Started:** ${startDate}`,
+    `**Ended:** ${endDate}`,
+    `**Duration:** ~${durationMin} min`,
+    `**Reason ended:** ${reason ?? 'ended'}`,
+    `**Account:** ${accountId}`,
+    '',
+    '## Transcript',
+    '',
+    transcript,
+  ].join('\n');
+
+  const namespace = `webview-call:${provider}:${accountId}`;
+  const key = `${channelLabel.replace(/\W+/g, '-').toLowerCase()}:${startedAt}`;
+
+  try {
+    await callCoreRpc({
+      method: 'openhuman.memory_doc_ingest',
+      params: {
+        namespace,
+        key,
+        title,
+        content,
+        source_type: `${provider}-call-transcript`,
+        priority: 'high',
+        tags: [provider, 'call-transcript', 'voice'],
+        metadata: {
+          provider,
+          accountId,
+          channelName: channelLabel,
+          durationSecs,
+          startedAt,
+          endedAt,
+        },
+        category: 'core',
+      },
+    });
+    log('call transcript persisted to memory account=%s provider=%s', accountId, provider);
+    store.dispatch(
+      appendLog({
+        accountId,
+        entry: {
+          ts: endedAt,
+          level: 'info',
+          msg: `[${provider}] call transcript saved (${durationMin} min, ${transcript.split(/\s+/).length} words)`,
+        },
+      })
+    );
+  } catch (err) {
+    errLog('call transcript memory write failed for account=%s: %o', accountId, err);
+    store.dispatch(
+      appendLog({
+        accountId,
+        entry: {
+          ts: endedAt,
+          level: 'error',
+          msg: `[${provider}] failed to save call transcript: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      })
+    );
+    return;
+  }
+
+  // Hand off the transcript to the orchestrator for analysis — same pattern
+  // as Google Meet.
+  try {
+    const thread = await threadApi.createNewThread();
+    const prompt = [
+      `I just finished a ${provider} voice call in "${channelLabel}" (~${durationMin} min).`,
+      '',
+      'Please:',
+      '1. Extract key discussion points, decisions made, and any action items.',
+      '2. For any action item you can act on with your tools, handle it now and report what you did.',
+      '',
+      'Transcript:',
+      '',
+      transcript,
+    ].join('\n');
+    await chatSend({ threadId: thread.id, message: prompt, model: MEET_ORCHESTRATOR_MODEL });
+    log('call transcript handed to orchestrator thread=%s account=%s', thread.id, accountId);
+    store.dispatch(
+      appendLog({
+        accountId,
+        entry: {
+          ts: endedAt,
+          level: 'info',
+          msg: `[${provider}] orchestrator analyzing call notes (thread ${thread.id})`,
+        },
+      })
+    );
+  } catch (err) {
+    errLog('call orchestrator handoff failed account=%s: %o', accountId, err);
+  }
 }

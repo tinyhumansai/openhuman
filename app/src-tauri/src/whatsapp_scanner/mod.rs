@@ -105,6 +105,8 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
         let mut last_full: Instant = Instant::now()
             .checked_sub(FULL_SCAN_INTERVAL)
             .unwrap_or_else(Instant::now);
+        // Track WhatsApp call state across ticks to detect start/end transitions.
+        let mut call_active = false;
         loop {
             // Gate: run a full IDB scan if enough time has elapsed,
             // otherwise run the cheap DOM-only scan.
@@ -124,6 +126,15 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
                             emit_dom_only(&app, &account_id, &dom.dom_messages);
                             last_dom_hash = Some(dom.hash);
                         }
+                        // Check call state on every fast tick alongside the message scan.
+                        call_active = emit_call_lifecycle_events(
+                            &app,
+                            &account_id,
+                            &url_prefix,
+                            &fragment,
+                            call_active,
+                        )
+                        .await;
                     }
                     Err(e) => {
                         log::debug!("[wa][{}] dom-scan failed: {}", account_id, e);
@@ -173,11 +184,134 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
                     log::warn!("[wa][{}] scan failed: {}", account_id, e);
                 }
             }
+            // Check call state on the full-scan tick too so we don't miss
+            // a transition that started while the IDB walk was running.
+            call_active =
+                emit_call_lifecycle_events(&app, &account_id, &url_prefix, &fragment, call_active)
+                    .await;
             // After a full scan, go back to fast-tick cadence until the
             // next `FULL_SCAN_INTERVAL` elapses.
             sleep(FAST_SCAN_INTERVAL).await;
         }
     });
+}
+
+/// Check WhatsApp call state via a fresh CDP DOM snapshot and emit
+/// `whatsapp_call_started` / `whatsapp_call_ended` lifecycle events when the
+/// active-call state transitions.
+///
+/// `prev_active` is the call state from the previous tick. Returns the new
+/// call state so the caller can persist it across ticks.
+async fn emit_call_lifecycle_events<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
+    url_prefix: &str,
+    url_fragment: &str,
+    prev_active: bool,
+) -> bool {
+    let call_state = match scan_call_state_once(url_prefix, url_fragment).await {
+        Ok(s) => s,
+        Err(e) => {
+            log::debug!("[wa][{}] call-state scan failed: {}", account_id, e);
+            // On error retain previous state — avoids spurious ended events on
+            // a transient CDP disconnect.
+            return prev_active;
+        }
+    };
+
+    let now_active = call_state.active;
+
+    if now_active && !prev_active {
+        // Call just started.
+        let contact = call_state
+            .contact_name
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        let started_at = chrono_now_millis();
+        log::info!("[wa][{}] call started contact={:?}", account_id, contact);
+        let call_evt = json!({
+            "account_id": account_id,
+            "provider": "whatsapp",
+            "kind": "whatsapp_call_started",
+            "payload": {
+                "contact": contact,
+                "url": url_prefix,
+                "startedAt": started_at,
+            },
+            "ts": started_at,
+        });
+        if let Err(e) = app.emit("webview:event", &call_evt) {
+            log::warn!(
+                "[wa][{}] whatsapp_call_started emit failed: {}",
+                account_id,
+                e
+            );
+        }
+    } else if !now_active && prev_active {
+        // Call just ended.
+        let ended_at = chrono_now_millis();
+        log::info!("[wa][{}] call ended", account_id);
+        let end_evt = json!({
+            "account_id": account_id,
+            "provider": "whatsapp",
+            "kind": "whatsapp_call_ended",
+            "payload": {
+                "contact": "unknown",
+                "endedAt": ended_at,
+                "reason": "ended",
+            },
+            "ts": ended_at,
+        });
+        if let Err(e) = app.emit("webview:event", &end_evt) {
+            log::warn!(
+                "[wa][{}] whatsapp_call_ended emit failed: {}",
+                account_id,
+                e
+            );
+        }
+    }
+
+    now_active
+}
+
+/// Fast CDP call-state snapshot: attach to the WhatsApp page, capture the
+/// DOM, detect call UI elements, detach. No IDB, no message parsing.
+/// Uses the same local `CdpConn` as the rest of the WhatsApp scanner.
+async fn scan_call_state_once(
+    url_prefix: &str,
+    url_fragment: &str,
+) -> Result<dom_snapshot::CallState, String> {
+    let browser_ws = browser_ws_url().await?;
+    let mut cdp = CdpConn::open(&browser_ws).await?;
+    let targets_v = cdp.call("Target.getTargets", json!({}), None).await?;
+    let targets = parse_targets(&targets_v);
+    let page_target = targets
+        .iter()
+        .find(|t| {
+            t.kind == "page" && t.url.starts_with(url_prefix) && t.url.ends_with(url_fragment)
+        })
+        .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
+    let attach = cdp
+        .call(
+            "Target.attachToTarget",
+            json!({ "targetId": page_target.id, "flatten": true }),
+            None,
+        )
+        .await?;
+    let page_session = attach
+        .get("sessionId")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| "page attach missing sessionId".to_string())?
+        .to_string();
+    let captured = dom_snapshot::capture_call_state(&mut cdp, &page_session).await;
+    let _ = cdp
+        .call(
+            "Target.detachFromTarget",
+            json!({ "sessionId": page_session }),
+            None,
+        )
+        .await;
+    captured
 }
 
 /// Emit an ingest payload carrying only DOM-scraped rows, grouped by

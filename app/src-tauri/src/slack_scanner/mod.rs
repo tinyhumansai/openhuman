@@ -655,16 +655,18 @@ fn spawn_dom_poll<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix:
         let fragment = crate::cdp::target_url_fragment(&account_id);
         sleep(Duration::from_secs(8)).await;
         let mut last_hash: Option<u64> = None;
+        let mut huddle_active = false;
         loop {
             match dom_scan_once(&url_prefix, &fragment).await {
                 Ok(scan) => {
                     if Some(scan.hash) != last_hash {
                         log::info!(
-                            "[sl][{}] dom scan rows={} unread={} hash={:x}",
+                            "[sl][{}] dom scan rows={} unread={} hash={:x} huddle={}",
                             account_id,
                             scan.rows.len(),
                             scan.total_unread,
-                            scan.hash
+                            scan.hash,
+                            scan.huddle.active,
                         );
                         last_hash = Some(scan.hash);
                         let envelope = json!({
@@ -678,6 +680,55 @@ fn spawn_dom_poll<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix:
                             log::warn!("[sl][{}] dom ingest emit failed: {}", account_id, e);
                         }
                     }
+                    // Emit call lifecycle events when Huddle state transitions.
+                    let now_active = scan.huddle.active;
+                    if now_active && !huddle_active {
+                        // Huddle just started.
+                        let channel = scan
+                            .huddle
+                            .channel_name
+                            .clone()
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let started_at = chrono_now_millis();
+                        log::info!("[sl][{}] huddle started channel={:?}", account_id, channel);
+                        let call_evt = json!({
+                            "account_id": account_id,
+                            "provider": "slack",
+                            "kind": "slack_call_started",
+                            "payload": {
+                                "channel": channel,
+                                "url": url_prefix,
+                                "startedAt": started_at,
+                            },
+                            "ts": started_at,
+                        });
+                        if let Err(e) = app.emit("webview:event", &call_evt) {
+                            log::warn!(
+                                "[sl][{}] slack_call_started emit failed: {}",
+                                account_id,
+                                e
+                            );
+                        }
+                    } else if !now_active && huddle_active {
+                        // Huddle just ended.
+                        let ended_at = chrono_now_millis();
+                        log::info!("[sl][{}] huddle ended", account_id);
+                        let end_evt = json!({
+                            "account_id": account_id,
+                            "provider": "slack",
+                            "kind": "slack_call_ended",
+                            "payload": {
+                                "channel": "unknown",
+                                "endedAt": ended_at,
+                                "reason": "left",
+                            },
+                            "ts": ended_at,
+                        });
+                        if let Err(e) = app.emit("webview:event", &end_evt) {
+                            log::warn!("[sl][{}] slack_call_ended emit failed: {}", account_id, e);
+                        }
+                    }
+                    huddle_active = now_active;
                 }
                 Err(e) => log::debug!("[sl][{}] dom scan: {}", account_id, e),
             }

@@ -7,6 +7,11 @@
 //!     `data-list-item-id^="channels"|"private-channels"`
 //!   * name:  class prefix `name_` / `channelName_` / first link text
 //!   * badge: class prefix `numberBadge_` / `unread_` / `aria-label*=unread`
+//!
+//! Voice channel detection:
+//!   * `[class*="voiceConnected_"]`   — active voice session panel
+//!   * `[class*="activityPanel_"]`    — activity panel shown when in VC
+//!   * `[class*="connection_"]` with inner "Voice Connected" text
 
 use serde_json::{json, Value};
 
@@ -18,10 +23,23 @@ pub struct ChannelRow {
     pub unread: u32,
 }
 
+/// Discord voice-channel call detection result.
+#[derive(Debug, Clone, Default)]
+pub struct VoiceState {
+    /// Whether a voice channel session is active.
+    pub active: bool,
+    /// Channel name, if detectable.
+    pub channel_name: Option<String>,
+    /// Guild (server) name, if detectable.
+    pub guild_name: Option<String>,
+}
+
 pub struct DomScan {
     pub rows: Vec<ChannelRow>,
     pub total_unread: u32,
     pub hash: u64,
+    /// Voice/call state at the time of this scan.
+    pub voice: VoiceState,
 }
 
 pub async fn scan(cdp: &mut CdpConn, session: &str) -> Result<DomScan, String> {
@@ -42,10 +60,12 @@ pub async fn scan(cdp: &mut CdpConn, session: &str) -> Result<DomScan, String> {
         });
     }
     let hash = hash_rows(&rows, total_unread);
+    let voice = detect_voice(&snap);
     Ok(DomScan {
         rows,
         total_unread,
         hash,
+        voice,
     })
 }
 
@@ -131,6 +151,64 @@ fn find_badge(snap: &Snapshot, root: usize) -> Option<u32> {
         return Some(0);
     }
     None
+}
+
+/// Detect whether a Discord voice channel session is active.
+///
+/// Discord uses hashed CSS class names, so we match by prefix:
+///   - `voiceConnected_` — the bottom panel shown when connected to a VC
+///   - `activityPanel_`  — activity panel that appears during VC
+///   - `connection_` with "Voice Connected" text inside
+fn detect_voice(snap: &Snapshot) -> VoiceState {
+    // 1. Voice-connected indicator panel.
+    let voice_nodes = snap.find_all(|s, i| {
+        s.is_element(i)
+            && (s.class_starts_with(i, "voiceConnected_")
+                || s.class_starts_with(i, "activityPanel_"))
+    });
+
+    if !voice_nodes.is_empty() {
+        // Try to find the channel name from a nearby element.
+        let channel_name = voice_nodes.first().and_then(|&root| {
+            let n = snap.find_descendant(root, |s, i| {
+                s.is_element(i)
+                    && (s.class_starts_with(i, "channelName_") || s.class_starts_with(i, "name_"))
+            })?;
+            let t = snap.text_content(n);
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
+        });
+
+        log::debug!(
+            "[dc-dom] voice detected active=true channel_name={:?}",
+            channel_name
+        );
+        return VoiceState {
+            active: true,
+            channel_name,
+            guild_name: None,
+        };
+    }
+
+    // 2. Look for "Voice Connected" text in a connection_ panel (fallback).
+    let connection_nodes =
+        snap.find_all(|s, i| s.is_element(i) && s.class_starts_with(i, "connection_"));
+    for &root in &connection_nodes {
+        let text = snap.text_content(root);
+        if text.to_lowercase().contains("voice connected") {
+            log::debug!("[dc-dom] voice detected via 'Voice Connected' text");
+            return VoiceState {
+                active: true,
+                channel_name: None,
+                guild_name: None,
+            };
+        }
+    }
+
+    VoiceState::default()
 }
 
 fn hash_rows(rows: &[ChannelRow], total_unread: u32) -> u64 {

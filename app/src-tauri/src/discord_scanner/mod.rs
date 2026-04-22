@@ -593,16 +593,18 @@ fn spawn_dom_poll<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix:
         let fragment = crate::cdp::target_url_fragment(&account_id);
         sleep(Duration::from_secs(6)).await;
         let mut last_hash: Option<u64> = None;
+        let mut voice_active = false;
         loop {
             match dom_scan_once(&url_prefix, &fragment).await {
                 Ok(scan) => {
                     if Some(scan.hash) != last_hash {
                         log::info!(
-                            "[discord][{}] dom scan rows={} unread={} hash={:x}",
+                            "[discord][{}] dom scan rows={} unread={} hash={:x} voice={}",
                             account_id,
                             scan.rows.len(),
                             scan.total_unread,
-                            scan.hash
+                            scan.hash,
+                            scan.voice.active,
                         );
                         last_hash = Some(scan.hash);
                         let envelope = json!({
@@ -616,6 +618,71 @@ fn spawn_dom_poll<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix:
                             log::warn!("[discord][{}] dom ingest emit failed: {}", account_id, e);
                         }
                     }
+
+                    // Emit voice call lifecycle events on state transitions.
+                    let now_active = scan.voice.active;
+                    if now_active && !voice_active {
+                        let channel_id = scan
+                            .voice
+                            .channel_name
+                            .clone()
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let channel_name = channel_id.clone();
+                        let guild_name = scan
+                            .voice
+                            .guild_name
+                            .clone()
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let started_at = chrono_now_millis();
+                        log::info!(
+                            "[discord][{}] voice call started channel={:?} guild={:?}",
+                            account_id,
+                            channel_name,
+                            guild_name,
+                        );
+                        let call_evt = json!({
+                            "account_id": account_id,
+                            "provider": "discord",
+                            "kind": "discord_call_started",
+                            "payload": {
+                                "channelId": channel_id,
+                                "channelName": channel_name,
+                                "guildName": guild_name,
+                                "url": url_prefix,
+                                "startedAt": started_at,
+                            },
+                            "ts": started_at,
+                        });
+                        if let Err(e) = app.emit("webview:event", &call_evt) {
+                            log::warn!(
+                                "[discord][{}] discord_call_started emit failed: {}",
+                                account_id,
+                                e
+                            );
+                        }
+                    } else if !now_active && voice_active {
+                        let ended_at = chrono_now_millis();
+                        log::info!("[discord][{}] voice call ended", account_id);
+                        let end_evt = json!({
+                            "account_id": account_id,
+                            "provider": "discord",
+                            "kind": "discord_call_ended",
+                            "payload": {
+                                "channelId": "unknown",
+                                "endedAt": ended_at,
+                                "reason": "disconnected",
+                            },
+                            "ts": ended_at,
+                        });
+                        if let Err(e) = app.emit("webview:event", &end_evt) {
+                            log::warn!(
+                                "[discord][{}] discord_call_ended emit failed: {}",
+                                account_id,
+                                e
+                            );
+                        }
+                    }
+                    voice_active = now_active;
                 }
                 Err(e) => log::debug!("[discord][{}] dom scan: {}", account_id, e),
             }

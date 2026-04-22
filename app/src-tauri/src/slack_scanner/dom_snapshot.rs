@@ -3,6 +3,11 @@
 //!   * rows:  `[data-qa="virtual-list-item"]` or `.p-channel_sidebar__channel`
 //!   * name:  `[data-qa="channel_sidebar_name_button"]` / `.p-channel_sidebar__name` / first `span`
 //!   * badge: `.p-channel_sidebar__badge` / `[data-qa="mention_badge"]`
+//!
+//! Also detects Slack Huddle (voice call) state:
+//!   * `[data-qa="huddle-mini-player"]` — Huddle mini player bar visible
+//!   * `[data-qa="huddle_sidebar"]`     — Huddle sidebar/panel open
+//!   * `.p-huddle-mini-player`          — CSS class fallback
 
 use serde_json::{json, Value};
 
@@ -14,10 +19,21 @@ pub struct ChannelRow {
     pub unread: u32,
 }
 
+/// Huddle/voice-call detection result from the DOM scan.
+#[derive(Debug, Clone, Default)]
+pub struct HuddleState {
+    /// Whether the Huddle mini player (active call indicator) is visible.
+    pub active: bool,
+    /// Channel name scraped from the Huddle UI, if available.
+    pub channel_name: Option<String>,
+}
+
 pub struct DomScan {
     pub rows: Vec<ChannelRow>,
     pub total_unread: u32,
     pub hash: u64,
+    /// Huddle/call state at the time of this scan.
+    pub huddle: HuddleState,
 }
 
 pub async fn scan(cdp: &mut CdpConn, session: &str) -> Result<DomScan, String> {
@@ -38,10 +54,12 @@ pub async fn scan(cdp: &mut CdpConn, session: &str) -> Result<DomScan, String> {
         });
     }
     let hash = hash_rows(&rows, total_unread);
+    let huddle = detect_huddle(&snap);
     Ok(DomScan {
         rows,
         total_unread,
         hash,
+        huddle,
     })
 }
 
@@ -120,6 +138,58 @@ fn find_badge(snap: &Snapshot, root: usize) -> Option<u32> {
         return Some(0);
     }
     trimmed.parse::<u32>().ok()
+}
+
+/// Detect whether a Slack Huddle (voice call) is active in the current DOM.
+///
+/// Selectors checked (in priority order):
+///   1. `[data-qa="huddle-mini-player"]` — the floating mini-player bar
+///   2. `[data-qa="huddle_sidebar"]`     — the Huddle sidebar/panel
+///   3. `.p-huddle-mini-player`          — CSS-class fallback
+fn detect_huddle(snap: &Snapshot) -> HuddleState {
+    // 1. Huddle mini-player bar
+    let mini_player = snap.find_all(|s, i| {
+        s.is_element(i)
+            && (s.attr(i, "data-qa") == Some("huddle-mini-player")
+                || s.attr(i, "data-qa") == Some("huddle_sidebar")
+                || s.has_class(i, "p-huddle-mini-player"))
+    });
+    if mini_player.is_empty() {
+        return HuddleState::default();
+    }
+
+    // Try to scrape the channel name from the mini-player text.
+    let channel_name = mini_player.first().and_then(|&root| {
+        // Huddle mini player often contains the channel name as a link text
+        // or aria-label on a nearby element.
+        let candidate = snap.find_descendant(root, |s, i| {
+            s.is_element(i)
+                && (s.attr(i, "data-qa") == Some("huddle_channel_name")
+                    || s.attr(i, "aria-label").map_or(false, |v| !v.is_empty()))
+        });
+        if let Some(idx) = candidate {
+            let text = snap.text_content(idx);
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+        // Fall back to first non-empty text node inside the player.
+        let first_text = snap.find_descendant(root, |s, i| {
+            s.is_element(i) && !s.text_content(i).trim().is_empty()
+        });
+        first_text
+            .map(|idx| snap.text_content(idx))
+            .filter(|t| !t.is_empty())
+    });
+
+    log::debug!(
+        "[sl-dom] huddle detected active=true channel_name={:?}",
+        channel_name
+    );
+    HuddleState {
+        active: true,
+        channel_name,
+    }
 }
 
 fn hash_rows(rows: &[ChannelRow], total_unread: u32) -> u64 {

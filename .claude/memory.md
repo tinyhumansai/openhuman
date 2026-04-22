@@ -108,6 +108,15 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Rust-side HTTP timeout is separate** — `src/openhuman/providers/compatible.rs` sets a 120s `reqwest` client timeout on LLM calls. Not changed in #715; relevant if a single LLM round-trip itself stalls for >2 min.
 - **Manual cancel path** — `chatCancel()` in `app/src/services/chatService.ts` → `openhuman.channel_web_cancel` RPC → `cancel_chat()` in `src/openhuman/channels/providers/web.rs`. Fully implemented; the silence timer is an automatic fallback.
 
+## Speech-to-Text / Audio Tap (Issue #728)
+
+- **CEF audio tap registry lives in `tauri-runtime-cef`** — Do NOT duplicate `audio_tap_registry` in the Tauri shell. Use `tauri_runtime_cef::audio_tap_registry` from the shell. The account-to-browser-ID mapping is a separate concern in `webview_accounts/audio_tap.rs`.
+- **Webview event pipeline** — Recipe/scanner events flow `webview_recipe_event` → `webview:event` Tauri event → `webviewAccountService.ts` dispatcher. New event kinds fall through to a catch-all log by default; add `if (evt.kind === '...')` branches as needed. Meet caption pipeline (`meet_call_started` / `meet_captions` / `meet_call_ended`) is the reference implementation.
+- **Settings panel pattern (April 2026)** — Use `SettingsHeader` + `useSettingsNavigation`. `SettingsPanelLayout` was deleted — do NOT re-create it. Wrap content as `<div>` → `<SettingsHeader>` → `<div className="p-4 space-y-4">`. Must add route detection in `useSettingsNavigation.ts` `getCurrentRoute()` AND breadcrumbs in `getBreadcrumbs()`.
+- **New Tauri commands need permissions** — Add to `app/src-tauri/permissions/allow-core-process.toml` `allow` array or they silently fail with permission-denied at runtime.
+- **Call transcription settings in localStorage** — Stored under `openhuman:call_transcription_settings`, not Redux. `webviewAccountService.ts` reads via `isCallTranscriptionEnabled()` before starting transcription.
+- **CEF ring buffer is 30s max** — Audio tap ring buffer holds max 30 seconds at 48kHz. Longer calls only get the last 30s transcribed. Streaming via `subscribe_audio` channel is needed for full-length transcription.
+
 ## Environment
 
 - **Core sidecar port** — `7788` (default). Check with `lsof -i :7788`.

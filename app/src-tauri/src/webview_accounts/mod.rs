@@ -18,6 +18,9 @@
 //! cookies and storage don't bleed between accounts (best-effort on
 //! WKWebView — see Tauri docs on `data_store_identifier` for the macOS path).
 
+pub mod audio_tap;
+pub mod call_session;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -237,6 +240,9 @@ pub struct WebviewAccountsState {
     /// close/purge so reopen cycles don't stack multiple live loops.
     #[cfg(feature = "cef")]
     cdp_sessions: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// Active call recording sessions. Keyed by account_id. Populated when
+    /// a call-started event is detected and cleared on call-ended or purge.
+    pub call_sessions: call_session::CallSessionManager,
 }
 
 /// Title prefix applied to every OS toast fired from an embedded webview.
@@ -794,6 +800,9 @@ pub async fn webview_account_open<R: Runtime>(
                     .unwrap()
                     .insert(acct_for_register.clone(), browser_id);
             }
+            // Wire the account → browser mapping so audio_tap / call_session
+            // can look up the browser id by account id at call-start time.
+            audio_tap::map_account_to_browser(&acct_for_register, browser_id);
             let acct_in_handler = acct_for_register.clone();
             let provider_in_handler = provider_for_register.clone();
             let app_in_handler = app_for_register.clone();
@@ -880,6 +889,9 @@ pub async fn webview_account_close<R: Runtime>(
                 browser_id
             );
         }
+        // Remove the account → browser mapping so stale entries don't linger
+        // across re-open cycles and confuse the call transcription pipeline.
+        audio_tap::remove_account_mapping(&args.account_id);
         if let Some(task) = state.cdp_sessions.lock().unwrap().remove(&args.account_id) {
             task.abort();
             log::debug!(
@@ -951,6 +963,9 @@ pub async fn webview_account_purge<R: Runtime>(
                 browser_id
             );
         }
+        // Remove the account → browser mapping on purge as well so a
+        // subsequent re-open of the same account id gets a fresh mapping.
+        audio_tap::remove_account_mapping(&args.account_id);
         if let Some(task) = state.cdp_sessions.lock().unwrap().remove(&args.account_id) {
             task.abort();
             log::debug!(
@@ -1174,4 +1189,74 @@ pub async fn webview_recipe_event<R: Runtime>(
     app.emit("webview:event", &event)
         .map_err(|e| format!("emit failed: {e}"))?;
     Ok(())
+}
+
+// ─── Call transcription Tauri commands ──────────────────────────────────────
+
+/// Start a call transcription session for an account. Called by the React
+/// service layer when a `*_call_started` event is received.
+///
+/// Looks up the CEF browser id for the account (if available) and opens a
+/// `CallSession` that will accumulate audio from the ring buffer until
+/// `call_transcription_stop` is called.
+#[tauri::command]
+pub async fn call_transcription_start<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, WebviewAccountsState>,
+    account_id: String,
+    provider: String,
+    channel_name: Option<String>,
+) -> Result<(), String> {
+    log::info!(
+        "[call-transcription] start account={} provider={} channel={:?}",
+        account_id,
+        provider,
+        channel_name
+    );
+    #[cfg(feature = "cef")]
+    {
+        let browser_id = audio_tap::get_browser_for_account(&account_id).unwrap_or(-1);
+        state
+            .call_sessions
+            .start(&account_id, &provider, channel_name, browser_id);
+    }
+    #[cfg(not(feature = "cef"))]
+    {
+        let _ = (account_id, provider, channel_name);
+        log::debug!("[call-transcription] start: cef feature not enabled, no-op");
+    }
+    Ok(())
+}
+
+/// Stop a call transcription session, transcribe accumulated audio, and emit
+/// a `webview:event` with `kind: "call_transcript"`.
+#[tauri::command]
+pub async fn call_transcription_stop<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, WebviewAccountsState>,
+    account_id: String,
+    reason: Option<String>,
+) -> Result<(), String> {
+    let reason = reason.unwrap_or_else(|| "ended".to_string());
+    log::info!(
+        "[call-transcription] stop account={} reason={}",
+        account_id,
+        reason
+    );
+    state.call_sessions.end(&app, &account_id, &reason).await;
+    Ok(())
+}
+
+/// Returns a JSON object describing the current call transcription status for
+/// the given account. Used by the React UI to display recording state.
+#[tauri::command]
+pub async fn call_transcription_status(
+    state: tauri::State<'_, WebviewAccountsState>,
+    account_id: String,
+) -> Result<serde_json::Value, String> {
+    let active = state.call_sessions.is_active(&account_id);
+    Ok(serde_json::json!({
+        "account_id": account_id,
+        "active": active,
+    }))
 }

@@ -887,6 +887,9 @@ pub fn run() {
             webview_accounts::webview_account_hide,
             webview_accounts::webview_account_show,
             webview_accounts::webview_recipe_event,
+            webview_accounts::call_transcription_start,
+            webview_accounts::call_transcription_stop,
+            webview_accounts::call_transcription_status,
             notification_settings::notification_settings_get,
             notification_settings::notification_settings_set,
             activate_main_window

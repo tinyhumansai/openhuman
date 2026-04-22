@@ -20,5 +20,8 @@ allow = [
     "webview_account_show",
     "webview_recipe_event",
     "activate_main_window",
+    "call_transcription_start",
+    "call_transcription_stop",
+    "call_transcription_status",
 ]
 deny = []
