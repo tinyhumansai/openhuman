@@ -13,7 +13,7 @@ The user's framing: OpenHuman should be **"the layer that captures everything fr
 ## Goals
 
 1. **Ship a magical demo of (a) Today brief and (b) cross-source retrieval with citations** within 4 weeks.
-2. **Continuous ingestion** of Gmail, Calendar, Slack, and iMessage (Mac) into a single local personal index — not on-demand tool calls.
+2. **Continuous ingestion** of Gmail, Calendar, and iMessage (Mac); Slack deferred to v1.1 into a single local personal index — not on-demand tool calls.
 3. **Three composable privacy modes** (Convenience / Hybrid / Fully local) made visible in a Privacy panel. Same code path, three swappable functions.
 4. **Unblock the ship pipeline** so this work can land continuously.
 5. **Reuse aggressively** from existing internal projects (`inbox/`, `ambient/`, `neocortex/`) instead of rebuilding.
@@ -157,7 +157,6 @@ Verification: smoke test green on 3 consecutive PR pushes; an installed v(N) aut
 
 ### Week 2 — Ingestors
 - `GmailIngestor` and `CalendarIngestor` reusing OAuth tokens already brokered through Composio. Delta-sync via Gmail history API and Calendar `updatedMin`.
-- `SlackIngestor` reusing existing Composio Slack integration where present; channels + DMs the user has access to.
 - `IMessageIngestor` (Mac only) — read-only access to `~/Library/Messages/chat.db` via SQLite, requires Full Disk Access permission with an in-app explainer screen. **Reuse heavily from `~/projects/inbox/inbox_client.py` and `~/projects/inbox/mcp_backend.py`** — port the iMessage SQLite reader logic to Rust rather than reinventing it.
 - Worker scheduler in the Rust core: runs each ingestor at its own cadence (Gmail/Slack: every 5 min; Calendar: every 15; iMessage: every 2 with a SQLite changefeed if cheap).
 
@@ -193,8 +192,7 @@ Verification: smoke test green on 3 consecutive PR pushes; an installed v(N) aut
 
 1. **"Jarvis" disambiguation.** User referenced an existing "jarvis" assistant stack. I see `~/projects/{inbox, ambient, neocortex, ccv4, officeqa-local}` but nothing literally named jarvis. Confirm which project(s) we should pull from beyond the inbox + ambient + neocortex set already noted.
 2. **Embedding provider default.** OpenAI text-embedding-3-small ($0.02/M tokens, 1536-dim) vs. Voyage voyage-3 (better recall, slightly more expensive). Default: OpenAI for ubiquity. OK?
-3. **Slack scope.** All channels the user is in, or DMs + explicitly-opted-in channels only? Default: DMs + opted-in (privacy-respecting).
-4. **Background ingestion when desktop app is closed.** OpenHuman has tray + autostart on macOS, so the core sidecar can keep running headless. Should ingestion continue when the window is closed (so the morning brief is ready instantly), or only while the app is in the foreground? Default proposal: continue while the tray icon is present; pause entirely if the user quits from tray.
+3. **Background ingestion when desktop app is closed.** OpenHuman has tray + autostart on macOS, so the core sidecar can keep running headless. Should ingestion continue when the window is closed (so the morning brief is ready instantly), or only while the app is in the foreground? Default proposal: continue while the tray icon is present; pause entirely if the user quits from tray.
 
 ## Out of scope (named so we don't drift)
 
