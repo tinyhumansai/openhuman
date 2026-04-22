@@ -681,6 +681,46 @@ async fn run_server_inner(
                     log::debug!("[core] desktop core startup");
                 }
 
+                // Bring up the curated-memory scratchpad (MEMORY.md + USER.md).
+                // Two markdown files in `<workspace>/memories/`, char-bounded
+                // at Hermes' defaults (memory: 2200, user: 1375). Stores are
+                // created here, registered on the runtime singleton, and
+                // exposed via the memory_curated.{read,add,replace,remove}
+                // controllers.
+                {
+                    use std::sync::Arc;
+                    let mem_dir = config.workspace_dir.join("memories");
+                    let memory_store = crate::openhuman::curated_memory::MemoryStore::open(
+                        &mem_dir,
+                        crate::openhuman::curated_memory::MemoryFile::Memory,
+                        2200,
+                    );
+                    let user_store = crate::openhuman::curated_memory::MemoryStore::open(
+                        &mem_dir,
+                        crate::openhuman::curated_memory::MemoryFile::User,
+                        1375,
+                    );
+                    match (memory_store, user_store) {
+                        (Ok(memory), Ok(user)) => {
+                            let rt = Arc::new(crate::openhuman::curated_memory::runtime::CuratedMemoryRuntime {
+                                memory: Arc::new(memory),
+                                user: Arc::new(user),
+                            });
+                            match crate::openhuman::curated_memory::runtime::init(rt).await {
+                                Ok(()) => log::info!(
+                                    "[curated_memory] runtime initialised at {}",
+                                    mem_dir.display()
+                                ),
+                                Err(e) => log::warn!("[curated_memory] init: {e}"),
+                            }
+                        }
+                        (Err(e), _) | (_, Err(e)) => log::warn!(
+                            "[curated_memory] failed to open stores at {}: {e}",
+                            mem_dir.display()
+                        ),
+                    }
+                }
+
                 // Bring up the local personal index (life-capture). This is the
                 // SQLite + sqlite-vec store backing the `life_capture.search`
                 // and `life_capture.get_stats` controllers. The embedder is
