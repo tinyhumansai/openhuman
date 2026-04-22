@@ -79,6 +79,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
     // Local personal index — search + stats over captured life data.
     controllers.extend(crate::openhuman::life_capture::all_life_capture_registered_controllers());
+    // Curated memory (MEMORY.md + USER.md) — agent-writable scratchpad.
+    controllers.extend(crate::openhuman::curated_memory::all_curated_memory_registered_controllers());
     // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
     // System and process health monitoring
@@ -178,6 +180,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::life_capture::all_life_capture_controller_schemas());
+    schemas.extend(crate::openhuman::curated_memory::all_curated_memory_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
