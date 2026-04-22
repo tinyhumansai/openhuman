@@ -65,7 +65,15 @@ const binName = isWindows ? "openhuman-core.exe" : "openhuman-core";
 console.log(
   `[core:stage] Building openhuman-core standalone binary for ${triple}...`,
 );
-run("cargo", ["build", "--manifest-path", "Cargo.toml", "--bin", "openhuman-core"]);
+run("cargo", [
+  "build",
+  "--manifest-path",
+  "Cargo.toml",
+  "--bin",
+  "openhuman-core",
+  "--features",
+  "whatsapp-web,channel-matrix",
+]);
 
 const targetDir = cargoTargetDir();
 const source = join(targetDir, "debug", binName);

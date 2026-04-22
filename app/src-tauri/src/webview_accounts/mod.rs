@@ -229,10 +229,36 @@ pub struct WebviewAccountsState {
     browser_ids: Mutex<HashMap<String, i32>>,
 }
 
+/// Title prefix applied to every OS toast fired from an embedded webview.
+/// Matches `openhuman_core::webview_notifications::OPENHUMAN_TITLE_PREFIX`
+/// — kept inline here so the shell crate doesn't take a build-time dep on
+/// the core library. Disambiguates from natively-installed apps (Slack,
+/// Discord, Gmail desktop) firing the same message twice.
+#[cfg(feature = "cef")]
+const OPENHUMAN_TITLE_PREFIX: &str = "OpenHuman: ";
+
+/// Serialised fire-event payload shipped to the frontend over the
+/// `webview-notification:fired` Tauri event. Carries `account_id` +
+/// `provider` so the React side can route a subsequent click back to
+/// the originating webview via Redux.
+#[cfg(feature = "cef")]
+#[derive(Debug, Clone, Serialize)]
+struct WebviewNotificationFired {
+    account_id: String,
+    provider: String,
+    title: String,
+    body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tag: Option<String>,
+}
+
 /// Translate a `tauri-runtime-cef` notification payload into a native OS
-/// toast via `tauri-plugin-notification`. Title is prefixed with the
-/// human-readable provider label so a glance tells the user which webview
-/// fired the ping.
+/// toast via `tauri-plugin-notification`, and mirror the fire to the
+/// React frontend so it can drive click-to-focus routing.
+///
+/// Gated on the runtime `NotificationSettings` flag (OFF by default) so
+/// v1 ships the plumbing without surprising users with a toast storm the
+/// first time they open a busy Slack tab.
 #[cfg(feature = "cef")]
 fn forward_native_notification<R: Runtime>(
     app: &AppHandle<R>,
@@ -240,12 +266,25 @@ fn forward_native_notification<R: Runtime>(
     provider: &str,
     payload: &tauri_runtime_cef::notification::NotificationPayload,
 ) {
+    // Feature flag — bail early when the user hasn't opted in.
+    if let Some(settings) = app.try_state::<crate::notification_settings::NotificationSettingsState>()
+    {
+        if !settings.enabled() {
+            log::debug!(
+                "[notify-cef][{}] suppressed (feature flag off) provider={}",
+                account_id,
+                provider
+            );
+            return;
+        }
+    }
+
     let provider_label = provider_display_name(provider);
-    let raw_title = payload.title.as_str();
+    let raw_title = payload.title.as_str().trim();
     let notify_title = if raw_title.is_empty() {
-        provider_label.to_string()
+        format!("{OPENHUMAN_TITLE_PREFIX}{provider_label}")
     } else {
-        format!("{} — {}", provider_label, raw_title)
+        format!("{OPENHUMAN_TITLE_PREFIX}{provider_label} — {raw_title}")
     };
     let body = payload.body.as_deref().unwrap_or("");
     log::info!(
@@ -257,6 +296,24 @@ fn forward_native_notification<R: Runtime>(
         raw_title,
         body.chars().count()
     );
+
+    // Mirror to the frontend BEFORE firing the OS toast so the Redux
+    // store has the routing context ready by the time the user clicks.
+    let fired = WebviewNotificationFired {
+        account_id: account_id.to_string(),
+        provider: provider.to_string(),
+        title: notify_title.clone(),
+        body: body.to_string(),
+        tag: payload.tag.clone(),
+    };
+    if let Err(err) = app.emit("webview-notification:fired", &fired) {
+        log::warn!(
+            "[notify-cef][{}] emit webview-notification:fired failed: {}",
+            account_id,
+            err
+        );
+    }
+
     let mut builder = app.notification().builder().title(&notify_title);
     if !body.is_empty() {
         builder = builder.body(body);

@@ -3,6 +3,7 @@ compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supp
 
 mod core_process;
 mod core_update;
+mod notification_settings;
 #[cfg(feature = "cef")]
 mod discord_scanner;
 #[cfg(feature = "cef")]
@@ -574,7 +575,8 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(DictationHotkeyState(Mutex::new(Vec::new())))
-        .manage(webview_accounts::WebviewAccountsState::default());
+        .manage(webview_accounts::WebviewAccountsState::default())
+        .manage(notification_settings::NotificationSettingsState::new());
     #[cfg(feature = "cef")]
     let builder = builder.manage(std::sync::Arc::new(imessage_scanner::ScannerRegistry::new()));
     let builder = builder.manage(whatsapp_scanner::ScannerRegistry::new());
@@ -884,6 +886,8 @@ pub fn run() {
             webview_accounts::webview_account_show,
             webview_accounts::webview_recipe_event,
             webview_accounts::webview_account_eval,
+            notification_settings::notification_settings_get,
+            notification_settings::notification_settings_set,
             activate_main_window
         ])
         .build(tauri::generate_context!())

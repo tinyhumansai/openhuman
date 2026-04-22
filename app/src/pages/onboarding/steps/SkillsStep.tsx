@@ -4,8 +4,10 @@ import ComposioConnectModal from '../../../components/composio/ComposioConnectMo
 import {
   composioToolkitMeta,
   type ComposioToolkitMeta,
+  KNOWN_COMPOSIO_TOOLKITS,
 } from '../../../components/composio/toolkitMeta';
 import { useComposioIntegrations } from '../../../lib/composio/hooks';
+import { canonicalizeComposioToolkitSlug } from '../../../lib/composio/toolkitSlug';
 import { type ComposioConnection, deriveComposioState } from '../../../lib/composio/types';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 
@@ -68,13 +70,19 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
     refresh: refreshComposio,
   } = useComposioIntegrations();
 
-  // Only show Gmail during onboarding — but only if the backend allowlist
-  // includes it. Fall back to showing it from the static catalog when the
-  // allowlist hasn't loaded yet (composioLoading is true).
-  const ONBOARDING_SLUGS = ['gmail'] as const;
-  const displayToolkits: ComposioToolkitMeta[] = ONBOARDING_SLUGS.filter(
-    slug => composioLoading || backendToolkits.map(t => t.toLowerCase()).includes(slug)
-  ).map(slug => composioToolkitMeta(slug));
+  // Keep onboarding opinionated: show a small curated set of high-value
+  // integrations, but never hide them just because the live Composio allowlist
+  // hasn't loaded yet or temporarily returns an empty list.
+  const ONBOARDING_SLUGS = ['gmail', 'googlecalendar', 'googledrive', 'notion'] as const;
+  const normalizedBackendToolkits = backendToolkits.map(canonicalizeComposioToolkitSlug);
+  const fallbackToolkits = ONBOARDING_SLUGS.filter(slug => KNOWN_COMPOSIO_TOOLKITS.includes(slug));
+  const effectiveToolkits =
+    normalizedBackendToolkits.length > 0
+      ? ONBOARDING_SLUGS.filter(slug => normalizedBackendToolkits.includes(slug))
+      : fallbackToolkits;
+  const displayToolkits: ComposioToolkitMeta[] = effectiveToolkits.map(slug =>
+    composioToolkitMeta(slug)
+  );
 
   // Only count connections for the displayed toolkits.
   const connectedCount = displayToolkits.filter(t => {
@@ -103,10 +111,10 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-4">
-        <h1 className="text-xl font-bold mb-2 text-stone-900">Connect Gmail</h1>
+        <h1 className="text-xl font-bold mb-2 text-stone-900">Connect your tools</h1>
         <p className="text-stone-600 text-sm">
-          Connect your Gmail so OpenHuman can learn about you and build context for your agent. Your
-          data is saved locally and never leaves your device.
+          Connect the tools you already use so OpenHuman can build context for your agent. Your data
+          is saved locally and never leaves your device.
         </p>
       </div>
 

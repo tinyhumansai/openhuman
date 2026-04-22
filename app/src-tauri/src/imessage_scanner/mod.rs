@@ -50,6 +50,8 @@ const MAX_MESSAGES_PER_DAY_REBUILD: usize = 5000;
 
 #[cfg(target_os = "macos")]
 mod chatdb;
+#[cfg(target_os = "macos")]
+mod tick;
 
 #[cfg(target_os = "macos")]
 const SCAN_INTERVAL: Duration = Duration::from_secs(60);
@@ -61,7 +63,7 @@ const MAX_MESSAGES_PER_TICK: usize = 2000;
 /// the webview scanners for future multi-account support.
 #[cfg(target_os = "macos")]
 pub struct ScannerRegistry {
-    inner: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    inner: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 #[cfg(target_os = "macos")]
@@ -75,10 +77,10 @@ impl ScannerRegistry {
     /// Spawn the scanner loop if not already running. Idempotent.
     pub fn ensure_scanner<R: Runtime>(self: Arc<Self>, app: AppHandle<R>, account_id: String) {
         let mut guard = self.inner.lock();
-        if guard.as_ref().map_or(false, |h| !h.is_finished()) {
+        if guard.is_some() {
             return;
         }
-        let handle = tokio::spawn(run_scanner(app, account_id));
+        let handle = tauri::async_runtime::spawn(run_scanner(app, account_id));
         *guard = Some(handle);
     }
 }
@@ -109,99 +111,40 @@ async fn run_scanner<R: Runtime>(app: AppHandle<R>, account_id: String) {
         cursor_path
     );
 
+    let deps = tick::HttpDeps;
     loop {
-        // Gate every tick on explicit iMessage connection state: no ingestion
-        // before opt-in, and stops immediately when the user disconnects.
-        let gate = match fetch_imessage_gate().await {
-            Ok(g) => g,
-            Err(e) => {
-                log::debug!("[imessage] config fetch failed (will retry): {}", e);
-                sleep(SCAN_INTERVAL).await;
-                continue;
-            }
+        let input = tick::TickInput {
+            db_path: db_path.clone(),
+            last_rowid,
+            account_id: account_id.clone(),
         };
-        let Some(allowed_contacts) = gate else {
-            log::debug!("[imessage] not connected — skipping tick");
-            sleep(SCAN_INTERVAL).await;
-            continue;
-        };
-
-        match chatdb::read_since(&db_path, last_rowid, MAX_MESSAGES_PER_TICK) {
-            Ok(messages) if messages.is_empty() => {
-                log::debug!("[imessage] no new messages since rowid={}", last_rowid);
-            }
-            Ok(messages) => {
-                // Remember max rowid we observed in THIS tick so the cursor
-                // can advance if all groups ingest successfully.
-                let tick_max_rowid = messages.iter().map(|m| m.rowid).max().unwrap_or(last_rowid);
-
-                // Collect unique (chat_identifier, apple_ns_within_day)
-                // pairs touched by this tick — we rebuild the full day for
-                // each before upserting, so per-tick POSTs contain the
-                // complete conversation and not just the delta.
-                let day_keys = unique_chat_day_keys(&messages);
-                log::info!(
-                    "[imessage][{}] scan ok new_rows={} unique_days={} cursor={}",
-                    account_id,
-                    messages.len(),
-                    day_keys.len(),
-                    tick_max_rowid
-                );
-
-                let mut had_group_failure = false;
-                for (chat_id, anchor_secs) in day_keys {
-                    if !chat_allowed(&chat_id, &allowed_contacts) {
-                        log::debug!(
-                            "[imessage] skipping chat={} — not in allowed_contacts",
-                            chat_id
-                        );
-                        continue;
-                    }
-                    let (start_ns, end_ns) = local_day_bounds_apple_ns(anchor_secs);
-                    let full_day = match chatdb::read_chat_day(
-                        &db_path,
-                        &chat_id,
-                        start_ns,
-                        end_ns,
-                        MAX_MESSAGES_PER_DAY_REBUILD,
-                    ) {
-                        Ok(msgs) => msgs,
-                        Err(e) => {
-                            log::warn!(
-                                "[imessage] full-day read failed chat={} err={}",
-                                chat_id,
-                                e
-                            );
-                            had_group_failure = true;
-                            continue;
-                        }
-                    };
-                    if full_day.is_empty() {
-                        continue;
-                    }
-                    let day_ymd = seconds_to_ymd(anchor_secs);
-                    let key = format!("{}:{}", chat_id, day_ymd);
-                    let transcript = format_transcript(&full_day);
-                    if let Err(e) = ingest_group(&account_id, &key, transcript).await {
-                        log::warn!("[imessage] memory write failed key={} err={}", key, e);
-                        had_group_failure = true;
-                    }
-                }
-
-                if had_group_failure {
-                    log::warn!(
-                        "[imessage] keeping cursor at rowid={} so failed groups retry",
-                        last_rowid
-                    );
+        match tick::run_single_tick(input, &deps).await {
+            Ok(outcome) => {
+                if outcome.skipped_unconnected {
+                    log::debug!("[imessage] not connected — skipping tick");
                 } else {
-                    last_rowid = tick_max_rowid;
-                    if let Err(e) = write_cursor(&cursor_path, last_rowid) {
-                        log::warn!("[imessage] cursor persist failed err={}", e);
+                    log::info!(
+                        "[imessage][{}] tick ok attempted={} ingested={} cursor={}{}",
+                        account_id,
+                        outcome.groups_attempted,
+                        outcome.groups_ingested,
+                        outcome.new_rowid,
+                        if outcome.had_group_failure {
+                            " (group failure — cursor held)"
+                        } else {
+                            ""
+                        }
+                    );
+                    if !outcome.had_group_failure && outcome.new_rowid != last_rowid {
+                        last_rowid = outcome.new_rowid;
+                        if let Err(e) = write_cursor(&cursor_path, last_rowid) {
+                            log::warn!("[imessage] cursor persist failed err={}", e);
+                        }
                     }
                 }
             }
             Err(e) => {
-                log::warn!("[imessage] scan failed err={}", e);
+                log::warn!("[imessage] tick failed err={}", e);
             }
         }
 
@@ -249,8 +192,10 @@ async fn fetch_imessage_gate() -> anyhow::Result<Option<Vec<String>>> {
         anyhow::bail!("config_get http {}", res.status());
     }
     let v: serde_json::Value = res.json().await?;
+    // JSON-RPC envelope is `{"result": {"logs": [...], "result": <RpcOutcome body>}}`
+    // so the config lives at `/result/result/config/...`, not `/result/config/...`.
     let imessage = v
-        .pointer("/result/config/channels_config/imessage")
+        .pointer("/result/result/config/channels_config/imessage")
         .cloned();
     let Some(imessage) = imessage else {
         return Ok(None);
