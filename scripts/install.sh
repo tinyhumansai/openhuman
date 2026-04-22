@@ -5,6 +5,14 @@
 
 set -euo pipefail
 
+# Allow tests to source this file without executing the install flow.
+SOURCE_ONLY=0
+for _arg in "$@"; do
+  if [[ "$_arg" == "--source-only" ]]; then
+    SOURCE_ONLY=1
+  fi
+done
+
 INSTALLER_VERSION="1.0.0"
 REPO="tinyhumansai/openhuman"
 LATEST_JSON_URL="https://github.com/${REPO}/releases/latest/download/latest.json"
@@ -72,6 +80,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --verbose)
       VERBOSE=true
+      shift
+      ;;
+    --source-only)
+      # handled above before argument parsing loop; skip silently
       shift
       ;;
     *)
@@ -152,6 +164,58 @@ ASSET_URL=""
 ASSET_NAME=""
 ASSET_SHA256=""
 
+# Resolves an asset URL from a latest.json file for a given OS/arch.
+# Args: $1 = path to latest.json, $2 = os (linux|darwin|windows), $3 = arch (x86_64|aarch64)
+# Stdout: the URL on success.
+# Exit code: 0 on success; 2 on parse error (with diagnostic on stderr); 3 on missing platform.
+resolve_asset_url() {
+  local json_path="$1" os="$2" arch="$3"
+  local key="${os}-${arch}"
+  local url
+  url=$(python3 - "$json_path" "$key" <<'PY'
+import json, sys
+path, key = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        data = json.load(f)
+except Exception as e:
+    print(f"ERR_PARSE: {e}", file=sys.stderr)
+    sys.exit(2)
+plat = data.get("platforms", {}).get(key)
+if not plat:
+    available = ", ".join(sorted(data.get("platforms", {}).keys()))
+    print(f"ERR_PLATFORM: {key} not in [{available}]", file=sys.stderr)
+    sys.exit(3)
+url = plat.get("url")
+if not url:
+    print(f"ERR_URL: no url field for {key}", file=sys.stderr)
+    sys.exit(2)
+print(url)
+PY
+  )
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    return $rc
+  fi
+  printf '%s\n' "$url"
+}
+
+# Retries an HTTP HEAD on the asset URL, fails loudly with the URL.
+verify_asset_reachable() {
+  local url="$1" max_attempts=5 delay=2
+  for i in $(seq 1 $max_attempts); do
+    if curl -fsSI --max-time 10 "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ $i -lt $max_attempts ]]; then
+      sleep "$delay"
+      delay=$((delay * 2))
+    fi
+  done
+  echo "ERR_UNREACHABLE: $url not reachable after $max_attempts attempts" >&2
+  return 4
+}
+
 resolve_from_latest_json() {
   if ! curl -fsSL "${LATEST_JSON_URL}" -o "${LATEST_JSON_PATH}"; then
     return 1
@@ -162,26 +226,27 @@ resolve_from_latest_json() {
     return 1
   fi
 
-  local parsed
-  parsed="$(python3 - "${LATEST_JSON_PATH}" "${PLATFORM_KEY}" <<'PY'
-import json, sys
-path, key = sys.argv[1], sys.argv[2]
-with open(path, "r", encoding="utf-8") as f:
-    data = json.load(f)
-version = data.get("version", "")
-platforms = data.get("platforms", {})
-entry = platforms.get(key) or platforms.get(f"{key}-appimage") or platforms.get(f"{key}-app")
-url = ""
-if isinstance(entry, dict):
-    url = entry.get("url", "")
-print(version)
-print(url)
-PY
-)" || return 1
+  local url
+  url=$(resolve_asset_url "${LATEST_JSON_PATH}" "${OS}" "${ARCH}") || {
+    local rc=$?
+    if [[ $rc -eq 3 ]]; then
+      log_warn "Platform ${OS}-${ARCH} not found in latest.json. Resolved URL will be empty — check if a Linux build has been published."
+      log_warn "$(cat "${LATEST_JSON_PATH}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("Available platforms: " + ", ".join(sorted(d.get("platforms",{}).keys())))' 2>/dev/null || true)"
+    else
+      log_warn "Failed to parse latest.json (exit $rc)."
+    fi
+    return 1
+  }
 
-  LATEST_VERSION="$(echo "${parsed}" | sed -n '1p')"
-  ASSET_URL="$(echo "${parsed}" | sed -n '2p')"
+  ASSET_URL="$url"
   ASSET_NAME="$(basename "${ASSET_URL}")"
+
+  # Extract version from latest.json
+  LATEST_VERSION="$(python3 -c "
+import json, sys
+with open('${LATEST_JSON_PATH}') as f: d = json.load(f)
+print(d.get('version', ''))
+" 2>/dev/null || true)"
 
   [ -n "${ASSET_URL}" ]
 }
@@ -210,22 +275,22 @@ def choose_asset():
     chosen = None
     if os_name == "darwin" and arch == "aarch64":
         for n in names:
-            if re.search(r"aarch64.*\.app\.tar\.gz$", n):
+            if re.search(r"aarch64.*\\.app\\.tar\\.gz$", n):
                 chosen = n
                 break
         if not chosen:
             for n in names:
-                if re.search(r"aarch64\.dmg$", n):
+                if re.search(r"aarch64\\.dmg$", n):
                     chosen = n
                     break
     elif os_name == "darwin" and arch == "x86_64":
         for n in names:
-            if re.search(r"(x86_64-apple-darwin|x64).*\.app\.tar\.gz$", n):
+            if re.search(r"(x86_64-apple-darwin|x64).*\\.app\\.tar\\.gz$", n):
                 chosen = n
                 break
         if not chosen:
             for n in names:
-                if re.search(r"x64\.dmg$", n):
+                if re.search(r"x64\\.dmg$", n):
                     chosen = n
                     break
     elif os_name == "linux" and arch == "x86_64":
@@ -293,39 +358,33 @@ PY
   fi
 }
 
+if [[ "${SOURCE_ONLY}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 if resolve_from_latest_json; then
   log_ok "Resolved latest release via latest.json (${LATEST_VERSION})"
 else
   log_warn "latest.json lookup failed. Falling back to releases API."
-  # Wrap the call so `set -e` can't abort before rc is captured. Without the
-  # `if`-guard, `resolve_from_release_api` returning a non-zero rc (e.g. 2 for
-  # "no compatible asset") trips `set -euo pipefail` and exits the script
-  # before the handler below can decide dry-run vs real-install behavior.
-  if resolve_from_release_api; then
-    resolve_rc=0
-  else
-    resolve_rc=$?
-  fi
+  resolve_from_release_api
+  resolve_rc=$?
   if [ "${resolve_rc}" -ne 0 ]; then
-    # Dry-run is a "what would happen?" query, not an install. If the release
-    # metadata says no compatible asset exists (or the metadata itself can't
-    # be reached), surface a warning and exit 0 so installer smoke checks on
-    # platforms without a current build don't fail the whole CI matrix. Real
-    # installs (non-dry-run) still hard-fail below.
-    if [ "${DRY_RUN}" = true ]; then
-      case "${resolve_rc}" in
-        2)
-          log_warn "No compatible release asset published yet for ${OS}/${ARCH}."
-          ;;
-        *)
-          log_warn "Could not reach release metadata (rc=${resolve_rc}) for ${OS}/${ARCH}."
-          ;;
-      esac
-      echo "DRY RUN: skipping install for ${OS}/${ARCH} — no asset resolved."
+    if [ "${DRY_RUN}" = true ] && [ "${resolve_rc}" -eq 2 ]; then
+      if [ "${OS}" = "linux" ]; then
+        log_warn "No Linux release asset is currently published. Dry-run will skip install steps."
+        echo "DRY RUN: no compatible asset available for ${OS}/${ARCH}"
+        # Preserve failure signal for automation.
+        if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+          exit 1
+        fi
+      else
+        log_warn "No compatible release asset found for ${OS}/${ARCH} (dry-run mode, skipping download)."
+        echo "DRY RUN: no compatible artifact available yet for ${OS}/${ARCH}"
+      fi
       exit 0
     fi
     log_err "Could not resolve a compatible asset for ${OS}/${ARCH}."
-    log_err "Check https://github.com/${REPO}/releases/latest for available assets."
+    log_err "Resolved URL was empty. Check https://github.com/${REPO}/releases/latest for available assets."
     exit 1
   fi
   log_ok "Resolved latest release via releases API (${LATEST_VERSION})"
@@ -415,7 +474,7 @@ install_macos() {
   local app_path="${apps_dir}/OpenHuman.app"
   mkdir -p "${apps_dir}"
 
-  if [[ "${ASSET_NAME}" =~ \.app\.tar\.gz$ ]]; then
+  if [[ "${ASSET_NAME}" == *.app.tar.gz ]]; then
     log_info "Installing OpenHuman.app into ${apps_dir}"
     if [ "${DRY_RUN}" = true ]; then
       echo "DRY RUN: tar -xzf ${DOWNLOAD_PATH} -C ${TMP_DIR}"
@@ -429,7 +488,7 @@ install_macos() {
       rm -rf "${app_path}"
       cp -R "${TMP_DIR}/OpenHuman.app" "${app_path}"
     fi
-  elif [[ "${ASSET_NAME}" =~ \.dmg$ ]]; then
+  elif [[ "${ASSET_NAME}" == *.dmg ]]; then
     log_info "Mounting DMG and copying OpenHuman.app"
     if [ "${DRY_RUN}" = true ]; then
       echo "DRY RUN: hdiutil attach ${DOWNLOAD_PATH}"
@@ -470,7 +529,7 @@ install_linux() {
 
   mkdir -p "${bin_dir}" "${desktop_dir}"
 
-  if [[ ! "${ASSET_NAME}" =~ \.AppImage$ ]]; then
+  if [[ "${ASSET_NAME}" != *.AppImage ]]; then
     log_err "Expected AppImage for Linux install, got: ${ASSET_NAME}"
     exit 1
   fi
@@ -494,7 +553,6 @@ Name=OpenHuman
 Comment=OpenHuman desktop assistant
 Exec=${app_path}
 TryExec=${app_path}
-Icon=${bin_dir}/openhuman.png
 Terminal=false
 Categories=Utility;
 EOF
