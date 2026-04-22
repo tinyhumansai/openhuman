@@ -190,9 +190,23 @@ pub async fn score_chunk(chunk: &Chunk, cfg: &ScoringConfig) -> Result<ScoreResu
         false
     };
 
-    // 4. Final weighted combine — includes llm_importance whether it was
-    //    populated by the LLM call (set to its rating) or not (still 0.0).
-    let total = self::signals::combine(&signals, &cfg.weights);
+    // 4. Final weighted combine.
+    //
+    // If the LLM ran, its importance signal is populated → use the full
+    // `combine` which includes the `llm_importance` weight.
+    //
+    // If the LLM was skipped (short-circuited or not configured) OR failed
+    // (caught above, sets `llm_consulted=false`), using the full combine
+    // would pin `llm_importance * w.llm_importance = 0 * 2.0` into the
+    // numerator while still dividing by the full denominator — artificially
+    // dragging the total down. Fall back to `combine_cheap_only` which
+    // excludes that term from both numerator and denominator, so the cheap
+    // signals alone produce the total.
+    let total = if llm_consulted {
+        self::signals::combine(&signals, &cfg.weights)
+    } else {
+        self::signals::combine_cheap_only(&signals, &cfg.weights)
+    };
 
     // 5. Admission gate. Source and interaction priors are deliberately
     // non-zero, so guard against very short entity-free chatter being kept by
@@ -520,5 +534,61 @@ mod tests {
         // Should not error out; should produce a result based on cheap signals only.
         let r = score_chunk(&c, &cfg).await.unwrap();
         assert_eq!(r.signals.llm_importance, 0.0);
+    }
+
+    /// When LLM is skipped (short-circuit or failure), the reported `total`
+    /// must equal `combine_cheap_only(signals, weights)` — not the
+    /// LLM-weighted `combine` (which would drag `llm_importance=0` through
+    /// a 2.0 weight and artificially lower the total).
+    #[tokio::test]
+    async fn short_circuit_reports_cheap_only_total() {
+        let c = test_chunk(
+            "We decided to ship Phoenix on Friday after reviewing alice@example.com and \
+             the migration plan carefully. @bob will coordinate and we discussed \
+             #launch-q2 details extensively in the email thread.",
+        );
+        let llm = FakeLlm::new(0.99);
+        let mut cfg = ScoringConfig::with_llm_extractor(llm.clone());
+        cfg.definite_keep_threshold = 0.10; // force short-circuit keep
+        let r = score_chunk(&c, &cfg).await.unwrap();
+        assert_eq!(llm.calls(), 0);
+        let expected = self::signals::combine_cheap_only(&r.signals, &cfg.weights);
+        assert!(
+            (r.total - expected).abs() < 1e-6,
+            "total={} expected(cheap_only)={}",
+            r.total,
+            expected
+        );
+        // And explicitly NOT the full combine (which would include a 0-value
+        // llm_importance term in a 0..1-clamped weighted average, dragging
+        // the total down).
+        let with_llm = self::signals::combine(&r.signals, &cfg.weights);
+        assert!(
+            r.total > with_llm,
+            "cheap-only total ({}) should exceed LLM-weighted total \
+             ({}) when llm_importance is zero",
+            r.total,
+            with_llm
+        );
+    }
+
+    /// When the LLM *does* run, the reported total uses the full combine —
+    /// the llm_importance contribution is actually in the sum.
+    #[tokio::test]
+    async fn llm_consulted_reports_full_total() {
+        let c = test_chunk("This is a moderately interesting note about a project.");
+        let llm = FakeLlm::new(0.9);
+        let mut cfg = ScoringConfig::with_llm_extractor(llm.clone());
+        cfg.definite_drop_threshold = 0.0;
+        cfg.definite_keep_threshold = 1.0;
+        let r = score_chunk(&c, &cfg).await.unwrap();
+        assert_eq!(llm.calls(), 1);
+        let expected = self::signals::combine(&r.signals, &cfg.weights);
+        assert!(
+            (r.total - expected).abs() < 1e-6,
+            "total={} expected(full combine)={}",
+            r.total,
+            expected
+        );
     }
 }

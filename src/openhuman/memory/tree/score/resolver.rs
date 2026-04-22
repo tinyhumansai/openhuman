@@ -117,6 +117,8 @@ mod tests {
                 entity(EntityKind::Email, "alice@example.com"),
             ],
             topics: vec![],
+            llm_importance: None,
+            llm_importance_reason: None,
         };
         let out = canonicalise(&ex);
         assert_eq!(out.len(), 2);

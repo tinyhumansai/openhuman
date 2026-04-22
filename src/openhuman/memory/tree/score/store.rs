@@ -353,6 +353,7 @@ mod tests {
                 source_weight: 0.5,
                 interaction: 0.6,
                 entity_density: 0.3,
+                llm_importance: 0.0,
             },
             dropped,
             reason: if dropped {
@@ -361,6 +362,7 @@ mod tests {
                 None
             },
             computed_at_ms: 1_700_000_000_000,
+            llm_importance_reason: None,
         }
     }
 

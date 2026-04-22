@@ -233,6 +233,8 @@ mod tests {
                 },
             ],
             topics: vec![],
+            llm_importance: None,
+            llm_importance_reason: None,
         };
         assert_eq!(e.unique_entity_count(), 1);
     }
@@ -257,6 +259,8 @@ mod tests {
                 },
             ],
             topics: vec![],
+            llm_importance: None,
+            llm_importance_reason: None,
         };
         assert_eq!(e.unique_entity_count(), 2);
     }
@@ -272,6 +276,8 @@ mod tests {
                 score: 1.0,
             }],
             topics: vec![],
+            llm_importance: None,
+            llm_importance_reason: None,
         };
         let b = ExtractedEntities {
             entities: vec![
@@ -291,6 +297,8 @@ mod tests {
                 }, // different span — keep
             ],
             topics: vec![],
+            llm_importance: None,
+            llm_importance_reason: None,
         };
         a.merge(b);
         assert_eq!(a.entities.len(), 2);

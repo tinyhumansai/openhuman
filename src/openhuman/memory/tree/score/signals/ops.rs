@@ -115,7 +115,7 @@ mod tests {
                     score: 1.0,
                 })
                 .collect(),
-            topics: vec![],
+            ..Default::default()
         }
     }
 
@@ -134,6 +134,7 @@ mod tests {
             source_weight: 1.0,
             interaction: 1.0,
             entity_density: 1.0,
+            llm_importance: 0.0, // default weight is 0 → contribution is zero
         };
         assert!((combine(&s, &SignalWeights::default()) - 1.0).abs() < 1e-6);
     }
@@ -147,6 +148,7 @@ mod tests {
             source_weight: 0.0,
             interaction: 1.0,
             entity_density: 0.0,
+            llm_importance: 0.0,
         };
         let total = combine(&s, &SignalWeights::default());
         assert!((total - (3.0 / 9.0)).abs() < 1e-6);

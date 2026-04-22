@@ -124,6 +124,23 @@ impl EntityExtractor for LlmEntityExtractor {
     }
 
     async fn extract(&self, text: &str) -> anyhow::Result<ExtractedEntities> {
+        // Soft-fallback contract: every failure path (transport, HTTP status,
+        // JSON parse) is logged as a warn and returns an empty
+        // `ExtractedEntities` rather than `Err`. This makes the extractor
+        // safe to call from any context, not just `score_chunk` (which
+        // separately catches errors from its own extractor chain). A caller
+        // distinguishes "LLM had nothing to say" from "LLM ran and returned
+        // zero entities" by inspecting `llm_importance` — `None` means the
+        // call didn't complete successfully.
+        Ok(self.extract_or_empty(text).await)
+    }
+}
+
+impl LlmEntityExtractor {
+    /// Internal: wraps the actual HTTP call and returns `ExtractedEntities`
+    /// for every failure mode via soft-fallback. Split out of `extract` so
+    /// the error branches can share logging without `?`-propagation.
+    async fn extract_or_empty(&self, text: &str) -> ExtractedEntities {
         let url = format!("{}/api/chat", self.cfg.endpoint.trim_end_matches('/'));
         let body = self.build_request(text);
         log::debug!(
@@ -132,36 +149,56 @@ impl EntityExtractor for LlmEntityExtractor {
             text.chars().count()
         );
 
-        let resp = self
-            .http
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(anyhow::Error::from)?;
+        let resp = match self.http.post(&url).json(&body).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!(
+                    "[memory_tree::extract::llm] transport failure to {url}: {e} — \
+                     returning empty extraction"
+                );
+                return ExtractedEntities::default();
+            }
+        };
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("ollama status {status}: {body}");
+            log::warn!(
+                "[memory_tree::extract::llm] ollama non-success status {status}: {} — \
+                 returning empty extraction",
+                truncate_for_log(&body, 200)
+            );
+            return ExtractedEntities::default();
         }
 
-        let envelope: OllamaChatResponse = resp.json().await.map_err(anyhow::Error::from)?;
+        let envelope: OllamaChatResponse = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!(
+                    "[memory_tree::extract::llm] response body not Ollama-shaped JSON: {e} — \
+                     returning empty extraction"
+                );
+                return ExtractedEntities::default();
+            }
+        };
         log::debug!(
             "[memory_tree::extract::llm] response chars={}",
             envelope.message.content.len()
         );
 
-        let parsed: LlmExtractionOutput =
-            serde_json::from_str(&envelope.message.content).map_err(|e| {
-                anyhow::anyhow!(
-                    "LLM returned non-JSON or wrong-shape response: {e}; \
-                     content was: {}",
+        let parsed: LlmExtractionOutput = match serde_json::from_str(&envelope.message.content) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!(
+                    "[memory_tree::extract::llm] LLM returned non-JSON or wrong-shape \
+                     response: {e}; content was: {} — returning empty extraction",
                     truncate_for_log(&envelope.message.content, 400)
-                )
-            })?;
+                );
+                return ExtractedEntities::default();
+            }
+        };
 
-        Ok(parsed.into_extracted_entities(text, &self.cfg))
+        parsed.into_extracted_entities(text, &self.cfg)
     }
 }
 
@@ -248,6 +285,15 @@ impl LlmExtractionOutput {
     ) -> ExtractedEntities {
         let mut entities = Vec::with_capacity(self.entities.len());
 
+        // Per-surface search cursor (char offset). When the LLM returns the
+        // same surface text twice (deliberately — the prompt asks for
+        // duplicates), we resume searching AFTER the previous occurrence so
+        // each emitted entity points at a distinct span. Byte indices are
+        // tracked separately from char indices because `str::find` returns
+        // byte offsets while the rest of the pipeline uses char spans.
+        use std::collections::HashMap;
+        let mut cursors: HashMap<String, (usize /*byte*/, u32 /*char*/)> = HashMap::new();
+
         for raw in self.entities {
             let surface = raw.text.trim();
             if surface.is_empty() {
@@ -280,18 +326,23 @@ impl LlmExtractionOutput {
                 }
             };
 
-            // Recover spans by string search. If the model hallucinated a
-            // surface that doesn't appear in the source text, drop it.
-            let (span_start, span_end) = match find_char_span(source_text, surface) {
-                Some(s) => s,
-                None => {
-                    log::debug!(
-                        "[memory_tree::extract::llm] dropping hallucinated entity (not found \
-                         in source): {surface:?}"
-                    );
-                    continue;
-                }
-            };
+            // Recover spans by string search, advancing the cursor for this
+            // surface so repeated mentions get distinct spans. If the model
+            // hallucinated a surface (or we've exhausted all of its
+            // occurrences), drop the entity.
+            let (byte_from, char_from) = cursors.get(surface).copied().unwrap_or((0, 0));
+            let (span_start, span_end, byte_after) =
+                match find_char_span_from(source_text, surface, byte_from, char_from) {
+                    Some(s) => s,
+                    None => {
+                        log::debug!(
+                            "[memory_tree::extract::llm] dropping hallucinated or exhausted \
+                             entity (not found beyond cursor): {surface:?}"
+                        );
+                        continue;
+                    }
+                };
+            cursors.insert(surface.to_string(), (byte_after, span_end));
 
             entities.push(ExtractedEntity {
                 kind,
@@ -332,10 +383,41 @@ fn parse_kind(s: &str) -> Option<EntityKind> {
 /// Uses byte-level `find` then translates to char offsets so spans align
 /// with the rest of the extractor pipeline (which is char-based).
 fn find_char_span(haystack: &str, needle: &str) -> Option<(u32, u32)> {
-    let byte_idx = haystack.find(needle)?;
-    let char_start = haystack[..byte_idx].chars().count() as u32;
+    find_char_span_from(haystack, needle, 0, 0).map(|(s, e, _)| (s, e))
+}
+
+/// Find `needle` in `haystack` starting from `byte_from` and return
+/// `(char_start, char_end, byte_after_needle)`.
+///
+/// The byte-offset return is so the caller can chain successive searches
+/// without re-walking the prefix every time: pass the returned
+/// `byte_after_needle` as the next call's `byte_from`.
+///
+/// `char_from` must correspond to `byte_from` in the same `haystack` —
+/// i.e. `haystack[..byte_from].chars().count() == char_from as usize`.
+/// The caller maintains this invariant (cheap: it's the return from the
+/// previous call).
+fn find_char_span_from(
+    haystack: &str,
+    needle: &str,
+    byte_from: usize,
+    char_from: u32,
+) -> Option<(u32, u32, usize)> {
+    if needle.is_empty() || byte_from > haystack.len() {
+        return None;
+    }
+    // Guard against `byte_from` landing inside a multi-byte UTF-8 sequence.
+    if !haystack.is_char_boundary(byte_from) {
+        return None;
+    }
+    let rel = haystack[byte_from..].find(needle)?;
+    let byte_start = byte_from + rel;
+    let byte_end = byte_start + needle.len();
+    // Walk forward from the previous char position to build the new char
+    // offset — avoids re-walking the full prefix.
+    let char_start = char_from + haystack[byte_from..byte_start].chars().count() as u32;
     let char_end = char_start + needle.chars().count() as u32;
-    Some((char_start, char_end))
+    Some((char_start, char_end, byte_end))
 }
 
 fn truncate_for_log(s: &str, max_chars: usize) -> String {
@@ -370,6 +452,111 @@ mod tests {
     #[test]
     fn find_char_span_returns_none_for_missing() {
         assert!(find_char_span("hello world", "absent").is_none());
+    }
+
+    #[test]
+    fn find_char_span_from_advances_past_prior_match() {
+        let text = "Alice met Bob then Alice left";
+        let (s1, e1, byte_after) = find_char_span_from(text, "Alice", 0, 0).unwrap();
+        assert_eq!((s1, e1), (0, 5));
+        // Resuming from the cursor must find the second Alice.
+        let (s2, e2, _) = find_char_span_from(text, "Alice", byte_after, e1).unwrap();
+        assert_eq!((s2, e2), (19, 24));
+    }
+
+    #[test]
+    fn find_char_span_from_returns_none_after_exhaustion() {
+        let text = "Alice met Bob";
+        let (_, _, byte_after) = find_char_span_from(text, "Alice", 0, 0).unwrap();
+        // No second Alice → None.
+        assert!(find_char_span_from(text, "Alice", byte_after, 5).is_none());
+    }
+
+    #[test]
+    fn find_char_span_from_preserves_utf8() {
+        // Two "中" characters (3 bytes each in UTF-8); "Alice" between.
+        let text = "中 Alice 中 Alice";
+        let (s1, e1, byte_after) = find_char_span_from(text, "Alice", 0, 0).unwrap();
+        assert_eq!((s1, e1), (2, 7));
+        let (s2, e2, _) = find_char_span_from(text, "Alice", byte_after, e1).unwrap();
+        // First "中 Alice " = 2 + 5 + 1 + 1 + 1 chars; second Alice starts at char 10.
+        assert_eq!((s2, e2), (10, 15));
+    }
+
+    #[test]
+    fn find_char_span_from_rejects_non_char_boundary() {
+        // "中" is 3 bytes; offsets 1 and 2 are mid-codepoint.
+        let text = "中Alice";
+        assert!(find_char_span_from(text, "Alice", 1, 0).is_none());
+    }
+
+    #[test]
+    fn into_extracted_entities_gives_distinct_spans_to_duplicate_mentions() {
+        // Two "Alice" mentions in source → two distinct ExtractedEntity rows
+        // with non-overlapping spans. Previously both got (0, 5).
+        let out = LlmExtractionOutput {
+            entities: vec![
+                LlmEntity {
+                    kind: "person".into(),
+                    text: "Alice".into(),
+                },
+                LlmEntity {
+                    kind: "person".into(),
+                    text: "Alice".into(),
+                },
+            ],
+            importance: None,
+            importance_reason: None,
+        };
+        let cfg = LlmExtractorConfig::default();
+        let e = out.into_extracted_entities("Alice met Bob then Alice left", &cfg);
+        assert_eq!(e.entities.len(), 2);
+        assert_eq!((e.entities[0].span_start, e.entities[0].span_end), (0, 5));
+        assert_eq!((e.entities[1].span_start, e.entities[1].span_end), (19, 24));
+    }
+
+    #[test]
+    fn into_extracted_entities_drops_extra_duplicate_when_source_only_has_one() {
+        // Three "Alice" mentions returned by LLM, only one in source → keep
+        // one, drop the rest as exhausted-duplicate.
+        let out = LlmExtractionOutput {
+            entities: vec![
+                LlmEntity {
+                    kind: "person".into(),
+                    text: "Alice".into(),
+                },
+                LlmEntity {
+                    kind: "person".into(),
+                    text: "Alice".into(),
+                },
+                LlmEntity {
+                    kind: "person".into(),
+                    text: "Alice".into(),
+                },
+            ],
+            importance: None,
+            importance_reason: None,
+        };
+        let cfg = LlmExtractorConfig::default();
+        let e = out.into_extracted_entities("Alice met Bob", &cfg);
+        assert_eq!(e.entities.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn extract_soft_fallback_on_unreachable_endpoint() {
+        // Point at an unreachable port so the transport fails. extract()
+        // must NOT return Err — it must return an empty ExtractedEntities
+        // with a warn log.
+        let cfg = LlmExtractorConfig {
+            endpoint: "http://127.0.0.1:1".to_string(),
+            timeout: std::time::Duration::from_millis(100),
+            ..LlmExtractorConfig::default()
+        };
+        let ex = LlmEntityExtractor::new(cfg).unwrap();
+        let out = ex.extract("some text").await.unwrap();
+        assert!(out.entities.is_empty());
+        assert!(out.topics.is_empty());
+        assert!(out.llm_importance.is_none());
     }
 
     #[test]
