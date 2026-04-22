@@ -342,7 +342,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
         if (cancelled) return;
         if (!status.stt_available) {
           setVoiceStatus(
-            'Speech-to-text unavailable: whisper-cli binary or STT model not found. Check Settings > Local Models.'
+            'Voice input needs a speech model to work. Go to Settings > Local AI Models to set it up.'
           );
         } else {
           setVoiceStatus('Ready — tap "Start Talking" to record.');
@@ -490,7 +490,16 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     } catch (err) {
       notifyOverlaySttState('error');
       const message = err instanceof Error ? err.message : String(err);
-      setSendError(chatSendError('voice_transcription', `Voice transcription failed: ${message}`));
+      const isSetupIssue =
+        message.includes('whisper') || message.includes('binary not found') || message.includes('STT model');
+      setSendError(
+        chatSendError(
+          isSetupIssue ? 'stt_not_ready' : 'voice_transcription',
+          isSetupIssue
+            ? 'Voice input needs a speech model. Go to Settings to download one.'
+            : `Voice transcription failed: ${message}`
+        )
+      );
       setVoiceStatus(null);
     } finally {
       setIsTranscribing(false);
@@ -1252,11 +1261,23 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
               <p className="text-xs text-coral-500" data-chat-send-error-code={sendError.code}>
                 {sendError.message}
               </p>
-              <button
-                onClick={() => setSendError(null)}
-                className="text-xs text-stone-500 hover:text-stone-700 transition-colors ml-2 flex-shrink-0">
-                Dismiss
-              </button>
+              <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                {(sendError.code === 'stt_not_ready' || sendError.code === 'voice_transcription') && (
+                  <button
+                    onClick={() => {
+                      setSendError(null);
+                      navigate('/settings/local-model');
+                    }}
+                    className="text-xs text-primary-500 hover:text-primary-600 font-medium transition-colors">
+                    Set up
+                  </button>
+                )}
+                <button
+                  onClick={() => setSendError(null)}
+                  className="text-xs text-stone-500 hover:text-stone-700 transition-colors">
+                  Dismiss
+                </button>
+              </div>
             </div>
           )}
 
