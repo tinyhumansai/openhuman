@@ -36,8 +36,8 @@ import {
 import { supportsExecuteScript } from '../helpers/platform';
 import {
   completeOnboardingIfVisible,
-  navigateViaHash,
   navigateToSettings,
+  navigateViaHash,
 } from '../helpers/shared-flows';
 import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
@@ -172,10 +172,7 @@ describe('Cron jobs (UI + core RPC)', () => {
     const seeded = await waitForSeededJob(MORNING_BRIEFING_NAME, 5_000);
     expect(seeded).toBeTruthy();
 
-    const runs = await callOpenhumanRpc('openhuman.cron_runs', {
-      job_id: seeded!.id,
-      limit: 5,
-    });
+    const runs = await callOpenhumanRpc('openhuman.cron_runs', { job_id: seeded!.id, limit: 5 });
     if (!runs.ok) stepLog('cron_runs failed', runs);
     expect(runs.ok).toBe(true);
     const history = innerPayload<unknown[]>(runs.result) ?? [];
