@@ -103,7 +103,9 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
   };
 
   return (
-    <div data-testid="onboarding-overlay" className="min-h-full relative flex items-center justify-center">
+    <div
+      data-testid="onboarding-overlay"
+      className="min-h-full relative flex items-center justify-center">
       {onDefer && (
         <div className="fixed top-4 right-0 z-20 sm:top-6 sm:right-6">
           <button

@@ -6,7 +6,6 @@
  * the first consumer; future panels can reuse the same types.
  */
 import { callCoreRpc } from '../../services/coreRpcClient';
-
 import { CommandResponse } from './common';
 
 export type CapabilityCategory =
@@ -23,12 +22,7 @@ export type CapabilityCategory =
 
 export type CapabilityStatus = 'stable' | 'beta' | 'coming_soon' | 'deprecated';
 
-export type PrivacyDataKind =
-  | 'raw'
-  | 'derived'
-  | 'credentials'
-  | 'diagnostics'
-  | 'metadata';
+export type PrivacyDataKind = 'raw' | 'derived' | 'credentials' | 'diagnostics' | 'metadata';
 
 export interface CapabilityPrivacy {
   leaves_device: boolean;

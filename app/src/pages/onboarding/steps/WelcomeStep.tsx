@@ -74,7 +74,9 @@ const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
   }, []);
 
   return (
-    <div data-testid="onboarding-welcome-step" className="rounded-2xl bg-white p-10 shadow-soft animate-fade-up">
+    <div
+      data-testid="onboarding-welcome-step"
+      className="rounded-2xl bg-white p-10 shadow-soft animate-fade-up">
       <div className="h-[340px] flex flex-col items-center justify-center">
         {slide === 0 && <WelcomeSlide />}
         {slide === 1 && <IntegrationsSlide />}

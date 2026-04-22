@@ -52,9 +52,7 @@ function nowStamp(): string {
 }
 
 function getRoot(): string {
-  return process.env.E2E_ARTIFACT_ROOT
-    ? path.resolve(process.env.E2E_ARTIFACT_ROOT)
-    : defaultRoot;
+  return process.env.E2E_ARTIFACT_ROOT ? path.resolve(process.env.E2E_ARTIFACT_ROOT) : defaultRoot;
 }
 
 /**
@@ -134,12 +132,7 @@ export async function captureCheckpoint(name: string): Promise<void> {
   if (await writeSource(xmlFile)) files.push(path.basename(xmlFile));
 
   if (meta) {
-    meta.checkpoints.push({
-      index: checkpointIndex,
-      name,
-      at: new Date().toISOString(),
-      files,
-    });
+    meta.checkpoints.push({ index: checkpointIndex, name, at: new Date().toISOString(), files });
     writeMeta();
   }
   // eslint-disable-next-line no-console
@@ -162,11 +155,7 @@ export async function captureFailureArtifacts(testName: string): Promise<void> {
     if (await writeSource(xmlFile)) files.push(path.basename(xmlFile));
 
     if (meta) {
-      meta.failures.push({
-        testName,
-        at: new Date().toISOString(),
-        files,
-      });
+      meta.failures.push({ testName, at: new Date().toISOString(), files });
       writeMeta();
     }
     // eslint-disable-next-line no-console
