@@ -1,6 +1,5 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
-import Markdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
@@ -14,7 +13,6 @@ import {
   beginInferenceTurn,
   clearRuntimeForThread,
   setToolTimelineForThread,
-  type ToolTimelineEntry,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
@@ -30,8 +28,7 @@ import {
   setSelectedThread,
 } from '../store/threadSlice';
 import type { ThreadMessage } from '../types/thread';
-import { parseMarkdownTable, splitAgentMessageIntoBubbles } from '../utils/agentMessageBubbles';
-import { openUrl } from '../utils/openUrl';
+import { splitAgentMessageIntoBubbles } from '../utils/agentMessageBubbles';
 import {
   isTauri,
   notifyOverlaySttState,
@@ -42,6 +39,19 @@ import {
   openhumanVoiceTts,
 } from '../utils/tauriCommands';
 import { formatTimelineEntry } from '../utils/toolTimelineFormatting';
+import {
+  AgentMessageBubble,
+  BubbleMarkdown,
+} from './conversations/components/AgentMessageBubble';
+import { LimitPill } from './conversations/components/LimitPill';
+import { ToolTimelineBlock } from './conversations/components/ToolTimelineBlock';
+import {
+  type AgentBubblePosition,
+  buildAcceptedInlineCompletion,
+  formatRelativeTime,
+  formatResetTime,
+  getInlineCompletionSuffix,
+} from './conversations/utils/format';
 
 // Chat uses the reasoning model; `agentic-v1` is reserved for sub-agents
 // that execute tool calls, not the primary user-facing conversation.
@@ -56,314 +66,6 @@ type ReplyMode = 'text' | 'voice';
 const AUTOCOMPLETE_POLL_DEBOUNCE_MS = 320;
 const AUTOCOMPLETE_MIN_CONTEXT_CHARS = 3;
 
-function formatRelativeTime(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diffMs = now - then;
-  if (diffMs < 60_000) return 'just now';
-  const mins = Math.floor(diffMs / 60_000);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function getInlineCompletionSuffix(input: string, suggestion: string): string {
-  if (!input || !suggestion) return '';
-  const normalize = (value: string) =>
-    value
-      .replace(/\u2192/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-  const normalizedInput = normalize(input);
-  const normalizedSuggestion = normalize(suggestion);
-  if (!normalizedSuggestion) return '';
-
-  // Full-text response: strip already-typed prefix.
-  if (normalizedSuggestion.startsWith(normalizedInput)) {
-    return normalizedSuggestion.slice(normalizedInput.length).trimStart();
-  }
-
-  // Remove overlap to prevent duplicate phrase insertion:
-  // "...want to" + "want to create..." => "create..."
-  const maxOverlap = Math.min(normalizedInput.length, normalizedSuggestion.length, 120);
-  for (let overlap = maxOverlap; overlap >= 1; overlap -= 1) {
-    if (
-      normalizedInput.slice(normalizedInput.length - overlap) ===
-      normalizedSuggestion.slice(0, overlap)
-    ) {
-      return normalizedSuggestion.slice(overlap).trimStart();
-    }
-  }
-
-  // Suffix-only fallback (the backend is intended to return suffix text).
-  if (normalizedInput.endsWith(normalizedSuggestion)) {
-    return '';
-  }
-  return normalizedSuggestion;
-}
-
-function buildAcceptedInlineCompletion(input: string, suffix: string): string {
-  const normalizedInput = input.replace(/\u2192/g, ' ').replace(/\t+/g, ' ');
-  const cleanSuffix = suffix
-    .replace(/\u2192/g, ' ')
-    .replace(/\t+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (!cleanSuffix) return normalizedInput;
-
-  const needsSpace =
-    normalizedInput.length > 0 && !/\s$/.test(normalizedInput) && !/^[,.;:!?)]/.test(cleanSuffix);
-
-  return `${normalizedInput}${needsSpace ? ' ' : ''}${cleanSuffix}`;
-}
-
-function isAllowedExternalHref(rawHref: string): boolean {
-  try {
-    const url = new URL(rawHref);
-    return url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'mailto:';
-  } catch {
-    return false;
-  }
-}
-
-type AgentBubblePosition = 'single' | 'first' | 'middle' | 'last';
-
-function getAgentBubbleChrome(position: AgentBubblePosition): string {
-  if (position === 'single') return 'rounded-2xl rounded-bl-md';
-  if (position === 'first') return 'rounded-2xl rounded-bl-lg';
-  if (position === 'middle') return 'rounded-2xl rounded-tl-md rounded-bl-lg';
-  return 'rounded-2xl rounded-tl-md rounded-bl-md';
-}
-
-function BubbleMarkdown({ content, tone = 'agent' }: { content: string; tone?: 'agent' | 'user' }) {
-  const proseTone =
-    tone === 'user'
-      ? 'prose-invert prose-p:text-white prose-li:text-white prose-a:text-white prose-code:text-white prose-strong:text-white prose-headings:text-white [&_li::marker]:text-white/85'
-      : 'prose-a:text-primary-500 prose-code:text-primary-700 prose-headings:text-sm [&_li::marker]:text-stone-700';
-
-  return (
-    <div
-      className={`text-sm prose prose-sm max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:rounded-lg prose-code:text-xs prose-headings:font-semibold prose-ul:my-0 prose-ol:my-0 prose-li:my-0 ${proseTone} ${
-        tone === 'user' ? 'prose-pre:bg-white/10' : 'prose-pre:bg-stone-300/50'
-      } [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:my-0 [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0`}>
-      <Markdown
-        components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              onClick={e => {
-                e.preventDefault();
-                if (!href || !isAllowedExternalHref(href)) return;
-                void openUrl(href).catch(() => {
-                  // Ignore launcher errors from OS URL handler failures.
-                });
-              }}
-              className="cursor-pointer underline">
-              {children}
-            </a>
-          ),
-        }}>
-        {content}
-      </Markdown>
-    </div>
-  );
-}
-
-function TableCellMarkdown({ content }: { content: string }) {
-  return (
-    <div className="prose prose-sm max-w-none text-sm text-stone-700 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 prose-a:text-primary-500 prose-strong:text-stone-900 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700 [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
-      <Markdown
-        components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              onClick={e => {
-                e.preventDefault();
-                if (!href || !isAllowedExternalHref(href)) return;
-                void openUrl(href).catch(() => {
-                  // Ignore launcher errors from OS URL handler failures.
-                });
-              }}
-              className="cursor-pointer underline">
-              {children}
-            </a>
-          ),
-        }}>
-        {content}
-      </Markdown>
-    </div>
-  );
-}
-
-function ToolTimelineBlock({ entries }: { entries: ToolTimelineEntry[] }) {
-  const latestRunningEntryId = [...entries].reverse().find(entry => entry.status === 'running')?.id;
-
-  const normalizeToolBody = (value?: string): string | undefined => {
-    if (!value) return undefined;
-    const trimmed = value.trim();
-    if (trimmed.length === 0) return undefined;
-    if (trimmed === '{}' || trimmed === '[]' || trimmed === 'null') return undefined;
-    return value;
-  };
-
-  return (
-    <div className="mb-2 space-y-1 px-1 py-0">
-      {entries.map(entry => {
-        const formatted = formatTimelineEntry(entry);
-        const detailContent =
-          normalizeToolBody(formatted.detail) ?? normalizeToolBody(entry.argsBuffer);
-        const shouldAutoExpand = latestRunningEntryId != null && latestRunningEntryId === entry.id;
-        const statusTone =
-          entry.status === 'running'
-            ? {
-                pill: 'bg-amber-100 text-amber-600',
-                bubble: 'bg-amber-50 text-amber-900',
-                code: 'text-amber-800',
-                chevron: 'text-amber-500',
-              }
-            : entry.status === 'success'
-              ? {
-                  pill: 'bg-sage-100 text-sage-600',
-                  bubble: 'bg-sage-50 text-sage-900',
-                  code: 'text-sage-800',
-                  chevron: 'text-sage-500',
-                }
-              : {
-                  pill: 'bg-coral-100 text-coral-600',
-                  bubble: 'bg-coral-50 text-coral-900',
-                  code: 'text-coral-800',
-                  chevron: 'text-coral-500',
-                };
-
-        return (
-          <div key={entry.id} className="flex flex-col gap-1 text-xs text-stone-400">
-            {detailContent ? (
-              <details open={shouldAutoExpand} className="ml-1 group">
-                <summary className="flex cursor-pointer list-none items-center gap-2 select-none marker:hidden">
-                  <span
-                    className={`text-[10px] transition-transform group-open:rotate-90 ${statusTone.chevron}`}>
-                    ▶
-                  </span>
-                  <span className="font-medium text-stone-600">{formatted.title}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone.pill}`}>
-                    {entry.status}
-                  </span>
-                </summary>
-                {formatted.detail ? (
-                  <div
-                    className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[11px] whitespace-pre-wrap break-words ${statusTone.bubble}`}>
-                    {formatted.detail}
-                  </div>
-                ) : (
-                  <pre
-                    className={`mt-1 max-h-24 overflow-y-auto rounded px-2 py-1 font-mono text-[10px] whitespace-pre-wrap break-all ${statusTone.bubble} ${statusTone.code}`}>
-                    {detailContent}
-                  </pre>
-                )}
-              </details>
-            ) : (
-              <div className="ml-1 flex items-center gap-2">
-                <span className="font-medium text-stone-600">{formatted.title}</span>
-                <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone.pill}`}>
-                  {entry.status}
-                </span>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function AgentMessageBubble({
-  content,
-  position = 'single',
-}: {
-  content: string;
-  position?: AgentBubblePosition;
-}) {
-  const table = parseMarkdownTable(content);
-  const bubbleChrome = getAgentBubbleChrome(position);
-
-  if (table) {
-    return (
-      <div
-        className={`w-full max-w-full overflow-hidden border border-stone-200 bg-white/90 shadow-sm ${bubbleChrome}`}>
-        <div className="overflow-x-auto">
-          <table className="w-max min-w-full border-collapse text-left text-sm text-stone-800">
-            <thead className="bg-stone-100/90">
-              <tr>
-                {table.headers.map(header => (
-                  <th
-                    key={header}
-                    className="max-w-[25vw] border-b border-stone-200 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-stone-500">
-                    {header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {table.rows.map((row, rowIndex) => (
-                <tr
-                  key={`${rowIndex}:${row.join('|')}`}
-                  className="odd:bg-white even:bg-stone-50/70">
-                  {row.map((cell, cellIndex) => (
-                    <td
-                      key={`${rowIndex}:${cellIndex}:${cell}`}
-                      className="max-w-[25vw] border-t border-stone-200 px-4 py-3 align-top text-sm text-stone-700">
-                      <TableCellMarkdown content={cell} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`bg-stone-200/80 px-4 py-2.5 text-stone-900 ${bubbleChrome}`}>
-      <BubbleMarkdown content={content} />
-    </div>
-  );
-}
-
-function formatResetTime(isoStr: string): string {
-  const ms = new Date(isoStr).getTime() - Date.now();
-  if (ms <= 0) return 'now';
-  const mins = Math.ceil(ms / 60_000);
-  if (mins < 60) return `in ${mins}m`;
-  const hours = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  if (hours < 24) return remMins > 0 ? `in ${hours}h ${remMins}m` : `in ${hours}h`;
-  const days = Math.floor(hours / 24);
-  const remHours = hours % 24;
-  return remHours > 0 ? `in ${days}d ${remHours}h` : `in ${days}d`;
-}
-
-function LimitPill({ label, usedPct }: { label: string; usedPct: number }) {
-  const barColor =
-    usedPct >= 1 ? 'bg-coral-500' : usedPct >= 0.8 ? 'bg-amber-500' : 'bg-primary-500';
-  return (
-    <div className="flex items-center gap-1">
-      <span className="text-[9px] text-stone-400 font-medium uppercase">{label}</span>
-      <div className="w-8 h-1.5 rounded-full bg-stone-200 overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-300 ${barColor}`}
-          style={{ width: `${Math.min(100, usedPct * 100)}%` }}
-        />
-      </div>
-      <span className="text-[9px] text-stone-500 tabular-nums">{Math.round(usedPct * 100)}%</span>
-    </div>
-  );
-}
 
 interface ConversationsProps {
   /**
