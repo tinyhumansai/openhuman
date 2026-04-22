@@ -7,6 +7,7 @@ import {
   focusAccountFromNotification,
   noteWebviewNotificationFired,
 } from '../../store/accountsSlice';
+import { notificationReceived } from '../../store/notificationSlice';
 import { WEBVIEW_NOTIFICATION_FIRED_EVENT, type WebviewNotificationFired } from './types';
 
 const log = debug('webview-notifications');
@@ -59,7 +60,7 @@ export function handleNotificationClick(accountId: string): void {
 }
 
 function handleFired(payload: WebviewNotificationFired): void {
-  const { account_id: accountId, provider, title, body } = payload;
+  const { account_id: accountId, provider, title, body, tag } = payload;
   log(
     'fired account=%s provider=%s title_chars=%d body_chars=%d',
     accountId,
@@ -68,6 +69,19 @@ function handleFired(payload: WebviewNotificationFired): void {
     body.length
   );
   store.dispatch(noteWebviewNotificationFired({ accountId }));
+  store.dispatch(
+    notificationReceived({
+      id: `${accountId}:${tag ?? ''}:${Date.now()}`,
+      category: 'messages',
+      title,
+      body,
+      timestamp: Date.now(),
+      read: false,
+      accountId,
+      provider,
+      deepLink: `/accounts/${accountId}`,
+    })
+  );
 }
 
 /** Exposed for tests — resets module singletons between runs. */

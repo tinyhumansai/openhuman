@@ -16,6 +16,7 @@ import { IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
+import notificationReducer from './notificationSlice';
 import socketReducer from './socketSlice';
 import threadReducer from './threadSlice';
 
@@ -38,6 +39,13 @@ const accountsPersistConfig = {
 };
 const persistedAccountsReducer = persistReducer(accountsPersistConfig, accountsReducer);
 
+const notificationPersistConfig = {
+  key: 'notifications',
+  storage,
+  whitelist: ['items', 'preferences'],
+};
+const persistedNotificationReducer = persistReducer(notificationPersistConfig, notificationReducer);
+
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
@@ -45,6 +53,7 @@ export const store = configureStore({
     chatRuntime: chatRuntimeReducer,
     channelConnections: persistedChannelConnectionsReducer,
     accounts: persistedAccountsReducer,
+    notifications: persistedNotificationReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({
