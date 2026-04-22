@@ -5,6 +5,7 @@ import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
 import BottomTabBar from './components/BottomTabBar';
+import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import DictationHotkeyManager from './components/DictationHotkeyManager';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
@@ -47,12 +48,14 @@ function App() {
             <SocketProvider>
               <ChatRuntimeProvider>
                 <Router>
-                  <ServiceBlockingGate>
-                    <AppShell />
-                    <OnboardingOverlay />
-                    <DictationHotkeyManager />
-                    <LocalAIDownloadSnackbar />
-                  </ServiceBlockingGate>
+                  <CommandProvider>
+                    <ServiceBlockingGate>
+                      <AppShell />
+                      <OnboardingOverlay />
+                      <DictationHotkeyManager />
+                      <LocalAIDownloadSnackbar />
+                    </ServiceBlockingGate>
+                  </CommandProvider>
                 </Router>
               </ChatRuntimeProvider>
             </SocketProvider>
