@@ -18,25 +18,20 @@ use super::{NoopEmbedding, OllamaEmbedding, OpenAiEmbedding};
 /// keyword-only search.
 pub fn create_embedding_provider(
     provider: &str,
-    api_key: Option<&str>,
     model: &str,
     dims: usize,
 ) -> anyhow::Result<Box<dyn EmbeddingProvider>> {
     match provider {
         "ollama" => Ok(Box::new(OllamaEmbedding::new("", model, dims))),
-        "openai" => {
-            let key = api_key.unwrap_or("");
-            Ok(Box::new(OpenAiEmbedding::new(
-                "https://api.openai.com",
-                key,
-                model,
-                dims,
-            )))
-        }
+        "openai" => Ok(Box::new(OpenAiEmbedding::new(
+            "https://api.openai.com",
+            "",
+            model,
+            dims,
+        ))),
         name if name.starts_with("custom:") => {
             let base_url = name.strip_prefix("custom:").unwrap_or("");
-            let key = api_key.unwrap_or("");
-            Ok(Box::new(OpenAiEmbedding::new(base_url, key, model, dims)))
+            Ok(Box::new(OpenAiEmbedding::new(base_url, "", model, dims)))
         }
         "none" => Ok(Box::new(NoopEmbedding)),
         unknown => Err(anyhow::anyhow!(

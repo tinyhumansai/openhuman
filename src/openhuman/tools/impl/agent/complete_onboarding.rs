@@ -141,7 +141,7 @@ impl Tool for CompleteOnboardingTool {
          ```\n\
          {\n\
            \"authenticated\": true,                       // bool — JWT present\n\
-           \"auth_source\": \"session_token\",            // \"session_token\" | \"legacy_api_key\" | null\n\
+           \"auth_source\": \"session_token\",            // \"session_token\" | null\n\
            \"default_model\": \"reasoning-v1\",           // string\n\
            \"channels_connected\": [\"telegram\"],        // string[] — connected messaging platforms\n\
            \"active_channel\": \"web\",                   // preferred channel for proactive messages\n\
@@ -301,16 +301,8 @@ async fn check_status() -> anyhow::Result<ToolResult> {
 
 /// Detect whether the user is authenticated for the welcome flow.
 ///
-/// Two possible auth sources, in priority order:
-///
-/// 1. The `app-session:default` profile in `auth-profiles.json` —
-///    the canonical inference credential, populated by the desktop
-///    OAuth deep-link flow's `exchange_token` Rust command. This is
-///    where every production inference RPC reads from.
-/// 2. `config.api_key` — legacy free-form provider key field, kept
-///    for CI / dev setups that bypass the desktop login flow.
-///
-/// Either one counts as "authenticated".
+/// Authentication is based on the `app-session:default` profile in
+/// `auth-profiles.json`, populated by the desktop OAuth deep-link flow.
 ///
 /// Returned as `(is_authenticated, auth_source_json)` so callers can
 /// both gate behaviour on the bool and embed the source label in a
@@ -320,12 +312,9 @@ pub(crate) fn detect_auth(config: &Config) -> (bool, Value) {
         .ok()
         .flatten()
         .is_some_and(|t| !t.is_empty());
-    let has_legacy_api_key = config.api_key.as_ref().is_some_and(|k| !k.is_empty());
-    let is_authenticated = has_session_jwt || has_legacy_api_key;
+    let is_authenticated = has_session_jwt;
     let auth_source: Value = if has_session_jwt {
         Value::String("session_token".to_string())
-    } else if has_legacy_api_key {
-        Value::String("legacy_api_key".to_string())
     } else {
         Value::Null
     };
@@ -399,12 +388,7 @@ pub(crate) fn build_status_snapshot(
         channels_connected.push("qq");
     }
 
-    let composio_enabled = config.composio.enabled
-        && config
-            .composio
-            .api_key
-            .as_ref()
-            .is_some_and(|k| !k.is_empty());
+    let composio_enabled = config.composio.enabled;
 
     let delegate_agents: Vec<&str> = config.agents.keys().map(|s| s.as_str()).collect();
 
@@ -463,9 +447,10 @@ pub(crate) fn build_status_snapshot(
 ///
 /// ## Auth requirement
 ///
-/// Requires the user to be authenticated. If there is no valid session
-/// JWT or legacy API key, the call is rejected with an explanation so
-/// the agent can instruct the user to log in.
+/// Requires the user to be authenticated with a valid session JWT.
+/// If `detect_auth()` cannot resolve an active app-session token, the
+/// call is rejected with an explanation so the agent can instruct the
+/// user to log in.
 async fn complete() -> anyhow::Result<ToolResult> {
     let mut config = Config::load_or_init()
         .await

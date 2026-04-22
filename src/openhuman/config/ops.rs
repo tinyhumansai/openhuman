@@ -150,7 +150,6 @@ pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String
 
 #[derive(Debug, Clone, Default)]
 pub struct ModelSettingsPatch {
-    pub api_key: Option<String>,
     pub api_url: Option<String>,
     pub default_model: Option<String>,
     pub default_temperature: Option<f64>,
@@ -218,13 +217,6 @@ pub async fn apply_model_settings(
     config: &mut Config,
     update: ModelSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
-    if let Some(api_key) = update.api_key {
-        config.api_key = if api_key.trim().is_empty() {
-            None
-        } else {
-            Some(api_key)
-        };
-    }
     if let Some(api_url) = update.api_url {
         config.api_url = if api_url.trim().is_empty() {
             None
@@ -1030,33 +1022,31 @@ mod tests {
         let tmp = tempdir().unwrap();
         let mut cfg = tmp_config(&tmp);
         let patch = ModelSettingsPatch {
-            api_key: Some("sk-test".into()),
             api_url: Some("https://api.example.test".into()),
             default_model: Some("gpt-4o".into()),
             default_temperature: Some(0.25),
         };
         let outcome = apply_model_settings(&mut cfg, patch).await.expect("apply");
-        assert_eq!(cfg.api_key.as_deref(), Some("sk-test"));
         assert_eq!(cfg.api_url.as_deref(), Some("https://api.example.test"));
         assert_eq!(cfg.default_model.as_deref(), Some("gpt-4o"));
         assert!((cfg.default_temperature - 0.25).abs() < f64::EPSILON);
-        assert_eq!(outcome.value["config"]["api_key"], "sk-test");
+        assert_eq!(
+            outcome.value["config"]["api_url"],
+            "https://api.example.test"
+        );
     }
 
     #[tokio::test]
     async fn apply_model_settings_empty_strings_clear_optional_fields() {
         let tmp = tempdir().unwrap();
         let mut cfg = tmp_config(&tmp);
-        cfg.api_key = Some("prev".into());
         cfg.default_model = Some("prev-model".into());
         let patch = ModelSettingsPatch {
-            api_key: Some("  ".into()),
             api_url: Some("".into()),
             default_model: Some("".into()),
             default_temperature: None,
         };
         let _ = apply_model_settings(&mut cfg, patch).await.expect("apply");
-        assert!(cfg.api_key.is_none());
         assert!(cfg.api_url.is_none());
         assert!(cfg.default_model.is_none());
     }

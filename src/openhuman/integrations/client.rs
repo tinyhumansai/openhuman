@@ -176,9 +176,6 @@ impl IntegrationClient {
 /// - auth token → [`crate::api::jwt::get_session_token`], i.e. the
 ///   app-session JWT written by `auth_store_session` — the same token
 ///   that billing, team, webhooks, referral, memory, etc. all use.
-///   As a last-ditch fallback we also honour `config.api_key` so
-///   non-interactive sidecar deployments that set `OPENHUMAN_API_KEY`
-///   still work.
 ///
 /// There are no per-feature toggles for the shared client itself —
 /// callers that need a kill switch (e.g. twilio, google_places,
@@ -203,17 +200,7 @@ pub fn build_client(config: &crate::openhuman::config::Config) -> Option<Arc<Int
         }
     };
 
-    // Fallback: config.api_key for headless / CI deployments.
-    let auth_token = session_token.or_else(|| {
-        config
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-    });
-
-    match auth_token {
+    match session_token {
         Some(token) => {
             tracing::debug!(
                 backend_url = %backend_url,
@@ -224,7 +211,7 @@ pub fn build_client(config: &crate::openhuman::config::Config) -> Option<Arc<Int
         None => {
             tracing::warn!(
                 "[integrations] no auth token available — user is not signed in \
-                 (no app-session JWT and no config.api_key fallback)"
+                 (no app-session JWT)"
             );
             None
         }

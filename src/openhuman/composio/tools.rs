@@ -715,7 +715,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut config = crate::openhuman::config::Config::default();
         config.config_path = tmp.path().join("config.toml");
-        config.api_key = None;
         let tools = all_composio_agent_tools(&config);
         assert!(tools.is_empty());
     }
@@ -725,7 +724,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut config = crate::openhuman::config::Config::default();
         config.config_path = tmp.path().join("config.toml");
-        config.api_key = Some("sk-test".into());
+        crate::openhuman::credentials::AuthService::from_config(&config)
+            .store_provider_token(
+                crate::openhuman::credentials::APP_SESSION_PROVIDER,
+                crate::openhuman::credentials::DEFAULT_AUTH_PROFILE_NAME,
+                "test-token",
+                std::collections::HashMap::new(),
+                true,
+            )
+            .expect("store test session token");
         let tools = all_composio_agent_tools(&config);
         assert_eq!(tools.len(), 5);
     }
