@@ -36,6 +36,8 @@ use tokio::sync::{oneshot, Mutex};
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+mod dom_snapshot;
+
 const CDP_HOST: &str = "127.0.0.1";
 const CDP_PORT: u16 = 9222;
 
@@ -54,11 +56,14 @@ struct CdpTarget {
 /// Spawn the per-account MITM task. Idempotent at call site — caller guards
 /// double-spawn via `ScannerRegistry::ensure_scanner`.
 pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix: String) {
+    spawn_dom_poll(app.clone(), account_id.clone(), url_prefix.clone());
     tokio::spawn(async move {
+        let fragment = crate::cdp::target_url_fragment(&account_id);
         log::info!(
-            "[discord][{}] mitm up url_prefix={} cdp={}:{}",
+            "[discord][{}] mitm up url_prefix={} fragment={} cdp={}:{}",
             account_id,
             url_prefix,
+            fragment,
             CDP_HOST,
             CDP_PORT
         );
@@ -68,7 +73,7 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
         // the first few frames anyway.
         sleep(Duration::from_secs(4)).await;
         loop {
-            match run_mitm_session(&app, &account_id, &url_prefix).await {
+            match run_mitm_session(&app, &account_id, &url_prefix, &fragment).await {
                 Ok(()) => {
                     log::info!(
                         "[discord][{}] session ended cleanly, reconnecting",
@@ -96,6 +101,7 @@ async fn run_mitm_session<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
     url_prefix: &str,
+    url_fragment: &str,
 ) -> Result<(), String> {
     let browser_ws = browser_ws_url().await?;
     let mut cdp = CdpConn::open(&browser_ws).await?;
@@ -108,8 +114,8 @@ async fn run_mitm_session<R: Runtime>(
     log::debug!("[discord][{}] {} targets total", account_id, targets.len());
     let page = targets
         .iter()
-        .find(|t| t.kind == "page" && t.url.starts_with(url_prefix))
-        .ok_or_else(|| format!("no page target matching {url_prefix}"))?;
+        .find(|t| t.kind == "page" && t.url.starts_with(url_prefix) && t.url.contains(url_fragment))
+        .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
     log::info!(
         "[discord][{}] attaching to target {} url={}",
         account_id,
@@ -575,6 +581,61 @@ fn chrono_now_millis() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+// ---------- DOM chat-list poll ----------------------------------------------
+
+const DOM_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+fn spawn_dom_poll<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix: String) {
+    tokio::spawn(async move {
+        let fragment = crate::cdp::target_url_fragment(&account_id);
+        sleep(Duration::from_secs(6)).await;
+        let mut last_hash: Option<u64> = None;
+        loop {
+            match dom_scan_once(&url_prefix, &fragment).await {
+                Ok(scan) => {
+                    if !scan.rows.is_empty() && Some(scan.hash) != last_hash {
+                        log::info!(
+                            "[discord][{}] dom scan rows={} unread={} hash={:x}",
+                            account_id,
+                            scan.rows.len(),
+                            scan.total_unread,
+                            scan.hash
+                        );
+                        last_hash = Some(scan.hash);
+                        let envelope = json!({
+                            "account_id": account_id,
+                            "provider": "discord",
+                            "kind": "ingest",
+                            "payload": dom_snapshot::ingest_payload(&scan),
+                            "ts": chrono_now_millis(),
+                        });
+                        if let Err(e) = app.emit("webview:event", &envelope) {
+                            log::warn!("[discord][{}] dom ingest emit failed: {}", account_id, e);
+                        }
+                    }
+                }
+                Err(e) => log::debug!("[discord][{}] dom scan: {}", account_id, e),
+            }
+            sleep(DOM_POLL_INTERVAL).await;
+        }
+    });
+}
+
+async fn dom_scan_once(
+    url_prefix: &str,
+    url_fragment: &str,
+) -> Result<dom_snapshot::DomScan, String> {
+    let prefix = url_prefix.to_string();
+    let fragment = url_fragment.to_string();
+    let (mut cdp, session) = crate::cdp::connect_and_attach_matching(move |t| {
+        t.url.starts_with(&prefix) && t.url.contains(&fragment)
+    })
+    .await?;
+    let scan = dom_snapshot::scan(&mut cdp, &session).await;
+    crate::cdp::detach_session(&mut cdp, &session).await;
+    scan
 }
 
 // ---------- Registry ---------------------------------------------------------

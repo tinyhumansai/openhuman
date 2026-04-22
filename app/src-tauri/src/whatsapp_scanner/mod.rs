@@ -82,10 +82,18 @@ pub struct ScanSnapshot {
 /// consumers don't need to care which one produced the event.
 pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix: String) {
     tokio::spawn(async move {
+        // `cdp` module is cef-only; under wry the fragment is unused (no
+        // port 9222 means scan_once will fail on every tick anyway). Keep
+        // a fallback so this file still compiles on non-cef builds.
+        #[cfg(feature = "cef")]
+        let fragment = crate::cdp::target_url_fragment(&account_id);
+        #[cfg(not(feature = "cef"))]
+        let fragment = String::new();
         log::info!(
-            "[wa] scanner up account={} url_prefix={} fast={:?} full={:?}",
+            "[wa] scanner up account={} url_prefix={} fragment={} fast={:?} full={:?}",
             account_id,
             url_prefix,
+            fragment,
             FAST_SCAN_INTERVAL,
             FULL_SCAN_INTERVAL
         );
@@ -102,7 +110,7 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
             // otherwise run the cheap DOM-only scan.
             let do_full = last_full.elapsed() >= FULL_SCAN_INTERVAL;
             if !do_full {
-                match scan_dom_once(&account_id, &url_prefix).await {
+                match scan_dom_once(&account_id, &url_prefix, &fragment).await {
                     Ok(dom) => {
                         let changed =
                             last_dom_hash != Some(dom.hash) && !dom.dom_messages.is_empty();
@@ -125,7 +133,7 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
                 continue;
             }
             last_full = Instant::now();
-            match scan_once(&app, &account_id, &url_prefix).await {
+            match scan_once(&app, &account_id, &url_prefix, &fragment).await {
                 Ok(snap) => {
                     log::info!(
                         "[wa][{}] full scan ok messages={} chats={} dom={}",
@@ -218,6 +226,7 @@ async fn scan_once<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
     url_prefix: &str,
+    url_fragment: &str,
 ) -> Result<ScanSnapshot, String> {
     // One CDP connection per tick — we attach to the WhatsApp page session,
     // run the IDB walk + DOM snapshot, then detach (which frees every
@@ -231,8 +240,8 @@ async fn scan_once<R: Runtime>(
 
     let page_target = targets
         .iter()
-        .find(|t| t.kind == "page" && t.url.starts_with(url_prefix))
-        .ok_or_else(|| format!("no page target matching {url_prefix}"))?;
+        .find(|t| t.kind == "page" && t.url.starts_with(url_prefix) && t.url.contains(url_fragment))
+        .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
     let attach = cdp
         .call(
             "Target.attachToTarget",
@@ -301,15 +310,19 @@ pub struct DomScanResult {
 /// enumeration, no JavaScript runs in the page — the snapshot is produced
 /// at the browser's C++ layer. The flat-array response is parsed in Rust
 /// (see `dom_snapshot.rs`).
-async fn scan_dom_once(account_id: &str, url_prefix: &str) -> Result<DomScanResult, String> {
+async fn scan_dom_once(
+    account_id: &str,
+    url_prefix: &str,
+    url_fragment: &str,
+) -> Result<DomScanResult, String> {
     let browser_ws = browser_ws_url().await?;
     let mut cdp = CdpConn::open(&browser_ws).await?;
     let targets_v = cdp.call("Target.getTargets", json!({}), None).await?;
     let targets = parse_targets(&targets_v);
     let page_target = targets
         .iter()
-        .find(|t| t.kind == "page" && t.url.starts_with(url_prefix))
-        .ok_or_else(|| format!("no page target matching {url_prefix}"))?;
+        .find(|t| t.kind == "page" && t.url.starts_with(url_prefix) && t.url.contains(url_fragment))
+        .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
     let attach = cdp
         .call(
             "Target.attachToTarget",

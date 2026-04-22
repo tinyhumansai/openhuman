@@ -30,6 +30,7 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+mod dom_snapshot;
 mod extract;
 mod idb;
 
@@ -45,23 +46,22 @@ struct CdpTarget {
     id: String,
     kind: String,
     url: String,
-    title: String,
 }
 
 /// Spawn a per-account CDP poller. Caller is expected to guard against
 /// double-spawning via `ScannerRegistry`.
-pub fn spawn_scanner<R: Runtime>(
-    app: AppHandle<R>,
-    account_id: String,
-    url_prefix: String,
-    target_marker: Option<String>,
-) {
+pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix: String) {
+    // Independent fast-tick task for the DOM chat-list scrape (replaces
+    // the old recipe.js setInterval). Decoupled from the slow IDB loop so
+    // an IDB failure doesn't stall the UI's unread-badge updates.
+    spawn_dom_poll(app.clone(), account_id.clone(), url_prefix.clone());
     tokio::spawn(async move {
+        let fragment = crate::cdp::target_url_fragment(&account_id);
         log::info!(
-            "[tg] scanner up account={} url_prefix={} target_marker={:?} interval={:?}",
+            "[tg] scanner up account={} url_prefix={} fragment={} interval={:?}",
             account_id,
             url_prefix,
-            target_marker,
+            fragment,
             IDB_SCAN_INTERVAL,
         );
         // Let tweb hydrate IDB before the first scan — otherwise we'd
@@ -69,7 +69,7 @@ pub fn spawn_scanner<R: Runtime>(
         sleep(Duration::from_secs(10)).await;
 
         loop {
-            match scan_once(&account_id, &url_prefix, target_marker.as_deref()).await {
+            match scan_once(&account_id, &url_prefix, &fragment).await {
                 Ok(dump) => {
                     let harvest = extract::harvest(&dump);
                     log::info!(
@@ -97,7 +97,7 @@ pub fn spawn_scanner<R: Runtime>(
 async fn scan_once(
     account_id: &str,
     url_prefix: &str,
-    target_marker: Option<&str>,
+    url_fragment: &str,
 ) -> Result<idb::IdbDump, String> {
     let browser_ws = browser_ws_url().await?;
     let mut cdp = CdpConn::open(&browser_ws).await?;
@@ -106,15 +106,11 @@ async fn scan_once(
     let targets = parse_targets(&targets_v);
     let page_target = targets
         .iter()
-        .find(|t| {
-            t.kind == "page"
-                && t.url.starts_with(url_prefix)
-                && target_marker.is_none_or(|marker| t.title.contains(marker))
-        })
+        .find(|t| t.kind == "page" && t.url.starts_with(url_prefix) && t.url.contains(url_fragment))
         .ok_or_else(|| {
             format!(
-                "no page target matching {} marker={:?}",
-                url_prefix, target_marker
+                "no page target matching {} fragment={}",
+                url_prefix, url_fragment
             )
         })?;
 
@@ -459,11 +455,6 @@ fn parse_targets(v: &Value) -> Vec<CdpTarget> {
                             .and_then(|u| u.as_str())
                             .unwrap_or("")
                             .to_string(),
-                        title: t
-                            .get("title")
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("")
-                            .to_string(),
                     })
                 })
                 .collect()
@@ -574,6 +565,66 @@ impl CdpConn {
     }
 }
 
+const DOM_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Fast DOM-only poll — runs every 2s, emits an `ingest` webview:event
+/// only when the row-set hash changes. Pure CDP: DOMSnapshot.captureSnapshot
+/// runs at the browser's C++ layer, no JS executes in the page world.
+fn spawn_dom_poll<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix: String) {
+    tokio::spawn(async move {
+        let fragment = crate::cdp::target_url_fragment(&account_id);
+        // Wait long enough for tweb to populate the chatlist — polling
+        // before that would just emit empty ingests.
+        sleep(Duration::from_secs(8)).await;
+        let mut last_hash: Option<u64> = None;
+        loop {
+            match dom_scan_once(&url_prefix, &fragment).await {
+                Ok(scan) => {
+                    if !scan.rows.is_empty() && Some(scan.hash) != last_hash {
+                        log::info!(
+                            "[tg][{}] dom scan rows={} unread={} hash={:x}",
+                            account_id,
+                            scan.rows.len(),
+                            scan.total_unread,
+                            scan.hash
+                        );
+                        last_hash = Some(scan.hash);
+                        let envelope = json!({
+                            "account_id": account_id,
+                            "provider": "telegram",
+                            "kind": "ingest",
+                            "payload": dom_snapshot::ingest_payload(&scan),
+                            "ts": chrono_now_millis(),
+                        });
+                        if let Err(e) = app.emit("webview:event", &envelope) {
+                            log::warn!("[tg][{}] dom ingest emit failed: {}", account_id, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::debug!("[tg][{}] dom scan: {}", account_id, e);
+                }
+            }
+            sleep(DOM_POLL_INTERVAL).await;
+        }
+    });
+}
+
+async fn dom_scan_once(
+    url_prefix: &str,
+    url_fragment: &str,
+) -> Result<dom_snapshot::DomScan, String> {
+    let prefix = url_prefix.to_string();
+    let fragment = url_fragment.to_string();
+    let (mut cdp, session) = crate::cdp::connect_and_attach_matching(move |t| {
+        t.url.starts_with(&prefix) && t.url.contains(&fragment)
+    })
+    .await?;
+    let scan = dom_snapshot::scan(&mut cdp, &session).await;
+    crate::cdp::detach_session(&mut cdp, &session).await;
+    scan
+}
+
 /// Registry to prevent double-spawning scanners for the same account.
 #[derive(Default)]
 pub struct ScannerRegistry {
@@ -590,14 +641,13 @@ impl ScannerRegistry {
         app: AppHandle<R>,
         account_id: String,
         url_prefix: String,
-        target_marker: Option<String>,
     ) {
         let mut g = self.started.lock().await;
         if !g.insert(account_id.clone()) {
             log::debug!("[tg] scanner already running for {}", account_id);
             return;
         }
-        spawn_scanner(app, account_id, url_prefix, target_marker);
+        spawn_scanner(app, account_id, url_prefix);
     }
 
     pub async fn forget(&self, account_id: &str) {

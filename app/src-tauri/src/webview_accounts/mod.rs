@@ -34,20 +34,19 @@ use tauri_plugin_notification::NotificationExt;
 #[cfg(feature = "cef")]
 use cef::ImplBrowser;
 
+#[cfg(feature = "cef")]
+use crate::cdp;
+
 const RUNTIME_JS: &str = include_str!("runtime.js");
+// UA spoofing moved from injected JS to CDP `Emulation.setUserAgentOverride`
+// under the cef feature; wry builds still need the old JS shim so the recipes
+// that emit an `ingest` payload (gmail / linkedin / google-meet) survive
+// fingerprint gates on Slack/Google's login flow.
+#[cfg(not(feature = "cef"))]
 const UA_SPOOF_JS: &str = include_str!("ua_spoof.js");
-const WHATSAPP_RECIPE_JS: &str = include_str!("../../recipes/whatsapp/recipe.js");
-const TELEGRAM_RECIPE_JS: &str = include_str!("../../recipes/telegram/recipe.js");
 const LINKEDIN_RECIPE_JS: &str = include_str!("../../recipes/linkedin/recipe.js");
 const GMAIL_RECIPE_JS: &str = include_str!("../../recipes/gmail/recipe.js");
-const SLACK_RECIPE_JS: &str = include_str!("../../recipes/slack/recipe.js");
-const DISCORD_RECIPE_JS: &str = include_str!("../../recipes/discord/recipe.js");
 const GOOGLE_MEET_RECIPE_JS: &str = include_str!("../../recipes/google-meet/recipe.js");
-const TELEGRAM_TARGET_MARKER_PREFIX: &str = "[openhuman-telegram:";
-/// Dev-only bot-detection sandbox. Exposed through the UI only when
-/// `import.meta.env.DEV` is true, but registered here unconditionally so
-/// debug/release test builds behave the same if invoked directly.
-const BROWSERSCAN_RECIPE_JS: &str = include_str!("../../recipes/browserscan/recipe.js");
 
 /// User agent we pretend to be for all external services. Web-app services
 /// (WhatsApp, Gmail, Google's login flow) reject "unknown" WebView UAs with
@@ -80,24 +79,39 @@ fn provider_user_agent(provider: &str) -> Option<&'static str> {
     }
 }
 
+/// Returns the injected recipe.js for providers that still rely on the
+/// JS-bridge ingest path. Migrated providers (whatsapp, telegram, slack,
+/// discord, browserscan) return `None` — their scraping runs natively via
+/// CDP in the per-provider scanner modules.
 fn provider_recipe_js(provider: &str) -> Option<&'static str> {
     match provider {
-        "whatsapp" => Some(WHATSAPP_RECIPE_JS),
-        "telegram" => Some(TELEGRAM_RECIPE_JS),
         "linkedin" => Some(LINKEDIN_RECIPE_JS),
         "gmail" => Some(GMAIL_RECIPE_JS),
-        "slack" => Some(SLACK_RECIPE_JS),
-        "discord" => Some(DISCORD_RECIPE_JS),
         "google-meet" => Some(GOOGLE_MEET_RECIPE_JS),
-        "browserscan" => Some(BROWSERSCAN_RECIPE_JS),
         _ => None,
     }
 }
 
-/// Whether to pre-load `ua_spoof.js` for a given provider. Enabled only
-/// for services known to run Chromium-specific fingerprinting checks —
-/// WhatsApp & Telegram are happy with the Chrome UA alone and running the
-/// spoof risks breaking perfectly-working integrations for no gain.
+/// Whether this provider is supported at all — mirrors the old registry
+/// so `webview_account_open` can reject unknown providers early.
+fn provider_is_supported(provider: &str) -> bool {
+    matches!(
+        provider,
+        "whatsapp"
+            | "telegram"
+            | "linkedin"
+            | "gmail"
+            | "slack"
+            | "discord"
+            | "google-meet"
+            | "browserscan"
+    )
+}
+
+/// Whether to pre-load `ua_spoof.js` for a given provider (wry only — cef
+/// handles UA via CDP `Emulation.setUserAgentOverride`). Enabled for
+/// services known to run Chromium-specific fingerprinting checks.
+#[cfg(not(feature = "cef"))]
 fn provider_ua_spoof(provider: &str) -> bool {
     matches!(
         provider,
@@ -299,12 +313,6 @@ pub struct AccountIdArgs {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct EvalArgs {
-    pub account_id: String,
-    pub js: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct RecipeEventArgs {
     pub account_id: String,
     pub provider: String,
@@ -368,77 +376,37 @@ fn data_directory_for<R: Runtime>(app: &AppHandle<R>, account_id: &str) -> Resul
     Ok(base.join("webview_accounts").join(account_id))
 }
 
-fn build_init_script(account_id: &str, provider: &str, recipe_js: &str) -> String {
-    // Inject context first so the runtime can read it on load. JSON-encode
-    // the values so escaping is safe. Order matters:
-    //   1. UA spoof (must land BEFORE page JS reads `navigator`)
-    //   2. Recipe context
-    //   3. Recipe runtime
-    //   4. Per-provider recipe
+/// Produce the `initialization_script` payload for this webview. Empty for
+/// providers whose scraping has moved natively to CDP (whatsapp, telegram,
+/// slack, discord, browserscan) under the cef runtime — their webviews
+/// load with ZERO injected JS. Gmail, LinkedIn, and Google Meet still
+/// depend on the JS recipe bridge (not migrated in this PR) so they get
+/// the runtime + recipe concatenated.
+fn build_init_script(account_id: &str, provider: &str) -> String {
+    let Some(recipe_js) = provider_recipe_js(provider) else {
+        return String::new();
+    };
     let ctx = serde_json::json!({
         "accountId": account_id,
         "provider": provider,
     });
+    // cef runs the UA override through CDP before navigation; wry has no
+    // CDP so keep the JS spoof for providers that need it.
+    #[cfg(not(feature = "cef"))]
     let spoof = if provider_ua_spoof(provider) {
         UA_SPOOF_JS
     } else {
         ""
     };
-    let target_marker = telegram_target_marker(account_id, provider);
-    let title_marker_script = if provider == "telegram" {
-        r#"
-(function () {
-  const marker = window.__OPENHUMAN_TARGET_MARKER__;
-  if (!marker || window.__OPENHUMAN_TITLE_MARKER_INSTALLED__) return;
-  window.__OPENHUMAN_TITLE_MARKER_INSTALLED__ = true;
-  function applyMarker() {
-    try {
-      const current = String(document.title || "");
-      if (!current.includes(marker)) {
-        document.title = current ? current + " " + marker : marker;
-      }
-    } catch (_) {}
-  }
-  applyMarker();
-  try {
-    const obs = new MutationObserver(applyMarker);
-    const start = function () {
-      if (document.querySelector("title")) obs.observe(document.querySelector("title"), {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
-      applyMarker();
-    };
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", start, { once: true });
-    } else {
-      start();
-    }
-    window.addEventListener("focus", applyMarker);
-    setInterval(applyMarker, 2000);
-  } catch (_) {}
-})();
-"#
-    } else {
-        ""
-    };
+    #[cfg(feature = "cef")]
+    let spoof = "";
     format!(
-        "{spoof}\n\nwindow.__OPENHUMAN_RECIPE_CTX__ = {ctx};\nwindow.__OPENHUMAN_TARGET_MARKER__ = {target_marker};\n\n{title_marker_script}\n\n{runtime}\n\n{recipe}\n",
+        "{spoof}\n\nwindow.__OPENHUMAN_RECIPE_CTX__ = {ctx};\n\n{runtime}\n\n{recipe}\n",
         spoof = spoof,
         ctx = ctx,
-        target_marker = serde_json::to_string(&target_marker).unwrap_or_else(|_| "null".to_string()),
-        title_marker_script = title_marker_script,
         runtime = RUNTIME_JS,
         recipe = recipe_js
     )
-}
-
-fn telegram_target_marker(account_id: &str, provider: &str) -> Option<String> {
-    if provider != "telegram" {
-        return None;
-    }
-    Some(format!("{TELEGRAM_TARGET_MARKER_PREFIX}{account_id}]"))
 }
 
 /// Spawn (or focus) the embedded webview for an account.
@@ -456,16 +424,26 @@ pub async fn webview_account_open<R: Runtime>(
         label
     );
 
-    let url_str = args
+    let real_url_str = args
         .url
         .as_deref()
         .or_else(|| provider_url(&args.provider))
-        .ok_or_else(|| format!("unknown provider: {}", args.provider))?;
-    let url: Url = url_str
+        .ok_or_else(|| format!("unknown provider: {}", args.provider))?
+        .to_string();
+    if !provider_is_supported(&args.provider) && args.url.is_none() {
+        return Err(format!("unknown provider: {}", args.provider));
+    }
+    // Under cef we open the webview at a tiny `data:` placeholder URL so
+    // the CDP session opener can attach and apply the UA override BEFORE
+    // the real provider URL loads. Under wry there's no CDP, so navigate
+    // straight to the real URL and rely on the injected `ua_spoof.js`.
+    #[cfg(feature = "cef")]
+    let initial_url_str = cdp::placeholder_data_url(&args.account_id);
+    #[cfg(not(feature = "cef"))]
+    let initial_url_str = real_url_str.clone();
+    let initial_url: Url = initial_url_str
         .parse()
-        .map_err(|e| format!("invalid url {url_str}: {e}"))?;
-    let recipe_js = provider_recipe_js(&args.provider)
-        .ok_or_else(|| format!("no recipe registered for provider: {}", args.provider))?;
+        .map_err(|e| format!("invalid initial url {initial_url_str}: {e}"))?;
 
     // If a webview for this account already exists, just reposition / show.
     {
@@ -511,11 +489,13 @@ pub async fn webview_account_open<R: Runtime>(
         );
     }
 
-    let init_script = build_init_script(&args.account_id, &args.provider, recipe_js);
+    let init_script = build_init_script(&args.account_id, &args.provider);
 
-    let mut builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(url))
-        .initialization_script(&init_script)
+    let mut builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(initial_url))
         .data_directory(data_dir);
+    if !init_script.is_empty() {
+        builder = builder.initialization_script(&init_script);
+    }
 
     // Keep link clicks that leave the provider's host set in the OS
     // browser, not the embedded webview. Same-host navigations (including
@@ -604,6 +584,15 @@ pub async fn webview_account_open<R: Runtime>(
         .unwrap()
         .insert(args.account_id.clone(), label.clone());
 
+    // Spawn the per-account CDP session opener: holds an attached session
+    // for the lifetime of the webview so `Emulation.setUserAgentOverride`
+    // (which reverts on detach) keeps applying, and drives the initial
+    // Page.navigate from our placeholder URL to the real provider URL.
+    // Also installs the `#openhuman-account-{id}` fragment the scanners
+    // match on for multi-account disambiguation.
+    #[cfg(feature = "cef")]
+    cdp::spawn_session(app.clone(), args.account_id.clone(), real_url_str.clone());
+
     // For providers we know how to scrape via CDP, kick off the IndexedDB
     // scanner. Compile-gated to `cef` because CDP only exists when the CEF
     // runtime is in use (wry has no remote-debugging port).
@@ -650,11 +639,8 @@ pub async fn webview_account_open<R: Runtime>(
                     let app_clone = app.clone();
                     let acct = args.account_id.clone();
                     let prefix = prefix.to_string();
-                    let target_marker = telegram_target_marker(&args.account_id, &args.provider);
                     tokio::spawn(async move {
-                        registry
-                            .ensure_scanner(app_clone, acct, prefix, target_marker)
-                            .await;
+                        registry.ensure_scanner(app_clone, acct, prefix).await;
                     });
                 } else {
                     log::warn!("[webview-accounts] telegram ScannerRegistry not in app state");
@@ -948,41 +934,6 @@ pub async fn webview_account_show<R: Runtime>(
         log::debug!("[webview-accounts] show label={}", label);
     }
     Ok(())
-}
-
-/// Look up the live `Webview` for an account, or return a descriptive error.
-fn resolve_webview<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &tauri::State<'_, WebviewAccountsState>,
-    account_id: &str,
-) -> Result<tauri::Webview<R>, String> {
-    let label = state
-        .inner
-        .lock()
-        .unwrap()
-        .get(account_id)
-        .cloned()
-        .ok_or_else(|| format!("no webview for account {account_id}"))?;
-    app.get_webview(&label)
-        .ok_or_else(|| format!("webview {label} missing (stale state)"))
-}
-
-/// Generic eval escape hatch — runs `js` inside the account's webview.
-/// Prefer the typed commands above; only use this for one-off recipe
-/// helpers or debugging.
-#[tauri::command]
-pub async fn webview_account_eval<R: Runtime>(
-    app: AppHandle<R>,
-    state: tauri::State<'_, WebviewAccountsState>,
-    args: EvalArgs,
-) -> Result<(), String> {
-    let wv = resolve_webview(&app, &state, &args.account_id)?;
-    log::debug!(
-        "[webview-accounts] eval account={} bytes={}",
-        args.account_id,
-        args.js.len()
-    );
-    wv.eval(&args.js).map_err(|e| format!("eval failed: {e}"))
 }
 
 /// Called from the injected runtime each time the recipe emits an event.
