@@ -21,7 +21,6 @@ pub use load::{
 mod local_ai;
 mod node;
 mod observability;
-mod orchestrator;
 mod proxy;
 mod routes;
 mod runtime;
@@ -42,20 +41,17 @@ pub use channels::{
 pub use context::ContextConfig;
 pub use dictation::{DictationActivationMode, DictationConfig};
 pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
-pub use identity_cost::{CostConfig, ModelPricing, PeripheralBoardConfig, PeripheralsConfig};
+pub use identity_cost::{CostConfig, ModelPricing};
 pub use learning::{LearningConfig, ReflectionSource};
 pub use local_ai::LocalAiConfig;
 pub use node::NodeConfig;
 pub use observability::ObservabilityConfig;
-pub use orchestrator::OrchestratorConfig;
 pub use proxy::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
     ProxyConfig, ProxyScope,
 };
-pub use routes::{
-    ClassificationRule, EmbeddingRouteConfig, ModelRouteConfig, QueryClassificationConfig,
-};
+pub use routes::{EmbeddingRouteConfig, ModelRouteConfig};
 pub use runtime::{DockerRuntimeConfig, ReliabilityConfig, RuntimeConfig, SchedulerConfig};
 pub use storage_memory::{
     MemoryConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,

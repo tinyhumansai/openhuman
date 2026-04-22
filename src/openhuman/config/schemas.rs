@@ -11,7 +11,6 @@ const DEFAULT_ONBOARDING_FLAG_NAME: &str = ".skip_onboarding";
 
 #[derive(Debug, Deserialize)]
 struct ModelSettingsUpdate {
-    api_key: Option<String>,
     api_url: Option<String>,
     default_model: Option<String>,
     default_temperature: Option<f64>,
@@ -230,9 +229,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "update_model_settings" => ControllerSchema {
             namespace: "config",
             function: "update_model_settings",
-            description: "Update model and API connection settings.",
+            description: "Update model and backend connection settings.",
             inputs: vec![
-                optional_string("api_key", "Provider API key."),
                 optional_string("api_url", "Backend API URL."),
                 optional_string("default_model", "Default model id."),
                 FieldSchema {
@@ -559,7 +557,6 @@ fn handle_update_model_settings(params: Map<String, Value>) -> ControllerFuture 
     Box::pin(async move {
         let update = deserialize_params::<ModelSettingsUpdate>(params)?;
         let patch = config_rpc::ModelSettingsPatch {
-            api_key: update.api_key,
             api_url: update.api_url,
             default_model: update.default_model,
             default_temperature: update.default_temperature,
@@ -907,13 +904,11 @@ mod tests {
     #[test]
     fn deserialize_params_parses_model_settings_update() {
         let mut m = Map::new();
-        m.insert("api_key".into(), Value::String("sk-123".into()));
         m.insert(
             "default_temperature".into(),
             Value::Number(serde_json::Number::from_f64(0.7).unwrap()),
         );
         let out: ModelSettingsUpdate = deserialize_params(m).unwrap();
-        assert_eq!(out.api_key.as_deref(), Some("sk-123"));
         assert_eq!(out.default_temperature, Some(0.7));
         assert!(out.api_url.is_none());
         assert!(out.default_model.is_none());

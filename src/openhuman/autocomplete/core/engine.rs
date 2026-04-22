@@ -10,8 +10,8 @@ use tokio::time::{self, Duration, Instant};
 #[cfg(target_os = "macos")]
 use super::focus::validate_focused_target;
 use super::focus::{
-    apply_text_to_focused_field, focused_text_context_verbose, is_escape_key_down, is_tab_key_down,
-    send_backspace,
+    any_modifier_down, apply_text_to_focused_field, focused_text_context_verbose,
+    is_escape_key_down, is_tab_key_down, send_backspace,
 };
 #[cfg(target_os = "macos")]
 use super::overlay::overlay_helper_quit;
@@ -731,12 +731,19 @@ impl AutocompleteEngine {
         let suggestion = sanitize_suggestion(&generated);
         let app_name = focused.app_name.clone();
         let target_role = focused.role.clone();
+        let low_quality = is_low_quality_suggestion(&suggestion, &context);
         let mut state = self.inner.lock().await;
         state.app_name = app_name.clone();
         state.target_role = target_role;
         state.context = context;
         state.updated_at_ms = Some(Utc::now().timestamp_millis());
-        if suggestion.is_empty() {
+        if suggestion.is_empty() || low_quality {
+            if low_quality {
+                log::debug!(
+                    "[autocomplete] dropping low-quality suggestion: {:?}",
+                    suggestion
+                );
+            }
             state.suggestion = None;
             state.phase = "idle".to_string();
             state.last_error = None;
@@ -795,6 +802,13 @@ impl AutocompleteEngine {
         }
 
         let is_down = is_tab_key_down();
+        // Ignore Tab when any modifier is held (Ctrl+Tab app-switch, Shift+Tab outdent,
+        // Cmd+Tab, Option+Tab). Reset edge state so a clean Tab afterwards still accepts.
+        if is_down && any_modifier_down() {
+            let mut state = self.inner.lock().await;
+            state.last_tab_down = false;
+            return Ok(());
+        }
         let pending = {
             let mut state = self.inner.lock().await;
             let edge = is_down && !state.last_tab_down;
@@ -1046,9 +1060,58 @@ fn detect_tab_artifact_suffix(expected_context: &str, current_context: &str) -> 
     0
 }
 
+/// Reject obviously useless suggestions before they reach the overlay.
+/// Filters: too-short, pure whitespace/punct, or exact echo of the trailing context.
+fn is_low_quality_suggestion(suggestion: &str, context: &str) -> bool {
+    let trimmed = suggestion.trim();
+    if trimmed.chars().count() < 2 {
+        return true;
+    }
+    if !trimmed.chars().any(|c| c.is_alphanumeric()) {
+        return true;
+    }
+    // Suggestion is a substring of the tail the user already typed — useless echo.
+    let tail_window = context
+        .chars()
+        .rev()
+        .take(trimmed.chars().count() + 8)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    if tail_window.contains(trimmed) {
+        return true;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::detect_tab_artifact_suffix;
+    use super::is_low_quality_suggestion;
+
+    #[test]
+    fn low_quality_rejects_too_short() {
+        assert!(is_low_quality_suggestion("", ""));
+        assert!(is_low_quality_suggestion("a", "hello "));
+    }
+
+    #[test]
+    fn low_quality_rejects_pure_punct() {
+        assert!(is_low_quality_suggestion("...", "hello"));
+        assert!(is_low_quality_suggestion("  -- ", "hello"));
+    }
+
+    #[test]
+    fn low_quality_rejects_echo_of_tail() {
+        assert!(is_low_quality_suggestion("world", "hello world"));
+    }
+
+    #[test]
+    fn low_quality_accepts_new_content() {
+        assert!(!is_low_quality_suggestion(" world", "hello"));
+        assert!(!is_low_quality_suggestion("tomorrow", "see you "));
+    }
 
     #[test]
     fn detects_literal_tab_suffix() {

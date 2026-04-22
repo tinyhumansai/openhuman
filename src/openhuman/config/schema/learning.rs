@@ -35,10 +35,6 @@ pub struct LearningConfig {
     #[serde(default = "default_true")]
     pub tool_tracking_enabled: bool,
 
-    /// Enable autonomous skill creation from experience. Default: false (Phase 5).
-    #[serde(default)]
-    pub skill_creation_enabled: bool,
-
     /// Which LLM to use for reflection. Default: local (Ollama).
     #[serde(default)]
     pub reflection_source: ReflectionSource,
@@ -71,7 +67,6 @@ impl Default for LearningConfig {
             reflection_enabled: default_true(),
             user_profile_enabled: default_true(),
             tool_tracking_enabled: default_true(),
-            skill_creation_enabled: false,
             reflection_source: ReflectionSource::default(),
             max_reflections_per_session: default_max_reflections(),
             min_turn_complexity: default_min_turn_complexity(),

@@ -27,7 +27,7 @@
 //! use crate::openhuman::providers::create_backend_inference_provider;
 //! use crate::openhuman::providers::compatible::{AuthStyle, OpenAiCompatibleProvider};
 //!
-//! let remote = create_backend_inference_provider(api_key, api_url, &opts)?;
+//! let remote = create_backend_inference_provider(api_url, &opts)?;
 //! let provider = routing::new_provider(remote, &config.local_ai, &config.default_model);
 //! ```
 

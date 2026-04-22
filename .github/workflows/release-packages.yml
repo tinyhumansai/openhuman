@@ -60,10 +60,29 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libssl-dev build-essential cmake
 
+      - name: Verify Sentry DSN is present
+        shell: bash
+        env:
+          OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_SENTRY_DSN }}
+        run: |
+          # Sentry DSN is baked into the binary at compile time via
+          # `option_env!`. Missing DSN here means the arm64 CLI silently
+          # ships without error reporting — fail the job instead.
+          if [ -z "${OPENHUMAN_SENTRY_DSN}" ]; then
+            echo "::error::vars.OPENHUMAN_SENTRY_DSN is empty — the Linux arm64 CLI would ship without error reporting."
+            echo "Configure the repository / environment variable before re-running the release."
+            exit 1
+          fi
+          echo "OPENHUMAN_SENTRY_DSN is set (length=${#OPENHUMAN_SENTRY_DSN})"
+
       - name: Build CLI binary and package tarball
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_SENTRY_DSN }}
+          # Sentry release tracking (#405): keep the arm64 CLI tag in sync
+          # with the desktop build (`openhuman@<version>+<short_sha>`).
+          OPENHUMAN_BUILD_SHA: ${{ github.sha }}
+          OPENHUMAN_APP_ENV: production
         run: |
           cargo build --release --bin openhuman-core
           VERSION="${{ github.event.release.tag_name }}"

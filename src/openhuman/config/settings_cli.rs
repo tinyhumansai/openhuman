@@ -19,7 +19,6 @@ pub fn settings_section_json(
     let cfg = &snap.config;
     let settings = match section {
         "model" => json!({
-            "api_key": cfg.get("api_key"),
             "api_url": cfg.get("api_url"),
             "default_model": cfg.get("default_model"),
             "default_temperature": cfg.get("default_temperature"),
@@ -57,7 +56,6 @@ mod tests {
     fn sample_snapshot() -> ConfigSnapshotFields {
         ConfigSnapshotFields {
             config: json!({
-                "api_key": "sk-xxx",
                 "api_url": "https://api.example.com",
                 "default_model": "gpt-4",
                 "default_temperature": 0.7,
@@ -75,7 +73,6 @@ mod tests {
         let snap = sample_snapshot();
         let v = settings_section_json("model", &snap, vec!["a".into()]);
         assert_eq!(v["result"]["section"], "model");
-        assert_eq!(v["result"]["settings"]["api_key"], "sk-xxx");
         assert_eq!(v["result"]["settings"]["default_model"], "gpt-4");
         assert_eq!(v["result"]["workspace_dir"], "/tmp/ws");
         assert_eq!(v["result"]["config_path"], "/tmp/config.toml");
@@ -140,9 +137,8 @@ mod tests {
             config_path: "/tmp/cfg.toml".into(),
         };
         let v = settings_section_json("model", &snap, vec![]);
-        // `default_model` present; the others (api_key/api_url/default_temperature) null.
+        // `default_model` present; the others (api_url/default_temperature) null.
         assert_eq!(v["result"]["settings"]["default_model"], "gpt-4");
-        assert!(v["result"]["settings"]["api_key"].is_null());
         assert!(v["result"]["settings"]["api_url"].is_null());
     }
 
