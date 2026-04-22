@@ -226,12 +226,36 @@ impl ConfigResolutionSource {
     }
 }
 
+/// Seam over process environment so config-dir resolution can be unit-tested
+/// without touching (and racing against) `std::env`.
+pub(crate) trait EnvLookup: Send + Sync {
+    fn get(&self, key: &str) -> Option<String>;
+}
+
+/// Production impl that reads from the real process environment.
+pub(crate) struct SystemEnv;
+
+impl EnvLookup for SystemEnv {
+    fn get(&self, key: &str) -> Option<String> {
+        std::env::var(key).ok()
+    }
+}
+
 async fn resolve_runtime_config_dirs(
     default_openhuman_dir: &Path,
     default_workspace_dir: &Path,
 ) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
+    resolve_runtime_config_dirs_with_env(default_openhuman_dir, default_workspace_dir, &SystemEnv)
+        .await
+}
+
+async fn resolve_runtime_config_dirs_with_env(
+    default_openhuman_dir: &Path,
+    default_workspace_dir: &Path,
+    env: &(dyn EnvLookup + Send + Sync),
+) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
     // 1. Explicit env override always wins.
-    if let Ok(custom_workspace) = std::env::var("OPENHUMAN_WORKSPACE") {
+    if let Some(custom_workspace) = env.get("OPENHUMAN_WORKSPACE") {
         if !custom_workspace.is_empty() {
             let (openhuman_dir, workspace_dir) =
                 resolve_config_dir_for_workspace(&PathBuf::from(custom_workspace));
@@ -1310,6 +1334,84 @@ mod tests {
             Some("https://token@sentry.io/1")
         );
         clear_env(&["OPENHUMAN_SENTRY_DSN"]);
+    }
+
+    // ── EnvLookup seam for resolve_runtime_config_dirs ─────────────
+
+    #[derive(Default)]
+    struct MapEnv(std::collections::HashMap<String, String>);
+
+    impl MapEnv {
+        fn with(mut self, k: &str, v: &str) -> Self {
+            self.0.insert(k.to_string(), v.to_string());
+            self
+        }
+    }
+
+    impl EnvLookup for MapEnv {
+        fn get(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+    }
+
+    #[tokio::test]
+    async fn env_workspace_override_wins_via_seam() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // Active user would otherwise win — confirm env override takes precedence.
+        write_active_user_id(root, "u-active").unwrap();
+
+        let ws_root = tempfile::tempdir().unwrap();
+        let ws_path = ws_root.path().join("my-workspace");
+        let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", ws_path.to_str().unwrap());
+
+        let default_workspace = root.join("workspace");
+        let (oh_dir, ws_dir, source) =
+            resolve_runtime_config_dirs_with_env(root, &default_workspace, &env)
+                .await
+                .unwrap();
+
+        let (expected_oh, expected_ws) = resolve_config_dir_for_workspace(&ws_path);
+        assert_eq!(source, ConfigResolutionSource::EnvWorkspace);
+        assert_eq!(oh_dir, expected_oh);
+        assert_eq!(ws_dir, expected_ws);
+    }
+
+    #[tokio::test]
+    async fn empty_env_workspace_falls_through_to_active_user() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write_active_user_id(root, "u-fallthrough").unwrap();
+        let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", "");
+
+        let default_workspace = root.join("workspace");
+        let (oh_dir, ws_dir, source) =
+            resolve_runtime_config_dirs_with_env(root, &default_workspace, &env)
+                .await
+                .unwrap();
+
+        let expected = root.join("users").join("u-fallthrough");
+        assert_eq!(source, ConfigResolutionSource::ActiveUser);
+        assert_eq!(oh_dir, expected);
+        assert_eq!(ws_dir, expected.join("workspace"));
+    }
+
+    #[tokio::test]
+    async fn missing_env_workspace_uses_pre_login_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let env = MapEnv::default(); // no OPENHUMAN_WORKSPACE, no active user
+
+        let default_workspace = root.join("workspace");
+        let (oh_dir, ws_dir, source) =
+            resolve_runtime_config_dirs_with_env(root, &default_workspace, &env)
+                .await
+                .unwrap();
+
+        let expected = root.join("users").join(PRE_LOGIN_USER_ID);
+        assert_eq!(source, ConfigResolutionSource::DefaultConfigDir);
+        assert_eq!(oh_dir, expected);
+        assert_eq!(ws_dir, expected.join("workspace"));
     }
 
     // ── resolve_config_dir_for_workspace ───────────────────────────
