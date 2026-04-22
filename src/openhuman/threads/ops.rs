@@ -15,15 +15,15 @@ use crate::openhuman::memory::{
     UpsertConversationThreadRequest,
 };
 use crate::openhuman::providers::{self, ProviderRuntimeOptions};
+use crate::openhuman::threads::title::{
+    build_title_prompt, is_auto_generated_thread_title, sanitize_generated_title,
+    title_log_fingerprint, THREAD_TITLE_LOG_PREFIX, THREAD_TITLE_MODEL_HINT,
+    THREAD_TITLE_SYSTEM_PROMPT,
+};
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-
-const THREAD_TITLE_LOG_PREFIX: &str = "[threads:title]";
-const THREAD_TITLE_MODEL_HINT: &str = "hint:summarize";
-const THREAD_TITLE_SYSTEM_PROMPT: &str = "You generate short, specific chat thread titles from the first user message and the assistant reply. Return only the title text. Keep it under 8 words. No quotes. No markdown. No trailing punctuation unless it is part of a proper noun.";
 
 fn request_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -34,12 +34,6 @@ fn counts(entries: impl IntoIterator<Item = (&'static str, usize)>) -> BTreeMap<
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect()
-}
-
-fn title_log_fingerprint(title: &str) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    title.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
 }
 
 fn envelope<T: Serialize>(
@@ -102,86 +96,6 @@ fn record_to_message(record: ConversationMessageRecord) -> ConversationMessage {
         sender: record.sender,
         created_at: record.created_at,
     }
-}
-
-fn is_auto_generated_thread_title(title: &str) -> bool {
-    let trimmed = title.trim();
-    let bytes = trimmed.as_bytes();
-    if bytes.len() < 16 || !trimmed.starts_with("Chat ") {
-        return false;
-    }
-
-    let month_end = 8;
-    if bytes.len() <= month_end || !bytes[5..month_end].iter().all(|b| b.is_ascii_alphabetic()) {
-        return false;
-    }
-    if bytes.get(month_end) != Some(&b' ') {
-        return false;
-    }
-
-    let mut idx = month_end + 1;
-    let day_start = idx;
-    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
-        idx += 1;
-    }
-    if idx == day_start || idx - day_start > 2 {
-        return false;
-    }
-    if bytes.get(idx) != Some(&b' ') {
-        return false;
-    }
-    idx += 1;
-
-    let hour_start = idx;
-    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
-        idx += 1;
-    }
-    if idx == hour_start || idx - hour_start > 2 {
-        return false;
-    }
-    if bytes.get(idx) != Some(&b':') {
-        return false;
-    }
-    idx += 1;
-
-    if idx + 2 >= bytes.len()
-        || !bytes[idx].is_ascii_digit()
-        || !bytes[idx + 1].is_ascii_digit()
-        || bytes[idx + 2] != b' '
-    {
-        return false;
-    }
-    idx += 3;
-
-    matches!(&trimmed[idx..], "AM" | "PM")
-}
-
-fn collapse_whitespace(input: &str) -> String {
-    input.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn sanitize_generated_title(raw: &str) -> Option<String> {
-    let line = raw
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or(raw)
-        .trim();
-    let trimmed = line
-        .trim_matches(|c: char| matches!(c, '"' | '\'' | '`'))
-        .trim()
-        .trim_end_matches(['.', '!', '?', ':', ';'])
-        .trim();
-    let collapsed = collapse_whitespace(trimmed);
-    if collapsed.is_empty() {
-        return None;
-    }
-    Some(collapsed.chars().take(80).collect())
-}
-
-fn build_title_prompt(user_message: &str, assistant_message: &str) -> String {
-    format!(
-        "First user message:\n{user_message}\n\nAssistant reply:\n{assistant_message}\n\nReturn the best thread title."
-    )
 }
 
 /// Lists all conversation threads.
