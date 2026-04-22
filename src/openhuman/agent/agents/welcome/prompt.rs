@@ -8,7 +8,8 @@
 //! skill-executor wording stays scoped to `integrations_agent/prompt.rs`).
 
 use crate::openhuman::context::prompt::{
-    render_tools, render_user_files, render_workspace, ConnectedIntegration, PromptContext,
+    render_connected_identities, render_tools, render_user_files, render_workspace,
+    ConnectedIntegration, PromptContext,
 };
 use anyhow::Result;
 use std::fmt::Write;
@@ -23,6 +24,12 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     let user_files = render_user_files(ctx)?;
     if !user_files.trim().is_empty() {
         out.push_str(user_files.trim_end());
+        out.push_str("\n\n");
+    }
+
+    let identities = render_connected_identities();
+    if !identities.trim().is_empty() {
+        out.push_str(identities.trim_end());
         out.push_str("\n\n");
     }
 
