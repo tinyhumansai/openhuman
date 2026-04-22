@@ -3,13 +3,12 @@ import { useState } from 'react';
 import { useDaemonHealth } from '../../hooks/useDaemonHealth';
 import { useDaemonLifecycle } from '../../hooks/useDaemonLifecycle';
 import { useCoreState } from '../../providers/CoreStateProvider';
+import { LATEST_APP_DOWNLOAD_URL } from '../../utils/config';
 import { openUrl } from '../../utils/openUrl';
 
 interface ServiceBlockingGateProps {
   children: React.ReactNode;
 }
-
-const LATEST_DOWNLOAD_URL = 'https://github.com/tinyhumansai/openhuman/releases/latest';
 
 const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
   const { snapshot } = useCoreState();
@@ -39,7 +38,7 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
   };
 
   const handleDownloadLatest = async () => {
-    await openUrl(LATEST_DOWNLOAD_URL);
+    await openUrl(LATEST_APP_DOWNLOAD_URL);
   };
 
   if (!shouldShowRecoveryPrompt) {

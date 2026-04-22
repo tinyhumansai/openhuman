@@ -1,3 +1,4 @@
+import { LATEST_APP_DOWNLOAD_URL } from '../utils/config';
 import { openUrl } from '../utils/openUrl';
 
 /**
@@ -16,8 +17,6 @@ interface ErrorFallbackScreenProps {
   componentStack?: string;
   onReset: () => void;
 }
-
-const LATEST_DOWNLOAD_URL = 'https://github.com/tinyhumansai/openhuman/releases/latest';
 
 export default function ErrorFallbackScreen({
   error,
@@ -95,7 +94,7 @@ export default function ErrorFallbackScreen({
               Reload App
             </button>
             <button
-              onClick={() => openUrl(LATEST_DOWNLOAD_URL)}
+              onClick={() => openUrl(LATEST_APP_DOWNLOAD_URL)}
               className="bg-stone-800 hover:bg-stone-700 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors border border-stone-600">
               Download Latest
             </button>

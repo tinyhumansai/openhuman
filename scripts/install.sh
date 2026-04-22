@@ -255,7 +255,12 @@ PY
   ASSET_URL="$(echo "${parsed}" | sed -n '3p')"
   ASSET_SHA256="$(echo "${parsed}" | sed -n '4p')"
 
-  [ -n "${ASSET_URL}" ]
+  # Exit 0 on success, 2 when API responded but no compatible asset was found.
+  # Callers can distinguish "no asset" (2) from network/parse errors (1).
+  if [ -n "${ASSET_URL}" ]; then
+    return 0
+  fi
+  return 2
 }
 
 resolve_release_digest() {
@@ -292,8 +297,10 @@ if resolve_from_latest_json; then
   log_ok "Resolved latest release via latest.json (${LATEST_VERSION})"
 else
   log_warn "latest.json lookup failed. Falling back to releases API."
-  if ! resolve_from_release_api; then
-    if [ "${OS}" = "linux" ] && [ "${DRY_RUN}" = true ]; then
+  resolve_from_release_api
+  resolve_rc=$?
+  if [ "${resolve_rc}" -ne 0 ]; then
+    if [ "${OS}" = "linux" ] && [ "${DRY_RUN}" = true ] && [ "${resolve_rc}" -eq 2 ]; then
       log_warn "No Linux release asset is currently published. Dry-run will skip install steps."
       echo "DRY RUN: no compatible asset available for ${OS}/${ARCH}"
       exit 0

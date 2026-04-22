@@ -40,3 +40,8 @@ export const TELEGRAM_BOT_USERNAME =
 export const DEV_JWT_TOKEN = import.meta.env.DEV
   ? (import.meta.env.VITE_DEV_JWT_TOKEN as string | undefined)
   : undefined;
+
+/** URL for the latest app release download page. Can be overridden via VITE_LATEST_APP_DOWNLOAD_URL for deployment-specific download pages. */
+export const LATEST_APP_DOWNLOAD_URL =
+  (import.meta.env.VITE_LATEST_APP_DOWNLOAD_URL as string | undefined)?.trim() ||
+  'https://github.com/tinyhumansai/openhuman/releases/latest';

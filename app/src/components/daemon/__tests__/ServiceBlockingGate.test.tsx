@@ -12,6 +12,10 @@ vi.mock('../../../utils/openUrl', () => ({
   openUrl: (...args: unknown[]) => mockOpenUrl(...args),
 }));
 
+vi.mock('../../../utils/config', () => ({
+  LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
+}));
+
 vi.mock('../../../providers/CoreStateProvider', () => ({ useCoreState: () => mockUseCoreState() }));
 
 vi.mock('../../../hooks/useDaemonHealth', () => ({ useDaemonHealth: () => mockUseDaemonHealth() }));
@@ -69,6 +73,65 @@ describe('ServiceBlockingGate', () => {
       expect(mockOpenUrl).toHaveBeenCalledWith(
         'https://github.com/tinyhumansai/openhuman/releases/latest'
       );
+    });
+  });
+
+  it('calls restartDaemon and resetRetries on successful retry', async () => {
+    const mockRestartDaemon = vi.fn().mockResolvedValue(true);
+    const mockResetRetries = vi.fn();
+    mockUseDaemonHealth.mockReturnValue({ status: 'error', restartDaemon: mockRestartDaemon });
+    mockUseDaemonLifecycle.mockReturnValue({
+      maxAttemptsReached: true,
+      resetRetries: mockResetRetries,
+    });
+
+    render(
+      <ServiceBlockingGate>
+        <div>App Content</div>
+      </ServiceBlockingGate>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Core' }));
+
+    await waitFor(() => {
+      expect(mockRestartDaemon).toHaveBeenCalled();
+      expect(mockResetRetries).toHaveBeenCalled();
+    });
+  });
+
+  it('shows error message when restartDaemon returns false', async () => {
+    const mockRestartDaemon = vi.fn().mockResolvedValue(false);
+    mockUseDaemonHealth.mockReturnValue({ status: 'error', restartDaemon: mockRestartDaemon });
+    mockUseDaemonLifecycle.mockReturnValue({ maxAttemptsReached: true, resetRetries: vi.fn() });
+
+    render(
+      <ServiceBlockingGate>
+        <div>App Content</div>
+      </ServiceBlockingGate>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Core' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Retry failed/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows error message when restartDaemon throws', async () => {
+    const mockRestartDaemon = vi.fn().mockRejectedValue(new Error('daemon error'));
+    mockUseDaemonHealth.mockReturnValue({ status: 'error', restartDaemon: mockRestartDaemon });
+    mockUseDaemonLifecycle.mockReturnValue({ maxAttemptsReached: true, resetRetries: vi.fn() });
+
+    render(
+      <ServiceBlockingGate>
+        <div>App Content</div>
+      </ServiceBlockingGate>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Core' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Retry failed/)).toBeInTheDocument();
     });
   });
 });
