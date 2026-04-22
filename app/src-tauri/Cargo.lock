@@ -8,6 +8,7 @@ version = "0.52.28"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "cef",
  "chrono",
  "env_logger",
