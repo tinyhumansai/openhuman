@@ -19,21 +19,28 @@ pub struct CdpTarget {
 /// CDP sessions in the app tunnel through this one ws once `flatten: true`
 /// is set on attach.
 pub async fn browser_ws_url() -> Result<String, String> {
-    let url = format!("http://{CDP_HOST}:{CDP_PORT}/json/version");
-    let resp = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("openhuman-cdp/1.0")
         .timeout(Duration::from_secs(5))
         .build()
-        .map_err(|e| format!("reqwest build: {e}"))?
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("GET {url}: {e}"))?;
-    let v: Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
-    v.get("webSocketDebuggerUrl")
-        .and_then(|x| x.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "no webSocketDebuggerUrl in /json/version".to_string())
+        .map_err(|e| format!("reqwest build: {e}"))?;
+    let mut last_err: Option<String> = None;
+    for host in [CDP_HOST, "localhost"] {
+        let url = format!("http://{host}:{CDP_PORT}/json/version");
+        match client.get(&url).send().await {
+            Ok(resp) => {
+                let v: Value = resp.json().await.map_err(|e| format!("parse {url}: {e}"))?;
+                if let Some(ws) = v.get("webSocketDebuggerUrl").and_then(|x| x.as_str()) {
+                    return Ok(ws.to_string());
+                }
+                last_err = Some(format!("no webSocketDebuggerUrl in {url}"));
+            }
+            Err(e) => {
+                last_err = Some(format!("GET {url}: {e}"));
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| "failed to resolve CDP websocket URL".to_string()))
 }
 
 pub fn parse_targets(v: &Value) -> Vec<CdpTarget> {

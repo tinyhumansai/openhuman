@@ -18,7 +18,7 @@
 //! cookies and storage don't bleed between accounts (best-effort on
 //! WKWebView — see Tauri docs on `data_store_identifier` for the macOS path).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -42,7 +42,6 @@ const RUNTIME_JS: &str = include_str!("runtime.js");
 // under the cef feature; wry builds still need the old JS shim so the recipes
 // that emit an `ingest` payload (gmail / linkedin / google-meet) survive
 // fingerprint gates on Slack/Google's login flow.
-#[cfg(not(feature = "cef"))]
 const UA_SPOOF_JS: &str = include_str!("ua_spoof.js");
 const LINKEDIN_RECIPE_JS: &str = include_str!("../../recipes/linkedin/recipe.js");
 const GMAIL_RECIPE_JS: &str = include_str!("../../recipes/gmail/recipe.js");
@@ -102,7 +101,6 @@ fn provider_is_supported(provider: &str) -> bool {
 /// Whether to pre-load `ua_spoof.js` for a given provider (wry only — cef
 /// handles UA via CDP `Emulation.setUserAgentOverride`). Enabled for
 /// services known to run Chromium-specific fingerprinting checks.
-#[cfg(not(feature = "cef"))]
 fn provider_ua_spoof(provider: &str) -> bool {
     matches!(
         provider,
@@ -237,6 +235,47 @@ pub struct WebviewAccountsState {
     /// close/purge so reopen cycles don't stack multiple live loops.
     #[cfg(feature = "cef")]
     cdp_sessions: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// Runtime notification-bypass controls used by the settings UI.
+    notification_bypass: Mutex<NotificationBypassPrefs>,
+}
+
+#[derive(Debug, Clone)]
+struct NotificationBypassPrefs {
+    global_dnd: bool,
+    muted_accounts: HashSet<String>,
+    bypass_when_focused: bool,
+    focused_account: Option<String>,
+}
+
+impl Default for NotificationBypassPrefs {
+    fn default() -> Self {
+        Self {
+            global_dnd: false,
+            muted_accounts: HashSet::new(),
+            // Match the existing UI copy: focused account may suppress toast.
+            bypass_when_focused: true,
+            focused_account: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NotificationBypassPrefsPayload {
+    pub global_dnd: bool,
+    pub muted_accounts: Vec<String>,
+    pub bypass_when_focused: bool,
+}
+
+impl From<&NotificationBypassPrefs> for NotificationBypassPrefsPayload {
+    fn from(value: &NotificationBypassPrefs) -> Self {
+        let mut muted_accounts = value.muted_accounts.iter().cloned().collect::<Vec<_>>();
+        muted_accounts.sort();
+        Self {
+            global_dnd: value.global_dnd,
+            muted_accounts,
+            bypass_when_focused: value.bypass_when_focused,
+        }
+    }
 }
 
 /// Title prefix applied to every OS toast fired from an embedded webview.
@@ -276,6 +315,34 @@ fn forward_native_notification<R: Runtime>(
     provider: &str,
     payload: &tauri_runtime_cef::notification::NotificationPayload,
 ) {
+    if let Some(state) = app.try_state::<WebviewAccountsState>() {
+        let prefs = state.notification_bypass.lock().unwrap().clone();
+        if prefs.global_dnd {
+            log::debug!(
+                "[notify-bypass][{}] suppressed global_dnd provider={}",
+                account_id,
+                provider
+            );
+            return;
+        }
+        if prefs.muted_accounts.contains(account_id) {
+            log::debug!(
+                "[notify-bypass][{}] suppressed muted_account provider={}",
+                account_id,
+                provider
+            );
+            return;
+        }
+        if prefs.bypass_when_focused && prefs.focused_account.as_deref() == Some(account_id) {
+            log::debug!(
+                "[notify-bypass][{}] suppressed focused_account provider={}",
+                account_id,
+                provider
+            );
+            return;
+        }
+    }
+
     // Feature flag — bail early when the user hasn't opted in.
     if let Some(settings) =
         app.try_state::<crate::notification_settings::NotificationSettingsState>()
@@ -445,15 +512,21 @@ fn data_directory_for<R: Runtime>(app: &AppHandle<R>, account_id: &str) -> Resul
 /// (spoof + runtime + recipe).
 #[cfg(feature = "cef")]
 fn build_init_script(account_id: &str, provider: &str) -> String {
+    let spoof = if provider_ua_spoof(provider) {
+        UA_SPOOF_JS
+    } else {
+        ""
+    };
     let Some(recipe_js) = provider_recipe_js(provider) else {
-        return String::new();
+        return spoof.to_string();
     };
     let ctx = serde_json::json!({
         "accountId": account_id,
         "provider": provider,
     });
     format!(
-        "window.__OPENHUMAN_RECIPE_CTX__ = {ctx};\n\n{runtime}\n\n{recipe}\n",
+        "{spoof}\n\nwindow.__OPENHUMAN_RECIPE_CTX__ = {ctx};\n\n{runtime}\n\n{recipe}\n",
+        spoof = spoof,
         ctx = ctx,
         runtime = RUNTIME_JS,
         recipe = recipe_js
@@ -1040,6 +1113,83 @@ pub async fn webview_account_show<R: Runtime>(
         let _ = wv.show();
         log::debug!("[webview-accounts] show label={}", label);
     }
+    Ok(())
+}
+
+/// Web-shape notification permission state used by frontend parity code.
+/// CEF path is effectively granted because interception is handled in-app.
+#[tauri::command]
+pub fn webview_notification_permission_state() -> String {
+    #[cfg(feature = "cef")]
+    {
+        "granted".to_string()
+    }
+    #[cfg(not(feature = "cef"))]
+    {
+        "default".to_string()
+    }
+}
+
+/// Request notification permission and return web-shape state.
+#[tauri::command]
+pub fn webview_notification_permission_request() -> String {
+    webview_notification_permission_state()
+}
+
+/// Enable/disable global DND for embedded webview OS toasts.
+#[tauri::command]
+pub fn webview_notification_set_dnd(
+    state: tauri::State<'_, WebviewAccountsState>,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut prefs = state.notification_bypass.lock().unwrap();
+    prefs.global_dnd = enabled;
+    log::debug!("[notify-bypass] set global_dnd={enabled}");
+    Ok(())
+}
+
+/// Mute/unmute a specific embedded account for OS toasts.
+#[tauri::command]
+pub fn webview_notification_mute_account(
+    state: tauri::State<'_, WebviewAccountsState>,
+    account_id: String,
+    muted: bool,
+) -> Result<(), String> {
+    let account_id = sanitize_account_id(&account_id)?.to_string();
+    let mut prefs = state.notification_bypass.lock().unwrap();
+    if muted {
+        prefs.muted_accounts.insert(account_id.clone());
+    } else {
+        prefs.muted_accounts.remove(&account_id);
+    }
+    log::debug!("[notify-bypass] set muted account_id={} muted={}", account_id, muted);
+    Ok(())
+}
+
+/// Return current bypass preferences for the settings UI.
+#[tauri::command]
+pub fn webview_notification_get_bypass_prefs(
+    state: tauri::State<'_, WebviewAccountsState>,
+) -> NotificationBypassPrefsPayload {
+    let prefs = state.notification_bypass.lock().unwrap();
+    NotificationBypassPrefsPayload::from(&*prefs)
+}
+
+/// Track which account is currently focused in the shell UI.
+#[tauri::command]
+pub fn webview_set_focused_account(
+    state: tauri::State<'_, WebviewAccountsState>,
+    account_id: Option<String>,
+) -> Result<(), String> {
+    let mut prefs = state.notification_bypass.lock().unwrap();
+    prefs.focused_account = match account_id {
+        Some(id) => Some(sanitize_account_id(&id)?.to_string()),
+        None => None,
+    };
+    log::debug!(
+        "[notify-bypass] set focused_account={}",
+        prefs.focused_account.as_deref().unwrap_or("<none>")
+    );
     Ok(())
 }
 

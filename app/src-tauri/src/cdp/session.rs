@@ -146,8 +146,50 @@ async fn run_session_cycle(account_id: &str, real_url: &str) -> Result<(), Strin
     cdp.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({
-            "source": "Object.defineProperty(Notification,'permission',{get:()=>'granted'});\
-                       Notification.requestPermission=()=>Promise.resolve('granted');"
+            "source": "(function(){\
+                function ensureNotificationGranted(){\
+                    try {\
+                        var NativeNotification = window.Notification;\
+                        if (typeof NativeNotification === 'function') {\
+                            var OpenHumanNotification = function(title, options){\
+                                try { return new NativeNotification(title, options); }\
+                                catch (_) { return {}; }\
+                            };\
+                            OpenHumanNotification.prototype = NativeNotification.prototype;\
+                            try {\
+                                Object.defineProperty(OpenHumanNotification, 'permission', {\
+                                    get: function(){ return 'granted'; },\
+                                    configurable: true\
+                                });\
+                            } catch (_) {}\
+                            OpenHumanNotification.requestPermission = function(){\
+                                return Promise.resolve('granted');\
+                            };\
+                            window.Notification = OpenHumanNotification;\
+                        }\
+                    } catch (_) {}\
+                    try {\
+                        var p = navigator && navigator.permissions;\
+                        if (p && typeof p.query === 'function') {\
+                            var q = p.query.bind(p);\
+                            var fp = {\
+                                query: function(d){\
+                                    if (d && d.name === 'notifications') {\
+                                        return Promise.resolve({ state: 'granted', onchange: null });\
+                                    }\
+                                    return q(d);\
+                                }\
+                            };\
+                            Object.defineProperty(navigator, 'permissions', {\
+                                get: function(){ return fp; },\
+                                configurable: true\
+                            });\
+                        }\
+                    } catch (_) {}\
+                }\
+                ensureNotificationGranted();\
+                try { setInterval(ensureNotificationGranted, 1000); } catch (_) {}\
+            })();"
         }),
         Some(&session_id),
     )
