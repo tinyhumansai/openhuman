@@ -10,7 +10,54 @@
 
 ---
 
-## Workstream A — Fix Ubuntu installer smoke test
+## Workstream A — Drop Ubuntu from CI + harden installer resolver
+
+**Context.** Investigation revealed the Ubuntu smoke test fails because `latest.json` does not include a `linux-x86_64` platform entry — OpenHuman currently does not publish a Linux GUI binary, only the `openhuman-core-*.tar.gz` CLI tarball. The script was failing silently on missing platform; now it fails loudly. But the structural fix is: stop pretending we ship Linux until we do. This workstream both (a) removes the ubuntu matrix row from the smoke job and (b) keeps the resolver hardening so future Linux support fails loudly when something's wrong.
+
+**Note.** Tasks A1-A3 were executed locally in a prior session — root cause diagnosed, install.sh refactored to expose `resolve_asset_url` + `verify_asset_reachable` + `--source-only`, scripts/test_install.sh added with fixture, all changes committed locally. Task A4 (CI wiring) and Task A5 (drop ubuntu row) below.
+
+### Task A4: Wire the resolver test into CI and drop the ubuntu matrix row
+
+**Files:**
+- Modify: the smoke workflow file identified in A1 (likely `.github/workflows/installer-smoke.yml` or similar)
+
+- [ ] **Step 1: Drop ubuntu-22.04 from the matrix**
+
+In the smoke job's `strategy.matrix.os` list, remove `ubuntu-22.04`. Leave macOS and Windows.
+
+- [ ] **Step 2: Add the resolver unit test step**
+
+Before the existing smoke install step:
+
+```yaml
+      - name: Resolver unit test
+        run: bash scripts/test_install.sh
+```
+
+- [ ] **Step 3: Add a one-line note in the workflow above the matrix**
+
+```yaml
+      # NOTE: Linux is not currently a published target. Add `ubuntu-22.04` back
+      # once we ship a Tauri Linux AppImage in the release workflow.
+```
+
+- [ ] **Step 4: Push the local commits + this change, open PR**
+
+```bash
+git push -u origin <current-branch>
+gh pr create --title "fix(install): drop ubuntu from smoke + harden resolver" \
+  --body "Drops ubuntu-22.04 from the installer-smoke matrix because we don't publish a Linux GUI binary today; the smoke test was failing on a structural mismatch, not a bug. Hardens scripts/install.sh to fail loudly with the resolved URL + missing-platform diagnostic for future Linux re-add. Adds scripts/test_install.sh for resolver coverage."
+gh pr checks --watch
+```
+Expected: macOS + Windows smoke jobs green, no ubuntu row attempted.
+
+- [ ] **Step 5: Merge once approved**
+
+```bash
+gh pr merge --squash --delete-branch
+```
+
+## Workstream A (original) — kept for history
 
 **Context.** Every PR currently fails the `Smoke install.sh (ubuntu-22.04)` job in CI. macOS and Windows install jobs pass; only Ubuntu fails. The script `scripts/install.sh` shells out to a Python3 parser to extract the right asset URL from `latest.json` (the GitHub release's metadata file). Suspected causes (in order of likelihood):
 
