@@ -350,6 +350,11 @@ pub(crate) fn with_connection<T>(
         .context("Failed to initialize memory_tree schema")?;
     // Phase 2 migrations — additive, idempotent.
     add_column_if_missing(&conn, "mem_tree_chunks", "embedding", "BLOB")?;
+    // Phase 2 LLM-NER follow-up: per-chunk LLM importance signal +
+    // human-readable reason. Both nullable; absence is treated as
+    // "no LLM signal available" by readers.
+    add_column_if_missing(&conn, "mem_tree_score", "llm_importance", "REAL")?;
+    add_column_if_missing(&conn, "mem_tree_score", "llm_importance_reason", "TEXT")?;
     f(&conn)
 }
 

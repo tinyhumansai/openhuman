@@ -95,10 +95,25 @@ pub struct ExtractedTopic {
 }
 
 /// Aggregate output of one or more extractors on a single chunk.
+///
+/// `llm_importance` and `llm_importance_reason` are populated by extractors
+/// that piggyback an importance rating on their NER call (see
+/// [`super::llm::LlmEntityExtractor`]). Cheap regex extractors leave them
+/// `None`; downstream signal compute treats `None` as "no LLM signal" and
+/// the weighted combine zeroes that contribution out so behaviour matches
+/// pre-LLM Phase 2 exactly when LLM is disabled.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExtractedEntities {
     pub entities: Vec<ExtractedEntity>,
     pub topics: Vec<ExtractedTopic>,
+    /// Optional LLM-rated importance in `[0.0, 1.0]` for this chunk.
+    /// `None` means no LLM signal is available.
+    #[serde(default)]
+    pub llm_importance: Option<f32>,
+    /// One-line audit trail from the LLM explaining the importance rating.
+    /// Used purely for diagnostics; never feeds back into scoring.
+    #[serde(default)]
+    pub llm_importance_reason: Option<String>,
 }
 
 impl ExtractedEntities {
@@ -118,8 +133,14 @@ impl ExtractedEntities {
 
     /// Merge another extractor's output into this one.
     ///
-    /// Deduplicates by `(kind, normalised_text, span_start)` so the same
-    /// match from two extractors doesn't get double-counted.
+    /// Deduplicates entities by `(kind, normalised_text, span_start)` and
+    /// topics by `label` so the same match from two extractors doesn't get
+    /// double-counted.
+    ///
+    /// LLM importance signals merge by **maximum** — if either side rated
+    /// the chunk as important, the merged result keeps that higher rating.
+    /// The reason from whichever side won the max wins; if they tied or
+    /// both are absent, the non-empty one (if any) is kept.
     pub fn merge(&mut self, other: ExtractedEntities) {
         use std::collections::BTreeSet;
         let mut seen: BTreeSet<(EntityKind, String, u32)> = self
@@ -138,6 +159,24 @@ impl ExtractedEntities {
         for t in other.topics {
             if topic_seen.insert(t.label.clone()) {
                 self.topics.push(t);
+            }
+        }
+
+        // Merge LLM importance: max wins, reason follows the max.
+        match (self.llm_importance, other.llm_importance) {
+            (Some(a), Some(b)) if b > a => {
+                self.llm_importance = Some(b);
+                self.llm_importance_reason = other.llm_importance_reason;
+            }
+            (None, Some(b)) => {
+                self.llm_importance = Some(b);
+                self.llm_importance_reason = other.llm_importance_reason;
+            }
+            // self.a >= other.b OR other has nothing — keep self
+            _ => {
+                if self.llm_importance_reason.is_none() {
+                    self.llm_importance_reason = other.llm_importance_reason;
+                }
             }
         }
     }

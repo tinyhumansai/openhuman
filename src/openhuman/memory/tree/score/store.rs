@@ -27,6 +27,11 @@ pub struct ScoreRow {
     pub dropped: bool,
     pub reason: Option<String>,
     pub computed_at_ms: i64,
+    /// One-line LLM-supplied explanation for the importance rating; useful
+    /// for tuning prompts and thresholds. The numeric value lives on
+    /// `signals.llm_importance`.
+    #[serde(default)]
+    pub llm_importance_reason: Option<String>,
 }
 
 /// Upsert one score rationale row, replacing any existing entry for `chunk_id`.
@@ -49,6 +54,8 @@ pub(crate) fn upsert_score_tx(tx: &Transaction<'_>, row: &ScoreRow) -> Result<()
             row.signals.source_weight,
             row.signals.interaction,
             row.signals.entity_density,
+            row.signals.llm_importance,
+            row.llm_importance_reason,
             i32::from(row.dropped),
             row.reason,
             row.computed_at_ms,
@@ -61,8 +68,9 @@ const SCORE_UPSERT_SQL: &str = "INSERT OR REPLACE INTO mem_tree_score (
     chunk_id, total,
     token_count_signal, unique_words_signal,
     metadata_weight, source_weight, interaction_weight, entity_density,
+    llm_importance, llm_importance_reason,
     dropped, reason, computed_at_ms
- ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
+ ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)";
 
 fn upsert_score_on_connection(conn: &Connection, row: &ScoreRow) -> Result<()> {
     conn.execute(
@@ -76,6 +84,8 @@ fn upsert_score_on_connection(conn: &Connection, row: &ScoreRow) -> Result<()> {
             row.signals.source_weight,
             row.signals.interaction,
             row.signals.entity_density,
+            row.signals.llm_importance,
+            row.llm_importance_reason,
             i32::from(row.dropped),
             row.reason,
             row.computed_at_ms,
@@ -91,6 +101,7 @@ pub fn get_score(config: &Config, chunk_id: &str) -> Result<Option<ScoreRow>> {
             "SELECT chunk_id, total,
                     token_count_signal, unique_words_signal,
                     metadata_weight, source_weight, interaction_weight, entity_density,
+                    llm_importance, llm_importance_reason,
                     dropped, reason, computed_at_ms
              FROM mem_tree_score WHERE chunk_id = ?1",
             params![chunk_id],
@@ -105,10 +116,12 @@ pub fn get_score(config: &Config, chunk_id: &str) -> Result<Option<ScoreRow>> {
                         source_weight: row.get(5)?,
                         interaction: row.get(6)?,
                         entity_density: row.get(7)?,
+                        llm_importance: row.get::<_, Option<f32>>(8)?.unwrap_or(0.0),
                     },
-                    dropped: row.get::<_, i32>(8)? != 0,
-                    reason: row.get(9)?,
-                    computed_at_ms: row.get(10)?,
+                    llm_importance_reason: row.get::<_, Option<String>>(9)?,
+                    dropped: row.get::<_, i32>(10)? != 0,
+                    reason: row.get(11)?,
+                    computed_at_ms: row.get(12)?,
                 })
             },
         )
