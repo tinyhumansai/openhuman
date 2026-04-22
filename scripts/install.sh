@@ -293,6 +293,11 @@ if resolve_from_latest_json; then
 else
   log_warn "latest.json lookup failed. Falling back to releases API."
   if ! resolve_from_release_api; then
+    if [ "${OS}" = "linux" ] && [ "${DRY_RUN}" = true ]; then
+      log_warn "No Linux release asset is currently published. Dry-run will skip install steps."
+      echo "DRY RUN: no compatible asset available for ${OS}/${ARCH}"
+      exit 0
+    fi
     log_err "Could not resolve a compatible asset for ${OS}/${ARCH}."
     exit 1
   fi
