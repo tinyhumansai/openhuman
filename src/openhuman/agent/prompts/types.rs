@@ -173,6 +173,10 @@ pub struct PromptContext<'a> {
     pub tool_call_format: ToolCallFormat,
     /// Active Composio integrations the user has connected.
     pub connected_integrations: &'a [ConnectedIntegration],
+    /// Pre-rendered `## Connected Identities` markdown block loaded once
+    /// by the caller so prompt builders remain deterministic and avoid
+    /// hidden global reads during `build(ctx)`.
+    pub connected_identities_md: String,
     /// When `true`, inject `PROFILE.md` (onboarding enrichment output).
     pub include_profile: bool,
     /// When `true`, inject `MEMORY.md` (archivist-curated long-term

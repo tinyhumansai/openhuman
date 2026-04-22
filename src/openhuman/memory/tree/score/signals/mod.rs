@@ -16,5 +16,5 @@ pub mod token_count;
 mod types;
 pub mod unique_words;
 
-pub use ops::{combine, compute, entity_density_score};
+pub use ops::{combine, combine_cheap_only, compute, entity_density_score};
 pub use types::{ScoreSignals, SignalWeights};

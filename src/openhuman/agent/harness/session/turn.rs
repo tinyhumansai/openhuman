@@ -1147,6 +1147,8 @@ impl Agent {
             visible_tool_names: &self.visible_tool_names,
             tool_call_format: self.tool_dispatcher.tool_call_format(),
             connected_integrations: &self.connected_integrations,
+            connected_identities_md: crate::openhuman::agent::prompts::render_connected_identities(
+            ),
             include_profile: !self.omit_profile,
             include_memory_md: !self.omit_memory_md,
         };
@@ -1549,7 +1551,7 @@ mod tests {
             ..crate::openhuman::config::MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> = Arc::from(
-            crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+            crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap(),
         );
 
         let mut builder = Agent::builder()
@@ -1587,7 +1589,7 @@ mod tests {
             ..crate::openhuman::config::MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> = Arc::from(
-            crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+            crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap(),
         );
 
         Agent::builder()

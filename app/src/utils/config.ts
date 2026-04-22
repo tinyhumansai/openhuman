@@ -54,6 +54,35 @@ export const DEV_JWT_TOKEN = import.meta.env.DEV
 export const APP_VERSION = packageJson.version;
 
 /**
+ * Deployment environment reported to Sentry and other observability surfaces.
+ *
+ * Derived from `VITE_OPENHUMAN_APP_ENV` (set by CI for production / staging
+ * bundles). Falls back to `development` in non-production builds so local
+ * debugging never mingles with real user events.
+ */
+export const APP_ENVIRONMENT: 'production' | 'staging' | 'development' = IS_DEV
+  ? 'development'
+  : APP_ENV === 'staging'
+    ? 'staging'
+    : 'production';
+
+/** Short git SHA baked in at build time (`VITE_BUILD_SHA`). Empty locally. */
+export const BUILD_SHA = ((import.meta.env.VITE_BUILD_SHA as string | undefined) ?? '')
+  .trim()
+  .slice(0, 12);
+
+/**
+ * Canonical Sentry release identifier: `openhuman@<version>[+<short_sha>]`.
+ *
+ * Matches the tag the Rust core sidecar reports (see `src/main.rs`) so events
+ * from the frontend, the core, and source-map uploads all group under the
+ * same release in the Sentry dashboard.
+ */
+export const SENTRY_RELEASE = BUILD_SHA
+  ? `openhuman@${APP_VERSION}+${BUILD_SHA}`
+  : `openhuman@${APP_VERSION}`;
+
+/**
  * Minimum **desktop app** semver required for OAuth deep-link completion (`openhuman://oauth/success`).
  *
  * **Build-time embedding:** This value is baked into each shipped installer. Raising the floor for
@@ -67,7 +96,7 @@ export const APP_VERSION = packageJson.version;
 export const MINIMUM_SUPPORTED_APP_VERSION =
   (import.meta.env.VITE_MINIMUM_SUPPORTED_APP_VERSION as string | undefined)?.trim() ?? '';
 
-/** Recovery link opened when OAuth is blocked due to an outdated app build (build-time default; override via CI). */
+/** URL for the latest app release download page. Used for OAuth version-gate recovery and crash-recovery prompts. Override via VITE_LATEST_APP_DOWNLOAD_URL for deployment-specific download pages. */
 export const LATEST_APP_DOWNLOAD_URL =
   (import.meta.env.VITE_LATEST_APP_DOWNLOAD_URL as string | undefined)?.trim() ||
   'https://github.com/tinyhumansai/openhuman/releases/latest';

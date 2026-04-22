@@ -28,7 +28,6 @@ pub struct Config {
     pub workspace_dir: PathBuf,
     #[serde(skip)]
     pub config_path: PathBuf,
-    pub api_key: Option<String>,
     pub api_url: Option<String>,
     pub default_model: Option<String>,
     pub default_temperature: f64,
@@ -69,9 +68,6 @@ pub struct Config {
 
     #[serde(default)]
     pub embedding_routes: Vec<EmbeddingRouteConfig>,
-
-    #[serde(default)]
-    pub query_classification: QueryClassificationConfig,
 
     #[serde(default)]
     pub heartbeat: HeartbeatConfig,
@@ -116,9 +112,6 @@ pub struct Config {
     pub computer_control: ComputerControlConfig,
 
     #[serde(default)]
-    pub peripherals: PeripheralsConfig,
-
-    #[serde(default)]
     pub agents: HashMap<String, DelegateAgentConfig>,
 
     #[serde(default)]
@@ -136,9 +129,6 @@ pub struct Config {
 
     #[serde(default)]
     pub learning: LearningConfig,
-
-    #[serde(default)]
-    pub orchestrator: OrchestratorConfig,
 
     #[serde(default)]
     pub update: UpdateConfig,
@@ -219,7 +209,6 @@ impl Default for Config {
         Self {
             workspace_dir: openhuman_dir.join("workspace"),
             config_path: openhuman_dir.join("config.toml"),
-            api_key: None,
             api_url: None,
             default_model: Some(DEFAULT_MODEL.to_string()),
             default_temperature: 0.7,
@@ -248,15 +237,12 @@ impl Default for Config {
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),
             computer_control: ComputerControlConfig::default(),
-            peripherals: PeripheralsConfig::default(),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),
             node: NodeConfig::default(),
             voice_server: VoiceServerConfig::default(),
-            query_classification: QueryClassificationConfig::default(),
             integrations: IntegrationsConfig::default(),
             learning: LearningConfig::default(),
-            orchestrator: OrchestratorConfig::default(),
             update: UpdateConfig::default(),
             dictation: DictationConfig::default(),
             onboarding_completed: false,

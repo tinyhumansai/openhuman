@@ -503,39 +503,6 @@ impl Config {
             })?;
             config.config_path = config_path.clone();
             config.workspace_dir = workspace_dir;
-            let store = crate::openhuman::security::SecretStore::new(
-                &openhuman_dir,
-                config.secrets.encrypt,
-            );
-            decrypt_optional_secret(&store, &mut config.api_key, "config.api_key")?;
-            decrypt_optional_secret(
-                &store,
-                &mut config.composio.api_key,
-                "config.composio.api_key",
-            )?;
-            decrypt_optional_secret(
-                &store,
-                &mut config.browser.computer_use.api_key,
-                "config.browser.computer_use.api_key",
-            )?;
-            decrypt_optional_secret(
-                &store,
-                &mut config.web_search.brave_api_key,
-                "config.web_search.brave_api_key",
-            )?;
-            decrypt_optional_secret(
-                &store,
-                &mut config.web_search.parallel_api_key,
-                "config.web_search.parallel_api_key",
-            )?;
-            decrypt_optional_secret(
-                &store,
-                &mut config.storage.provider.config.db_url,
-                "config.storage.provider.config.db_url",
-            )?;
-            for agent in config.agents.values_mut() {
-                decrypt_optional_secret(&store, &mut agent.api_key, "config.agents.*.api_key")?;
-            }
             migrate_legacy_autocomplete_disabled_apps(&mut config);
             config.apply_env_overrides();
 
@@ -609,11 +576,6 @@ impl Config {
     }
 
     pub fn apply_env_overrides(&mut self) {
-        if let Ok(key) = std::env::var("OPENHUMAN_API_KEY").or_else(|_| std::env::var("API_KEY")) {
-            if !key.is_empty() {
-                self.api_key = Some(key);
-            }
-        }
         if let Ok(model) = std::env::var("OPENHUMAN_MODEL").or_else(|_| std::env::var("MODEL")) {
             if !model.is_empty() {
                 self.default_model = Some(model);
@@ -649,42 +611,12 @@ impl Config {
 
         // `OPENHUMAN_WEB_SEARCH_ENABLED` is intentionally ignored —
         // web search is unconditionally registered in the tool set.
-        // Only the provider / API-key / budget knobs remain
-        // environment-configurable. Emit a one-shot deprecation warning
-        // if the caller still sets it so stale scripts surface clearly.
+        // Only the result/timeout budget knobs remain environment-configurable.
         if std::env::var_os("OPENHUMAN_WEB_SEARCH_ENABLED").is_some() {
             log::warn!(
                 "[config] OPENHUMAN_WEB_SEARCH_ENABLED is deprecated and ignored — \
-                 web search is always registered; use OPENHUMAN_WEB_SEARCH_PROVIDER / \
-                 API-key / budget env vars instead."
+                 web search is always registered; provider/API-key overrides were removed."
             );
-        }
-
-        if let Ok(provider) = std::env::var("OPENHUMAN_WEB_SEARCH_PROVIDER")
-            .or_else(|_| std::env::var("WEB_SEARCH_PROVIDER"))
-        {
-            let provider = provider.trim();
-            if !provider.is_empty() {
-                self.web_search.provider = provider.to_string();
-            }
-        }
-
-        if let Ok(api_key) =
-            std::env::var("OPENHUMAN_BRAVE_API_KEY").or_else(|_| std::env::var("BRAVE_API_KEY"))
-        {
-            let api_key = api_key.trim();
-            if !api_key.is_empty() {
-                self.web_search.brave_api_key = Some(api_key.to_string());
-            }
-        }
-
-        if let Ok(api_key) = std::env::var("OPENHUMAN_PARALLEL_API_KEY")
-            .or_else(|_| std::env::var("PARALLEL_API_KEY"))
-        {
-            let api_key = api_key.trim();
-            if !api_key.is_empty() {
-                self.web_search.parallel_api_key = Some(api_key.to_string());
-            }
         }
 
         if let Ok(max_results) = std::env::var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS")
@@ -703,28 +635,6 @@ impl Config {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
                 if timeout_secs > 0 {
                     self.web_search.timeout_secs = timeout_secs;
-                }
-            }
-        }
-
-        if let Ok(provider) = std::env::var("OPENHUMAN_STORAGE_PROVIDER") {
-            let provider = provider.trim();
-            if !provider.is_empty() {
-                self.storage.provider.config.provider = provider.to_string();
-            }
-        }
-
-        if let Ok(db_url) = std::env::var("OPENHUMAN_STORAGE_DB_URL") {
-            let db_url = db_url.trim();
-            if !db_url.is_empty() {
-                self.storage.provider.config.db_url = Some(db_url.to_string());
-            }
-        }
-
-        if let Ok(timeout_secs) = std::env::var("OPENHUMAN_STORAGE_CONNECT_TIMEOUT_SECS") {
-            if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
-                if timeout_secs > 0 {
-                    self.storage.provider.config.connect_timeout_secs = Some(timeout_secs);
                 }
             }
         }
@@ -888,14 +798,6 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_SKILL_CREATION_ENABLED") {
-            let normalized = flag.trim().to_ascii_lowercase();
-            match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.learning.skill_creation_enabled = true,
-                "0" | "false" | "no" | "off" => self.learning.skill_creation_enabled = false,
-                _ => {}
-            }
-        }
         if let Ok(source) = std::env::var("OPENHUMAN_LEARNING_REFLECTION_SOURCE") {
             let normalized = source.trim().to_ascii_lowercase();
             match normalized.as_str() {
@@ -1022,62 +924,6 @@ impl Config {
                 _ => {}
             }
         }
-        // Parse both percentage env vars into temporaries so we can
-        // enforce the `compaction < hard_limit` invariant before
-        // touching the live config. Each slot is independently
-        // validated (1..=100, rejecting 0 so we never arm the guard at
-        // an always-true trigger) and then cross-validated as a pair.
-        // On any failure we leave the existing values intact and emit a
-        // warning naming the offending env var + value.
-        let compaction_raw = std::env::var("OPENHUMAN_CONTEXT_COMPACTION_TRIGGER_PCT").ok();
-        let hard_limit_raw = std::env::var("OPENHUMAN_CONTEXT_HARD_LIMIT_PCT").ok();
-
-        let parse_pct = |name: &str, raw: &str| -> Option<u8> {
-            match raw.trim().parse::<u8>() {
-                Ok(pct) if (1..=100).contains(&pct) => Some(pct),
-                _ => {
-                    tracing::warn!(
-                        env = %name,
-                        value = %raw,
-                        "[context:config] invalid percentage — must be integer in 1..=100; ignoring"
-                    );
-                    None
-                }
-            }
-        };
-
-        let new_compaction = compaction_raw
-            .as_deref()
-            .and_then(|v| parse_pct("OPENHUMAN_CONTEXT_COMPACTION_TRIGGER_PCT", v));
-        let new_hard_limit = hard_limit_raw
-            .as_deref()
-            .and_then(|v| parse_pct("OPENHUMAN_CONTEXT_HARD_LIMIT_PCT", v));
-
-        // Effective pair after applying whichever overrides parsed
-        // cleanly, falling back to the current live values for any
-        // unset side.
-        let effective_compaction = new_compaction.unwrap_or(self.context.compaction_trigger_pct);
-        let effective_hard_limit = new_hard_limit.unwrap_or(self.context.hard_limit_pct);
-
-        if effective_compaction < effective_hard_limit {
-            if let Some(pct) = new_compaction {
-                self.context.compaction_trigger_pct = pct;
-            }
-            if let Some(pct) = new_hard_limit {
-                self.context.hard_limit_pct = pct;
-            }
-        } else {
-            tracing::warn!(
-                compaction_trigger_pct = effective_compaction,
-                hard_limit_pct = effective_hard_limit,
-                "[context:config] refusing env overrides — compaction_trigger_pct must be strictly less than hard_limit_pct; leaving existing values unchanged"
-            );
-        }
-        if let Ok(val) = std::env::var("OPENHUMAN_CONTEXT_RESERVE_OUTPUT_TOKENS") {
-            if let Ok(n) = val.trim().parse::<u64>() {
-                self.context.reserve_output_tokens = n;
-            }
-        }
         if let Ok(val) = std::env::var("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES") {
             if let Ok(n) = val.trim().parse::<usize>() {
                 self.context.tool_result_budget_bytes = n;
@@ -1124,43 +970,7 @@ impl Config {
     }
 
     pub async fn save(&self) -> Result<()> {
-        let mut config_to_save = self.clone();
-        let openhuman_dir = self
-            .config_path
-            .parent()
-            .context("Config path must have a parent directory")?;
-        let store =
-            crate::openhuman::security::SecretStore::new(openhuman_dir, self.secrets.encrypt);
-
-        encrypt_optional_secret(&store, &mut config_to_save.api_key, "config.api_key")?;
-        encrypt_optional_secret(
-            &store,
-            &mut config_to_save.composio.api_key,
-            "config.composio.api_key",
-        )?;
-        encrypt_optional_secret(
-            &store,
-            &mut config_to_save.browser.computer_use.api_key,
-            "config.browser.computer_use.api_key",
-        )?;
-        encrypt_optional_secret(
-            &store,
-            &mut config_to_save.web_search.brave_api_key,
-            "config.web_search.brave_api_key",
-        )?;
-        encrypt_optional_secret(
-            &store,
-            &mut config_to_save.web_search.parallel_api_key,
-            "config.web_search.parallel_api_key",
-        )?;
-        encrypt_optional_secret(
-            &store,
-            &mut config_to_save.storage.provider.config.db_url,
-            "config.storage.provider.config.db_url",
-        )?;
-        for agent in config_to_save.agents.values_mut() {
-            encrypt_optional_secret(&store, &mut agent.api_key, "config.agents.*.api_key")?;
-        }
+        let config_to_save = self.clone();
 
         let toml_str =
             toml::to_string_pretty(&config_to_save).context("Failed to serialize config")?;
@@ -1350,38 +1160,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_env_overrides_picks_up_api_key() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env(&["OPENHUMAN_API_KEY", "API_KEY", "OPENHUMAN_MODEL", "MODEL"]);
-        unsafe {
-            std::env::set_var("OPENHUMAN_API_KEY", "sk-test");
-        }
-        let mut cfg = Config::default();
-        cfg.apply_env_overrides();
-        assert_eq!(cfg.api_key.as_deref(), Some("sk-test"));
-        unsafe {
-            std::env::remove_var("OPENHUMAN_API_KEY");
-        }
-    }
-
-    #[test]
-    fn apply_env_overrides_ignores_empty_api_key() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env(&["OPENHUMAN_API_KEY", "API_KEY"]);
-        unsafe {
-            std::env::set_var("OPENHUMAN_API_KEY", "");
-        }
-        let mut cfg = Config::default();
-        cfg.api_key = Some("prior".into());
-        cfg.apply_env_overrides();
-        // Empty env var must not overwrite existing value.
-        assert_eq!(cfg.api_key.as_deref(), Some("prior"));
-        unsafe {
-            std::env::remove_var("OPENHUMAN_API_KEY");
-        }
-    }
-
-    #[test]
     fn apply_env_overrides_picks_up_model() {
         let _g = ENV_LOCK.lock().unwrap();
         clear_env(&["OPENHUMAN_MODEL", "MODEL"]);
@@ -1457,30 +1235,25 @@ mod tests {
     }
 
     #[test]
-    fn apply_env_overrides_web_search_provider_and_api_keys() {
+    fn apply_env_overrides_web_search_limits_only() {
         let _g = ENV_LOCK.lock().unwrap();
         clear_env(&[
-            "OPENHUMAN_WEB_SEARCH_PROVIDER",
-            "WEB_SEARCH_PROVIDER",
-            "OPENHUMAN_BRAVE_API_KEY",
-            "BRAVE_API_KEY",
-            "OPENHUMAN_PARALLEL_API_KEY",
-            "PARALLEL_API_KEY",
+            "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
+            "WEB_SEARCH_MAX_RESULTS",
+            "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
+            "WEB_SEARCH_TIMEOUT_SECS",
         ]);
         let mut cfg = Config::default();
         unsafe {
-            std::env::set_var("OPENHUMAN_WEB_SEARCH_PROVIDER", "brave");
-            std::env::set_var("OPENHUMAN_BRAVE_API_KEY", "bk-1");
-            std::env::set_var("OPENHUMAN_PARALLEL_API_KEY", "pk-1");
+            std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "5");
+            std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "20");
         }
         cfg.apply_env_overrides();
-        assert_eq!(cfg.web_search.provider, "brave");
-        assert_eq!(cfg.web_search.brave_api_key.as_deref(), Some("bk-1"));
-        assert_eq!(cfg.web_search.parallel_api_key.as_deref(), Some("pk-1"));
+        assert_eq!(cfg.web_search.max_results, 5);
+        assert_eq!(cfg.web_search.timeout_secs, 20);
         clear_env(&[
-            "OPENHUMAN_WEB_SEARCH_PROVIDER",
-            "OPENHUMAN_BRAVE_API_KEY",
-            "OPENHUMAN_PARALLEL_API_KEY",
+            "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
+            "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
         ]);
     }
 
@@ -1524,21 +1297,19 @@ mod tests {
     }
 
     #[test]
-    fn apply_env_overrides_storage_provider_and_db_url() {
+    fn apply_env_overrides_picks_up_sentry_dsn() {
         let _g = ENV_LOCK.lock().unwrap();
-        clear_env(&["OPENHUMAN_STORAGE_PROVIDER", "OPENHUMAN_STORAGE_DB_URL"]);
+        clear_env(&["OPENHUMAN_SENTRY_DSN"]);
         let mut cfg = Config::default();
         unsafe {
-            std::env::set_var("OPENHUMAN_STORAGE_PROVIDER", "postgres");
-            std::env::set_var("OPENHUMAN_STORAGE_DB_URL", "postgres://host/db");
+            std::env::set_var("OPENHUMAN_SENTRY_DSN", "https://token@sentry.io/1");
         }
         cfg.apply_env_overrides();
-        assert_eq!(cfg.storage.provider.config.provider, "postgres");
         assert_eq!(
-            cfg.storage.provider.config.db_url.as_deref(),
-            Some("postgres://host/db")
+            cfg.observability.sentry_dsn.as_deref(),
+            Some("https://token@sentry.io/1")
         );
-        clear_env(&["OPENHUMAN_STORAGE_PROVIDER", "OPENHUMAN_STORAGE_DB_URL"]);
+        clear_env(&["OPENHUMAN_SENTRY_DSN"]);
     }
 
     // ── resolve_config_dir_for_workspace ───────────────────────────

@@ -6,6 +6,7 @@
 //! Stored as markdown files in `memory/namespaces/{ns}/tree/`.
 
 pub mod bus;
+pub(crate) mod cli;
 pub mod engine;
 pub mod ops;
 pub mod store;

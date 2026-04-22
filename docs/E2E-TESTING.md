@@ -173,3 +173,14 @@ Deep links require a `.app` bundle. Use `yarn tauri build --debug --bundles app`
 ### Docker: Build is slow on first run
 
 The first Docker build compiles Rust + tauri-driver from source. Subsequent runs use cached layers. Cargo registry and git sources are cached via Docker volumes.
+
+## Agent-observable artifact flow
+
+For a canonical, inspectable run that drops screenshots, page-source dumps, and mock request logs on disk:
+
+```bash
+bash app/scripts/e2e-agent-review.sh
+```
+
+Artifacts land in `app/test/e2e/artifacts/<timestamp>-agent-review/`. Full details + helper API: [`AGENT-OBSERVABILITY.md`](AGENT-OBSERVABILITY.md). Any failing test triggers `wdio.conf.ts`'s `afterTest` hook, which writes `failure-*.png` + `failure-*.source.xml` into the same run dir.
+

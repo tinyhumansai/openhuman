@@ -65,3 +65,4 @@ workflow
 .fastembed_cache
 overlay/src-tauri/target/
 .claude/*.lock
+app/.claude/scheduled_tasks.lock

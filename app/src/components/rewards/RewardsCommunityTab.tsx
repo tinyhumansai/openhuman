@@ -68,12 +68,14 @@ function roleGlyph(index: number) {
 interface RewardsCommunityTabProps {
   error: string | null;
   isLoading: boolean;
+  onRetry?: () => void;
   snapshot: RewardsSnapshot | null;
 }
 
 export default function RewardsCommunityTab({
   error,
   isLoading,
+  onRetry,
   snapshot,
 }: RewardsCommunityTabProps) {
   const navigate = useNavigate();
@@ -136,9 +138,22 @@ export default function RewardsCommunityTab({
       {error ? (
         <div
           role="alert"
-          className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Rewards sync is unavailable right now. The page is showing connection guidance without
-          claiming new unlocks. Details: {error}
+          data-testid="rewards-error"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span>
+            Rewards sync is unavailable right now. The page is showing connection guidance without
+            claiming new unlocks. Details: {error}
+          </span>
+          {onRetry ? (
+            <button
+              type="button"
+              data-testid="rewards-retry"
+              onClick={onRetry}
+              disabled={isLoading}
+              className="rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-semibold text-amber-800 shadow-sm transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60">
+              {isLoading ? 'Retrying…' : 'Try again'}
+            </button>
+          ) : null}
         </div>
       ) : null}
 

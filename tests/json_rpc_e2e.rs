@@ -2177,3 +2177,89 @@ async fn voice_status_returns_availability() {
     mock_join.abort();
     rpc_join.abort();
 }
+
+#[tokio::test]
+async fn notification_settings_roundtrip_and_disabled_ingest_skip() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let set = post_json_rpc(
+        &rpc_base,
+        4001,
+        "openhuman.notification_settings_set",
+        json!({
+            "provider": "gmail",
+            "enabled": false,
+            "importance_threshold": 0.8,
+            "route_to_orchestrator": false
+        }),
+    )
+    .await;
+    let set_result = assert_no_jsonrpc_error(&set, "notification_settings_set");
+    assert_eq!(set_result.get("ok").and_then(Value::as_bool), Some(true));
+
+    let get = post_json_rpc(
+        &rpc_base,
+        4002,
+        "openhuman.notification_settings_get",
+        json!({ "provider": "gmail" }),
+    )
+    .await;
+    let get_result = assert_no_jsonrpc_error(&get, "notification_settings_get");
+    let settings = get_result.get("settings").expect("settings object");
+    assert_eq!(
+        settings.get("enabled").and_then(Value::as_bool),
+        Some(false)
+    );
+    let threshold = settings
+        .get("importance_threshold")
+        .and_then(Value::as_f64)
+        .unwrap_or_default();
+    assert!(
+        (threshold - 0.8).abs() < 0.0001,
+        "expected threshold ~= 0.8, got {threshold}"
+    );
+    assert_eq!(
+        settings
+            .get("route_to_orchestrator")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let ingest = post_json_rpc(
+        &rpc_base,
+        4003,
+        "openhuman.notification_ingest",
+        json!({
+            "provider": "gmail",
+            "account_id": "acct-1",
+            "title": "subject",
+            "body": "body",
+            "raw_payload": { "source": "test" }
+        }),
+    )
+    .await;
+    let ingest_result = assert_no_jsonrpc_error(&ingest, "notification_ingest");
+    assert_eq!(
+        ingest_result.get("skipped").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}

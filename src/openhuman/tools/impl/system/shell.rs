@@ -326,7 +326,6 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn shell_does_not_leak_api_key() {
         let _g1 = EnvGuard::set("API_KEY", "sk-test-secret-12345");
-        let _g2 = EnvGuard::set("OPENHUMAN_API_KEY", "sk-test-secret-67890");
 
         let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime());
         let result = tool.execute(json!({"command": "env"})).await.unwrap();
@@ -334,10 +333,6 @@ mod tests {
         assert!(
             !result.output().contains("sk-test-secret-12345"),
             "API_KEY leaked to shell command output"
-        );
-        assert!(
-            !result.output().contains("sk-test-secret-67890"),
-            "OPENHUMAN_API_KEY leaked to shell command output"
         );
     }
 

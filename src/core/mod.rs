@@ -16,11 +16,8 @@ pub mod jsonrpc;
 pub mod logging;
 pub mod memory_cli;
 pub mod rpc_log;
-pub mod screen_intelligence_cli;
 pub mod shutdown;
 pub mod socketio;
-pub mod text_input_cli;
-pub mod tree_summarizer_cli;
 pub mod types;
 
 /// Canonical function contract for domain controllers.

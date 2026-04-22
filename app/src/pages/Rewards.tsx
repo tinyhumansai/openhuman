@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import PillTabBar from '../components/PillTabBar';
 import RewardsCommunityTab from '../components/rewards/RewardsCommunityTab';
@@ -9,50 +9,64 @@ import type { RewardsSnapshot } from '../types/rewards';
 
 type RewardsTab = 'referrals' | 'redeem' | 'rewards';
 
+function errorMessage(err: unknown): string {
+  if (err && typeof err === 'object' && 'error' in err && typeof err.error === 'string') {
+    return err.error;
+  }
+  if (err instanceof Error) {
+    return err.message;
+  }
+  return 'Unable to load rewards';
+}
+
 const Rewards = () => {
   const [selectedTab, setSelectedTab] = useState<RewardsTab>('rewards');
   const [snapshot, setSnapshot] = useState<RewardsSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadRewards = async () => {
-      try {
-        const result = await rewardsApi.getMyRewards();
-        if (!cancelled) {
-          setSnapshot(result);
-          console.debug('[rewards] snapshot applied', {
-            unlockedCount: result.summary.unlockedCount,
-            totalCount: result.summary.totalCount,
-          });
-        }
-      } catch (err) {
-        const message =
-          err && typeof err === 'object' && 'error' in err && typeof err.error === 'string'
-            ? err.error
-            : err instanceof Error
-              ? err.message
-              : 'Unable to load rewards';
-        console.debug('[rewards] snapshot load failed', message);
-        if (!cancelled) {
-          setSnapshot(null);
-          setError(message);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
+  const loadRewards = useCallback(async (signal?: { cancelled: boolean }) => {
+    console.debug('[rewards] fetching snapshot');
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await rewardsApi.getMyRewards();
+      if (signal?.cancelled) return;
+      setSnapshot(result);
+      console.debug('[rewards] snapshot applied', {
+        unlockedCount: result.summary.unlockedCount,
+        totalCount: result.summary.totalCount,
+      });
+    } catch (err) {
+      const message = errorMessage(err);
+      console.debug('[rewards] snapshot load failed', message);
+      if (signal?.cancelled) return;
+      setSnapshot(null);
+      setError(message);
+    } finally {
+      if (!signal?.cancelled) {
+        setIsLoading(false);
       }
-    };
-
-    void loadRewards();
-
-    return () => {
-      cancelled = true;
-    };
+    }
   }, []);
+
+  useEffect(() => {
+    const signal = { cancelled: false };
+    void loadRewards(signal);
+    return () => {
+      signal.cancelled = true;
+    };
+  }, [loadRewards]);
+
+  const handleTabChange = useCallback((next: RewardsTab) => {
+    console.debug('[rewards] tab changed', { next });
+    setSelectedTab(next);
+  }, []);
+
+  const handleRetry = useCallback(() => {
+    console.debug('[rewards] retry requested');
+    void loadRewards();
+  }, [loadRewards]);
 
   return (
     <div className="min-h-full px-4 pt-6 pb-10">
@@ -64,7 +78,7 @@ const Rewards = () => {
             { label: 'Redeem', value: 'redeem' },
           ]}
           selected={selectedTab}
-          onChange={setSelectedTab}
+          onChange={handleTabChange}
           activeClassName="border-primary-600 bg-primary-600 text-white"
         />
 
@@ -73,7 +87,12 @@ const Rewards = () => {
         ) : selectedTab === 'redeem' ? (
           <RewardsRedeemTab />
         ) : (
-          <RewardsCommunityTab error={error} isLoading={isLoading} snapshot={snapshot} />
+          <RewardsCommunityTab
+            error={error}
+            isLoading={isLoading}
+            onRetry={handleRetry}
+            snapshot={snapshot}
+          />
         )}
       </div>
     </div>

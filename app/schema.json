@@ -777,12 +777,6 @@
       "function": "update_model_settings",
       "inputs": [
         {
-          "comment": "Provider API key.",
-          "name": "api_key",
-          "required": false,
-          "ty": { "Option": "String" }
-        },
-        {
           "comment": "Backend API URL.",
           "name": "api_url",
           "required": false,

@@ -16,7 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest]
+        # ubuntu-22.04 temporarily disabled — no Linux release asset published yet
+        os: [macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -527,6 +527,7 @@ async fn run_typed_mode(
         visible_tool_names: &visible_tool_names,
         tool_call_format: parent.tool_call_format,
         connected_integrations: &narrowed_integrations,
+        connected_identities_md: crate::openhuman::agent::prompts::render_connected_identities(),
         include_profile: !definition.omit_profile,
         include_memory_md: !definition.omit_memory_md,
     };

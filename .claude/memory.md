@@ -46,7 +46,8 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Notification z-index stacking** — ErrorReportNotification: z-[10000] bottom-right. OnboardingOverlay: z-[9999]. LocalAIDownloadSnackbar: z-[9998] bottom-left.
 - **React Compiler lint** — `useCallback` deps must match the full inferred closure. Using `user?._id` as dep when the closure captures `user` triggers `preserve-manual-memoization`. Use `user` as the dep instead.
 - **`setState` in effects** — ESLint `react-hooks/set-state-in-effect` catches synchronous setState in useEffect bodies. Use lazy initializers, compute at render, or event handlers instead.
-- **`OnboardingNextButton` is the shared primary CTA** — All 5 onboarding steps (Welcome, LocalAI, ScreenPermissions, Tools, Skills) use `app/src/pages/onboarding/components/OnboardingNextButton.tsx`. New steps must use this component for the primary navigation button.
+- **`OnboardingNextButton` is the shared primary CTA** — All onboarding steps use `app/src/pages/onboarding/components/OnboardingNextButton.tsx`. New steps must use this component for the primary navigation button.
+- **Onboarding is 3 steps: Welcome(0) → Skills(1) → ContextGathering(2)** — Referral step was removed (issue #752). `ReferralApplyStep.tsx` is preserved but unused. `referralApi` is still used on the Rewards page. `WelcomeStep` no longer has `nextDisabled`/`nextLoading`/`nextLoadingLabel` props (those gated on referral stats prefetch).
 - **Recovery Phrase moved to Settings** — MnemonicStep was removed from onboarding (was step 5). The same BIP39 generate/import functionality now lives in `app/src/components/settings/panels/RecoveryPhrasePanel.tsx`, accessible via Settings > Recovery Phrase. Onboarding completion logic moved into `handleSkillsNext` in `Onboarding.tsx`.
 - **E2E tests find onboarding buttons by label text** — `shared-flows.ts`, `login-flow.spec.ts`, `auth-access-control.spec.ts`, and `voice-mode.spec.ts` locate buttons by their visible label. Changing button labels requires updating all four files. Note: `voice-mode.spec.ts` still references legacy labels that don't match current steps (pre-existing tech debt).
 - **`ScreenPermissionsStep` always shows Continue** — The Continue button is always visible regardless of permission grant status, allowing users to skip the permissions step (#274).
@@ -100,6 +101,14 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Panel decomposition** — LocalModelPanel, AutocompletePanel, CronJobsPanel, ScreenIntelligencePanel were split into sub-components in subdirectories. Each orchestrator is ≤ ~300 lines.
 - **UnifiedSkillCard** — All skill types (built-in, channels, 3rd party) use `UnifiedSkillCard` from `app/src/components/skills/SkillCard.tsx`. Secondary actions use an overflow menu. `data-testid` attributes (`skill-sync-button-*`, `skill-debug-button-*`) must be preserved.
 - **SkillSearchBar + SkillCategoryFilter** — New components in `app/src/components/skills/` for search and category filtering on the Skills page.
+
+## Composio Identity (Issue #691)
+
+- **`ProviderUserProfile.profile_url`** — New optional field on the struct in `src/openhuman/composio/providers/types.rs`. Providers should populate it when available from upstream profile payloads.
+- **`identity_set` callback in default flow** — `ComposioProvider::on_connection_created()` in `src/openhuman/composio/providers/traits.rs` now calls `identity_set(&profile)` after profile fetch. `composio_get_user_profile` in `src/openhuman/composio/ops.rs` also routes persistence through `identity_set`.
+- **Facet key format for connected identities** — `skill:{toolkit}:{identifier}:{field}` (e.g. `skill:gmail:user@example.com:profile_url`). Use `FacetType::Skill` when storing. Toolkit and identifier together form the unique identity; field is the attribute name.
+- **Connected identities loader/renderer** — `src/openhuman/composio/providers/profile.rs` contains `load_connected_identities()` (reads `skill:*` facets) and `render_connected_identities_section()` (formats markdown for prompt injection). Keep rendering logic there, not in prompt modules.
+- **Prompt injection helper** — `render_connected_identities` is imported and called in `welcome/prompt.rs`, `orchestrator/prompt.rs`, and `integrations_agent/prompt.rs` to inject a "Connected accounts:" block. Add it to any new agent prompt that needs Composio context.
 
 ## Agent Timeout & Cancellation (Issue #715)
 

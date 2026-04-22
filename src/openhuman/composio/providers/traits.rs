@@ -52,6 +52,16 @@ pub trait ComposioProvider: Send + Sync {
     /// the memory layer via [`ProviderContext::memory_client`]).
     async fn sync(&self, ctx: &ProviderContext, reason: SyncReason) -> Result<SyncOutcome, String>;
 
+    /// Standardized identity callback for provider implementations.
+    ///
+    /// Providers can override this to customize how identity fragments
+    /// are persisted. Default behavior stores a normalized identity
+    /// fragment in profile facets via `skill:{source}:{identifier}:{field}`
+    /// keys and returns the number of facets written.
+    fn identity_set(&self, profile: &ProviderUserProfile) -> usize {
+        super::profile::persist_provider_profile(profile)
+    }
+
     /// Hook fired when an OAuth handoff completes
     /// ([`crate::core::event_bus::DomainEvent::ComposioConnectionCreated`]).
     ///
@@ -91,11 +101,11 @@ pub trait ComposioProvider: Send + Sync {
                 // facet table so display_name / email / avatar are
                 // available to the agent context and UI without a
                 // round-trip to the upstream provider.
-                let facets = super::profile::persist_provider_profile(&profile);
+                let facets = self.identity_set(&profile);
                 tracing::debug!(
                     toolkit = %toolkit,
                     facets_written = facets,
-                    "[composio:provider] profile facets persisted"
+                    "[composio:provider] identity_set persisted profile facets"
                 );
             }
             Err(e) => {

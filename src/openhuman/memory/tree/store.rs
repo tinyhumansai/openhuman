@@ -88,6 +88,92 @@ CREATE INDEX IF NOT EXISTS idx_mem_tree_entity_index_node
     ON mem_tree_entity_index(node_id);
 CREATE INDEX IF NOT EXISTS idx_mem_tree_entity_index_timestamp
     ON mem_tree_entity_index(timestamp_ms);
+
+-- Phase 3a (#709): summary trees / bucket-seal.
+-- `mem_tree_trees` tracks one tree per scope (source/topic/global).
+CREATE TABLE IF NOT EXISTS mem_tree_trees (
+    id                     TEXT PRIMARY KEY,
+    kind                   TEXT NOT NULL,
+    scope                  TEXT NOT NULL,
+    root_id                TEXT,
+    max_level              INTEGER NOT NULL DEFAULT 0,
+    status                 TEXT NOT NULL DEFAULT 'active',
+    created_at_ms          INTEGER NOT NULL,
+    last_sealed_at_ms      INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_tree_trees_kind_scope
+    ON mem_tree_trees(kind, scope);
+CREATE INDEX IF NOT EXISTS idx_mem_tree_trees_status
+    ON mem_tree_trees(status);
+
+-- `mem_tree_summaries` holds sealed summary nodes. Immutable once written
+-- (Phase 3a). `deleted` is reserved for future archive cascades.
+CREATE TABLE IF NOT EXISTS mem_tree_summaries (
+    id                     TEXT PRIMARY KEY,
+    tree_id                TEXT NOT NULL,
+    tree_kind              TEXT NOT NULL,
+    level                  INTEGER NOT NULL,
+    parent_id              TEXT,
+    child_ids_json         TEXT NOT NULL DEFAULT '[]',
+    content                TEXT NOT NULL,
+    token_count            INTEGER NOT NULL,
+    entities_json          TEXT NOT NULL DEFAULT '[]',
+    topics_json            TEXT NOT NULL DEFAULT '[]',
+    time_range_start_ms    INTEGER NOT NULL,
+    time_range_end_ms      INTEGER NOT NULL,
+    score                  REAL NOT NULL DEFAULT 0.0,
+    sealed_at_ms           INTEGER NOT NULL,
+    deleted                INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (tree_id) REFERENCES mem_tree_trees(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_tree_summaries_tree_level
+    ON mem_tree_summaries(tree_id, level);
+CREATE INDEX IF NOT EXISTS idx_mem_tree_summaries_parent
+    ON mem_tree_summaries(parent_id);
+CREATE INDEX IF NOT EXISTS idx_mem_tree_summaries_sealed_at
+    ON mem_tree_summaries(sealed_at_ms);
+CREATE INDEX IF NOT EXISTS idx_mem_tree_summaries_deleted
+    ON mem_tree_summaries(deleted);
+
+-- `mem_tree_buffers` holds the unsealed frontier per (tree, level). One row
+-- per active level per tree; deleted when the buffer seals (clears) in the
+-- same transaction as the new summary node row.
+CREATE TABLE IF NOT EXISTS mem_tree_buffers (
+    tree_id                TEXT NOT NULL,
+    level                  INTEGER NOT NULL,
+    item_ids_json          TEXT NOT NULL DEFAULT '[]',
+    token_sum              INTEGER NOT NULL DEFAULT 0,
+    oldest_at_ms           INTEGER,
+    updated_at_ms          INTEGER NOT NULL,
+    PRIMARY KEY (tree_id, level),
+    FOREIGN KEY (tree_id) REFERENCES mem_tree_trees(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_tree_buffers_oldest
+    ON mem_tree_buffers(oldest_at_ms);
+
+-- Phase 3c (#709): per-entity hotness counters driving lazy topic-tree
+-- materialisation. One row per canonical entity_id. Counters are bumped
+-- on every ingest; `last_hotness` is recomputed every
+-- `TOPIC_RECHECK_EVERY` ingests to decide whether to spawn / archive a
+-- topic tree for the entity. TODO: 30-day windowing — for Phase 3c we
+-- increment counts forever and rely on project-scale truthfulness.
+CREATE TABLE IF NOT EXISTS mem_tree_entity_hotness (
+    entity_id              TEXT PRIMARY KEY,
+    mention_count_30d      INTEGER NOT NULL DEFAULT 0,
+    distinct_sources       INTEGER NOT NULL DEFAULT 0,
+    last_seen_ms           INTEGER,
+    query_hits_30d         INTEGER NOT NULL DEFAULT 0,
+    graph_centrality       REAL,
+    ingests_since_check    INTEGER NOT NULL DEFAULT 0,
+    last_hotness           REAL,
+    last_updated_ms        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_tree_entity_hotness_score
+    ON mem_tree_entity_hotness(last_hotness);
 ";
 
 /// Upsert a batch of chunks atomically.
@@ -350,6 +436,15 @@ pub(crate) fn with_connection<T>(
         .context("Failed to initialize memory_tree schema")?;
     // Phase 2 migrations — additive, idempotent.
     add_column_if_missing(&conn, "mem_tree_chunks", "embedding", "BLOB")?;
+    // Phase 2 LLM-NER follow-up: per-chunk LLM importance signal +
+    // human-readable reason. Both nullable; absence is treated as
+    // "no LLM signal available" by readers.
+    add_column_if_missing(&conn, "mem_tree_score", "llm_importance", "REAL")?;
+    add_column_if_missing(&conn, "mem_tree_score", "llm_importance_reason", "TEXT")?;
+    // Phase 3a (#709): parent-summary backlink on leaves. Populated when
+    // the L0 buffer seals into an L1 summary so traversal can walk
+    // leaf → parent without scanning `mem_tree_summaries.child_ids_json`.
+    add_column_if_missing(&conn, "mem_tree_chunks", "parent_summary_id", "TEXT")?;
     f(&conn)
 }
 

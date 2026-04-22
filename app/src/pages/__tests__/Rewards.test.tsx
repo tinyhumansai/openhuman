@@ -97,6 +97,67 @@ describe('Rewards page', () => {
     expect(screen.queryByText('Unlocked')).not.toBeInTheDocument();
   });
 
+  it('retries the snapshot fetch when the user clicks Try again', async () => {
+    rewardsApi.getMyRewards
+      .mockRejectedValueOnce({ error: 'Backend offline' })
+      .mockResolvedValueOnce({
+        discord: {
+          linked: true,
+          discordId: 'discord-123',
+          inviteUrl: 'https://discord.gg/openhuman',
+          membershipStatus: 'member',
+        },
+        summary: {
+          unlockedCount: 1,
+          totalCount: 2,
+          assignedDiscordRoleCount: 1,
+          plan: 'PRO',
+          hasActiveSubscription: true,
+        },
+        metrics: {
+          currentStreakDays: 7,
+          longestStreakDays: 7,
+          cumulativeTokens: 12000000,
+          featuresUsedCount: 2,
+          trackedFeaturesCount: 6,
+          lastEvaluatedAt: '2026-04-09T00:00:00.000Z',
+          lastSyncedAt: '2026-04-09T01:00:00.000Z',
+        },
+        achievements: [
+          {
+            id: 'STREAK_7',
+            title: '7-Day Streak',
+            description: 'Use OpenHuman on seven consecutive active days.',
+            actionLabel: 'Keep your streak alive for 7 days',
+            unlocked: true,
+            progressLabel: 'Unlocked',
+            roleId: 'role-streak-7',
+            discordRoleStatus: 'assigned',
+            creditAmountUsd: null,
+          },
+        ],
+      });
+
+    render(
+      <MemoryRouter>
+        <Rewards />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('rewards-error')).toBeInTheDocument();
+    });
+    expect(rewardsApi.getMyRewards).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId('rewards-retry'));
+
+    await waitFor(() => {
+      expect(screen.getByText('7-Day Streak')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('rewards-error')).not.toBeInTheDocument();
+    expect(rewardsApi.getMyRewards).toHaveBeenCalledTimes(2);
+  });
+
   it('switches to the referrals tab content', async () => {
     rewardsApi.getMyRewards.mockResolvedValueOnce({
       discord: {

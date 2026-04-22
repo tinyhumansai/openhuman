@@ -9,10 +9,13 @@ import {
   KNOWN_COMPOSIO_TOOLKITS,
 } from '../components/composio/toolkitMeta';
 import AutocompleteSetupModal from '../components/skills/AutocompleteSetupModal';
+import CreateSkillModal from '../components/skills/CreateSkillModal';
+import InstallSkillDialog from '../components/skills/InstallSkillDialog';
 import ScreenIntelligenceSetupModal from '../components/skills/ScreenIntelligenceSetupModal';
 import UnifiedSkillCard from '../components/skills/SkillCard';
 import { SKILL_CATEGORY_ORDER, type SkillCategory } from '../components/skills/skillCategories';
 import SkillCategoryFilter from '../components/skills/SkillCategoryFilter';
+import SkillDetailDrawer from '../components/skills/SkillDetailDrawer';
 import {
   BUILT_IN_SKILL_ICONS,
   CHANNEL_ICONS,
@@ -28,6 +31,7 @@ import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
 import { useComposioIntegrations } from '../lib/composio/hooks';
 import { canonicalizeComposioToolkitSlug } from '../lib/composio/toolkitSlug';
 import { type ComposioConnection, deriveComposioState } from '../lib/composio/types';
+import { skillsApi, type SkillSummary } from '../services/api/skillsApi';
 import { useAppSelector } from '../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../types/channels';
 import { subconsciousEscalationsDismiss } from '../utils/tauriCommands';
@@ -135,7 +139,7 @@ interface SkillItem {
   name: string;
   description: string;
   category: SkillCategory;
-  kind: 'builtin' | 'channel' | 'composio';
+  kind: 'builtin' | 'channel' | 'composio' | 'discovered';
   // For built-in
   route?: string;
   icon?: React.ReactNode;
@@ -145,6 +149,8 @@ interface SkillItem {
   // For composio
   composioToolkit?: ComposioToolkitMeta;
   composioConnection?: ComposioConnection;
+  // For discovered SKILL.md skills
+  discoveredSkill?: SkillSummary;
 }
 
 // ─── Main Skills Page ──────────────────────────────────────────────────────────
@@ -175,6 +181,10 @@ export default function Skills() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<SkillCategory>('All');
+  const [discoveredSkills, setDiscoveredSkills] = useState<SkillSummary[]>([]);
+  const [selectedSkill, setSelectedSkill] = useState<SkillSummary | null>(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const pendingEscalationId =
     location.state &&
     typeof location.state === 'object' &&
@@ -212,6 +222,40 @@ export default function Skills() {
     },
     [clearPendingEscalationState, pendingEscalationId]
   );
+
+  // Discover SKILL.md skills via the core RPC. Ignore failures — the rest of
+  // the page still works when the sidecar is unreachable or no skills exist.
+  // Extracted so create/install flows can trigger a refresh on success.
+  const refreshDiscoveredSkills = useCallback(async (): Promise<SkillSummary[]> => {
+    try {
+      const skills = await skillsApi.listSkills();
+      console.debug('[skills][discovered] listSkills ok', { count: skills.length });
+      setDiscoveredSkills(skills);
+      return skills;
+    } catch (err) {
+      console.debug('[skills][discovered] listSkills error', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const skills = await refreshDiscoveredSkills();
+      if (cancelled) {
+        // If the effect was cancelled mid-fetch, the state update still
+        // fired inside `refreshDiscoveredSkills`. That's fine — React
+        // will bail on the unmounted update; no retry needed.
+        return;
+      }
+      void skills;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshDiscoveredSkills]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -304,6 +348,21 @@ export default function Skills() {
       });
     }
 
+    // Discovered SKILL.md skills — surface each as a card whose CTA opens
+    // the detail drawer. They live under the generic "Other" category so
+    // they don't displace hand-curated built-ins or Channels.
+    for (const skill of discoveredSkills) {
+      items.push({
+        id: `discovered-${skill.id}`,
+        name: skill.name,
+        description: skill.description,
+        category: 'Other',
+        kind: 'discovered',
+        icon: BUILT_IN_SKILL_ICONS.screenIntelligence,
+        discoveredSkill: skill,
+      });
+    }
+
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -311,6 +370,7 @@ export default function Skills() {
     channelConnections,
     composioCatalogToolkits,
     composioConnectionByToolkit,
+    discoveredSkills,
   ]);
 
   const availableCategories: SkillCategory[] = useMemo(() => {
@@ -349,6 +409,30 @@ export default function Skills() {
       <div className="min-h-full flex flex-col">
         <div className="flex-1 flex items-start justify-center p-4 pt-6">
           <div className="max-w-lg w-full space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h1 className="text-base font-semibold text-stone-900">Skills</h1>
+                <p className="text-xs text-stone-500">
+                  Scaffold a new <code className="font-mono">SKILL.md</code> or install a published
+                  package.
+                </p>
+              </div>
+              <div className="flex flex-shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setInstallDialogOpen(true)}
+                  className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 shadow-soft transition-colors hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1">
+                  Install from URL
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateModalOpen(true)}
+                  className="rounded-lg bg-primary-500 px-3 py-2 text-xs font-semibold text-white shadow-soft transition-colors hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1">
+                  New skill
+                </button>
+              </div>
+            </div>
+
             <SkillSearchBar value={searchQuery} onChange={setSearchQuery} />
 
             <SkillCategoryFilter
@@ -510,6 +594,48 @@ export default function Skills() {
                           />
                         );
                       }
+                      if (item.kind === 'discovered') {
+                        const skill = item.discoveredSkill!;
+                        const scopeLabel = skill.legacy
+                          ? 'Legacy'
+                          : skill.scope === 'user'
+                            ? 'User'
+                            : skill.scope === 'project'
+                              ? 'Project'
+                              : 'Legacy';
+                        const scopeDot = skill.legacy
+                          ? 'bg-stone-300'
+                          : skill.scope === 'user'
+                            ? 'bg-sage-500'
+                            : skill.scope === 'project'
+                              ? 'bg-amber-500'
+                              : 'bg-stone-300';
+                        const scopeColor = skill.legacy
+                          ? 'text-stone-600'
+                          : skill.scope === 'user'
+                            ? 'text-sage-600'
+                            : skill.scope === 'project'
+                              ? 'text-amber-600'
+                              : 'text-stone-600';
+                        return (
+                          <UnifiedSkillCard
+                            key={item.id}
+                            icon={item.icon}
+                            title={item.name}
+                            description={item.description}
+                            statusDot={scopeDot}
+                            statusLabel={scopeLabel}
+                            statusColor={scopeColor}
+                            ctaLabel="View"
+                            onCtaClick={() => {
+                              console.debug('[skills][discovered] open drawer', {
+                                skillId: skill.id,
+                              });
+                              setSelectedSkill(skill);
+                            }}
+                          />
+                        );
+                      }
                       if (item.kind === 'composio') {
                         const meta = item.composioToolkit!;
                         const connection = item.composioConnection;
@@ -595,6 +721,52 @@ export default function Skills() {
             void dismissPendingEscalationIfResolved(`composio:${composioModalToolkit.slug}`);
           }}
           onClose={() => setComposioModalToolkit(null)}
+        />
+      )}
+
+      {selectedSkill && (
+        <SkillDetailDrawer skill={selectedSkill} onClose={() => setSelectedSkill(null)} />
+      )}
+
+      {createModalOpen && (
+        <CreateSkillModal
+          onClose={() => setCreateModalOpen(false)}
+          onCreated={skill => {
+            console.debug('[skills][create] created', { id: skill.id, scope: skill.scope });
+            setCreateModalOpen(false);
+            // Optimistically append; then reconcile against a fresh list so
+            // version/author/warnings picked up by the Rust discoverer end
+            // up in state too.
+            setDiscoveredSkills(prev =>
+              prev.some(s => s.id === skill.id) ? prev : [...prev, skill]
+            );
+            setSelectedSkill(skill);
+            void refreshDiscoveredSkills();
+          }}
+        />
+      )}
+
+      {installDialogOpen && (
+        <InstallSkillDialog
+          onClose={() => setInstallDialogOpen(false)}
+          onInstalled={result => {
+            console.debug('[skills][install] complete', {
+              url: result.url,
+              newSkills: result.newSkills.length,
+            });
+            void (async () => {
+              const skills = await refreshDiscoveredSkills();
+              // Auto-select the first newly-installed skill, if any — matches
+              // the create flow's UX of landing the user in the detail view.
+              const firstNewId = result.newSkills[0];
+              if (firstNewId) {
+                const match = skills.find(s => s.id === firstNewId);
+                if (match) {
+                  setSelectedSkill(match);
+                }
+              }
+            })();
+          }}
         />
       )}
     </div>

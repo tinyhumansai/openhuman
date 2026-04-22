@@ -18,7 +18,7 @@
 //! cookies and storage don't bleed between accounts (best-effort on
 //! WKWebView — see Tauri docs on `data_store_identifier` for the macOS path).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -34,20 +34,18 @@ use tauri_plugin_notification::NotificationExt;
 #[cfg(feature = "cef")]
 use cef::ImplBrowser;
 
+#[cfg(feature = "cef")]
+use crate::cdp;
+
 const RUNTIME_JS: &str = include_str!("runtime.js");
+// UA spoofing moved from injected JS to CDP `Emulation.setUserAgentOverride`
+// under the cef feature; wry builds still need the old JS shim so the recipes
+// that emit an `ingest` payload (gmail / linkedin / google-meet) survive
+// fingerprint gates on Slack/Google's login flow.
 const UA_SPOOF_JS: &str = include_str!("ua_spoof.js");
-const WHATSAPP_RECIPE_JS: &str = include_str!("../../recipes/whatsapp/recipe.js");
-const TELEGRAM_RECIPE_JS: &str = include_str!("../../recipes/telegram/recipe.js");
 const LINKEDIN_RECIPE_JS: &str = include_str!("../../recipes/linkedin/recipe.js");
 const GMAIL_RECIPE_JS: &str = include_str!("../../recipes/gmail/recipe.js");
-const SLACK_RECIPE_JS: &str = include_str!("../../recipes/slack/recipe.js");
-const DISCORD_RECIPE_JS: &str = include_str!("../../recipes/discord/recipe.js");
 const GOOGLE_MEET_RECIPE_JS: &str = include_str!("../../recipes/google-meet/recipe.js");
-const TELEGRAM_TARGET_MARKER_PREFIX: &str = "[openhuman-telegram:";
-/// Dev-only bot-detection sandbox. Exposed through the UI only when
-/// `import.meta.env.DEV` is true, but registered here unconditionally so
-/// debug/release test builds behave the same if invoked directly.
-const BROWSERSCAN_RECIPE_JS: &str = include_str!("../../recipes/browserscan/recipe.js");
 
 /// User agent we pretend to be for all external services. Web-app services
 /// (WhatsApp, Gmail, Google's login flow) reject "unknown" WebView UAs with
@@ -80,24 +78,29 @@ fn provider_user_agent(provider: &str) -> Option<&'static str> {
     }
 }
 
+/// Returns the injected recipe.js for providers that still rely on the
+/// JS-bridge ingest path. Migrated providers (whatsapp, telegram, slack,
+/// discord, browserscan) return `None` — their scraping runs natively via
+/// CDP in the per-provider scanner modules.
 fn provider_recipe_js(provider: &str) -> Option<&'static str> {
     match provider {
-        "whatsapp" => Some(WHATSAPP_RECIPE_JS),
-        "telegram" => Some(TELEGRAM_RECIPE_JS),
         "linkedin" => Some(LINKEDIN_RECIPE_JS),
         "gmail" => Some(GMAIL_RECIPE_JS),
-        "slack" => Some(SLACK_RECIPE_JS),
-        "discord" => Some(DISCORD_RECIPE_JS),
         "google-meet" => Some(GOOGLE_MEET_RECIPE_JS),
-        "browserscan" => Some(BROWSERSCAN_RECIPE_JS),
         _ => None,
     }
 }
 
-/// Whether to pre-load `ua_spoof.js` for a given provider. Enabled only
-/// for services known to run Chromium-specific fingerprinting checks —
-/// WhatsApp & Telegram are happy with the Chrome UA alone and running the
-/// spoof risks breaking perfectly-working integrations for no gain.
+/// Whether this provider is supported at all. Derived from
+/// `provider_url` so there's one canonical list — new providers added
+/// to the `provider_url` match automatically become "supported" here.
+fn provider_is_supported(provider: &str) -> bool {
+    provider_url(provider).is_some()
+}
+
+/// Whether to pre-load `ua_spoof.js` for a given provider (wry only — cef
+/// handles UA via CDP `Emulation.setUserAgentOverride`). Enabled for
+/// services known to run Chromium-specific fingerprinting checks.
 fn provider_ua_spoof(provider: &str) -> bool {
     matches!(
         provider,
@@ -227,6 +230,52 @@ pub struct WebviewAccountsState {
     /// per-browser handler entries across account churn.
     #[cfg(feature = "cef")]
     browser_ids: Mutex<HashMap<String, i32>>,
+    /// account_id -> CDP session task. One long-lived task per account
+    /// keeps the UA override resident (see `cdp::session`); aborted on
+    /// close/purge so reopen cycles don't stack multiple live loops.
+    #[cfg(feature = "cef")]
+    cdp_sessions: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// Runtime notification-bypass controls used by the settings UI.
+    notification_bypass: Mutex<NotificationBypassPrefs>,
+}
+
+#[derive(Debug, Clone)]
+struct NotificationBypassPrefs {
+    global_dnd: bool,
+    muted_accounts: HashSet<String>,
+    bypass_when_focused: bool,
+    focused_account: Option<String>,
+}
+
+impl Default for NotificationBypassPrefs {
+    fn default() -> Self {
+        Self {
+            global_dnd: false,
+            muted_accounts: HashSet::new(),
+            // Match the existing UI copy: focused account may suppress toast.
+            bypass_when_focused: true,
+            focused_account: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NotificationBypassPrefsPayload {
+    pub global_dnd: bool,
+    pub muted_accounts: Vec<String>,
+    pub bypass_when_focused: bool,
+}
+
+impl From<&NotificationBypassPrefs> for NotificationBypassPrefsPayload {
+    fn from(value: &NotificationBypassPrefs) -> Self {
+        let mut muted_accounts = value.muted_accounts.iter().cloned().collect::<Vec<_>>();
+        muted_accounts.sort();
+        Self {
+            global_dnd: value.global_dnd,
+            muted_accounts,
+            bypass_when_focused: value.bypass_when_focused,
+        }
+    }
 }
 
 /// Title prefix applied to every OS toast fired from an embedded webview.
@@ -266,6 +315,34 @@ fn forward_native_notification<R: Runtime>(
     provider: &str,
     payload: &tauri_runtime_cef::notification::NotificationPayload,
 ) {
+    if let Some(state) = app.try_state::<WebviewAccountsState>() {
+        let prefs = state.notification_bypass.lock().unwrap().clone();
+        if prefs.global_dnd {
+            log::debug!(
+                "[notify-bypass][{}] suppressed global_dnd provider={}",
+                account_id,
+                provider
+            );
+            return;
+        }
+        if prefs.muted_accounts.contains(account_id) {
+            log::debug!(
+                "[notify-bypass][{}] suppressed muted_account provider={}",
+                account_id,
+                provider
+            );
+            return;
+        }
+        if prefs.bypass_when_focused && prefs.focused_account.as_deref() == Some(account_id) {
+            log::debug!(
+                "[notify-bypass][{}] suppressed focused_account provider={}",
+                account_id,
+                provider
+            );
+            return;
+        }
+    }
+
     // Feature flag — bail early when the user hasn't opted in.
     if let Some(settings) =
         app.try_state::<crate::notification_settings::NotificationSettingsState>()
@@ -289,14 +366,15 @@ fn forward_native_notification<R: Runtime>(
     };
     let body = payload.body.as_deref().unwrap_or("");
     log::info!(
-        "[notify-cef][{}] source={:?} tag={:?} silent={} title={:?} body_chars={}",
+        "[notify-cef][{}] source={:?} tag={:?} silent={} title_chars={} body_chars={}",
         account_id,
         payload.source,
         payload.tag,
         payload.silent,
-        raw_title,
+        raw_title.chars().count(),
         body.chars().count()
     );
+    log::debug!("[notify-cef][{}] raw_title={:?}", account_id, raw_title);
 
     // Mirror to the frontend BEFORE firing the OS toast so the Redux
     // store has the routing context ready by the time the user clicks.
@@ -313,6 +391,18 @@ fn forward_native_notification<R: Runtime>(
             account_id,
             err
         );
+    }
+
+    // Respect the Web Notification `silent` flag — the mirror event above
+    // still updates the in-app notification center, but the OS toast is
+    // suppressed so the user is not audibly/visually interrupted for
+    // notifications the page explicitly marked as silent.
+    if payload.silent {
+        log::debug!(
+            "[notify-cef][{}] silent=true, suppressing OS toast",
+            account_id
+        );
+        return;
     }
 
     let mut builder = app.notification().builder().title(&notify_title);
@@ -354,12 +444,6 @@ pub struct BoundsArgs {
 #[derive(Debug, Deserialize)]
 pub struct AccountIdArgs {
     pub account_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct EvalArgs {
-    pub account_id: String,
-    pub js: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -426,77 +510,65 @@ fn data_directory_for<R: Runtime>(app: &AppHandle<R>, account_id: &str) -> Resul
     Ok(base.join("webview_accounts").join(account_id))
 }
 
-fn build_init_script(account_id: &str, provider: &str, recipe_js: &str) -> String {
-    // Inject context first so the runtime can read it on load. JSON-encode
-    // the values so escaping is safe. Order matters:
-    //   1. UA spoof (must land BEFORE page JS reads `navigator`)
-    //   2. Recipe context
-    //   3. Recipe runtime
-    //   4. Per-provider recipe
-    let ctx = serde_json::json!({
-        "accountId": account_id,
-        "provider": provider,
-    });
+/// Produce the `initialization_script` payload for this webview.
+///
+/// Under **cef** (production): empty for the 5 migrated providers
+/// (whatsapp, telegram, slack, discord, browserscan) — they load with
+/// ZERO injected JS; their scraping + UA override runs via CDP. The 3
+/// deferred providers (gmail, linkedin, google-meet) still get the JS
+/// recipe bridge.
+///
+/// Under **wry**: there is no CDP, so migrated providers that fingerprint
+/// on `navigator.*` still need the `ua_spoof.js` shim even though their
+/// scraper is gone. Non-migrated providers keep the full legacy path
+/// (spoof + runtime + recipe).
+#[cfg(feature = "cef")]
+fn build_init_script(account_id: &str, provider: &str) -> String {
     let spoof = if provider_ua_spoof(provider) {
         UA_SPOOF_JS
     } else {
         ""
     };
-    let target_marker = telegram_target_marker(account_id, provider);
-    let title_marker_script = if provider == "telegram" {
-        r#"
-(function () {
-  const marker = window.__OPENHUMAN_TARGET_MARKER__;
-  if (!marker || window.__OPENHUMAN_TITLE_MARKER_INSTALLED__) return;
-  window.__OPENHUMAN_TITLE_MARKER_INSTALLED__ = true;
-  function applyMarker() {
-    try {
-      const current = String(document.title || "");
-      if (!current.includes(marker)) {
-        document.title = current ? current + " " + marker : marker;
-      }
-    } catch (_) {}
-  }
-  applyMarker();
-  try {
-    const obs = new MutationObserver(applyMarker);
-    const start = function () {
-      if (document.querySelector("title")) obs.observe(document.querySelector("title"), {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
-      applyMarker();
+    let Some(recipe_js) = provider_recipe_js(provider) else {
+        return spoof.to_string();
     };
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", start, { once: true });
-    } else {
-      start();
-    }
-    window.addEventListener("focus", applyMarker);
-    setInterval(applyMarker, 2000);
-  } catch (_) {}
-})();
-"#
-    } else {
-        ""
-    };
+    let ctx = serde_json::json!({
+        "accountId": account_id,
+        "provider": provider,
+    });
     format!(
-        "{spoof}\n\nwindow.__OPENHUMAN_RECIPE_CTX__ = {ctx};\nwindow.__OPENHUMAN_TARGET_MARKER__ = {target_marker};\n\n{title_marker_script}\n\n{runtime}\n\n{recipe}\n",
+        "{spoof}\n\nwindow.__OPENHUMAN_RECIPE_CTX__ = {ctx};\n\n{runtime}\n\n{recipe}\n",
         spoof = spoof,
         ctx = ctx,
-        target_marker = serde_json::to_string(&target_marker).unwrap_or_else(|_| "null".to_string()),
-        title_marker_script = title_marker_script,
         runtime = RUNTIME_JS,
         recipe = recipe_js
     )
 }
 
-fn telegram_target_marker(account_id: &str, provider: &str) -> Option<String> {
-    if provider != "telegram" {
-        return None;
-    }
-    Some(format!("{TELEGRAM_TARGET_MARKER_PREFIX}{account_id}]"))
+#[cfg(not(feature = "cef"))]
+fn build_init_script(account_id: &str, provider: &str) -> String {
+    let spoof = if provider_ua_spoof(provider) {
+        UA_SPOOF_JS
+    } else {
+        ""
+    };
+    // Migrated providers have no recipe under wry either (recipe.js
+    // files were deleted with the cef migration), but the UA shim is
+    // still worth shipping so fingerprint gates pass.
+    let Some(recipe_js) = provider_recipe_js(provider) else {
+        return spoof.to_string();
+    };
+    let ctx = serde_json::json!({
+        "accountId": account_id,
+        "provider": provider,
+    });
+    format!(
+        "{spoof}\n\nwindow.__OPENHUMAN_RECIPE_CTX__ = {ctx};\n\n{runtime}\n\n{recipe}\n",
+        spoof = spoof,
+        ctx = ctx,
+        runtime = RUNTIME_JS,
+        recipe = recipe_js
+    )
 }
 
 /// Spawn (or focus) the embedded webview for an account.
@@ -514,16 +586,44 @@ pub async fn webview_account_open<R: Runtime>(
         label
     );
 
-    let url_str = args
+    // Reject unknown providers early. `provider_url` already errors when
+    // no URL override is supplied; the `provider_is_supported` check
+    // additionally gates custom-URL overrides so an arbitrary provider
+    // string can't ride in via the debug `url` field.
+    if !provider_is_supported(&args.provider) {
+        return Err(format!("unknown provider: {}", args.provider));
+    }
+    let real_url_str = args
         .url
         .as_deref()
         .or_else(|| provider_url(&args.provider))
-        .ok_or_else(|| format!("unknown provider: {}", args.provider))?;
-    let url: Url = url_str
+        .ok_or_else(|| format!("no url for provider: {}", args.provider))?
+        .to_string();
+    // Validate the real URL up front — otherwise a malformed debug
+    // `args.url` would only fail later inside the async CDP session
+    // loop, which is much harder to surface to the caller. The parsed
+    // Url also feeds `scanner_url_prefix` so scanners match on the
+    // actual origin the user navigated to (honoring debug overrides).
+    let real_url: Url = real_url_str
         .parse()
-        .map_err(|e| format!("invalid url {url_str}: {e}"))?;
-    let recipe_js = provider_recipe_js(&args.provider)
-        .ok_or_else(|| format!("no recipe registered for provider: {}", args.provider))?;
+        .map_err(|e| format!("invalid provider url {real_url_str}: {e}"))?;
+    // Scanner target-match uses `url.starts_with(prefix)`, so the
+    // prefix needs to be the ORIGIN (scheme + host), not the full URL
+    // — same-host intra-app navigations must keep matching after the
+    // initial load.
+    #[cfg(feature = "cef")]
+    let scanner_url_prefix = format!("{}/", real_url.origin().ascii_serialization());
+    // Under cef we open the webview at a tiny `data:` placeholder URL so
+    // the CDP session opener can attach and apply the UA override BEFORE
+    // the real provider URL loads. Under wry there's no CDP, so navigate
+    // straight to the real URL and rely on the injected `ua_spoof.js`.
+    #[cfg(feature = "cef")]
+    let initial_url_str = cdp::placeholder_data_url(&args.account_id);
+    #[cfg(not(feature = "cef"))]
+    let initial_url_str = real_url_str.clone();
+    let initial_url: Url = initial_url_str
+        .parse()
+        .map_err(|e| format!("invalid initial url {initial_url_str}: {e}"))?;
 
     // If a webview for this account already exists, just reposition / show.
     {
@@ -569,11 +669,13 @@ pub async fn webview_account_open<R: Runtime>(
         );
     }
 
-    let init_script = build_init_script(&args.account_id, &args.provider, recipe_js);
+    let init_script = build_init_script(&args.account_id, &args.provider);
 
-    let mut builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(url))
-        .initialization_script(&init_script)
+    let mut builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(initial_url))
         .data_directory(data_dir);
+    if !init_script.is_empty() {
+        builder = builder.initialization_script(&init_script);
+    }
 
     // Keep link clicks that leave the provider's host set in the OS
     // browser, not the embedded webview. Same-host navigations (including
@@ -662,87 +764,91 @@ pub async fn webview_account_open<R: Runtime>(
         .unwrap()
         .insert(args.account_id.clone(), label.clone());
 
+    // Spawn the per-account CDP session opener: holds an attached session
+    // for the lifetime of the webview so `Emulation.setUserAgentOverride`
+    // (which reverts on detach) keeps applying, and drives the initial
+    // Page.navigate from our placeholder URL to the real provider URL.
+    // Also installs the `#openhuman-account-{id}` fragment the scanners
+    // match on for multi-account disambiguation.
+    // Spawn the per-account CDP session opener, replacing any prior
+    // handle for this account (the old one would still be trying to
+    // attach to a target that's been torn down).
+    #[cfg(feature = "cef")]
+    {
+        let handle = cdp::spawn_session(args.account_id.clone(), real_url_str.clone());
+        let mut sessions = state.cdp_sessions.lock().unwrap();
+        if let Some(old) = sessions.insert(args.account_id.clone(), handle) {
+            old.abort();
+        }
+    }
+
     // For providers we know how to scrape via CDP, kick off the IndexedDB
     // scanner. Compile-gated to `cef` because CDP only exists when the CEF
     // runtime is in use (wry has no remote-debugging port).
     #[cfg(feature = "cef")]
     {
+        // Prefix is derived from the validated real URL's origin above
+        // so debug `args.url` overrides (alt hosts, localhost mirrors)
+        // resolve correctly — previously we always used the static
+        // `provider_url(...)` default even when the webview had
+        // navigated elsewhere.
         if args.provider == "whatsapp" {
-            if let Some(prefix) = provider_url(&args.provider) {
-                let registry = app
-                    .try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
-                    .map(|s| s.inner().clone());
-                if let Some(registry) = registry {
-                    let app_clone = app.clone();
-                    let acct = args.account_id.clone();
-                    let prefix = prefix.to_string();
-                    tokio::spawn(async move {
-                        registry.ensure_scanner(app_clone, acct, prefix).await;
-                    });
-                } else {
-                    log::warn!("[webview-accounts] CDP ScannerRegistry not in app state");
-                }
+            let registry = app
+                .try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
+                .map(|s| s.inner().clone());
+            if let Some(registry) = registry {
+                let app_clone = app.clone();
+                let acct = args.account_id.clone();
+                let prefix = scanner_url_prefix.clone();
+                tokio::spawn(async move {
+                    registry.ensure_scanner(app_clone, acct, prefix).await;
+                });
+            } else {
+                log::warn!("[webview-accounts] CDP ScannerRegistry not in app state");
             }
         } else if args.provider == "slack" {
-            if let Some(prefix) = provider_url(&args.provider) {
-                let registry = app
-                    .try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
-                    .map(|s| s.inner().clone());
-                if let Some(registry) = registry {
-                    let app_clone = app.clone();
-                    let acct = args.account_id.clone();
-                    let prefix = prefix.to_string();
-                    tokio::spawn(async move {
-                        registry.ensure_scanner(app_clone, acct, prefix).await;
-                    });
-                } else {
-                    log::warn!("[webview-accounts] slack ScannerRegistry not in app state");
-                }
+            let registry = app
+                .try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
+                .map(|s| s.inner().clone());
+            if let Some(registry) = registry {
+                let app_clone = app.clone();
+                let acct = args.account_id.clone();
+                let prefix = scanner_url_prefix.clone();
+                tokio::spawn(async move {
+                    registry.ensure_scanner(app_clone, acct, prefix).await;
+                });
+            } else {
+                log::warn!("[webview-accounts] slack ScannerRegistry not in app state");
             }
         } else if args.provider == "telegram" {
-            if let Some(prefix) = provider_url(&args.provider) {
-                let registry = app
-                    .try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
-                    .map(|s| s.inner().clone());
-                if let Some(registry) = registry {
-                    let app_clone = app.clone();
-                    let acct = args.account_id.clone();
-                    let prefix = prefix.to_string();
-                    let target_marker = telegram_target_marker(&args.account_id, &args.provider);
-                    tokio::spawn(async move {
-                        registry
-                            .ensure_scanner(app_clone, acct, prefix, target_marker)
-                            .await;
-                    });
-                } else {
-                    log::warn!("[webview-accounts] telegram ScannerRegistry not in app state");
-                }
+            let registry = app
+                .try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
+                .map(|s| s.inner().clone());
+            if let Some(registry) = registry {
+                let app_clone = app.clone();
+                let acct = args.account_id.clone();
+                let prefix = scanner_url_prefix.clone();
+                tokio::spawn(async move {
+                    registry.ensure_scanner(app_clone, acct, prefix).await;
+                });
+            } else {
+                log::warn!("[webview-accounts] telegram ScannerRegistry not in app state");
             }
         } else if args.provider == "discord" {
             // Discord MITM uses CDP `Network.*` to capture HTTP API calls
-            // and gateway WebSocket frames — see `discord_scanner/mod.rs`
-            // for the event filter and emit shape.
-            if let Some(prefix) = provider_url(&args.provider) {
-                // The CDP target match is by URL prefix only — Discord
-                // navigates within `discord.com/...` so trim the channel
-                // path off the default and match the bare host root.
-                let prefix = prefix
-                    .split_once("/channels")
-                    .map(|(host, _)| host)
-                    .unwrap_or(prefix);
-                let registry = app
-                    .try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
-                    .map(|s| s.inner().clone());
-                if let Some(registry) = registry {
-                    let app_clone = app.clone();
-                    let acct = args.account_id.clone();
-                    let prefix = prefix.to_string();
-                    tokio::spawn(async move {
-                        registry.ensure_scanner(app_clone, acct, prefix).await;
-                    });
-                } else {
-                    log::warn!("[webview-accounts] discord ScannerRegistry not in app state");
-                }
+            // and gateway WebSocket frames — see `discord_scanner/mod.rs`.
+            let registry = app
+                .try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
+                .map(|s| s.inner().clone());
+            if let Some(registry) = registry {
+                let app_clone = app.clone();
+                let acct = args.account_id.clone();
+                let prefix = scanner_url_prefix.clone();
+                tokio::spawn(async move {
+                    registry.ensure_scanner(app_clone, acct, prefix).await;
+                });
+            } else {
+                log::warn!("[webview-accounts] discord ScannerRegistry not in app state");
             }
         }
 
@@ -860,6 +966,13 @@ pub async fn webview_account_close<R: Runtime>(
                 browser_id
             );
         }
+        if let Some(task) = state.cdp_sessions.lock().unwrap().remove(&args.account_id) {
+            task.abort();
+            log::debug!(
+                "[cdp-session] aborted session task for account={}",
+                args.account_id
+            );
+        }
     }
     log::info!("[webview-accounts] closed label={}", label);
     Ok(())
@@ -922,6 +1035,13 @@ pub async fn webview_account_purge<R: Runtime>(
                 "[notify-cef] purge unregistered handler account={} browser_id={}",
                 args.account_id,
                 browser_id
+            );
+        }
+        if let Some(task) = state.cdp_sessions.lock().unwrap().remove(&args.account_id) {
+            task.abort();
+            log::debug!(
+                "[cdp-session] purge aborted session task for account={}",
+                args.account_id
             );
         }
     }
@@ -1008,39 +1128,85 @@ pub async fn webview_account_show<R: Runtime>(
     Ok(())
 }
 
-/// Look up the live `Webview` for an account, or return a descriptive error.
-fn resolve_webview<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &tauri::State<'_, WebviewAccountsState>,
-    account_id: &str,
-) -> Result<tauri::Webview<R>, String> {
-    let label = state
-        .inner
-        .lock()
-        .unwrap()
-        .get(account_id)
-        .cloned()
-        .ok_or_else(|| format!("no webview for account {account_id}"))?;
-    app.get_webview(&label)
-        .ok_or_else(|| format!("webview {label} missing (stale state)"))
+/// Web-shape notification permission state used by frontend parity code.
+/// CEF path is effectively granted because interception is handled in-app.
+#[tauri::command]
+pub fn webview_notification_permission_state() -> String {
+    #[cfg(feature = "cef")]
+    {
+        "granted".to_string()
+    }
+    #[cfg(not(feature = "cef"))]
+    {
+        "default".to_string()
+    }
 }
 
-/// Generic eval escape hatch — runs `js` inside the account's webview.
-/// Prefer the typed commands above; only use this for one-off recipe
-/// helpers or debugging.
+/// Request notification permission and return web-shape state.
 #[tauri::command]
-pub async fn webview_account_eval<R: Runtime>(
-    app: AppHandle<R>,
+pub fn webview_notification_permission_request() -> String {
+    webview_notification_permission_state()
+}
+
+/// Enable/disable global DND for embedded webview OS toasts.
+#[tauri::command]
+pub fn webview_notification_set_dnd(
     state: tauri::State<'_, WebviewAccountsState>,
-    args: EvalArgs,
+    enabled: bool,
 ) -> Result<(), String> {
-    let wv = resolve_webview(&app, &state, &args.account_id)?;
+    let mut prefs = state.notification_bypass.lock().unwrap();
+    prefs.global_dnd = enabled;
+    log::debug!("[notify-bypass] set global_dnd={enabled}");
+    Ok(())
+}
+
+/// Mute/unmute a specific embedded account for OS toasts.
+#[tauri::command]
+pub fn webview_notification_mute_account(
+    state: tauri::State<'_, WebviewAccountsState>,
+    account_id: String,
+    muted: bool,
+) -> Result<(), String> {
+    let account_id = sanitize_account_id(&account_id)?.to_string();
+    let mut prefs = state.notification_bypass.lock().unwrap();
+    if muted {
+        prefs.muted_accounts.insert(account_id.clone());
+    } else {
+        prefs.muted_accounts.remove(&account_id);
+    }
     log::debug!(
-        "[webview-accounts] eval account={} bytes={}",
-        args.account_id,
-        args.js.len()
+        "[notify-bypass] set muted account_id={} muted={}",
+        account_id,
+        muted
     );
-    wv.eval(&args.js).map_err(|e| format!("eval failed: {e}"))
+    Ok(())
+}
+
+/// Return current bypass preferences for the settings UI.
+#[tauri::command]
+pub fn webview_notification_get_bypass_prefs(
+    state: tauri::State<'_, WebviewAccountsState>,
+) -> NotificationBypassPrefsPayload {
+    let prefs = state.notification_bypass.lock().unwrap();
+    NotificationBypassPrefsPayload::from(&*prefs)
+}
+
+/// Track which account is currently focused in the shell UI.
+#[tauri::command]
+pub fn webview_set_focused_account(
+    state: tauri::State<'_, WebviewAccountsState>,
+    account_id: Option<String>,
+) -> Result<(), String> {
+    let mut prefs = state.notification_bypass.lock().unwrap();
+    prefs.focused_account = match account_id {
+        Some(id) => Some(sanitize_account_id(&id)?.to_string()),
+        None => None,
+    };
+    log::debug!(
+        "[notify-bypass] set focused_account={}",
+        prefs.focused_account.as_deref().unwrap_or("<none>")
+    );
+    Ok(())
 }
 
 /// Called from the injected runtime each time the recipe emits an event.
