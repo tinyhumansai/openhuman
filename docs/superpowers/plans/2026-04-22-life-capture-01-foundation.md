@@ -1701,9 +1701,396 @@ git commit -m "feat(life_capture): wire PersonalIndex + Embedder into core dispa
 
 ---
 
+---
+
+## Task F15: Curated memory store (MEMORY.md + USER.md)
+
+**Context.** Adapted from Hermes' `tools/memory_tool.py` pattern (MIT, NousResearch). Two char-bounded markdown files the agent writes to with `add | replace | remove | read` actions. Snapshot-frozen at session start, injected into the cached system prompt, never mutated mid-session — preserves prefix cache.
+
+**Files:**
+- Create: `src/openhuman/curated_memory/mod.rs` (re-exports)
+- Create: `src/openhuman/curated_memory/store.rs` (file IO, char-bounded writes, atomic rename)
+- Create: `src/openhuman/curated_memory/types.rs` (`MemoryFile`, `MemoryAction`, `MemorySnapshot`)
+- Modify: `src/openhuman/mod.rs` (`pub mod curated_memory;`)
+
+- [ ] **Step 1: Failing test for store actions**
+
+`src/openhuman/curated_memory/store.rs` (top of file, with the test at the bottom):
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn add_replace_remove_read_round_trip_under_char_limit() {
+        let tmp = TempDir::new().unwrap();
+        let store = MemoryStore::open(tmp.path(), MemoryFile::Memory, 200).unwrap();
+
+        store.add("user prefers terse replies").await.unwrap();
+        store.add("project context: openhuman").await.unwrap();
+        let s = store.read().await.unwrap();
+        assert!(s.contains("terse replies"));
+        assert!(s.contains("openhuman"));
+
+        store.replace("user prefers terse", "user prefers concise").await.unwrap();
+        let s = store.read().await.unwrap();
+        assert!(s.contains("concise"));
+        assert!(!s.contains("terse"));
+
+        store.remove("openhuman").await.unwrap();
+        let s = store.read().await.unwrap();
+        assert!(!s.contains("openhuman"));
+    }
+
+    #[tokio::test]
+    async fn add_rejected_when_char_limit_would_be_exceeded() {
+        let tmp = TempDir::new().unwrap();
+        let store = MemoryStore::open(tmp.path(), MemoryFile::Memory, 50).unwrap();
+        store.add("a".repeat(40).as_str()).await.unwrap();
+        let err = store.add("a".repeat(40).as_str()).await.unwrap_err();
+        assert!(err.to_string().contains("char limit"), "got {err}");
+    }
+}
+```
+
+Add to `Cargo.toml` `[dev-dependencies]`:
+
+```toml
+tempfile = "3"
+```
+
+- [ ] **Step 2: Run, verify failure**
+
+```bash
+cargo test --manifest-path Cargo.toml -p openhuman_core curated_memory -- --nocapture
+```
+Expected: FAIL — types undefined.
+
+- [ ] **Step 3: Implement types and store**
+
+`src/openhuman/curated_memory/types.rs`:
+
+```rust
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryFile {
+    /// Agent's notes about the environment, conventions, what worked.
+    Memory,
+    /// Notes about the user — preferences, role, recurring goals.
+    User,
+}
+
+impl MemoryFile {
+    pub fn filename(&self) -> &'static str {
+        match self { Self::Memory => "MEMORY.md", Self::User => "USER.md" }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySnapshot {
+    pub memory: String,
+    pub user: String,
+}
+```
+
+`src/openhuman/curated_memory/store.rs` (full body):
+
+```rust
+use crate::openhuman::curated_memory::types::MemoryFile;
+use std::path::{Path, PathBuf};
+use tokio::sync::Mutex;
+
+pub struct MemoryStore {
+    file_path: PathBuf,
+    char_limit: usize,
+    write_lock: Mutex<()>,
+}
+
+const ENTRY_SEP: &str = "\n§\n";
+
+impl MemoryStore {
+    pub fn open(dir: &Path, kind: MemoryFile, char_limit: usize) -> std::io::Result<Self> {
+        std::fs::create_dir_all(dir)?;
+        let file_path = dir.join(kind.filename());
+        if !file_path.exists() {
+            std::fs::write(&file_path, "")?;
+        }
+        Ok(Self { file_path, char_limit, write_lock: Mutex::new(()) })
+    }
+
+    pub async fn read(&self) -> std::io::Result<String> {
+        tokio::fs::read_to_string(&self.file_path).await
+    }
+
+    pub async fn add(&self, entry: &str) -> std::io::Result<()> {
+        let _g = self.write_lock.lock().await;
+        let current = tokio::fs::read_to_string(&self.file_path).await.unwrap_or_default();
+        let next = if current.is_empty() { entry.to_string() }
+                   else { format!("{current}{ENTRY_SEP}{entry}") };
+        if next.chars().count() > self.char_limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("char limit {} exceeded", self.char_limit),
+            ));
+        }
+        atomic_write(&self.file_path, &next).await
+    }
+
+    pub async fn replace(&self, needle: &str, replacement: &str) -> std::io::Result<()> {
+        let _g = self.write_lock.lock().await;
+        let current = tokio::fs::read_to_string(&self.file_path).await.unwrap_or_default();
+        let next = current.replace(needle, replacement);
+        if next.chars().count() > self.char_limit {
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, "char limit"));
+        }
+        atomic_write(&self.file_path, &next).await
+    }
+
+    pub async fn remove(&self, needle: &str) -> std::io::Result<()> {
+        let _g = self.write_lock.lock().await;
+        let current = tokio::fs::read_to_string(&self.file_path).await.unwrap_or_default();
+        // Drop any entry containing `needle`.
+        let kept: Vec<&str> = current
+            .split(ENTRY_SEP)
+            .filter(|e| !e.contains(needle))
+            .collect();
+        let next = kept.join(ENTRY_SEP);
+        atomic_write(&self.file_path, &next).await
+    }
+}
+
+async fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
+    let tmp = path.with_extension("md.tmp");
+    tokio::fs::write(&tmp, contents).await?;
+    tokio::fs::rename(&tmp, path).await
+}
+```
+
+`src/openhuman/curated_memory/mod.rs`:
+
+```rust
+pub mod store;
+pub mod types;
+pub use store::MemoryStore;
+pub use types::{MemoryFile, MemorySnapshot};
+```
+
+In `src/openhuman/mod.rs` add `pub mod curated_memory;` alphabetically.
+
+- [ ] **Step 4: Run, verify pass, commit**
+
+```bash
+cargo test --manifest-path Cargo.toml -p openhuman_core curated_memory -- --nocapture
+git add -A
+git commit -m "feat(curated_memory): MEMORY.md/USER.md store with char-bounded actions
+
+Adapted from NousResearch/hermes-agent (MIT) — tools/memory_tool.py."
+```
+
+---
+
+## Task F16: Session-start snapshot + system-prompt injection
+
+**Files:**
+- Modify: the OpenClaw context loader in `src-tauri/src/commands/chat.rs` (around `load_openclaw_context`)
+- Modify: `src/openhuman/curated_memory/mod.rs` (add `snapshot()` helper)
+
+- [ ] **Step 1: Add a `snapshot` function**
+
+Append to `src/openhuman/curated_memory/store.rs`:
+
+```rust
+pub async fn snapshot_pair(
+    memory_store: &MemoryStore,
+    user_store: &MemoryStore,
+) -> std::io::Result<crate::openhuman::curated_memory::types::MemorySnapshot> {
+    Ok(crate::openhuman::curated_memory::types::MemorySnapshot {
+        memory: memory_store.read().await.unwrap_or_default(),
+        user: user_store.read().await.unwrap_or_default(),
+    })
+}
+```
+
+- [ ] **Step 2: Wire into chat context assembly**
+
+In `src-tauri/src/commands/chat.rs`, find where `load_openclaw_context` builds the system prompt. After loading OpenClaw, before assembling the user message, take a snapshot of the curated memory and append it to the system context **once per session**.
+
+Cache the snapshot in the existing static `AI_CONFIG_CACHE` (or alongside it) so subsequent turns in the same session reuse the same string — preserves prefix cache. Invalidate when the session changes, not when memory changes mid-turn.
+
+```rust
+let snapshot = crate::openhuman::curated_memory::snapshot_pair(
+    &ctx.memory_store, &ctx.user_store
+).await.unwrap_or_default();
+let curated_block = format!(
+    "\n\n## Curated Memory (frozen at session start)\n\n\
+     ### MEMORY.md\n{}\n\n### USER.md\n{}\n",
+    snapshot.memory, snapshot.user
+);
+let system_prompt = format!("{openclaw_context}{curated_block}");
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add -A
+git commit -m "feat(curated_memory): snapshot at session start, inject into system prompt"
+```
+
+---
+
+## Task F17: Expose `memory.{add,replace,remove,read}` as a tool
+
+**Files:**
+- Modify: `src/openhuman/curated_memory/schemas.rs` (new — controller schema)
+- Modify: `src/openhuman/curated_memory/rpc.rs` (new — RPC handlers)
+- Modify: the dispatch registration where life_capture was wired (Task F12 location)
+
+- [ ] **Step 1: Add controller schema**
+
+`src/openhuman/curated_memory/schemas.rs`:
+
+```rust
+use crate::core::{ControllerSchema, FieldSchema, MethodSchema, TypeSchema};
+
+pub fn curated_memory_schema() -> ControllerSchema {
+    ControllerSchema {
+        name: "memory".into(),
+        description: "Agent-writable curated memory (MEMORY.md, USER.md).".into(),
+        methods: vec![
+            MethodSchema { name: "read".into(),  description: "Read a curated memory file.".into(),
+                params: vec![FieldSchema::new("file", TypeSchema::String)],
+                returns: TypeSchema::String },
+            MethodSchema { name: "add".into(),   description: "Append an entry.".into(),
+                params: vec![
+                    FieldSchema::new("file",  TypeSchema::String),
+                    FieldSchema::new("entry", TypeSchema::String),
+                ], returns: TypeSchema::Null },
+            MethodSchema { name: "replace".into(), description: "Substring replace.".into(),
+                params: vec![
+                    FieldSchema::new("file",        TypeSchema::String),
+                    FieldSchema::new("needle",      TypeSchema::String),
+                    FieldSchema::new("replacement", TypeSchema::String),
+                ], returns: TypeSchema::Null },
+            MethodSchema { name: "remove".into(), description: "Drop entries containing needle.".into(),
+                params: vec![
+                    FieldSchema::new("file",   TypeSchema::String),
+                    FieldSchema::new("needle", TypeSchema::String),
+                ], returns: TypeSchema::Null },
+        ],
+    }
+}
+```
+
+- [ ] **Step 2: Add RPC handlers**
+
+`src/openhuman/curated_memory/rpc.rs`:
+
+```rust
+use crate::core::RpcOutcome;
+use crate::openhuman::curated_memory::{MemoryFile, MemoryStore};
+
+fn pick<'a>(file: &str, mem: &'a MemoryStore, user: &'a MemoryStore) -> Option<&'a MemoryStore> {
+    match file { "memory" => Some(mem), "user" => Some(user), _ => None }
+}
+
+pub async fn handle_read(file: String, mem: &MemoryStore, user: &MemoryStore) -> RpcOutcome<String> {
+    let s = match pick(&file, mem, user) { Some(s) => s, None => return RpcOutcome::error("unknown file".into()) };
+    match s.read().await { Ok(v) => RpcOutcome::ok(v), Err(e) => RpcOutcome::error(e.to_string()) }
+}
+pub async fn handle_add(file: String, entry: String, mem: &MemoryStore, user: &MemoryStore) -> RpcOutcome<()> {
+    let s = match pick(&file, mem, user) { Some(s) => s, None => return RpcOutcome::error("unknown file".into()) };
+    s.add(&entry).await.map(|_| RpcOutcome::ok(())).unwrap_or_else(|e| RpcOutcome::error(e.to_string()))
+}
+pub async fn handle_replace(file: String, needle: String, replacement: String, mem: &MemoryStore, user: &MemoryStore) -> RpcOutcome<()> {
+    let s = match pick(&file, mem, user) { Some(s) => s, None => return RpcOutcome::error("unknown file".into()) };
+    s.replace(&needle, &replacement).await.map(|_| RpcOutcome::ok(())).unwrap_or_else(|e| RpcOutcome::error(e.to_string()))
+}
+pub async fn handle_remove(file: String, needle: String, mem: &MemoryStore, user: &MemoryStore) -> RpcOutcome<()> {
+    let s = match pick(&file, mem, user) { Some(s) => s, None => return RpcOutcome::error("unknown file".into()) };
+    s.remove(&needle).await.map(|_| RpcOutcome::ok(())).unwrap_or_else(|e| RpcOutcome::error(e.to_string()))
+}
+```
+
+Wire `pub mod rpc; pub mod schemas;` into `src/openhuman/curated_memory/mod.rs`.
+
+- [ ] **Step 3: Register handlers + add stores to context**
+
+In the same dispatch registration site as Task F12, add:
+
+```rust
+dispatch.register_schema(crate::openhuman::curated_memory::schemas::curated_memory_schema());
+dispatch.register_handler("memory.read",    |ctx, p| async move { /* call handle_read with ctx.memory_store / ctx.user_store */ });
+// ...add, replace, remove similarly
+```
+
+In the dispatch context struct (Task F14), add:
+
+```rust
+pub memory_store: std::sync::Arc<crate::openhuman::curated_memory::MemoryStore>,
+pub user_store:   std::sync::Arc<crate::openhuman::curated_memory::MemoryStore>,
+```
+
+Construct on startup with limits `2200` (memory) and `1375` (user) per Hermes' defaults:
+
+```rust
+let mem_dir = app_data_dir.join("memories");
+let memory_store = std::sync::Arc::new(
+    crate::openhuman::curated_memory::MemoryStore::open(&mem_dir, MemoryFile::Memory, 2200)?
+);
+let user_store = std::sync::Arc::new(
+    crate::openhuman::curated_memory::MemoryStore::open(&mem_dir, MemoryFile::User, 1375)?
+);
+```
+
+- [ ] **Step 4: Compile, write a quick integration test**
+
+`src/openhuman/curated_memory/tests.rs`:
+
+```rust
+use super::*;
+use tempfile::TempDir;
+
+#[tokio::test]
+async fn snapshot_reflects_writes_then_freezes() {
+    let tmp = TempDir::new().unwrap();
+    let mem = MemoryStore::open(tmp.path(), MemoryFile::Memory, 500).unwrap();
+    let user = MemoryStore::open(tmp.path(), MemoryFile::User, 500).unwrap();
+    mem.add("note one").await.unwrap();
+    user.add("user is jwalin").await.unwrap();
+
+    let snap = store::snapshot_pair(&mem, &user).await.unwrap();
+    assert!(snap.memory.contains("note one"));
+    assert!(snap.user.contains("jwalin"));
+
+    // Mutating after snapshot does not change the snapshot value held by the caller.
+    mem.add("note two").await.unwrap();
+    assert!(!snap.memory.contains("note two"));
+}
+```
+
+In `src/openhuman/curated_memory/mod.rs` add `#[cfg(test)] mod tests;`.
+
+```bash
+cargo test --manifest-path Cargo.toml -p openhuman_core curated_memory -- --nocapture
+```
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "feat(curated_memory): expose memory.{read,add,replace,remove} via controller dispatch"
+```
+
+---
+
 ## Acceptance for Foundation milestone
 
-- [ ] All 14 tasks merged onto a feature branch (`feat/life-capture-foundation`)
+- [ ] All 17 tasks merged onto a feature branch (`feat/life-capture-foundation`)
 - [ ] `cargo test life_capture` passes (every sub-module test + e2e)
 - [ ] On startup, `personal_index.db` is created in the app data dir with the expected schema
 - [ ] `life_capture.get_stats` and `life_capture.search` callable via the existing controller dispatch (CLI and JSON-RPC)
