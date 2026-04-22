@@ -253,10 +253,10 @@ jobs:
             args: --target x86_64-apple-darwin
             target: x86_64-apple-darwin
             artifact_suffix: x86_64-apple-darwin
-          # - platform: ubuntu-22.04
-          #   args: --target x86_64-unknown-linux-gnu
-          #   target: x86_64-unknown-linux-gnu
-          #   artifact_suffix: ubuntu
+          - platform: ubuntu-22.04
+            args: --target x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-gnu
+            artifact_suffix: ubuntu
           - platform: windows-latest
             args: --target x86_64-pc-windows-msvc
             target: x86_64-pc-windows-msvc
