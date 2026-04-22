@@ -55,12 +55,11 @@ pub fn get_or_create_source_tree(config: &Config, scope: &str) -> Result<Tree> {
                 "[source_tree::registry] UNIQUE race for scope={} — re-querying",
                 scope
             );
-            store::get_tree_by_scope(config, TreeKind::Source, scope)?
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "UNIQUE violation on insert but no row found on re-query for scope {scope}"
-                    )
-                })
+            store::get_tree_by_scope(config, TreeKind::Source, scope)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "UNIQUE violation on insert but no row found on re-query for scope {scope}"
+                )
+            })
         }
         Err(err) => Err(err),
     }
@@ -165,6 +164,9 @@ mod tests {
             ..pre_existing.clone()
         };
         let err = store::insert_tree(&cfg, &dup).unwrap_err();
-        assert!(is_unique_violation(&err), "expected UNIQUE violation, got: {err:#}");
+        assert!(
+            is_unique_violation(&err),
+            "expected UNIQUE violation, got: {err:#}"
+        );
     }
 }
