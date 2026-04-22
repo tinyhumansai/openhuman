@@ -1837,10 +1837,7 @@ mod tests {
         // Point OPENHUMAN_WORKSPACE at a custom path via HashMapEnv — no
         // process-env mutation needed.
         let custom_ws = tmp.path().join("custom_ws");
-        let env = HashMapEnv::new().with(
-            "OPENHUMAN_WORKSPACE",
-            custom_ws.to_str().unwrap(),
-        );
+        let env = HashMapEnv::new().with("OPENHUMAN_WORKSPACE", custom_ws.to_str().unwrap());
 
         let (oh_dir, ws_dir, source) =
             resolve_runtime_config_dirs_with(root, &default_workspace, &env)
@@ -1894,7 +1891,10 @@ mod tests {
         // `set_runtime_proxy_config` must have been called: the global should
         // reflect the proxy URL we injected.
         let runtime = runtime_proxy_config();
-        assert!(runtime.enabled, "runtime proxy must be enabled after apply_env_overrides");
+        assert!(
+            runtime.enabled,
+            "runtime proxy must be enabled after apply_env_overrides"
+        );
         assert_eq!(
             runtime.http_proxy.as_deref(),
             Some("http://proxy.test:8080"),
