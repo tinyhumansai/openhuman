@@ -6,5 +6,16 @@
 	<string>OpenHuman uses the microphone for voice dictation and for voice/video calls and huddles inside embedded apps (Google Meet, Discord, Slack).</string>
 	<key>NSCameraUsageDescription</key>
 	<string>OpenHuman uses the camera for video calls and huddles inside embedded apps (Google Meet, Discord, Slack).</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.openhuman.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>openhuman</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

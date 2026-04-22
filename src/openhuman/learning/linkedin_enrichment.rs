@@ -261,17 +261,11 @@ async fn write_profile_md(
 /// Ask the backend LLM to distil the raw LinkedIn Markdown into a
 /// concise, high-signal profile document suitable for agent context.
 async fn summarise_profile_with_llm(config: &Config, raw_md: &str) -> anyhow::Result<String> {
-    use crate::api::jwt::get_session_token;
     use crate::openhuman::providers::ops::{
         create_backend_inference_provider, ProviderRuntimeOptions,
     };
 
-    let token = get_session_token(config)
-        .map_err(|e| anyhow::anyhow!("failed to read session token: {e}"))?
-        .ok_or_else(|| anyhow::anyhow!("no session token for LLM call"))?;
-
     let provider = create_backend_inference_provider(
-        Some(&token),
         config.api_url.as_deref(),
         &ProviderRuntimeOptions::default(),
     )?;

@@ -76,9 +76,104 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
             );
             crate::core::agent_cli::run_agent_command(&args[1..])
         }
+        "sentry-test" => run_sentry_test_command(&args[1..]),
         // Generic namespace dispatcher: `openhuman <namespace> <function> ...`
         namespace => run_namespace_command(namespace, &args[1..], &grouped),
     }
+}
+
+/// Handles the `sentry-test` subcommand used to verify Sentry wiring end-to-end.
+///
+/// Captures an Error-level event against the currently initialized Sentry
+/// client (see `sentry::init` in the binary entry point), flushes the client,
+/// and prints the event UUID to stdout. Optional `--panic` flag additionally
+/// triggers a panic so the panic integration is exercised too.
+///
+/// Requires a DSN resolvable at runtime — either via the `OPENHUMAN_SENTRY_DSN`
+/// env var or baked into the binary at build time via `option_env!`. Absent a
+/// DSN, the command exits non-zero with a diagnostic instead of silently
+/// producing no telemetry.
+fn run_sentry_test_command(args: &[String]) -> Result<()> {
+    let mut message: Option<String> = None;
+    let mut do_panic = false;
+    let mut i = 0usize;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--message" => {
+                message = Some(
+                    args.get(i + 1)
+                        .ok_or_else(|| anyhow::anyhow!("missing value for --message"))?
+                        .clone(),
+                );
+                i += 2;
+            }
+            "--panic" => {
+                do_panic = true;
+                i += 1;
+            }
+            "-h" | "--help" => {
+                println!("Usage: openhuman sentry-test [--message <text>] [--panic]");
+                println!();
+                println!("  --message <text>  Body of the Error-level event sent to Sentry");
+                println!("                    (default: \"openhuman sentry-test ping\")");
+                println!("  --panic           After capturing the event, trigger a panic so the");
+                println!("                    panic integration reports it as a separate event.");
+                println!();
+                println!("Requires OPENHUMAN_SENTRY_DSN at runtime, or baked into the binary at");
+                println!(
+                    "build time via option_env!. On success, prints the event UUID to stdout."
+                );
+                return Ok(());
+            }
+            other => return Err(anyhow::anyhow!("unknown sentry-test arg: {other}")),
+        }
+    }
+
+    let client = sentry::Hub::current().client();
+    let dsn_host = client
+        .as_deref()
+        .and_then(|c| c.dsn())
+        .map(|d| d.host().to_string());
+
+    match &dsn_host {
+        Some(host) => eprintln!("[sentry-test] Sentry client active (dsn host: {host})"),
+        None => {
+            return Err(anyhow::anyhow!(
+                "Sentry is not initialized in this binary — no DSN is resolvable. \
+                 Set OPENHUMAN_SENTRY_DSN in the environment (or rebuild with it defined \
+                 at compile time) and try again."
+            ));
+        }
+    }
+
+    let msg = message.unwrap_or_else(|| "openhuman sentry-test ping".to_string());
+
+    sentry::configure_scope(|scope| {
+        scope.set_tag("test", "true");
+        scope.set_tag("source", "sentry-test-cli");
+    });
+
+    let event_id = sentry::capture_message(&msg, sentry::Level::Error);
+
+    if let Some(c) = client {
+        if !c.flush(Some(std::time::Duration::from_secs(5))) {
+            eprintln!(
+                "[sentry-test] WARNING: flush timed out after 5s — event may not have reached Sentry."
+            );
+        }
+    }
+
+    println!("{event_id}");
+
+    if do_panic {
+        eprintln!(
+            "[sentry-test] Triggering panic as requested — the panic integration should capture it."
+        );
+        panic!("openhuman sentry-test intentional panic");
+    }
+
+    Ok(())
 }
 
 /// Loads key/value pairs from a `.env` file into the process environment.
@@ -422,6 +517,7 @@ fn print_general_help(grouped: &BTreeMap<String, Vec<ControllerSchema>>) {
     println!("  openhuman agent <subcommand> [options]    (inspect agent definitions & prompts)");
     println!("  openhuman voice [--hotkey <combo>] [--mode <tap|push>]  (voice dictation server)");
     println!("  openhuman tree-summarizer <subcommand> [options]  (summary tree CLI)");
+    println!("  openhuman sentry-test [--message <text>] [--panic]  (verify Sentry wiring)");
     println!("  openhuman <namespace> <function> [--param value ...]\n");
     println!("Available namespaces:");
     for namespace in grouped.keys() {

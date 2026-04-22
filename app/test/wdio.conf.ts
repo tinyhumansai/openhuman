@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+import { captureFailureArtifacts } from './e2e/helpers/artifacts';
+
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(configDir, '..');
 const repoRoot = path.resolve(projectRoot, '..');
@@ -99,4 +101,17 @@ export const config: Options.Testrunner & Record<string, unknown> = {
     timeout: 120_000, // Billing/settings tests need extra time for API polling
   },
   autoCompileOpts: { tsNodeOpts: { project: tsconfigE2ePath } },
+  /**
+   * Always capture screenshot + page source on failure so agents can
+   * inspect what the app looked like the moment the assertion failed.
+   */
+  afterTest: async function (
+    test: { title: string; parent?: string },
+    _context: unknown,
+    result: { passed: boolean; error?: Error },
+  ) {
+    if (result.passed) return;
+    const name = [test.parent, test.title].filter(Boolean).join(' ').trim() || test.title;
+    await captureFailureArtifacts(name);
+  },
 };

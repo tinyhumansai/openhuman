@@ -556,32 +556,17 @@ impl Agent {
             &config.embedding_routes,
             Some(&config.storage.provider.config),
             &config.workspace_dir,
-            config.api_key.as_deref(),
         )?);
-
-        let composio_key = if config.composio.enabled {
-            config.composio.api_key.as_deref()
-        } else {
-            None
-        };
-        let composio_entity_id = if config.composio.enabled {
-            Some(config.composio.entity_id.as_str())
-        } else {
-            None
-        };
 
         let mut tools = tools::all_tools_with_runtime(
             Arc::new(config.clone()),
             &security,
             runtime,
             memory.clone(),
-            composio_key,
-            composio_entity_id,
             &config.browser,
             &config.http_request,
             &config.workspace_dir,
             &config.agents,
-            config.api_key.as_deref(),
             config,
         );
 
@@ -632,7 +617,6 @@ impl Agent {
         };
 
         let provider: Box<dyn Provider> = providers::create_intelligent_routing_provider(
-            config.api_key.as_deref(),
             config.api_url.as_deref(),
             config,
             &provider_runtime_options,
@@ -744,7 +728,6 @@ impl Agent {
                         == crate::openhuman::config::ReflectionSource::Cloud
                     {
                         Some(Arc::from(providers::create_routed_provider(
-                            config.api_key.as_deref(),
                             config.api_url.as_deref(),
                             &config.reliability,
                             &config.model_routes,

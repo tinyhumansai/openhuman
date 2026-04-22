@@ -6,8 +6,10 @@
 //! NER (GLiNER / LLM) plugs in later without changing any call sites.
 
 mod extractor;
+pub mod llm;
 pub mod regex;
 pub mod types;
 
 pub use extractor::{CompositeExtractor, EntityExtractor, RegexEntityExtractor};
+pub use llm::{LlmEntityExtractor, LlmExtractorConfig};
 pub use types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};

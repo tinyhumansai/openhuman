@@ -27,6 +27,11 @@ pub struct ScoreRow {
     pub dropped: bool,
     pub reason: Option<String>,
     pub computed_at_ms: i64,
+    /// One-line LLM-supplied explanation for the importance rating; useful
+    /// for tuning prompts and thresholds. The numeric value lives on
+    /// `signals.llm_importance`.
+    #[serde(default)]
+    pub llm_importance_reason: Option<String>,
 }
 
 /// Upsert one score rationale row, replacing any existing entry for `chunk_id`.
@@ -49,6 +54,8 @@ pub(crate) fn upsert_score_tx(tx: &Transaction<'_>, row: &ScoreRow) -> Result<()
             row.signals.source_weight,
             row.signals.interaction,
             row.signals.entity_density,
+            row.signals.llm_importance,
+            row.llm_importance_reason,
             i32::from(row.dropped),
             row.reason,
             row.computed_at_ms,
@@ -61,8 +68,9 @@ const SCORE_UPSERT_SQL: &str = "INSERT OR REPLACE INTO mem_tree_score (
     chunk_id, total,
     token_count_signal, unique_words_signal,
     metadata_weight, source_weight, interaction_weight, entity_density,
+    llm_importance, llm_importance_reason,
     dropped, reason, computed_at_ms
- ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
+ ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)";
 
 fn upsert_score_on_connection(conn: &Connection, row: &ScoreRow) -> Result<()> {
     conn.execute(
@@ -76,6 +84,8 @@ fn upsert_score_on_connection(conn: &Connection, row: &ScoreRow) -> Result<()> {
             row.signals.source_weight,
             row.signals.interaction,
             row.signals.entity_density,
+            row.signals.llm_importance,
+            row.llm_importance_reason,
             i32::from(row.dropped),
             row.reason,
             row.computed_at_ms,
@@ -91,6 +101,7 @@ pub fn get_score(config: &Config, chunk_id: &str) -> Result<Option<ScoreRow>> {
             "SELECT chunk_id, total,
                     token_count_signal, unique_words_signal,
                     metadata_weight, source_weight, interaction_weight, entity_density,
+                    llm_importance, llm_importance_reason,
                     dropped, reason, computed_at_ms
              FROM mem_tree_score WHERE chunk_id = ?1",
             params![chunk_id],
@@ -105,10 +116,12 @@ pub fn get_score(config: &Config, chunk_id: &str) -> Result<Option<ScoreRow>> {
                         source_weight: row.get(5)?,
                         interaction: row.get(6)?,
                         entity_density: row.get(7)?,
+                        llm_importance: row.get::<_, Option<f32>>(8)?.unwrap_or(0.0),
                     },
-                    dropped: row.get::<_, i32>(8)? != 0,
-                    reason: row.get(9)?,
-                    computed_at_ms: row.get(10)?,
+                    llm_importance_reason: row.get::<_, Option<String>>(9)?,
+                    dropped: row.get::<_, i32>(10)? != 0,
+                    reason: row.get(11)?,
+                    computed_at_ms: row.get(12)?,
                 })
             },
         )
@@ -208,6 +221,65 @@ pub(crate) fn clear_entity_index_for_node_tx(tx: &Transaction<'_>, node_id: &str
         params![node_id],
     )?;
     Ok(n)
+}
+
+/// Index summary-node entities by canonical id only. Summary-level entity
+/// metadata is LLM-derived (Phase 3a #709) — the summariser emits a
+/// curated list of canonical ids without per-occurrence span/surface data.
+///
+/// Writes the kind prefix (everything before the first `:`) into the
+/// `entity_kind` column so [`lookup_entity`]'s `EntityKind::parse()` keeps
+/// round-tripping on summary rows. `surface` stores the full canonical id
+/// as a stable placeholder — at the summary level we have no per-occurrence
+/// span to recover, and the id is always unique. The summary's score is
+/// reused for each of its entities.
+///
+/// Callers should prefer the regular [`index_entities_tx`] for leaves,
+/// where span/surface are meaningful.
+pub(crate) fn index_summary_entity_ids_tx(
+    tx: &Transaction<'_>,
+    entity_ids: &[String],
+    node_id: &str,
+    score: f32,
+    timestamp_ms: i64,
+    tree_id: Option<&str>,
+) -> Result<usize> {
+    if entity_ids.is_empty() {
+        return Ok(0);
+    }
+    let mut stmt = tx.prepare(
+        "INSERT OR REPLACE INTO mem_tree_entity_index (
+            entity_id, node_id, node_kind, entity_kind, surface,
+            score, timestamp_ms, tree_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )?;
+    for canonical_id in entity_ids {
+        // Canonical ids follow Phase 2's "<kind>:<value>" convention.
+        // Without this split, `entity_kind` would hold the full id and
+        // `lookup_entity`'s `EntityKind::parse()` would fail at read time,
+        // poisoning any mixed leaf/summary lookup.
+        let entity_kind = match canonical_id.split_once(':') {
+            Some((kind, _)) => kind,
+            None => {
+                log::warn!(
+                    "[memory_tree::score::store] summary entity id missing ':' — \
+                     storing as-is: {canonical_id}"
+                );
+                canonical_id.as_str()
+            }
+        };
+        stmt.execute(params![
+            canonical_id,
+            node_id,
+            "summary",
+            entity_kind,
+            canonical_id,
+            score,
+            timestamp_ms,
+            tree_id,
+        ])?;
+    }
+    Ok(entity_ids.len())
 }
 
 pub(crate) fn index_entities_tx(
@@ -340,6 +412,7 @@ mod tests {
                 source_weight: 0.5,
                 interaction: 0.6,
                 entity_density: 0.3,
+                llm_importance: 0.0,
             },
             dropped,
             reason: if dropped {
@@ -348,6 +421,7 @@ mod tests {
                 None
             },
             computed_at_ms: 1_700_000_000_000,
+            llm_importance_reason: None,
         }
     }
 
@@ -469,5 +543,59 @@ mod tests {
         }
         let hits = lookup_entity(&cfg, "email:alice", Some(2)).unwrap();
         assert_eq!(hits.len(), 2);
+    }
+
+    /// Regression: `index_summary_entity_ids_tx` must write a parseable
+    /// `entity_kind` (the "<kind>" prefix before `:`) so `lookup_entity`
+    /// can still round-trip rows through `EntityKind::parse`. Earlier code
+    /// stored the full canonical id, which poisoned lookups mixing leaf
+    /// and summary hits. See PR #789 CodeRabbit review.
+    #[test]
+    fn summary_entity_index_kind_is_parseable() {
+        use crate::openhuman::memory::tree::store::with_connection;
+
+        let (_tmp, cfg) = test_config();
+
+        // Seed a leaf hit so lookup_entity has something leafy to mix
+        // with the summary hit — this reproduces the mixed-row crash.
+        let leaf_entity = sample_entity("alice");
+        index_entity(&cfg, &leaf_entity, "leaf-1", "leaf", 1000, Some("tree-1")).unwrap();
+
+        // Write a summary row via the tx helper under test.
+        with_connection(&cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            let n = index_summary_entity_ids_tx(
+                &tx,
+                &["email:alice@example.com".into(), "hashtag:launch-q2".into()],
+                "summary-1",
+                0.84,
+                2000,
+                Some("tree-1"),
+            )?;
+            assert_eq!(n, 2);
+            tx.commit()?;
+            Ok(())
+        })
+        .unwrap();
+
+        // Before the fix: lookup_entity would fail on the summary row
+        // because entity_kind was "email:alice@example.com" and
+        // EntityKind::parse rejects it. After the fix, the column stores
+        // "email" and the lookup succeeds with both rows.
+        let hits = lookup_entity(&cfg, "email:alice@example.com", None).unwrap();
+        assert_eq!(hits.len(), 1, "summary row should be discoverable");
+        assert_eq!(hits[0].node_id, "summary-1");
+        assert_eq!(hits[0].node_kind, "summary");
+        assert_eq!(hits[0].entity_kind, EntityKind::Email);
+
+        // Hashtag row parses as its own kind too.
+        let hits = lookup_entity(&cfg, "hashtag:launch-q2", None).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].entity_kind, EntityKind::Hashtag);
+
+        // Mixing leaf + summary entity ids in one lookup also parses cleanly.
+        let hits = lookup_entity(&cfg, "email:alice", None).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].entity_kind, EntityKind::Email);
     }
 }

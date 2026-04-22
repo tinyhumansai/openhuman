@@ -5,9 +5,6 @@ import OnboardingNextButton from '../components/OnboardingNextButton';
 
 interface WelcomeStepProps {
   onNext: () => void;
-  nextDisabled?: boolean;
-  nextLoading?: boolean;
-  nextLoadingLabel?: string;
 }
 
 const TOTAL_SLIDES = 3;
@@ -66,12 +63,7 @@ const AutomationSlide = () => (
 /* ------------------------------------------------------------------ */
 /*  WelcomeStep — auto-advancing carousel, button goes to next step    */
 /* ------------------------------------------------------------------ */
-const WelcomeStep = ({
-  onNext,
-  nextDisabled = false,
-  nextLoading = false,
-  nextLoadingLabel,
-}: WelcomeStepProps) => {
+const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
   const [slide, setSlide] = useState(0);
 
   useEffect(() => {
@@ -82,7 +74,7 @@ const WelcomeStep = ({
   }, []);
 
   return (
-    <div className="rounded-2xl bg-white p-10 shadow-soft animate-fade-up">
+    <div data-testid="onboarding-welcome-step" className="rounded-2xl bg-white p-10 shadow-soft animate-fade-up">
       <div className="h-[340px] flex flex-col items-center justify-center">
         {slide === 0 && <WelcomeSlide />}
         {slide === 1 && <IntegrationsSlide />}
@@ -91,13 +83,7 @@ const WelcomeStep = ({
       <div className="mt-8 mb-6 flex justify-center">
         <ProgressIndicator currentStep={slide} totalSteps={TOTAL_SLIDES} />
       </div>
-      <OnboardingNextButton
-        label="Let's Start"
-        onClick={onNext}
-        disabled={nextDisabled}
-        loading={nextLoading}
-        loadingLabel={nextLoadingLabel}
-      />
+      <OnboardingNextButton label="Let's Start" onClick={onNext} />
     </div>
   );
 };

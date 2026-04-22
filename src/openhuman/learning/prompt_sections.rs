@@ -157,6 +157,7 @@ mod tests {
             visible_tool_names,
             tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
             connected_integrations: &[],
+            connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
         }
