@@ -67,6 +67,21 @@ impl MemoryStore {
     }
 }
 
+/// Snapshot both curated-memory files at a single point in time. The returned
+/// `MemorySnapshot` is a plain `String` pair — it does NOT hold a reference
+/// back to the stores, so subsequent `add` / `replace` / `remove` calls leave
+/// the snapshot frozen. Designed to be taken once at session start and reused
+/// across turns to preserve LLM prefix-cache hits.
+pub async fn snapshot_pair(
+    memory_store: &MemoryStore,
+    user_store: &MemoryStore,
+) -> std::io::Result<crate::openhuman::curated_memory::types::MemorySnapshot> {
+    Ok(crate::openhuman::curated_memory::types::MemorySnapshot {
+        memory: memory_store.read().await.unwrap_or_default(),
+        user: user_store.read().await.unwrap_or_default(),
+    })
+}
+
 async fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
     let tmp = path.with_extension("md.tmp");
     tokio::fs::write(&tmp, contents).await?;
@@ -97,6 +112,29 @@ mod tests {
         store.remove("openhuman").await.unwrap();
         let s = store.read().await.unwrap();
         assert!(!s.contains("openhuman"));
+    }
+
+    #[tokio::test]
+    async fn snapshot_pair_freezes_at_capture_time() {
+        let tmp = TempDir::new().unwrap();
+        let mem = MemoryStore::open(tmp.path(), MemoryFile::Memory, 500).unwrap();
+        let user = MemoryStore::open(tmp.path(), MemoryFile::User, 500).unwrap();
+        mem.add("note one").await.unwrap();
+        user.add("user is jwalin").await.unwrap();
+
+        let snap = snapshot_pair(&mem, &user).await.unwrap();
+        assert!(snap.memory.contains("note one"));
+        assert!(snap.user.contains("jwalin"));
+
+        mem.add("note two").await.unwrap();
+        assert!(
+            !snap.memory.contains("note two"),
+            "snapshot was mutated after a later add() — should be frozen"
+        );
+        assert!(
+            mem.read().await.unwrap().contains("note two"),
+            "later add() didn't actually persist"
+        );
     }
 
     #[tokio::test]
