@@ -100,6 +100,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
                         "True when the provider is disabled and the notification was not stored.",
                     required: true,
                 },
+                FieldSchema {
+                    name: "reason",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Human-readable reason populated alongside `skipped=true` \
+                              (e.g. \"provider_disabled\").",
+                    required: false,
+                },
             ],
         },
 
@@ -214,12 +221,20 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: true,
                 },
             ],
-            outputs: vec![FieldSchema {
-                name: "ok",
-                ty: TypeSchema::Bool,
-                comment: "True when settings were saved.",
-                required: true,
-            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "ok",
+                    ty: TypeSchema::Bool,
+                    comment: "True when settings were saved.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "settings",
+                    ty: TypeSchema::Ref("NotificationSettings"),
+                    comment: "The normalized (clamped) settings that were persisted.",
+                    required: true,
+                },
+            ],
         },
 
         _other => ControllerSchema {

@@ -98,6 +98,11 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/webhooks-debug')) return 'webhooks-debug';
     if (path.includes('/settings/recovery-phrase')) return 'recovery-phrase';
     if (path.includes('/settings/agent-chat')) return 'agent-chat';
+    // Notification routes must be checked in specificity order so the more
+    // specific `notification-routing` path doesn't get swallowed by the
+    // shorter `notifications` prefix.
+    if (path.includes('/settings/notification-routing')) return 'notification-routing';
+    if (path.includes('/settings/notifications')) return 'notifications';
     return 'home';
   };
 
@@ -207,6 +212,11 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
 
       // Developer options section page
       case 'developer-options':
+        return [settingsCrumb];
+
+      // Notifications panels sit at the top level of Settings.
+      case 'notifications':
+      case 'notification-routing':
         return [settingsCrumb];
 
       case 'home':
