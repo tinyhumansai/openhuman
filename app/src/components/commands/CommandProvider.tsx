@@ -6,7 +6,6 @@ import { hotkeyManager } from '../../lib/commands/hotkeyManager';
 import { registry } from '../../lib/commands/registry';
 import { ScopeContext } from '../../lib/commands/ScopeContext';
 import CommandPalette from './CommandPalette';
-import HelpOverlay from './HelpOverlay';
 
 let instanceCount = 0;
 
@@ -17,7 +16,6 @@ interface Props {
 export default function CommandProvider({ children }: Props) {
   const navigate = useNavigate();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
 
   const setupDone = useRef(false);
   const globalFrame = useRef<symbol | null>(null);
@@ -26,14 +24,7 @@ export default function CommandProvider({ children }: Props) {
     hotkeyManager.init();
     globalFrame.current = hotkeyManager.pushFrame('global', 'root');
     registry.setActiveStack(hotkeyManager.getStackSymbols());
-    registerGlobalActions(
-      navigate,
-      () => {
-        setPaletteOpen(false);
-        setHelpOpen(true);
-      },
-      globalFrame.current,
-    );
+    registerGlobalActions(navigate, globalFrame.current);
     setupDone.current = true;
   }
 
@@ -57,7 +48,6 @@ export default function CommandProvider({ children }: Props) {
     const sym = hotkeyManager.bind(frame, {
       shortcut: 'mod+k',
       handler: () => {
-        setHelpOpen(false);
         setPaletteOpen(o => !o);
       },
       allowInInput: true,
@@ -73,7 +63,6 @@ export default function CommandProvider({ children }: Props) {
     <ScopeContext.Provider value={value}>
       {children}
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
-      <HelpOverlay open={helpOpen} onOpenChange={setHelpOpen} />
     </ScopeContext.Provider>
   );
 }
