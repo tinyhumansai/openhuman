@@ -67,7 +67,13 @@ pub fn extract(text: &str) -> ExtractedEntities {
         }
     }
 
-    ExtractedEntities { entities, topics }
+    ExtractedEntities {
+        entities,
+        topics,
+        // Regex extractor never produces an LLM importance signal.
+        llm_importance: None,
+        llm_importance_reason: None,
+    }
 }
 
 fn to_entity(text: &str, start: usize, end: usize, kind: EntityKind) -> ExtractedEntity {

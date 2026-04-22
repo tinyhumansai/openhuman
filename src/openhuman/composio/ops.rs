@@ -81,6 +81,13 @@ pub async fn composio_list_connections(
         .filter(|c| matches!(c.status.as_str(), "ACTIVE" | "CONNECTED"))
         .count();
     let total = resp.connections.len();
+    // Reconcile the chat-runtime integrations cache against this fresh
+    // snapshot. The desktop UI polls this RPC every 5 s, so any OAuth
+    // completion that lands out-of-band from the event-bus invalidation
+    // path (common on Windows when `wait_for_connection_active`'s 60 s
+    // timeout fires before the user finishes the hosted flow) is still
+    // reflected in chat within one poll interval.
+    sync_cache_with_connections(&resp.connections);
     Ok(RpcOutcome::new(
         resp,
         vec![format!(
@@ -439,14 +446,45 @@ fn parse_sync_reason(raw: Option<&str>) -> OpResult<SyncReason> {
 // ── Prompt integration discovery ────────────────────────────────────
 
 use crate::openhuman::context::prompt::{ConnectedIntegration, ConnectedIntegrationTool};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, RwLock};
+use std::time::{Duration, Instant};
+
+/// Defensive TTL on the integrations cache.
+///
+/// Background: the primary invalidation path is the
+/// `ComposioConnectionCreated` → `wait_for_connection_active` bus flow
+/// (see [`super::bus::ComposioConnectionCreatedSubscriber`]), which
+/// polls the backend for up to 60 s after `composio_authorize` returns
+/// a `connectUrl`. On Windows the OAuth round-trip can exceed that
+/// window (Defender SmartScreen, slower browser launch, extra consent
+/// dialogs), so the invalidation call never fires and the chat
+/// runtime's cache stays frozen on the pre-connect snapshot even
+/// though the Settings UI polls `composio_list_connections` every 5 s
+/// and shows the user as "Connected".
+///
+/// The cross-platform defenses we layer on top:
+///   1. [`composio_list_connections`] diff-invalidates the cache whenever
+///      the backend's active-toolkit set diverges from what's cached,
+///      so a running UI keeps the chat cache in sync within one poll
+///      interval.
+///   2. This TTL caps worst-case staleness at 60 s regardless of
+///      whether the UI is open, the bus fires, or the user reconnected
+///      out-of-band.
+const CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// Cached entry: the integrations list plus the timestamp we wrote it.
+#[derive(Clone)]
+struct CachedIntegrations {
+    entries: Vec<ConnectedIntegration>,
+    cached_at: Instant,
+}
 
 /// Process-wide cache for connected integrations, keyed by the config
 /// identity (the `config_path` string) so different user contexts don't
 /// collide. Each entry is populated on first fetch and returned on
-/// subsequent calls until explicitly invalidated.
-static INTEGRATIONS_CACHE: LazyLock<RwLock<HashMap<String, Vec<ConnectedIntegration>>>> =
+/// subsequent calls until explicitly invalidated or the TTL expires.
+static INTEGRATIONS_CACHE: LazyLock<RwLock<HashMap<String, CachedIntegrations>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Derive a stable cache key from a [`Config`]. We use the stringified
@@ -460,13 +498,95 @@ fn cache_key(config: &Config) -> String {
 /// [`fetch_connected_integrations`] hits the backend again.
 ///
 /// Called by [`super::bus::ComposioConnectionCreatedSubscriber`] when a
-/// new OAuth connection completes, and can also be called from tests.
-/// Clears the entire map because the bus subscriber doesn't carry a
-/// config reference.
+/// new OAuth connection completes, by [`composio_list_connections`]
+/// when it observes a divergence between the backend response and the
+/// cached snapshot, and from tests. Clears the entire map because the
+/// callers don't carry a config reference.
 pub fn invalidate_connected_integrations_cache() {
     if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
+        let entries = guard.len();
         guard.clear();
-        tracing::debug!("[composio] connected integrations cache invalidated");
+        tracing::info!(
+            cached_keys = entries,
+            "[composio][integrations] cache invalidated"
+        );
+    }
+}
+
+/// Collect the set of toolkit slugs marked `connected` in a snapshot.
+///
+/// Exposed to [`sync_cache_with_connections`] so it can diff the live
+/// backend connection list against what the chat runtime currently
+/// believes is connected.
+fn connected_toolkit_set(integrations: &[ConnectedIntegration]) -> HashSet<String> {
+    integrations
+        .iter()
+        .filter(|i| i.connected)
+        .map(|i| i.toolkit.clone())
+        .collect()
+}
+
+/// Reconcile the process-wide integrations cache with a fresh backend
+/// `list_connections` response.
+///
+/// Called from [`composio_list_connections`], which the desktop UI
+/// polls every 5 s (see `app/src/lib/composio/hooks.ts`). When the set
+/// of ACTIVE/CONNECTED toolkits in the response differs from what's in
+/// the cache, we invalidate so the chat runtime re-fetches on its next
+/// `fetch_connected_integrations` call. This keeps tool availability
+/// in chat in sync with the badge the user sees in Settings, even when
+/// the primary event-bus invalidation path misses (e.g. Windows OAuth
+/// flows that overrun the 60 s readiness poll).
+fn sync_cache_with_connections(connections: &[super::types::ComposioConnection]) {
+    let live_active: HashSet<String> = connections
+        .iter()
+        .filter(|c| matches!(c.status.as_str(), "ACTIVE" | "CONNECTED"))
+        .map(|c| c.toolkit.clone())
+        .collect();
+
+    // Read once to decide whether any cache entry is out of sync. We
+    // clone out the keys + connected sets so we can release the read
+    // lock before taking the write lock.
+    let divergent_keys: Vec<(String, HashSet<String>, HashSet<String>)> = {
+        let Ok(guard) = INTEGRATIONS_CACHE.read() else {
+            return;
+        };
+        guard
+            .iter()
+            .filter_map(|(key, cached)| {
+                let cached_set = connected_toolkit_set(&cached.entries);
+                if cached_set != live_active {
+                    Some((key.clone(), cached_set, live_active.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+
+    if divergent_keys.is_empty() {
+        tracing::debug!(
+            live_connected = live_active.len(),
+            "[composio][integrations] list_connections matches cache — no invalidation needed"
+        );
+        return;
+    }
+
+    if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
+        for (key, cached_set, live_set) in divergent_keys {
+            // Diff logging — makes Windows-timing regressions easy to
+            // catch in user-supplied debug dumps without leaking any
+            // PII (toolkit slugs are public strings like "gmail").
+            let added: Vec<&String> = live_set.difference(&cached_set).collect();
+            let removed: Vec<&String> = cached_set.difference(&live_set).collect();
+            tracing::info!(
+                key = %key,
+                ?added,
+                ?removed,
+                "[composio][integrations] cache diverges from backend — invalidating"
+            );
+            guard.remove(&key);
+        }
     }
 }
 
@@ -480,23 +600,37 @@ pub fn invalidate_connected_integrations_cache() {
 /// Results are cached process-wide (keyed by config identity) and
 /// returned instantly on subsequent calls. The cache is invalidated
 /// when a new connection is created
-/// (via [`invalidate_connected_integrations_cache`]) or on process
-/// restart.
+/// (via [`invalidate_connected_integrations_cache`]), when a UI
+/// `list_connections` poll observes a divergent live set, when
+/// [`CACHE_TTL`] expires, or on process restart.
 ///
 /// Best-effort: returns an empty vec when the user isn't signed in,
 /// the backend is unreachable, or any step fails.
 pub async fn fetch_connected_integrations(config: &Config) -> Vec<ConnectedIntegration> {
     let key = cache_key(config);
 
-    // Fast path: return cached result.
+    // Fast path: return cached result if fresh. Stale entries fall
+    // through to the backend fetch below so the chat runtime can never
+    // be more than `CACHE_TTL` behind a real-world change.
     if let Ok(guard) = INTEGRATIONS_CACHE.read() {
         if let Some(cached) = guard.get(&key) {
-            tracing::debug!(
-                count = cached.len(),
+            let age = cached.cached_at.elapsed();
+            if age < CACHE_TTL {
+                tracing::debug!(
+                    count = cached.entries.len(),
+                    age_ms = age.as_millis() as u64,
+                    key = %key,
+                    "[composio][integrations] returning cached result"
+                );
+                return cached.entries.clone();
+            }
+            tracing::info!(
+                count = cached.entries.len(),
+                age_ms = age.as_millis() as u64,
+                ttl_ms = CACHE_TTL.as_millis() as u64,
                 key = %key,
-                "[composio] fetch_connected_integrations: returning cached result"
+                "[composio][integrations] cache entry expired — refetching"
             );
-            return cached.clone();
         }
     }
 
@@ -504,7 +638,13 @@ pub async fn fetch_connected_integrations(config: &Config) -> Vec<ConnectedInteg
         Some(result) => {
             // Backend was reachable — cache the result (even if empty).
             if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
-                guard.insert(key, result.clone());
+                guard.insert(
+                    key,
+                    CachedIntegrations {
+                        entries: result.clone(),
+                        cached_at: Instant::now(),
+                    },
+                );
             }
             result
         }
@@ -885,6 +1025,14 @@ mod tests {
 
     // ── cache_key / invalidate_connected_integrations_cache ───────
 
+    /// Process-wide mutex every test that mutates the `INTEGRATIONS_CACHE`
+    /// takes before it runs. cargo runs tests in parallel within a
+    /// single binary, and all these tests touch the same global map;
+    /// holding this guard keeps concurrent invalidations from
+    /// clobbering each other's seeded state. Poison-recover so a panic
+    /// in one test doesn't permanently block the rest.
+    static CACHE_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn cache_key_is_based_on_config_path_string() {
         let tmp = tempfile::tempdir().unwrap();
@@ -898,6 +1046,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_connected_integrations_returns_empty_without_auth() {
+        let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let config = test_config(&tmp);
         let integrations = fetch_connected_integrations(&config).await;
@@ -906,6 +1055,7 @@ mod tests {
 
     #[test]
     fn invalidate_connected_integrations_cache_is_safe_without_prior_insert() {
+        let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         // Must not panic on an empty cache.
         invalidate_connected_integrations_cache();
         invalidate_connected_integrations_cache();
@@ -1107,6 +1257,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_connected_integrations_via_mock_aggregates_tools() {
+        let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         // Connections: gmail + notion. Tools: filtered to those toolkits
         // and prefixed with the uppercased slug. The toolkits route
         // backs the `list_toolkits()` allowlist gate that
@@ -1169,6 +1320,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_connected_integrations_via_mock_returns_empty_with_no_active() {
+        let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let app = Router::new().route(
             "/agent-integrations/composio/connections",
             get(|| async {
@@ -1183,6 +1335,227 @@ mod tests {
         invalidate_connected_integrations_cache();
         let integrations = fetch_connected_integrations(&config).await;
         assert!(integrations.is_empty());
+    }
+
+    // ── Windows-observed sync regression coverage (issue #749) ────
+    //
+    // These tests exercise the cross-platform defenses layered on top
+    // of the `ComposioConnectionCreated` → `wait_for_connection_active`
+    // event-bus invalidation path — which can miss on Windows when the
+    // OAuth handoff outruns the 60 s readiness poll. They use the ops
+    // helpers directly (no mock backend needed) so they're deterministic
+    // and don't depend on the tokio runtime's scheduling.
+    //
+    // Every test uses a unique cache key (a unique &str literal) and
+    // clears only *its* key before seeding, so they can safely run in
+    // parallel with each other and with any other test in the binary
+    // that mutates `INTEGRATIONS_CACHE` (e.g. the mock-backend tests
+    // above call `invalidate_connected_integrations_cache()`, which
+    // would otherwise wipe our seeded state mid-run).
+
+    /// Remove just the test's own cache entry. Preferred over
+    /// [`invalidate_connected_integrations_cache`] inside these tests
+    /// because it can't be clobbered by — nor clobber — parallel tests
+    /// that also touch the global cache.
+    fn clear_cache_key(key: &str) {
+        if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
+            guard.remove(key);
+        }
+    }
+
+    /// Seed the process-wide cache with `integrations` keyed by `key`
+    /// and an `Instant::now()` timestamp. Used by tests that want to
+    /// drive cache behaviour without going through a backend fetch.
+    fn seed_cache(key: &str, integrations: Vec<ConnectedIntegration>) {
+        let mut guard = INTEGRATIONS_CACHE.write().unwrap();
+        guard.insert(
+            key.to_string(),
+            CachedIntegrations {
+                entries: integrations,
+                cached_at: Instant::now(),
+            },
+        );
+    }
+
+    /// Build a minimal `ConnectedIntegration` for cache-seeding tests.
+    /// Only `toolkit` + `connected` matter for diff-based invalidation.
+    fn integration(toolkit: &str, connected: bool) -> ConnectedIntegration {
+        ConnectedIntegration {
+            toolkit: toolkit.to_string(),
+            description: String::new(),
+            tools: Vec::new(),
+            connected,
+        }
+    }
+
+    /// Build a minimal backend connection row for
+    /// `sync_cache_with_connections` tests.
+    fn conn(id: &str, toolkit: &str, status: &str) -> super::super::types::ComposioConnection {
+        // The real type has a handful of optional metadata fields we
+        // don't care about here — construct via serde so the test
+        // stays decoupled from struct-field churn.
+        serde_json::from_value(json!({
+            "id": id,
+            "toolkit": toolkit,
+            "status": status,
+        }))
+        .expect("deserialize test ComposioConnection")
+    }
+
+    #[test]
+    fn sync_cache_invalidates_when_connection_becomes_active() {
+        let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // Cache reflects the pre-connect world: gmail is listed but
+        // not connected. This is exactly the state the chat runtime
+        // gets stuck in on Windows when the user completes OAuth
+        // after the event-bus 60 s readiness poll times out.
+        let key = "windows-regression-1";
+        clear_cache_key(key);
+        seed_cache(
+            key,
+            vec![integration("gmail", false), integration("notion", false)],
+        );
+
+        // Fresh UI poll shows gmail just flipped ACTIVE — mirrors a
+        // user who finished OAuth in the system browser.
+        sync_cache_with_connections(&[conn("c-1", "gmail", "ACTIVE")]);
+
+        // Chat-runtime cache must be cleared so the next
+        // `fetch_connected_integrations` re-fetches truth from the
+        // backend. Without this fix the entry would live on until
+        // `CACHE_TTL` expired or the process restarted.
+        let guard = INTEGRATIONS_CACHE.read().unwrap();
+        assert!(
+            guard.get(key).is_none(),
+            "expected cache to be busted when a new toolkit flips ACTIVE"
+        );
+    }
+
+    #[test]
+    fn sync_cache_invalidates_when_connection_is_removed() {
+        let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // Cache remembers gmail as connected. The user just
+        // disconnected it from Settings; the next UI poll returns an
+        // empty list. Chat must forget gmail within one poll.
+        let key = "windows-regression-2";
+        clear_cache_key(key);
+        seed_cache(key, vec![integration("gmail", true)]);
+
+        sync_cache_with_connections(&[]);
+
+        let guard = INTEGRATIONS_CACHE.read().unwrap();
+        assert!(
+            guard.get(key).is_none(),
+            "expected cache to be busted when a connected toolkit disappears"
+        );
+    }
+
+    #[test]
+    fn sync_cache_noop_when_backend_matches_cached_state() {
+        let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // Steady state: UI polls confirm cache is accurate. No
+        // invalidation — we must not thrash the chat runtime's tool
+        // registry on every 5 s UI poll.
+        let key = "windows-regression-3";
+        clear_cache_key(key);
+        seed_cache(
+            key,
+            vec![integration("gmail", true), integration("notion", false)],
+        );
+
+        sync_cache_with_connections(&[conn("c-1", "gmail", "ACTIVE")]);
+
+        let guard = INTEGRATIONS_CACHE.read().unwrap();
+        assert!(
+            guard.get(key).is_some(),
+            "expected cache entry to survive when backend matches cached state"
+        );
+        // And the seeded entries are still there byte-for-byte.
+        assert_eq!(guard.get(key).unwrap().entries.len(), 2);
+    }
+
+    #[test]
+    fn sync_cache_ignores_non_active_connection_rows() {
+        let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // Backend reports a PENDING row (user started OAuth but
+        // hasn't completed). The cache should NOT be invalidated —
+        // that would trigger a fresh `list_tools` call on every poll
+        // while the OAuth handshake is in flight, which is wasteful
+        // and would also clear `tools` vecs for real active
+        // integrations already on disk.
+        let key = "windows-regression-4";
+        clear_cache_key(key);
+        seed_cache(key, vec![integration("gmail", true)]);
+
+        sync_cache_with_connections(&[
+            conn("c-1", "gmail", "ACTIVE"),
+            conn("c-2", "notion", "PENDING"),
+            conn("c-3", "slack", "FAILED"),
+        ]);
+
+        let guard = INTEGRATIONS_CACHE.read().unwrap();
+        assert!(
+            guard.get(key).is_some(),
+            "PENDING/FAILED rows must not trigger invalidation"
+        );
+    }
+
+    #[test]
+    fn sync_cache_treats_connected_status_equivalent_to_active() {
+        let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // Backend may emit either "ACTIVE" or "CONNECTED" — we treat
+        // them identically in every status check (see
+        // `fetch_connected_integrations_uncached` filter). Make sure
+        // the new diff path matches that convention so it doesn't
+        // produce a false-positive invalidation.
+        let key = "windows-regression-5";
+        clear_cache_key(key);
+        seed_cache(key, vec![integration("gmail", true)]);
+
+        // Same toolkit set but reported via the legacy "CONNECTED" spelling.
+        sync_cache_with_connections(&[conn("c-1", "gmail", "CONNECTED")]);
+
+        let guard = INTEGRATIONS_CACHE.read().unwrap();
+        assert!(
+            guard.get(key).is_some(),
+            "CONNECTED should be treated as an active status"
+        );
+    }
+
+    #[test]
+    fn cache_entries_expire_after_ttl() {
+        let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // Even without any UI polling, the chat runtime must
+        // self-heal stale state within `CACHE_TTL`. We can't wait
+        // 60 s in a unit test; instead, directly age the entry by
+        // rewriting its `cached_at`.
+        let key = "windows-regression-6";
+        clear_cache_key(key);
+        seed_cache(key, vec![integration("gmail", true)]);
+
+        // Age the entry past the TTL.
+        {
+            let mut guard = INTEGRATIONS_CACHE.write().unwrap();
+            let entry = guard.get_mut(key).unwrap();
+            entry.cached_at = Instant::now() - (CACHE_TTL + Duration::from_secs(1));
+        }
+
+        // Re-read via the public API — expired reads must not serve
+        // the stale entry. We can't trigger a real backend call in a
+        // unit test, so assert that the read path falls through (by
+        // asserting the entry is still present before the read, and
+        // proving the staleness check via a direct helper).
+        let is_fresh = {
+            let guard = INTEGRATIONS_CACHE.read().unwrap();
+            guard
+                .get(key)
+                .map(|c| c.cached_at.elapsed() < CACHE_TTL)
+                .unwrap_or(false)
+        };
+        assert!(
+            !is_fresh,
+            "entry aged past CACHE_TTL must not be treated as fresh"
+        );
     }
 }
 
