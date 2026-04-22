@@ -28,6 +28,7 @@ pub mod context;
 pub mod cost;
 pub mod credentials;
 pub mod cron;
+pub mod curated_memory;
 pub mod dev_paths;
 pub mod doctor;
 pub mod embeddings;
