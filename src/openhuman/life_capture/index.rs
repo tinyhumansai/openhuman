@@ -290,6 +290,59 @@ impl IndexReader {
         .context("keyword_search task panicked")?
     }
 
+    /// Hybrid search — pulls oversampled candidates from both the keyword and
+    /// vector legs, normalises each leg independently, and re-ranks in app code
+    /// with `0.55 * vec_norm + 0.35 * kw_norm + 0.10 * recency` where recency
+    /// is `exp(-age_days / 30)` (half-life ~21 days).
+    ///
+    /// Oversample factor `k * 3` (min 20) is enough to catch documents that
+    /// rank well on one signal but not the other. Items missing a vector still
+    /// appear (vec_norm = 0) and items missing keyword hits still appear
+    /// (kw_norm = 0); only documents with neither signal are dropped.
+    pub async fn hybrid_search(
+        &self,
+        q: &crate::openhuman::life_capture::types::Query,
+        query_vector: &[f32],
+    ) -> anyhow::Result<Vec<crate::openhuman::life_capture::types::Hit>> {
+        use crate::openhuman::life_capture::types::Hit;
+        use std::collections::HashMap;
+
+        let oversample = (q.k * 3).max(20);
+        let kw = self.keyword_search(&q.text, oversample).await?;
+        let vc = self.vector_search(query_vector, oversample).await?;
+
+        let max_kw = kw.iter().map(|h| h.score).fold(f32::MIN, f32::max).max(1e-6);
+        let max_vc = vc.iter().map(|h| h.score).fold(f32::MIN, f32::max).max(1e-6);
+
+        let mut by_id: HashMap<uuid::Uuid, (Hit, f32, f32)> = HashMap::new();
+        for h in kw {
+            let s = h.score / max_kw;
+            let id = h.item.id;
+            by_id.insert(id, (h, s, 0.0));
+        }
+        for h in vc {
+            let s = h.score / max_vc;
+            by_id
+                .entry(h.item.id)
+                .and_modify(|(_, _, vs)| *vs = s)
+                .or_insert_with(|| (h.clone(), 0.0, s));
+        }
+
+        let now = chrono::Utc::now().timestamp();
+        let mut out: Vec<Hit> = by_id
+            .into_values()
+            .map(|(mut hit, kw_n, vc_n)| {
+                let age_days = ((now - hit.item.ts.timestamp()).max(0) as f32) / 86400.0;
+                let recency = (-age_days / 30.0).exp();
+                hit.score = 0.55 * vc_n + 0.35 * kw_n + 0.10 * recency;
+                hit
+            })
+            .collect();
+        out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        out.truncate(q.k);
+        Ok(out)
+    }
+
     /// Vector search via sqlite-vec MATCH. Score is `1 / (1 + distance)` so
     /// callers can blend it with the keyword score on the same monotonic scale.
     pub async fn vector_search(
@@ -486,5 +539,44 @@ mod reader_vector_tests {
         let hits = reader.vector_search(&near(&va, 0.01), 2).await.unwrap();
         assert_eq!(hits.len(), 2, "k=2");
         assert_eq!(hits[0].item.external_id, "a", "nearest first");
+    }
+}
+
+#[cfg(test)]
+mod reader_hybrid_tests {
+    use super::*;
+    use crate::openhuman::life_capture::types::{Item, Query, Source};
+    use chrono::{Duration, Utc};
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn hybrid_combines_signals_and_breaks_keyword_only_ties_with_vector() {
+        let idx = PersonalIndex::open_in_memory().await.unwrap();
+        let w = IndexWriter::new(&idx);
+
+        let now = Utc::now();
+        let mk = |ext: &str, subj: &str, text: &str, days_ago: i64| Item {
+            id: Uuid::new_v4(),
+            source: Source::Gmail,
+            external_id: ext.into(),
+            ts: now - Duration::days(days_ago),
+            author: None,
+            subject: Some(subj.into()),
+            text: text.into(),
+            metadata: serde_json::json!({}),
+        };
+        let a = mk("a", "ledger", "ledger contract draft", 1);
+        let b = mk("b", "ledger", "ledger contract draft", 30);
+        w.upsert(&[a.clone(), b.clone()]).await.unwrap();
+
+        // Same vector for both — recency should break the tie in favor of `a`.
+        let v: Vec<f32> = (0..1536).map(|i| (i as f32) / 1536.0).collect();
+        w.upsert_vector(&a.id, &v).await.unwrap();
+        w.upsert_vector(&b.id, &v).await.unwrap();
+
+        let reader = IndexReader::new(&idx);
+        let q = Query::simple("ledger contract", 5);
+        let hits = reader.hybrid_search(&q, &v).await.unwrap();
+        assert_eq!(hits[0].item.external_id, "a", "recency breaks tie");
     }
 }
