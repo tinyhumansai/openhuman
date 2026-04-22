@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 
 import { useCoreState } from '../../providers/CoreStateProvider';
-import { referralApi } from '../../services/api/referralApi';
 import { userApi } from '../../services/api/userApi';
 import { getDefaultEnabledTools } from '../../utils/toolDefinitions';
 import BetaBanner from './components/BetaBanner';
 import ContextGatheringStep from './steps/ContextGatheringStep';
-import ReferralApplyStep from './steps/ReferralApplyStep';
 import SkillsStep from './steps/SkillsStep';
 import WelcomeStep from './steps/WelcomeStep';
 
@@ -19,103 +17,25 @@ interface OnboardingDraft {
   connectedSources: string[];
 }
 
-function hasReferralFromProfile(
-  user:
-    | { referral?: { invitedBy?: string | null; invitedByCode?: string | null } }
-    | null
-    | undefined
-): boolean {
-  return !!(user?.referral?.invitedBy || user?.referral?.invitedByCode);
-}
-
-/** When referral is skipped, step index 1 (apply) is not shown — treat as skills (2). */
-function resolveOnboardingStep(currentStep: number, skipReferralStep: boolean): number {
-  if (skipReferralStep && currentStep === 1) {
-    return 2;
-  }
-  return currentStep;
-}
-
 const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
   const { setOnboardingCompletedFlag, setOnboardingTasks, snapshot } = useCoreState();
   const [currentStep, setCurrentStep] = useState(0);
   const [draft, setDraft] = useState<OnboardingDraft>({ connectedSources: [] });
-  /** Last session token for which referral stats prefetch finished (async path only). */
-  const [referralStatsToken, setReferralStatsToken] = useState<string | null>(null);
-  const [skipReferralFromStats, setSkipReferralFromStats] = useState(false);
-  const [referralAppliedThisSession, setReferralAppliedThisSession] = useState(false);
-
-  const token = snapshot.sessionToken;
-  const currentUser = snapshot.currentUser;
-
-  const profileAlreadyReferred = useMemo(() => hasReferralFromProfile(currentUser), [currentUser]);
-  const needsReferralStatsPrefetch = !!(token && !profileAlreadyReferred);
-
-  useEffect(() => {
-    if (!needsReferralStatsPrefetch) {
-      return;
-    }
-
-    let cancelled = false;
-    (async () => {
-      try {
-        const stats = await referralApi.getStats();
-        const applied =
-          typeof stats.appliedReferralCode === 'string' && stats.appliedReferralCode.trim() !== '';
-        if (!cancelled) {
-          setSkipReferralFromStats(applied);
-          setReferralStatsToken(token);
-        }
-      } catch {
-        console.debug('[onboarding] referral preflight failed; showing referral step');
-        if (!cancelled) {
-          setSkipReferralFromStats(false);
-          setReferralStatsToken(token);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [needsReferralStatsPrefetch, token, profileAlreadyReferred]);
-
-  const referralGateReady = !token || profileAlreadyReferred || referralStatsToken === token;
-
-  const skipReferralStep = !token
-    ? false
-    : profileAlreadyReferred
-      ? true
-      : referralStatsToken === token && skipReferralFromStats;
-
-  const resolvedStep = resolveOnboardingStep(currentStep, skipReferralStep);
 
   const handleWelcomeNext = () => {
-    if (skipReferralStep) {
-      setCurrentStep(2);
-    } else {
-      setCurrentStep(1);
-    }
+    setCurrentStep(1);
   };
 
   const handleNext = () => {
-    const logical = resolveOnboardingStep(currentStep, skipReferralStep);
-    if (logical < 3) {
-      setCurrentStep(logical + 1);
+    if (currentStep < 2) {
+      setCurrentStep(currentStep + 1);
     }
   };
 
   const handleBack = () => {
-    const logical = resolveOnboardingStep(currentStep, skipReferralStep);
-    if (logical <= 0) return;
-    if (
-      logical === 2 &&
-      (skipReferralStep || profileAlreadyReferred || referralAppliedThisSession)
-    ) {
-      setCurrentStep(0);
-      return;
+    if (currentStep > 0) {
+      setCurrentStep(currentStep - 1);
     }
-    setCurrentStep(logical - 1);
   };
 
   const handleSkillsNext = async (connectedSources: string[]) => {
@@ -164,27 +84,12 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
   };
 
   const renderStep = () => {
-    switch (resolvedStep) {
+    switch (currentStep) {
       case 0:
-        return (
-          <WelcomeStep
-            onNext={handleWelcomeNext}
-            nextDisabled={!referralGateReady}
-            nextLoading={!!token && !referralGateReady}
-            nextLoadingLabel="Checking account…"
-          />
-        );
+        return <WelcomeStep onNext={handleWelcomeNext} />;
       case 1:
-        return (
-          <ReferralApplyStep
-            onNext={handleNext}
-            onBack={handleBack}
-            onApplied={() => setReferralAppliedThisSession(true)}
-          />
-        );
-      case 2:
         return <SkillsStep onNext={handleSkillsNext} onBack={handleBack} />;
-      case 3:
+      case 2:
         return (
           <ContextGatheringStep
             connectedSources={draft.connectedSources}
