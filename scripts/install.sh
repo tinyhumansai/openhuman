@@ -293,6 +293,11 @@ if resolve_from_latest_json; then
 else
   log_warn "latest.json lookup failed. Falling back to releases API."
   if ! resolve_from_release_api; then
+    if [ "${DRY_RUN}" = true ]; then
+      log_warn "No compatible release asset found for ${OS}/${ARCH} (dry-run mode, skipping download)."
+      echo "DRY RUN: no compatible artifact available yet for ${OS}/${ARCH}"
+      exit 0
+    fi
     log_err "Could not resolve a compatible asset for ${OS}/${ARCH}."
     exit 1
   fi

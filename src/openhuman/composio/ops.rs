@@ -129,10 +129,29 @@ pub async fn composio_delete_connection(
 ) -> OpResult<RpcOutcome<ComposioDeleteResponse>> {
     tracing::debug!(connection_id = %connection_id, "[composio] rpc delete_connection");
     let client = resolve_client(config)?;
+    let toolkit = resolve_toolkit_for_connection(&client, connection_id)
+        .await
+        .ok();
     let resp = client
         .delete_connection(connection_id)
         .await
         .map_err(|e| format!("[composio] delete_connection failed: {e:#}"))?;
+    if let Some(toolkit) = toolkit.as_deref() {
+        let deleted =
+            super::providers::profile::delete_connected_identity_facets(toolkit, connection_id);
+        tracing::debug!(
+            toolkit = %toolkit,
+            connection_id = %connection_id,
+            facets_deleted = deleted,
+            "[composio] deleted connected identity facets after connection removal"
+        );
+    }
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::ComposioConnectionDeleted {
+            toolkit: toolkit.unwrap_or_else(|| "unknown".to_string()),
+            connection_id: connection_id.to_string(),
+        },
+    );
     // Bust the integrations cache so the next prompt reflects the removal.
     invalidate_connected_integrations_cache();
     Ok(RpcOutcome::new(
@@ -372,11 +391,11 @@ pub async fn composio_get_user_profile(
 
     // Side-effect: persist profile fields into the local user_profile
     // facet table so any RPC call also refreshes the local store.
-    let facets = super::providers::profile::persist_provider_profile(&profile);
+    let facets = provider.identity_set(&profile);
     tracing::debug!(
         toolkit = %toolkit,
         facets_written = facets,
-        "[composio] profile facets persisted from get_user_profile"
+        "[composio] identity_set persisted profile facets from get_user_profile"
     );
 
     Ok(RpcOutcome::new(

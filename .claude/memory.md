@@ -102,6 +102,14 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **UnifiedSkillCard** — All skill types (built-in, channels, 3rd party) use `UnifiedSkillCard` from `app/src/components/skills/SkillCard.tsx`. Secondary actions use an overflow menu. `data-testid` attributes (`skill-sync-button-*`, `skill-debug-button-*`) must be preserved.
 - **SkillSearchBar + SkillCategoryFilter** — New components in `app/src/components/skills/` for search and category filtering on the Skills page.
 
+## Composio Identity (Issue #691)
+
+- **`ProviderUserProfile.profile_url`** — New optional field on the struct in `src/openhuman/composio/providers/types.rs`. Providers should populate it when available from upstream profile payloads.
+- **`identity_set` callback in default flow** — `ComposioProvider::on_connection_created()` in `src/openhuman/composio/providers/traits.rs` now calls `identity_set(&profile)` after profile fetch. `composio_get_user_profile` in `src/openhuman/composio/ops.rs` also routes persistence through `identity_set`.
+- **Facet key format for connected identities** — `skill:{toolkit}:{identifier}:{field}` (e.g. `skill:gmail:user@example.com:profile_url`). Use `FacetType::Skill` when storing. Toolkit and identifier together form the unique identity; field is the attribute name.
+- **Connected identities loader/renderer** — `src/openhuman/composio/providers/profile.rs` contains `load_connected_identities()` (reads `skill:*` facets) and `render_connected_identities_section()` (formats markdown for prompt injection). Keep rendering logic there, not in prompt modules.
+- **Prompt injection helper** — `render_connected_identities` is imported and called in `welcome/prompt.rs`, `orchestrator/prompt.rs`, and `integrations_agent/prompt.rs` to inject a "Connected accounts:" block. Add it to any new agent prompt that needs Composio context.
+
 ## Agent Timeout & Cancellation (Issue #715)
 
 - **Frontend silence timer, not a wall-clock limit** — `armSilenceTimer` in `app/src/pages/Conversations.tsx` fires if 120s (fixed to 600s) pass with zero inference progress events. It re-arms on every `tool_call`, `tool_result`, `iteration_start`, etc., so long-running tool chains that keep emitting events are not cut off.
