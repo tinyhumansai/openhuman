@@ -17,7 +17,7 @@
 | `src/openhuman/life_capture/mod.rs` | Light re-export hub per repo rules; no logic |
 | `src/openhuman/life_capture/types.rs` | `Item`, `Source`, `Person`, `Hit`, `Query`, `IndexStats` |
 | `src/openhuman/life_capture/index.rs` | SQLite + sqlite-vec store; `IndexWriter` + `IndexReader` impls |
-| `src/openhuman/life_capture/migrations.rs` | Embedded SQL migrations (versioned) |
+| `src/openhuman/life_capture/migrations.rs` | Embedded SQL migrations (versioned) — v1 ships items + items_fts + sync_state + ACL column (Onyx pattern) |
 | `src/openhuman/life_capture/embedder.rs` | `Embedder` trait + `HostedEmbedder` impl (OpenAI) |
 | `src/openhuman/life_capture/redact.rs` | PII redaction (regex, no model dependency) |
 | `src/openhuman/life_capture/quote_strip.rs` | Email quoted-reply stripping |
@@ -253,15 +253,28 @@ git commit -m "feat(life_capture): core types — Item, Source, Person, Query, H
 
 ```sql
 CREATE TABLE IF NOT EXISTS items (
-    id            TEXT PRIMARY KEY,           -- uuid
-    source        TEXT NOT NULL,
-    external_id   TEXT NOT NULL,
-    ts            INTEGER NOT NULL,           -- unix seconds
-    author_json   TEXT,                       -- serialized Person, nullable
-    subject       TEXT,
-    text          TEXT NOT NULL,
-    metadata_json TEXT NOT NULL DEFAULT '{}',
+    id                  TEXT PRIMARY KEY,           -- uuid
+    source              TEXT NOT NULL,
+    external_id         TEXT NOT NULL,
+    ts                  INTEGER NOT NULL,           -- unix seconds
+    author_json         TEXT,                       -- serialized Person, nullable
+    subject             TEXT,
+    text                TEXT NOT NULL,              -- normalized body for embedding (semantic)
+    text_keyword        TEXT,                       -- raw values projection for FTS5/BM25 (Onyx pattern)
+    metadata_json       TEXT NOT NULL DEFAULT '{}',
+    -- ACL tokens, e.g. ["user:local","source:gmail","account:foo@bar"]. Single-user v1 still
+    -- sets ["user:local"] so the column is mandatory and team v2 needs no migration.
+    access_control_list TEXT NOT NULL DEFAULT '["user:local"]',
     UNIQUE(source, external_id)
+);
+
+-- Per-connector checkpoint store. Plan #2 ingestors write here; Foundation creates the table
+-- so the schema is in place when ingestors land.
+CREATE TABLE IF NOT EXISTS sync_state (
+    connector_name TEXT PRIMARY KEY,    -- e.g. "gmail", "calendar", "imessage"
+    cursor_blob    TEXT,                -- opaque per-connector cursor (JSON)
+    last_sync_ts   INTEGER,
+    last_error     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS items_source_ts_idx ON items(source, ts DESC);
@@ -1089,12 +1102,15 @@ impl<'a> IndexReader<'a> {
 
     pub async fn keyword_search(&self, query: &str, k: usize) -> sqlx::Result<Vec<Hit>> {
         // bm25(items_fts) is negative in sqlite (lower is better); we negate so higher = better.
+        // ACL filter: v1 always passes ["user:local"]; expressed as a json_each EXISTS clause so
+        // the same query shape works for team v2 with multi-token ACLs.
         let rows = sqlx::query_as::<_, ItemRow>(
             "SELECT i.id, i.source, i.external_id, i.ts, i.author_json, i.subject, i.text, i.metadata_json,
                     -bm25(items_fts) AS score,
                     snippet(items_fts, 1, '«', '»', '…', 12) AS snip
              FROM items_fts JOIN items i ON i.rowid = items_fts.rowid
              WHERE items_fts MATCH ?
+               AND EXISTS (SELECT 1 FROM json_each(i.access_control_list) WHERE value = 'user:local')
              ORDER BY score DESC
              LIMIT ?"
         )
