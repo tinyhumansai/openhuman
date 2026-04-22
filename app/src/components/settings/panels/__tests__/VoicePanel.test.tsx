@@ -5,8 +5,11 @@ import { renderWithProviders } from '../../../../test/test-utils';
 import {
   type CommandResponse,
   type ConfigSnapshot,
+  type LocalAiDownloadsProgress,
   openhumanGetVoiceServerSettings,
   openhumanLocalAiAssetsStatus,
+  openhumanLocalAiDownloadAsset,
+  openhumanLocalAiDownloadsProgress,
   openhumanUpdateVoiceServerSettings,
   openhumanVoiceServerStart,
   openhumanVoiceServerStatus,
@@ -21,12 +24,46 @@ import VoicePanel from '../VoicePanel';
 vi.mock('../../../../utils/tauriCommands', () => ({
   openhumanGetVoiceServerSettings: vi.fn(),
   openhumanLocalAiAssetsStatus: vi.fn(),
+  openhumanLocalAiDownloadAsset: vi.fn(),
+  openhumanLocalAiDownloadsProgress: vi.fn(),
   openhumanUpdateVoiceServerSettings: vi.fn(),
   openhumanVoiceServerStart: vi.fn(),
   openhumanVoiceServerStatus: vi.fn(),
   openhumanVoiceServerStop: vi.fn(),
   openhumanVoiceStatus: vi.fn(),
 }));
+
+const emptyDownloadsProgress = (): CommandResponse<LocalAiDownloadsProgress> => {
+  const blank = {
+    id: '',
+    provider: 'local',
+    state: 'idle',
+    progress: null,
+    downloaded_bytes: null,
+    total_bytes: null,
+    speed_bps: null,
+    eta_seconds: null,
+    warning: null,
+    path: null,
+  };
+  return {
+    result: {
+      state: 'idle',
+      progress: null,
+      downloaded_bytes: null,
+      total_bytes: null,
+      speed_bps: null,
+      eta_seconds: null,
+      warning: null,
+      chat: { ...blank },
+      vision: { ...blank },
+      embedding: { ...blank },
+      stt: { ...blank },
+      tts: { ...blank },
+    },
+    logs: [],
+  };
+};
 
 type RuntimeHarness = {
   settings: VoiceServerSettings;
@@ -97,6 +134,16 @@ describe('VoicePanel', () => {
       } as never,
       logs: [],
     }));
+    vi.mocked(openhumanLocalAiDownloadsProgress).mockImplementation(async () =>
+      emptyDownloadsProgress()
+    );
+    vi.mocked(openhumanLocalAiDownloadAsset).mockImplementation(async () => ({
+      result: {
+        quantization: 'q4',
+        stt: { id: 'ggml-tiny-q5_1.bin', state: 'downloading' },
+      } as never,
+      logs: [],
+    }));
     vi.mocked(openhumanUpdateVoiceServerSettings).mockImplementation(async update => {
       runtime.settings = { ...runtime.settings, ...update };
       return makeConfigSnapshot();
@@ -116,17 +163,86 @@ describe('VoicePanel', () => {
     });
   });
 
-  it('disables the panel when STT assets are not ready', async () => {
+  it('shows an inline Download STT model CTA when the STT asset is missing', async () => {
     runtime.sttState = 'missing';
     runtime.voiceStatus.stt_available = false;
 
     renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
 
     expect(await screen.findByText('Voice Dictation')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Voice dictation is disabled until the local STT model is downloaded/)
-    ).toBeInTheDocument();
+    expect(await screen.findByTestId('voice-stt-setup-idle')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download STT model' })).toBeInTheDocument();
+    // Old redirect CTA is gone — the whole point of issue #632.
+    expect(screen.queryByRole('button', { name: 'Open Local AI Model' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Start Voice Server' })).toBeDisabled();
+  });
+
+  it('triggers an in-place STT download and shows progress without redirecting', async () => {
+    runtime.sttState = 'missing';
+    runtime.voiceStatus.stt_available = false;
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const cta = await screen.findByRole('button', { name: 'Download STT model' });
+    fireEvent.click(cta);
+
+    await waitFor(() => {
+      expect(openhumanLocalAiDownloadAsset).toHaveBeenCalledWith('stt');
+    });
+
+    // Core starts reporting an active download on the next poll.
+    vi.mocked(openhumanLocalAiDownloadsProgress).mockImplementation(async () => {
+      const base = emptyDownloadsProgress();
+      base.result.state = 'downloading';
+      base.result.progress = 0.42;
+      base.result.downloaded_bytes = 42_000_000;
+      base.result.total_bytes = 100_000_000;
+      base.result.stt = {
+        id: 'ggml-tiny-q5_1.bin',
+        provider: 'local',
+        state: 'downloading',
+        progress: 0.42,
+        downloaded_bytes: 42_000_000,
+        total_bytes: 100_000_000,
+        speed_bps: 1_500_000,
+        eta_seconds: 40,
+        warning: null,
+        path: null,
+      };
+      return base;
+    });
+
+    expect(await screen.findByTestId('voice-stt-setup-progress')).toBeInTheDocument();
+  });
+
+  it('surfaces a retry button when the STT download fails and retries on click', async () => {
+    runtime.sttState = 'missing';
+    runtime.voiceStatus.stt_available = false;
+    vi.mocked(openhumanLocalAiDownloadAsset).mockRejectedValueOnce(new Error('network dropped'));
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Download STT model' }));
+
+    const errorBlock = await screen.findByTestId('voice-stt-setup-error');
+    expect(errorBlock).toHaveTextContent('network dropped');
+    const retry = screen.getByRole('button', { name: 'Retry download' });
+
+    vi.mocked(openhumanLocalAiDownloadAsset).mockResolvedValueOnce({
+      result: {
+        quantization: 'q4',
+        stt: { id: 'ggml-tiny-q5_1.bin', state: 'downloading' },
+      } as never,
+      logs: [],
+    });
+    fireEvent.click(retry);
+
+    await waitFor(() => {
+      expect(openhumanLocalAiDownloadAsset).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('voice-stt-setup-error')).toBeNull();
+    });
   });
 
   it('starts the voice server with the edited form values', async () => {
