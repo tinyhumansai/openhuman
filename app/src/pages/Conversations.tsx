@@ -491,7 +491,9 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       notifyOverlaySttState('error');
       const message = err instanceof Error ? err.message : String(err);
       const isSetupIssue =
-        message.includes('whisper') || message.includes('binary not found') || message.includes('STT model');
+        message.includes('whisper') ||
+        message.includes('binary not found') ||
+        message.includes('STT model');
       setSendError(
         chatSendError(
           isSetupIssue ? 'stt_not_ready' : 'voice_transcription',
@@ -1262,7 +1264,8 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                 {sendError.message}
               </p>
               <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                {(sendError.code === 'stt_not_ready' || sendError.code === 'voice_transcription') && (
+                {(sendError.code === 'stt_not_ready' ||
+                  sendError.code === 'voice_transcription') && (
                   <button
                     onClick={() => {
                       setSendError(null);
