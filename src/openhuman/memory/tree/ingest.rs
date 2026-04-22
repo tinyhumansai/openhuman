@@ -20,6 +20,9 @@ use crate::openhuman::memory::tree::canonicalize::{
 };
 use crate::openhuman::memory::tree::chunker::{chunk_markdown, ChunkerInput, ChunkerOptions};
 use crate::openhuman::memory::tree::score::{self, ScoreResult, ScoringConfig};
+use crate::openhuman::memory::tree::source_tree::{
+    append_leaf, get_or_create_source_tree, InertSummariser, LeafRef,
+};
 use crate::openhuman::memory::tree::store;
 use crate::openhuman::memory::tree::types::Chunk;
 
@@ -182,12 +185,75 @@ async fn persist(
     .await
     .map_err(|e| anyhow::anyhow!("persist join error: {e}"))??;
 
+    // 5. Source-tree append (Phase 3a #709). Each kept leaf pushes into
+    //    the tree's L0 buffer and cascades upward when token_sum crosses
+    //    the budget. Entities/topics from the scorer are threaded in so
+    //    sealed summaries inherit the child signal set. Failures here
+    //    log at warn level but don't fail the ingest — leaves are already
+    //    persisted, and a later flush/retry can still rebuild the tree.
+    if let Err(e) = append_leaves_to_tree(config, source_id, &kept_chunks, &all_results).await {
+        log::warn!(
+            "[memory_tree::ingest] source_tree append failed source_id={} err={:#}",
+            source_id,
+            e
+        );
+    }
+
     Ok(IngestResult {
         source_id: source_id.to_string(),
         chunks_written: written,
         chunks_dropped: dropped,
         chunk_ids: kept_chunks.iter().map(|c| c.id.clone()).collect(),
     })
+}
+
+/// Push every kept chunk into its source tree. Scoped to Phase 3a — all
+/// chunks from one ingest batch share the same `source_id`, so they share
+/// one tree lookup. The inert summariser is the default; future wiring
+/// can swap in an LLM summariser here.
+async fn append_leaves_to_tree(
+    config: &Config,
+    source_id: &str,
+    kept_chunks: &[Chunk],
+    all_results: &[(ScoreResult, i64)],
+) -> Result<()> {
+    if kept_chunks.is_empty() {
+        return Ok(());
+    }
+    let tree = get_or_create_source_tree(config, source_id)?;
+    let summariser = InertSummariser::new();
+
+    // Build a chunk_id → (score, entities, topics) map for quick lookup.
+    use std::collections::HashMap;
+    let mut score_by_id: HashMap<String, &ScoreResult> = HashMap::new();
+    for (r, _) in all_results {
+        score_by_id.insert(r.chunk_id.clone(), r);
+    }
+
+    for chunk in kept_chunks {
+        let (score_value, entities, topics) = match score_by_id.get(&chunk.id) {
+            Some(r) => (
+                r.total,
+                r.canonical_entities
+                    .iter()
+                    .map(|e| e.canonical_id.clone())
+                    .collect(),
+                chunk.metadata.tags.clone(),
+            ),
+            None => (0.0, Vec::new(), chunk.metadata.tags.clone()),
+        };
+        let leaf = LeafRef {
+            chunk_id: chunk.id.clone(),
+            token_count: chunk.token_count,
+            timestamp: chunk.metadata.timestamp,
+            content: chunk.content.clone(),
+            entities,
+            topics,
+            score: score_value,
+        };
+        append_leaf(config, &tree, &leaf, &summariser).await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
