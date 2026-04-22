@@ -424,15 +424,19 @@ pub async fn webview_account_open<R: Runtime>(
         label
     );
 
+    // Reject unknown providers early. `provider_url` already errors when
+    // no URL override is supplied; the `provider_is_supported` check
+    // additionally gates custom-URL overrides so an arbitrary provider
+    // string can't ride in via the debug `url` field.
+    if !provider_is_supported(&args.provider) {
+        return Err(format!("unknown provider: {}", args.provider));
+    }
     let real_url_str = args
         .url
         .as_deref()
         .or_else(|| provider_url(&args.provider))
-        .ok_or_else(|| format!("unknown provider: {}", args.provider))?
+        .ok_or_else(|| format!("no url for provider: {}", args.provider))?
         .to_string();
-    if !provider_is_supported(&args.provider) && args.url.is_none() {
-        return Err(format!("unknown provider: {}", args.provider));
-    }
     // Under cef we open the webview at a tiny `data:` placeholder URL so
     // the CDP session opener can attach and apply the UA override BEFORE
     // the real provider URL loads. Under wry there's no CDP, so navigate
@@ -591,7 +595,7 @@ pub async fn webview_account_open<R: Runtime>(
     // Also installs the `#openhuman-account-{id}` fragment the scanners
     // match on for multi-account disambiguation.
     #[cfg(feature = "cef")]
-    cdp::spawn_session(app.clone(), args.account_id.clone(), real_url_str.clone());
+    cdp::spawn_session(args.account_id.clone(), real_url_str.clone());
 
     // For providers we know how to scrape via CDP, kick off the IndexedDB
     // scanner. Compile-gated to `cef` because CDP only exists when the CEF

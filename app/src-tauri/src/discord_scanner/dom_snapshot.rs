@@ -72,15 +72,14 @@ pub fn ingest_payload(scan: &DomScan) -> Value {
 }
 
 fn is_channel_row(snap: &Snapshot, idx: usize) -> bool {
-    if snap.attr(idx, "role") == Some("treeitem") && snap.attr(idx, "data-list-item-id").is_some() {
-        return true;
-    }
-    if let Some(dlii) = snap.attr(idx, "data-list-item-id") {
-        if dlii.starts_with("channels") || dlii.starts_with("private-channels") {
-            return true;
-        }
-    }
-    false
+    let Some(dlii) = snap.attr(idx, "data-list-item-id") else {
+        return false;
+    };
+    // Primary: any treeitem carrying a list-item id (current Discord DOM).
+    // Fallback: legacy rows without `role` but with a well-known id prefix.
+    snap.attr(idx, "role") == Some("treeitem")
+        || dlii.starts_with("channels")
+        || dlii.starts_with("private-channels")
 }
 
 fn find_name(snap: &Snapshot, root: usize) -> Option<String> {
@@ -121,11 +120,8 @@ fn find_badge(snap: &Snapshot, root: usize) -> Option<u32> {
             return Some(n_parsed);
         }
     }
-    // Generic unread marker — present without a numeric count. Return 1
-    // so `totalUnread` increments and the ingest event fires, matching
-    // the recipe's `parseInt("") → NaN → 0` behavior (which actually
-    // produced 0 there, but the recipe's `unread > 0 ? totalUnread += unread : noop`
-    // meant pure-marker rows didn't bump the total — we keep that here).
+    // Pure marker (no numeric count): row is included in `rows` with
+    // unread=0 but `total_unread` is not incremented.
     if snap
         .find_descendant(root, |s, i| {
             s.is_element(i) && s.class_starts_with(i, "unread_")
@@ -149,7 +145,7 @@ fn hash_rows(rows: &[ChannelRow], total_unread: u32) -> u64 {
     for b in total_unread.to_le_bytes() {
         mix(&mut h, b);
     }
-    for r in rows.iter().take(8) {
+    for r in rows {
         for b in r.name.as_bytes() {
             mix(&mut h, *b);
         }

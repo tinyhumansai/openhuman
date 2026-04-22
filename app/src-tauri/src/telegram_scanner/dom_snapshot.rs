@@ -153,7 +153,7 @@ fn hash_rows(rows: &[ChatRow], total_unread: u32) -> u64 {
     for b in total_unread.to_le_bytes() {
         mix(&mut h, b);
     }
-    for r in rows.iter().take(5) {
+    for r in rows {
         for b in r.name.as_bytes() {
             mix(&mut h, *b);
         }

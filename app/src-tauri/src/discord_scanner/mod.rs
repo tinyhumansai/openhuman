@@ -38,8 +38,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod dom_snapshot;
 
-const CDP_HOST: &str = "127.0.0.1";
-const CDP_PORT: u16 = 9222;
+use crate::cdp::{CDP_HOST, CDP_PORT};
 
 /// How long to wait between reconnect attempts when the CDP WebSocket drops
 /// or the page target disappears (e.g. Discord refresh, navigation).

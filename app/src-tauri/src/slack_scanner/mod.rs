@@ -34,8 +34,8 @@ mod dom_snapshot;
 mod extract;
 mod idb;
 
-const CDP_HOST: &str = "127.0.0.1";
-const CDP_PORT: u16 = 9222;
+use crate::cdp::{CDP_HOST, CDP_PORT};
+
 /// How often we walk IDB. Tune down for faster iteration during dev; the
 /// walk itself is bounded by per-store record caps in `idb.rs`.
 const IDB_SCAN_INTERVAL: Duration = Duration::from_secs(30);

@@ -111,7 +111,15 @@ fn find_badge(snap: &Snapshot, root: usize) -> Option<u32> {
             && (s.has_class(i, "p-channel_sidebar__badge")
                 || s.attr(i, "data-qa") == Some("mention_badge"))
     })?;
-    snap.text_content(n).trim().parse::<u32>().ok()
+    // Matches the Discord scraper: a present-but-empty badge (generic
+    // unread marker) returns Some(0) so the row is still included in
+    // the ingest, but `total_unread` isn't bumped.
+    let txt = snap.text_content(n);
+    let trimmed = txt.trim();
+    if trimmed.is_empty() {
+        return Some(0);
+    }
+    trimmed.parse::<u32>().ok()
 }
 
 fn hash_rows(rows: &[ChannelRow], total_unread: u32) -> u64 {
@@ -126,7 +134,7 @@ fn hash_rows(rows: &[ChannelRow], total_unread: u32) -> u64 {
     for b in total_unread.to_le_bytes() {
         mix(&mut h, b);
     }
-    for r in rows.iter().take(8) {
+    for r in rows {
         for b in r.name.as_bytes() {
             mix(&mut h, *b);
         }

@@ -17,7 +17,6 @@
 use std::time::Duration;
 
 use serde_json::json;
-use tauri::{AppHandle, Runtime};
 use tokio::time::sleep;
 
 use super::{browser_ws_url, find_page_target_where, set_user_agent_override, CdpConn, UaSpec};
@@ -56,7 +55,15 @@ pub fn placeholder_data_url(account_id: &str) -> String {
 /// task keeps the session alive and retries on disconnect. Idempotent at
 /// the call site — the caller is expected to only call this once per
 /// `webview_account_open`.
-pub fn spawn_session<R: Runtime>(_app: AppHandle<R>, account_id: String, real_url: String) {
+///
+/// **Shutdown**: currently no cancellation plumbing. When the webview
+/// closes, the session's CDP WebSocket drops (target is gone) and
+/// `run_session_cycle` returns with an error; the outer loop then fails
+/// every reconnect attempt until the process exits. Benign in practice —
+/// `attach_to_target` on a missing target is a cheap error — but a
+/// cancellation token from `webview_account_close` is worth adding in a
+/// follow-up if scanner churn becomes noisy in logs.
+pub fn spawn_session(account_id: String, real_url: String) {
     tokio::spawn(async move {
         log::info!(
             "[cdp-session][{}] up real_url={} marker={}",
@@ -131,8 +138,15 @@ async fn run_session_cycle(account_id: &str, real_url: &str) -> Result<(), Strin
     // Drive the webview from the placeholder to the real provider URL.
     // Fragment survives same-origin navigations so scanners can match on
     // it indefinitely. Skip navigation if the target is already on the
-    // real URL (e.g. we reconnected after a ws drop).
-    if !target.url.starts_with(real_url) {
+    // real URL (e.g. we reconnected after a ws drop). Boundary-check
+    // the prefix so `https://discord.com` doesn't spuriously match
+    // `https://discord.com.evil/…`.
+    let at_real_url = target.url.starts_with(real_url)
+        && target.url[real_url.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| matches!(c, '/' | '?' | '#'));
+    if !at_real_url {
         let dest = if real_url.contains('#') {
             real_url.to_string()
         } else {

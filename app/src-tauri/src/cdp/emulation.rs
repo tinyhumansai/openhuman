@@ -34,6 +34,13 @@ pub struct UaSpec {
 }
 
 impl UaSpec {
+    /// TODO(maintenance): bump these strings when the headline Chrome
+    /// version drifts far enough that fingerprinters flag us as stale.
+    /// Fields to refresh in lock-step: `user_agent`, `chrome_major`,
+    /// `chrome_full`, `platform_version`. Target cadence: quarterly, or
+    /// whenever a provider starts rejecting the current UA. The previous
+    /// JS shim (`ua_spoof.js`) shipped these same values so behaviour is
+    /// preserved until we touch them.
     pub fn chrome_mac() -> Self {
         Self {
             user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
