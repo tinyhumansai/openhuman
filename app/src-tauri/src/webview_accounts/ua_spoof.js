@@ -145,6 +145,14 @@
   // Some apps (Slack) rebind/inspect the Notification constructor itself,
   // so wrapping the constructor is more reliable than patching only the
   // `permission` static descriptor.
+  //
+  // Guard with `window.__OH_NOTIF_SHIM` so repeat evaluations of this script
+  // (e.g. from `Page.addScriptToEvaluateOnNewDocument` plus frame-level
+  // re-injections) don't keep stacking wrappers onto the same globals and
+  // double-proxy `Function.prototype.toString`.
+  if (window.__OH_NOTIF_SHIM) {
+    return;
+  }
   try {
     if (typeof window.Notification === 'function') {
       var __NativeNotification = window.Notification;

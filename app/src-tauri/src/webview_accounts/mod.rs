@@ -393,6 +393,18 @@ fn forward_native_notification<R: Runtime>(
         );
     }
 
+    // Respect the Web Notification `silent` flag — the mirror event above
+    // still updates the in-app notification center, but the OS toast is
+    // suppressed so the user is not audibly/visually interrupted for
+    // notifications the page explicitly marked as silent.
+    if payload.silent {
+        log::debug!(
+            "[notify-cef][{}] silent=true, suppressing OS toast",
+            account_id
+        );
+        return;
+    }
+
     let mut builder = app.notification().builder().title(&notify_title);
     if !body.is_empty() {
         builder = builder.body(body);
@@ -1162,7 +1174,11 @@ pub fn webview_notification_mute_account(
     } else {
         prefs.muted_accounts.remove(&account_id);
     }
-    log::debug!("[notify-bypass] set muted account_id={} muted={}", account_id, muted);
+    log::debug!(
+        "[notify-bypass] set muted account_id={} muted={}",
+        account_id,
+        muted
+    );
     Ok(())
 }
 

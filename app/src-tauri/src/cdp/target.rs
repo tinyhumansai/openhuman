@@ -28,13 +28,19 @@ pub async fn browser_ws_url() -> Result<String, String> {
     for host in [CDP_HOST, "localhost"] {
         let url = format!("http://{host}:{CDP_PORT}/json/version");
         match client.get(&url).send().await {
-            Ok(resp) => {
-                let v: Value = resp.json().await.map_err(|e| format!("parse {url}: {e}"))?;
-                if let Some(ws) = v.get("webSocketDebuggerUrl").and_then(|x| x.as_str()) {
-                    return Ok(ws.to_string());
+            Ok(resp) => match resp.json::<Value>().await {
+                Ok(v) => {
+                    if let Some(ws) = v.get("webSocketDebuggerUrl").and_then(|x| x.as_str()) {
+                        return Ok(ws.to_string());
+                    }
+                    last_err = Some(format!("no webSocketDebuggerUrl in {url}"));
                 }
-                last_err = Some(format!("no webSocketDebuggerUrl in {url}"));
-            }
+                Err(e) => {
+                    // Don't bail out — fall through so the next host in the
+                    // candidate list still gets a chance to resolve the ws url.
+                    last_err = Some(format!("parse {url}: {e}"));
+                }
+            },
             Err(e) => {
                 last_err = Some(format!("GET {url}: {e}"));
             }
