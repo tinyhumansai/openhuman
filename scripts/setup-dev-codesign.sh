@@ -65,8 +65,11 @@ openssl req \
   2>/dev/null
 
 # ── Bundle to PKCS12 ─────────────────────────────────────────────────────────
+# `-legacy` keeps PKCS12 MAC/encryption compatible with macOS `security` tool
+# which does not yet support OpenSSL 3.x defaults (SHA256 MAC / AES-256-CBC).
 openssl pkcs12 \
   -export \
+  -legacy \
   -out "$P12" \
   -inkey "$KEY" \
   -in "$CERT" \
