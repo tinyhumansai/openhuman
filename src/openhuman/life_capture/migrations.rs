@@ -71,6 +71,11 @@ pub async fn run_async(conn: std::sync::Arc<tokio::sync::Mutex<Connection>>) -> 
 mod tests {
     use super::*;
 
+    fn fresh_conn() -> Connection {
+        super::super::index::ensure_vec_extension_registered();
+        Connection::open_in_memory().unwrap()
+    }
+
     fn table_names(conn: &Connection) -> Vec<String> {
         let mut stmt = conn
             .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
@@ -83,7 +88,7 @@ mod tests {
 
     #[test]
     fn migrations_create_expected_tables() {
-        let conn = Connection::open_in_memory().unwrap();
+        let conn = fresh_conn();
         run(&conn).expect("first run");
 
         let tables = table_names(&conn);
@@ -100,7 +105,7 @@ mod tests {
 
     #[test]
     fn migrations_are_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
+        let conn = fresh_conn();
         run(&conn).expect("first run");
         run(&conn).expect("second run (idempotent)");
 
@@ -116,7 +121,7 @@ mod tests {
 
     #[test]
     fn fts_trigger_fires_on_insert() {
-        let conn = Connection::open_in_memory().unwrap();
+        let conn = fresh_conn();
         run(&conn).unwrap();
 
         conn.execute(
