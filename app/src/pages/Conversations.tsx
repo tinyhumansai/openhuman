@@ -39,10 +39,7 @@ import {
   openhumanVoiceTts,
 } from '../utils/tauriCommands';
 import { formatTimelineEntry } from '../utils/toolTimelineFormatting';
-import {
-  AgentMessageBubble,
-  BubbleMarkdown,
-} from './conversations/components/AgentMessageBubble';
+import { AgentMessageBubble, BubbleMarkdown } from './conversations/components/AgentMessageBubble';
 import { LimitPill } from './conversations/components/LimitPill';
 import { ToolTimelineBlock } from './conversations/components/ToolTimelineBlock';
 import {
@@ -65,7 +62,6 @@ type InputMode = 'text' | 'voice';
 type ReplyMode = 'text' | 'voice';
 const AUTOCOMPLETE_POLL_DEBOUNCE_MS = 320;
 const AUTOCOMPLETE_MIN_CONTEXT_CHARS = 3;
-
 
 interface ConversationsProps {
   /**
