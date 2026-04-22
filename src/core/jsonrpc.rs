@@ -655,6 +655,26 @@ async fn run_server_inner(
     // --- Skill runtime bootstrap -------------------------------------------
     bootstrap_skill_runtime().await;
 
+    // --- Curated-memory + life-capture runtime bootstrap ------------------
+    //
+    // These MUST initialise before `axum::serve` starts accepting connections
+    // so the very first RPC can't race the OnceCell — earlier we set them
+    // inside the tokio::spawn block below and the server began accepting
+    // before they were ready, surfacing as spurious 'not initialised' errors
+    // for the first few requests.
+    //
+    // Loading the config a second time here (the spawn block also calls
+    // `load_or_init`) is fine — it caches and is idempotent.
+    if let Ok(config) = crate::openhuman::config::Config::load_or_init().await {
+        bootstrap_curated_memory(&config.workspace_dir).await;
+        bootstrap_life_capture(&config.workspace_dir).await;
+    } else {
+        log::warn!(
+            "[core] config load failed during runtime bootstrap; \
+             curated_memory and life_capture controllers will return 'not initialised'"
+        );
+    }
+
     log::info!(
         "[core] OpenHuman core is ready — listening on http://{bind_addr} (version {})",
         env!("CARGO_PKG_VERSION")
@@ -679,99 +699,6 @@ async fn run_server_inner(
                     log::debug!("[core] embedded core startup");
                 } else {
                     log::debug!("[core] desktop core startup");
-                }
-
-                // Bring up the curated-memory scratchpad (MEMORY.md + USER.md).
-                // Two markdown files in `<workspace>/memories/`, char-bounded
-                // at Hermes' defaults (memory: 2200, user: 1375). Stores are
-                // created here, registered on the runtime singleton, and
-                // exposed via the memory_curated.{read,add,replace,remove}
-                // controllers.
-                {
-                    use std::sync::Arc;
-                    let mem_dir = config.workspace_dir.join("memories");
-                    let memory_store = crate::openhuman::curated_memory::MemoryStore::open(
-                        &mem_dir,
-                        crate::openhuman::curated_memory::MemoryFile::Memory,
-                        2200,
-                    );
-                    let user_store = crate::openhuman::curated_memory::MemoryStore::open(
-                        &mem_dir,
-                        crate::openhuman::curated_memory::MemoryFile::User,
-                        1375,
-                    );
-                    match (memory_store, user_store) {
-                        (Ok(memory), Ok(user)) => {
-                            let rt = Arc::new(crate::openhuman::curated_memory::runtime::CuratedMemoryRuntime {
-                                memory: Arc::new(memory),
-                                user: Arc::new(user),
-                            });
-                            match crate::openhuman::curated_memory::runtime::init(rt).await {
-                                Ok(()) => log::info!(
-                                    "[curated_memory] runtime initialised at {}",
-                                    mem_dir.display()
-                                ),
-                                Err(e) => log::warn!("[curated_memory] init: {e}"),
-                            }
-                        }
-                        (Err(e), _) | (_, Err(e)) => log::warn!(
-                            "[curated_memory] failed to open stores at {}: {e}",
-                            mem_dir.display()
-                        ),
-                    }
-                }
-
-                // Bring up the local personal index (life-capture). This is the
-                // SQLite + sqlite-vec store backing the `life_capture.search`
-                // and `life_capture.get_stats` controllers. The embedder is
-                // env-gated for now: if neither OPENHUMAN_EMBEDDINGS_KEY nor
-                // OPENAI_API_KEY is set we still open the index file (so the
-                // ingestion pipeline in Plan #2 can write to it later) but skip
-                // runtime registration — the controllers will then return a
-                // structured "not initialised" error rather than silently
-                // succeed against a non-functional embedder.
-                {
-                    use std::sync::Arc;
-                    let index_path = config.workspace_dir.join("personal_index.db");
-                    match crate::openhuman::life_capture::index::PersonalIndex::open(&index_path).await {
-                        Ok(idx) => {
-                            let idx = Arc::new(idx);
-                            let api_key = std::env::var("OPENHUMAN_EMBEDDINGS_KEY")
-                                .or_else(|_| std::env::var("OPENAI_API_KEY"))
-                                .ok();
-                            if let Some(api_key) = api_key {
-                                let base_url = std::env::var("OPENHUMAN_EMBEDDINGS_URL")
-                                    .unwrap_or_else(|_| "https://api.openai.com/v1".into());
-                                let model = std::env::var("OPENHUMAN_EMBEDDINGS_MODEL")
-                                    .unwrap_or_else(|_| "text-embedding-3-small".into());
-                                let embedder: Arc<dyn crate::openhuman::life_capture::embedder::Embedder> =
-                                    Arc::new(crate::openhuman::life_capture::embedder::HostedEmbedder::new(
-                                        base_url, api_key, model,
-                                    ));
-                                let rt = Arc::new(crate::openhuman::life_capture::runtime::LifeCaptureRuntime {
-                                    index: idx,
-                                    embedder,
-                                });
-                                match crate::openhuman::life_capture::runtime::init(rt).await {
-                                    Ok(()) => log::info!(
-                                        "[life_capture] runtime initialised — index={} model=text-embedding-3-small",
-                                        index_path.display()
-                                    ),
-                                    Err(e) => log::warn!("[life_capture] runtime init: {e}"),
-                                }
-                            } else {
-                                log::info!(
-                                    "[life_capture] index opened at {} but no embedder key found \
-                                     (set OPENAI_API_KEY or OPENHUMAN_EMBEDDINGS_KEY); search controller will return 'not initialised'",
-                                    index_path.display()
-                                );
-                            }
-                        }
-                        Err(e) => log::warn!(
-                            "[life_capture] failed to open personal index at {}: {e}",
-                            index_path.display()
-                        ),
-                    }
                 }
 
                 // Register autocomplete shutdown hook so the engine (and its
@@ -955,6 +882,94 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
 }
 
 /// Initializes long-lived socket/event-bus infrastructure.
+/// Open MEMORY.md / USER.md at `<workspace>/memories/` and register the
+/// curated-memory runtime singleton. Idempotent — second-init is a no-op.
+async fn bootstrap_curated_memory(workspace_dir: &std::path::Path) {
+    use std::sync::Arc;
+    let mem_dir = workspace_dir.join("memories");
+    let memory_store = crate::openhuman::curated_memory::MemoryStore::open(
+        &mem_dir,
+        crate::openhuman::curated_memory::MemoryFile::Memory,
+        2200,
+    );
+    let user_store = crate::openhuman::curated_memory::MemoryStore::open(
+        &mem_dir,
+        crate::openhuman::curated_memory::MemoryFile::User,
+        1375,
+    );
+    match (memory_store, user_store) {
+        (Ok(memory), Ok(user)) => {
+            let rt = Arc::new(crate::openhuman::curated_memory::runtime::CuratedMemoryRuntime {
+                memory: Arc::new(memory),
+                user: Arc::new(user),
+            });
+            match crate::openhuman::curated_memory::runtime::init(rt).await {
+                Ok(()) => log::info!(
+                    "[curated_memory] runtime initialised at {}",
+                    mem_dir.display()
+                ),
+                Err(e) => log::debug!("[curated_memory] init skipped: {e}"),
+            }
+        }
+        (Err(e), _) | (_, Err(e)) => log::warn!(
+            "[curated_memory] failed to open stores at {}: {e}",
+            mem_dir.display()
+        ),
+    }
+}
+
+/// Open `<workspace>/personal_index.db` and register the life-capture index.
+/// If `OPENAI_API_KEY` / `OPENHUMAN_EMBEDDINGS_KEY` is also set, register the
+/// embedder; otherwise leave it unset so `get_stats` still works while
+/// `search` returns the structured "embedder not configured" error.
+async fn bootstrap_life_capture(workspace_dir: &std::path::Path) {
+    use std::sync::Arc;
+    let index_path = workspace_dir.join("personal_index.db");
+    let idx = match crate::openhuman::life_capture::index::PersonalIndex::open(&index_path).await {
+        Ok(idx) => Arc::new(idx),
+        Err(e) => {
+            log::warn!(
+                "[life_capture] failed to open personal index at {}: {e}",
+                index_path.display()
+            );
+            return;
+        }
+    };
+    if let Err(e) = crate::openhuman::life_capture::runtime::init_index(Arc::clone(&idx)).await {
+        log::debug!("[life_capture] index init skipped: {e}");
+    } else {
+        log::info!(
+            "[life_capture] index initialised at {}",
+            index_path.display()
+        );
+    }
+
+    let api_key = std::env::var("OPENHUMAN_EMBEDDINGS_KEY")
+        .or_else(|_| std::env::var("OPENAI_API_KEY"))
+        .ok();
+    let Some(api_key) = api_key else {
+        log::info!(
+            "[life_capture] embedder not configured (set OPENAI_API_KEY or \
+             OPENHUMAN_EMBEDDINGS_KEY); life_capture.search will return \
+             'embedder not configured', life_capture.get_stats remains available"
+        );
+        return;
+    };
+
+    let base_url = std::env::var("OPENHUMAN_EMBEDDINGS_URL")
+        .unwrap_or_else(|_| "https://api.openai.com/v1".into());
+    let model = std::env::var("OPENHUMAN_EMBEDDINGS_MODEL")
+        .unwrap_or_else(|_| "text-embedding-3-small".into());
+    let embedder: Arc<dyn crate::openhuman::life_capture::embedder::Embedder> = Arc::new(
+        crate::openhuman::life_capture::embedder::HostedEmbedder::new(base_url, api_key, model.clone()),
+    );
+    if let Err(e) = crate::openhuman::life_capture::runtime::init_embedder(embedder).await {
+        log::debug!("[life_capture] embedder init skipped: {e}");
+    } else {
+        log::info!("[life_capture] embedder initialised — model={model}");
+    }
+}
+
 pub async fn bootstrap_skill_runtime() {
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;

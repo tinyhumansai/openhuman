@@ -14,7 +14,7 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::curated_memory::{rpc, runtime};
 use crate::rpc::RpcOutcome;
 
-const NS: &str = "memory_curated";
+const NS: &str = "curated_memory";
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![

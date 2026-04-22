@@ -2,17 +2,19 @@
 //! deserialise params and call into these functions; tests can call them
 //! directly with a constructed `LifeCaptureRuntime`.
 
+use std::sync::Arc;
+
 use serde_json::{json, Value};
 
-use crate::openhuman::life_capture::index::IndexReader;
-use crate::openhuman::life_capture::runtime::LifeCaptureRuntime;
+use crate::openhuman::life_capture::embedder::Embedder;
+use crate::openhuman::life_capture::index::{IndexReader, PersonalIndex};
 use crate::openhuman::life_capture::types::Query;
 use crate::rpc::RpcOutcome;
 
 /// Returns total item count, per-source counts, and the most recent item ts
 /// (unix seconds, or null when the index is empty).
-pub async fn handle_get_stats(rt: &LifeCaptureRuntime) -> Result<RpcOutcome<Value>, String> {
-    let conn = rt.index.conn.clone();
+pub async fn handle_get_stats(idx: &PersonalIndex) -> Result<RpcOutcome<Value>, String> {
+    let conn = idx.conn.clone();
     let stats = tokio::task::spawn_blocking(move || -> Result<Value, String> {
         let guard = conn.blocking_lock();
         let total: i64 = guard
@@ -52,7 +54,8 @@ pub async fn handle_get_stats(rt: &LifeCaptureRuntime) -> Result<RpcOutcome<Valu
 /// Embeds the query, runs hybrid search, and returns hits trimmed to a
 /// flat shape matching the `search` controller schema.
 pub async fn handle_search(
-    rt: &LifeCaptureRuntime,
+    idx: &PersonalIndex,
+    embedder: &Arc<dyn Embedder>,
     text: String,
     k: usize,
 ) -> Result<RpcOutcome<Value>, String> {
@@ -61,14 +64,13 @@ pub async fn handle_search(
     }
     let k = k.clamp(1, 100);
 
-    let mut vecs = rt
-        .embedder
+    let mut vecs = embedder
         .embed_batch(&[text.as_str()])
         .await
         .map_err(|e| format!("embed: {e}"))?;
     let query_vec = vecs.pop().ok_or("embedder returned no vectors")?;
 
-    let reader = IndexReader::new(&rt.index);
+    let reader = IndexReader::new(idx);
     let q = Query::simple(text, k);
     let hits = reader
         .hybrid_search(&q, &query_vec)

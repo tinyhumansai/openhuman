@@ -58,7 +58,7 @@ async fn ingest_then_retrieve_with_redaction_and_quote_strip() {
         text: cleaned,
         metadata: serde_json::json!({}),
     };
-    writer.upsert(&[item.clone()]).await.unwrap();
+    writer.upsert(&mut [item.clone()]).await.unwrap();
 
     let vecs = embedder.embed_batch(&[item.text.as_str()]).await.unwrap();
     writer.upsert_vector(&item.id, &vecs[0]).await.unwrap();

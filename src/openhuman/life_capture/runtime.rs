@@ -5,10 +5,12 @@
 //! object — so anything they need (the SQLite-backed `PersonalIndex`, the active
 //! `Embedder`) has to live in process-global state.
 //!
-//! `OnceCell` enforces a single initialisation: F14 calls `init` once at app
-//! startup with the constructed index and embedder; handlers call `get` and
-//! return a structured error if the runtime hasn't been wired yet (e.g. when
-//! the `embeddings.api_key` is unset and life-capture is disabled).
+//! The index and embedder live in **separate** OnceCells so that opening the
+//! index (which only needs a workspace dir) is decoupled from configuring the
+//! embedder (which needs an API key). That way `get_stats` works as soon as
+//! the index opens, even when no embedder key is set; `search` returns a
+//! structured "embedder not configured" error in the same situation rather
+//! than blocking unrelated capabilities.
 
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -16,34 +18,48 @@ use tokio::sync::OnceCell;
 use crate::openhuman::life_capture::embedder::Embedder;
 use crate::openhuman::life_capture::index::PersonalIndex;
 
-/// Shared runtime handles consumed by the controller handlers.
-pub struct LifeCaptureRuntime {
+static INDEX: OnceCell<Arc<PersonalIndex>> = OnceCell::const_new();
+static EMBEDDER: OnceCell<Arc<dyn Embedder>> = OnceCell::const_new();
+
+/// Initialise the index handle. Call once at startup, immediately after
+/// `PersonalIndex::open` succeeds. Returns Err on double-init.
+pub async fn init_index(idx: Arc<PersonalIndex>) -> Result<(), &'static str> {
+    INDEX.set(idx).map_err(|_| "life_capture index already initialised")
+}
+
+/// Initialise the embedder handle. Optional — called only when an embeddings
+/// API key is available (e.g. `OPENAI_API_KEY` or `OPENHUMAN_EMBEDDINGS_KEY`).
+pub async fn init_embedder(embedder: Arc<dyn Embedder>) -> Result<(), &'static str> {
+    EMBEDDER.set(embedder).map_err(|_| "life_capture embedder already initialised")
+}
+
+/// Fetch the index, or return a structured error if startup hasn't run yet.
+pub fn get_index() -> Result<Arc<PersonalIndex>, &'static str> {
+    INDEX
+        .get()
+        .cloned()
+        .ok_or("life_capture index not initialised — core startup hasn't completed")
+}
+
+/// Fetch the embedder, or return a structured error pointing the user at the
+/// env vars that gate it. Used by `search`; `get_stats` does not call this.
+pub fn get_embedder() -> Result<Arc<dyn Embedder>, &'static str> {
+    EMBEDDER.get().cloned().ok_or(
+        "life_capture embedder not configured — \
+         set OPENAI_API_KEY or OPENHUMAN_EMBEDDINGS_KEY",
+    )
+}
+
+/// Convenience bundle returned to handlers that need both. Keeps the call
+/// sites compact without re-introducing the over-gating problem.
+pub struct LifeCaptureHandles {
     pub index: Arc<PersonalIndex>,
     pub embedder: Arc<dyn Embedder>,
 }
 
-static RUNTIME: OnceCell<Arc<LifeCaptureRuntime>> = OnceCell::const_new();
-
-/// Initialise the runtime exactly once. Returns `Err` if already initialised
-/// so callers can surface "double-init" loudly rather than silently dropping.
-pub async fn init(rt: Arc<LifeCaptureRuntime>) -> Result<(), &'static str> {
-    RUNTIME
-        .set(rt)
-        .map_err(|_| "life_capture runtime already initialised")
-}
-
-/// Fetch the runtime, or `Err` if not initialised yet. Handlers translate this
-/// into a user-facing error like "life-capture is not configured".
-pub fn get() -> Result<Arc<LifeCaptureRuntime>, &'static str> {
-    RUNTIME
-        .get()
-        .cloned()
-        .ok_or("life_capture runtime not initialised — set embeddings.api_key in config")
-}
-
-#[cfg(test)]
-pub(crate) fn reset_for_tests() {
-    // OnceCell has no public reset; tests that need a fresh runtime must run in
-    // separate processes (or use the in-process index directly without the
-    // controller surface). This helper exists for documentation only.
+pub fn get_full() -> Result<LifeCaptureHandles, &'static str> {
+    Ok(LifeCaptureHandles {
+        index: get_index()?,
+        embedder: get_embedder()?,
+    })
 }

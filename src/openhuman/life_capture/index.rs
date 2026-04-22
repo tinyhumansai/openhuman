@@ -1,6 +1,6 @@
 use anyhow::Context;
 use once_cell::sync::OnceCell;
-use rusqlite::{ffi, Connection};
+use rusqlite::{ffi, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -80,73 +80,134 @@ impl IndexWriter {
 
     /// Upsert items by (source, external_id). FTS rows are kept in sync via
     /// the SQL triggers defined in 0001_init.sql.
-    pub async fn upsert(&self, items: &[crate::openhuman::life_capture::types::Item]) -> anyhow::Result<()> {
-        let items = items.to_vec();
+    ///
+    /// Mutates `items[i].id` to the canonical (existing) UUID when a row with
+    /// the same (source, external_id) already exists — so callers can write the
+    /// vector under the correct id without orphaning the previous one. Cascades
+    /// `item_vectors` deletes for any caller-supplied id that loses the race.
+    pub async fn upsert(
+        &self,
+        items: &mut [crate::openhuman::life_capture::types::Item],
+    ) -> anyhow::Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        // Clone across the blocking boundary, write canonical ids back below.
+        let mut owned = items.to_vec();
         let conn = Arc::clone(&self.conn);
-        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let mut guard = conn.blocking_lock();
-            let tx = guard.transaction().context("begin upsert tx")?;
-            for item in &items {
-                let source = serde_json::to_value(item.source)
-                    .ok()
-                    .and_then(|v| v.as_str().map(str::to_string))
-                    .unwrap_or_default();
-                let author_json = item
-                    .author
-                    .as_ref()
-                    .map(|a| serde_json::to_string(a).unwrap_or_else(|_| "null".into()));
-                let metadata_json = serde_json::to_string(&item.metadata)
-                    .unwrap_or_else(|_| "{}".into());
+        let result: anyhow::Result<Vec<crate::openhuman::life_capture::types::Item>> =
+            tokio::task::spawn_blocking(move || {
+                let mut guard = conn.blocking_lock();
+                let tx = guard.transaction().context("begin upsert tx")?;
+                for item in owned.iter_mut() {
+                    let source = serde_json::to_value(item.source)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_default();
+                    let author_json = item
+                        .author
+                        .as_ref()
+                        .map(|a| serde_json::to_string(a).unwrap_or_else(|_| "null".into()));
+                    let metadata_json = serde_json::to_string(&item.metadata)
+                        .unwrap_or_else(|_| "{}".into());
+                    let new_id = item.id.to_string();
 
-                tx.execute(
-                    "INSERT INTO items(id, source, external_id, ts, author_json, subject, text, metadata_json) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
-                     ON CONFLICT(source, external_id) DO UPDATE SET \
-                       ts            = excluded.ts, \
-                       author_json   = excluded.author_json, \
-                       subject       = excluded.subject, \
-                       text          = excluded.text, \
-                       metadata_json = excluded.metadata_json",
-                    rusqlite::params![
-                        item.id.to_string(),
-                        source,
-                        item.external_id,
-                        item.ts.timestamp(),
-                        author_json,
-                        item.subject.as_deref(),
-                        item.text,
-                        metadata_json,
-                    ],
-                )
-                .context("upsert item row")?;
-            }
-            tx.commit().context("commit upsert tx")?;
-            Ok(())
-        })
-        .await
-        .context("upsert task panicked")?
+                    // Look up the existing canonical id, if any.
+                    let existing_id: Option<String> = tx
+                        .query_row(
+                            "SELECT id FROM items WHERE source = ?1 AND external_id = ?2",
+                            rusqlite::params![source, item.external_id],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .context("lookup existing item by (source, external_id)")?;
+
+                    match existing_id {
+                        Some(canonical) => {
+                            // Existing row wins. If the caller supplied a
+                            // different id, drop any vector they may have
+                            // already written under that wrong id.
+                            if canonical != new_id {
+                                tx.execute(
+                                    "DELETE FROM item_vectors WHERE item_id = ?1",
+                                    rusqlite::params![new_id],
+                                )
+                                .context("orphan-clean stale vector by caller id")?;
+                            }
+                            tx.execute(
+                                "UPDATE items \
+                                 SET ts = ?1, author_json = ?2, subject = ?3, \
+                                     text = ?4, metadata_json = ?5 \
+                                 WHERE id = ?6",
+                                rusqlite::params![
+                                    item.ts.timestamp(),
+                                    author_json,
+                                    item.subject.as_deref(),
+                                    item.text,
+                                    metadata_json,
+                                    canonical,
+                                ],
+                            )
+                            .context("update existing item row")?;
+                            // Mutate the caller's item so subsequent
+                            // upsert_vector writes under the canonical id.
+                            item.id = uuid::Uuid::parse_str(&canonical)
+                                .context("existing items.id is not a valid uuid")?;
+                        }
+                        None => {
+                            tx.execute(
+                                "INSERT INTO items(id, source, external_id, ts, author_json, subject, text, metadata_json) \
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                                rusqlite::params![
+                                    new_id,
+                                    source,
+                                    item.external_id,
+                                    item.ts.timestamp(),
+                                    author_json,
+                                    item.subject.as_deref(),
+                                    item.text,
+                                    metadata_json,
+                                ],
+                            )
+                            .context("insert new item row")?;
+                        }
+                    }
+                }
+                tx.commit().context("commit upsert tx")?;
+                Ok(owned)
+            })
+            .await
+            .context("upsert task panicked")?;
+
+        let updated = result?;
+        // Move canonical ids back into the caller's slice.
+        for (slot, item) in items.iter_mut().zip(updated.into_iter()) {
+            *slot = item;
+        }
+        Ok(())
     }
 
-    /// Replace the vector for an item. DELETE + INSERT because vec0 doesn't
-    /// support ON CONFLICT for virtual table primary keys.
+    /// Replace the vector for an item atomically: DELETE + INSERT inside a
+    /// single transaction so a failed INSERT doesn't permanently remove the
+    /// item's vector. (vec0 doesn't support ON CONFLICT on its primary key.)
     pub async fn upsert_vector(&self, item_id: &uuid::Uuid, vector: &[f32]) -> anyhow::Result<()> {
         let id = item_id.to_string();
         let v_json = serde_json::to_string(vector).context("serialize vector")?;
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let guard = conn.blocking_lock();
-            guard
-                .execute(
-                    "DELETE FROM item_vectors WHERE item_id = ?1",
-                    rusqlite::params![id],
-                )
-                .context("delete prior vector")?;
-            guard
-                .execute(
-                    "INSERT INTO item_vectors(item_id, embedding) VALUES (?1, ?2)",
-                    rusqlite::params![id, v_json],
-                )
-                .context("insert vector")?;
+            let mut guard = conn.blocking_lock();
+            let tx = guard.transaction().context("begin upsert_vector tx")?;
+            tx.execute(
+                "DELETE FROM item_vectors WHERE item_id = ?1",
+                rusqlite::params![id],
+            )
+            .context("delete prior vector")?;
+            tx.execute(
+                "INSERT INTO item_vectors(item_id, embedding) VALUES (?1, ?2)",
+                rusqlite::params![id, v_json],
+            )
+            .context("insert vector")?;
+            tx.commit().context("commit upsert_vector tx")?;
             Ok(())
         })
         .await
@@ -412,9 +473,9 @@ mod writer_tests {
         let idx = PersonalIndex::open_in_memory().await.unwrap();
         let writer = IndexWriter::new(&idx);
 
-        writer.upsert(&[sample_item("a", "first")]).await.unwrap();
-        writer.upsert(&[sample_item("a", "first updated")]).await.unwrap();
-        writer.upsert(&[sample_item("b", "second")]).await.unwrap();
+        writer.upsert(&mut [sample_item("a", "first")]).await.unwrap();
+        writer.upsert(&mut [sample_item("a", "first updated")]).await.unwrap();
+        writer.upsert(&mut [sample_item("b", "second")]).await.unwrap();
 
         let conn = idx.conn.lock().await;
         let count: i64 = conn
@@ -430,6 +491,42 @@ mod writer_tests {
             )
             .unwrap();
         assert_eq!(updated, "first updated", "upsert overwrites text");
+    }
+
+    #[tokio::test]
+    async fn reingest_with_fresh_uuid_keeps_vector_findable() {
+        // Regression: previously upsert kept the existing items.id but the
+        // caller's fresh UUID was used for upsert_vector — leaving an
+        // orphaned vector under an id no row joined to.
+        let idx = PersonalIndex::open_in_memory().await.unwrap();
+        let writer = IndexWriter::new(&idx);
+
+        let mut first = [sample_item("dup", "first")];
+        writer.upsert(&mut first).await.unwrap();
+        let canonical_id = first[0].id;
+        let v: Vec<f32> = (0..1536).map(|i| i as f32 * 0.001).collect();
+        writer.upsert_vector(&canonical_id, &v).await.unwrap();
+
+        // Re-ingest with a fresh Uuid for the same (source, external_id).
+        let mut second = [sample_item("dup", "updated text")];
+        let fresh_uuid = second[0].id;
+        assert_ne!(fresh_uuid, canonical_id, "test setup needs a different uuid");
+        writer.upsert(&mut second).await.unwrap();
+
+        // upsert must rewrite the caller's id to the canonical one so the
+        // next vector write lands under the right key.
+        assert_eq!(
+            second[0].id, canonical_id,
+            "upsert should rewrite caller id to existing canonical id"
+        );
+
+        // And it must not have left the old vector orphaned: vector_search
+        // for v finds the (single, updated) row.
+        let reader = IndexReader::new(&idx);
+        let hits = reader.vector_search(&v, 5).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].item.text, "updated text");
+        assert_eq!(hits[0].item.id, canonical_id);
     }
 
     #[tokio::test]
@@ -477,7 +574,7 @@ mod reader_keyword_tests {
         let idx = PersonalIndex::open_in_memory().await.unwrap();
         let writer = IndexWriter::new(&idx);
         writer
-            .upsert(&[
+            .upsert(&mut [
                 it("a", "ledger contract", "the ledger contract draft is attached", 100),
                 it("b", "lunch", "let's grab lunch", 200),
                 it("c", "ledger", "ledger ledger ledger", 300),
@@ -522,7 +619,7 @@ mod reader_vector_tests {
         let a = mk("a");
         let b = mk("b");
         let c = mk("c");
-        writer.upsert(&[a.clone(), b.clone(), c.clone()]).await.unwrap();
+        writer.upsert(&mut [a.clone(), b.clone(), c.clone()]).await.unwrap();
 
         let mut va = vec![0.0_f32; 1536];
         va[0] = 1.0;
@@ -567,7 +664,7 @@ mod reader_hybrid_tests {
         };
         let a = mk("a", "ledger", "ledger contract draft", 1);
         let b = mk("b", "ledger", "ledger contract draft", 30);
-        w.upsert(&[a.clone(), b.clone()]).await.unwrap();
+        w.upsert(&mut [a.clone(), b.clone()]).await.unwrap();
 
         // Same vector for both — recency should break the tie in favor of `a`.
         let v: Vec<f32> = (0..1536).map(|i| (i as f32) / 1536.0).collect();

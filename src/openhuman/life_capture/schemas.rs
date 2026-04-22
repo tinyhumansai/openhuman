@@ -157,17 +157,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
 
 fn handle_get_stats(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let rt = runtime::get().map_err(|e| e.to_string())?;
-        to_json(rpc::handle_get_stats(&rt).await?)
+        let idx = runtime::get_index().map_err(|e| e.to_string())?;
+        to_json(rpc::handle_get_stats(&idx).await?)
     })
 }
 
 fn handle_search(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let rt = runtime::get().map_err(|e| e.to_string())?;
+        let idx = runtime::get_index().map_err(|e| e.to_string())?;
+        let embedder = runtime::get_embedder().map_err(|e| e.to_string())?;
         let text = read_required_string(&params, "text")?;
         let k = read_optional_u64(&params, "k")?.unwrap_or(10) as usize;
-        to_json(rpc::handle_search(&rt, text, k).await?)
+        to_json(rpc::handle_search(&idx, &embedder, text, k).await?)
     })
 }
 
