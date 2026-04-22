@@ -696,6 +696,59 @@ async fn run_server_inner(
                     log::debug!("[core] desktop core startup");
                 }
 
+                // Bring up the local personal index (life-capture). This is the
+                // SQLite + sqlite-vec store backing the `life_capture.search`
+                // and `life_capture.get_stats` controllers. The embedder is
+                // env-gated for now: if neither OPENHUMAN_EMBEDDINGS_KEY nor
+                // OPENAI_API_KEY is set we still open the index file (so the
+                // ingestion pipeline in Plan #2 can write to it later) but skip
+                // runtime registration — the controllers will then return a
+                // structured "not initialised" error rather than silently
+                // succeed against a non-functional embedder.
+                {
+                    use std::sync::Arc;
+                    let index_path = config.workspace_dir.join("personal_index.db");
+                    match crate::openhuman::life_capture::index::PersonalIndex::open(&index_path).await {
+                        Ok(idx) => {
+                            let idx = Arc::new(idx);
+                            let api_key = std::env::var("OPENHUMAN_EMBEDDINGS_KEY")
+                                .or_else(|_| std::env::var("OPENAI_API_KEY"))
+                                .ok();
+                            if let Some(api_key) = api_key {
+                                let base_url = std::env::var("OPENHUMAN_EMBEDDINGS_URL")
+                                    .unwrap_or_else(|_| "https://api.openai.com/v1".into());
+                                let model = std::env::var("OPENHUMAN_EMBEDDINGS_MODEL")
+                                    .unwrap_or_else(|_| "text-embedding-3-small".into());
+                                let embedder: Arc<dyn crate::openhuman::life_capture::embedder::Embedder> =
+                                    Arc::new(crate::openhuman::life_capture::embedder::HostedEmbedder::new(
+                                        base_url, api_key, model,
+                                    ));
+                                let rt = Arc::new(crate::openhuman::life_capture::runtime::LifeCaptureRuntime {
+                                    index: idx,
+                                    embedder,
+                                });
+                                match crate::openhuman::life_capture::runtime::init(rt).await {
+                                    Ok(()) => log::info!(
+                                        "[life_capture] runtime initialised — index={} model=text-embedding-3-small",
+                                        index_path.display()
+                                    ),
+                                    Err(e) => log::warn!("[life_capture] runtime init: {e}"),
+                                }
+                            } else {
+                                log::info!(
+                                    "[life_capture] index opened at {} but no embedder key found \
+                                     (set OPENAI_API_KEY or OPENHUMAN_EMBEDDINGS_KEY); search controller will return 'not initialised'",
+                                    index_path.display()
+                                );
+                            }
+                        }
+                        Err(e) => log::warn!(
+                            "[life_capture] failed to open personal index at {}: {e}",
+                            index_path.display()
+                        ),
+                    }
+                }
+
                 // Register autocomplete shutdown hook so the engine (and its
                 // Swift overlay helper) are stopped cleanly on process exit.
                 // This is unconditional — the hook should fire regardless of
