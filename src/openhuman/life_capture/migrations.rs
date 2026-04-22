@@ -2,6 +2,7 @@ use rusqlite::{Connection, Result};
 
 const MIGRATIONS: &[(&str, &str)] = &[
     ("0001_init", include_str!("migrations/0001_init.sql")),
+    ("0002_vec", include_str!("migrations/0002_vec.sql")),
 ];
 
 /// Run all pending life-capture migrations against an open `rusqlite::Connection`.
