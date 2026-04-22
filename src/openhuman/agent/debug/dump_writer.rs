@@ -144,11 +144,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dumps = vec![
             sample_dump("orchestrator", None, &["a", "b", "c"]),
-            sample_dump(
-                "integrations_agent",
-                Some("gmail"),
-                &["send", "search"],
-            ),
+            sample_dump("integrations_agent", Some("gmail"), &["send", "search"]),
         ];
 
         let out = write_prompt_dumps(dir.path(), &dumps).unwrap();
@@ -167,10 +163,7 @@ mod tests {
         assert_eq!(body, "# prompt for orchestrator\nbody\n");
 
         // Meta sidecar: exact byte format, toolkit-less variant.
-        let meta0 = std::fs::read_to_string(
-            dir.path().join("1_orchestrator.meta.txt"),
-        )
-        .unwrap();
+        let meta0 = std::fs::read_to_string(dir.path().join("1_orchestrator.meta.txt")).unwrap();
         let expected_meta0 = "\
 agent:          orchestrator
 mode:           session
@@ -182,10 +175,8 @@ skill_tools:    1
         assert_eq!(meta0, expected_meta0);
 
         // Meta sidecar: toolkit variant inserts `toolkit:` after `agent:`.
-        let meta1 = std::fs::read_to_string(
-            dir.path().join("2_integrations_agent_gmail.meta.txt"),
-        )
-        .unwrap();
+        let meta1 = std::fs::read_to_string(dir.path().join("2_integrations_agent_gmail.meta.txt"))
+            .unwrap();
         let expected_meta1 = "\
 agent:          integrations_agent
 toolkit:        gmail

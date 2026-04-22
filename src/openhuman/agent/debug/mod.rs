@@ -506,4 +506,3 @@ async fn connected_toolkits_for(config: &Config) -> Result<Vec<String>> {
         .map(|ci| ci.toolkit.clone())
         .collect())
 }
-
