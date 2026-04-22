@@ -7,9 +7,10 @@
 //!   traversal, symlink, size and UTF-8 guards.
 //! * `skills.create` — scaffold a new SKILL.md skill under the user or
 //!   workspace scope.
-//! * `skills.install_from_url` — install a remote skill by shelling out to
-//!   `npx --yes skills add <url>` through the managed Node.js toolchain,
-//!   with https-only / private-IP URL guards and a timeout.
+//! * `skills.install_from_url` — install a remote skill by fetching its
+//!   `SKILL.md` over HTTPS (size-capped, timeout-clamped) and writing it into
+//!   the user-scope skills directory. Rejects non-https, private-IP, and
+//!   non-SKILL.md URLs; normalises `github.com/.../blob/...` → raw.
 //!
 //! All controllers resolve the active workspace via the persisted config
 //! layer (`config::load_config_with_timeout`) so the CLI and UI see the same
@@ -306,7 +307,7 @@ pub fn skills_schemas(function: &str) -> ControllerSchema {
         "skills_install_from_url" => ControllerSchema {
             namespace: "skills",
             function: "install_from_url",
-            description: "Install a remote skill by shelling out to `npx --yes skills add <url>`. URL must be https and resolve to a public host; default 60s timeout (max 600s).",
+            description: "Install a remote skill by fetching its SKILL.md over HTTPS and writing it into the user-scope skills directory. URL must be https, resolve to a public host, and point at a single `.md` file (`github.com/.../blob/...` auto-rewrites to raw). Default 60s timeout, max 600s.",
             inputs: vec![
                 FieldSchema {
                     name: "url",
@@ -331,13 +332,13 @@ pub fn skills_schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "stdout",
                     ty: TypeSchema::String,
-                    comment: "Captured stdout from the `npx skills add` invocation.",
+                    comment: "Human-readable diagnostic summary (bytes fetched, target path).",
                     required: true,
                 },
                 FieldSchema {
                     name: "stderr",
                     ty: TypeSchema::String,
-                    comment: "Captured stderr from the `npx skills add` invocation.",
+                    comment: "Non-fatal frontmatter parse warnings, joined by newlines.",
                     required: true,
                 },
                 FieldSchema {

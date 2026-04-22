@@ -110,8 +110,10 @@ export interface InstallSkillFromUrlInput {
  * Result of `openhuman.skills_install_from_url`.
  *
  * `newSkills` lists skill ids that appeared post-install (diff vs the
- * pre-install snapshot). `stdout` and `stderr` are captured verbatim from
- * the `npx skills add …` subprocess so the UI can surface progress/errors.
+ * pre-install snapshot). `stdout` holds a human-readable diagnostic summary
+ * (bytes fetched, target path); `stderr` holds non-fatal frontmatter parse
+ * warnings joined by newlines. There is no subprocess — the Rust side fetches
+ * SKILL.md directly over HTTPS.
  */
 export interface InstallSkillFromUrlResult {
   url: string;
@@ -211,12 +213,14 @@ export const skillsApi = {
   },
 
   /**
-   * Install a published skill package by URL via `openhuman.skills_install_from_url`.
+   * Install a remote SKILL.md by URL via `openhuman.skills_install_from_url`.
    *
-   * The Rust side shells out to `npx --yes skills add <url>` under the
-   * managed Node toolchain, with an allow-list on the URL (https only,
-   * no private/loopback/link-local/multicast/cloud-metadata hosts) and a
-   * wall-clock timeout (default 60s, max 600s).
+   * The Rust side fetches the SKILL.md directly over HTTPS (no subprocess,
+   * no Node toolchain required), validates the frontmatter, and writes it
+   * into the user-scope skills directory. URL must be https, resolve to a
+   * public host, and point at a single `.md` file; `github.com/.../blob/...`
+   * is normalised to its `raw.githubusercontent.com` equivalent. Size is
+   * capped at 1 MiB; timeout default 60s, max 600s.
    */
   installSkillFromUrl: async (
     input: InstallSkillFromUrlInput
