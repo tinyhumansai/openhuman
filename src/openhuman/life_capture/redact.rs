@@ -8,7 +8,7 @@ static EMAIL: Lazy<Regex> = Lazy::new(|| {
 // Catches +1-415-555-0123, (415) 555-0123, 415.555.0123, 4155550123 in 10-15 digit forms.
 static PHONE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?x)
-        \+?\d{1,3}[\s\-.]?  # optional country code
+        (?:\+?\d{1,3}[\s\-.])?       # optional country code, e.g. '+1-' or '1.'
         (?:\(\d{2,4}\)|\d{2,4})[\s\-.]?
         \d{3}[\s\-.]?\d{3,4}
     ").unwrap()
