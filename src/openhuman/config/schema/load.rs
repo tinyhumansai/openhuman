@@ -268,8 +268,20 @@ async fn resolve_runtime_config_dirs(
     default_openhuman_dir: &Path,
     default_workspace_dir: &Path,
 ) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
+    resolve_runtime_config_dirs_with(default_openhuman_dir, default_workspace_dir, &ProcessEnv)
+        .await
+}
+
+/// Env-injectable variant of [`resolve_runtime_config_dirs`]. Accepts any
+/// [`EnvLookup`] so unit tests can exercise the `OPENHUMAN_WORKSPACE`
+/// override path without mutating the process environment.
+async fn resolve_runtime_config_dirs_with(
+    default_openhuman_dir: &Path,
+    default_workspace_dir: &Path,
+    env: &(dyn EnvLookup + Sync),
+) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
     // 1. Explicit env override always wins.
-    if let Ok(custom_workspace) = std::env::var("OPENHUMAN_WORKSPACE") {
+    if let Some(custom_workspace) = env.get("OPENHUMAN_WORKSPACE") {
         if !custom_workspace.is_empty() {
             let (openhuman_dir, workspace_dir) =
                 resolve_config_dir_for_workspace(&PathBuf::from(custom_workspace));
@@ -1812,5 +1824,81 @@ mod tests {
         );
         // All missing → None.
         assert_eq!(env.get_any(&["KEY_X", "KEY_Y"]), None);
+    }
+
+    // ── resolve_runtime_config_dirs_with ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn resolve_runtime_config_dirs_with_env_workspace_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let default_workspace = root.join("workspace");
+
+        // Point OPENHUMAN_WORKSPACE at a custom path via HashMapEnv — no
+        // process-env mutation needed.
+        let custom_ws = tmp.path().join("custom_ws");
+        let env = HashMapEnv::new().with(
+            "OPENHUMAN_WORKSPACE",
+            custom_ws.to_str().unwrap(),
+        );
+
+        let (oh_dir, ws_dir, source) =
+            resolve_runtime_config_dirs_with(root, &default_workspace, &env)
+                .await
+                .unwrap();
+
+        assert_eq!(source, ConfigResolutionSource::EnvWorkspace);
+        // resolve_config_dir_for_workspace: no config.toml and basename ≠
+        // "workspace" → oh_dir == custom_ws, ws_dir == custom_ws/workspace.
+        assert_eq!(oh_dir, custom_ws);
+        assert_eq!(ws_dir, custom_ws.join("workspace"));
+    }
+
+    #[tokio::test]
+    async fn resolve_runtime_config_dirs_with_empty_env_falls_back_to_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let default_workspace = root.join("workspace");
+
+        // Empty env: no OPENHUMAN_WORKSPACE → falls through to the pre-login
+        // user directory path (no active_user.toml, no workspace marker).
+        let env = HashMapEnv::new();
+        let (oh_dir, _ws_dir, source) =
+            resolve_runtime_config_dirs_with(root, &default_workspace, &env)
+                .await
+                .unwrap();
+
+        assert_eq!(source, ConfigResolutionSource::DefaultConfigDir);
+        // Should be under the users/pre-login tree, not the bare root.
+        assert!(
+            oh_dir.starts_with(root.join("users")),
+            "expected oh_dir under users/, got {oh_dir:?}"
+        );
+    }
+
+    #[test]
+    fn apply_env_overrides_commits_side_effects_to_runtime_proxy() {
+        use crate::openhuman::config::schema::proxy::runtime_proxy_config;
+
+        // Build a config with a proxy URL via the injectable seam.
+        let mut cfg = Config::default();
+        cfg.apply_env_overlay_with(
+            &HashMapEnv::new()
+                .with("OPENHUMAN_HTTP_PROXY", "http://proxy.test:8080")
+                .with("OPENHUMAN_PROXY_ENABLED", "true"),
+        );
+
+        // Now call the public wrapper which commits side effects.
+        cfg.apply_env_overrides();
+
+        // `set_runtime_proxy_config` must have been called: the global should
+        // reflect the proxy URL we injected.
+        let runtime = runtime_proxy_config();
+        assert!(runtime.enabled, "runtime proxy must be enabled after apply_env_overrides");
+        assert_eq!(
+            runtime.http_proxy.as_deref(),
+            Some("http://proxy.test:8080"),
+            "runtime proxy URL must match the env-injected value"
+        );
     }
 }
