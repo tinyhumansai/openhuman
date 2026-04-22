@@ -195,6 +195,145 @@ mod tests {
     }
 }
 
+/// Reader for the personal index. All queries enforce the v1 ACL token
+/// (`user:local`) via `EXISTS (... json_each(access_control_list) = 'user:local')`
+/// so the same query shape works for the multi-token team v2 ACL without rewrites.
+pub struct IndexReader {
+    conn: Arc<Mutex<Connection>>,
+}
+
+/// Internal row shape for both keyword and vector search. We hand-build it
+/// inside the `query_row` closure because rusqlite has no derive equivalent.
+struct ItemRow {
+    id: String,
+    source: String,
+    external_id: String,
+    ts: i64,
+    author_json: Option<String>,
+    subject: Option<String>,
+    text: String,
+    metadata_json: String,
+    score: f64,
+    snip: String,
+}
+
+impl ItemRow {
+    fn into_hit(self) -> crate::openhuman::life_capture::types::Hit {
+        use crate::openhuman::life_capture::types::{Hit, Item, Source};
+        let author = self.author_json.and_then(|s| serde_json::from_str(&s).ok());
+        let metadata =
+            serde_json::from_str(&self.metadata_json).unwrap_or(serde_json::json!({}));
+        let source: Source =
+            serde_json::from_value(serde_json::Value::String(self.source.clone()))
+                .unwrap_or(Source::Gmail);
+        Hit {
+            score: self.score as f32,
+            snippet: self.snip,
+            item: Item {
+                id: uuid::Uuid::parse_str(&self.id).unwrap_or_else(|_| uuid::Uuid::nil()),
+                source,
+                external_id: self.external_id,
+                ts: chrono::DateTime::from_timestamp(self.ts, 0).unwrap_or_default(),
+                author,
+                subject: self.subject,
+                text: self.text,
+                metadata,
+            },
+        }
+    }
+}
+
+impl IndexReader {
+    pub fn new(idx: &PersonalIndex) -> Self {
+        Self { conn: Arc::clone(&idx.conn) }
+    }
+
+    /// Keyword search via FTS5 ranked by bm25 (negated so higher = better).
+    pub async fn keyword_search(
+        &self,
+        query: &str,
+        k: usize,
+    ) -> anyhow::Result<Vec<crate::openhuman::life_capture::types::Hit>> {
+        let query = query.to_string();
+        let conn = Arc::clone(&self.conn);
+        tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<_>> {
+            let guard = conn.blocking_lock();
+            let mut stmt = guard.prepare(
+                "SELECT i.id, i.source, i.external_id, i.ts, i.author_json, i.subject, i.text, i.metadata_json, \
+                        -bm25(items_fts) AS score, \
+                        snippet(items_fts, 1, '«', '»', '…', 12) AS snip \
+                 FROM items_fts JOIN items i ON i.rowid = items_fts.rowid \
+                 WHERE items_fts MATCH ?1 \
+                   AND EXISTS (SELECT 1 FROM json_each(i.access_control_list) WHERE value = 'user:local') \
+                 ORDER BY score DESC \
+                 LIMIT ?2",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![query, k as i64], |row| {
+                    Ok(ItemRow {
+                        id: row.get(0)?,
+                        source: row.get(1)?,
+                        external_id: row.get(2)?,
+                        ts: row.get(3)?,
+                        author_json: row.get(4)?,
+                        subject: row.get(5)?,
+                        text: row.get(6)?,
+                        metadata_json: row.get(7)?,
+                        score: row.get(8)?,
+                        snip: row.get(9)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows.into_iter().map(ItemRow::into_hit).collect())
+        })
+        .await
+        .context("keyword_search task panicked")?
+    }
+
+    /// Vector search via sqlite-vec MATCH. Score is `1 / (1 + distance)` so
+    /// callers can blend it with the keyword score on the same monotonic scale.
+    pub async fn vector_search(
+        &self,
+        vector: &[f32],
+        k: usize,
+    ) -> anyhow::Result<Vec<crate::openhuman::life_capture::types::Hit>> {
+        let v_json = serde_json::to_string(vector).context("serialize vector")?;
+        let conn = Arc::clone(&self.conn);
+        tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<_>> {
+            let guard = conn.blocking_lock();
+            let mut stmt = guard.prepare(
+                "SELECT i.id, i.source, i.external_id, i.ts, i.author_json, i.subject, i.text, i.metadata_json, \
+                        (1.0 / (1.0 + v.distance)) AS score, \
+                        substr(i.text, 1, 200) AS snip \
+                 FROM item_vectors v JOIN items i ON i.id = v.item_id \
+                 WHERE v.embedding MATCH ?1 AND k = ?2 \
+                   AND EXISTS (SELECT 1 FROM json_each(i.access_control_list) WHERE value = 'user:local') \
+                 ORDER BY v.distance ASC \
+                 LIMIT ?2",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![v_json, k as i64], |row| {
+                    Ok(ItemRow {
+                        id: row.get(0)?,
+                        source: row.get(1)?,
+                        external_id: row.get(2)?,
+                        ts: row.get(3)?,
+                        author_json: row.get(4)?,
+                        subject: row.get(5)?,
+                        text: row.get(6)?,
+                        metadata_json: row.get(7)?,
+                        score: row.get(8)?,
+                        snip: row.get(9)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows.into_iter().map(ItemRow::into_hit).collect())
+        })
+        .await
+        .context("vector_search task panicked")?
+    }
+}
+
 #[cfg(test)]
 mod writer_tests {
     use super::*;
@@ -257,5 +396,95 @@ mod writer_tests {
             .query_row("SELECT count(*) FROM item_vectors WHERE item_id = ?1", rusqlite::params![id.to_string()], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1, "vector replaced, not duplicated");
+    }
+}
+
+#[cfg(test)]
+mod reader_keyword_tests {
+    use super::*;
+    use crate::openhuman::life_capture::types::{Item, Source};
+    use chrono::{TimeZone, Utc};
+    use uuid::Uuid;
+
+    fn it(ext: &str, subj: &str, text: &str, ts_secs: i64) -> Item {
+        Item {
+            id: Uuid::new_v4(),
+            source: Source::Gmail,
+            external_id: ext.into(),
+            ts: Utc.timestamp_opt(ts_secs, 0).single().unwrap(),
+            author: None,
+            subject: Some(subj.into()),
+            text: text.into(),
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    #[tokio::test]
+    async fn keyword_search_ranks_by_relevance() {
+        let idx = PersonalIndex::open_in_memory().await.unwrap();
+        let writer = IndexWriter::new(&idx);
+        writer
+            .upsert(&[
+                it("a", "ledger contract", "the ledger contract draft is attached", 100),
+                it("b", "lunch", "let's grab lunch", 200),
+                it("c", "ledger", "ledger ledger ledger", 300),
+            ])
+            .await
+            .unwrap();
+
+        let reader = IndexReader::new(&idx);
+        let hits = reader.keyword_search("ledger contract", 10).await.unwrap();
+        assert!(!hits.is_empty(), "expected at least one hit");
+        assert_eq!(hits[0].item.external_id, "a", "best match should be 'a'");
+    }
+}
+
+#[cfg(test)]
+mod reader_vector_tests {
+    use super::*;
+    use crate::openhuman::life_capture::types::{Item, Source};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    fn near(target: &[f32], jitter: f32) -> Vec<f32> {
+        target.iter().map(|x| x + jitter).collect()
+    }
+
+    #[tokio::test]
+    async fn vector_search_returns_nearest_first() {
+        let idx = PersonalIndex::open_in_memory().await.unwrap();
+        let writer = IndexWriter::new(&idx);
+
+        let mk = |ext: &str| Item {
+            id: Uuid::new_v4(),
+            source: Source::Gmail,
+            external_id: ext.into(),
+            ts: Utc::now(),
+            author: None,
+            subject: None,
+            text: format!("body of {ext}"),
+            metadata: serde_json::json!({}),
+        };
+
+        let a = mk("a");
+        let b = mk("b");
+        let c = mk("c");
+        writer.upsert(&[a.clone(), b.clone(), c.clone()]).await.unwrap();
+
+        let mut va = vec![0.0_f32; 1536];
+        va[0] = 1.0;
+        let mut vb = vec![0.0_f32; 1536];
+        vb[1] = 1.0;
+        let mut vc = vec![0.0_f32; 1536];
+        vc[2] = 1.0;
+
+        writer.upsert_vector(&a.id, &va).await.unwrap();
+        writer.upsert_vector(&b.id, &vb).await.unwrap();
+        writer.upsert_vector(&c.id, &vc).await.unwrap();
+
+        let reader = IndexReader::new(&idx);
+        let hits = reader.vector_search(&near(&va, 0.01), 2).await.unwrap();
+        assert_eq!(hits.len(), 2, "k=2");
+        assert_eq!(hits[0].item.external_id, "a", "nearest first");
     }
 }
