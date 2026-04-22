@@ -142,6 +142,16 @@ impl ComposioProvider for GmailProvider {
             ],
         )
         .or_else(|| email.clone());
+        let profile_url = pick_str(
+            data,
+            &[
+                "data.profileUrl",
+                "data.profile_url",
+                "data.profile.url",
+                "profileUrl",
+                "profile_url",
+            ],
+        );
 
         let profile = ProviderUserProfile {
             toolkit: "gmail".to_string(),
@@ -150,6 +160,7 @@ impl ComposioProvider for GmailProvider {
             email,
             username: None,
             avatar_url: None,
+            profile_url,
             extras: data.clone(),
         };
         let has_email = profile.email.is_some();

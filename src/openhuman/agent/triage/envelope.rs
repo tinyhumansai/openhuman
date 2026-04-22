@@ -19,6 +19,14 @@ pub enum TriggerSource {
     /// socket.io bridge. `toolkit` is the slug like `"gmail"`;
     /// `trigger` is the slug like `"GMAIL_NEW_GMAIL_MESSAGE"`.
     Composio { toolkit: String, trigger: String },
+    /// A notification captured from an embedded webview integration
+    /// (WhatsApp Web, Gmail, Slack, …) via the recipe event pipeline.
+    /// `provider` is the slug like `"gmail"`; `account_id` is the
+    /// webview account identifier.
+    WebviewIntegration {
+        provider: String,
+        account_id: String,
+    },
     // Cron / Webhook / … variants will be added in later commits as
     // those callers wire up the triage pipeline.
 }
@@ -29,6 +37,7 @@ impl TriggerSource {
     pub fn slug(&self) -> &'static str {
         match self {
             Self::Composio { .. } => "composio",
+            Self::WebviewIntegration { .. } => "webview",
         }
     }
 }
@@ -123,6 +132,7 @@ mod tests {
                 assert_eq!(toolkit, "gmail");
                 assert_eq!(trigger, "GMAIL_NEW_GMAIL_MESSAGE");
             }
+            _ => panic!("expected Composio source"),
         }
         assert_eq!(env.payload["from"], "a@b.com");
     }

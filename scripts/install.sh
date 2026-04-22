@@ -293,12 +293,17 @@ if resolve_from_latest_json; then
 else
   log_warn "latest.json lookup failed. Falling back to releases API."
   if ! resolve_from_release_api; then
-    if [ "${OS}" = "linux" ] && [ "${DRY_RUN}" = true ]; then
-      log_warn "No Linux release asset is currently published. Dry-run will skip install steps."
-      echo "DRY RUN: no compatible asset available for ${OS}/${ARCH}"
-      # Preserve failure signal for automation.
-      if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-        exit 1
+    if [ "${DRY_RUN}" = true ]; then
+      if [ "${OS}" = "linux" ]; then
+        log_warn "No Linux release asset is currently published. Dry-run will skip install steps."
+        echo "DRY RUN: no compatible asset available for ${OS}/${ARCH}"
+        # Preserve failure signal for automation.
+        if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+          exit 1
+        fi
+      else
+        log_warn "No compatible release asset found for ${OS}/${ARCH} (dry-run mode, skipping download)."
+        echo "DRY RUN: no compatible artifact available yet for ${OS}/${ARCH}"
       fi
       exit 0
     fi

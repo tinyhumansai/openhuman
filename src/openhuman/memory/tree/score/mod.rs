@@ -27,6 +27,18 @@ use crate::openhuman::memory::tree::types::{approx_token_count, Chunk, SourceKin
 /// are tombstoned and never reach the chunk store.
 pub const DEFAULT_DROP_THRESHOLD: f32 = 0.3;
 
+/// If the deterministic (cheap-signals-only) total is at or above this,
+/// the chunk is admitted without consulting the LLM extractor.
+///
+/// Tuned to leave a generous "borderline" band where the LLM signal is
+/// most informative while skipping LLM cost on obviously substantive
+/// content.
+pub const DEFAULT_DEFINITE_KEEP: f32 = 0.85;
+
+/// If the deterministic total is at or below this, the chunk is dropped
+/// without consulting the LLM extractor. Catches obvious noise cheaply.
+pub const DEFAULT_DEFINITE_DROP: f32 = 0.15;
+
 /// Whole outcome of [`score_chunk`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScoreResult {
@@ -44,10 +56,25 @@ pub struct ScoreResult {
 /// Held as a struct (vs config struct fields) so callers can override per-run
 /// without mutating global config — useful for tests and explicit threshold
 /// tuning.
+///
+/// The `extractor` field always runs (typically a regex-based composite
+/// for cheap mechanical entities). `llm_extractor` is consulted **only
+/// when the cheap-signals total falls in the band**
+/// `(definite_drop_threshold, definite_keep_threshold)` — chunks that are
+/// obviously trash or obviously substantive don't pay the LLM cost.
 pub struct ScoringConfig {
     pub extractor: Arc<dyn EntityExtractor>,
     pub weights: SignalWeights,
     pub drop_threshold: f32,
+    /// Optional second-pass extractor whose output is **merged** into the
+    /// regex output before the final combine. Designed for LLM-based NER +
+    /// importance signal (see [`extract::LlmEntityExtractor`]). `None`
+    /// means LLM augmentation is disabled.
+    pub llm_extractor: Option<Arc<dyn EntityExtractor>>,
+    /// Cheap-signals total ≥ this → admit without consulting LLM.
+    pub definite_keep_threshold: f32,
+    /// Cheap-signals total ≤ this → drop without consulting LLM.
+    pub definite_drop_threshold: f32,
 }
 
 impl ScoringConfig {
@@ -57,6 +84,23 @@ impl ScoringConfig {
             extractor: Arc::new(extract::CompositeExtractor::regex_only()),
             weights: SignalWeights::default(),
             drop_threshold: DEFAULT_DROP_THRESHOLD,
+            llm_extractor: None,
+            definite_keep_threshold: DEFAULT_DEFINITE_KEEP,
+            definite_drop_threshold: DEFAULT_DEFINITE_DROP,
+        }
+    }
+
+    /// Convenience constructor: regex always + LLM extractor on borderline
+    /// chunks. The `llm_importance` weight is enabled in [`SignalWeights`]
+    /// so the LLM signal actually influences the final total.
+    pub fn with_llm_extractor(llm: Arc<dyn EntityExtractor>) -> Self {
+        Self {
+            extractor: Arc::new(extract::CompositeExtractor::regex_only()),
+            weights: SignalWeights::with_llm_enabled(),
+            drop_threshold: DEFAULT_DROP_THRESHOLD,
+            llm_extractor: Some(llm),
+            definite_keep_threshold: DEFAULT_DEFINITE_KEEP,
+            definite_drop_threshold: DEFAULT_DEFINITE_DROP,
         }
     }
 }
@@ -65,6 +109,16 @@ impl ScoringConfig {
 ///
 /// Pure function — does not touch the store. Callers decide what to persist
 /// based on [`ScoreResult::kept`].
+///
+/// Pipeline:
+/// 1. Run the always-on extractor (typically regex).
+/// 2. Compute cheap signals; combine **excluding** `llm_importance` weight.
+/// 3. Short-circuit:
+///    - If cheap total ≥ `definite_keep_threshold`: admit without LLM.
+///    - If cheap total ≤ `definite_drop_threshold`: drop without LLM.
+///    - Else: borderline — run the LLM extractor (if configured), merge
+///      its output, recompute signals, recombine with full weights.
+/// 4. Apply final admission gate against `drop_threshold`.
 pub async fn score_chunk(chunk: &Chunk, cfg: &ScoringConfig) -> Result<ScoreResult> {
     log::debug!(
         "[memory_tree::score] score_chunk chunk_id={} tokens={}",
@@ -75,21 +129,86 @@ pub async fn score_chunk(chunk: &Chunk, cfg: &ScoringConfig) -> Result<ScoreResu
     let scoring_content = scoring_content_for_chunk(chunk);
     let scoring_token_count = approx_token_count(&scoring_content);
 
-    // 1. Extract entities (regex + any configured semantic extractors)
-    let extracted = cfg.extractor.extract(&scoring_content).await?;
+    // 1. Always-on extraction (regex / mechanical).
+    let mut extracted = cfg.extractor.extract(&scoring_content).await?;
 
-    // 2. Compute signals
-    let signals = self::signals::compute(
+    // 2. Compute cheap signals + combine excluding LLM importance.
+    let mut signals = self::signals::compute(
         &chunk.metadata,
         &scoring_content,
         scoring_token_count,
         &extracted,
     );
+    let cheap_total = self::signals::combine_cheap_only(&signals, &cfg.weights);
 
-    // 3. Weighted combine
-    let total = self::signals::combine(&signals, &cfg.weights);
+    // 3. Short-circuit decision.
+    let in_band =
+        cheap_total > cfg.definite_drop_threshold && cheap_total < cfg.definite_keep_threshold;
+    let llm_consulted = if in_band {
+        if let Some(llm) = cfg.llm_extractor.as_ref() {
+            log::debug!(
+                "[memory_tree::score] borderline chunk_id={} cheap_total={:.3} — consulting LLM",
+                chunk.id,
+                cheap_total
+            );
+            match llm.extract(&scoring_content).await {
+                Ok(more) => {
+                    extracted.merge(more);
+                    // Recompute signals so llm_importance flows in.
+                    signals = self::signals::compute(
+                        &chunk.metadata,
+                        &scoring_content,
+                        scoring_token_count,
+                        &extracted,
+                    );
+                    true
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[memory_tree::score] LLM extractor `{}` failed: {e} — \
+                         falling back to cheap signals only",
+                        llm.name()
+                    );
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    } else {
+        log::debug!(
+            "[memory_tree::score] short-circuit chunk_id={} cheap_total={:.3} \
+             ({}, skipping LLM)",
+            chunk.id,
+            cheap_total,
+            if cheap_total >= cfg.definite_keep_threshold {
+                "definite_keep"
+            } else {
+                "definite_drop"
+            }
+        );
+        false
+    };
 
-    // 4. Admission gate. Source and interaction priors are deliberately
+    // 4. Final weighted combine.
+    //
+    // If the LLM ran, its importance signal is populated → use the full
+    // `combine` which includes the `llm_importance` weight.
+    //
+    // If the LLM was skipped (short-circuited or not configured) OR failed
+    // (caught above, sets `llm_consulted=false`), using the full combine
+    // would pin `llm_importance * w.llm_importance = 0 * 2.0` into the
+    // numerator while still dividing by the full denominator — artificially
+    // dragging the total down. Fall back to `combine_cheap_only` which
+    // excludes that term from both numerator and denominator, so the cheap
+    // signals alone produce the total.
+    let total = if llm_consulted {
+        self::signals::combine(&signals, &cfg.weights)
+    } else {
+        self::signals::combine_cheap_only(&signals, &cfg.weights)
+    };
+
+    // 5. Admission gate. Source and interaction priors are deliberately
     // non-zero, so guard against very short entity-free chatter being kept by
     // metadata alone.
     let tiny_entity_free =
@@ -110,16 +229,17 @@ pub async fn score_chunk(chunk: &Chunk, cfg: &ScoringConfig) -> Result<ScoreResu
         ))
     };
 
-    // 5. Canonicalise for indexing (only meaningful when kept — but we
+    // 6. Canonicalise for indexing (only meaningful when kept — but we
     //    canonicalise unconditionally so the result is inspectable in tests)
     let canonical_entities = canonicalise(&extracted);
 
     if !kept {
         log::debug!(
-            "[memory_tree::score] drop chunk_id={} total={:.3} reason={:?}",
+            "[memory_tree::score] drop chunk_id={} total={:.3} reason={:?} llm_consulted={}",
             chunk.id,
             total,
-            drop_reason
+            drop_reason,
+            llm_consulted
         );
     }
 
@@ -233,6 +353,7 @@ fn score_row(result: &ScoreResult) -> store::ScoreRow {
         dropped: !result.kept,
         reason: result.drop_reason.clone(),
         computed_at_ms: Utc::now().timestamp_millis(),
+        llm_importance_reason: result.extracted.llm_importance_reason.clone(),
     }
 }
 
@@ -301,5 +422,173 @@ mod tests {
             .collect();
         assert!(ids.iter().any(|id| *id == "email:alice@example.com"));
         assert!(ids.iter().any(|id| *id == "handle:alice"));
+    }
+
+    // ── Short-circuit / LLM-extractor tests ─────────────────────────────
+
+    /// Test extractor that returns a fixed importance value and records call count.
+    struct FakeLlm {
+        importance: f32,
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    impl FakeLlm {
+        fn new(importance: f32) -> std::sync::Arc<Self> {
+            std::sync::Arc::new(Self {
+                importance,
+                call_count: std::sync::atomic::AtomicUsize::new(0),
+            })
+        }
+        fn calls(&self) -> usize {
+            self.call_count.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl extract::EntityExtractor for FakeLlm {
+        fn name(&self) -> &'static str {
+            "fake-llm"
+        }
+        async fn extract(&self, _text: &str) -> Result<extract::ExtractedEntities> {
+            self.call_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(extract::ExtractedEntities {
+                entities: vec![],
+                topics: vec![],
+                llm_importance: Some(self.importance),
+                llm_importance_reason: Some("fake".into()),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn short_circuit_skips_llm_when_cheap_total_is_definite_keep() {
+        // A substantive chunk with high cheap-total should bypass the LLM.
+        let c = test_chunk(
+            "We decided to ship Phoenix on Friday after reviewing alice@example.com and \
+             the migration plan carefully. @bob will coordinate and we discussed \
+             #launch-q2 details extensively in the email thread.",
+        );
+        let llm = FakeLlm::new(0.5);
+        let mut cfg = ScoringConfig::with_llm_extractor(llm.clone());
+        // Force the cheap total well above the keep threshold by lowering
+        // the keep threshold so this test is robust to weight tuning.
+        cfg.definite_keep_threshold = 0.10;
+        let r = score_chunk(&c, &cfg).await.unwrap();
+        assert!(r.kept);
+        assert_eq!(llm.calls(), 0, "LLM should not be consulted");
+        // signals.llm_importance stays at 0 (no LLM call happened)
+        assert_eq!(r.signals.llm_importance, 0.0);
+    }
+
+    #[tokio::test]
+    async fn short_circuit_skips_llm_when_cheap_total_is_definite_drop() {
+        // A noisy chunk with very low cheap total should bypass the LLM
+        // and be dropped.
+        let c = test_chunk("ok");
+        let llm = FakeLlm::new(0.99);
+        let mut cfg = ScoringConfig::with_llm_extractor(llm.clone());
+        // Force the cheap total to look like definite_drop.
+        cfg.definite_drop_threshold = 0.99;
+        let r = score_chunk(&c, &cfg).await.unwrap();
+        assert!(!r.kept);
+        assert_eq!(
+            llm.calls(),
+            0,
+            "LLM should not be consulted on definite_drop"
+        );
+    }
+
+    #[tokio::test]
+    async fn borderline_chunk_consults_llm() {
+        // Pick content that will land in the borderline band and verify the LLM
+        // gets called. Use generous band edges so the test isn't sensitive
+        // to weight nudges.
+        let c = test_chunk("This is a moderately interesting note about a project.");
+        let llm = FakeLlm::new(0.9);
+        let mut cfg = ScoringConfig::with_llm_extractor(llm.clone());
+        cfg.definite_drop_threshold = 0.0;
+        cfg.definite_keep_threshold = 1.0;
+        let r = score_chunk(&c, &cfg).await.unwrap();
+        assert_eq!(llm.calls(), 1, "LLM should be consulted exactly once");
+        assert!(r.signals.llm_importance > 0.0);
+        assert_eq!(r.extracted.llm_importance_reason.as_deref(), Some("fake"));
+    }
+
+    #[tokio::test]
+    async fn llm_failure_falls_back_gracefully() {
+        struct FailingLlm;
+        #[async_trait::async_trait]
+        impl extract::EntityExtractor for FailingLlm {
+            fn name(&self) -> &'static str {
+                "failing-llm"
+            }
+            async fn extract(&self, _text: &str) -> Result<extract::ExtractedEntities> {
+                Err(anyhow::anyhow!("simulated failure"))
+            }
+        }
+        let c = test_chunk("This is a moderately interesting note about a project.");
+        let mut cfg = ScoringConfig::with_llm_extractor(std::sync::Arc::new(FailingLlm));
+        cfg.definite_drop_threshold = 0.0;
+        cfg.definite_keep_threshold = 1.0;
+        // Should not error out; should produce a result based on cheap signals only.
+        let r = score_chunk(&c, &cfg).await.unwrap();
+        assert_eq!(r.signals.llm_importance, 0.0);
+    }
+
+    /// When LLM is skipped (short-circuit or failure), the reported `total`
+    /// must equal `combine_cheap_only(signals, weights)` — not the
+    /// LLM-weighted `combine` (which would drag `llm_importance=0` through
+    /// a 2.0 weight and artificially lower the total).
+    #[tokio::test]
+    async fn short_circuit_reports_cheap_only_total() {
+        let c = test_chunk(
+            "We decided to ship Phoenix on Friday after reviewing alice@example.com and \
+             the migration plan carefully. @bob will coordinate and we discussed \
+             #launch-q2 details extensively in the email thread.",
+        );
+        let llm = FakeLlm::new(0.99);
+        let mut cfg = ScoringConfig::with_llm_extractor(llm.clone());
+        cfg.definite_keep_threshold = 0.10; // force short-circuit keep
+        let r = score_chunk(&c, &cfg).await.unwrap();
+        assert_eq!(llm.calls(), 0);
+        let expected = self::signals::combine_cheap_only(&r.signals, &cfg.weights);
+        assert!(
+            (r.total - expected).abs() < 1e-6,
+            "total={} expected(cheap_only)={}",
+            r.total,
+            expected
+        );
+        // And explicitly NOT the full combine (which would include a 0-value
+        // llm_importance term in a 0..1-clamped weighted average, dragging
+        // the total down).
+        let with_llm = self::signals::combine(&r.signals, &cfg.weights);
+        assert!(
+            r.total > with_llm,
+            "cheap-only total ({}) should exceed LLM-weighted total \
+             ({}) when llm_importance is zero",
+            r.total,
+            with_llm
+        );
+    }
+
+    /// When the LLM *does* run, the reported total uses the full combine —
+    /// the llm_importance contribution is actually in the sum.
+    #[tokio::test]
+    async fn llm_consulted_reports_full_total() {
+        let c = test_chunk("This is a moderately interesting note about a project.");
+        let llm = FakeLlm::new(0.9);
+        let mut cfg = ScoringConfig::with_llm_extractor(llm.clone());
+        cfg.definite_drop_threshold = 0.0;
+        cfg.definite_keep_threshold = 1.0;
+        let r = score_chunk(&c, &cfg).await.unwrap();
+        assert_eq!(llm.calls(), 1);
+        let expected = self::signals::combine(&r.signals, &cfg.weights);
+        assert!(
+            (r.total - expected).abs() < 1e-6,
+            "total={} expected(full combine)={}",
+            r.total,
+            expected
+        );
     }
 }

@@ -58,6 +58,7 @@ mod tests {
             visible_tool_names: &visible,
             tool_call_format: ToolCallFormat::PFormat,
             connected_integrations: &[],
+            connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
         };

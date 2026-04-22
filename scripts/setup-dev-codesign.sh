@@ -75,8 +75,8 @@ if openssl pkcs12 -help 2>&1 | grep -q -- '-legacy'; then
 fi
 
 openssl pkcs12 \
-  -export \
   "${PKCS12_LEGACY_ARGS[@]}" \
+  -export \
   -out "$P12" \
   -inkey "$KEY" \
   -in "$CERT" \

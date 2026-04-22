@@ -887,6 +887,12 @@ pub fn run() {
             webview_accounts::webview_account_hide,
             webview_accounts::webview_account_show,
             webview_accounts::webview_recipe_event,
+            webview_accounts::webview_notification_permission_state,
+            webview_accounts::webview_notification_permission_request,
+            webview_accounts::webview_notification_set_dnd,
+            webview_accounts::webview_notification_mute_account,
+            webview_accounts::webview_notification_get_bypass_prefs,
+            webview_accounts::webview_set_focused_account,
             notification_settings::notification_settings_get,
             notification_settings::notification_settings_set,
             activate_main_window

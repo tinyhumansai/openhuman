@@ -44,12 +44,12 @@ impl UaSpec {
     pub fn chrome_mac() -> Self {
         Self {
             user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
-                 (KHTML, like Gecko) Chrome/124.0.6367.118 Safari/537.36"
+                 (KHTML, like Gecko) Chrome/136.0.7103.114 Safari/537.36"
                 .to_string(),
-            chrome_major: "124".to_string(),
-            chrome_full: "124.0.6367.118".to_string(),
+            chrome_major: "136".to_string(),
+            chrome_full: "136.0.7103.114".to_string(),
             platform: "macOS".to_string(),
-            platform_version: "14.0.0".to_string(),
+            platform_version: "15.0.0".to_string(),
             architecture: "x86".to_string(),
             bitness: "64".to_string(),
             mobile: false,

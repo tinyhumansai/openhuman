@@ -4,6 +4,7 @@
 //! Thin orchestration layer consumed by autocomplete, voice control, and other
 //! text-aware features. All platform work delegates to `accessibility::*`.
 
+pub(crate) mod cli;
 pub mod ops;
 mod schemas;
 mod types;

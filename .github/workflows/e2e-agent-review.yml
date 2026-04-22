@@ -1,0 +1,131 @@
+name: E2E (Linux) — agent-review
+
+on:
+  pull_request:
+    paths:
+      - "app/test/e2e/specs/agent-review.spec.ts"
+      - "app/test/e2e/helpers/**"
+      - "app/test/wdio.conf.ts"
+      - "app/scripts/e2e-*.sh"
+      - ".github/workflows/e2e-agent-review.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-agent-review-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-agent-review:
+    name: E2E agent-review (Linux / tauri-driver)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Gate on spec presence
+        id: gate
+        run: |
+          if [ -f app/test/e2e/specs/agent-review.spec.ts ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "agent-review.spec.ts not present — skipping remaining steps."
+          fi
+
+      - name: Setup Node.js 24.x
+        if: steps.gate.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: "yarn"
+
+      - name: Install Rust (rust-toolchain.toml)
+        if: steps.gate.outputs.present == 'true'
+        uses: dtolnay/rust-toolchain@1.93.0
+
+      - name: Install system dependencies
+        if: steps.gate.outputs.present == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf \
+            xvfb at-spi2-core dbus-x11 \
+            webkit2gtk-driver \
+            libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev
+
+      - name: Cargo.lock fingerprint (deps only)
+        if: steps.gate.outputs.present == 'true'
+        id: cargo-lock-fingerprint
+        shell: bash
+        run: |
+          echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Cargo registry and build
+        if: steps.gate.outputs.present == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-e2e-agentreview-cargo-${{ steps.cargo-lock-fingerprint.outputs.hash }}
+          restore-keys: |
+            ${{ runner.os }}-e2e-agentreview-cargo-
+            ${{ runner.os }}-e2e-cargo-
+
+      - name: Install tauri-driver
+        if: steps.gate.outputs.present == 'true'
+        run: cargo install tauri-driver --version 2.0.5
+
+      - name: Install JS dependencies
+        if: steps.gate.outputs.present == 'true'
+        run: yarn install --frozen-lockfile
+
+      - name: Ensure .env exists for E2E build
+        if: steps.gate.outputs.present == 'true'
+        run: |
+          touch .env
+          touch app/.env
+
+      - name: Build E2E app
+        if: steps.gate.outputs.present == 'true'
+        run: yarn workspace openhuman-app test:e2e:build
+
+      - name: Stage sidecar next to app binary
+        if: steps.gate.outputs.present == 'true'
+        run: |
+          cp app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu \
+             app/src-tauri/target/debug/openhuman-core-x86_64-unknown-linux-gnu
+          chmod +x app/src-tauri/target/debug/openhuman-core-x86_64-unknown-linux-gnu
+
+      - name: Run agent-review E2E spec under Xvfb
+        if: steps.gate.outputs.present == 'true'
+        run: |
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1280x1024x24 &
+          sleep 2
+          eval "$(dbus-launch --sh-syntax)"
+          mkdir -p ~/.local/share/applications
+          export RUST_BACKTRACE=1
+          cd app
+          mkdir -p test/e2e/artifacts
+          bash scripts/e2e-run-spec.sh test/e2e/specs/agent-review.spec.ts agent-review
+
+      - name: Upload E2E artifacts
+        if: always() && steps.gate.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-agent-review-artifacts
+          path: |
+            app/test/e2e/artifacts/**
+            /tmp/tauri-driver-e2e-agent-review.log
+          if-no-files-found: ignore
+          retention-days: 7
