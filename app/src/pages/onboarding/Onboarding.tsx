@@ -4,6 +4,7 @@ import { useCoreState } from '../../providers/CoreStateProvider';
 import { referralApi } from '../../services/api/referralApi';
 import { userApi } from '../../services/api/userApi';
 import { getDefaultEnabledTools } from '../../utils/toolDefinitions';
+import BetaBanner from './components/BetaBanner';
 import ContextGatheringStep from './steps/ContextGatheringStep';
 import ReferralApplyStep from './steps/ReferralApplyStep';
 import SkillsStep from './steps/SkillsStep';
@@ -208,7 +209,10 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
           </button>
         </div>
       )}
-      <div className="relative z-10 max-w-lg w-full mx-4">{renderStep()}</div>
+      <div className="relative z-10 max-w-lg w-full mx-4">
+        <BetaBanner />
+        {renderStep()}
+      </div>
     </div>
   );
 };

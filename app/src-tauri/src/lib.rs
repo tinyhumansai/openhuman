@@ -1,14 +1,20 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supported.");
 
+#[cfg(feature = "cef")]
+mod cdp;
 mod core_process;
 mod core_update;
 #[cfg(feature = "cef")]
 mod discord_scanner;
 #[cfg(feature = "cef")]
-mod slack_scanner;
-mod webview_accounts;
+mod imessage_scanner;
+mod notification_settings;
 #[cfg(feature = "cef")]
+mod slack_scanner;
+#[cfg(feature = "cef")]
+mod telegram_scanner;
+mod webview_accounts;
 mod whatsapp_scanner;
 
 use std::sync::Mutex;
@@ -221,6 +227,13 @@ async fn run_core_cli(args: Vec<String>) -> Result<String, String> {
             cmd.arg("core");
         }
         cmd.args(&args);
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
 
         log::info!(
             "[service-direct] running {:?} {}{}",
@@ -450,7 +463,6 @@ fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
         .map_err(|err| format!("failed to focus main window: {err}"))?;
     Ok(())
 }
-
 fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
     log::info!("[tray] setting up tray icon");
 
@@ -544,6 +556,14 @@ pub fn run() {
         let mut args: Vec<(&str, Option<&str>)> = vec![
             ("--use-mock-keychain", None),
             ("--password-store", Some("basic")),
+            // Enable SharedArrayBuffer so embedded apps that need WebRTC
+            // audio worklets / Opus encoders (Slack Huddles, Meet
+            // real-time features, Discord voice) can actually initialise.
+            // Chromium gates SharedArrayBuffer behind cross-origin
+            // isolation by default; web apps embedded inside CEF rarely
+            // send COOP/COEP headers, so without this flag the feature
+            // silently disappears and huddle/call buttons no-op.
+            ("--enable-features", Some("SharedArrayBuffer")),
         ];
         if cfg!(debug_assertions) {
             args.push(("--remote-debugging-port", Some("9222")));
@@ -557,13 +577,17 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(DictationHotkeyState(Mutex::new(Vec::new())))
-        .manage(webview_accounts::WebviewAccountsState::default());
+        .manage(webview_accounts::WebviewAccountsState::default())
+        .manage(notification_settings::NotificationSettingsState::new());
     #[cfg(feature = "cef")]
+    let builder = builder.manage(std::sync::Arc::new(imessage_scanner::ScannerRegistry::new()));
     let builder = builder.manage(whatsapp_scanner::ScannerRegistry::new());
     #[cfg(feature = "cef")]
     let builder = builder.manage(slack_scanner::ScannerRegistry::new());
     #[cfg(feature = "cef")]
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
+    #[cfg(feature = "cef")]
+    let builder = builder.manage(telegram_scanner::ScannerRegistry::new());
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -634,22 +658,6 @@ pub fn run() {
 
             if let Err(err) = setup_tray(app.handle()) {
                 log::error!("[tray] failed to setup tray icon: {err}");
-            }
-
-            // Track window focus for notification bypass — the focused-bypass
-            // condition needs to know whether the main window has OS focus.
-            {
-                let accounts_state = app.state::<webview_accounts::WebviewAccountsState>();
-                let focus_flag = accounts_state.window_is_focused.clone();
-                if let Some(window) = app.get_webview_window("main") {
-                    let flag = focus_flag.clone();
-                    window.on_window_event(move |event| {
-                        if let tauri::WindowEvent::Focused(focused) = event {
-                            flag.store(*focused, std::sync::atomic::Ordering::Relaxed);
-                            log::debug!("[notify-bypass] window focused={}", focused);
-                        }
-                    });
-                }
             }
 
             // Dev convenience: if OPENHUMAN_DEV_AUTO_WHATSAPP=<account-id>
@@ -741,6 +749,48 @@ pub fn run() {
                 }
             }
 
+            // Same dev helper, Telegram flavour. OPENHUMAN_DEV_AUTO_TELEGRAM=<uuid>
+            // opens the Telegram Web K account webview on startup so the CDP
+            // scanner can iterate without manual UI clicks.
+            if let Ok(account_id) = std::env::var("OPENHUMAN_DEV_AUTO_TELEGRAM") {
+                let account_id = account_id.trim().to_string();
+                if !account_id.is_empty() {
+                    let app_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        let state = app_handle.state::<webview_accounts::WebviewAccountsState>();
+                        let args = webview_accounts::OpenArgs {
+                            account_id: account_id.clone(),
+                            provider: "telegram".to_string(),
+                            url: None,
+                            bounds: Some(webview_accounts::Bounds {
+                                x: 100.0,
+                                y: 100.0,
+                                width: 900.0,
+                                height: 700.0,
+                            }),
+                        };
+                        match webview_accounts::webview_account_open(
+                            app_handle.clone(),
+                            state,
+                            args,
+                        )
+                        .await
+                        {
+                            Ok(label) => log::info!(
+                                "[dev-auto-telegram] spawned label={} account={}",
+                                label,
+                                account_id
+                            ),
+                            Err(e) => log::error!(
+                                "[dev-auto-telegram] failed: {} (account={})",
+                                e,
+                                account_id
+                            ),
+                        }
+                    });
+                }
+            }
             // Same dev helper, Google Meet flavour.
             // OPENHUMAN_DEV_AUTO_GOOGLE_MEET=<uuid> opens the gmeet account
             // webview at startup so the caption-capture recipe runs
@@ -800,6 +850,21 @@ pub fn run() {
                 }
             }
 
+            #[cfg(all(target_os = "macos", feature = "cef"))]
+            {
+                use std::sync::Arc;
+                // The scanner task self-gates on `channels_config.imessage` via
+                // JSON-RPC each tick — it stays idle until the user connects
+                // iMessage and stops ingesting as soon as they disconnect. We
+                // spawn it here just so the loop is live and picks up state
+                // changes without requiring an app restart.
+                if let Some(registry) = app.try_state::<Arc<imessage_scanner::ScannerRegistry>>() {
+                    let registry = registry.inner().clone();
+                    let app_handle = app.handle().clone();
+                    registry.ensure_scanner(app_handle, "default".to_string());
+                    log::info!("[imessage] scanner scheduled (gates on config each tick)");
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -822,14 +887,8 @@ pub fn run() {
             webview_accounts::webview_account_hide,
             webview_accounts::webview_account_show,
             webview_accounts::webview_recipe_event,
-            webview_accounts::webview_account_eval,
-            webview_accounts::webview_notification_permission_state,
-            webview_accounts::webview_notification_permission_request,
-            webview_accounts::webview_notification_set_dnd,
-            webview_accounts::webview_notification_mute_account,
-            webview_accounts::webview_notification_get_bypass_prefs,
-            webview_accounts::webview_set_focused_account,
-            webview_accounts::webview_notification_emit_click_for_route,
+            notification_settings::notification_settings_get,
+            notification_settings::notification_settings_set,
             activate_main_window
         ])
         .build(tauri::generate_context!())

@@ -28,18 +28,11 @@ pub fn effective_memory_backend_name(
 }
 
 /// Create a standard memory instance based on the provided configuration.
-///
-/// # Arguments
-///
-/// * `config` - The memory configuration (provider, model, etc.).
-/// * `workspace_dir` - The directory where memory data should be stored.
-/// * `api_key` - Optional API key for external embedding providers.
 pub fn create_memory(
     config: &MemoryConfig,
     workspace_dir: &Path,
-    api_key: Option<&str>,
 ) -> anyhow::Result<Box<dyn Memory>> {
-    create_memory_with_storage_and_routes(config, &[], None, workspace_dir, api_key)
+    create_memory_with_storage_and_routes(config, &[], None, workspace_dir)
 }
 
 /// Create a memory instance with an optional storage provider configuration.
@@ -47,34 +40,23 @@ pub fn create_memory_with_storage(
     config: &MemoryConfig,
     storage_provider: Option<&StorageProviderConfig>,
     workspace_dir: &Path,
-    api_key: Option<&str>,
 ) -> anyhow::Result<Box<dyn Memory>> {
-    create_memory_with_storage_and_routes(config, &[], storage_provider, workspace_dir, api_key)
+    create_memory_with_storage_and_routes(config, &[], storage_provider, workspace_dir)
 }
 
 /// The most comprehensive factory function for creating a memory instance.
 ///
 /// This function initializes the embedding provider and then creates a
 /// `UnifiedMemory` instance.
-///
-/// # Arguments
-///
-/// * `config` - Core memory configuration.
-/// * `_embedding_routes` - Configuration for routing embeddings (currently unused).
-/// * `_storage_provider` - Configuration for the storage backend (currently unused).
-/// * `workspace_dir` - The directory for storage.
-/// * `api_key` - API key for the embedding provider.
 pub fn create_memory_with_storage_and_routes(
     config: &MemoryConfig,
     _embedding_routes: &[EmbeddingRouteConfig],
     _storage_provider: Option<&StorageProviderConfig>,
     workspace_dir: &Path,
-    api_key: Option<&str>,
 ) -> anyhow::Result<Box<dyn Memory>> {
     // 1. Create the embedding provider based on config (Local vs Remote).
     let embedder: Arc<dyn EmbeddingProvider> = Arc::from(embeddings::create_embedding_provider(
         &config.embedding_provider,
-        api_key,
         &config.embedding_model,
         config.embedding_dimensions,
     )?);

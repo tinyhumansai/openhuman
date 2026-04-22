@@ -60,43 +60,34 @@ mod tests {
 
     #[test]
     fn factory_ollama() {
-        let p = create_embedding_provider("ollama", None, DEFAULT_OLLAMA_MODEL, 768).unwrap();
+        let p = create_embedding_provider("ollama", DEFAULT_OLLAMA_MODEL, 768).unwrap();
         assert_eq!(p.name(), "ollama");
         assert_eq!(p.dimensions(), 768);
     }
 
     #[test]
     fn factory_openai() {
-        let p = create_embedding_provider("openai", Some("key"), "text-embedding-3-small", 1536)
-            .unwrap();
-        assert_eq!(p.name(), "openai");
-        assert_eq!(p.dimensions(), 1536);
-    }
-
-    #[test]
-    fn factory_openai_no_api_key() {
-        let p = create_embedding_provider("openai", None, "text-embedding-3-small", 1536).unwrap();
+        let p = create_embedding_provider("openai", "text-embedding-3-small", 1536).unwrap();
         assert_eq!(p.name(), "openai");
         assert_eq!(p.dimensions(), 1536);
     }
 
     #[test]
     fn factory_custom_url() {
-        let p =
-            create_embedding_provider("custom:http://localhost:1234", None, "model", 768).unwrap();
+        let p = create_embedding_provider("custom:http://localhost:1234", "model", 768).unwrap();
         assert_eq!(p.name(), "openai"); // OpenAI-compatible under the hood
         assert_eq!(p.dimensions(), 768);
     }
 
     #[test]
     fn factory_custom_empty_url() {
-        let p = create_embedding_provider("custom:", None, "model", 768).unwrap();
+        let p = create_embedding_provider("custom:", "model", 768).unwrap();
         assert_eq!(p.name(), "openai");
     }
 
     #[test]
     fn factory_none() {
-        let p = create_embedding_provider("none", None, "", 0).unwrap();
+        let p = create_embedding_provider("none", "", 0).unwrap();
         assert_eq!(p.name(), "none");
         assert_eq!(p.dimensions(), 0);
     }
@@ -105,7 +96,7 @@ mod tests {
 
     #[test]
     fn factory_unknown_provider_errors() {
-        let result = create_embedding_provider("cohere", None, "model", 1536);
+        let result = create_embedding_provider("cohere", "model", 1536);
         let msg = result.err().expect("should be an error").to_string();
         assert!(
             msg.contains("cohere"),
@@ -116,7 +107,7 @@ mod tests {
 
     #[test]
     fn factory_empty_string_errors() {
-        let result = create_embedding_provider("", None, "model", 1536);
+        let result = create_embedding_provider("", "model", 1536);
         assert!(result
             .err()
             .expect("should error")
@@ -126,7 +117,7 @@ mod tests {
 
     #[test]
     fn factory_fastembed_errors() {
-        let result = create_embedding_provider("fastembed", None, "BGESmallENV15", 384);
+        let result = create_embedding_provider("fastembed", "BGESmallENV15", 384);
         assert!(result
             .err()
             .expect("should error")

@@ -45,6 +45,12 @@ impl LocalHealthChecker {
 
     /// Create a checker with a custom cache TTL (useful in tests).
     pub fn with_ttl(base_url: &str, ttl: Duration) -> Self {
+        Self::with_probe_url(format!("{base_url}/api/tags"), ttl)
+    }
+
+    /// Create a checker with an explicit full probe URL (for non-ollama local
+    /// backends such as llama-server, whose health endpoint is `/v1/models`).
+    pub fn with_probe_url(probe_url: String, ttl: Duration) -> Self {
         let client = reqwest::Client::builder()
             .timeout(PROBE_TIMEOUT)
             .build()
@@ -57,7 +63,7 @@ impl LocalHealthChecker {
             });
         Self {
             client,
-            probe_url: format!("{base_url}/api/tags"),
+            probe_url,
             cache: Mutex::new(None),
             ttl,
         }

@@ -3,6 +3,7 @@ use super::*;
 use crate::openhuman::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::openhuman::config::{Config, DelegateAgentConfig};
 use crate::openhuman::memory::Memory;
+use crate::openhuman::node_runtime::NodeBootstrap;
 use crate::openhuman::security::SecurityPolicy;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,19 +25,16 @@ pub fn default_tools_with_runtime(
     ]
 }
 
-/// Create full tool registry including memory tools and optional Composio
+/// Create full tool registry including memory tools.
 #[allow(clippy::implicit_hasher, clippy::too_many_arguments)]
 pub fn all_tools(
     config: Arc<Config>,
     security: &Arc<SecurityPolicy>,
     memory: Arc<dyn Memory>,
-    composio_key: Option<&str>,
-    composio_entity_id: Option<&str>,
     browser_config: &crate::openhuman::config::BrowserConfig,
     http_config: &crate::openhuman::config::HttpRequestConfig,
     workspace_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
-    fallback_api_key: Option<&str>,
     root_config: &crate::openhuman::config::Config,
 ) -> Vec<Box<dyn Tool>> {
     all_tools_with_runtime(
@@ -44,35 +42,61 @@ pub fn all_tools(
         security,
         Arc::new(NativeRuntime::new()),
         memory,
-        composio_key,
-        composio_entity_id,
         browser_config,
         http_config,
         workspace_dir,
         agents,
-        fallback_api_key,
         root_config,
     )
 }
 
-/// Create full tool registry including memory tools and optional Composio.
+/// Create full tool registry including memory tools.
 #[allow(clippy::implicit_hasher, clippy::too_many_arguments)]
 pub fn all_tools_with_runtime(
     config: Arc<Config>,
     security: &Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
     memory: Arc<dyn Memory>,
-    composio_key: Option<&str>,
-    composio_entity_id: Option<&str>,
     browser_config: &crate::openhuman::config::BrowserConfig,
     http_config: &crate::openhuman::config::HttpRequestConfig,
     workspace_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
-    fallback_api_key: Option<&str>,
     root_config: &crate::openhuman::config::Config,
 ) -> Vec<Box<dyn Tool>> {
+    // Build a session-scoped managed Node.js bootstrap once, so ShellTool,
+    // NodeExecTool, and NpmExecTool all share the same memoised resolution
+    // state. Disabled when `node.enabled = false` — in that case shell skips
+    // PATH injection and node/npm tools are not registered.
+    let node_bootstrap: Option<Arc<NodeBootstrap>> = if root_config.node.enabled {
+        tracing::debug!(
+            version = %root_config.node.version,
+            prefer_system = root_config.node.prefer_system,
+            "[tools::ops] node runtime enabled — constructing shared NodeBootstrap"
+        );
+        Some(Arc::new(NodeBootstrap::new(
+            root_config.node.clone(),
+            workspace_dir.to_path_buf(),
+            reqwest::Client::new(),
+        )))
+    } else {
+        tracing::debug!(
+            "[tools::ops] node runtime disabled — shell PATH injection + node_exec/npm_exec suppressed"
+        );
+        None
+    };
+
+    let shell: Box<dyn Tool> = if let Some(bootstrap) = node_bootstrap.as_ref() {
+        Box::new(ShellTool::with_node_bootstrap(
+            security.clone(),
+            Arc::clone(&runtime),
+            Arc::clone(bootstrap),
+        ))
+    } else {
+        Box::new(ShellTool::new(security.clone(), Arc::clone(&runtime)))
+    };
+
     let mut tools: Vec<Box<dyn Tool>> = vec![
-        Box::new(ShellTool::new(security.clone(), runtime)),
+        shell,
         Box::new(FileReadTool::new(security.clone())),
         Box::new(FileWriteTool::new(security.clone())),
         Box::new(CsvExportTool::new(security.clone())),
@@ -123,7 +147,7 @@ pub fn all_tools_with_runtime(
             browser_config.native_chrome_path.clone(),
             ComputerUseConfig {
                 endpoint: browser_config.computer_use.endpoint.clone(),
-                api_key: browser_config.computer_use.api_key.clone(),
+                api_key: None,
                 timeout_ms: browser_config.computer_use.timeout_ms,
                 allow_remote_endpoint: browser_config.computer_use.allow_remote_endpoint,
                 window_allowlist: browser_config.computer_use.window_allowlist.clone(),
@@ -144,17 +168,32 @@ pub fn all_tools_with_runtime(
         http_config.timeout_secs,
     )));
 
-    // Web search — always registered. Provider / API-key / budget
+    // Web search — always registered. Result/timeout budget
     // knobs still come from `config.web_search`, but there is no
     // enable flag: every session needs research as a baseline
     // capability.
     tools.push(Box::new(WebSearchTool::new(
-        root_config.web_search.provider.clone(),
-        root_config.web_search.brave_api_key.clone(),
-        root_config.web_search.parallel_api_key.clone(),
+        crate::openhuman::integrations::build_client(root_config),
         root_config.web_search.max_results,
         root_config.web_search.timeout_secs,
     )));
+
+    // Managed Node.js exec tools — gated on `root_config.node.enabled`.
+    // Both share the same `NodeBootstrap` as ShellTool so the download +
+    // extract + install pipeline runs at most once per session.
+    if let Some(bootstrap) = node_bootstrap.as_ref() {
+        tools.push(Box::new(NodeExecTool::new(
+            security.clone(),
+            Arc::clone(&runtime),
+            Arc::clone(bootstrap),
+        )));
+        tools.push(Box::new(NpmExecTool::new(
+            security.clone(),
+            Arc::clone(&runtime),
+            Arc::clone(bootstrap),
+        )));
+        tracing::debug!("[tools::ops] registered node_exec + npm_exec");
+    }
 
     // Vision tools are always available
     tools.push(Box::new(ScreenshotTool::new(security.clone())));
@@ -165,16 +204,6 @@ pub fn all_tools_with_runtime(
         tools.push(Box::new(MouseTool::new(security.clone())));
         tools.push(Box::new(KeyboardTool::new(security.clone())));
         tracing::debug!("[computer] mouse and keyboard tools registered");
-    }
-
-    if let Some(key) = composio_key {
-        if !key.is_empty() {
-            tools.push(Box::new(ComposioTool::new(
-                key,
-                composio_entity_id,
-                security.clone(),
-            )));
-        }
     }
 
     // Tool effectiveness stats (enabled when learning is on)
@@ -194,13 +223,8 @@ pub fn all_tools_with_runtime(
             .iter()
             .map(|(name, cfg)| (name.clone(), cfg.clone()))
             .collect();
-        let delegate_fallback_credential = fallback_api_key.and_then(|value| {
-            let trimmed_value = value.trim();
-            (!trimmed_value.is_empty()).then(|| trimmed_value.to_owned())
-        });
         tools.push(Box::new(DelegateTool::new_with_options(
             delegate_agents,
-            delegate_fallback_credential,
             security.clone(),
             crate::openhuman::providers::ProviderRuntimeOptions {
                 auth_profile_override: None,
@@ -285,13 +309,6 @@ pub fn all_tools_with_runtime(
     tools
 }
 
-/// Hardware peripheral tools — always empty (boards removed); config kept for compatibility.
-pub async fn create_peripheral_tools(
-    _config: &crate::openhuman::config::PeripheralsConfig,
-) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    Ok(Vec::new())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,7 +343,7 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
 
         let browser = BrowserConfig {
             enabled: false,
@@ -341,13 +358,10 @@ mod tests {
             Arc::new(Config::default()),
             &security,
             mem,
-            None,
-            None,
             &browser,
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -369,7 +383,7 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
 
         let browser = BrowserConfig::default();
         let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -379,13 +393,10 @@ mod tests {
             Arc::new(Config::default()),
             &security,
             mem,
-            None,
-            None,
             &browser,
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -404,7 +415,7 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
 
         let browser = BrowserConfig::default();
         let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -414,13 +425,10 @@ mod tests {
             Arc::new(Config::default()),
             &security,
             mem,
-            None,
-            None,
             &browser,
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -439,7 +447,7 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
 
         let browser = BrowserConfig {
             enabled: false,
@@ -454,13 +462,10 @@ mod tests {
             Arc::new(Config::default()),
             &security,
             mem,
-            None,
-            None,
             &browser,
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -479,7 +484,7 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
 
         let browser = BrowserConfig {
             enabled: true,
@@ -494,13 +499,10 @@ mod tests {
             Arc::new(Config::default()),
             &security,
             mem,
-            None,
-            None,
             &browser,
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -603,7 +605,7 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
 
         let browser = BrowserConfig::default();
         let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -615,7 +617,6 @@ mod tests {
             DelegateAgentConfig {
                 model: "llama3".to_string(),
                 system_prompt: None,
-                api_key: None,
                 temperature: None,
                 max_depth: 3,
             },
@@ -625,13 +626,10 @@ mod tests {
             Arc::new(Config::default()),
             &security,
             mem,
-            None,
-            None,
             &browser,
             &http,
             tmp.path(),
             &agents,
-            Some("delegate-test-credential"),
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -647,7 +645,7 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
 
         let browser = BrowserConfig::default();
         let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -657,17 +655,91 @@ mod tests {
             Arc::new(Config::default()),
             &security,
             mem,
-            None,
-            None,
             &browser,
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(!names.contains(&"delegate"));
+    }
+
+    #[test]
+    fn all_tools_registers_node_exec_when_node_enabled() {
+        // Default NodeConfig has `enabled = true`, so both `node_exec` and
+        // `npm_exec` must appear in the registry. Regression guard for the
+        // skills integration — if this fires, managed-node skills silently
+        // lose both tools.
+        let tmp = TempDir::new().unwrap();
+        let security = Arc::new(SecurityPolicy::default());
+        let mem_cfg = MemoryConfig {
+            backend: "markdown".into(),
+            ..MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> =
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+
+        let browser = BrowserConfig::default();
+        let http = crate::openhuman::config::HttpRequestConfig::default();
+        let cfg = test_config(&tmp);
+
+        let tools = all_tools(
+            Arc::new(Config::default()),
+            &security,
+            mem,
+            &browser,
+            &http,
+            tmp.path(),
+            &HashMap::new(),
+            &cfg,
+        );
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert!(
+            names.contains(&"node_exec"),
+            "node_exec must be registered when node.enabled=true; got: {names:?}"
+        );
+        assert!(
+            names.contains(&"npm_exec"),
+            "npm_exec must be registered when node.enabled=true; got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn all_tools_excludes_node_exec_when_node_disabled() {
+        let tmp = TempDir::new().unwrap();
+        let security = Arc::new(SecurityPolicy::default());
+        let mem_cfg = MemoryConfig {
+            backend: "markdown".into(),
+            ..MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> =
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+
+        let browser = BrowserConfig::default();
+        let http = crate::openhuman::config::HttpRequestConfig::default();
+        let mut cfg = test_config(&tmp);
+        cfg.node.enabled = false;
+
+        let tools = all_tools(
+            Arc::new(Config::default()),
+            &security,
+            mem,
+            &browser,
+            &http,
+            tmp.path(),
+            &HashMap::new(),
+            &cfg,
+        );
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert!(
+            !names.contains(&"node_exec"),
+            "node_exec must NOT be registered when node.enabled=false; got: {names:?}"
+        );
+        assert!(
+            !names.contains(&"npm_exec"),
+            "npm_exec must NOT be registered when node.enabled=false; got: {names:?}"
+        );
     }
 
     #[test]
@@ -679,7 +751,7 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
 
         let browser = BrowserConfig::default();
         let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -690,13 +762,10 @@ mod tests {
             Arc::new(Config::default()),
             &security,
             mem,
-            None,
-            None,
             &browser,
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -719,7 +788,7 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
 
         let browser = BrowserConfig::default();
         let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -730,13 +799,10 @@ mod tests {
             Arc::new(Config::default()),
             &security,
             mem,
-            None,
-            None,
             &browser,
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();

@@ -4,6 +4,7 @@ pub mod orchestrator_tools;
 pub mod schema;
 mod schemas;
 pub mod traits;
+pub(crate) mod user_filter;
 
 #[path = "impl/mod.rs"]
 pub(crate) mod implementations;
@@ -19,3 +20,4 @@ pub use schemas::{
 pub use traits::{
     PermissionLevel, Tool, ToolCategory, ToolContent, ToolResult, ToolScope, ToolSpec,
 };
+pub(crate) use user_filter::filter_tools_by_user_preference;

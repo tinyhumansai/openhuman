@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://discord.com/invite/k23Kn8nK">Discord</a> •
+  <a href="https://discord.tinyhumans.ai/">Discord</a> •
   <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> •
   <a href="https://x.com/tinyhumansai">X/Twitter</a> •
   <a href="https://tinyhumans.gitbook.io/openhuman/">Docs</a>
@@ -55,19 +55,32 @@ OpenHuman is an open-source agentic assistant that is designed to integrate with
 
 Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Contributor orientation: [`CONTRIBUTING.md`](./CONTRIBUTING.md). Running from source: [`docs/install.md`](docs/install.md#running-from-source).
 
+## Highlights
+
+- **[Neocortex](https://tinyhumans.gitbook.io/openhuman/technology/neocortex)** — local-first knowledge base that learns from your data and activity, compounding context across tools and sessions.
+- **[The Subconscious](https://tinyhumans.gitbook.io/openhuman/technology/the-subconscious)** — background self-learning loops that turn everyday usage into workflow-aware intelligence.
+- **[Screen Intelligence](https://tinyhumans.gitbook.io/openhuman/features/screen-intelligence)** — the agent sees what's on your screen and feeds it into your local context.
+- **[Inline Autocomplete](https://tinyhumans.gitbook.io/openhuman/features/inline-autocomplete)** — memory-aware keyboard autocomplete anywhere on your desktop.
+- **[Voice (STT + TTS)](https://tinyhumans.gitbook.io/openhuman/features/voice-speech-to-text)** — speak to OpenHuman and hear it reply, natively on the desktop.
+- **[Skills & Integrations](https://tinyhumans.gitbook.io/openhuman/product/skills-and-integrations)** — one-click skills for Gmail, Slack, Notion and the rest of your stack, with local encryption and webhooks for instant feedback.
+- **[Messaging Channels](https://tinyhumans.gitbook.io/openhuman/product/messaging-channels)** — inbound/outbound across the channels you already use, routed through your agent.
+- **[Teams & Organizations](https://tinyhumans.gitbook.io/openhuman/product/teams)** — shared workspaces for collaborating with an agent across a team.
+- **[Rewards & Achievements](https://tinyhumans.gitbook.io/openhuman/product/rewards-and-achievements)** — gamified progression as your agent grows with you.
+- **[Privacy & Security](https://tinyhumans.gitbook.io/openhuman/product/privacy-and-security)** — workflow data stays on device, encrypted locally, and treated as yours.
+
 ## OpenHuman vs other agents
 
 High-level comparison (products evolve—verify against each vendor). OpenHuman is built to **minimize vendor sprawl**, keep **workflow knowledge on-device**, and ship **deep desktop** features—not only chat.
 
-|                                                                           | Claude Code/Cowork                                     | OpenClaw                                                              | Hermes Agent                                | OpenHuman                                                                                                 |
-| ------------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **Open-source**: Is the codebase open to review?                          | 🚫 Proprietary client                                  | ✅ MIT License                                                        | ✅ MIT License                              | ✅ GNU License                                                                                            |
-| **Simple**: Is it simple to get started?                                  | ✅ Simple Desktop App + CLI                            | ⚠️ Terminal first and often complex                                   | ⚠️ Terminal first and often complex         | ✅ Simple, Clean UI/UX. Get started within minutes                                                        |
-| **Cost**: How expensive is to run?                                        | ⚠️ Subscription + **add-on** tool/API costs            | ⚠️ Tied to **models & hosting** you choose                            | ⚠️ Tied to **models & hosting** you choose  | ✅ **Cost optimized** with the option to run many things locally for free                                 |
-| **Memory & Knowledge Base (KB)**: Does the agent know you and your world? | ✅ Built-in **memory**; mostly **chat/session** scoped | ⚠️ Has a local memory but often needs **plugins** for richer behavior | ✅ **Self-learning** / task loops (typical) | 🚀 **Local KB + Self-learning** from **your** activity & data (GMail, Notion etc... via skills) & prompts |
-| **API spagetti**: How complex is it to hook mulitple features together?   | 🚫 Claude bill + often **extra keys** for MCP/tools    | 🚫 **BYOK** / **multi-vendor** common                                 | 🚫 **Multiple providers** common            | ✅ **One account** get access to many **bundled** platform APIs                                           |
-| **Extensibility**: Can you add rich features into it?                     | ✅ **MCP** (different model than sandboxed skills)     | ✅ Plugin Architecture (SKILL.md)                                     | ✅ Plugin Architecture (SKILL.md)           | 🚀 **Rich Skills** with ability to have realtime updates, local DB & more                                 |
-| **Desktop integrations**: Can it integrate into your desktop completely?  | ⚠️ Desktop app & access to folders                     | ⚠️ Often **lighter** native surface                                   | ⚠️ Often **lighter** native surface         | ✅ **STT**, **TTS**, **screen intelligence**, **memory-aware autocomplete** and a whole lot more          |
+|                         | Claude Code/Cowork  | OpenClaw           | Hermes Agent       | OpenHuman                |
+| ----------------------- | ------------------- | ------------------ | ------------------ | ------------------------ |
+| **Open-source**         | 🚫 Proprietary      | ✅ MIT             | ✅ MIT             | ✅ GNU                   |
+| **Simple to start**     | ✅ Desktop + CLI    | ⚠️ Terminal-first  | ⚠️ Terminal-first  | ✅ Clean UI, minutes     |
+| **Cost**                | ⚠️ Sub + add-ons    | ⚠️ BYO models      | ⚠️ BYO models      | ✅ Local-friendly        |
+| **Memory & KB**         | ✅ Chat-scoped      | ⚠️ Plugin-reliant  | ✅ Self-learning   | 🚀 Local KB + learning   |
+| **API sprawl**          | 🚫 Extra keys       | 🚫 BYOK            | 🚫 Multi-vendor    | ✅ One account           |
+| **Extensibility**       | ✅ MCP              | ✅ SKILL.md        | ✅ SKILL.md        | 🚀 Rich Skills           |
+| **Desktop integration** | ⚠️ Basic            | ⚠️ Light           | ⚠️ Light           | ✅ STT/TTS/screen/more   |
 
 <!-- # Star us on GitHub
 

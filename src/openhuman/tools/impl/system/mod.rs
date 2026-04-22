@@ -1,5 +1,7 @@
 mod current_time;
 mod insert_sql_record;
+mod node_exec;
+mod npm_exec;
 mod proxy_config;
 mod pushover;
 mod schedule;
@@ -9,6 +11,8 @@ mod workspace_state;
 
 pub use current_time::CurrentTimeTool;
 pub use insert_sql_record::InsertSqlRecordTool;
+pub use node_exec::NodeExecTool;
+pub use npm_exec::NpmExecTool;
 pub use proxy_config::ProxyConfigTool;
 pub use pushover::PushoverTool;
 pub use schedule::ScheduleTool;

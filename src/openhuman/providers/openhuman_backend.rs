@@ -15,25 +15,17 @@ use std::path::PathBuf;
 
 const PROVIDER_LABEL: &str = "OpenHuman";
 
-/// Routes chat to `config.api_url` + `/openai` with `Authorization: Bearer` from the `app-session` profile (or `config.api_key` when set).
+/// Routes chat to `config.api_url` + `/openai` with `Authorization: Bearer` from the `app-session` profile.
 pub struct OpenHumanBackendProvider {
     options: ProviderRuntimeOptions,
     api_url: Option<String>,
-    config_api_key: Option<String>,
 }
 
 impl OpenHumanBackendProvider {
-    pub fn new(
-        api_url: Option<&str>,
-        api_key: Option<&str>,
-        options: &ProviderRuntimeOptions,
-    ) -> Self {
+    pub fn new(api_url: Option<&str>, options: &ProviderRuntimeOptions) -> Self {
         Self {
             options: options.clone(),
             api_url: api_url
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty()),
-            config_api_key: api_key
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
         }
@@ -58,14 +50,7 @@ impl OpenHumanBackendProvider {
         {
             return Ok(t);
         }
-        if let Some(ref k) = self.config_api_key {
-            if !k.is_empty() {
-                return Ok(k.clone());
-            }
-        }
-        anyhow::bail!(
-            "No backend session: store a JWT via auth (app-session) or set api_key in config"
-        )
+        anyhow::bail!("No backend session: store a JWT via auth (app-session)")
     }
 
     fn base_url(&self) -> anyhow::Result<String> {

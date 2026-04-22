@@ -16,6 +16,7 @@ pub mod rpc_models;
 pub mod schemas;
 pub mod store;
 pub mod traits;
+pub mod tree;
 
 pub use ingestion::{
     ExtractedEntity, ExtractedRelation, ExtractionMode, MemoryIngestionConfig,
@@ -36,3 +37,4 @@ pub use store::{
     NamespaceQueryResult, NamespaceRetrievalContext, RetrievalScoreBreakdown, UnifiedMemory,
 };
 pub use traits::{Memory, MemoryCategory, MemoryEntry};
+pub use tree::{all_memory_tree_controller_schemas, all_memory_tree_registered_controllers};

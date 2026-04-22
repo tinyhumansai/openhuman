@@ -11,9 +11,6 @@ pub struct DelegateAgentConfig {
     /// Optional system prompt for the sub-agent
     #[serde(default)]
     pub system_prompt: Option<String>,
-    /// Optional API key override
-    #[serde(default)]
-    pub api_key: Option<String>,
     /// Temperature override
     #[serde(default)]
     pub temperature: Option<f64>,

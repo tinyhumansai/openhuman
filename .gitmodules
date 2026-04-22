@@ -1,7 +1,4 @@
-[submodule "openhuman-skills"]
-	path = openhuman-skills
-	url = https://github.com/tinyhumansai/openhuman-skills
 [submodule "app/src-tauri/vendor/tauri-cef"]
 	path = app/src-tauri/vendor/tauri-cef
 	url = https://github.com/tinyhumansai/tauri-cef.git
-	branch = feat/cef-notification-intercept
+	branch = feat/cef

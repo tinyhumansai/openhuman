@@ -770,7 +770,6 @@ mod tests {
         let mut c = Config::default();
         c.workspace_dir = tmp.path().join("workspace");
         c.config_path = tmp.path().join("config.toml");
-        c.api_key = None; // ensure no token fallback
         c
     }
 
@@ -953,8 +952,16 @@ mod tests {
         let mut c = Config::default();
         c.workspace_dir = tmp.path().join("workspace");
         c.config_path = tmp.path().join("config.toml");
-        c.api_key = Some("test-token".into());
         c.api_url = Some(base);
+        crate::openhuman::credentials::AuthService::from_config(&c)
+            .store_provider_token(
+                crate::openhuman::credentials::APP_SESSION_PROVIDER,
+                crate::openhuman::credentials::DEFAULT_AUTH_PROFILE_NAME,
+                "test-token",
+                std::collections::HashMap::new(),
+                true,
+            )
+            .expect("store test session token");
         c
     }
 

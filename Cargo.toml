@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.52.26"
+version = "0.52.28"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -16,6 +16,7 @@ crate-type = ["rlib"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 # Used by composio post-processing to convert Gmail HTML bodies to
 # markdown. `html2md` is the canonical pure-Rust crate (no system deps);
 # `htmd` (>0.5) is more actively maintained but our usage is one
@@ -37,6 +38,15 @@ rand = "0.9"
 dirs = "5"
 sha2 = "0.10"
 hmac = "0.12"
+# Archive extraction for the Node.js runtime bootstrap. Unix Node
+# distributions ship as .tar.xz, Windows as .zip. `xz2` with `static`
+# bundles liblzma so we don't need it as a system dependency.
+tar = "0.4"
+xz2 = { version = "0.1", features = ["static"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Real timeout for `node --version` probes in the runtime resolver. Guards
+# against a broken shim on PATH hanging the bootstrap forever.
+wait-timeout = "0.2"
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1.0"
 async-trait = "0.1"

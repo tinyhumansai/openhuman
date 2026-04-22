@@ -25,6 +25,21 @@ fn apply_core_color_env(cmd: &mut Command) {
     }
 }
 
+/// Hide the console window that Windows would otherwise allocate for the
+/// core sidecar. The core binary is a console-subsystem executable so that
+/// `openhuman core run` in a terminal behaves normally, but when the GUI
+/// shell spawns it as a child a stray conhost window pops up on top of the
+/// app. `CREATE_NO_WINDOW` suppresses that while leaving stdout/stderr
+/// piping intact for our log forwarding.
+#[cfg(windows)]
+fn apply_core_no_window(cmd: &mut Command) {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn apply_core_no_window(_cmd: &mut Command) {}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CoreRunMode {
     InProcess,
@@ -142,6 +157,7 @@ impl CoreProcessHandle {
                         cmd
                     };
                     apply_core_color_env(&mut cmd);
+                    apply_core_no_window(&mut cmd);
                     let child = cmd
                         .spawn()
                         .map_err(|e| format!("failed to spawn core process: {e}"))?;
@@ -180,6 +196,7 @@ impl CoreProcessHandle {
                     };
 
                     apply_core_color_env(&mut cmd);
+                    apply_core_no_window(&mut cmd);
                     let child = cmd
                         .spawn()
                         .map_err(|e| format!("failed to spawn core process: {e}"))?;

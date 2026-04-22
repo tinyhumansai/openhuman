@@ -20,6 +20,7 @@ import {
   clearStreamingAssistantForThread,
   endInferenceTurn,
   markInferenceTurnStreaming,
+  recordChatTurnUsage,
   setInferenceStatusForThread,
   setStreamingAssistantForThread,
   setToolTimelineForThread,
@@ -499,8 +500,16 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           thread: event.thread_id,
           request: event.request_id,
           segments: event.segment_total,
+          input_tokens: event.total_input_tokens,
+          output_tokens: event.total_output_tokens,
         });
 
+        dispatch(
+          recordChatTurnUsage({
+            inputTokens: event.total_input_tokens,
+            outputTokens: event.total_output_tokens,
+          })
+        );
         dispatch(clearInferenceStatusForThread({ threadId: event.thread_id }));
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
 

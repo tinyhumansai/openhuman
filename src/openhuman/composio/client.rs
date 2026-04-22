@@ -250,7 +250,7 @@ impl ComposioClient {
 ///
 /// Composio is **always enabled** — there are no configuration flags
 /// gating it. The backend URL and auth token come from the shared
-/// core defaults (`config.api_url` / `config.api_key`) via
+/// core defaults (`config.api_url` plus the app-session JWT) via
 /// [`crate::openhuman::integrations::build_client`]. The only reason
 /// this returns `None` is that the user isn't signed in yet.
 pub fn build_composio_client(config: &crate::openhuman::config::Config) -> Option<ComposioClient> {
@@ -267,23 +267,28 @@ mod tests {
     /// token — callers treat that as "skip silently" (user not signed in).
     #[test]
     fn build_composio_client_none_without_auth_token() {
+        let tmp = tempfile::tempdir().expect("tempdir");
         let mut config = Config::default();
-        config.api_key = None;
+        config.config_path = tmp.path().join("config.toml");
         assert!(build_composio_client(&config).is_none());
     }
 
-    /// With an auth token, we should get a live client wrapping the
-    /// shared integration client. We scope `config_path` to a temp dir
-    /// so the session-token lookup doesn't pick up a real dev profile
-    /// off-disk — the test exercises the pure `config.api_key` fallback.
     #[test]
     fn build_composio_client_some_with_auth_token() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let mut config = Config::default();
         config.config_path = tmp.path().join("config.toml");
-        config.api_key = Some("test-token".into());
+        crate::openhuman::credentials::AuthService::from_config(&config)
+            .store_provider_token(
+                crate::openhuman::credentials::APP_SESSION_PROVIDER,
+                crate::openhuman::credentials::DEFAULT_AUTH_PROFILE_NAME,
+                "test-token",
+                std::collections::HashMap::new(),
+                true,
+            )
+            .expect("store test session token");
         let client =
-            build_composio_client(&config).expect("client should build when api_key is set");
+            build_composio_client(&config).expect("client should build when session is set");
         assert!(
             !client.inner().auth_token.is_empty(),
             "resolved auth token should not be empty"

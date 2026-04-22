@@ -166,7 +166,7 @@ fn load_stored_app_state_unlocked(config: &Config) -> Result<StoredAppState, Str
     }
 }
 
-fn load_stored_app_state(config: &Config) -> Result<StoredAppState, String> {
+pub(crate) fn load_stored_app_state(config: &Config) -> Result<StoredAppState, String> {
     let _guard = APP_STATE_FILE_LOCK.lock();
     load_stored_app_state_unlocked(config)
 }

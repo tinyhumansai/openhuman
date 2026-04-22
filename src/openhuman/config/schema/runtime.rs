@@ -90,8 +90,6 @@ pub struct ReliabilityConfig {
     #[serde(default)]
     pub fallback_providers: Vec<String>,
     #[serde(default)]
-    pub api_keys: Vec<String>,
-    #[serde(default)]
     pub model_fallbacks: HashMap<String, Vec<String>>,
     #[serde(default = "default_channel_backoff_secs")]
     pub channel_initial_backoff_secs: u64,
@@ -133,7 +131,6 @@ impl Default for ReliabilityConfig {
             provider_retries: default_provider_retries(),
             provider_backoff_ms: default_provider_backoff_ms(),
             fallback_providers: Vec::new(),
-            api_keys: Vec::new(),
             model_fallbacks: HashMap::new(),
             channel_initial_backoff_secs: default_channel_backoff_secs(),
             channel_max_backoff_secs: default_channel_backoff_max_secs(),

@@ -116,6 +116,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::tools::all_tools_registered_controllers());
     // Document and knowledge graph storage
     controllers.extend(crate::openhuman::memory::all_memory_registered_controllers());
+    // Memory tree ingestion layer (#707 — canonicalised chunks with provenance)
+    controllers.extend(crate::openhuman::memory::all_memory_tree_registered_controllers());
     // Referral and growth tracking
     controllers.extend(crate::openhuman::referral::all_referral_registered_controllers());
     // Billing and subscription management
@@ -139,8 +141,10 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::learning::all_learning_registered_controllers());
     // Conversation thread and message management
     controllers.extend(crate::openhuman::threads::all_threads_registered_controllers());
-    // Integration notification center
-    controllers.extend(crate::openhuman::notifications::all_notifications_registered_controllers());
+    // Embedded webview native notifications
+    controllers.extend(
+        crate::openhuman::webview_notifications::all_webview_notifications_registered_controllers(),
+    );
     controllers
 }
 
@@ -176,6 +180,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::workspace::all_workspace_controller_schemas());
     schemas.extend(crate::openhuman::tools::all_tools_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());
+    schemas.extend(crate::openhuman::memory::all_memory_tree_controller_schemas());
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
     schemas.extend(crate::openhuman::team::all_team_controller_schemas());
@@ -188,8 +193,10 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::learning::all_learning_controller_schemas());
     // Conversation thread and message management
     schemas.extend(crate::openhuman::threads::all_threads_controller_schemas());
-    // Integration notification center
-    schemas.extend(crate::openhuman::notifications::all_notifications_controller_schemas());
+    // Embedded webview native notifications
+    schemas.extend(
+        crate::openhuman::webview_notifications::all_webview_notifications_controller_schemas(),
+    );
     schemas
 }
 
@@ -234,6 +241,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "service" => Some("Desktop service lifecycle management."),
         "socket" => Some("Skills runtime socket bridge controls."),
         "memory" => Some("Document storage, vector search, key-value store, and knowledge graph."),
+        "memory_tree" => Some(
+            "Canonical chunk ingestion, provenance capture, and chunk retrieval for source-grounded memory.",
+        ),
         "referral" => Some("Referral codes, stats, and apply flows via the hosted backend API."),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "team" => Some("Team member management, invites, and role changes via the backend."),
@@ -251,10 +261,6 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         }
         "learning" => Some(
             "User context enrichment — LinkedIn profile scraping and onboarding intelligence.",
-        ),
-        "notification" => Some(
-            "Integration notification center — ingest, triage, and surface notifications from \
-             embedded webview accounts (Gmail, Slack, WhatsApp, …).",
         ),
         _ => None,
     }
@@ -519,6 +525,7 @@ mod tests {
     #[test]
     fn namespace_description_known_namespaces() {
         assert!(namespace_description("memory").is_some());
+        assert!(namespace_description("memory_tree").is_some());
         assert!(namespace_description("billing").is_some());
         assert!(namespace_description("config").is_some());
         assert!(namespace_description("health").is_some());

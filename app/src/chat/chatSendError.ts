@@ -5,6 +5,7 @@ export type ChatSendErrorCode =
   | 'local_model_failed'
   | 'cloud_send_failed'
   | 'voice_transcription'
+  | 'stt_not_ready'
   | 'microphone_unavailable'
   | 'microphone_recording'
   | 'microphone_access'

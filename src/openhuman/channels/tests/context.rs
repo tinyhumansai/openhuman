@@ -77,7 +77,6 @@ fn compact_sender_history_keeps_recent_truncated_messages() {
         conversation_histories: Arc::new(Mutex::new(histories)),
         provider_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
-        api_key: None,
         api_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
         multimodal: crate::openhuman::config::MultimodalConfig::default(),

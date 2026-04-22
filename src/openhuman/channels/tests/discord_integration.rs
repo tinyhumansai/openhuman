@@ -131,7 +131,6 @@ fn make_discord_ctx(
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
         provider_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
-        api_key: None,
         api_url: None,
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
         provider_runtime_options: crate::openhuman::providers::ProviderRuntimeOptions::default(),

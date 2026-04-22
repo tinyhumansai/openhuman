@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import {
   CATEGORY_DESCRIPTIONS,
   getDefaultEnabledTools,
+  getEnabledRustToolNames,
   getToolsByCategory,
   TOOL_CATEGORIES,
 } from '../../../utils/toolDefinitions';
@@ -18,11 +19,16 @@ const ToolsPanel = () => {
   const [enabled, setEnabled] = useState<Record<string, boolean>>({});
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+  // Prevents the useEffect from re-initializing state immediately after a save
+  // (the core state update triggers a re-render before the ref resets).
+  const savingRef = useRef(false);
 
   const onboardingTasks = snapshot.localState.onboardingTasks;
 
   // Initialise toggle state from core state (persisted) or defaults.
   useEffect(() => {
+    if (savingRef.current) return;
     const persisted = onboardingTasks?.enabledTools;
     const enabledList = persisted && persisted.length > 0 ? persisted : getDefaultEnabledTools();
     const map: Record<string, boolean> = {};
@@ -41,24 +47,34 @@ const ToolsPanel = () => {
 
   const handleSave = async () => {
     setSaving(true);
+    savingRef.current = true;
     try {
-      const enabledList = Object.entries(enabled)
+      const enabledIds = Object.entries(enabled)
         .filter(([, v]) => v)
         .map(([k]) => k);
+
+      // Expand UI toggle IDs to the Rust tool names the session builder filters on.
+      const enabledTools = getEnabledRustToolNames(enabledIds);
 
       await setOnboardingTasks({
         accessibilityPermissionGranted: onboardingTasks?.accessibilityPermissionGranted ?? false,
         localModelConsentGiven: onboardingTasks?.localModelConsentGiven ?? false,
         localModelDownloadStarted: onboardingTasks?.localModelDownloadStarted ?? false,
-        enabledTools: enabledList,
+        enabledTools,
         connectedSources: onboardingTasks?.connectedSources ?? [],
         updatedAtMs: Date.now(),
       });
       setDirty(false);
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (err) {
       console.warn('[ToolsPanel] Failed to save tool preferences:', err);
+      setSaveStatus('error');
     } finally {
       setSaving(false);
+      setTimeout(() => {
+        savingRef.current = false;
+      }, 500);
     }
   };
 
@@ -127,6 +143,14 @@ const ToolsPanel = () => {
             className="mt-4 w-full py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-500 transition-colors disabled:opacity-50">
             {saving ? 'Saving...' : 'Save Changes'}
           </button>
+        )}
+        {saveStatus === 'saved' && (
+          <p className="text-xs text-center text-green-600 mt-1">Preferences saved</p>
+        )}
+        {saveStatus === 'error' && (
+          <p className="text-xs text-center text-red-500 mt-1">
+            Failed to save preferences. Try again.
+          </p>
         )}
       </div>
     </div>

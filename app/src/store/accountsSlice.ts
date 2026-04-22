@@ -88,6 +88,19 @@ const accountsSlice = createSlice({
       }
     },
 
+    noteWebviewNotificationFired(state, action: PayloadAction<{ accountId: string }>) {
+      const { accountId } = action.payload;
+      if (!state.accounts[accountId]) return;
+      state.unread[accountId] = (state.unread[accountId] ?? 0) + 1;
+    },
+
+    focusAccountFromNotification(state, action: PayloadAction<{ accountId: string }>) {
+      const { accountId } = action.payload;
+      if (!state.accounts[accountId]) return;
+      state.activeAccountId = accountId;
+      state.unread[accountId] = 0;
+    },
+
     resetAccountsState() {
       return initialState;
     },
@@ -101,6 +114,8 @@ export const {
   setAccountStatus,
   appendMessages,
   appendLog,
+  noteWebviewNotificationFired,
+  focusAccountFromNotification,
   resetAccountsState,
 } = accountsSlice.actions;
 

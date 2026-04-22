@@ -125,21 +125,7 @@ const BUILT_IN_SKILLS = [
     route: '/settings/screen-intelligence',
     icon: BUILT_IN_SKILL_ICONS.screenIntelligence,
   },
-  {
-    id: 'text-autocomplete',
-    title: 'Text Auto-Complete',
-    description:
-      'Suggest inline completions while you type and control where autocomplete is active.',
-    route: '/settings/autocomplete',
-    icon: BUILT_IN_SKILL_ICONS.textAutocomplete,
-  },
-  {
-    id: 'voice-stt',
-    title: 'Voice Intelligence',
-    description: 'Use the microphone for dictation and voice-driven chat with your AI.',
-    route: '/settings/voice',
-    icon: BUILT_IN_SKILL_ICONS.voiceStt,
-  },
+  // text-autocomplete + voice-stt hidden per #717 (modals/status hooks retained for re-enable).
 ];
 
 // ─── Item type for unified list ────────────────────────────────────────────────

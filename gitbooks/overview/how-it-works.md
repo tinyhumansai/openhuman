@@ -78,11 +78,7 @@ The success metric for the subconscious is what the team calls the "mirror test"
 
 When you use OpenHuman, here is what happens:
 
-<figure><img src="/broken/files/qZp0NB9a68hME51I4bLX" alt=""><figcaption></figcaption></figure>
-
 **Your desktop app runs locally.** Screen Intelligence captures your screen context. Auto-complete assists your typing. Local models handle chat, vision, and voice. All of this runs on your device with no server dependency.
-
-<figure><img src="/broken/files/cVwq7j0D8bm7POwV4L1V" alt=""><figcaption></figcaption></figure>
 
 **Connect your data sources.** Telegram, Slack, Gmail, Notion, blockchain wallets, and more. Each connection expands your knowledge graph.
 
@@ -93,6 +89,8 @@ When you use OpenHuman, here is what happens:
 **You interact naturally.** Ask anything about your life, your team, your projects. Not general knowledge. Your knowledge. What did your team decide? What is the status? What did you miss? What was on that dashboard you were looking at this morning? OpenHuman already knows.
 
 **Privacy is maintained.** Raw data stays on device, encrypted with AES-256-GCM. Encryption keys never leave the device. Screen captures are processed locally and discarded. Only compressed metadata and summaries are processed server-side.
+
+<figure><img src="../.gitbook/assets/2. How It Works@2x.png" alt=""><figcaption></figcaption></figure>
 
 ### The architecture: OpenClaw foundation
 
