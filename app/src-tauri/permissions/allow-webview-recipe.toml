@@ -1,7 +1,7 @@
 [[permission]]
 identifier = "allow-webview-recipe"
-description = "Allow injected per-provider recipe code (running inside the third-party site's origin) to invoke the recipe ingest command back to Rust."
+description = "Allow injected per-provider recipe code (running inside the third-party site's origin) to invoke the recipe ingest command back to Rust. Also includes screen_share_list_sources so the in-page getDisplayMedia shim (#713) can enumerate real screens and windows to build its picker UI inside the child webview's DOM."
 
 [permission.commands]
-allow = ["webview_recipe_event"]
+allow = ["webview_recipe_event", "screen_share_list_sources", "screen_share_thumbnail"]
 deny = []
