@@ -50,9 +50,7 @@ function ConnectionOptionRow({
       className={`group w-full flex items-center justify-between p-4 bg-white text-left transition-colors duration-150 ${
         isLast ? '' : 'border-b border-stone-200'
       } ${isFirst ? 'rounded-t-2xl' : ''} ${isLast ? 'rounded-b-2xl' : ''} ${
-        isDisabled
-          ? 'opacity-70 cursor-not-allowed'
-          : 'hover:bg-stone-50 focus-visible:bg-stone-50'
+        isDisabled ? 'opacity-70 cursor-not-allowed' : 'hover:bg-stone-50 focus-visible:bg-stone-50'
       } focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40`}>
       <div
         className={`w-5 h-5 flex-shrink-0 mr-3 text-stone-700 ${

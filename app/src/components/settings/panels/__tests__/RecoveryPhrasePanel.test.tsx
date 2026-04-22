@@ -2,6 +2,7 @@ import { fireEvent, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
+import RecoveryPhrasePanel from '../RecoveryPhrasePanel';
 
 vi.mock('../../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({
@@ -9,8 +10,6 @@ vi.mock('../../../../providers/CoreStateProvider', () => ({
     setEncryptionKey: vi.fn(async () => undefined),
   }),
 }));
-
-import RecoveryPhrasePanel from '../RecoveryPhrasePanel';
 
 describe('RecoveryPhrasePanel — trust-surface polish', () => {
   it('renders the amber warning callout in generate mode', () => {
