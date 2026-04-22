@@ -1,43 +1,30 @@
 #!/usr/bin/env sh
 
-# Run format check first (capture exit code without breaking script)
+# Non-mutating pre-push gate: verifies formatting, lint, TypeScript, and
+# Rust compile. Nothing here writes to the working tree, so a failing push
+# never produces phantom diffs that require a follow-up "chore(fmt)" commit.
+#
+# If a check fails, fix it locally (e.g. `yarn format`, `yarn lint:fix`)
+# and push again.
+
 set +e
 yarn format:check
 FORMAT_EXIT=$?
-set -e
-
-# If format check failed, run format to auto-fix
-if [ $FORMAT_EXIT -ne 0 ]; then
-  echo "Formatting issues detected. Running format to auto-fix..."
-  yarn format
-fi
-
-# Run lint check (capture exit code without breaking script)
-set +e
 yarn lint
 LINT_EXIT=$?
-set -e
-
-# If lint check failed, run lint:fix to auto-fix
-if [ $LINT_EXIT -ne 0 ]; then
-  echo "Linting issues detected. Running lint:fix to auto-fix..."
-  yarn lint:fix
-fi
-
-# Run TypeScript compile check (capture exit code without breaking script)
-set +e
 yarn compile
 COMPILE_EXIT=$?
-set -e
-
-# Run Rust compile checks for both the core and Tauri codebases
-set +e
 yarn rust:check
 RUST_CHECK_EXIT=$?
 set -e
 
-# Exit with error if any command still fails after fixes
 if [ $FORMAT_EXIT -ne 0 ] || [ $LINT_EXIT -ne 0 ] || [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CHECK_EXIT -ne 0 ]; then
-  echo "Pre-push checks failed. Please fix format (Prettier + cargo fmt for core and Tauri), lint, TypeScript, and/or Rust errors before pushing."
+  echo ""
+  echo "Pre-push checks failed."
+  [ $FORMAT_EXIT -ne 0 ] && echo "  - Formatting:  run \`yarn format\` to fix"
+  [ $LINT_EXIT -ne 0 ]   && echo "  - Lint:        run \`yarn lint:fix\` to fix"
+  [ $COMPILE_EXIT -ne 0 ] && echo "  - TypeScript:  run \`yarn compile\` and address errors"
+  [ $RUST_CHECK_EXIT -ne 0 ] && echo "  - Rust:        run \`yarn rust:check\` and address errors"
+  echo ""
   exit 1
 fi
