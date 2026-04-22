@@ -12,3 +12,6 @@ pub use schemas::{
     all_controller_schemas as all_life_capture_controller_schemas,
     all_registered_controllers as all_life_capture_registered_controllers,
 };
+
+#[cfg(test)]
+mod tests;
