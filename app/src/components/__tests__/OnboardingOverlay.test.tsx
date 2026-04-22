@@ -49,12 +49,12 @@ describe('OnboardingOverlay', () => {
     expect(screen.queryByText('Skip')).not.toBeInTheDocument();
   });
 
-  it('does not render when user profile is not loaded yet', () => {
+  it('renders even when user profile is still loading', () => {
     mockUseCoreState.mockReturnValue(makeCoreState({ currentUser: {} }));
 
     render(<OnboardingOverlay />);
 
-    expect(screen.queryByText('Skip')).not.toBeInTheDocument();
+    expect(screen.getByText('Skip')).toBeInTheDocument();
   });
 
   it('renders when the user is authenticated and onboarding is incomplete', () => {

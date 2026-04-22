@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 import { createPortal } from 'react-dom';
 
 import Onboarding from '../pages/onboarding/Onboarding';
@@ -14,27 +14,6 @@ import { DEV_FORCE_ONBOARDING } from '../utils/config';
 const OnboardingOverlay = () => {
   const { isBootstrapping, snapshot, setOnboardingCompletedFlag } = useCoreState();
   const token = snapshot.sessionToken;
-  const user = snapshot.currentUser;
-  const [userLoadTimedOut, setUserLoadTimedOut] = useState(false);
-
-  // Reset local state on logout so re-login starts fresh.
-  useEffect(() => {
-    if (!token) {
-      setUserLoadTimedOut(false);
-    }
-  }, [token]);
-
-  // Timeout: if user profile hasn't loaded after 3s but we have token + bootstrap,
-  // proceed anyway so onboarding isn't permanently invisible.
-  useEffect(() => {
-    if (!token || isBootstrapping || user?._id) return;
-
-    const timer = setTimeout(() => setUserLoadTimedOut(true), 3000);
-    return () => clearTimeout(timer);
-  }, [token, isBootstrapping, user?._id]);
-
-  // User is ready when profile loaded or timeout elapsed.
-  const userReady = !!user?._id || userLoadTimedOut;
   const onboardingCompleted = snapshot.onboardingCompleted;
 
   const handleDone = useCallback(async () => {
@@ -45,8 +24,9 @@ const OnboardingOverlay = () => {
     }
   }, [setOnboardingCompletedFlag]);
 
-  // Don't show if not logged in, bootstrap not complete, or user not ready
-  if (!token || isBootstrapping || !userReady) return null;
+  // Don't show if not logged in or bootstrap not complete.
+  // Showing immediately after bootstrap removes a first-launch delay.
+  if (!token || isBootstrapping) return null;
 
   const shouldShow = DEV_FORCE_ONBOARDING || !onboardingCompleted;
 
