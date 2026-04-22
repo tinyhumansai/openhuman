@@ -19,7 +19,7 @@ static VEC_REGISTERED: OnceCell<()> = OnceCell::new();
 
 /// Register `sqlite3_vec_init` as a SQLite auto-extension exactly once per process.
 /// Every connection opened after this point loads the vec0 module automatically.
-fn ensure_vec_extension_registered() {
+pub(crate) fn ensure_vec_extension_registered() {
     VEC_REGISTERED.get_or_init(|| unsafe {
         let init: unsafe extern "C" fn() = sqlite_vec::sqlite3_vec_init;
         let entry: unsafe extern "C" fn(
@@ -66,6 +66,94 @@ impl PersonalIndex {
     }
 }
 
+/// Writer for the personal index. Upserts items keyed by (source, external_id)
+/// so re-ingesting the same source row updates in place; vectors are written
+/// separately via `upsert_vector` since embeddings come from a remote call.
+pub struct IndexWriter {
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl IndexWriter {
+    pub fn new(idx: &PersonalIndex) -> Self {
+        Self { conn: Arc::clone(&idx.conn) }
+    }
+
+    /// Upsert items by (source, external_id). FTS rows are kept in sync via
+    /// the SQL triggers defined in 0001_init.sql.
+    pub async fn upsert(&self, items: &[crate::openhuman::life_capture::types::Item]) -> anyhow::Result<()> {
+        let items = items.to_vec();
+        let conn = Arc::clone(&self.conn);
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let mut guard = conn.blocking_lock();
+            let tx = guard.transaction().context("begin upsert tx")?;
+            for item in &items {
+                let source = serde_json::to_value(item.source)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_default();
+                let author_json = item
+                    .author
+                    .as_ref()
+                    .map(|a| serde_json::to_string(a).unwrap_or_else(|_| "null".into()));
+                let metadata_json = serde_json::to_string(&item.metadata)
+                    .unwrap_or_else(|_| "{}".into());
+
+                tx.execute(
+                    "INSERT INTO items(id, source, external_id, ts, author_json, subject, text, metadata_json) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+                     ON CONFLICT(source, external_id) DO UPDATE SET \
+                       ts            = excluded.ts, \
+                       author_json   = excluded.author_json, \
+                       subject       = excluded.subject, \
+                       text          = excluded.text, \
+                       metadata_json = excluded.metadata_json",
+                    rusqlite::params![
+                        item.id.to_string(),
+                        source,
+                        item.external_id,
+                        item.ts.timestamp(),
+                        author_json,
+                        item.subject.as_deref(),
+                        item.text,
+                        metadata_json,
+                    ],
+                )
+                .context("upsert item row")?;
+            }
+            tx.commit().context("commit upsert tx")?;
+            Ok(())
+        })
+        .await
+        .context("upsert task panicked")?
+    }
+
+    /// Replace the vector for an item. DELETE + INSERT because vec0 doesn't
+    /// support ON CONFLICT for virtual table primary keys.
+    pub async fn upsert_vector(&self, item_id: &uuid::Uuid, vector: &[f32]) -> anyhow::Result<()> {
+        let id = item_id.to_string();
+        let v_json = serde_json::to_string(vector).context("serialize vector")?;
+        let conn = Arc::clone(&self.conn);
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let guard = conn.blocking_lock();
+            guard
+                .execute(
+                    "DELETE FROM item_vectors WHERE item_id = ?1",
+                    rusqlite::params![id],
+                )
+                .context("delete prior vector")?;
+            guard
+                .execute(
+                    "INSERT INTO item_vectors(item_id, embedding) VALUES (?1, ?2)",
+                    rusqlite::params![id, v_json],
+                )
+                .context("insert vector")?;
+            Ok(())
+        })
+        .await
+        .context("upsert_vector task panicked")?
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,5 +192,70 @@ mod tests {
             )
             .expect("vec MATCH query");
         assert_eq!(id, "00000000-0000-0000-0000-000000000001");
+    }
+}
+
+#[cfg(test)]
+mod writer_tests {
+    use super::*;
+    use crate::openhuman::life_capture::types::{Item, Source};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    fn sample_item(ext: &str, text: &str) -> Item {
+        Item {
+            id: Uuid::new_v4(),
+            source: Source::Gmail,
+            external_id: ext.into(),
+            ts: Utc::now(),
+            author: None,
+            subject: Some("subj".into()),
+            text: text.into(),
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    #[tokio::test]
+    async fn upsert_inserts_new_and_dedupes_existing() {
+        let idx = PersonalIndex::open_in_memory().await.unwrap();
+        let writer = IndexWriter::new(&idx);
+
+        writer.upsert(&[sample_item("a", "first")]).await.unwrap();
+        writer.upsert(&[sample_item("a", "first updated")]).await.unwrap();
+        writer.upsert(&[sample_item("b", "second")]).await.unwrap();
+
+        let conn = idx.conn.lock().await;
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM items", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "dedupe by (source, external_id)");
+
+        let updated: String = conn
+            .query_row(
+                "SELECT text FROM items WHERE external_id='a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(updated, "first updated", "upsert overwrites text");
+    }
+
+    #[tokio::test]
+    async fn upsert_vector_replaces_existing_row() {
+        let idx = PersonalIndex::open_in_memory().await.unwrap();
+        let writer = IndexWriter::new(&idx);
+
+        let id = Uuid::new_v4();
+        let v1: Vec<f32> = (0..1536).map(|i| i as f32 * 0.001).collect();
+        let v2: Vec<f32> = (0..1536).map(|i| (i as f32 * 0.001) + 0.5).collect();
+
+        writer.upsert_vector(&id, &v1).await.unwrap();
+        writer.upsert_vector(&id, &v2).await.unwrap();
+
+        let conn = idx.conn.lock().await;
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM item_vectors WHERE item_id = ?1", rusqlite::params![id.to_string()], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "vector replaced, not duplicated");
     }
 }
