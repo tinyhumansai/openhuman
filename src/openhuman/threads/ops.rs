@@ -547,7 +547,8 @@ mod tests {
         let fp = title_log_fingerprint("Chat Jan 1 1:00 AM");
         assert_eq!(fp.len(), 16);
         assert!(
-            fp.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            fp.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
             "fingerprint must be lowercase hex, got: {fp}"
         );
     }
@@ -742,7 +743,11 @@ mod tests {
             count: 7,
         };
         let counts_map = counts([("num_messages", 7)]);
-        let out = envelope(json!({"v": 42}), Some(counts_map.clone()), Some(pagination.clone()));
+        let out = envelope(
+            json!({"v": 42}),
+            Some(counts_map.clone()),
+            Some(pagination.clone()),
+        );
         let env = &out.value;
         assert_eq!(env.data.as_ref().unwrap()["v"], json!(42));
         assert!(env.error.is_none());
