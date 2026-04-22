@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 export function useStickToBottom(
   messages: readonly unknown[],
   threadKey: string | null | undefined,
-  resetKey: string,
+  resetKey: string
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);

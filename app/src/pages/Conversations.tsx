@@ -199,7 +199,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const { containerRef: messagesContainerRef, endRef: messagesEndRef } = useStickToBottom(
     messages,
     selectedThreadId,
-    location.pathname,
+    location.pathname
   );
 
   useEffect(() => {
