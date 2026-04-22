@@ -28,8 +28,15 @@ pub struct CanonicalEntity {
 /// Same surface form (after normalisation) → same `canonical_id` regardless
 /// of how many times it appears in a chunk. Preserves source spans by
 /// emitting one [`CanonicalEntity`] per occurrence.
+///
+/// Extracted **topics** are also promoted into the canonical stream under
+/// [`EntityKind::Topic`] so downstream routing (Phase 3c topic trees) can
+/// treat themes as first-class scope alongside people/orgs. Topics have no
+/// source span (they're derived from the whole chunk, not a specific
+/// substring), so `span_start` / `span_end` are both `0` for topic rows —
+/// readers should key on `kind` instead of span when span-awareness matters.
 pub fn canonicalise(extracted: &ExtractedEntities) -> Vec<CanonicalEntity> {
-    extracted
+    let mut out: Vec<CanonicalEntity> = extracted
         .entities
         .iter()
         .map(|e| CanonicalEntity {
@@ -40,7 +47,35 @@ pub fn canonicalise(extracted: &ExtractedEntities) -> Vec<CanonicalEntity> {
             span_end: e.span_end,
             score: e.score,
         })
-        .collect()
+        .collect();
+
+    // Promote topics. Dedup against the entities we already emitted so a
+    // hashtag like `#launch` and a topic label `"launch"` don't both land
+    // as the same canonical id with the same kind — the hashtag keeps its
+    // Hashtag kind, the topic gets Topic kind, and `canonical_id_for`
+    // makes them distinguishable: `hashtag:launch` vs `topic:launch`.
+    for topic in &extracted.topics {
+        let canonical_id = canonical_id_for(EntityKind::Topic, &topic.label);
+        // Dedup within the topic set in case the scorer produces the same
+        // label twice (LLM + regex overlap). Entities under other kinds
+        // aren't dedup targets — `topic:launch` and `hashtag:launch` are
+        // intentionally separate.
+        if out
+            .iter()
+            .any(|e| e.kind == EntityKind::Topic && e.canonical_id == canonical_id)
+        {
+            continue;
+        }
+        out.push(CanonicalEntity {
+            canonical_id,
+            kind: EntityKind::Topic,
+            surface: topic.label.clone(),
+            span_start: 0,
+            span_end: 0,
+            score: topic.score,
+        });
+    }
+    out
 }
 
 /// Canonical id form per kind. Deterministic so the same surface always
@@ -134,5 +169,97 @@ mod tests {
             canonical_id_for(EntityKind::Handle, "alice"),
             canonical_id_for(EntityKind::Person, "alice")
         );
+    }
+
+    // ── Topic canonicalisation (#709 / Phase 3c topic-tree scope) ────
+
+    use crate::openhuman::memory::tree::score::extract::ExtractedTopic;
+
+    fn topic(label: &str, score: f32) -> ExtractedTopic {
+        ExtractedTopic {
+            label: label.to_string(),
+            score,
+        }
+    }
+
+    #[test]
+    fn topics_are_promoted_to_canonical_entities() {
+        let ex = ExtractedEntities {
+            entities: vec![],
+            topics: vec![topic("phoenix", 0.72), topic("migration", 0.60)],
+            llm_importance: None,
+            llm_importance_reason: None,
+        };
+        let out = canonicalise(&ex);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].kind, EntityKind::Topic);
+        assert_eq!(out[0].canonical_id, "topic:phoenix");
+        assert!((out[0].score - 0.72).abs() < 1e-6);
+        assert_eq!(out[1].canonical_id, "topic:migration");
+    }
+
+    #[test]
+    fn topic_canonicalisation_lowercases() {
+        let ex = ExtractedEntities {
+            entities: vec![],
+            topics: vec![topic("Phoenix", 1.0), topic("PHOENIX", 0.5)],
+            llm_importance: None,
+            llm_importance_reason: None,
+        };
+        let out = canonicalise(&ex);
+        // Both normalise to "topic:phoenix" — second occurrence is deduped.
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].canonical_id, "topic:phoenix");
+        // First-seen surface is preserved.
+        assert_eq!(out[0].surface, "Phoenix");
+    }
+
+    #[test]
+    fn hashtag_and_topic_with_same_label_coexist() {
+        // "#launch" regex → EntityKind::Hashtag, LLM theme "launch" → Topic.
+        // They stay as two distinct canonical entities — different kind,
+        // different canonical_id prefix.
+        let ex = ExtractedEntities {
+            entities: vec![ExtractedEntity {
+                kind: EntityKind::Hashtag,
+                text: "launch".into(),
+                span_start: 0,
+                span_end: 6,
+                score: 1.0,
+            }],
+            topics: vec![topic("launch", 0.8)],
+            llm_importance: None,
+            llm_importance_reason: None,
+        };
+        let out = canonicalise(&ex);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].kind, EntityKind::Hashtag);
+        assert_eq!(out[0].canonical_id, "hashtag:launch");
+        assert_eq!(out[1].kind, EntityKind::Topic);
+        assert_eq!(out[1].canonical_id, "topic:launch");
+    }
+
+    #[test]
+    fn canonicalise_mixes_entities_and_topics_in_order() {
+        // Entities come first, topics appended after — downstream callers
+        // (e.g. routing) can rely on this ordering if they ever need it.
+        let ex = ExtractedEntities {
+            entities: vec![entity(EntityKind::Email, "alice@example.com")],
+            topics: vec![topic("phoenix", 0.7)],
+            llm_importance: None,
+            llm_importance_reason: None,
+        };
+        let out = canonicalise(&ex);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].kind, EntityKind::Email);
+        assert_eq!(out[1].kind, EntityKind::Topic);
+    }
+
+    #[test]
+    fn topic_entity_kind_round_trips_through_parse() {
+        // Defence in depth: ensure the new Topic variant survives the
+        // round-trip used by mem_tree_entity_index on read.
+        assert_eq!(EntityKind::parse("topic"), Ok(EntityKind::Topic));
+        assert_eq!(EntityKind::Topic.as_str(), "topic");
     }
 }

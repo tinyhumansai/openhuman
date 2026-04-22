@@ -33,6 +33,13 @@ pub enum EntityKind {
     Event,
     Product,
     Misc,
+    // Thematic — scorer-surfaced topics (hashtag-like short phrases or
+    // LLM-extracted themes). Promoted into the canonical entity stream
+    // by the resolver so Phase 3c topic trees can route on themes the
+    // same way they route on people/orgs. A chunk saying "Phoenix
+    // migration ships Friday" emits `topic:phoenix` and `topic:migration`
+    // in addition to any emails/hashtags the mechanical extractors find.
+    Topic,
 }
 
 impl EntityKind {
@@ -48,6 +55,7 @@ impl EntityKind {
             Self::Event => "event",
             Self::Product => "product",
             Self::Misc => "misc",
+            Self::Topic => "topic",
         }
     }
 
@@ -63,6 +71,7 @@ impl EntityKind {
             "event" => Ok(Self::Event),
             "product" => Ok(Self::Product),
             "misc" => Ok(Self::Misc),
+            "topic" => Ok(Self::Topic),
             other => Err(format!("unknown entity kind: {other}")),
         }
     }
