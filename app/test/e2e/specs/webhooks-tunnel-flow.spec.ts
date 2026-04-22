@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * End-to-end: webhook tunnel CRUD round-trip (UI WebView → core JSON-RPC → mock backend).
  *
@@ -39,7 +38,7 @@ import {
   navigateViaHash,
   waitForRequest,
 } from '../helpers/shared-flows';
-import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
+import { clearRequestLog, getRequestLog, resetMockBehavior, startMockServer, stopMockServer } from '../mock-server';
 
 function stepLog(message: string, context?: unknown): void {
   const stamp = new Date().toISOString();
@@ -69,7 +68,12 @@ function unwrapRpcValue<T = unknown>(raw: unknown): T | undefined {
 describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
   before(async () => {
     await startMockServer();
+    await resetMockBehavior();
     await waitForApp();
+    clearRequestLog();
+  });
+
+  beforeEach(() => {
     clearRequestLog();
   });
 
@@ -92,12 +96,18 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
   });
 
   it('creates a tunnel → lists → deletes, with matching mock-backend traffic', async () => {
-    // Give the deep-link listener's async `storeSession()` a moment to settle before
+    // Wait for the deep-link listener's async `storeSession()` to settle before
     // exercising tunnel RPCs (webhooks ops require a stored session token).
-    await browser.pause(1_500);
-    clearRequestLog();
+    await browser.waitUntil(
+      async () => {
+        const probe = await callOpenhumanRpc('openhuman.webhooks_list_tunnels', {});
+        return probe.ok;
+      },
+      { timeout: 15_000, interval: 500, timeoutMsg: 'Session did not settle: webhooks_list_tunnels never returned ok' }
+    );
 
     // --- create ---------------------------------------------------------------
+    clearRequestLog();
     const tunnelName = `e2e-tunnel-${Date.now()}`;
     const created = await callOpenhumanRpc('openhuman.webhooks_create_tunnel', {
       name: tunnelName,
@@ -112,7 +122,8 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
       created.result
     );
     const tunnelId = createdTunnel?.id;
-    expect(typeof tunnelId === 'string' && (tunnelId as string).length > 0).toBe(true);
+    expect(typeof tunnelId).toBe('string');
+    expect((tunnelId as string).length).toBeGreaterThan(0);
     expect(createdTunnel?.name).toBe(tunnelName);
 
     const createReq = await waitForRequest(getRequestLog, 'POST', '/webhooks/core', 10_000);
@@ -122,6 +133,7 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
     expect(createReq).toBeDefined();
 
     // --- list -----------------------------------------------------------------
+    clearRequestLog();
     const listed = await callOpenhumanRpc('openhuman.webhooks_list_tunnels', {});
     if (!listed.ok) {
       stepLog('webhooks_list_tunnels failed', listed);
@@ -137,6 +149,7 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
     expect(listReq).toBeDefined();
 
     // --- delete ---------------------------------------------------------------
+    clearRequestLog();
     const deleted = await callOpenhumanRpc('openhuman.webhooks_delete_tunnel', { id: tunnelId });
     if (!deleted.ok) {
       stepLog('webhooks_delete_tunnel failed', deleted);
@@ -155,6 +168,7 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
     expect(deleteReq).toBeDefined();
 
     // --- post-delete list confirms removal ------------------------------------
+    clearRequestLog();
     const relisted = await callOpenhumanRpc('openhuman.webhooks_list_tunnels', {});
     expect(relisted.ok).toBe(true);
     const relistedValue = unwrapRpcValue<Array<{ id?: string }>>(relisted.result);
@@ -166,7 +180,18 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
 
   it('Webhooks page loads (ComposeIO trigger history surface)', async () => {
     await navigateViaHash('/webhooks');
-    await browser.pause(2_000);
+
+    await browser.waitUntil(
+      async () => {
+        return (
+          (await textExists('ComposeIO Triggers')) ||
+          (await textExists('ComposeIO')) ||
+          (await textExists('Archive')) ||
+          (await textExists('Refresh'))
+        );
+      },
+      { timeout: 10_000, interval: 500, timeoutMsg: 'Webhooks page markers did not appear' }
+    );
 
     if (supportsExecuteScript()) {
       const hash = await browser.execute(() => window.location.hash);
