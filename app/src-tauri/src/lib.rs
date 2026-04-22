@@ -3,11 +3,11 @@ compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supp
 
 mod core_process;
 mod core_update;
-mod notification_settings;
 #[cfg(feature = "cef")]
 mod discord_scanner;
 #[cfg(feature = "cef")]
 mod imessage_scanner;
+mod notification_settings;
 #[cfg(feature = "cef")]
 mod slack_scanner;
 #[cfg(feature = "cef")]

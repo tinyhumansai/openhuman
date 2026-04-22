@@ -267,7 +267,8 @@ fn forward_native_notification<R: Runtime>(
     payload: &tauri_runtime_cef::notification::NotificationPayload,
 ) {
     // Feature flag — bail early when the user hasn't opted in.
-    if let Some(settings) = app.try_state::<crate::notification_settings::NotificationSettingsState>()
+    if let Some(settings) =
+        app.try_state::<crate::notification_settings::NotificationSettingsState>()
     {
         if !settings.enabled() {
             log::debug!(
