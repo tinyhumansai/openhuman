@@ -38,7 +38,13 @@ import {
   navigateViaHash,
   waitForRequest,
 } from '../helpers/shared-flows';
-import { clearRequestLog, getRequestLog, resetMockBehavior, startMockServer, stopMockServer } from '../mock-server';
+import {
+  clearRequestLog,
+  getRequestLog,
+  resetMockBehavior,
+  startMockServer,
+  stopMockServer,
+} from '../mock-server';
 
 function stepLog(message: string, context?: unknown): void {
   const stamp = new Date().toISOString();
@@ -103,7 +109,11 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
         const probe = await callOpenhumanRpc('openhuman.webhooks_list_tunnels', {});
         return probe.ok;
       },
-      { timeout: 15_000, interval: 500, timeoutMsg: 'Session did not settle: webhooks_list_tunnels never returned ok' }
+      {
+        timeout: 15_000,
+        interval: 500,
+        timeoutMsg: 'Session did not settle: webhooks_list_tunnels never returned ok',
+      }
     );
 
     // --- create ---------------------------------------------------------------
