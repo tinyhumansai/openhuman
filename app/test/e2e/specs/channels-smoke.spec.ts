@@ -85,9 +85,7 @@ describe('Channels page smoke (Telegram + Discord)', () => {
     // Switch to the Discord pill and assert it also exposes a Connect button.
     stepLog('switching to Discord panel');
     const clicked = await browser.execute(() => {
-      const buttons = Array.from(
-        document.querySelectorAll<HTMLButtonElement>('button')
-      );
+      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
       const discordBtn = buttons.find(b => b.textContent?.includes('Discord'));
       if (discordBtn) {
         discordBtn.click();
