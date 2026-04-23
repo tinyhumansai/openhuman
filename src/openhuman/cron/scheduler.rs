@@ -53,6 +53,19 @@ pub async fn run(config: Config) -> Result<()> {
     }
 }
 
+/// Public entry point for delivering a job's output via the configured
+/// delivery mode (proactive / announce). Called by `cron_run` ("Run Now")
+/// so manual runs also push notifications and alerts.
+pub async fn deliver_job(config: &Config, job: &CronJob, output: &str) {
+    if let Err(e) = deliver_if_configured(config, job, output).await {
+        if job.delivery.best_effort {
+            tracing::warn!("[cron] delivery failed (best_effort, Run Now): {e}");
+        } else {
+            tracing::warn!("[cron] delivery failed (Run Now): {e}");
+        }
+    }
+}
+
 pub async fn execute_job_now(config: &Config, job: &CronJob) -> (bool, String) {
     let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
     execute_job_with_retry(config, &security, job).await
@@ -329,7 +342,7 @@ fn warn_if_high_frequency_agent_job(job: &CronJob) {
     }
 }
 
-async fn deliver_if_configured(_config: &Config, job: &CronJob, output: &str) -> Result<()> {
+async fn deliver_if_configured(config: &Config, job: &CronJob, output: &str) -> Result<()> {
     let delivery: &DeliveryConfig = &job.delivery;
 
     let mode = delivery.mode.trim().to_ascii_lowercase();
@@ -349,6 +362,9 @@ async fn deliver_if_configured(_config: &Config, job: &CronJob, output: &str) ->
                 message: output.to_string(),
                 job_name: job.name.clone(),
             });
+
+            // Also push to the alerts tab so the user sees it in /notifications.
+            push_cron_alert(config, job, output);
         }
 
         // Announce delivery — the cron job specifies the exact channel
@@ -375,6 +391,8 @@ async fn deliver_if_configured(_config: &Config, job: &CronJob, output: &str) ->
                 target: target.to_string(),
                 output: output.to_string(),
             });
+
+            push_cron_alert(config, job, output);
         }
 
         // No delivery configured — output is stored in last_output only.
@@ -382,6 +400,47 @@ async fn deliver_if_configured(_config: &Config, job: &CronJob, output: &str) ->
     }
 
     Ok(())
+}
+
+/// Insert a notification into the alerts tab for a completed cron job.
+fn push_cron_alert(config: &Config, job: &CronJob, output: &str) {
+    use crate::openhuman::notifications::store as notif_store;
+    use crate::openhuman::notifications::types::{IntegrationNotification, NotificationStatus};
+
+    let name = job.name.as_deref().unwrap_or("Cron job");
+    let truncated = crate::openhuman::util::truncate_with_ellipsis(output, 512);
+
+    let notification = IntegrationNotification {
+        id: uuid::Uuid::new_v4().to_string(),
+        provider: "cron".to_string(),
+        account_id: Some(job.id.clone()),
+        title: name.to_string(),
+        body: truncated,
+        raw_payload: serde_json::json!({
+            "job_id": job.id,
+            "job_name": job.name,
+            "delivery_mode": job.delivery.mode,
+        }),
+        importance_score: Some(0.65),
+        triage_action: Some("react".to_string()),
+        triage_reason: Some("Scheduled delivery".to_string()),
+        status: NotificationStatus::Unread,
+        received_at: Utc::now(),
+        scored_at: Some(Utc::now()),
+    };
+
+    if let Err(e) = notif_store::insert(config, &notification) {
+        tracing::warn!(
+            job_id = %job.id,
+            error = %e,
+            "[cron] failed to push notification alert"
+        );
+    } else {
+        tracing::debug!(
+            job_id = %job.id,
+            "[cron] pushed notification alert to alerts tab"
+        );
+    }
 }
 
 fn is_env_assignment(word: &str) -> bool {

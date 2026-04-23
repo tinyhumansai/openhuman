@@ -101,7 +101,7 @@ impl EventHandler for ProactiveMessageSubscriber {
         let DomainEvent::ProactiveMessageRequested {
             source,
             message,
-            job_name: _,
+            job_name,
         } = event
         else {
             return;

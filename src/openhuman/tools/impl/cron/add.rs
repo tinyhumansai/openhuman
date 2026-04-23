@@ -31,7 +31,7 @@ impl Tool for CronAddTool {
         json!({
             "type": "object",
             "properties": {
-                "name": { "type": "string" },
+                "name": { "type": "string", "description": "Short human-readable name for the job (e.g. 'drink_water_reminder'). Always provide a name." },
                 "schedule": {
                     "type": "object",
                     "description": "Schedule object: {kind:'cron',expr,tz?} | {kind:'at',at} | {kind:'every',every_ms}"
@@ -41,10 +41,19 @@ impl Tool for CronAddTool {
                 "prompt": { "type": "string" },
                 "session_target": { "type": "string", "enum": ["isolated", "main"] },
                 "model": { "type": "string" },
-                "delivery": { "type": "object" },
+                "delivery": {
+                    "type": "object",
+                    "description": "Delivery config. Defaults to proactive (notifies user). Modes: proactive, announce (needs channel+to), none (silent).",
+                    "properties": {
+                        "mode": { "type": "string", "enum": ["proactive", "announce", "none"] },
+                        "channel": { "type": "string", "description": "Required for announce mode" },
+                        "to": { "type": "string", "description": "Required for announce mode" },
+                        "best_effort": { "type": "boolean", "default": true }
+                    }
+                },
                 "delete_after_run": { "type": "boolean" }
             },
-            "required": ["schedule"]
+            "required": ["name", "schedule"]
         })
     }
 
@@ -72,7 +81,21 @@ impl Tool for CronAddTool {
         let name = args
             .get("name")
             .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
+            .map(str::to_string)
+            .or_else(|| {
+                // Derive a name from the prompt so cron jobs are never unnamed.
+                args.get("prompt")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|p| {
+                        let slug: String = p
+                            .chars()
+                            .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+                            .take(48)
+                            .collect();
+                        slug.trim_matches('_').to_string()
+                    })
+                    .filter(|s| !s.is_empty())
+            });
 
         let job_type = match args.get("job_type").and_then(serde_json::Value::as_str) {
             Some("agent") => JobType::Agent,
@@ -146,7 +169,12 @@ impl Tool for CronAddTool {
                             return Ok(ToolResult::error(format!("Invalid delivery config: {e}")));
                         }
                     },
-                    None => None,
+                    None => Some(DeliveryConfig {
+                        mode: "proactive".to_string(),
+                        channel: None,
+                        to: None,
+                        best_effort: true,
+                    }),
                 };
 
                 cron::add_agent_job(
@@ -266,6 +294,47 @@ mod tests {
 
         assert!(result.is_error);
         assert!(result.output().contains("every_ms must be > 0"));
+    }
+
+    #[tokio::test]
+    async fn agent_job_defaults_to_proactive_delivery() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = test_config(&tmp).await;
+        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let result = tool
+            .execute(json!({
+                "schedule": { "kind": "every", "every_ms": 300000 },
+                "job_type": "agent",
+                "prompt": "remind me to drink water"
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error, "{:?}", result.output());
+        let jobs = cron::list_jobs(&cfg).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].delivery.mode, "proactive");
+    }
+
+    #[tokio::test]
+    async fn agent_job_respects_explicit_none_delivery() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = test_config(&tmp).await;
+        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let result = tool
+            .execute(json!({
+                "schedule": { "kind": "every", "every_ms": 300000 },
+                "job_type": "agent",
+                "prompt": "silent background task",
+                "delivery": { "mode": "none" }
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error, "{:?}", result.output());
+        let jobs = cron::list_jobs(&cfg).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].delivery.mode, "none");
     }
 
     #[tokio::test]
