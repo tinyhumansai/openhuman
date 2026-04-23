@@ -10,8 +10,8 @@ This plan is the concrete, verified follow-up to the adversarial review run on 2
 | Item | Status after verification |
 | --- | --- |
 | RPC `fetch()` has no timeout (`coreRpcClient.ts:154`) | Confirmed |
-| Core spawn does not check `try_wait()` before polling (`core_process.rs:161–164`) | Partially confirmed — `try_wait()` is called inside the 100 ms poll loop at line 241, but not immediately after `spawn()`. First exit-check happens after the first sleep. |
-| `Arc<Mutex>` on child handle held across `.await` in spawn (`core_process.rs:168–205`) | Confirmed |
+| Core spawn does not check `try_wait()` before polling (`core_process.rs:161–164`) | **Rejected after re-read** — the poll loop at lines 209–254 runs `is_rpc_port_open()` then `try_wait()` *before* the 100 ms sleep, so an instant-exit child is caught within ~250 ms. Not worth changing. |
+| `Arc<Mutex>` on child handle held across `.await` in spawn (`core_process.rs:168–205`) | **Rejected after re-read** — `tokio::process::Command::spawn()` is synchronous; no `.await` happens between lock acquire and release in either the spawn block or the poll iteration. Not a real issue. |
 | `core_rpc_url` silent fallback (`coreRpcClient.ts:105–112`) | Confirmed |
 | CSP wildcard port for localhost in `tauri.conf.json:26` | Confirmed — directly enables the upstream **#812** class of bug |
 | MCP transport leaks request handlers on disconnect (`lib/mcp/transport.ts`) | Confirmed (to re-verify when patch is written) |
@@ -27,24 +27,31 @@ Items are ordered by: blast radius × concreteness × low risk of regression. I 
 
 ### Security / hardening
 
-1. **[ ] Tighten `tauri.conf.json` CSP** — replace `http://127.0.0.1:*` / `http://localhost:*` wildcard with the actual core port. `default_core_port()` (`app/src-tauri/src/core_process.rs:446`) resolves `OPENHUMAN_CORE_PORT` or falls back to `7788`; CSP should reflect the fallback and any deterministic dev/test ports. Directly addresses upstream **#812** ("screen-share list/thumbnail commands reachable from third-party page origin").
+1. **[~] Tighten `tauri.conf.json` CSP** — deferred. Pinning the core port in static CSP is incompatible with `OPENHUMAN_CORE_PORT` runtime override, and #812 is a capability-level issue (command reachability from 3rd-party origins) that CSP alone wouldn't fix. Needs upstream design.
 
 ### Reliability / IPC
 
-2. **[ ] RPC fetch timeout** — `callCoreRpc()` must use `AbortController` with a bounded timeout (default 30 s; configurable via `VITE_CORE_RPC_TIMEOUT_MS`) and surface a distinct error message. Today a hung core hangs the UI forever (`app/src/services/coreRpcClient.ts:154`).
-3. **[ ] Core spawn: immediate `try_wait()` after `spawn()`** — catch instant-exit children (bad args, missing .so) without eating the first 100 ms sleep. `app/src-tauri/src/core_process.rs:161, 200`.
-4. **[ ] Core spawn: drop child lock before awaits** — `self.child.lock().await` is held while the poll loop runs `.await` against the TCP port. Restructure so the lock is released between spawn and port polling. `core_process.rs:168–205`.
-5. **[ ] MCP transport: drain pending handlers on disconnect** — on `disconnect`, reject all `requestHandlers` with a synthetic `ConnectionClosed` error so callers unwind instead of waiting on the 30 s timeout. `app/src/lib/mcp/transport.ts`.
-6. **[ ] `core_rpc_url` resolution: stop swallowing the failure** — log the caught error via `coreRpcError`, expose a `resolveCoreRpcUrl` diagnostic so the UI can surface "falling back to default URL". `app/src/services/coreRpcClient.ts:105–112`.
+2. **[x] RPC fetch timeout** — `callCoreRpc()` uses `AbortController` with a bounded timeout (default 30 s; configurable via `VITE_CORE_RPC_TIMEOUT_MS`) and surfaces a distinct error message. Landed: `app/src/services/coreRpcClient.ts`, `app/src/utils/config.ts`, tests at `app/src/services/__tests__/coreRpcClient.test.ts`, env example updated.
+3. ~~Core spawn: immediate `try_wait()` after `spawn()`~~ — rejected on re-read (see table above).
+4. ~~Core spawn: drop child lock before awaits~~ — rejected on re-read (see table above).
+5. **[x] MCP transport: drain pending handlers on disconnect** — rejects all in-flight `requestHandlers` with `Socket disconnected` (via `disconnect` listener) or `Socket replaced` (via `updateSocket`). Landed: `app/src/lib/mcp/transport.ts` + new test suite `app/src/lib/mcp/__tests__/transport.test.ts`.
+6. **[x] `core_rpc_url` resolution: stop swallowing the failure** — both the throw path and the empty-string path now log the underlying misconfig via `coreRpcError`. Landed: `app/src/services/coreRpcClient.ts`.
 
 ### UX / observability
 
-7. **[ ] PersistGate timeout** — wrap `PersistGate` so a rehydration that doesn't complete within 10 s falls through to the app with a toast/banner rather than leaving the user on a permanent loading screen. `app/src/App.tsx:45`.
-8. **[ ] RPC errors carry a structured code** — include `{ code, httpStatus, method }` on the thrown error so UI can distinguish timeout / network / JSON-RPC error classes. `coreRpcClient.ts:181–184`.
+7. **[x] PersistGate timeout** — new `PersistRehydrationScreen` preserves the normal splash for the first 10 s, then swaps in a recovery panel that calls `persistor.purge()` + `window.location.reload()`. Landed: `app/src/App.tsx`, `app/src/components/PersistRehydrationScreen.tsx`.
+8. **[ ] RPC errors carry a structured code** — deferred to a follow-up. `coreRpcClient.ts` still throws `Error(message)`; richer error codes would churn every call site. Tracked as next-branch work.
 
 ### Repo hygiene
 
-9. **[ ] Stale `.claude/rules/` pass** — reconcile or delete rules that conflict with CLAUDE.md: at minimum `08-frontend-guide.md` (Zustand/MTProto/ticker), `11-tech-stack-detailed.md` (Zustand, `src-tauri/` path), `16-macos-background-execution.md` ("Outsourced", tray config not in `tauri.conf.json`). Tracks upstream **#805**.
+9. **[x] Stale `.claude/rules/` pass (upstream #805)** — deleted 7 files that actively contradicted CLAUDE.md (they auto-load into every Claude Code session, so their misinformation is load-bearing context, not just docs):
+   - `00-project-vision.md`, `01-project-overview.md` — "crypto community platform, poke.com" framing, mobile targets.
+   - `05-platform-setup-android.md`, `06-platform-setup-ios.md` — non-desktop targets are rejected by `compile_error!`.
+   - `08-frontend-guide.md` — fabricated features (Telegram MTProto, crypto price ticker, chat with crypto addresses).
+   - `11-tech-stack-detailed.md` — claimed Zustand for state mgmt (repo uses Redux Toolkit); wrong directory paths.
+   - `16-macos-background-execution.md` — "Outsourced" product name, tray config that isn't in `tauri.conf.json`.
+
+   Rewrote `02-development-commands.md` to match CLAUDE.md (desktop-only, workspace paths, real script names). Trimmed Android/iOS sections out of `10-troubleshooting.md`, fixed `src-tauri/` paths.
 
 ### Explicitly out of scope for this branch
 
