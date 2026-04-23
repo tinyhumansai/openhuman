@@ -12,6 +12,10 @@ A native Rust credential proxy inside openhuman core that lets skills make authe
 
 Pattern adapted from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw) and [onecli/onecli](https://github.com/onecli/onecli) (both Apache-2.0 / MIT). Architecture only — no code copy.
 
+## History
+
+An earlier revision of this doc proposed an Infisical-based HTTPS proxy. That plan was pivoted after reviewing nanoclaw + OneCLI: shipping Docker + Postgres + a Next.js dashboard as a runtime dep is the wrong shape for a desktop app, and OneCLI has no Windows-support signal. Borrowing the pattern and implementing natively in Rust gives equivalent security with zero third-party install on end-user machines and no Windows testing gap.
+
 ---
 
 ## Non-goals
@@ -21,6 +25,7 @@ Pattern adapted from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw) a
 - Postgres-backed storage (use existing openhuman SQLite)
 - Web dashboard (use existing Tauri UI)
 - Replace OpenAI / Anthropic API key env vars in core (those are core-config, not skill-credentials)
+- Adopt OneCLI as a runtime dep (wrong shape; borrow pattern instead)
 
 ---
 
