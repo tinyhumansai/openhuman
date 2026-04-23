@@ -1,5 +1,5 @@
-import { callCoreRpc } from '../coreRpcClient';
 import { getBackendUrl } from '../backendUrl';
+import { callCoreRpc } from '../coreRpcClient';
 
 /**
  * Send a magic-link email for email-based login.

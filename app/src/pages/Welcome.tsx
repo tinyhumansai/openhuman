@@ -28,14 +28,13 @@ const Welcome = () => {
     try {
       // Desktop: redirect back via openhuman:// deep link.
       // Web: redirect to the current origin so the app's hash router picks up the token.
-      const frontendRedirectUri = isTauri()
-        ? DESKTOP_FRONTEND_URI
-        : window.location.origin;
+      const frontendRedirectUri = isTauri() ? DESKTOP_FRONTEND_URI : window.location.origin;
 
       await sendEmailMagicLink(email.trim(), frontendRedirectUri);
       setIsSent(true);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+      const message =
+        err instanceof Error ? err.message : 'Something went wrong. Please try again.';
       setEmailError(message);
     } finally {
       setIsSending(false);
@@ -83,8 +82,7 @@ const Welcome = () => {
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
-                  strokeWidth={2}
-                >
+                  strokeWidth={2}>
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -94,14 +92,16 @@ const Welcome = () => {
               </div>
               <p className="text-sm font-medium text-stone-900">Check your email</p>
               <p className="text-xs text-stone-500">
-                We sent a sign-in link to <span className="font-medium text-stone-700">{email}</span>.
-                Click it to continue.
+                We sent a sign-in link to{' '}
+                <span className="font-medium text-stone-700">{email}</span>. Click it to continue.
               </p>
               <button
                 type="button"
-                onClick={() => { setIsSent(false); setEmail(''); }}
-                className="mt-1 text-xs text-primary-500 hover:underline"
-              >
+                onClick={() => {
+                  setIsSent(false);
+                  setEmail('');
+                }}
+                className="mt-1 text-xs text-primary-500 hover:underline">
                 Use a different email
               </button>
             </div>
@@ -145,8 +145,7 @@ const Welcome = () => {
                 <button
                   type="submit"
                   disabled={isSending || !email.trim()}
-                  className="w-full py-3 bg-primary-500 hover:bg-primary-600 text-white font-medium text-sm rounded-xl transition-colors duration-200 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
+                  className="w-full py-3 bg-primary-500 hover:bg-primary-600 text-white font-medium text-sm rounded-xl transition-colors duration-200 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                   {isSending ? (
                     <>
                       <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
