@@ -51,6 +51,11 @@
     "externalBin": [
       "binaries/openhuman-core"
     ],
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    },
     "createUpdaterArtifacts": false,
     "macOS": {
       "minimumSystemVersion": "10.15",
