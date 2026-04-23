@@ -28,6 +28,39 @@ require() {
   done
 }
 
+# Summarize free-form text via a local LLM CLI (expects `-p <prompt>`).
+# Usage: summarize_text <tool> <input>
+# Tools used here: gemini (default for summaries), claude, or any CLI that
+# accepts `-p "<prompt>"` and prints the response to stdout.
+# Special value `none` echoes input unchanged.
+summarize_text() {
+  local tool="$1"
+  local input="$2"
+  if [ "$tool" = "none" ] || [ "$tool" = "raw" ]; then
+    printf '%s' "$input"
+    return
+  fi
+  require "$tool"
+  local prompt
+  prompt=$(cat <<'EOF'
+You are writing the body of a squash-merge commit.
+Summarize the PR changes below into 3-6 short bullet points.
+Rules:
+- Start each bullet with "- " and use imperative mood ("Add…", "Fix…", "Rename…").
+- One line per bullet, under ~100 chars.
+- No headers, no code fences, no sign-offs, no Co-authored-by lines.
+- Do not include the PR number or title.
+- Output only the bullets, nothing else.
+
+PR content:
+---
+EOF
+)
+  "$tool" -p "${prompt}
+${input}
+---"
+}
+
 require_pr_number() {
   if [ -z "${1:-}" ]; then
     echo "Usage: $(basename "$0") <pr-number>" >&2
@@ -48,7 +81,7 @@ sync_pr() {
   local repo
   repo=$(resolve_repo)
 
-  echo "[review] syncing main from upstream…"
+  echo "[review] syncing main from upstream..."
   git checkout main
   git pull origin main
   git fetch upstream
@@ -68,7 +101,7 @@ sync_pr() {
     "+${head_branch}:${local_branch}"
   git checkout "$local_branch"
 
-  echo "[review] merging main into $local_branch (conflicts will not abort)…"
+  echo "[review] merging main into $local_branch (conflicts will not abort)..."
   git merge main || echo "[review] ! conflicts detected in PR #$pr, continuing."
 
   # Prefer an existing SSH remote pointing at this fork to avoid https auth prompts.
