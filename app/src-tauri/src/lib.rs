@@ -683,7 +683,9 @@ pub fn run() {
             //   }
 
             if let Err(err) = setup_tray(app.handle()) {
-                log::warn!("[tray] failed to setup tray icon (non-fatal in headless environment): {err}");
+                log::warn!(
+                    "[tray] failed to setup tray icon (non-fatal in headless environment): {err}"
+                );
             }
 
             // Dev convenience: if OPENHUMAN_DEV_AUTO_WHATSAPP=<account-id>
