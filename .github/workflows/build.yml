@@ -13,6 +13,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: Build Tauri App
@@ -90,6 +93,7 @@ jobs:
           TAURI_CONFIG_OVERRIDE='{"plugins":{"updater":{"active":false}}}'
           cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
         env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
           NODE_ENV: production
           CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"

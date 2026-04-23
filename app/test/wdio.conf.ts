@@ -9,6 +9,7 @@ const configDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(configDir, '..');
 const repoRoot = path.resolve(projectRoot, '..');
 const tsconfigE2ePath = path.join(projectRoot, 'test', 'tsconfig.e2e.json');
+const testSpecsPath = path.join(projectRoot, 'test', 'e2e', 'specs', '**', '*.spec.ts');
 
 /**
  * Resolve the path to the built Tauri application.
@@ -85,7 +86,8 @@ export const config: Options.Testrunner & Record<string, unknown> = {
   runner: 'local',
   hostname: '127.0.0.1',
   port: driverPort,
-  specs: ['./test/e2e/specs/**/*.spec.ts'],
+  specs: [testSpecsPath],
+  rootDir: projectRoot,
   maxInstances: 1, // Tauri apps are single-instance
   capabilities: getPlatformCapabilities(),
   logLevel: 'warn',
