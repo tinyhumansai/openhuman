@@ -233,9 +233,7 @@ fn fetch_topic_tree_root_summary(config: &Config, entity_id: &str) -> Result<Opt
         Some(s) => s,
         None => {
             log::warn!(
-                "[retrieval::topic] topic tree {} has root_id={} but the summary row is missing",
-                tree.id,
-                root_id
+                "[retrieval::topic] topic tree has root_id set but the summary row is missing"
             );
             return Ok(None);
         }
@@ -263,9 +261,7 @@ async fn entity_hit_to_retrieval_hit(
             let summary = match store::get_summary(&config_owned, &node_id)? {
                 Some(s) => s,
                 None => {
-                    log::warn!(
-                        "[retrieval::topic] entity index points at summary {node_id} but row missing"
-                    );
+                    log::warn!("[retrieval::topic] entity index points at missing summary row");
                     return Ok(None);
                 }
             };
@@ -290,9 +286,7 @@ async fn entity_hit_to_retrieval_hit(
         let chunk = match get_chunk(&config_owned, &node_id)? {
             Some(c) => c,
             None => {
-                log::warn!(
-                    "[retrieval::topic] entity index points at chunk {node_id} but row missing"
-                );
+                log::warn!("[retrieval::topic] entity index points at missing chunk row");
                 return Ok(None);
             }
         };
@@ -303,12 +297,7 @@ async fn entity_hit_to_retrieval_hit(
         } else {
             chunk.metadata.source_id.clone()
         };
-        let mut h = hit_from_chunk(
-            &chunk,
-            tree_id_opt.as_deref().unwrap_or(""),
-            &scope,
-            score,
-        );
+        let mut h = hit_from_chunk(&chunk, tree_id_opt.as_deref().unwrap_or(""), &scope, score);
         // Stamp the hit's time range end to the index's recorded timestamp
         // if our chunk row lacks a meaningful range (e.g. pre-3a leaves).
         if h.time_range_end <= chrono::DateTime::<Utc>::MIN_UTC {

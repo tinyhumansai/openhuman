@@ -46,7 +46,7 @@ pub async fn query_source_rpc(
     req: QuerySourceRequest,
 ) -> Result<RpcOutcome<QueryResponse>, String> {
     let source_kind = match req.source_kind.as_deref() {
-        Some(s) => Some(SourceKind::parse(s)?),
+        Some(s) => Some(SourceKind::parse(s).map_err(|e| format!("query_source: {e}"))?),
         None => None,
     };
     let limit = req.limit.unwrap_or(0);
@@ -169,8 +169,10 @@ pub async fn search_entities_rpc(
     let kinds = match req.kinds {
         None => None,
         Some(list) => {
-            let parsed: Result<Vec<EntityKind>, String> =
-                list.iter().map(|s| EntityKind::parse(s)).collect();
+            let parsed: Result<Vec<EntityKind>, String> = list
+                .iter()
+                .map(|s| EntityKind::parse(s).map_err(|e| format!("search_entities: {e}")))
+                .collect();
             Some(parsed?)
         }
     };
@@ -263,4 +265,298 @@ pub async fn fetch_leaves_rpc(
         FetchLeavesResponse { hits },
         format!("memory_tree: fetch_leaves n={n}"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the Phase 4 retrieval RPC handlers.
+    //!
+    //! Scope: the handler layer specifically — param parsing, default
+    //! fallbacks, `SourceKind` / `EntityKind` validation, `RpcOutcome`
+    //! envelope shape, and PII-redacted log formatting. Deeper domain
+    //! behaviour is already covered by the per-module tests in
+    //! `source.rs`, `topic.rs`, `drill_down.rs`, etc. — these tests
+    //! intentionally do NOT re-verify retrieval correctness.
+    //!
+    //! All tests run against a fresh empty workspace. `with_connection`
+    //! initialises the schema idempotently on first access, so read-only
+    //! calls return empty responses rather than erroring.
+    use super::*;
+    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceRef};
+    use chrono::{TimeZone, Utc};
+    use tempfile::TempDir;
+
+    fn test_config() -> (TempDir, Config) {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.workspace_dir = tmp.path().to_path_buf();
+        // Phase 4 (#710): inert embedder keeps tests deterministic and
+        // avoids any real Ollama call.
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.memory_tree.embedding_strict = false;
+        (tmp, cfg)
+    }
+
+    fn sample_chunk(source: &str, seq: u32) -> Chunk {
+        let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        Chunk {
+            id: chunk_id(SourceKind::Chat, source, seq),
+            content: format!("content-{source}-{seq}"),
+            metadata: Metadata {
+                source_kind: SourceKind::Chat,
+                source_id: source.into(),
+                owner: "alice".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec![],
+                source_ref: Some(SourceRef::new(format!("slack://{source}/{seq}"))),
+            },
+            token_count: 20,
+            seq_in_source: seq,
+            created_at: ts,
+        }
+    }
+
+    // ── query_source_rpc ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn query_source_rpc_returns_hits_with_no_filters() {
+        let (_tmp, cfg) = test_config();
+        let outcome = query_source_rpc(&cfg, QuerySourceRequest::default())
+            .await
+            .unwrap();
+        assert!(outcome.value.hits.is_empty());
+        assert_eq!(outcome.value.total, 0);
+        assert_eq!(outcome.logs.len(), 1);
+        let log = &outcome.logs[0];
+        assert!(log.contains("has_source_id=false"), "log: {log}");
+        assert!(log.contains("source_kind=None"), "log: {log}");
+        assert!(log.contains("has_query=false"), "log: {log}");
+        assert!(log.contains("hits=0"), "log: {log}");
+    }
+
+    #[tokio::test]
+    async fn query_source_rpc_parses_valid_source_kind_and_limit() {
+        let (_tmp, cfg) = test_config();
+        let req = QuerySourceRequest {
+            source_id: Some("slack:#eng".into()),
+            source_kind: Some("chat".into()),
+            time_window_days: None,
+            query: None,
+            limit: Some(5),
+        };
+        let outcome = query_source_rpc(&cfg, req).await.unwrap();
+        assert!(outcome.value.hits.is_empty());
+        let log = &outcome.logs[0];
+        assert!(log.contains("has_source_id=true"), "log: {log}");
+        assert!(log.contains("source_kind=Some(\"chat\")"), "log: {log}");
+        // PII redaction: the raw source_id must NOT leak into the log.
+        assert!(!log.contains("slack:#eng"), "log leaked source_id: {log}");
+    }
+
+    #[tokio::test]
+    async fn query_source_rpc_rejects_invalid_source_kind() {
+        let (_tmp, cfg) = test_config();
+        let req = QuerySourceRequest {
+            source_id: None,
+            source_kind: Some("bogus".into()),
+            time_window_days: None,
+            query: None,
+            limit: None,
+        };
+        let err = query_source_rpc(&cfg, req).await.unwrap_err();
+        assert!(err.contains("unknown source kind: bogus"), "got {err}");
+    }
+
+    // ── query_global_rpc ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn query_global_rpc_returns_response_for_valid_window() {
+        let (_tmp, cfg) = test_config();
+        let req = QueryGlobalRequest { window_days: 7 };
+        let outcome = query_global_rpc(&cfg, req).await.unwrap();
+        assert!(outcome.value.hits.is_empty());
+        assert_eq!(outcome.logs.len(), 1);
+        assert!(
+            outcome.logs[0].contains("query_global hits=0"),
+            "log: {}",
+            outcome.logs[0]
+        );
+    }
+
+    // ── query_topic_rpc ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn query_topic_rpc_logs_entity_kind_prefix_for_colon_separated_id() {
+        let (_tmp, cfg) = test_config();
+        let req = QueryTopicRequest {
+            entity_id: "email:alice@example.com".into(),
+            time_window_days: None,
+            query: None,
+            limit: None,
+        };
+        let outcome = query_topic_rpc(&cfg, req).await.unwrap();
+        let log = &outcome.logs[0];
+        assert!(log.contains("entity_kind=email"), "log: {log}");
+        // PII redaction — the raw email must NOT appear anywhere in the log.
+        assert!(!log.contains("alice@example.com"), "log leaked PII: {log}");
+    }
+
+    #[tokio::test]
+    async fn query_topic_rpc_logs_unknown_when_entity_id_has_no_colon() {
+        let (_tmp, cfg) = test_config();
+        let req = QueryTopicRequest {
+            entity_id: "nocolonhere".into(),
+            time_window_days: None,
+            query: None,
+            limit: None,
+        };
+        let outcome = query_topic_rpc(&cfg, req).await.unwrap();
+        assert!(
+            outcome.logs[0].contains("entity_kind=unknown"),
+            "log: {}",
+            outcome.logs[0]
+        );
+    }
+
+    // ── search_entities_rpc ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn search_entities_rpc_passes_through_kinds_none() {
+        let (_tmp, cfg) = test_config();
+        let req = SearchEntitiesRequest {
+            query: "alice".into(),
+            kinds: None,
+            limit: None,
+        };
+        let outcome = search_entities_rpc(&cfg, req).await.unwrap();
+        assert!(outcome.value.matches.is_empty());
+        let log = &outcome.logs[0];
+        assert!(log.contains("query_len=5"), "log: {log}");
+        assert!(log.contains("has_kinds=false"), "log: {log}");
+        // PII redaction — the raw query value must NOT appear in the log.
+        assert!(!log.contains("alice"), "log leaked raw query: {log}");
+    }
+
+    #[tokio::test]
+    async fn search_entities_rpc_parses_valid_kinds_list() {
+        let (_tmp, cfg) = test_config();
+        let req = SearchEntitiesRequest {
+            query: "x".into(),
+            kinds: Some(vec!["email".into(), "topic".into()]),
+            limit: Some(10),
+        };
+        let outcome = search_entities_rpc(&cfg, req).await.unwrap();
+        assert!(outcome.value.matches.is_empty());
+        assert!(
+            outcome.logs[0].contains("has_kinds=true"),
+            "log: {}",
+            outcome.logs[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn search_entities_rpc_rejects_unknown_entity_kind() {
+        let (_tmp, cfg) = test_config();
+        let req = SearchEntitiesRequest {
+            query: "x".into(),
+            kinds: Some(vec!["email".into(), "bogus".into()]),
+            limit: None,
+        };
+        let err = search_entities_rpc(&cfg, req).await.unwrap_err();
+        assert!(err.contains("unknown entity kind: bogus"), "got {err}");
+    }
+
+    // ── drill_down_rpc ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn drill_down_rpc_defaults_max_depth_to_one_when_unset() {
+        let (_tmp, cfg) = test_config();
+        let req = DrillDownRequest {
+            node_id: "chat:missing".into(),
+            max_depth: None,
+            query: None,
+            limit: None,
+        };
+        let outcome = drill_down_rpc(&cfg, req).await.unwrap();
+        assert!(
+            outcome.logs[0].contains("depth=1"),
+            "log: {}",
+            outcome.logs[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn drill_down_rpc_logs_node_kind_prefix_for_colon_separated_id() {
+        let (_tmp, cfg) = test_config();
+        let req = DrillDownRequest {
+            node_id: "chat:slack:#eng:0".into(),
+            max_depth: Some(2),
+            query: None,
+            limit: None,
+        };
+        let outcome = drill_down_rpc(&cfg, req).await.unwrap();
+        let log = &outcome.logs[0];
+        assert!(log.contains("node_kind=chat"), "log: {log}");
+        // PII redaction — scope segments beyond the kind prefix must not leak.
+        assert!(!log.contains("slack"), "log leaked scope: {log}");
+        assert!(!log.contains("#eng"), "log leaked scope: {log}");
+    }
+
+    #[tokio::test]
+    async fn drill_down_rpc_logs_unknown_when_node_id_has_no_colon() {
+        let (_tmp, cfg) = test_config();
+        let req = DrillDownRequest {
+            node_id: "rootnode".into(),
+            max_depth: None,
+            query: None,
+            limit: None,
+        };
+        let outcome = drill_down_rpc(&cfg, req).await.unwrap();
+        assert!(
+            outcome.logs[0].contains("node_kind=unknown"),
+            "log: {}",
+            outcome.logs[0]
+        );
+    }
+
+    // ── fetch_leaves_rpc ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn fetch_leaves_rpc_returns_empty_response_for_empty_input() {
+        let (_tmp, cfg) = test_config();
+        let req = FetchLeavesRequest { chunk_ids: vec![] };
+        let outcome = fetch_leaves_rpc(&cfg, req).await.unwrap();
+        assert!(outcome.value.hits.is_empty());
+        assert!(outcome.logs[0].contains("n=0"), "log: {}", outcome.logs[0]);
+    }
+
+    #[tokio::test]
+    async fn fetch_leaves_rpc_hydrates_valid_ids() {
+        let (_tmp, cfg) = test_config();
+        let c1 = sample_chunk("slack:#eng", 0);
+        let c2 = sample_chunk("slack:#eng", 1);
+        upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
+        let req = FetchLeavesRequest {
+            chunk_ids: vec![c1.id.clone(), c2.id.clone()],
+        };
+        let outcome = fetch_leaves_rpc(&cfg, req).await.unwrap();
+        assert_eq!(outcome.value.hits.len(), 2);
+        assert!(outcome.logs[0].contains("n=2"), "log: {}", outcome.logs[0]);
+    }
+
+    #[tokio::test]
+    async fn fetch_leaves_rpc_skips_missing_ids_silently() {
+        let (_tmp, cfg) = test_config();
+        let c1 = sample_chunk("slack:#eng", 0);
+        upsert_chunks(&cfg, &[c1.clone()]).unwrap();
+        let req = FetchLeavesRequest {
+            chunk_ids: vec![c1.id.clone(), "ghost:nonexistent".into()],
+        };
+        let outcome = fetch_leaves_rpc(&cfg, req).await.unwrap();
+        assert_eq!(outcome.value.hits.len(), 1);
+        assert!(outcome.logs[0].contains("n=1"), "log: {}", outcome.logs[0]);
+    }
 }

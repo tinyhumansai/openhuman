@@ -51,7 +51,10 @@ pub async fn fetch_leaves(config: &Config, chunk_ids: &[String]) -> Result<Vec<R
             let chunk = match get_chunk(&config_owned, id)? {
                 Some(c) => c,
                 None => {
-                    log::debug!("[retrieval::fetch] chunk id={id} not found — skipping");
+                    log::debug!(
+                        "[retrieval::fetch] chunk not found — skipping (1 of {} requested)",
+                        ids.len()
+                    );
                     continue;
                 }
             };

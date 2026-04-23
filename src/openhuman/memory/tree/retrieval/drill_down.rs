@@ -196,13 +196,18 @@ fn walk_with_embeddings(
         // Else try as a chunk (leaf). Chunk embeddings live in a separate
         // blob column — fetch via the existing accessor.
         if let Some(chunk) = get_chunk(config, &id)? {
-            let emb = get_chunk_embedding(config, &chunk.id).unwrap_or(None);
+            // Propagate DB errors rather than silently treating them as
+            // "no embedding" — the caller should know if the store is broken.
+            let emb = get_chunk_embedding(config, &chunk.id)?;
             embeddings.push(emb);
             // Score unknown here; 0.0 neutral placeholder.
             out.push(hit_from_chunk(&chunk, "", &chunk.metadata.source_id, 0.0));
             continue;
         }
-        log::warn!("[retrieval::drill_down] child id={id} points at nothing — skipping");
+        // Redact the child id — may contain source scope (e.g.
+        // `chat:slack:#<channel>:seq`). Log the kind prefix only.
+        let kind_prefix = id.split_once(':').map(|(k, _)| k).unwrap_or("unknown");
+        log::warn!("[retrieval::drill_down] child kind={kind_prefix} points at nothing — skipping");
     }
     Ok((out, embeddings))
 }

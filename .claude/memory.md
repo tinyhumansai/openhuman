@@ -116,6 +116,15 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Rust-side HTTP timeout is separate** — `src/openhuman/providers/compatible.rs` sets a 120s `reqwest` client timeout on LLM calls. Not changed in #715; relevant if a single LLM round-trip itself stalls for >2 min.
 - **Manual cancel path** — `chatCancel()` in `app/src/services/chatService.ts` → `openhuman.channel_web_cancel` RPC → `cancel_chat()` in `src/openhuman/channels/providers/web.rs`. Fully implemented; the silence timer is an automatic fallback.
 
+## Webhook & Cron Triggers (Issue #726)
+
+- **Webhook bus was hardcoded 410** — `src/openhuman/webhooks/bus.rs` `WebhookRequestSubscriber::handle()` returned 410 "skill runtime removed" for ALL incoming webhooks. Now routes to echo/agent/skill/404 based on `TunnelRegistration.target_kind`.
+- **WebhookRouter access from bus.rs** — Router lives in `SocketManager::shared.webhook_router` (was `pub(super)`). Added `pub fn webhook_router(&self)` accessor on `SocketManager`; bus.rs reaches it via `global_socket_manager().webhook_router()`.
+- **`TriggerSource` enum: three update points** — Adding new variants requires updating: (a) `slug()` match in `envelope.rs`, (b) exhaustive test match, (c) `handle_triage_evaluate` string match in `agent/schemas.rs` (uses `p.source.as_str()`, not the enum directly).
+- **`CronJobTriggered/CronJobCompleted` were never published** — Defined in `events.rs` and used in tests but never emitted. Now published by `execute_and_persist_job()` in `scheduler.rs`. Adding fields to these variants requires updating ~5 construction sites: `cron/bus.rs`, `composio/bus.rs`, `tree_summarizer/bus.rs`, `channels/proactive.rs`, and `events.rs` tests.
+- **Webhook ops were all stubs** — `list_registrations`, `list_logs`, `clear_logs`, `register_echo`, `unregister_echo` in `ops.rs` all returned empty. Now backed by the real router via a `get_router()` helper.
+- **`GGML_NATIVE=OFF` for cargo check** — Sidestepping the whisper-rs macOS Tahoe build blocker for `cargo check`: `GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml`. Allows compilation checks without the cmake failure.
+
 ## Environment
 
 - **Core sidecar port** — `7788` (default). Check with `lsof -i :7788`.

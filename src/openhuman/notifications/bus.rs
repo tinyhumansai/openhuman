@@ -62,7 +62,9 @@ fn now_ms() -> u64 {
 pub fn event_to_notification(event: &DomainEvent) -> Option<CoreNotificationEvent> {
     let ts = now_ms();
     match event {
-        DomainEvent::CronJobCompleted { job_id, success } => Some(CoreNotificationEvent {
+        DomainEvent::CronJobCompleted {
+            job_id, success, ..
+        } => Some(CoreNotificationEvent {
             id: format!("cron:{}:{}", job_id, ts),
             category: CoreNotificationCategory::Agents,
             title: if *success {
@@ -184,6 +186,7 @@ mod tests {
         let ev = DomainEvent::CronJobCompleted {
             job_id: "job-1".into(),
             success: true,
+            output: "done".into(),
         };
         let n = event_to_notification(&ev).expect("should produce notification");
         assert_eq!(n.category, CoreNotificationCategory::Agents);
@@ -196,6 +199,7 @@ mod tests {
         let ev = DomainEvent::CronJobCompleted {
             job_id: "job-1".into(),
             success: false,
+            output: "error".into(),
         };
         let n = event_to_notification(&ev).unwrap();
         assert_eq!(n.title, "Cron job failed");

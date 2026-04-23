@@ -115,20 +115,28 @@ pub struct MemoryTreeConfig {
     pub embedding_strict: bool,
 }
 
+/// Returns `None` so that existing installs that never opted into Phase 4
+/// embeddings stay on the inert zero-vector path rather than suddenly
+/// attempting to reach a local Ollama daemon they haven't configured.
+/// Operators enable the Ollama path by setting either `embedding_endpoint`
+/// in TOML or the `OPENHUMAN_MEMORY_EMBED_ENDPOINT` env var.
 fn default_memory_tree_embedding_endpoint() -> Option<String> {
-    Some("http://localhost:11434".into())
+    None
 }
 
 fn default_memory_tree_embedding_model() -> Option<String> {
-    Some("nomic-embed-text".into())
+    None
 }
 
 fn default_memory_tree_embedding_timeout_ms() -> Option<u64> {
     Some(10_000)
 }
 
+/// Defaults to `false` so installs without an embedding endpoint fall back
+/// to the inert zero-vector embedder (with a warn log) instead of refusing
+/// to run. Set to `true` in production configs that require embeddings.
 fn default_memory_tree_embedding_strict() -> bool {
-    true
+    false
 }
 
 impl Default for MemoryTreeConfig {

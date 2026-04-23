@@ -309,6 +309,7 @@ mod tests {
 
         sub.handle(&DomainEvent::CronJobTriggered {
             job_id: "j".into(),
+            job_name: "test-job".into(),
             job_type: "agent".into(),
         })
         .await;

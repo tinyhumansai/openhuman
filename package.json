@@ -27,6 +27,7 @@
     "test:coverage": "yarn workspace openhuman-app test:coverage",
     "test:rust": "yarn workspace openhuman-app test:rust",
     "mock:api": "node scripts/mock-api-server.mjs",
+    "review": "bash scripts/review/cli.sh",
     "rust:check": "yarn workspace openhuman-app rust:check",
     "typecheck": "yarn workspace openhuman-app compile"
   },
