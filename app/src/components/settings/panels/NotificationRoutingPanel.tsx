@@ -51,7 +51,8 @@ const NotificationRoutingPanel = () => {
           };
           nextLoadedProviders[provider] = true;
         } else {
-          const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
+          const message =
+            result.reason instanceof Error ? result.reason.message : String(result.reason);
           nextLoadErrors[provider] = message;
           console.warn(`[settings][notification-routing] failed to load provider=${provider}`, {
             error: message,
@@ -225,7 +226,9 @@ const NotificationRoutingPanel = () => {
                     />
                   </label>
                   {hasLoadError ? (
-                    <p className="text-xs text-red-600">Failed to load settings. Retry from this panel.</p>
+                    <p className="text-xs text-red-600">
+                      Failed to load settings. Retry from this panel.
+                    </p>
                   ) : null}
                 </div>
               );

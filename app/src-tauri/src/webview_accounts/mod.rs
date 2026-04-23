@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
 #[cfg(all(feature = "cef", target_os = "linux"))]
-use std::sync::{OnceLock, mpsc::sync_channel};
+use std::sync::{mpsc::sync_channel, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tauri::{
