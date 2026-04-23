@@ -80,7 +80,6 @@ export function getArtifactDir(): string {
   };
   writeMeta();
 
-  // eslint-disable-next-line no-console
   console.log(`[artifacts] run dir: ${runDir}`);
   return runDir;
 }
@@ -96,7 +95,6 @@ async function writeScreenshot(file: string): Promise<boolean> {
     fs.writeFileSync(file, Buffer.from(png, 'base64'));
     return true;
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn(`[artifacts] screenshot failed: ${err}`);
     return false;
   }
@@ -108,7 +106,6 @@ async function writeSource(file: string): Promise<boolean> {
     fs.writeFileSync(file, source);
     return true;
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn(`[artifacts] source dump failed: ${err}`);
     return false;
   }
@@ -135,7 +132,7 @@ export async function captureCheckpoint(name: string): Promise<void> {
     meta.checkpoints.push({ index: checkpointIndex, name, at: new Date().toISOString(), files });
     writeMeta();
   }
-  // eslint-disable-next-line no-console
+
   console.log(`[artifacts] checkpoint ${idx} "${name}" → ${files.join(', ')}`);
 }
 
@@ -158,11 +155,11 @@ export async function captureFailureArtifacts(testName: string): Promise<void> {
       meta.failures.push({ testName, at: new Date().toISOString(), files });
       writeMeta();
     }
-    // eslint-disable-next-line no-console
+
     console.log(`[artifacts] FAILURE "${testName}" → ${files.join(', ')}`);
   } catch (err) {
     // Never let artifact capture break the runner.
-    // eslint-disable-next-line no-console
+
     console.warn(`[artifacts] captureFailureArtifacts swallow: ${err}`);
   }
 }
@@ -175,7 +172,7 @@ export function saveMockRequestLog(label: string, log: unknown[]): string {
   const dir = getArtifactDir();
   const file = path.join(dir, `mock-requests-${sanitize(label)}.json`);
   fs.writeFileSync(file, JSON.stringify(log, null, 2));
-  // eslint-disable-next-line no-console
+
   console.log(`[artifacts] mock log "${label}" (${log.length} req) → ${path.basename(file)}`);
   return file;
 }

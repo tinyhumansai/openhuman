@@ -62,17 +62,7 @@ jobs:
           node-version: 24.x
           cache: pnpm
 
-      - name: Cache node modules
-        id: pnpm-cache
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-build-
-
       - name: Install dependencies
-        if: steps.pnpm-cache.outputs.cache-hit != 'true'
         run: pnpm install --no-frozen-lockfile
 
       - name: Install cmake (for whisper-rs)
