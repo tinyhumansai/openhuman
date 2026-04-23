@@ -48,11 +48,11 @@ OS="$(uname)"
 if [ "$OS" = "Linux" ]; then
   # Linux: build debug binary only (no bundle needed for tauri-driver)
   echo "Building for Linux (debug binary, no bundle)..."
-  npx tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle
+  pnpm exec tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle
 else
   # macOS: build .app bundle for Appium Mac2
   echo "Building for macOS (.app bundle)..."
-  npx tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug
+  pnpm exec tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug
 fi
 
 echo "E2E build complete."
