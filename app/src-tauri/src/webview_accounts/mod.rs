@@ -154,6 +154,47 @@ fn provider_allowed_hosts(provider: &str) -> &'static [&'static str] {
     }
 }
 
+/// Rewrite a provider-specific native-app deep link (e.g. Zoom's
+/// `zoomus://zoom.us/join?...`) into a web-client URL so the meeting stays
+/// inside the embedded webview instead of failing with
+/// ERR_UNKNOWN_URL_SCHEME (CEF has no handler for these schemes).
+///
+/// Returns `Some(rewritten)` when the provider claims the scheme and a
+/// valid web-client URL can be built; `None` otherwise (caller should
+/// leave the navigation alone).
+fn rewrite_provider_deep_link(provider: &str, url: &Url) -> Option<Url> {
+    if provider != "zoom" {
+        return None;
+    }
+    if !matches!(url.scheme(), "zoomus" | "zoommtg") {
+        return None;
+    }
+    // Pull the meeting id out of the query string. Zoom uses `confno` on
+    // both `action=join` (joining) and `action=start` (hosting) flows.
+    let confno = url
+        .query_pairs()
+        .find(|(k, _)| k == "confno")
+        .map(|(_, v)| v.into_owned());
+    let pwd = url
+        .query_pairs()
+        .find(|(k, _)| k == "pwd" || k == "tk")
+        .map(|(_, v)| v.into_owned());
+    let web_url = match confno {
+        Some(id) if !id.is_empty() => {
+            let mut u = format!("https://app.zoom.us/wc/join/{}", id);
+            if let Some(ref p) = pwd {
+                if !p.is_empty() {
+                    u.push_str("?pwd=");
+                    u.push_str(p);
+                }
+            }
+            u
+        }
+        _ => "https://app.zoom.us/wc/home".to_string(),
+    };
+    Url::parse(&web_url).ok()
+}
+
 /// `true` if `url` is considered in-app for `provider`. Non-HTTP(S)
 /// schemes (`about:blank`, `data:`, `blob:`) have no host and are always
 /// allowed so the webview's own internal navigations keep working.
@@ -945,9 +986,35 @@ pub async fn webview_account_open<R: Runtime>(
     // Keep link clicks that leave the provider's host set in the OS
     // browser, not the embedded webview. Same-host navigations (including
     // OAuth hops to accounts.google.com etc., which we pre-declare per
-    // provider) stay in-app.
+    // provider) stay in-app. Provider-specific native-app deep links
+    // (`zoomus://`, `zoommtg://`, …) are rewritten to the web-client URL
+    // and re-navigated in-app so meetings don't bounce out.
     let nav_provider = args.provider.clone();
+    let nav_app = app.clone();
+    let nav_label = label.clone();
     builder = builder.on_navigation(move |url| {
+        if let Some(rewritten) = rewrite_provider_deep_link(&nav_provider, url) {
+            log::info!(
+                "[webview-accounts] deep-link rewrite {} → {} (provider={})",
+                url,
+                rewritten,
+                nav_provider
+            );
+            let app = nav_app.clone();
+            let label = nav_label.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(wv) = app.get_webview(&label) {
+                    if let Err(e) = wv.navigate(rewritten) {
+                        log::warn!(
+                            "[webview-accounts] post-rewrite navigate failed label={} err={}",
+                            label,
+                            e
+                        );
+                    }
+                }
+            });
+            return false;
+        }
         if url_is_internal(&nav_provider, url) {
             true
         } else {
@@ -981,7 +1048,31 @@ pub async fn webview_account_open<R: Runtime>(
     // For those URLs we allow CEF's default popup handling so an in-app
     // child window opens and the caller gets a real window handle.
     let popup_provider = args.provider.clone();
+    let popup_app = app.clone();
+    let popup_label = label.clone();
     builder = builder.on_new_window(move |url, _features| {
+        if let Some(rewritten) = rewrite_provider_deep_link(&popup_provider, &url) {
+            log::info!(
+                "[webview-accounts] new-window deep-link rewrite {} → {} (provider={})",
+                url,
+                rewritten,
+                popup_provider
+            );
+            let app = popup_app.clone();
+            let label = popup_label.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(wv) = app.get_webview(&label) {
+                    if let Err(e) = wv.navigate(rewritten) {
+                        log::warn!(
+                            "[webview-accounts] post-rewrite navigate (popup) failed label={} err={}",
+                            label,
+                            e
+                        );
+                    }
+                }
+            });
+            return NewWindowResponse::Deny;
+        }
         if popup_should_stay_in_app(&popup_provider, &url) {
             log::info!(
                 "[webview-accounts] new-window request {} → in-app popup (provider={})",
