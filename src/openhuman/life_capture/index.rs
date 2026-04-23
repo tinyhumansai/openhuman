@@ -364,26 +364,31 @@ struct ItemRow {
 }
 
 impl ItemRow {
-    fn into_hit(self) -> crate::openhuman::life_capture::types::Hit {
+    fn into_hit(self) -> anyhow::Result<crate::openhuman::life_capture::types::Hit> {
         use crate::openhuman::life_capture::types::{Hit, Item, Source};
         let author = self.author_json.and_then(|s| serde_json::from_str(&s).ok());
         let metadata = serde_json::from_str(&self.metadata_json).unwrap_or(serde_json::json!({}));
-        let source: Source = serde_json::from_value(serde_json::Value::String(self.source.clone()))
-            .unwrap_or(Source::Gmail);
-        Hit {
+        let source: Source =
+            serde_json::from_value(serde_json::Value::String(self.source.clone()))
+                .with_context(|| format!("unknown source value {:?} in items row", self.source))?;
+        let id = uuid::Uuid::parse_str(&self.id)
+            .with_context(|| format!("malformed UUID {:?} in items.id", self.id))?;
+        let ts = chrono::DateTime::from_timestamp(self.ts, 0)
+            .ok_or_else(|| anyhow::anyhow!("out-of-range timestamp {} in items row", self.ts))?;
+        Ok(Hit {
             score: self.score as f32,
             snippet: self.snip,
             item: Item {
-                id: uuid::Uuid::parse_str(&self.id).unwrap_or_else(|_| uuid::Uuid::nil()),
+                id,
                 source,
                 external_id: self.external_id,
-                ts: chrono::DateTime::from_timestamp(self.ts, 0).unwrap_or_default(),
+                ts,
                 author,
                 subject: self.subject,
                 text: self.text,
                 metadata,
             },
-        }
+        })
     }
 }
 
@@ -522,7 +527,10 @@ impl IndexReader {
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
-            let hits: Vec<_> = rows.into_iter().map(ItemRow::into_hit).collect();
+            let hits: Vec<_> = rows
+                .into_iter()
+                .map(ItemRow::into_hit)
+                .collect::<anyhow::Result<Vec<_>>>()?;
             debug!("[life_capture] keyword_search: {} hits returned", hits.len());
             Ok(hits)
         })
@@ -650,7 +658,10 @@ impl IndexReader {
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
-            let hits: Vec<_> = rows.into_iter().map(ItemRow::into_hit).collect();
+            let hits: Vec<_> = rows
+                .into_iter()
+                .map(ItemRow::into_hit)
+                .collect::<anyhow::Result<Vec<_>>>()?;
             debug!("[life_capture] vector_search: {} hits returned", hits.len());
             Ok(hits)
         })
