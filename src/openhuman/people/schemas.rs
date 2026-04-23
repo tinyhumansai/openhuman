@@ -179,7 +179,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "refresh_address_book" => ControllerSchema {
             namespace: "people",
             function: "refresh_address_book",
-            description: "Seed the people store from the system address book (macOS CNContactStore). \
+            description:
+                "Seed the people store from the system address book (macOS CNContactStore). \
                  Triggers the TCC Contacts permission prompt if not yet granted. \
                  Returns counts of seeded / skipped contacts plus a permission_denied flag.",
             inputs: vec![],

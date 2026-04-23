@@ -25,7 +25,10 @@ impl std::fmt::Display for AddressBookError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AddressBookError::PermissionDenied => {
-                write!(f, "contacts access denied — grant access in System Settings > Privacy > Contacts")
+                write!(
+                    f,
+                    "contacts access denied — grant access in System Settings > Privacy > Contacts"
+                )
             }
             AddressBookError::Other(s) => write!(f, "{s}"),
         }
@@ -55,10 +58,7 @@ impl ContactsSource for SystemContactsSource {
 pub fn read_with(source: &dyn ContactsSource) -> Result<Vec<AddressBookContact>, AddressBookError> {
     match source.fetch_contacts() {
         Ok(v) => {
-            tracing::debug!(
-                "[people::address_book] fetched {} contacts",
-                v.len()
-            );
+            tracing::debug!("[people::address_book] fetched {} contacts", v.len());
             Ok(v)
         }
         Err(AddressBookError::PermissionDenied) => {
@@ -89,11 +89,11 @@ mod imp {
     use block2::RcBlock;
     use core::ptr::NonNull;
     use objc2::runtime::Bool;
+    use objc2::runtime::ProtocolObject;
     use objc2::AnyThread as _;
     use objc2_contacts::{
         CNAuthorizationStatus, CNContact, CNContactFetchRequest, CNContactStore, CNEntityType,
     };
-    use objc2::runtime::ProtocolObject;
     use objc2_foundation::{NSArray, NSError, NSString};
     use std::sync::{Arc, Mutex};
 
@@ -106,8 +106,8 @@ mod imp {
     /// # Safety
     /// NSString::from_str is safe; casting to ProtocolObject is safe because
     /// `NSString: CNKeyDescriptor` (confirmed by the objc2-contacts bindings).
-    unsafe fn make_keys_array(
-    ) -> objc2::rc::Retained<NSArray<ProtocolObject<dyn CNKeyDescriptor>>> {
+    unsafe fn make_keys_array() -> objc2::rc::Retained<NSArray<ProtocolObject<dyn CNKeyDescriptor>>>
+    {
         let given = NSString::from_str("givenName");
         let family = NSString::from_str("familyName");
         let emails = NSString::from_str("emailAddresses");
@@ -128,13 +128,10 @@ mod imp {
     /// on macOS (CNContactStore will deadlock).
     fn request_access(store: &CNContactStore) -> Result<(), AddressBookError> {
         unsafe {
-            let status =
-                CNContactStore::authorizationStatusForEntityType(CNEntityType::Contacts);
+            let status = CNContactStore::authorizationStatusForEntityType(CNEntityType::Contacts);
             match status {
                 CNAuthorizationStatus::Authorized | CNAuthorizationStatus::Limited => {
-                    tracing::debug!(
-                        "[people::address_book] contacts access already authorized"
-                    );
+                    tracing::debug!("[people::address_book] contacts access already authorized");
                     return Ok(());
                 }
                 CNAuthorizationStatus::Denied | CNAuthorizationStatus::Restricted => {
@@ -163,15 +160,10 @@ mod imp {
                 }
             });
 
-            store.requestAccessForEntityType_completionHandler(
-                CNEntityType::Contacts,
-                &*block,
-            );
+            store.requestAccessForEntityType_completionHandler(CNEntityType::Contacts, &*block);
 
             rx.recv().map_err(|_| {
-                AddressBookError::Other(
-                    "contacts permission callback never fired".into(),
-                )
+                AddressBookError::Other("contacts permission callback never fired".into())
             })?
         }
     }
@@ -301,7 +293,9 @@ pub mod tests {
 
     impl MockContactsSource {
         pub fn ok(contacts: Vec<AddressBookContact>) -> Self {
-            Self { result: Ok(contacts) }
+            Self {
+                result: Ok(contacts),
+            }
         }
 
         pub fn permission_denied() -> Self {

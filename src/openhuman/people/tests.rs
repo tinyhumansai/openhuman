@@ -50,7 +50,10 @@ fn schema_exposes_four_controllers() {
         .into_iter()
         .map(|s| s.function)
         .collect();
-    assert!(names.contains(&"refresh_address_book"), "missing refresh_address_book: {names:?}");
+    assert!(
+        names.contains(&"refresh_address_book"),
+        "missing refresh_address_book: {names:?}"
+    );
     assert_eq!(names.len(), 4);
 }
 
