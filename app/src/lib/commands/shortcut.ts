@@ -36,11 +36,16 @@ export function parseShortcut(raw: ShortcutString): ParsedShortcut {
   const cached = parseCache.get(raw);
   if (cached) return cached;
   if (!raw) throw new Error('parseShortcut: empty shortcut string');
-  const tokens = raw
+  const rawTokens = raw
     .toLowerCase()
     .split('+')
-    .map(t => t.trim())
-    .filter(Boolean);
+    .map(t => t.trim());
+  // Reject malformed shortcuts explicitly instead of silently dropping empty
+  // tokens: "mod++k", "mod+ +k", and trailing "+" all need to fail loudly.
+  if (rawTokens.some(t => t.length === 0)) {
+    throw new Error(`parseShortcut: empty token in "${raw}"`);
+  }
+  const tokens = rawTokens;
   if (tokens.length === 0) throw new Error(`parseShortcut: invalid shortcut "${raw}"`);
   const key = tokens[tokens.length - 1];
   if (MODIFIER_TOKENS.has(key)) throw new Error(`parseShortcut: shortcut "${raw}" has no key`);
@@ -56,9 +61,14 @@ export function parseShortcut(raw: ShortcutString): ParsedShortcut {
     throw new Error(`parseShortcut: unknown key "${key}" in "${raw}"`);
   }
   const result: ParsedShortcut = { key, mod: false, shift: false, alt: false, ctrl: false };
+  const seenModifiers = new Set<string>();
   for (let i = 0; i < tokens.length - 1; i++) {
     const m = tokens[i];
     if (m === 'mod' || m === 'shift' || m === 'alt' || m === 'ctrl') {
+      if (seenModifiers.has(m)) {
+        throw new Error(`parseShortcut: duplicate modifier "${m}" in "${raw}"`);
+      }
+      seenModifiers.add(m);
       result[m] = true;
     } else {
       throw new Error(`parseShortcut: unknown modifier "${m}" in "${raw}"`);

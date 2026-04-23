@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 
 export function useStickToBottom(
   messages: readonly unknown[],
@@ -9,12 +9,18 @@ export function useStickToBottom(
   const endRef = useRef<HTMLDivElement>(null);
   const didInitialScrollRef = useRef(false);
   const lastScrolledThreadRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    didInitialScrollRef.current = false;
-  }, [resetKey]);
+  const lastResetKeyRef = useRef(resetKey);
 
   useLayoutEffect(() => {
+    // Reset is handled inside the same layout phase as the scroll so we never
+    // read a stale `didInitialScrollRef` after a resetKey change (the previous
+    // useEffect-based reset fired after paint, leaving this layout effect with
+    // stale state on the first re-render and triggering an unwanted smooth
+    // scroll animation on re-entry).
+    if (lastResetKeyRef.current !== resetKey) {
+      didInitialScrollRef.current = false;
+      lastResetKeyRef.current = resetKey;
+    }
     if (messages.length === 0) return;
     const container = containerRef.current;
     const threadChanged = lastScrolledThreadRef.current !== threadKey;
@@ -29,7 +35,7 @@ export function useStickToBottom(
     }
     lastScrolledThreadRef.current = threadKey ?? null;
     didInitialScrollRef.current = true;
-  }, [messages, threadKey]);
+  }, [messages, threadKey, resetKey]);
 
   return { containerRef, endRef };
 }
