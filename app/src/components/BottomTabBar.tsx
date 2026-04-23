@@ -7,22 +7,21 @@ import { selectUnreadCount } from '../store/notificationSlice';
 import { isAccountsFullscreen } from '../utils/accountsFullscreen';
 
 const tabs = [
-  // Hidden — not active yet. Uncomment to re-enable.
-  // {
-  //   id: 'home',
-  //   label: 'Home',
-  //   path: '/home',
-  //   icon: (
-  //     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-  //       <path
-  //         strokeLinecap="round"
-  //         strokeLinejoin="round"
-  //         strokeWidth={1.8}
-  //         d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a2 2 0 01-2-2v-4a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2z"
-  //       />
-  //     </svg>
-  //   ),
-  // },
+  {
+    id: 'home',
+    label: 'Home',
+    path: '/home',
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a2 2 0 01-2-2v-4a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2z"
+        />
+      </svg>
+    ),
+  },
   {
     id: 'chat',
     label: 'Chat',
@@ -53,22 +52,21 @@ const tabs = [
       </svg>
     ),
   },
-  // Hidden — not active yet. Uncomment to re-enable.
-  // {
-  //   id: 'intelligence',
-  //   label: 'Intelligence',
-  //   path: '/intelligence',
-  //   icon: (
-  //     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-  //       <path
-  //         strokeLinecap="round"
-  //         strokeLinejoin="round"
-  //         strokeWidth={1.8}
-  //         d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-  //       />
-  //     </svg>
-  //   ),
-  // },
+  {
+    id: 'intelligence',
+    label: 'Memory',
+    path: '/intelligence',
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+        />
+      </svg>
+    ),
+  },
   {
     id: 'notifications',
     label: 'Alerts',
@@ -191,7 +189,7 @@ const BottomTabBar = () => {
               <button
                 key={tab.id}
                 onClick={() => navigate(tab.path)}
-                className={`group relative flex items-center px-2 py-2 rounded-sm text-sm transition-colors duration-200 ease-out cursor-pointer ${
+                className={`group relative flex items-center px-2 py-2 rounded-sm text-sm transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
                   active
                     ? 'bg-white text-stone-900 font-semibold shadow-sm'
                     : 'bg-transparent text-stone-500 hover:bg-stone-300/50 hover:text-stone-700'
@@ -210,7 +208,7 @@ const BottomTabBar = () => {
                   )}
                 </span>
                 <span
-                  className={`overflow-hidden whitespace-nowrap transition-[max-width,margin-left,opacity] duration-300 ease-out ${
+                  className={`overflow-hidden whitespace-nowrap transition-[max-width,margin-left,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                     active
                       ? 'max-w-[160px] ml-2 opacity-100'
                       : 'max-w-0 ml-0 opacity-0 group-hover:max-w-[160px] group-hover:ml-2 group-hover:opacity-100 group-focus-visible:max-w-[160px] group-focus-visible:ml-2 group-focus-visible:opacity-100'
