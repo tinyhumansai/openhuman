@@ -62,17 +62,28 @@ impl Tool for MemoryForgetTool {
             return Ok(ToolResult::error(error));
         }
 
-        // Legacy hack preserved for Phase A — Phase B will replace this with
-        // a clean `.forget(namespace, key)` once tool schemas are honest.
-        let namespaced_key = format!("{}/{}", namespace.trim(), key);
-        match self.memory.forget("", &namespaced_key).await {
-            Ok(true) => Ok(ToolResult::success(format!(
-                "Forgot memory: {namespaced_key}"
-            ))),
-            Ok(false) => Ok(ToolResult::success(format!(
-                "No memory found with key: {key}"
-            ))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to forget memory: {e}"))),
+        let namespace = namespace.trim();
+        let legacy_key = format!("{namespace}/{key}");
+        let display_key = format!("{namespace}/{key}");
+
+        // Try the new split namespace/key first (covers post-migration rows),
+        // then fall back to the legacy packed-key shape for rows that were
+        // stored before the boot migration ran (Phase A compatibility).
+        let deleted = match self.memory.forget(namespace, key).await {
+            Ok(true) => true,
+            Ok(false) => match self.memory.forget("", &legacy_key).await {
+                Ok(deleted) => deleted,
+                Err(e) => return Ok(ToolResult::error(format!("Failed to forget memory: {e}"))),
+            },
+            Err(e) => return Ok(ToolResult::error(format!("Failed to forget memory: {e}"))),
+        };
+
+        if deleted {
+            Ok(ToolResult::success(format!("Forgot memory: {display_key}")))
+        } else {
+            Ok(ToolResult::success(format!(
+                "No memory found with key: {display_key}"
+            )))
         }
     }
 }

@@ -56,8 +56,9 @@ impl std::fmt::Display for MemoryCategory {
 
 /// Optional filters for `Memory::recall`.
 ///
-/// All fields default to `None`. `namespace = None` means "search any namespace"
-/// (legacy behavior). Pass `Some("namespace")` to scope the semantic query.
+/// All fields default to `None`. `namespace = None` uses the backend's legacy
+/// default namespace (`GLOBAL_NAMESPACE`). Pass `Some("namespace")` to scope
+/// the semantic query to a specific namespace.
 #[derive(Debug, Default, Clone)]
 pub struct RecallOpts<'a> {
     pub namespace: Option<&'a str>,
@@ -97,7 +98,8 @@ pub trait Memory: Send + Sync {
 
     /// Recalls memories matching a query string using keyword or semantic search.
     ///
-    /// Namespace is passed via `opts.namespace`; `None` means search globally.
+    /// Namespace is passed via `opts.namespace`; `None` uses the backend's
+    /// legacy default namespace (`GLOBAL_NAMESPACE`).
     async fn recall(
         &self,
         query: &str,

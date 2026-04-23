@@ -50,13 +50,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional("deep_link", TypeSchema::String, "Provider deep link used to open the source surface."),
                 FieldSchema {
                     name: "requires_attention",
+                    // ProviderEvent::requires_attention is #[serde(default)] so
+                    // the deserializer accepts absence. Mark required: false here
+                    // so the registry's validate_params agrees with the struct.
                     ty: TypeSchema::Bool,
-                    comment: "Whether the event should enter the respond queue as actionable.",
-                    required: true,
+                    comment: "Whether the event should enter the respond queue as actionable. Defaults to false when omitted.",
+                    required: false,
                 },
                 FieldSchema {
                     name: "raw_payload",
-                    ty: TypeSchema::Json,
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
                     comment: "Optional provider-specific raw payload for future debugging and enrichment.",
                     required: false,
                 },

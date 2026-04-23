@@ -72,6 +72,11 @@ pub async fn list_queue(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate the process-global RESPOND_QUEUE so cargo's
+    /// default parallel test runner cannot interleave clear/insert/assert cycles.
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     fn sample_event(entity_id: &str) -> ProviderEvent {
         ProviderEvent {
@@ -93,6 +98,7 @@ mod tests {
 
     #[tokio::test]
     async fn ingest_event_upserts_queue_item() {
+        let _lock = TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         store::clear_queue();
         let first = ingest_event(sample_event("entity-1")).await.unwrap();
         let second = ingest_event(sample_event("entity-1")).await.unwrap();
@@ -113,6 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_queue_returns_newest_first() {
+        let _lock = TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         store::clear_queue();
         ingest_event(sample_event("entity-1")).await.unwrap();
         ingest_event(sample_event("entity-2")).await.unwrap();

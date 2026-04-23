@@ -33,6 +33,17 @@ fn timestamp_to_rfc3339(ts: f64) -> String {
         .unwrap_or_else(|| format!("{ts}"))
 }
 
+/// Normalize a namespace value: trim whitespace and fall back to
+/// `GLOBAL_NAMESPACE` for `None` or blank/whitespace-only inputs. This ensures
+/// that `recall`/`list` calls derived from user or RPC input never silently
+/// receive an empty string that misses the global namespace.
+fn normalize_namespace(namespace: Option<&str>) -> &str {
+    namespace
+        .map(str::trim)
+        .filter(|ns| !ns.is_empty())
+        .unwrap_or(GLOBAL_NAMESPACE)
+}
+
 /// Helper to convert a raw string category from the database into a `MemoryCategory`.
 fn memory_category_from_stored(raw: &str) -> MemoryCategory {
     match raw {
@@ -86,7 +97,7 @@ impl Memory for UnifiedMemory {
         limit: usize,
         opts: RecallOpts<'_>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
-        let namespace = opts.namespace.unwrap_or(GLOBAL_NAMESPACE);
+        let namespace = normalize_namespace(opts.namespace);
 
         let ranked = self
             .query_namespace_ranked(namespace, query, limit as u32)
@@ -216,7 +227,7 @@ impl Memory for UnifiedMemory {
         category: Option<&MemoryCategory>,
         _session_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
-        let ns = namespace.unwrap_or(GLOBAL_NAMESPACE);
+        let ns = normalize_namespace(namespace);
         let docs = self
             .list_documents(Some(ns))
             .await
