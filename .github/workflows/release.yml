@@ -254,7 +254,7 @@ jobs:
             target: x86_64-apple-darwin
             artifact_suffix: x86_64-apple-darwin
           - platform: ubuntu-22.04
-            args: --target x86_64-unknown-linux-gnu
+            args: --target x86_64-unknown-linux-gnu --bundles deb
             target: x86_64-unknown-linux-gnu
             artifact_suffix: ubuntu
           - platform: windows-latest
@@ -449,6 +449,7 @@ jobs:
         run: yarn build
         env:
           NODE_ENV: production
+          NODE_OPTIONS: --max-old-space-size=4096
           VITE_OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
           VITE_BACKEND_URL: ${{ needs.prepare-build.outputs.base_url }}
           VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
@@ -572,6 +573,7 @@ jobs:
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
           MATRIX_ARGS: ${{ matrix.settings.args }}
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
 
