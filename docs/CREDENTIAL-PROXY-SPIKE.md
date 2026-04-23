@@ -43,7 +43,7 @@ An earlier revision of this doc proposed an Infisical-based HTTPS proxy. That pl
 
 ## Architecture
 
-```
+```text
 Skill process
   ↓ HTTP to 127.0.0.1:<proxy_port>
   ↓ Authorization: Bearer <skill_access_token>
@@ -63,7 +63,7 @@ All five components (proxy listener, resolver, store, decryptor, forwarder) live
 
 New domain under `src/openhuman/credentials/`:
 
-```
+```text
 src/openhuman/credentials/
   mod.rs               # re-exports; controller registration
   proxy.rs             # hyper-based HTTP proxy, listens on 127.0.0.1
@@ -125,7 +125,7 @@ Master encryption key lives in OS keychain under service `openhuman`, account `c
 
 ## Crypto details (non-negotiable)
 
-- Crate: `aes-gcm` (RustCrypto), FIPS-compatible AEAD primitives
+- Crate: `aes-gcm` (RustCrypto). Implements AES-GCM, a FIPS-approved algorithm; note that the RustCrypto crate itself is not a FIPS 140-3 validated module — callers requiring module validation must swap in a validated backend.
 - Key size: 256 bit, generated via `rand::rngs::OsRng`
 - Nonce: 96-bit random per encryption, stored as first 12 bytes of ciphertext blob
 - **Never reuse a nonce with the same key** — enforced by always generating fresh via `OsRng`
@@ -155,7 +155,7 @@ UI surface in Tauri app: new Settings pane "Credentials" with add/list/delete + 
 
 - Binds `127.0.0.1` on an ephemeral port at core startup; port published via existing core RPC so skills can discover
 - `Proxy-Authorization: Bearer <skill_token>` required on every request
-- Matches `(host, path)` against skill's granted credentials; first match wins, deterministic order
+- Matches `(host, path)` against skill's granted credentials; first match wins, sorted by `match_priority ASC`, then `created_at ASC`, then `id ASC` (deterministic order)
 - Substitutes placeholder per `injection_spec`:
   - `header`: sets `{name}: {template with ${SECRET}}`
   - `query`: appends `?{name}={template}`

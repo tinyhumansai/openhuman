@@ -14,7 +14,7 @@ Not a replacement for `TODO.md` — that stays tactical.
 | Contract layer | Today in openhuman |
 | --- | --- |
 | Durable authored state | `skills/` submodule, `ai/*.md` (SOUL, IDENTITY, AGENTS, USER, BOOTSTRAP, MEMORY, TOOLS), controller registry (`src/core/all.rs`) |
-| Durable adaptive state | TinyHumans memory (`skill:{id}:{integration_id}` namespaces), curated_memory snapshots, retrieval evals |
+| Durable adaptive state | TinyHumans memory (`skill-{skill}` namespaces, with `integration_id` carried in record metadata), curated_memory snapshots, retrieval evals |
 | Runtime continuity | `OPENHUMAN_WORKSPACE` override, r2d2 SQLite pools, life_capture ingest, event bus |
 | Projected execution state | Controller schemas, JSON-RPC dispatch, capability routing per run |
 | Portability | Workspace-as-unit via `OPENHUMAN_WORKSPACE` |
@@ -56,7 +56,7 @@ reliably" to "X is a skill."
 Need:
 - Detect repeated tool-call patterns with positive feedback (e.g. same sequence,
   same shape of args, good outcomes).
-- Generate candidate skill scaffold (manifest + handler stub).
+- Generate candidate skill scaffold (`SKILL.md` with frontmatter per the current loader contract; legacy `skill.json` remains as a fallback only).
 - Review queue in UI — user approves, rejects, or edits before it lands in
   `skills/`.
 - Promoted skill is just a regular skill from that point on.

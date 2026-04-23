@@ -30,7 +30,7 @@ Explicitly **not** the first target:
 
 ## Architecture: two sidecars, behind a trait
 
-```
+```text
 traces/ (SQLite, from roadmap gap #1)
     │
     ▼
@@ -89,7 +89,9 @@ trait TraceGraph {
 - Ingest Phase 1's compressed traces via `cognee.add` → `cognee.cognify`.
 - Implement `find_repeated_patterns` as a Cognee graph query.
 - Build minimal review UI: list of candidate patterns + "promote to skill"
-  button that scaffolds a `skills/skills/<id>/manifest.json` draft.
+  button that scaffolds a `<workspace>/.openhuman/skills/<id>/SKILL.md` draft
+  (with frontmatter per the current SKILL.md-first loader contract; legacy
+  `skill.json` remains as a fallback only).
 - **Success criterion:** at least one candidate skill scaffold from real
   traces that the operator would accept (even with edits).
 
