@@ -50,6 +50,9 @@ jobs:
       # so `cargo tauri build` below resolves to the fork without any
       # per-run compile step.
 
+      - name: Install pnpm
+        run: npm install -g pnpm
+
       - name: Cache node modules
         id: pnpm-cache
         uses: actions/cache@v4

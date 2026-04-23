@@ -31,6 +31,9 @@ jobs:
           node-version: 24.x
           cache: pnpm
 
+      - name: Install pnpm
+        run: npm install -g pnpm
+
       - name: Install Rust (1.93.0)
         uses: dtolnay/rust-toolchain@1.93.0
         with:
