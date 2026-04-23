@@ -168,12 +168,15 @@ pub async fn trigger_agent(
             let output = payload
                 .get("output")
                 .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-                .unwrap_or_else(|| payload.to_string());
-            TriggerEnvelope::from_cron(caller_id, reason, &output)
+                .unwrap_or(reason);
+            TriggerEnvelope::from_cron(caller_id, reason, output)
         }
         "external" => TriggerEnvelope::from_external(caller_id, reason, payload),
-        other => return Err(format!("unsupported trigger source `{other}`")),
+        other => {
+            return Err(format!(
+                "unsupported trigger source `{other}` — supported: webhook, cron, external"
+            ))
+        }
     };
 
     let run = crate::openhuman::agent::triage::run_triage(&envelope)

@@ -283,14 +283,15 @@ fn handle_triage_evaluate(params: Map<String, Value>) -> ControllerFuture {
                 tracing::trace!("[rpc][agent] building cron trigger envelope");
                 let job_id = p.external_id.as_deref().unwrap_or("unknown");
                 let job_name = p.display_label.as_str();
+                // Preserve the structured payload — extract the output string
+                // for the envelope label but keep the full JSON for triage.
                 let output = p
                     .payload
                     .get("output")
                     .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| p.payload.to_string());
+                    .unwrap_or(job_name);
                 crate::openhuman::agent::triage::TriggerEnvelope::from_cron(
-                    job_id, job_name, &output,
+                    job_id, job_name, output,
                 )
             }
             "external" => {
@@ -311,7 +312,7 @@ fn handle_triage_evaluate(params: Map<String, Value>) -> ControllerFuture {
 
         tracing::debug!(
             source = %envelope.source.slug(),
-            external_id = %envelope.external_id,
+            external_id_len = envelope.external_id.len(),
             "[rpc][agent] running triage pipeline"
         );
 

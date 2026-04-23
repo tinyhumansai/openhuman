@@ -96,33 +96,41 @@ impl EventHandler for WebhookRequestSubscriber {
                     "[webhook] agent tunnel {} — routing to triage pipeline",
                     tunnel_uuid
                 );
-                let payload = match decode_webhook_body(&request.body) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::error!("[webhook] failed to decode body: {}", e);
-                        serde_json::json!({})
-                    }
-                };
-                let envelope = crate::openhuman::agent::triage::TriggerEnvelope::from_webhook(
-                    &tunnel_uuid,
-                    &method,
-                    &path,
-                    payload,
-                );
-                match run_agent_trigger(&envelope).await {
-                    Ok(output) => {
-                        let resp = build_agent_response(&correlation_id, 200, &output);
-                        let skill_id = reg.agent_id.clone().or_else(|| Some(reg.skill_id.clone()));
-                        (resp, skill_id, None)
-                    }
-                    Err(e) => {
-                        tracing::error!("[webhook] agent trigger failed: {}", e);
-                        let resp = build_agent_response(
-                            &correlation_id,
-                            500,
-                            &format!("Agent error: {e}"),
+                let decoded = decode_webhook_body(&request.body);
+                if let Err(e) = &decoded {
+                    tracing::error!("[webhook] rejecting — failed to decode body: {}", e);
+                    let resp = WebhookResponseData {
+                        correlation_id: correlation_id.clone(),
+                        status_code: 400,
+                        headers: HashMap::new(),
+                        body: error_body(&format!("Invalid request body: {e}")),
+                    };
+                    (resp, None, Some(e.to_string()))
+                } else {
+                    let payload = decoded.unwrap();
+                    let envelope =
+                        crate::openhuman::agent::triage::TriggerEnvelope::from_webhook(
+                            &tunnel_uuid,
+                            &method,
+                            &path,
+                            payload,
                         );
-                        (resp, None, Some(e))
+                    match run_agent_trigger(&envelope).await {
+                        Ok(output) => {
+                            let resp = build_agent_response(&correlation_id, 200, &output);
+                            let skill_id =
+                                reg.agent_id.clone().or_else(|| Some(reg.skill_id.clone()));
+                            (resp, skill_id, None)
+                        }
+                        Err(e) => {
+                            tracing::error!("[webhook] agent trigger failed: {}", e);
+                            let resp = build_agent_response(
+                                &correlation_id,
+                                500,
+                                &format!("Agent error: {e}"),
+                            );
+                            (resp, None, Some(e))
+                        }
                     }
                 }
             }
