@@ -3,6 +3,8 @@
 //! Controllers exposed:
 //!   - `life_capture.get_stats` — index size, per-source counts, last-ingest ts
 //!   - `life_capture.search`    — hybrid (vector + keyword + recency) search
+//!   - `life_capture.ingest`    — upsert a single item + embedding (idempotent
+//!                                by (source, external_id))
 //!
 //! Handlers translate the raw `Map<String, Value>` params into typed calls into
 //! the domain functions in `rpc.rs`. Runtime state (the `PersonalIndex` + the
@@ -13,11 +15,12 @@ use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::openhuman::life_capture::types::Source;
 use crate::openhuman::life_capture::{rpc, runtime};
 use crate::rpc::RpcOutcome;
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
-    vec![schemas("get_stats"), schemas("search")]
+    vec![schemas("get_stats"), schemas("search"), schemas("ingest")]
 }
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
@@ -29,6 +32,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("search"),
             handler: handle_search,
+        },
+        RegisteredController {
+            schema: schemas("ingest"),
+            handler: handle_ingest,
         },
     ]
 }
@@ -140,6 +147,67 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "ingest" => ControllerSchema {
+            namespace: "life_capture",
+            function: "ingest",
+            description: "Upsert a single item (and its embedding) into the personal index. \
+                          Idempotent by (source, external_id): re-ingesting the same key \
+                          updates the row in place rather than creating a duplicate.",
+            inputs: vec![
+                FieldSchema {
+                    name: "source",
+                    ty: TypeSchema::String,
+                    comment: "Source identifier — one of 'gmail', 'calendar', 'imessage', 'slack'.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "external_id",
+                    ty: TypeSchema::String,
+                    comment:
+                        "Source-native dedupe key. Re-ingesting the same key updates in place.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "ts",
+                    ty: TypeSchema::I64,
+                    comment: "Unix-seconds timestamp of the item.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "text",
+                    ty: TypeSchema::String,
+                    comment: "Normalized body text. Required and non-empty.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "subject",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional subject / title.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "metadata",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional JSON object with source-specific metadata.",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "item_id",
+                    ty: TypeSchema::String,
+                    comment:
+                        "Canonical UUID of the item (stable across re-ingests of the same key).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "replaced",
+                    ty: TypeSchema::Bool,
+                    comment: "True when this call updated an existing row; false on first insert.",
+                    required: true,
+                },
+            ],
+        },
         _ => ControllerSchema {
             namespace: "life_capture",
             function: "unknown",
@@ -172,11 +240,66 @@ fn handle_search(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_ingest(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let idx = runtime::get_index().map_err(|e| e.to_string())?;
+        let embedder = runtime::get_embedder().map_err(|e| e.to_string())?;
+        let source_str = read_required_string(&params, "source")?;
+        let source: Source = serde_json::from_value(Value::String(source_str.clone()))
+            .map_err(|e| format!("invalid 'source' '{source_str}': {e}"))?;
+        let external_id = read_required_string(&params, "external_id")?;
+        let ts = read_required_i64(&params, "ts")?;
+        let text = read_required_string(&params, "text")?;
+        let subject = read_optional_string(&params, "subject")?;
+        let metadata = params
+            .get("metadata")
+            .cloned()
+            .unwrap_or(Value::Object(Map::new()));
+        to_json(
+            rpc::handle_ingest(
+                &idx,
+                &embedder,
+                source,
+                external_id,
+                ts,
+                subject,
+                text,
+                metadata,
+            )
+            .await?,
+        )
+    })
+}
+
 fn read_required_string(params: &Map<String, Value>, key: &str) -> Result<String, String> {
     match params.get(key) {
         Some(Value::String(s)) => Ok(s.clone()),
         Some(other) => Err(format!(
             "invalid '{key}': expected string, got {}",
+            type_name(other)
+        )),
+        None => Err(format!("missing required param '{key}'")),
+    }
+}
+
+fn read_optional_string(params: &Map<String, Value>, key: &str) -> Result<Option<String>, String> {
+    match params.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(other) => Err(format!(
+            "invalid '{key}': expected string, got {}",
+            type_name(other)
+        )),
+    }
+}
+
+fn read_required_i64(params: &Map<String, Value>, key: &str) -> Result<i64, String> {
+    match params.get(key) {
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .ok_or_else(|| format!("invalid '{key}': expected integer")),
+        Some(other) => Err(format!(
+            "invalid '{key}': expected integer, got {}",
             type_name(other)
         )),
         None => Err(format!("missing required param '{key}'")),
@@ -243,19 +366,33 @@ mod tests {
     }
 
     #[test]
-    fn all_controller_schemas_lists_both_functions() {
+    fn all_controller_schemas_lists_all_functions() {
         let names: Vec<_> = all_controller_schemas()
             .into_iter()
             .map(|s| s.function)
             .collect();
-        assert_eq!(names, vec!["get_stats", "search"]);
+        assert_eq!(names, vec!["get_stats", "search", "ingest"]);
     }
 
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let regs = all_registered_controllers();
-        assert_eq!(regs.len(), 2);
+        assert_eq!(regs.len(), 3);
         let names: Vec<_> = regs.iter().map(|c| c.schema.function).collect();
-        assert_eq!(names, vec!["get_stats", "search"]);
+        assert_eq!(names, vec!["get_stats", "search", "ingest"]);
+    }
+
+    #[test]
+    fn schemas_ingest_requires_source_external_id_ts_text() {
+        let s = schemas("ingest");
+        let required: Vec<_> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(required, vec!["source", "external_id", "ts", "text"]);
+        let outs: Vec<_> = s.outputs.iter().map(|f| f.name).collect();
+        assert_eq!(outs, vec!["item_id", "replaced"]);
     }
 }

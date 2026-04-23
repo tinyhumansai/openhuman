@@ -4,11 +4,12 @@
 
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
 use crate::openhuman::life_capture::embedder::Embedder;
-use crate::openhuman::life_capture::index::{IndexReader, PersonalIndex};
-use crate::openhuman::life_capture::types::Query;
+use crate::openhuman::life_capture::index::{IndexReader, IndexWriter, PersonalIndex};
+use crate::openhuman::life_capture::types::{Item, Query, Source};
 use crate::rpc::RpcOutcome;
 
 /// Returns total item count, per-source counts, and the most recent item ts
@@ -113,5 +114,66 @@ pub async fn handle_search(
         })
         .collect();
 
-    Ok(RpcOutcome::new(Value::Array(payload), vec![]))
+    Ok(RpcOutcome::new(json!({ "hits": payload }), vec![]))
+}
+
+/// Ingest a single item: upsert-by-(source, external_id), embed text, replace
+/// vector atomically. Returns the canonical item_id plus `replaced: bool` so
+/// callers can tell insert from update.
+pub async fn handle_ingest(
+    idx: &PersonalIndex,
+    embedder: &Arc<dyn Embedder>,
+    source: Source,
+    external_id: String,
+    ts: i64,
+    subject: Option<String>,
+    text: String,
+    metadata: Value,
+) -> Result<RpcOutcome<Value>, String> {
+    if external_id.trim().is_empty() {
+        return Err("external_id must not be empty".into());
+    }
+    if text.trim().is_empty() {
+        return Err("text must not be empty".into());
+    }
+    let ts = DateTime::<Utc>::from_timestamp(ts, 0)
+        .ok_or_else(|| format!("invalid ts (out of range): {ts}"))?;
+
+    let requested_id = uuid::Uuid::new_v4();
+    let mut items = vec![Item {
+        id: requested_id,
+        source,
+        external_id,
+        ts,
+        author: None,
+        subject,
+        text: text.clone(),
+        metadata,
+    }];
+
+    let writer = IndexWriter::new(idx);
+    writer
+        .upsert(&mut items)
+        .await
+        .map_err(|e| format!("upsert: {e}"))?;
+    let canonical_id = items[0].id;
+    let replaced = canonical_id != requested_id;
+
+    let mut vecs = embedder
+        .embed_batch(&[text.as_str()])
+        .await
+        .map_err(|e| format!("embed: {e}"))?;
+    let vector = vecs.pop().ok_or("embedder returned no vectors")?;
+    writer
+        .upsert_vector(&canonical_id, &vector)
+        .await
+        .map_err(|e| format!("upsert_vector: {e}"))?;
+
+    Ok(RpcOutcome::new(
+        json!({
+            "item_id": canonical_id.to_string(),
+            "replaced": replaced,
+        }),
+        vec![],
+    ))
 }
