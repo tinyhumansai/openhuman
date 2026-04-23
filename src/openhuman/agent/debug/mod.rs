@@ -392,6 +392,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
         connected_identities_md: crate::openhuman::agent::prompts::render_connected_identities(),
         include_profile: !definition.omit_profile,
         include_memory_md: !definition.omit_memory_md,
+        curated_snapshot: None,
     };
 
     let mut text = build(&ctx)

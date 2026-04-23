@@ -83,6 +83,7 @@ impl Agent {
             // inference backend has already tokenised. Fetching it later
             // would just burn memory-store reads on data we throw away.
             self.fetch_connected_integrations().await;
+            self.ensure_curated_snapshot().await;
             let learned = self.fetch_learned_context().await;
             let rendered_prompt = self.build_system_prompt(learned)?;
             log::info!("[agent] system prompt built — initialising conversation history");
@@ -983,6 +984,7 @@ impl Agent {
             tool_call_format: self.tool_dispatcher.tool_call_format(),
             session_key: self.session_key.clone(),
             session_parent_prefix: self.session_parent_prefix.clone(),
+            curated_snapshot: self.curated_snapshot.clone(),
         }
     }
 
@@ -1161,6 +1163,40 @@ impl Agent {
         self.composio_client = crate::openhuman::composio::build_composio_client(&config);
     }
 
+    /// Take one curated-memory snapshot per session. Subsequent turns reuse
+    /// the same `Arc<MemorySnapshot>` so the rendered prompt bytes stay
+    /// frozen and stay in the backend's KV-prefix cache. A no-op when the
+    /// curated-memory runtime singleton isn't initialised (unit tests,
+    /// minimal embeds) — the prompt renderer falls back to the legacy
+    /// workspace-file loader in that case.
+    async fn ensure_curated_snapshot(&mut self) {
+        if self.curated_snapshot.is_some() {
+            return;
+        }
+        match crate::openhuman::curated_memory::runtime::get() {
+            Ok(rt) => {
+                match crate::openhuman::curated_memory::snapshot_pair(&rt.memory, &rt.user).await {
+                    Ok(snap) => {
+                        log::debug!(
+                            "[curated_memory] session snapshot taken memory_chars={} user_chars={}",
+                            snap.memory.chars().count(),
+                            snap.user.chars().count()
+                        );
+                        self.curated_snapshot = Some(std::sync::Arc::new(snap));
+                    }
+                    Err(e) => {
+                        log::debug!(
+                            "[curated_memory] snapshot_pair failed — falling back to workspace file loader: {e}"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                log::trace!("[curated_memory] runtime not initialised — skipping snapshot: {e}");
+            }
+        }
+    }
+
     /// Builds the system prompt for the current turn, including tool
     /// instructions and learned context.
     pub fn build_system_prompt(&self, learned: LearnedContextData) -> Result<String> {
@@ -1186,6 +1222,7 @@ impl Agent {
             ),
             include_profile: !self.omit_profile,
             include_memory_md: !self.omit_memory_md,
+            curated_snapshot: self.curated_snapshot.as_deref(),
         };
         // Route through the global context manager so every
         // prompt-building call-site — main agent, sub-agent runner,
