@@ -1,35 +1,33 @@
 {
   "name": "openhuman-repo",
   "private": true,
-  "workspaces": [
-    "app"
-  ],
+  "packageManager": "pnpm@10.10.0",
   "resolutions": {
     "@tauri-apps/api": "2.10.1"
   },
   "scripts": {
-    "build": "yarn workspace openhuman-app build",
-    "compile": "yarn workspace openhuman-app compile",
-    "core:stage": "yarn workspace openhuman-app core:stage",
-    "dev": "yarn workspace openhuman-app dev",
-    "dev:app": "yarn workspace openhuman-app dev:app",
-    "dev:cef": "yarn workspace openhuman-app dev:cef",
-    "format": "yarn workspace openhuman-app format",
-    "format:check": "yarn workspace openhuman-app format:check",
-    "knip": "yarn workspace openhuman-app knip",
-    "knip:production": "yarn workspace openhuman-app knip:production",
-    "lint": "yarn workspace openhuman-app lint",
-    "lint:fix": "yarn workspace openhuman-app lint:fix",
+    "build": "pnpm --filter openhuman-app build",
+    "compile": "pnpm --filter openhuman-app compile",
+    "core:stage": "pnpm --filter openhuman-app core:stage",
+    "dev": "pnpm --filter openhuman-app dev",
+    "dev:app": "pnpm --filter openhuman-app dev:app",
+    "dev:cef": "pnpm --filter openhuman-app dev:cef",
+    "format": "pnpm --filter openhuman-app format",
+    "format:check": "pnpm --filter openhuman-app format:check",
+    "knip": "pnpm --filter openhuman-app knip",
+    "knip:production": "pnpm --filter openhuman-app knip:production",
+    "lint": "pnpm --filter openhuman-app lint",
+    "lint:fix": "pnpm --filter openhuman-app lint:fix",
     "prepare": "husky",
     "postinstall": "husky",
-    "tauri": "yarn workspace openhuman-app tauri",
-    "test": "yarn workspace openhuman-app test",
-    "test:coverage": "yarn workspace openhuman-app test:coverage",
-    "test:rust": "yarn workspace openhuman-app test:rust",
+    "tauri": "pnpm --filter openhuman-app tauri",
+    "test": "pnpm --filter openhuman-app test",
+    "test:coverage": "pnpm --filter openhuman-app test:coverage",
+    "test:rust": "pnpm --filter openhuman-app test:rust",
     "mock:api": "node scripts/mock-api-server.mjs",
     "review": "bash scripts/review/cli.sh",
-    "rust:check": "yarn workspace openhuman-app rust:check",
-    "typecheck": "yarn workspace openhuman-app compile"
+    "rust:check": "pnpm --filter openhuman-app rust:check",
+    "typecheck": "pnpm --filter openhuman-app compile"
   },
   "devDependencies": {
     "husky": "^9.1.7"
