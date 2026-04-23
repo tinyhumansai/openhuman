@@ -64,12 +64,10 @@ const NotificationCard = ({ notification: n, onMarkRead }: Props) => {
         isUnread ? 'bg-primary-50/30' : 'bg-white'
       }`}>
       <div className="flex items-start gap-3">
-        {/* Unread dot */}
-        <div className="mt-1.5 flex-shrink-0">
-          {isUnread ? (
-            <span className="block w-2 h-2 rounded-full bg-primary-500" />
-          ) : (
-            <span className="block w-2 h-2 rounded-full bg-transparent" />
+        {/* Unread dot — reserve space so text stays aligned whether read or unread */}
+        <div className="mt-1.5 flex-shrink-0 w-2">
+          {isUnread && (
+            <span className="block w-2 h-2 rounded-full bg-primary-500" aria-hidden="true" />
           )}
         </div>
 

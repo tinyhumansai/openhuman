@@ -13,6 +13,7 @@ import MeshGradient from './components/MeshGradient';
 import OnboardingOverlay from './components/OnboardingOverlay';
 import RouteLoadingScreen from './components/RouteLoadingScreen';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
+import { startNativeNotificationsService } from './lib/nativeNotifications';
 import { startWebviewNotificationsService } from './lib/webviewNotifications';
 import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
 import CoreStateProvider from './providers/CoreStateProvider';
@@ -29,6 +30,7 @@ import { isAccountsFullscreen } from './utils/accountsFullscreen';
 // Idempotent — the service uses a `started` singleton guard.
 startWebviewAccountService();
 startWebviewNotificationsService();
+startNativeNotificationsService();
 
 function App() {
   return (

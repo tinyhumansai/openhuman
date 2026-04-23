@@ -448,6 +448,32 @@ fn activate_main_window(app: AppHandle<AppRuntime>) -> Result<(), String> {
     show_main_window(&app)
 }
 
+/// Tauri command: fire a native OS notification from the frontend. Used by
+/// the in-app notification center to banner events (agent completions,
+/// connection drops, etc.) when the window is not focused.
+#[tauri::command]
+fn show_native_notification(
+    app: AppHandle<AppRuntime>,
+    title: String,
+    body: String,
+    tag: Option<String>,
+) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    log::debug!(
+        "[notify] show_native_notification title_chars={} body_chars={} tag={:?}",
+        title.len(),
+        body.len(),
+        tag
+    );
+    let mut builder = app.notification().builder().title(&title);
+    if !body.is_empty() {
+        builder = builder.body(&body);
+    }
+    builder
+        .show()
+        .map_err(|e| format!("notification show failed: {e}"))
+}
+
 fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
@@ -895,7 +921,8 @@ pub fn run() {
             webview_accounts::webview_set_focused_account,
             notification_settings::notification_settings_get,
             notification_settings::notification_settings_set,
-            activate_main_window
+            activate_main_window,
+            show_native_notification
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

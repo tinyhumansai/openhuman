@@ -75,8 +75,6 @@ const NotificationCenter = () => {
     }
   };
 
-  const providers = allProviders;
-
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -101,7 +99,7 @@ const NotificationCenter = () => {
       </div>
 
       {/* Provider filter pills */}
-      {providers.length > 1 && (
+      {allProviders.length > 1 && (
         <div className="flex items-center gap-2 px-4 py-2 border-b border-stone-100 overflow-x-auto">
           <button
             onClick={() => setSelectedProvider(undefined)}
@@ -112,7 +110,7 @@ const NotificationCenter = () => {
             }`}>
             All
           </button>
-          {providers.map(p => (
+          {allProviders.map(p => (
             <button
               key={p}
               onClick={() => setSelectedProvider(p === selectedProvider ? undefined : p)}
