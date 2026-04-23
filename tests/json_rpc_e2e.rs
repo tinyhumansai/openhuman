@@ -30,6 +30,12 @@ impl EnvVarGuard {
         Self { key, old }
     }
 
+    fn set(key: &'static str, value: &str) -> Self {
+        let old = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, old }
+    }
+
     fn unset(key: &'static str) -> Self {
         let old = std::env::var(key).ok();
         std::env::remove_var(key);
@@ -781,6 +787,14 @@ async fn json_rpc_memory_tree_end_to_end() {
     let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
     let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
     let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    // Phase 4 (#710): disable strict embedding so ingest falls back to the
+    // Inert (zero-vector) embedder when no Ollama endpoint is reachable.
+    // CI has no local Ollama; without this the `memory_tree_ingest` call
+    // would fail with `embed chunk_id=<id> during ingest` before writing
+    // any chunks.
+    let _embed_strict_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "false");
+    let _embed_endpoint_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", "");
+    let _embed_model_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", "");
 
     let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
     let mock_origin = format!("http://{}", mock_addr);

@@ -852,18 +852,25 @@ impl Config {
             }
         }
 
-        // Phase 4 memory-tree embedding overrides (#710).
+        // Phase 4 memory-tree embedding overrides (#710). Setting the env
+        // var to an empty string explicitly clears the default — useful
+        // for CI and other environments that want to opt into the
+        // InertEmbedder fallback without editing config.toml.
         if let Ok(endpoint) = std::env::var("OPENHUMAN_MEMORY_EMBED_ENDPOINT") {
             let trimmed = endpoint.trim();
-            if !trimmed.is_empty() {
-                self.memory_tree.embedding_endpoint = Some(trimmed.to_string());
-            }
+            self.memory_tree.embedding_endpoint = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
         }
         if let Ok(model) = std::env::var("OPENHUMAN_MEMORY_EMBED_MODEL") {
             let trimmed = model.trim();
-            if !trimmed.is_empty() {
-                self.memory_tree.embedding_model = Some(trimmed.to_string());
-            }
+            self.memory_tree.embedding_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
         }
         if let Ok(val) = std::env::var("OPENHUMAN_MEMORY_EMBED_TIMEOUT_MS") {
             if let Ok(timeout_ms) = val.trim().parse::<u64>() {
