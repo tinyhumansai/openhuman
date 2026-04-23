@@ -13,7 +13,7 @@
 use anyhow::Result;
 
 /// Entry point for `openhuman tree-summarizer <subcommand>`.
-pub fn run_tree_summarizer_command(args: &[String]) -> Result<()> {
+pub(crate) fn run_tree_summarizer_command(args: &[String]) -> Result<()> {
     if args.is_empty() || is_help(&args[0]) {
         print_help();
         return Ok(());

@@ -69,13 +69,14 @@ function handleFired(payload: WebviewNotificationFired): void {
     body.length
   );
   store.dispatch(noteWebviewNotificationFired({ accountId }));
+  const now = Date.now();
   store.dispatch(
     notificationReceived({
-      id: `${accountId}:${tag ?? ''}:${Date.now()}`,
+      id: `${accountId}:${tag ?? ''}:${now}`,
       category: 'messages',
       title,
       body,
-      timestamp: Date.now(),
+      timestamp: now,
       read: false,
       accountId,
       provider,

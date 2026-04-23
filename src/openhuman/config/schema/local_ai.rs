@@ -39,14 +39,8 @@ pub struct LocalAiConfig {
     pub preload_tts_voice: bool,
     #[serde(default = "default_download_url")]
     pub download_url: Option<String>,
-    #[serde(default)]
-    pub checksum_sha256: Option<String>,
-    #[serde(default = "default_artifact_name")]
-    pub artifact_name: String,
     #[serde(default = "default_autosummary_debounce_ms")]
     pub autosummary_debounce_ms: u64,
-    #[serde(default = "default_context_compaction_threshold_tokens")]
-    pub context_compaction_threshold_tokens: usize,
     #[serde(default = "default_max_suggestions")]
     pub max_suggestions: usize,
     #[serde(default)]
@@ -147,16 +141,8 @@ fn default_download_url() -> Option<String> {
     None
 }
 
-fn default_artifact_name() -> String {
-    "ollama-managed".to_string()
-}
-
 fn default_autosummary_debounce_ms() -> u64 {
     2500
-}
-
-fn default_context_compaction_threshold_tokens() -> usize {
-    100_000
 }
 
 fn default_max_suggestions() -> usize {
@@ -191,10 +177,7 @@ impl Default for LocalAiConfig {
             preload_stt_model: default_preload_stt_model(),
             preload_tts_voice: default_preload_tts_voice(),
             download_url: default_download_url(),
-            checksum_sha256: None,
-            artifact_name: default_artifact_name(),
             autosummary_debounce_ms: default_autosummary_debounce_ms(),
-            context_compaction_threshold_tokens: default_context_compaction_threshold_tokens(),
             max_suggestions: default_max_suggestions(),
             selected_tier: None,
             opt_in_confirmed: false,

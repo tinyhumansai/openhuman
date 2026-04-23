@@ -17,6 +17,7 @@ import accountsReducer from './accountsSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
 import notificationReducer from './notificationSlice';
+import notificationsReducer from './notificationsSlice';
 import socketReducer from './socketSlice';
 import threadReducer from './threadSlice';
 
@@ -54,6 +55,7 @@ export const store = configureStore({
     channelConnections: persistedChannelConnectionsReducer,
     accounts: persistedAccountsReducer,
     notifications: persistedNotificationReducer,
+    integrationNotifications: notificationsReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({

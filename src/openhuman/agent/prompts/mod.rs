@@ -1,5 +1,7 @@
 pub mod types;
 pub use types::*;
+mod connected_identities;
+pub use connected_identities::render_connected_identities;
 
 use crate::openhuman::skills::Skill;
 use crate::openhuman::tools::Tool;
@@ -581,6 +583,7 @@ fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
         visible_tool_names: visible,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: EMPTY_INTEGRATIONS,
+        connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
     }
@@ -1057,6 +1060,7 @@ mod tests {
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
             connected_integrations: &[],
+            connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
         };
@@ -1085,6 +1089,7 @@ mod tests {
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
             connected_integrations: &[],
+            connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
         };
@@ -1122,6 +1127,7 @@ mod tests {
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
             connected_integrations: &[],
+            connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
         };
@@ -1179,6 +1185,7 @@ mod tests {
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
             connected_integrations: &[],
+            connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
         };
@@ -1222,6 +1229,7 @@ mod tests {
                 visible_tool_names: &NO_FILTER,
                 tool_call_format: format,
                 connected_integrations: &[],
+                connected_identities_md: String::new(),
                 include_profile: false,
                 include_memory_md: false,
             };
@@ -1261,6 +1269,7 @@ mod tests {
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
             connected_integrations: &[],
+            connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
         };
@@ -1288,6 +1297,7 @@ mod tests {
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
             connected_integrations: &[],
+            connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
         };
@@ -1934,6 +1944,7 @@ mod tests {
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
             connected_integrations: &[],
+            connected_identities_md: String::new(),
             include_profile: true,
             include_memory_md: true,
         };
@@ -1974,6 +1985,7 @@ mod tests {
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
             connected_integrations: &[],
+            connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
         };
@@ -2051,6 +2063,7 @@ mod tests {
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
             connected_integrations: &[],
+            connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
         };

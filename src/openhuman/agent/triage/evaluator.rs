@@ -340,6 +340,7 @@ fn extract_inline_prompt(def: &AgentDefinition) -> Option<String> {
                 visible_tool_names: &empty_visible,
                 tool_call_format: ToolCallFormat::PFormat,
                 connected_integrations: &empty_integrations,
+                connected_identities_md: String::new(),
                 include_profile: false,
                 include_memory_md: false,
             };

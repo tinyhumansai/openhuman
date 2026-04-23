@@ -17,3 +17,4 @@ export * from './service';
 export * from './accessibility';
 export * from './autocomplete';
 export * from './voice';
+export * from './aboutApp';

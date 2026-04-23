@@ -11,7 +11,9 @@ import { showNativeNotification } from '../tauriBridge';
 
 vi.mock('../tauriBridge', () => ({ showNativeNotification: vi.fn() }));
 
-vi.mock('../../../services/socketService', () => ({ socketService: { on: vi.fn() } }));
+vi.mock('../../../services/socketService', () => ({
+  socketService: { on: vi.fn(), off: vi.fn() },
+}));
 
 describe('nativeNotifications service', () => {
   beforeEach(() => {

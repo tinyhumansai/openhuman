@@ -3,11 +3,18 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import debug from 'debug';
 
 import { store } from '../store';
-import { appendLog, appendMessages, setAccountStatus } from '../store/accountsSlice';
+import {
+  appendLog,
+  appendMessages,
+  setAccountStatus,
+  setActiveAccount,
+} from '../store/accountsSlice';
+import { addNotification } from '../store/notificationsSlice';
 import type { AccountProvider, IngestedMessage } from '../types/accounts';
 import { threadApi } from './api/threadApi';
 import { chatSend } from './chatService';
 import { callCoreRpc } from './coreRpcClient';
+import { ingestNotification } from './notificationService';
 
 const MEET_ORCHESTRATOR_MODEL = 'reasoning-v1';
 
@@ -46,8 +53,24 @@ interface IngestPayload {
   isSeed?: boolean;
 }
 
+interface NotificationClickPayload {
+  account_id: string;
+  provider: string;
+}
+
+interface RecipeNotifyPayload {
+  title?: string;
+  body?: string;
+  icon?: string | null;
+  tag?: string | null;
+  silent?: boolean;
+  [key: string]: unknown;
+}
+
 let unlisten: UnlistenFn | null = null;
+let unlistenNotifyClick: UnlistenFn | null = null;
 let started = false;
+let permissionChecked = false;
 
 export function startWebviewAccountService(): void {
   if (started) return;
@@ -66,6 +89,16 @@ export function startWebviewAccountService(): void {
     } catch (err) {
       errLog('failed to attach listener', err);
     }
+    try {
+      // Dormant until the platform click hook (UNUserNotificationCenter /
+      // notify-rust on_response) emits `notification:click` from Rust.
+      unlistenNotifyClick = await listen<NotificationClickPayload>('notification:click', evt => {
+        handleNotificationClick(evt.payload);
+      });
+      log('notification:click listener attached');
+    } catch (err) {
+      errLog('failed to attach notification:click listener', err);
+    }
   })();
 }
 
@@ -74,7 +107,43 @@ export function stopWebviewAccountService(): void {
     unlisten();
     unlisten = null;
   }
+  if (unlistenNotifyClick) {
+    unlistenNotifyClick();
+    unlistenNotifyClick = null;
+  }
   started = false;
+}
+
+function handleNotificationClick(payload: NotificationClickPayload) {
+  const accountId = payload?.account_id;
+  const provider = payload?.provider;
+  if (!accountId) {
+    errLog('notification:click missing account_id — ignoring: %o', payload);
+    return;
+  }
+  log('notification:click → account=%s provider=%s', accountId, provider);
+  store.dispatch(setActiveAccount(accountId));
+  void setFocusedAccount(accountId);
+  invoke('activate_main_window').catch(err => {
+    errLog('activate_main_window failed after notification click: %o', err);
+  });
+}
+
+// Round-trip the OS notification permission once per session on first
+// account open. Desktop plugin auto-grants today, but the shape matches
+// the web API so future platform prompts slot in without UI change.
+async function ensureNotificationPermission(): Promise<void> {
+  if (permissionChecked) return;
+  try {
+    const state = await invoke<string>('webview_notification_permission_state');
+    permissionChecked = true;
+    log('notification permission state=%s', state);
+    if (state === 'granted') return;
+    const next = await invoke<string>('webview_notification_permission_request');
+    log('notification permission after request=%s', next);
+  } catch (err) {
+    errLog('notification permission check failed: %o', err);
+  }
 }
 
 function handleRecipeEvent(evt: RecipeEventPayload) {
@@ -120,6 +189,39 @@ function handleRecipeEvent(evt: RecipeEventPayload) {
     // Namespace mirrors the skill-sync convention so the recall pipeline
     // can find these alongside other ingested context.
     void persistIngestToMemory(accountId, evt.provider, ingest, messages);
+    return;
+  }
+
+  if (evt.kind === 'notify') {
+    const payload = evt.payload as RecipeNotifyPayload;
+    const title = String(payload.title ?? '').trim();
+    const body = String(payload.body ?? '').trim();
+    if (!title && !body) return;
+    void ingestNotification({
+      provider: evt.provider,
+      account_id: accountId,
+      title: title || `${evt.provider} notification`,
+      body,
+      raw_payload: payload as Record<string, unknown>,
+    })
+      .then(result => {
+        if (result.skipped) return;
+        store.dispatch(
+          addNotification({
+            id: result.id,
+            provider: evt.provider,
+            account_id: accountId,
+            title: title || `${evt.provider} notification`,
+            body,
+            raw_payload: payload as Record<string, unknown>,
+            status: 'unread',
+            received_at: new Date().toISOString(),
+          })
+        );
+      })
+      .catch(err => {
+        errLog('notify ingest failed account=%s provider=%s: %o', accountId, evt.provider, err);
+      });
     return;
   }
 
@@ -611,11 +713,13 @@ export async function openWebviewAccount(args: OpenAccountArgs): Promise<void> {
   if (!isTauri()) throw new Error('webview accounts require the desktop app');
   log('open account=%s provider=%s', args.accountId, args.provider);
   store.dispatch(setAccountStatus({ accountId: args.accountId, status: 'pending' }));
+  void ensureNotificationPermission();
   try {
     await invoke('webview_account_open', {
       args: { account_id: args.accountId, provider: args.provider, bounds: args.bounds },
     });
     store.dispatch(setAccountStatus({ accountId: args.accountId, status: 'open' }));
+    void setFocusedAccount(args.accountId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     errLog('open failed: %s', msg);
@@ -682,6 +786,69 @@ export async function purgeWebviewAccount(accountId: string): Promise<void> {
   } catch (err) {
     errLog('purge failed: %o', err);
     throw err;
+  }
+}
+
+// ────────────────────────── Notification bypass helpers ─────────────────────
+
+/**
+ * Mute or unmute OS notification toasts for a specific embedded account.
+ * When muted, toasts from that account are suppressed regardless of focus state.
+ */
+export async function setAccountMuted(accountId: string, muted: boolean): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke('webview_notification_mute_account', { accountId, muted });
+    log('notify-bypass: account=%s muted=%s', accountId, muted);
+  } catch (e) {
+    log('notify-bypass: setAccountMuted error %o', e);
+  }
+}
+
+/**
+ * Enable or disable global Do Not Disturb mode for embedded webview notifications.
+ * When enabled, all OS notification toasts from embedded accounts are suppressed.
+ */
+export async function setGlobalDnd(enabled: boolean): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke('webview_notification_set_dnd', { enabled });
+    log('notify-bypass: global DND set to %s', enabled);
+  } catch (e) {
+    log('notify-bypass: setGlobalDnd error %o', e);
+  }
+}
+
+/**
+ * Fetch the current notification bypass preferences from the Rust side.
+ * Returns `null` when not running in Tauri or on any invoke error.
+ */
+export async function getBypassPrefs(): Promise<{
+  global_dnd: boolean;
+  muted_accounts: string[];
+  bypass_when_focused: boolean;
+} | null> {
+  if (!isTauri()) return null;
+  try {
+    return await invoke('webview_notification_get_bypass_prefs');
+  } catch (e) {
+    log('notify-bypass: getBypassPrefs error %o', e);
+    return null;
+  }
+}
+
+/**
+ * Tell Rust which account (if any) the user is currently viewing.
+ * Rust uses this together with the window-focus state to suppress
+ * notifications while the user is actively looking at that account.
+ */
+export async function setFocusedAccount(accountId: string | null): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke('webview_set_focused_account', { accountId });
+    log('notify-bypass: focused account set to %s', accountId);
+  } catch (e) {
+    log('notify-bypass: setFocusedAccount error %o', e);
   }
 }
 

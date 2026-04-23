@@ -65,13 +65,22 @@ openssl req \
   2>/dev/null
 
 # ── Bundle to PKCS12 ─────────────────────────────────────────────────────────
+# `-legacy` keeps PKCS12 MAC/encryption compatible with macOS `security` tool
+# which does not yet support OpenSSL 3.x defaults (SHA256 MAC / AES-256-CBC).
+# Older OpenSSL/LibreSSL (including the macOS-bundled LibreSSL) do not know
+# about `-legacy`, so probe for support before adding it.
+PKCS12_LEGACY_ARGS=()
+if openssl pkcs12 -help 2>&1 | grep -q -- '-legacy'; then
+  PKCS12_LEGACY_ARGS=(-legacy)
+fi
+
 openssl pkcs12 \
+  "${PKCS12_LEGACY_ARGS[@]}" \
   -export \
   -out "$P12" \
   -inkey "$KEY" \
   -in "$CERT" \
-  -passout "pass:$P12_PASS" \
-  2>/dev/null
+  -passout "pass:$P12_PASS"
 
 # ── Import into login Keychain ───────────────────────────────────────────────
 security import "$P12" \

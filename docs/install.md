@@ -17,6 +17,12 @@
 brew install tinyhumansai/openhuman/openhuman
 ```
 
+This is the current official Homebrew distribution channel and is backed by the
+custom tap at
+[tinyhumansai/homebrew-openhuman](https://github.com/tinyhumansai/homebrew-openhuman).
+The repository also now tracks a `homebrew/core` source-formula candidate for a
+future upstream submission; see [Homebrew Core Submission](./homebrew-core.md).
+
 **Update:**
 ```bash
 brew upgrade openhuman
@@ -28,8 +34,7 @@ brew uninstall openhuman
 brew untap tinyhumansai/openhuman   # optional: remove tap
 ```
 
-Homebrew installs the binary as `openhuman`. The tap lives at
-[tinyhumansai/homebrew-openhuman](https://github.com/tinyhumansai/homebrew-openhuman).
+Homebrew installs the binary as `openhuman`.
 
 ---
 

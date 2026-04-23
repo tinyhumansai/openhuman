@@ -1,3 +1,6 @@
+import { LATEST_APP_DOWNLOAD_URL } from '../utils/config';
+import { openUrl } from '../utils/openUrl';
+
 /**
  * ErrorFallbackScreen
  *
@@ -55,6 +58,9 @@ export default function ErrorFallbackScreen({
           <p className="text-sm text-stone-400 text-center mb-6">
             The application encountered an unexpected error and could not recover.
           </p>
+          <p className="text-xs text-stone-500 text-center mb-6">
+            If this keeps happening after restart, install the latest version.
+          </p>
 
           {/* Error details */}
           <div className="bg-stone-800/50 border border-stone-700/50 rounded-xl p-4 mb-6">
@@ -73,10 +79,10 @@ export default function ErrorFallbackScreen({
           </div>
 
           {/* Actions */}
-          <div className="flex gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <button
               onClick={onReset}
-              className="flex-1 bg-stone-700 hover:bg-stone-600 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors">
+              className="bg-stone-700 hover:bg-stone-600 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors">
               Try to Recover
             </button>
             <button
@@ -84,8 +90,13 @@ export default function ErrorFallbackScreen({
                 window.location.hash = '#/home';
                 window.location.reload();
               }}
-              className="flex-1 bg-coral-500 hover:bg-coral-600 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors">
+              className="bg-coral-500 hover:bg-coral-600 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors">
               Reload App
+            </button>
+            <button
+              onClick={() => openUrl(LATEST_APP_DOWNLOAD_URL)}
+              className="bg-stone-800 hover:bg-stone-700 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors border border-stone-600">
+              Download Latest
             </button>
           </div>
         </div>

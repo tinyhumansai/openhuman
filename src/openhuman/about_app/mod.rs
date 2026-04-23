@@ -14,4 +14,6 @@ pub use ops::{list_capabilities, lookup_capability, search_capabilities};
 pub use schemas::{
     about_app_schemas, all_about_app_controller_schemas, all_about_app_registered_controllers,
 };
-pub use types::{Capability, CapabilityCategory, CapabilityStatus};
+pub use types::{
+    Capability, CapabilityCategory, CapabilityPrivacy, CapabilityStatus, PrivacyDataKind,
+};

@@ -231,8 +231,6 @@ pub struct LinqConfig {
     pub api_token: String,
     pub from_phone: String,
     #[serde(default)]
-    pub signing_secret: Option<String>,
-    #[serde(default)]
     pub allowed_senders: Vec<String>,
 }
 
@@ -326,38 +324,11 @@ pub enum SandboxBackend {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ResourceLimitsConfig {
-    #[serde(default = "default_max_memory_mb")]
-    pub max_memory_mb: u32,
-    #[serde(default = "default_max_cpu_time_seconds")]
-    pub max_cpu_time_seconds: u64,
-    #[serde(default = "default_max_subprocesses")]
-    pub max_subprocesses: u32,
-    #[serde(default = "default_memory_monitoring_enabled")]
-    pub memory_monitoring: bool,
-}
-
-fn default_max_memory_mb() -> u32 {
-    512
-}
-fn default_max_cpu_time_seconds() -> u64 {
-    60
-}
-fn default_max_subprocesses() -> u32 {
-    10
-}
-fn default_memory_monitoring_enabled() -> bool {
-    true
-}
+pub struct ResourceLimitsConfig {}
 
 impl Default for ResourceLimitsConfig {
     fn default() -> Self {
-        Self {
-            max_memory_mb: default_max_memory_mb(),
-            max_cpu_time_seconds: default_max_cpu_time_seconds(),
-            max_subprocesses: default_max_subprocesses(),
-            memory_monitoring: default_memory_monitoring_enabled(),
-        }
+        Self {}
     }
 }
 
@@ -369,8 +340,6 @@ pub struct AuditConfig {
     pub log_path: String,
     #[serde(default = "default_audit_max_size_mb")]
     pub max_size_mb: u32,
-    #[serde(default)]
-    pub sign_events: bool,
 }
 
 fn default_audit_enabled() -> bool {
@@ -389,7 +358,6 @@ impl Default for AuditConfig {
             enabled: default_audit_enabled(),
             log_path: default_audit_log_path(),
             max_size_mb: default_audit_max_size_mb(),
-            sign_events: false,
         }
     }
 }
@@ -561,11 +529,6 @@ mod tests {
         assert!(sec.audit.enabled);
         assert_eq!(sec.audit.log_path, "audit.log");
         assert_eq!(sec.audit.max_size_mb, 100);
-        assert!(!sec.audit.sign_events);
-        assert_eq!(sec.resources.max_memory_mb, 512);
-        assert_eq!(sec.resources.max_cpu_time_seconds, 60);
-        assert_eq!(sec.resources.max_subprocesses, 10);
-        assert!(sec.resources.memory_monitoring);
     }
 
     #[test]

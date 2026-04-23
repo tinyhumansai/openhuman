@@ -36,6 +36,12 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str("\n\n");
     }
 
+    let identities = ctx.connected_identities_md.as_str();
+    if !identities.trim().is_empty() {
+        out.push_str(identities.trim_end());
+        out.push_str("\n\n");
+    }
+
     let skills = render_available_skills(ctx.skills, ctx.workspace_dir);
     if !skills.trim().is_empty() {
         out.push_str(skills.trim_end());
@@ -159,6 +165,7 @@ mod tests {
             visible_tool_names: EMPTY_VISIBLE.get_or_init(HashSet::new),
             tool_call_format: ToolCallFormat::PFormat,
             connected_integrations: integrations,
+            connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
         }

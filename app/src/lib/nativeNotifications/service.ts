@@ -13,6 +13,12 @@ const log = debug('native-notifications');
 
 let started = false;
 
+// Retain listener references so stopNativeNotificationsService can remove them.
+let chatDoneListener: ((...args: unknown[]) => void) | null = null;
+let chatErrorListener: ((...args: unknown[]) => void) | null = null;
+let coreNotificationListener: ((...args: unknown[]) => void) | null = null;
+let disconnectListener: ((...args: unknown[]) => void) | null = null;
+
 interface ChatDonePayload {
   thread_id?: string;
   request_id?: string;
@@ -66,15 +72,15 @@ function truncate(input: string, max: number): string {
 
 /**
  * Subscribe to socket events that should surface as notifications (agent
- * completions, chat errors, connection drops). Idempotent. Safe to call at
- * app boot before the socket has connected — the socketService queues
- * listeners until the socket is ready.
+ * completions, chat errors, core-originated events, connection drops).
+ * Idempotent. Safe to call at app boot before the socket has connected —
+ * the socketService queues listeners until the socket is ready.
  */
 export function startNativeNotificationsService(): void {
   if (started) return;
   started = true;
 
-  socketService.on('chat_done', (...args: unknown[]) => {
+  chatDoneListener = (...args: unknown[]) => {
     const p = (args[0] ?? {}) as ChatDonePayload;
     dispatchAndMaybeBanner('agents', {
       id: `chat_done:${p.thread_id ?? 'unknown'}:${p.request_id ?? Date.now()}`,
@@ -82,9 +88,9 @@ export function startNativeNotificationsService(): void {
       body: truncate(p.full_response?.trim() || 'Agent finished processing.', 160),
       deepLink: '/chat',
     });
-  });
+  };
 
-  socketService.on('chat_error', (...args: unknown[]) => {
+  chatErrorListener = (...args: unknown[]) => {
     const p = (args[0] ?? {}) as ChatErrorPayload;
     dispatchAndMaybeBanner('system', {
       id: `chat_error:${p.thread_id ?? 'unknown'}:${p.request_id ?? Date.now()}`,
@@ -92,12 +98,12 @@ export function startNativeNotificationsService(): void {
       body: truncate(p.message || 'An error occurred during inference.', 160),
       deepLink: '/chat',
     });
-  });
+  };
 
   // Core-originated notifications (cron completions, webhook failures,
   // sub-agent completions) bridged over socket.io from the Rust event
   // bus. See src/openhuman/notifications/bus.rs.
-  socketService.on('core_notification', (...args: unknown[]) => {
+  coreNotificationListener = (...args: unknown[]) => {
     const p = (args[0] ?? {}) as CoreNotificationPayload;
     if (!p.id || !p.title) return;
     dispatchAndMaybeBanner(p.category, {
@@ -106,20 +112,47 @@ export function startNativeNotificationsService(): void {
       body: truncate(p.body ?? '', 160),
       deepLink: p.deep_link ?? undefined,
     });
-  });
+  };
 
-  socketService.on('disconnect', (...args: unknown[]) => {
+  disconnectListener = (...args: unknown[]) => {
     const reason = typeof args[0] === 'string' ? args[0] : 'unknown';
     dispatchAndMaybeBanner('system', {
       id: `socket_disconnect:${Date.now()}`,
       title: 'Connection lost',
       body: `OpenHuman lost its connection to the core service (${truncate(reason, 80)}).`,
     });
-  });
+  };
+
+  socketService.on('chat_done', chatDoneListener);
+  socketService.on('chat_error', chatErrorListener);
+  socketService.on('core_notification', coreNotificationListener);
+  socketService.on('disconnect', disconnectListener);
+
+  log('started — subscribed to chat_done, chat_error, core_notification, disconnect');
 }
 
 export function stopNativeNotificationsService(): void {
+  if (!started) return;
+
+  if (chatDoneListener) {
+    socketService.off('chat_done', chatDoneListener);
+    chatDoneListener = null;
+  }
+  if (chatErrorListener) {
+    socketService.off('chat_error', chatErrorListener);
+    chatErrorListener = null;
+  }
+  if (coreNotificationListener) {
+    socketService.off('core_notification', coreNotificationListener);
+    coreNotificationListener = null;
+  }
+  if (disconnectListener) {
+    socketService.off('disconnect', disconnectListener);
+    disconnectListener = null;
+  }
+
   started = false;
+  log('stopped — all socket listeners removed');
 }
 
 /** Exposed for tests — dispatch as if a chat_done event arrived. */
@@ -146,4 +179,8 @@ export function __handleCoreNotificationForTests(payload: CoreNotificationPayloa
 /** Exposed for tests — resets module singletons between runs. */
 export function __resetForTests(): void {
   started = false;
+  chatDoneListener = null;
+  chatErrorListener = null;
+  coreNotificationListener = null;
+  disconnectListener = null;
 }

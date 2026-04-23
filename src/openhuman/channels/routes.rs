@@ -178,7 +178,6 @@ pub(crate) async fn get_or_create_provider(
     };
 
     let provider = providers::create_resilient_provider_with_options(
-        ctx.api_key.as_deref(),
         api_url,
         &ctx.reliability,
         &ctx.provider_runtime_options,
@@ -448,7 +447,6 @@ mod tests {
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             provider_cache: ProviderCacheMap::default(),
             route_overrides: RouteSelectionMap::default(),
-            api_key: None,
             api_url: None,
             reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
             provider_runtime_options: crate::openhuman::providers::ProviderRuntimeOptions::default(
