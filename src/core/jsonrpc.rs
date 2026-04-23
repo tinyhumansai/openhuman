@@ -969,11 +969,23 @@ async fn bootstrap_life_capture(workspace_dir: &std::path::Path) {
             model.clone(),
         ),
     );
-    if let Err(e) = crate::openhuman::life_capture::runtime::init_embedder(embedder).await {
+    if let Err(e) =
+        crate::openhuman::life_capture::runtime::init_embedder(Arc::clone(&embedder)).await
+    {
         log::debug!("[life_capture] embedder init skipped: {e}");
     } else {
         log::info!("[life_capture] embedder initialised — model={model}");
     }
+
+    // Alongside the existing `register_composio_trigger_subscriber()` (triage +
+    // history), install a second subscriber that routes Gmail + Google Calendar
+    // Composio triggers into the PersonalIndex. Safe to call here because both
+    // the index and embedder are now known-good, and the event bus registrar
+    // is idempotent.
+    crate::openhuman::life_capture::ingest::register_life_capture_composio_bridge(
+        Arc::clone(&idx),
+        embedder,
+    );
 }
 
 pub async fn bootstrap_skill_runtime() {
