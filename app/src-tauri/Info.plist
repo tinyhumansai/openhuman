@@ -6,6 +6,12 @@
 	<string>OpenHuman uses the microphone for voice dictation and for voice/video calls and huddles inside embedded apps (Google Meet, Discord, Slack).</string>
 	<key>NSCameraUsageDescription</key>
 	<string>OpenHuman uses the camera for video calls and huddles inside embedded apps (Google Meet, Discord, Slack).</string>
+	<key>NSContactsUsageDescription</key>
+	<string>OpenHuman reads your contacts to recognize the people in your messages and calendar, and to resolve handles like emails and phone numbers to real people.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>OpenHuman reads your calendar to understand your schedule and surface what matters across your day.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>OpenHuman creates reminders to help you follow up on the people and commitments that matter.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
