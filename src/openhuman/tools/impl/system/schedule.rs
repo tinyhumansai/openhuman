@@ -295,7 +295,13 @@ impl ScheduleTool {
                     Some(
                         prompt_text
                             .chars()
-                            .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+                            .map(|c| {
+                                if c.is_alphanumeric() {
+                                    c.to_ascii_lowercase()
+                                } else {
+                                    '_'
+                                }
+                            })
                             .take(48)
                             .collect::<String>()
                             .trim_matches('_')
@@ -326,9 +332,7 @@ impl ScheduleTool {
             let job_name = job.name.as_deref().unwrap_or("(unnamed)");
             return Ok(ToolResult::success(format!(
                 "Created agent job '{}' (id: {}, next: {})",
-                job_name,
-                job.id,
-                job.next_run,
+                job_name, job.id, job.next_run,
             )));
         }
 
@@ -404,10 +408,7 @@ fn looks_like_shell_command(input: &str) -> bool {
         return false;
     }
     // Starts with a path or known shell built-in
-    if trimmed.starts_with('/')
-        || trimmed.starts_with("./")
-        || trimmed.starts_with("~/")
-    {
+    if trimmed.starts_with('/') || trimmed.starts_with("./") || trimmed.starts_with("~/") {
         return true;
     }
     // Contains shell operators
@@ -417,10 +418,10 @@ fn looks_like_shell_command(input: &str) -> bool {
     // First word is a common CLI executable
     let first_word = trimmed.split_whitespace().next().unwrap_or("");
     const SHELL_COMMANDS: &[&str] = &[
-        "echo", "cat", "ls", "cd", "cp", "mv", "rm", "mkdir", "grep", "sed", "awk",
-        "curl", "wget", "python", "python3", "node", "npm", "yarn", "cargo", "bash",
-        "sh", "zsh", "git", "docker", "kubectl", "make", "env", "export", "source",
-        "test", "find", "sort", "head", "tail", "wc", "tar", "zip", "unzip",
+        "echo", "cat", "ls", "cd", "cp", "mv", "rm", "mkdir", "grep", "sed", "awk", "curl", "wget",
+        "python", "python3", "node", "npm", "yarn", "cargo", "bash", "sh", "zsh", "git", "docker",
+        "kubectl", "make", "env", "export", "source", "test", "find", "sort", "head", "tail", "wc",
+        "tar", "zip", "unzip",
     ];
     SHELL_COMMANDS.contains(&first_word)
 }

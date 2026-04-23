@@ -389,20 +389,32 @@ mod tests {
 
     #[test]
     fn parse_delay_accepts_seconds_minutes_hours_days() {
-        assert_eq!(parse_human_delay("5s").unwrap(), chrono::Duration::seconds(5));
-        assert_eq!(parse_human_delay("10m").unwrap(), chrono::Duration::minutes(10));
+        assert_eq!(
+            parse_human_delay("5s").unwrap(),
+            chrono::Duration::seconds(5)
+        );
+        assert_eq!(
+            parse_human_delay("10m").unwrap(),
+            chrono::Duration::minutes(10)
+        );
         assert_eq!(parse_human_delay("2h").unwrap(), chrono::Duration::hours(2));
         assert_eq!(parse_human_delay("3d").unwrap(), chrono::Duration::days(3));
     }
 
     #[test]
     fn parse_delay_defaults_to_minutes_when_no_unit() {
-        assert_eq!(parse_human_delay("15").unwrap(), chrono::Duration::minutes(15));
+        assert_eq!(
+            parse_human_delay("15").unwrap(),
+            chrono::Duration::minutes(15)
+        );
     }
 
     #[test]
     fn parse_delay_trims_whitespace() {
-        assert_eq!(parse_human_delay("  7m  ").unwrap(), chrono::Duration::minutes(7));
+        assert_eq!(
+            parse_human_delay("  7m  ").unwrap(),
+            chrono::Duration::minutes(7)
+        );
     }
 
     #[test]

@@ -89,7 +89,13 @@ impl Tool for CronAddTool {
                     .map(|p| {
                         let slug: String = p
                             .chars()
-                            .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+                            .map(|c| {
+                                if c.is_alphanumeric() {
+                                    c.to_ascii_lowercase()
+                                } else {
+                                    '_'
+                                }
+                            })
                             .take(48)
                             .collect();
                         slug.trim_matches('_').to_string()
