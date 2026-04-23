@@ -64,6 +64,7 @@ vi.mock('../utils/config', () => ({
   SENTRY_DSN: undefined,
   BACKEND_URL: 'http://localhost:5005',
   TELEGRAM_BOT_USERNAME: 'openhuman_bot',
+  LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
   DEV_JWT_TOKEN: undefined,
 }));
 

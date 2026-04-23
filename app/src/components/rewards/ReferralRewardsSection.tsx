@@ -4,6 +4,7 @@ import { useUser } from '../../hooks/useUser';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { referralApi } from '../../services/api/referralApi';
 import type { ReferralRelationshipStatus, ReferralStats } from '../../types/referral';
+import { LATEST_APP_DOWNLOAD_URL } from '../../utils/config';
 
 function formatUsd(n: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
@@ -87,12 +88,12 @@ const ReferralRewardsSection = () => {
     void loadStats();
   }, [loadStats]);
 
-  const shareOrCopyTarget = stats?.referralLink?.trim() || stats?.referralCode || '';
+  const referralCodeToCopy = stats?.referralCode?.trim() || '';
 
   const handleCopy = async () => {
-    if (!shareOrCopyTarget) return;
+    if (!referralCodeToCopy) return;
     try {
-      await navigator.clipboard.writeText(shareOrCopyTarget);
+      await navigator.clipboard.writeText(referralCodeToCopy);
       setCopyHint('Copied');
       setTimeout(() => setCopyHint(null), 2000);
     } catch {
@@ -102,23 +103,31 @@ const ReferralRewardsSection = () => {
   };
 
   const handleShare = async () => {
-    if (!shareOrCopyTarget) return;
+    if (!referralCodeToCopy) return;
+    const shareText = [
+      'Join me on OpenHuman.',
+      `Referral code: ${referralCodeToCopy}`,
+      `Download OpenHuman: ${LATEST_APP_DOWNLOAD_URL}`,
+    ].join('\n');
+
     try {
       if (navigator.share) {
-        const url = stats?.referralLink?.trim();
-        await navigator.share({
-          title: 'OpenHuman',
-          text: url
-            ? 'Join me on OpenHuman'
-            : `Join me on OpenHuman — referral code: ${stats?.referralCode ?? ''}`,
-          ...(url ? { url } : {}),
-        });
+        await navigator.share({ title: 'OpenHuman', text: shareText });
       } else {
-        await handleCopy();
+        await navigator.clipboard.writeText(shareText);
+        setCopyHint('Copied');
+        setTimeout(() => setCopyHint(null), 2000);
       }
     } catch (e) {
       if ((e as Error)?.name !== 'AbortError') {
-        await handleCopy();
+        try {
+          await navigator.clipboard.writeText(shareText);
+          setCopyHint('Copied');
+          setTimeout(() => setCopyHint(null), 2000);
+        } catch {
+          setCopyHint('Copy failed');
+          setTimeout(() => setCopyHint(null), 2500);
+        }
       }
     }
   };
@@ -168,7 +177,7 @@ const ReferralRewardsSection = () => {
           <div className="space-y-2">
             <h2 className="text-2xl font-semibold text-stone-900">Invite friends, earn credits</h2>
             <p className="text-sm text-stone-600 max-w-xl">
-              Share your personal link. When a friend subscribes to a monthly plan, you both get $5
+              Share your referral code. When a friend subscribes to a monthly plan, you both get $5
               in account credit. Self-referrals and duplicate rewards are blocked on the server.
             </p>
           </div>
@@ -230,14 +239,14 @@ const ReferralRewardsSection = () => {
               <button
                 type="button"
                 onClick={() => void handleCopy()}
-                disabled={!shareOrCopyTarget}
+                disabled={!referralCodeToCopy}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-stone-800 disabled:opacity-50">
-                Copy link or code
+                Copy code
               </button>
               <button
                 type="button"
                 onClick={() => void handleShare()}
-                disabled={!shareOrCopyTarget}
+                disabled={!referralCodeToCopy}
                 className="inline-flex items-center justify-center rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:opacity-50">
                 Share
               </button>
@@ -245,10 +254,6 @@ const ReferralRewardsSection = () => {
                 <span className="self-center text-sm text-sage-600">{copyHint}</span>
               ) : null}
             </div>
-
-            {stats.referralLink ? (
-              <p className="text-xs text-stone-500 break-all font-mono">{stats.referralLink}</p>
-            ) : null}
           </>
         ) : null}
       </div>
