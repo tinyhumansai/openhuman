@@ -16,9 +16,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use openhuman_core::openhuman::life_capture::index::{
-    IndexReader, IndexWriter, PersonalIndex,
-};
+use openhuman_core::openhuman::life_capture::index::{IndexReader, IndexWriter, PersonalIndex};
 use openhuman_core::openhuman::life_capture::types::{Item, Query, Source};
 
 const EMBED_DIM: usize = 1536;
@@ -155,9 +153,7 @@ fn fixture_to_item(fx: &FixtureItem) -> Item {
 }
 
 /// Find the ext_id of each hit by mapping its UUID back via `item.external_id`.
-fn hit_ext_ids(
-    hits: &[openhuman_core::openhuman::life_capture::types::Hit],
-) -> Vec<String> {
+fn hit_ext_ids(hits: &[openhuman_core::openhuman::life_capture::types::Hit]) -> Vec<String> {
     hits.iter().map(|h| h.item.external_id.clone()).collect()
 }
 
@@ -197,10 +193,7 @@ fn assert_absent_in_top(
     Ok(())
 }
 
-async fn run_query(
-    reader: &IndexReader,
-    q: &FixtureQuery,
-) -> Result<Vec<String>> {
+async fn run_query(reader: &IndexReader, q: &FixtureQuery) -> Result<Vec<String>> {
     let hits = match q.kind {
         QueryKind::Keyword => reader
             .keyword_search(&q.text, q.k)
@@ -304,7 +297,10 @@ async fn retrieval_eval_against_fixture_corpus() -> Result<()> {
 fn embed_is_unit_length_when_tokens_present() {
     let v = embed("Tokyo itinerary draft");
     let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
-    assert!((norm - 1.0).abs() < 1e-5, "expected unit vector, got {norm}");
+    assert!(
+        (norm - 1.0).abs() < 1e-5,
+        "expected unit vector, got {norm}"
+    );
 }
 
 #[test]
@@ -312,7 +308,10 @@ fn embed_shared_tokens_produce_nonzero_cosine() {
     let a = embed("tokyo hotel park hyatt");
     let b = embed("tokyo trip itinerary");
     let cos: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    assert!(cos > 0.0, "shared token `tokyo` should yield positive cosine, got {cos}");
+    assert!(
+        cos > 0.0,
+        "shared token `tokyo` should yield positive cosine, got {cos}"
+    );
 }
 
 #[test]
@@ -320,5 +319,8 @@ fn embed_disjoint_vocab_gives_zero_cosine() {
     let a = embed("apple banana cherry");
     let b = embed("xenon yacht zebra");
     let cos: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    assert!(cos.abs() < 1e-6, "disjoint vocab should give zero cosine, got {cos}");
+    assert!(
+        cos.abs() < 1e-6,
+        "disjoint vocab should give zero cosine, got {cos}"
+    );
 }
