@@ -4,7 +4,7 @@
 //! Kept together because they share a theme (what does the sub-agent
 //! actually see?) and because several of them are exposed `pub(crate)`
 //! so the debug-dump path in
-//! [`crate::openhuman::context::debug_dump`] can mirror the live runner
+//! [`crate::openhuman::agent::debug`] can mirror the live runner
 //! byte-for-byte instead of carrying its own drifting copies.
 
 use std::collections::HashSet;
@@ -137,9 +137,8 @@ pub(super) fn is_subagent_spawn_tool(name: &str) -> bool {
 /// 3. `scope` — `Wildcard` (everything remaining) or `Named` allowlist.
 ///
 /// Exposed `pub(crate)` so the debug dump path in
-/// [`crate::openhuman::context::debug_dump`] shares the exact same
-/// filter logic as the live runner — previously debug_dump carried a
-/// "standalone copy" which drifted over time.
+/// [`crate::openhuman::agent::debug`] shares the exact same
+/// filter logic as the live runner instead of keeping a separate copy.
 pub(crate) fn filter_tool_indices(
     parent_tools: &[Box<dyn Tool>],
     scope: &ToolScope,
@@ -179,8 +178,8 @@ pub(crate) fn filter_tool_indices(
 /// workspace `prompts/` directory or the agent crate's bundled prompts.
 ///
 /// Exposed `pub(crate)` so the debug dump path in
-/// [`crate::openhuman::context::debug_dump`] loads prompts through the
-/// exact same code the runner uses — no parallel body-loading logic.
+/// [`crate::openhuman::agent::debug`] loads prompts through the
+/// exact same code the runner uses instead of keeping a separate copy.
 pub(crate) fn load_prompt_source(
     source: &PromptSource,
     ctx: &PromptContext<'_>,

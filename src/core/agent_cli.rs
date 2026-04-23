@@ -20,13 +20,13 @@
 //! any built-in or workspace-custom agent id (e.g. `integrations_agent`,
 //! `welcome`, `code_executor`).
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use std::path::PathBuf;
 
-use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
-use crate::openhuman::context::debug_dump::{
-    dump_agent_prompt, dump_all_agent_prompts, DumpPromptOptions, DumpedPrompt,
+use crate::openhuman::agent::debug::{
+    dump_agent_prompt, dump_all_agent_prompts, write_prompt_dumps, DumpPromptOptions, DumpedPrompt,
 };
+use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 
 /// Entry point for `openhuman agent <subcommand>`.
 pub fn run_agent_command(args: &[String]) -> Result<()> {
@@ -120,9 +120,6 @@ fn run_dump_all(args: &[String]) -> Result<()> {
         flags.model
     );
 
-    std::fs::create_dir_all(&flags.out)
-        .with_context(|| format!("creating output dir {}", flags.out.display()))?;
-
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -135,79 +132,12 @@ fn run_dump_all(args: &[String]) -> Result<()> {
         dumps.len()
     );
 
-    let mut summary = String::new();
-    for (idx, dumped) in dumps.iter().enumerate() {
-        let safe_agent = sanitise_filename_component(&dumped.agent_id);
-        let stem = match &dumped.toolkit {
-            Some(tk) => format!(
-                "{}_{}_{}",
-                idx + 1,
-                safe_agent,
-                sanitise_filename_component(tk)
-            ),
-            None => format!("{}_{}", idx + 1, safe_agent),
-        };
-        let prompt_path = flags.out.join(format!("{stem}.md"));
-        let meta_path = flags.out.join(format!("{stem}.meta.txt"));
-
-        log::trace!(
-            "[agent-cli] run_dump_all: writing prompt file {} ({} bytes)",
-            prompt_path.display(),
-            dumped.text.len()
-        );
-        std::fs::write(&prompt_path, &dumped.text)
-            .with_context(|| format!("writing {}", prompt_path.display()))?;
-
-        let mut meta = String::new();
-        use std::fmt::Write as _;
-        let _ = writeln!(meta, "agent:          {}", dumped.agent_id);
-        if let Some(tk) = &dumped.toolkit {
-            let _ = writeln!(meta, "toolkit:        {tk}");
-        }
-        let _ = writeln!(meta, "mode:           {}", dumped.mode);
-        let _ = writeln!(meta, "model:          {}", dumped.model);
-        let _ = writeln!(meta, "workspace:      {}", dumped.workspace_dir.display());
-        let _ = writeln!(meta, "tool_count:     {}", dumped.tool_names.len());
-        let _ = writeln!(meta, "skill_tools:    {}", dumped.skill_tool_count);
-        std::fs::write(&meta_path, meta)
-            .with_context(|| format!("writing {}", meta_path.display()))?;
-
-        let label = match &dumped.toolkit {
-            Some(tk) => format!("{}@{}", dumped.agent_id, tk),
-            None => dumped.agent_id.clone(),
-        };
-        let _ = writeln!(
-            summary,
-            "{:<32} tools={:<4} skill={:<4}",
-            label,
-            dumped.tool_names.len(),
-            dumped.skill_tool_count
-        );
-        eprintln!("[dump-all] {label:<32} → {}", prompt_path.display());
-    }
-
-    let summary_path = flags.out.join("SUMMARY.txt");
-    std::fs::write(&summary_path, &summary)
-        .with_context(|| format!("writing {}", summary_path.display()))?;
-    eprintln!("[dump-all] wrote summary → {}", summary_path.display());
+    write_prompt_dumps(&flags.out, &dumps)?;
     log::debug!(
         "[agent-cli] run_dump_all exit: wrote {} prompt(s) + SUMMARY.txt",
         dumps.len()
     );
     Ok(())
-}
-
-fn sanitise_filename_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -469,21 +399,17 @@ fn run_list(args: &[String]) -> Result<()> {
     // (The project's CLI logger writes to stdout, not stderr.)
     init_quiet_logging(verbose);
 
-    // Resolve a workspace directory so workspace-custom overrides are
-    // picked up. Fall back to the config's default when no --workspace is
-    // passed, matching the lookup behaviour the runtime uses at spawn time.
-    let resolved_workspace = if let Some(ws) = workspace {
-        ws
+    // Resolve workspace-custom overrides the same way the runtime does
+    // at spawn time. When --workspace is explicit we load against it
+    // directly; otherwise the registry helper does the Config dance.
+    let registry = if let Some(ws) = workspace {
+        AgentDefinitionRegistry::load(&ws)?
     } else {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let config =
-            rt.block_on(async { crate::openhuman::config::Config::load_or_init().await })?;
-        config.workspace_dir
+        rt.block_on(AgentDefinitionRegistry::load_for_default_workspace())?
     };
-
-    let registry = AgentDefinitionRegistry::load(&resolved_workspace)?;
     if as_json {
         let mut arr = Vec::new();
         for def in registry.list() {

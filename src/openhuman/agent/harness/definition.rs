@@ -489,6 +489,17 @@ impl AgentDefinitionRegistry {
         Ok(reg)
     }
 
+    /// Convenience: resolve the default workspace via
+    /// [`crate::openhuman::config::Config::load_or_init`] and load from
+    /// it. Built for sync CLI call sites (`openhuman agent list`,
+    /// future inspection tools) so they don't re-implement the Config
+    /// → workspace resolution dance. Must NOT be called from an
+    /// existing tokio runtime — construct a runtime and `block_on`.
+    pub async fn load_for_default_workspace() -> Result<Self> {
+        let config = crate::openhuman::config::Config::load_or_init().await?;
+        Self::load(&config.workspace_dir)
+    }
+
     /// Insert (or replace) a definition by id.
     pub fn insert(&mut self, def: AgentDefinition) {
         let id = def.id.clone();

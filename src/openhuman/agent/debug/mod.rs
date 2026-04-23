@@ -20,9 +20,12 @@
 //! toolkit.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
+
+pub mod dump_writer;
+pub use dump_writer::{write_prompt_dumps, DumpWriteSummary};
 
 use crate::openhuman::agent::harness::definition::{
     AgentDefinition, AgentDefinitionRegistry, PromptSource,
@@ -158,7 +161,7 @@ pub async fn dump_all_agent_prompts(
         if id == INTEGRATIONS_AGENT_ID {
             let toolkits = connected_toolkits_for(&config).await?;
             if toolkits.is_empty() {
-                log::info!("[debug_dump] skipping integrations_agent — no connected toolkits");
+                log::info!("[agent::debug] skipping integrations_agent — no connected toolkits");
                 continue;
             }
             for toolkit in toolkits {
@@ -286,14 +289,14 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
         }
         Ok(_) => {
             log::debug!(
-                "[debug_dump] fresh list_tools for `{}` returned empty; keeping cached catalogue ({} actions)",
+                "[agent::debug] fresh list_tools for `{}` returned empty; keeping cached catalogue ({} actions)",
                 integration.toolkit,
                 integration.tools.len()
             );
         }
         Err(e) => {
             log::warn!(
-                "[debug_dump] fresh list_tools for `{}` failed ({e}); keeping cached catalogue ({} actions)",
+                "[agent::debug] fresh list_tools for `{}` failed ({e}); keeping cached catalogue ({} actions)",
                 integration.toolkit,
                 integration.tools.len()
             );
@@ -504,9 +507,3 @@ async fn connected_toolkits_for(config: &Config) -> Result<Vec<String>> {
         .map(|ci| ci.toolkit.clone())
         .collect())
 }
-
-// `config` usage is currently limited to plumbing; keep the path-level
-// reference alive so future hooks (overrides, scoped workspaces) can
-// extend from here without touching every call site.
-#[allow(dead_code)]
-fn _keep_path_imports_alive(_p: &Path) {}
