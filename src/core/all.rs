@@ -194,6 +194,20 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers
 }
 
+/// Bootstrap any per-controller runtime state that MUST be ready before the
+/// HTTP server begins accepting connections. Each branch initialises a domain's
+/// singleton runtime (OnceCell, connection pool, etc.) so the very first RPC
+/// can't race against initialisation and surface spurious 'not initialised'
+/// errors.
+///
+/// Called once from the transport layer (`core_server::jsonrpc`) immediately
+/// before `axum::serve`. Transport code stays domain-agnostic — new domains
+/// with pre-serve startup requirements add themselves here, not in jsonrpc.rs.
+pub async fn bootstrap_controller_runtimes(workspace_dir: &std::path::Path) {
+    crate::openhuman::curated_memory::runtime::bootstrap(workspace_dir).await;
+    crate::openhuman::life_capture::runtime::bootstrap(workspace_dir).await;
+}
+
 /// Aggregates all controller schemas from across the codebase.
 ///
 /// Similar to [`build_registered_controllers`], but only collects the metadata

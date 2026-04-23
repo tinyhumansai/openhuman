@@ -670,24 +670,23 @@ async fn run_server_inner(
     // --- Skill runtime bootstrap -------------------------------------------
     bootstrap_skill_runtime().await;
 
-    // --- Curated-memory + life-capture runtime bootstrap ------------------
+    // --- Pre-serve controller-runtime bootstrap ---------------------------
     //
-    // These MUST initialise before `axum::serve` starts accepting connections
-    // so the very first RPC can't race the OnceCell — earlier we set them
-    // inside the tokio::spawn block below and the server began accepting
-    // before they were ready, surfacing as spurious 'not initialised' errors
-    // for the first few requests.
+    // Must run before `axum::serve` starts accepting connections so the very
+    // first RPC can't race per-domain OnceCell initialisation. Domain list
+    // lives in `crate::core::all::bootstrap_controller_runtimes` so this
+    // transport file stays domain-agnostic.
     //
     // Loading the config a second time here (the spawn block also calls
     // `load_or_init`) is fine — it caches and is idempotent.
-    if let Ok(config) = crate::openhuman::config::Config::load_or_init().await {
-        crate::openhuman::curated_memory::runtime::bootstrap(&config.workspace_dir).await;
-        crate::openhuman::life_capture::runtime::bootstrap(&config.workspace_dir).await;
-    } else {
-        log::warn!(
+    match crate::openhuman::config::Config::load_or_init().await {
+        Ok(config) => {
+            crate::core::all::bootstrap_controller_runtimes(&config.workspace_dir).await;
+        }
+        Err(_) => log::warn!(
             "[core] config load failed during runtime bootstrap; \
-             curated_memory and life_capture controllers will return 'not initialised'"
-        );
+             controllers with pre-serve runtimes will return 'not initialised'"
+        ),
     }
 
     log::info!(
