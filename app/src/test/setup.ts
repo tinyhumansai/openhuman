@@ -65,6 +65,7 @@ vi.mock('../utils/config', () => ({
   BACKEND_URL: 'http://localhost:5005',
   TELEGRAM_BOT_USERNAME: 'openhuman_bot',
   DEV_JWT_TOKEN: undefined,
+  SHARE_BASE_URL: 'https://openhuman.ai',
 }));
 
 vi.mock('../services/backendUrl', () => ({

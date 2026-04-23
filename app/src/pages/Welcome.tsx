@@ -53,14 +53,27 @@ const Welcome = () => {
 
           {/* Heading */}
           <h1 className="text-2xl font-bold text-stone-900 text-center mb-2">
-            Sign in! Let's Cook
+            Your AI, actually yours.
           </h1>
 
           {/* Subtitle */}
-          <p className="text-sm text-stone-500 text-center mb-6 leading-relaxed">
-            Welcome to <span className="font-medium text-stone-900">OpenHuman</span>! Your Personal
-            AI Super Intelligence. Private, Simple and extremely powerful.
+          <p className="text-sm text-stone-500 text-center mb-4 leading-relaxed">
+            <span className="font-medium text-stone-900">OpenHuman</span> — a private AI super
+            assistant that remembers, reasons, and runs on your rules.
           </p>
+
+          {/* Social proof row */}
+          <div className="flex items-center justify-center gap-2 mb-6">
+            <div className="flex -space-x-1.5">
+              <span className="h-5 w-5 rounded-full border border-white bg-primary-500" />
+              <span className="h-5 w-5 rounded-full border border-white bg-sage-500" />
+              <span className="h-5 w-5 rounded-full border border-white bg-amber-500" />
+              <span className="h-5 w-5 rounded-full border border-white bg-stone-900" />
+            </div>
+            <span className="text-[11px] font-medium text-stone-500">
+              Trusted by builders worldwide
+            </span>
+          </div>
 
           {errorMessage ? (
             <div

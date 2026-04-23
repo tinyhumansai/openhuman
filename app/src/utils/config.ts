@@ -100,3 +100,14 @@ export const MINIMUM_SUPPORTED_APP_VERSION =
 export const LATEST_APP_DOWNLOAD_URL =
   (import.meta.env.VITE_LATEST_APP_DOWNLOAD_URL as string | undefined)?.trim() ||
   'https://github.com/tinyhumansai/openhuman/releases/latest';
+
+/**
+ * Public base URL used to build shareable invite/referral links.
+ *
+ * Friends who click the link from a social post land on a web page that
+ * routes them into the app (or the download page). Override with
+ * `VITE_SHARE_BASE_URL` to point at a staging/marketing host.
+ */
+export const SHARE_BASE_URL = (
+  (import.meta.env.VITE_SHARE_BASE_URL as string | undefined)?.trim() || 'https://openhuman.ai'
+).replace(/\/+$/, '');

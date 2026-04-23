@@ -272,6 +272,39 @@ const Home = () => {
           </button>
         </div>
 
+        {/* Invite nudge — compact viral nudge that cheaply links to the full invite flow */}
+        <button
+          onClick={() => navigate('/invites')}
+          className="group mt-3 w-full overflow-hidden rounded-2xl border border-stone-200 bg-gradient-to-r from-primary-500 via-primary-400 to-sage-500 p-[1px] text-left shadow-soft transition-transform hover:scale-[1.01]"
+          aria-label="Invite a friend to OpenHuman">
+          <div className="flex items-center justify-between gap-3 rounded-[15px] bg-white px-4 py-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-sage-500 text-white">
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-stone-900">
+                  Give OpenHuman to a friend
+                </div>
+                <div className="truncate text-[11px] text-stone-500">
+                  You both earn credits. Takes 5 seconds.
+                </div>
+              </div>
+            </div>
+            <span className="shrink-0 rounded-full bg-stone-900 px-3 py-1 text-[11px] font-medium text-white transition-colors group-hover:bg-stone-800">
+              Share
+            </span>
+          </div>
+        </button>
+
         {/* Next steps — compact directory of where to go next */}
         <div className="mt-3 bg-white rounded-2xl shadow-soft border border-stone-200 p-4">
           <div className="text-[11px] uppercase tracking-wide text-stone-400 mb-2">Next steps</div>

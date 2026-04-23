@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useUser } from '../../hooks/useUser';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { referralApi } from '../../services/api/referralApi';
 import type { ReferralRelationshipStatus, ReferralStats } from '../../types/referral';
+import { defaultInviteMessage } from '../../utils/share';
+import SocialShareRow from '../share/SocialShareRow';
+import ViralInviteCard from '../share/ViralInviteCard';
 
 function formatUsd(n: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
@@ -44,7 +47,6 @@ const ReferralRewardsSection = () => {
   const [applyLoading, setApplyLoading] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applySuccess, setApplySuccess] = useState(false);
-  const [copyHint, setCopyHint] = useState<string | null>(null);
 
   const latestRequestIdRef = useRef(0);
 
@@ -87,41 +89,14 @@ const ReferralRewardsSection = () => {
     void loadStats();
   }, [loadStats]);
 
-  const shareOrCopyTarget = stats?.referralLink?.trim() || stats?.referralCode || '';
-
-  const handleCopy = async () => {
-    if (!shareOrCopyTarget) return;
-    try {
-      await navigator.clipboard.writeText(shareOrCopyTarget);
-      setCopyHint('Copied');
-      setTimeout(() => setCopyHint(null), 2000);
-    } catch {
-      setCopyHint('Copy failed');
-      setTimeout(() => setCopyHint(null), 2500);
-    }
-  };
-
-  const handleShare = async () => {
-    if (!shareOrCopyTarget) return;
-    try {
-      if (navigator.share) {
-        const url = stats?.referralLink?.trim();
-        await navigator.share({
-          title: 'OpenHuman',
-          text: url
-            ? 'Join me on OpenHuman'
-            : `Join me on OpenHuman — referral code: ${stats?.referralCode ?? ''}`,
-          ...(url ? { url } : {}),
-        });
-      } else {
-        await handleCopy();
-      }
-    } catch (e) {
-      if ((e as Error)?.name !== 'AbortError') {
-        await handleCopy();
-      }
-    }
-  };
+  const shareUrl = useMemo(
+    () => stats?.referralLink?.trim() || stats?.referralCode?.trim() || '',
+    [stats?.referralLink, stats?.referralCode]
+  );
+  const shareMessage = useMemo(
+    () => defaultInviteMessage(stats?.referralCode?.trim() || 'OPENHUMAN', shareUrl),
+    [stats?.referralCode, shareUrl]
+  );
 
   const handleApply = async () => {
     const trimmed = applyCode.trim();
@@ -163,17 +138,21 @@ const ReferralRewardsSection = () => {
 
   return (
     <div className="space-y-4">
-      <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 space-y-6">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-2">
-            <h2 className="text-2xl font-semibold text-stone-900">Invite friends, earn credits</h2>
-            <p className="text-sm text-stone-600 max-w-xl">
-              Share your personal link. When a friend subscribes to a monthly plan, you both get $5
-              in account credit. Self-referrals and duplicate rewards are blocked on the server.
-            </p>
-          </div>
-        </div>
+      {stats && stats.referralCode ? (
+        <ViralInviteCard
+          code={stats.referralCode}
+          url={shareUrl || stats.referralCode}
+          firstName={user?.firstName ?? undefined}
+          headline={
+            user?.firstName
+              ? `${user.firstName}, turn your network into credits.`
+              : 'Turn your network into credits.'
+          }
+          subheadline="Share your link. When a friend subscribes, you both earn $5 in credit."
+        />
+      ) : null}
 
+      <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 space-y-5">
         {loading && !stats ? (
           <p className="text-sm text-stone-500">Loading referral program…</p>
         ) : null}
@@ -191,15 +170,18 @@ const ReferralRewardsSection = () => {
 
         {stats ? (
           <>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
-                <div className="text-xs font-medium uppercase tracking-wide text-stone-400">
-                  Your code
-                </div>
-                <div className="mt-2 font-mono text-lg font-semibold text-stone-900 break-all">
-                  {stats.referralCode || '—'}
-                </div>
-              </div>
+            <div>
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-stone-400">
+                Share with one tap
+              </p>
+              <SocialShareRow
+                url={shareUrl || stats.referralCode}
+                message={shareMessage}
+                variant="spacious"
+              />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
                 <div className="text-xs font-medium uppercase tracking-wide text-stone-400">
                   Total earned
@@ -210,7 +192,7 @@ const ReferralRewardsSection = () => {
               </div>
               <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
                 <div className="text-xs font-medium uppercase tracking-wide text-stone-400">
-                  Pending referrals
+                  Pending
                 </div>
                 <div className="mt-2 text-2xl font-semibold text-stone-900">
                   {stats.totals.pendingCount}
@@ -225,30 +207,6 @@ const ReferralRewardsSection = () => {
                 </div>
               </div>
             </div>
-
-            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-              <button
-                type="button"
-                onClick={() => void handleCopy()}
-                disabled={!shareOrCopyTarget}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-stone-800 disabled:opacity-50">
-                Copy link or code
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleShare()}
-                disabled={!shareOrCopyTarget}
-                className="inline-flex items-center justify-center rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:opacity-50">
-                Share
-              </button>
-              {copyHint ? (
-                <span className="self-center text-sm text-sage-600">{copyHint}</span>
-              ) : null}
-            </div>
-
-            {stats.referralLink ? (
-              <p className="text-xs text-stone-500 break-all font-mono">{stats.referralLink}</p>
-            ) : null}
           </>
         ) : null}
       </div>
