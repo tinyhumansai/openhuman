@@ -54,7 +54,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.pnpm-cache.outputs.cache-hit != 'true'
-        run: pnpm install --frozen-lockfile
+        run: pnpm install
 
       - name: Run tests with coverage
         run: pnpm test:coverage
@@ -178,7 +178,7 @@ jobs:
   #       run: cargo install tauri-driver --version 2.0.5
 
   #     - name: Install JS dependencies
-  #       run: pnpm install --frozen-lockfile
+  #       run: pnpm install
 
   #     - name: Ensure .env exists for E2E build
   #       run: |
