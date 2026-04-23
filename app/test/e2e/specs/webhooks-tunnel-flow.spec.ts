@@ -71,6 +71,26 @@ function unwrapRpcValue<T = unknown>(raw: unknown): T | undefined {
   return raw as T;
 }
 
+/**
+ * Authenticate via the deep-link bypass and wait for the app shell to be ready.
+ * Extracted as a standalone helper so every `it` block that needs an authenticated
+ * session can call it independently — tests must be runnable in isolation without
+ * relying on a prior `it` having already stored a session.
+ */
+async function authenticateAndReachShell(): Promise<void> {
+  await triggerAuthDeepLinkBypass('e2e-webhooks-tunnel-user');
+  await waitForWindowVisible(25_000);
+  await waitForWebView(15_000);
+  await waitForAppReady(15_000);
+  await completeOnboardingIfVisible('[WebhooksTunnelE2E]');
+
+  const atHome =
+    (await textExists('Message OpenHuman')) ||
+    (await textExists('Good morning')) ||
+    (await textExists('Upgrade to Premium'));
+  expect(atHome).toBe(true);
+}
+
 describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
   before(async () => {
     await startMockServer();
@@ -88,20 +108,12 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
   });
 
   it('authenticates via bypass deep link and reaches the logged-in shell', async () => {
-    await triggerAuthDeepLinkBypass('e2e-webhooks-tunnel-user');
-    await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
-    await waitForAppReady(15_000);
-    await completeOnboardingIfVisible('[WebhooksTunnelE2E]');
-
-    const atHome =
-      (await textExists('Message OpenHuman')) ||
-      (await textExists('Good morning')) ||
-      (await textExists('Upgrade to Premium'));
-    expect(atHome).toBe(true);
+    await authenticateAndReachShell();
   });
 
   it('creates a tunnel → lists → deletes, with matching mock-backend traffic', async () => {
+    await authenticateAndReachShell();
+
     // Wait for the deep-link listener's async `storeSession()` to settle before
     // exercising tunnel RPCs (webhooks ops require a stored session token).
     await browser.waitUntil(
@@ -169,7 +181,7 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
     const deleteReq = await waitForRequest(
       getRequestLog,
       'DELETE',
-      `/webhooks/core/${tunnelId}`,
+      `/webhooks/core/${encodeURIComponent(tunnelId as string)}`,
       10_000
     );
     if (!deleteReq) {
@@ -189,6 +201,7 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
   });
 
   it('Webhooks page loads (ComposeIO trigger history surface)', async () => {
+    await authenticateAndReachShell();
     await navigateViaHash('/webhooks');
 
     await browser.waitUntil(
