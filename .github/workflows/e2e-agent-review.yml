@@ -44,7 +44,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: "yarn"
+          cache: "pnpm"
 
       - name: Install Rust (rust-toolchain.toml)
         if: steps.gate.outputs.present == 'true'
@@ -87,7 +87,7 @@ jobs:
 
       - name: Install JS dependencies
         if: steps.gate.outputs.present == 'true'
-        run: yarn install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Ensure .env exists for E2E build
         if: steps.gate.outputs.present == 'true'
@@ -97,7 +97,7 @@ jobs:
 
       - name: Build E2E app
         if: steps.gate.outputs.present == 'true'
-        run: yarn workspace openhuman-app test:e2e:build
+        run: pnpm --filter openhuman-app test:e2e:build
 
       - name: Stage sidecar next to app binary
         if: steps.gate.outputs.present == 'true'

@@ -51,17 +51,17 @@ jobs:
       # per-run compile step.
 
       - name: Cache node modules
-        id: yarn-cache
+        id: pnpm-cache
         uses: actions/cache@v4
         with:
           path: node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('**/yarn.lock') }}
+          key: ${{ runner.os }}-build-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-build-
 
       - name: Install dependencies
-        if: steps.yarn-cache.outputs.cache-hit != 'true'
-        run: yarn install --frozen-lockfile
+        if: steps.pnpm-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
 
       - name: Install cmake (for whisper-rs)
         run: apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
