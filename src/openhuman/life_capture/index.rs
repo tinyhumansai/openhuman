@@ -1,18 +1,34 @@
 use anyhow::Context;
 use once_cell::sync::OnceCell;
-use rusqlite::{ffi, Connection, OptionalExtension};
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::{ffi, Connection, OpenFlags, OptionalExtension};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// r2d2 pool of read-only SQLite connections. Used for file-backed indexes
+/// in production so WAL actually buys us concurrent readers; in-memory test
+/// indexes keep the single-connection layout since a shared-cache URI adds
+/// ceremony for no throughput win at test-fixture scale.
+pub(crate) type ReaderPool = r2d2::Pool<SqliteConnectionManager>;
+
 /// Personal index — SQLite database with FTS5 + sqlite-vec virtual tables loaded.
 ///
-/// Wraps a single rusqlite `Connection` behind an async mutex so it can be shared
-/// across tasks. Reads and writes serialise; this is intentional — SQLite handles
-/// concurrent readers via WAL but a single writer is the simpler model and matches
-/// our access pattern (one ingest worker + a few reader call sites).
+/// Internally split into a dedicated writer connection (serialised behind
+/// `tokio::sync::Mutex`) and an optional pool of read-only connections. Writes
+/// go through the writer (single-writer SQLite model); searches use the pool
+/// when present so concurrent RPC callers don't block on each other or on a
+/// long-running ingest. In-memory handles leave the pool `None` — both
+/// readers and writers share the single connection, matching the pre-pool
+/// behaviour tests depend on.
 pub struct PersonalIndex {
-    pub conn: Arc<Mutex<Connection>>,
+    /// Writer connection — always present. Also used as the sole reader when
+    /// `reader_pool` is `None` (in-memory handles).
+    pub writer: Arc<Mutex<Connection>>,
+    /// Optional read-only connection pool. `Some` for file-backed indexes;
+    /// `None` for in-memory ones so the writer's schema is visible to readers
+    /// without a shared-cache URI.
+    pub(crate) reader_pool: Option<Arc<ReaderPool>>,
 }
 
 static VEC_REGISTERED: OnceCell<()> = OnceCell::new();
@@ -34,30 +50,72 @@ pub(crate) fn ensure_vec_extension_registered() {
     });
 }
 
+/// Default pool size — small enough to stay within SQLite's default
+/// connection fan-out without heroics, large enough that a handful of
+/// concurrent RPC searches don't queue up behind each other while an
+/// ingest holds the writer. Override is deliberately not exposed: the
+/// numbers here are only loosely tuned and are best treated as an
+/// implementation detail, not a knob.
+const READER_POOL_SIZE: u32 = 4;
+
 impl PersonalIndex {
-    /// Open (or create) the personal index at `path`. Loads sqlite-vec, runs migrations.
+    /// Open (or create) the personal index at `path`. Loads sqlite-vec, runs
+    /// migrations on the writer, then spins up a read-only r2d2 pool against
+    /// the same file so searches can run concurrently with an in-flight
+    /// write.
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
         ensure_vec_extension_registered();
-        let path = path.to_path_buf();
-        let conn = tokio::task::spawn_blocking(move || -> anyhow::Result<Connection> {
-            let conn = Connection::open(&path).context("open sqlite db")?;
-            conn.pragma_update(None, "journal_mode", "WAL")?;
-            conn.pragma_update(None, "foreign_keys", "ON")?;
-            super::migrations::run(&conn).context("run life_capture migrations")?;
-            Ok(conn)
-        })
-        .await
-        .context("open task panicked")??;
+        let path_buf = path.to_path_buf();
+        let (writer, pool) =
+            tokio::task::spawn_blocking(move || -> anyhow::Result<(Connection, ReaderPool)> {
+                // Writer: exclusive RW connection, WAL journal so readers
+                // don't block on it, migrations run here.
+                let writer = Connection::open(&path_buf).context("open sqlite writer")?;
+                writer.pragma_update(None, "journal_mode", "WAL")?;
+                writer.pragma_update(None, "foreign_keys", "ON")?;
+                super::migrations::run(&writer).context("run life_capture migrations")?;
+
+                // Reader pool: read-only connections on the same file. Each
+                // pooled connection gets `query_only = 1` as a belt-and-
+                // suspenders guard so a mis-routed write here fails loudly
+                // instead of racing the writer. Foreign-key enforcement is
+                // writer-only in SQLite, so readers skip it.
+                //
+                // `SQLITE_OPEN_READ_ONLY` alone would also work, but keeping
+                // the connection RW + `query_only` lets sqlite-vec register
+                // on the connection at open time (the extension's own init
+                // writes to the sqlite_sequence table on first use).
+                let manager = SqliteConnectionManager::file(&path_buf).with_init(|c| {
+                    c.pragma_update(None, "query_only", "ON")?;
+                    Ok(())
+                });
+                let pool = r2d2::Pool::builder()
+                    .max_size(READER_POOL_SIZE)
+                    .build(manager)
+                    .context("build reader pool")?;
+                Ok((writer, pool))
+            })
+            .await
+            .context("open task panicked")??;
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            writer: Arc::new(Mutex::new(writer)),
+            reader_pool: Some(Arc::new(pool)),
         })
     }
 
-    /// Open an in-memory index (for tests). Same setup as `open`.
+    /// Open an in-memory index (for tests). Single connection shared between
+    /// reader and writer — keeps the fixture path free of shared-cache URI
+    /// ceremony that buys no real concurrency at test-fixture scale.
     pub async fn open_in_memory() -> anyhow::Result<Self> {
         ensure_vec_extension_registered();
         let conn = tokio::task::spawn_blocking(|| -> anyhow::Result<Connection> {
-            let conn = Connection::open_in_memory().context("open in-memory sqlite")?;
+            let conn = Connection::open_with_flags(
+                ":memory:",
+                OpenFlags::SQLITE_OPEN_READ_WRITE
+                    | OpenFlags::SQLITE_OPEN_CREATE
+                    | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .context("open in-memory sqlite")?;
             conn.pragma_update(None, "foreign_keys", "ON")?;
             super::migrations::run(&conn).context("run life_capture migrations")?;
             Ok(conn)
@@ -65,7 +123,8 @@ impl PersonalIndex {
         .await
         .context("open task panicked")??;
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            writer: Arc::new(Mutex::new(conn)),
+            reader_pool: None,
         })
     }
 }
@@ -80,7 +139,7 @@ pub struct IndexWriter {
 impl IndexWriter {
     pub fn new(idx: &PersonalIndex) -> Self {
         Self {
-            conn: Arc::clone(&idx.conn),
+            conn: Arc::clone(&idx.writer),
         }
     }
 
@@ -238,7 +297,7 @@ mod tests {
     #[tokio::test]
     async fn vec_extension_loads_and_reports_version() {
         let idx = PersonalIndex::open_in_memory().await.expect("open");
-        let conn = idx.conn.lock().await;
+        let conn = idx.writer.lock().await;
         let version: String = conn
             .query_row("SELECT vec_version()", [], |row| row.get(0))
             .expect("vec_version");
@@ -251,7 +310,7 @@ mod tests {
     #[tokio::test]
     async fn vec0_table_accepts_insert_and_returns_match() {
         let idx = PersonalIndex::open_in_memory().await.expect("open");
-        let conn = idx.conn.lock().await;
+        let conn = idx.writer.lock().await;
 
         let v: Vec<f32> = (0..1536).map(|i| (i as f32) * 0.001).collect();
         let v_json = serde_json::to_string(&v).unwrap();
@@ -278,8 +337,14 @@ mod tests {
 /// Reader for the personal index. All queries enforce the v1 ACL token
 /// (`user:local`) via `EXISTS (... json_each(access_control_list) = 'user:local')`
 /// so the same query shape works for the multi-token team v2 ACL without rewrites.
+///
+/// Reads route through the [`ReaderPool`] when available (file-backed
+/// `PersonalIndex`), falling back to the writer connection otherwise
+/// (in-memory handles). The fallback keeps the existing `open_in_memory`
+/// contract intact — readers and writers share one connection for tests.
 pub struct IndexReader {
-    conn: Arc<Mutex<Connection>>,
+    writer: Arc<Mutex<Connection>>,
+    pool: Option<Arc<ReaderPool>>,
 }
 
 /// Internal row shape for both keyword and vector search. We hand-build it
@@ -376,7 +441,40 @@ fn apply_query_filters(
 impl IndexReader {
     pub fn new(idx: &PersonalIndex) -> Self {
         Self {
-            conn: Arc::clone(&idx.conn),
+            writer: Arc::clone(&idx.writer),
+            pool: idx.reader_pool.as_ref().map(Arc::clone),
+        }
+    }
+
+    /// Run a synchronous read closure on a connection from the pool (when
+    /// available) or the writer lock (when not). Handles the spawn_blocking
+    /// boundary so callers just write straight rusqlite.
+    async fn with_read_conn<F, T>(&self, label: &'static str, f: F) -> anyhow::Result<T>
+    where
+        F: FnOnce(&Connection) -> anyhow::Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        match &self.pool {
+            Some(pool) => {
+                let pool = Arc::clone(pool);
+                tokio::task::spawn_blocking(move || -> anyhow::Result<T> {
+                    let conn = pool
+                        .get()
+                        .with_context(|| format!("acquire pooled reader connection for {label}"))?;
+                    f(&conn)
+                })
+                .await
+                .with_context(|| format!("{label} task panicked"))?
+            }
+            None => {
+                let writer = Arc::clone(&self.writer);
+                tokio::task::spawn_blocking(move || -> anyhow::Result<T> {
+                    let guard = writer.blocking_lock();
+                    f(&guard)
+                })
+                .await
+                .with_context(|| format!("{label} task panicked"))?
+            }
         }
     }
 
@@ -391,10 +489,8 @@ impl IndexReader {
         k: usize,
     ) -> anyhow::Result<Vec<crate::openhuman::life_capture::types::Hit>> {
         let query = fts5_quote(query);
-        let conn = Arc::clone(&self.conn);
-        tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<_>> {
-            let guard = conn.blocking_lock();
-            let mut stmt = guard.prepare(
+        self.with_read_conn("keyword_search", move |conn| {
+            let mut stmt = conn.prepare(
                 "SELECT i.id, i.source, i.external_id, i.ts, i.author_json, i.subject, i.text, i.metadata_json, \
                         -bm25(items_fts) AS score, \
                         snippet(items_fts, 1, '«', '»', '…', 12) AS snip \
@@ -423,7 +519,6 @@ impl IndexReader {
             Ok(rows.into_iter().map(ItemRow::into_hit).collect())
         })
         .await
-        .context("keyword_search task panicked")?
     }
 
     /// Hybrid search via Reciprocal Rank Fusion. Pulls oversampled candidates
@@ -496,10 +591,8 @@ impl IndexReader {
         k: usize,
     ) -> anyhow::Result<Vec<crate::openhuman::life_capture::types::Hit>> {
         let v_json = serde_json::to_string(vector).context("serialize vector")?;
-        let conn = Arc::clone(&self.conn);
-        tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<_>> {
-            let guard = conn.blocking_lock();
-            let mut stmt = guard.prepare(
+        self.with_read_conn("vector_search", move |conn| {
+            let mut stmt = conn.prepare(
                 "SELECT i.id, i.source, i.external_id, i.ts, i.author_json, i.subject, i.text, i.metadata_json, \
                         (1.0 / (1.0 + v.distance)) AS score, \
                         substr(i.text, 1, 200) AS snip \
@@ -528,7 +621,6 @@ impl IndexReader {
             Ok(rows.into_iter().map(ItemRow::into_hit).collect())
         })
         .await
-        .context("vector_search task panicked")?
     }
 }
 
@@ -570,7 +662,7 @@ mod writer_tests {
             .await
             .unwrap();
 
-        let conn = idx.conn.lock().await;
+        let conn = idx.writer.lock().await;
         let count: i64 = conn
             .query_row("SELECT count(*) FROM items", [], |r| r.get(0))
             .unwrap();
@@ -637,7 +729,7 @@ mod writer_tests {
         writer.upsert_vector(&id, &v1).await.unwrap();
         writer.upsert_vector(&id, &v2).await.unwrap();
 
-        let conn = idx.conn.lock().await;
+        let conn = idx.writer.lock().await;
         let count: i64 = conn
             .query_row(
                 "SELECT count(*) FROM item_vectors WHERE item_id = ?1",

@@ -202,7 +202,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     let mut schemas = Vec::new();
     schemas.extend(crate::openhuman::about_app::all_about_app_controller_schemas());
     schemas.extend(crate::openhuman::app_state::all_app_state_controller_schemas());
-    schemas.extend(crate::openhuman::composio::all_controller_schemas());
+    schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::life_capture::all_life_capture_controller_schemas());

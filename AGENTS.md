@@ -495,35 +495,37 @@ _Last aligned with monorepo layout (`app/` + root `src/`), QuickJS skills in `op
 <claude-mem-context>
 # Memory Context
 
-# [openhuman] recent context, 2026-04-22 9:52am PDT
+# [openhuman] recent context, 2026-05-02 5:43pm PDT
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 20 obs (8,333t read) | 593,112t work | 99% savings
+Stats: 20 obs (7,187t read) | 145,639t work | 95% savings
 
-### Apr 22, 2026
-2848 9:07a ✅ openhuman: All Three Review Branches Pushed to Fork Successfully
-2849 " 🔵 openhuman review-daemon-lifecycle: Two Post-Push Issues — Unstaged Prettier Changes + Missing tauri-cef Vendor
-2851 9:08a ✅ openhuman daemon lifecycle: Prettier Format Committed as Follow-Up
-2855 9:09a ✅ openhuman: All Three Review Branches Fully Pushed — PRs Ready to Open
-2857 9:10a 🔵 openhuman: GitHub Connector Cannot Create PRs to tinyhumansai/openhuman — 403 Forbidden
-2858 9:11a 🔵 openhuman webhooks-ingress: Session Stalled — Instruction Not Processed After 10+ Minutes
-2860 " 🔵 openhuman webhooks: WebhooksDebugPanel Architecture for E2E Smoke Spec
-2861 9:13a 🔵 openhuman webhooks-ingress: Full Spec Surface Mapped — RPC Log Strings + UI Navigation Path
-2866 9:15a 🟣 openhuman webhooks-ingress: webhooks-ingress-flow.spec.ts Written
-2869 9:18a ⚖️ openhuman Memory Refactor Plan: Trait Shape, L1 Pointer, and Missing Pieces
-2871 " 🔵 openhuman Memory Architecture: Auto-Inject Pattern Has 3 Separate Implementations
-2873 9:31a 🟣 openhuman: Draft PR Opened — Config Runtime Dir Refactor for Testability
-2874 9:32a 🟣 openhuman: 3 More Draft PRs Opened — Threads Schema, Daemon Lifecycle, Webhooks E2E
-2875 9:33a 🔵 openhuman Memory Namespace: 3 Auto-Inject Sites, Not 1
-2876 " ⚖️ openhuman Memory Refactor: Breaking Trait Change + Flag-Off + ToolDiscovery Hybrid
-2877 " ✅ Memory Namespace Refactor Plan Written to docs/plans/memory-namespace-refactor.md
-2879 9:34a 🔵 openhuman Memory Trait: 15 Impls, Not 14; MemoryRecalled Has No Live Emit Site
-2880 " 🔵 openhuman SQLite Schema: memory_docs Already Has namespace Column; Migration Scope Minimal
-2881 " 🔵 openhuman Memory Trait Current Signatures: No Namespace Param on Any Method
-2882 " 🔵 openhuman Eval Infra: Does Not Exist; Phase D Requires Bootstrap from Scratch
+### Apr 23, 2026
+4180 11:21a 🔵 PR #817 CI Now Green — One Unresolved CodeRabbit Thread (Deferred)
+4431 3:59p 🔵 agentd Protocol Draft v0.1 — "LSP for Agent Tools" Design Reviewed
+### Apr 26, 2026
+6610 10:25p 🔵 OpenHuman Project — Current Git State and Recent Commits
+6613 10:32p 🔵 Claude Code Startup Warnings — Invalid SKILL.md Files + Failed MCP Client
+6614 " 🔴 Codex Startup Warnings Fixed — Truncated SKILL.md Descriptions + Removed Stale Solo MCP Entry
+6618 10:38p 🔴 Codex Startup Warning Fixes Validated — All Three Issues Confirmed Resolved
+6630 10:51p 🔵 sccache Blocked by Sandbox — "Operation Not Permitted" on rustc
+6631 " 🟣 openhuman Recall Tool — Dedup Guard Test Passes
+6632 " ✅ openhuman — Unused Import Cleanup After Recall Refactor
+6633 10:55p 🟣 openhuman Recall Tool — Full Test Suite Passes (2 Tests)
+6636 10:57p 🔵 openhuman Full Lib Test Suite — 383 Tests All Pass
+6645 11:00p 🟣 openhuman Recall Tool — 6-Test Suite Complete, All Pass
+6646 " 🔵 openhuman Working Tree — Full Change Scope Across 8 Files
+6647 " 🟣 openhuman Recall Dedup Guard — Full Implementation Details
+6649 11:01p ✅ openhuman Recall Output — Conditional "new memories" vs "memories" Label
+6660 11:09p 🔴 openhuman recall.rs — cargo fmt Style Fix for Inline Ternary Label
+### May 2, 2026
+8340 3:21p 🔵 OpenHuman Fork State — Upstream 50+ Commits Ahead, Active PR Chain Pending
+8342 3:23p 🔵 OpenHuman Upstream Issue Landscape — Top Priorities Mapped
+8367 3:29p ⚖️ PR #817 life-capture Foundation Fix Strategy — Isolated Worktree + Targeted Fixes
+8374 3:35p 🟣 PR #1110 CodeRabbit Review Fixes — Composio Trigger UI (Worker A Task Scope)
 
-Access 593k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 146k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>

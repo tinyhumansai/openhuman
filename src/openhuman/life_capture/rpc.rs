@@ -14,7 +14,11 @@ use crate::rpc::RpcOutcome;
 /// Returns total item count, per-source counts, and the most recent item ts
 /// (unix seconds, or null when the index is empty).
 pub async fn handle_get_stats(idx: &PersonalIndex) -> Result<RpcOutcome<Value>, String> {
-    let conn = idx.conn.clone();
+    // Stats is a read-only query but it runs through the writer connection
+    // rather than the pool: the schema is tiny and we don't want to add a
+    // pool-aware helper here just for three count()s. If this ever turns
+    // into a hot path, switch it to `IndexReader::with_read_conn`.
+    let conn = idx.writer.clone();
     let stats = tokio::task::spawn_blocking(move || -> Result<Value, String> {
         let guard = conn.blocking_lock();
         let total: i64 = guard
