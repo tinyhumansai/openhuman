@@ -4,9 +4,9 @@
   "version": "0.52.28",
   "identifier": "com.openhuman.app",
   "build": {
-    "beforeDevCommand": "npm run core:stage && npm run dev",
+    "beforeDevCommand": "pnpm run core:stage && pnpm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build:app && npm run core:stage",
+    "beforeBuildCommand": "pnpm run build:app && pnpm run core:stage",
     "frontendDist": "../dist"
   },
   "app": {
