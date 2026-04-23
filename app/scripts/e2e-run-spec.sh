@@ -181,4 +181,4 @@ else
 fi
 
 echo "Running E2E spec ($SPEC)..."
-npx wdio run test/wdio.conf.ts --spec "$SPEC"
+pnpm exec wdio run test/wdio.conf.ts --spec "$SPEC"
