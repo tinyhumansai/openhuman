@@ -118,6 +118,13 @@ pub struct ParentExecutionContext {
     /// `Some(parent.session_key)`. A grand-child observes
     /// `Some("{grandparent_key}__{parent_key}")`.
     pub session_parent_prefix: Option<String>,
+
+    /// Parent session's curated-memory snapshot. Sub-agents inherit the
+    /// exact same `Arc` so every agent in the delegation tree renders
+    /// byte-identical `MEMORY.md` / `USER.md` blocks within a turn.
+    /// `None` when the parent built without a snapshot (unit tests,
+    /// curated-memory runtime not initialised).
+    pub curated_snapshot: Option<std::sync::Arc<crate::openhuman::curated_memory::MemorySnapshot>>,
 }
 
 tokio::task_local! {
