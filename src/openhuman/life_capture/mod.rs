@@ -1,5 +1,6 @@
 pub mod embedder;
 pub mod index;
+pub mod ingest;
 pub mod migrations;
 pub mod quote_strip;
 pub mod redact;
