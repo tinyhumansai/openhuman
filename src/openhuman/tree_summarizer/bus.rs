@@ -123,6 +123,7 @@ mod tests {
         let sub = TreeSummarizerEventSubscriber::new();
         sub.handle(&DomainEvent::CronJobTriggered {
             job_id: "j1".into(),
+            job_name: "test-job".into(),
             job_type: "shell".into(),
         })
         .await;

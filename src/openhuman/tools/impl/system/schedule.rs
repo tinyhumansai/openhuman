@@ -1,5 +1,5 @@
 use crate::openhuman::config::Config;
-use crate::openhuman::cron;
+use crate::openhuman::cron::{self, DeliveryConfig, Schedule, SessionTarget};
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use anyhow::Result;
@@ -53,7 +53,15 @@ impl Tool for ScheduleTool {
                 },
                 "command": {
                     "type": "string",
-                    "description": "Shell command to execute. Required for create/add/once."
+                    "description": "Shell command to execute. Use 'command' for shell jobs OR 'prompt' for agent jobs."
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Agent prompt for recurring agent tasks (e.g. reminders, briefings). Use this instead of 'command' for user-facing notifications."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Short human-readable name for the job (e.g. 'drink_water_reminder'). Always provide a name."
                 },
                 "id": {
                     "type": "string",
@@ -201,8 +209,26 @@ impl ScheduleTool {
         let command = args
             .get("command")
             .and_then(|value| value.as_str())
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| anyhow::anyhow!("Missing or empty 'command' parameter"))?;
+            .filter(|value| !value.trim().is_empty());
+        let prompt = args
+            .get("prompt")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty());
+
+        // If the LLM passed a "command" that isn't a real shell command,
+        // treat it as an agent prompt instead. This handles the common case
+        // where the LLM puts "remind me to drink water" in the command field.
+        let (command, prompt) = match (command, prompt) {
+            (Some(cmd), None) if !looks_like_shell_command(cmd) => (None, Some(cmd)),
+            other => other,
+        };
+
+        // Must have either command (shell) or prompt (agent).
+        if command.is_none() && prompt.is_none() {
+            return Ok(ToolResult::error(
+                "Provide 'command' for shell jobs or 'prompt' for agent jobs.".to_string(),
+            ));
+        }
 
         let expression = args.get("expression").and_then(|value| value.as_str());
         let delay = args.get("delay").and_then(|value| value.as_str());
@@ -240,6 +266,89 @@ impl ScheduleTool {
                 }
             }
         }
+
+        // ── Agent job (prompt provided) ──────────────────────────────
+        if let Some(prompt_text) = prompt {
+            tracing::debug!(
+                action = %action,
+                prompt_len = prompt_text.len(),
+                "[schedule] creating agent job"
+            );
+            let schedule = if let Some(expr) = expression {
+                Schedule::Cron {
+                    expr: expr.to_string(),
+                    tz: None,
+                }
+            } else if let Some(delay_str) = delay {
+                let at = Utc::now() + cron::parse_human_delay(delay_str)?;
+                Schedule::At { at }
+            } else if let Some(at_str) = run_at {
+                let at: DateTime<Utc> = DateTime::parse_from_rfc3339(at_str)
+                    .map_err(|e| anyhow::anyhow!("Invalid run_at timestamp: {e}"))?
+                    .with_timezone(&Utc);
+                Schedule::At { at }
+            } else {
+                return Ok(ToolResult::error("Missing scheduling parameters"));
+            };
+
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or_else(|| {
+                    // Derive a slug from the prompt so jobs are never unnamed.
+                    Some(
+                        prompt_text
+                            .chars()
+                            .map(|c| {
+                                if c.is_alphanumeric() {
+                                    c.to_ascii_lowercase()
+                                } else {
+                                    '_'
+                                }
+                            })
+                            .take(48)
+                            .collect::<String>()
+                            .trim_matches('_')
+                            .to_string(),
+                    )
+                    .filter(|s| !s.is_empty())
+                });
+
+            let delete_after_run = matches!(schedule, Schedule::At { .. });
+            let delivery = Some(DeliveryConfig {
+                mode: "proactive".to_string(),
+                channel: None,
+                to: None,
+                best_effort: true,
+            });
+
+            let job = cron::add_agent_job(
+                &self.config,
+                name,
+                schedule,
+                prompt_text,
+                SessionTarget::Isolated,
+                None,
+                delivery,
+                delete_after_run,
+            )?;
+
+            let job_name = job.name.as_deref().unwrap_or("(unnamed)");
+            tracing::debug!(
+                job_id = %job.id,
+                job_name = %job_name,
+                next_run = %job.next_run,
+                "[schedule] agent job created"
+            );
+            return Ok(ToolResult::success(format!(
+                "Created agent job '{}' (id: {}, next: {})",
+                job_name, job.id, job.next_run,
+            )));
+        }
+
+        // ── Shell job (command provided) ─────────────────────────────
+        let command = command.unwrap();
 
         if let Some(value) = expression {
             let job = cron::add_job(&self.config, value, command)?;
@@ -299,6 +408,34 @@ impl ScheduleTool {
             Err(error) => ToolResult::error(error.to_string()),
         }
     }
+}
+
+/// Heuristic: does this look like a shell command rather than a natural
+/// language prompt? Shell commands typically start with an executable name
+/// or path and contain shell metacharacters.
+fn looks_like_shell_command(input: &str) -> bool {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Starts with a path or known shell built-in
+    if trimmed.starts_with('/') || trimmed.starts_with("./") || trimmed.starts_with("~/") {
+        return true;
+    }
+    // Contains shell operators
+    if trimmed.contains('|') || trimmed.contains("&&") || trimmed.contains(">>") {
+        return true;
+    }
+    // First word is a common CLI executable
+    let first_word = trimmed.split_whitespace().next().unwrap_or("");
+    // Exclude ambiguous words (test, find, make, source, head, sort) that
+    // are common English verbs and would misclassify natural-language prompts.
+    const SHELL_COMMANDS: &[&str] = &[
+        "echo", "cat", "ls", "cd", "cp", "mv", "rm", "mkdir", "grep", "sed", "awk", "curl", "wget",
+        "python", "python3", "node", "npm", "yarn", "cargo", "bash", "sh", "zsh", "git", "docker",
+        "kubectl", "env", "export", "tail", "wc", "tar", "zip", "unzip",
+    ];
+    SHELL_COMMANDS.contains(&first_word)
 }
 
 #[cfg(test)]

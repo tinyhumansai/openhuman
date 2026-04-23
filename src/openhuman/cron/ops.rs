@@ -8,7 +8,7 @@ use anyhow::Result;
 use serde_json::json;
 
 pub fn add_once(config: &Config, delay: &str, command: &str) -> Result<CronJob> {
-    let duration = parse_delay(delay)?;
+    let duration = parse_human_delay(delay)?;
     let at = chrono::Utc::now() + duration;
     add_once_at(config, at, command)
 }
@@ -93,7 +93,9 @@ pub fn update_cron_job(
     update_job(config, id, patch)
 }
 
-fn parse_delay(input: &str) -> Result<chrono::Duration> {
+/// Parse a human-friendly delay string (e.g. "5m", "2h", "30s") into a
+/// `chrono::Duration`. Defaults to minutes when no unit is given.
+pub fn parse_human_delay(input: &str) -> Result<chrono::Duration> {
     let input = input.trim();
     if input.is_empty() {
         anyhow::bail!("delay must not be empty");
@@ -194,6 +196,10 @@ pub async fn cron_run(
         duration_ms,
     );
     let _ = cron::record_last_run(config, &job.id, finished_at, success, &output);
+
+    // Deliver via the same path as the scheduler loop so proactive
+    // messages and alerts are sent on "Run Now" too.
+    cron::scheduler::deliver_job(config, &job, &output).await;
 
     Ok(RpcOutcome::new(
         json!({
@@ -383,43 +389,55 @@ mod tests {
 
     #[test]
     fn parse_delay_accepts_seconds_minutes_hours_days() {
-        assert_eq!(parse_delay("5s").unwrap(), chrono::Duration::seconds(5));
-        assert_eq!(parse_delay("10m").unwrap(), chrono::Duration::minutes(10));
-        assert_eq!(parse_delay("2h").unwrap(), chrono::Duration::hours(2));
-        assert_eq!(parse_delay("3d").unwrap(), chrono::Duration::days(3));
+        assert_eq!(
+            parse_human_delay("5s").unwrap(),
+            chrono::Duration::seconds(5)
+        );
+        assert_eq!(
+            parse_human_delay("10m").unwrap(),
+            chrono::Duration::minutes(10)
+        );
+        assert_eq!(parse_human_delay("2h").unwrap(), chrono::Duration::hours(2));
+        assert_eq!(parse_human_delay("3d").unwrap(), chrono::Duration::days(3));
     }
 
     #[test]
     fn parse_delay_defaults_to_minutes_when_no_unit() {
-        assert_eq!(parse_delay("15").unwrap(), chrono::Duration::minutes(15));
+        assert_eq!(
+            parse_human_delay("15").unwrap(),
+            chrono::Duration::minutes(15)
+        );
     }
 
     #[test]
     fn parse_delay_trims_whitespace() {
-        assert_eq!(parse_delay("  7m  ").unwrap(), chrono::Duration::minutes(7));
+        assert_eq!(
+            parse_human_delay("  7m  ").unwrap(),
+            chrono::Duration::minutes(7)
+        );
     }
 
     #[test]
     fn parse_delay_rejects_empty_input() {
-        let err = parse_delay("").unwrap_err();
+        let err = parse_human_delay("").unwrap_err();
         assert!(err.to_string().contains("delay must not be empty"));
-        let err = parse_delay("   ").unwrap_err();
+        let err = parse_human_delay("   ").unwrap_err();
         assert!(err.to_string().contains("delay must not be empty"));
     }
 
     #[test]
     fn parse_delay_rejects_unsupported_unit() {
-        let err = parse_delay("5x").unwrap_err();
+        let err = parse_human_delay("5x").unwrap_err();
         assert!(err.to_string().contains("unsupported delay unit"));
         // Multi-char unit not matched in the parse branch either.
-        let err = parse_delay("5wk").unwrap_err();
+        let err = parse_human_delay("5wk").unwrap_err();
         assert!(err.to_string().contains("unsupported delay unit"));
     }
 
     #[test]
     fn parse_delay_rejects_non_numeric_prefix() {
         // No ascii-digit prefix at all → empty num, parse() fails.
-        assert!(parse_delay("abc").is_err());
+        assert!(parse_human_delay("abc").is_err());
     }
 
     // ── add_once ────────────────────────────────────────────────────

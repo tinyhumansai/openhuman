@@ -24,6 +24,26 @@ struct WebhookUnregisterEchoParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct WebhookRegisterAgentParams {
+    tunnel_uuid: String,
+    agent_id: Option<String>,
+    tunnel_name: Option<String>,
+    backend_tunnel_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebhookTriggerAgentParams {
+    /// Trigger source slug: `"webhook"`, `"cron"`, or `"external"`.
+    source: Option<String>,
+    /// Stable identifier for the caller (tunnel UUID, job ID, etc.).
+    caller_id: String,
+    /// Human-readable reason / label for the trigger.
+    reason: Option<String>,
+    /// Trigger payload forwarded to the triage pipeline.
+    payload: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
 struct WebhookCreateTunnelParams {
     name: String,
     description: Option<String>,
@@ -50,6 +70,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("clear_logs"),
         schemas("register_echo"),
         schemas("unregister_echo"),
+        schemas("register_agent"),
+        schemas("trigger_agent"),
         schemas("list_tunnels"),
         schemas("create_tunnel"),
         schemas("get_tunnel"),
@@ -80,6 +102,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("unregister_echo"),
             handler: handle_unregister_echo,
+        },
+        RegisteredController {
+            schema: schemas("register_agent"),
+            handler: handle_register_agent,
+        },
+        RegisteredController {
+            schema: schemas("trigger_agent"),
+            handler: handle_trigger_agent,
         },
         RegisteredController {
             schema: schemas("list_tunnels"),
@@ -174,6 +204,73 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
             outputs: vec![json_output("result", "Updated webhook registrations.")],
+        },
+        "register_agent" => ControllerSchema {
+            namespace: "webhooks",
+            function: "register_agent",
+            description:
+                "Register an agent-backed webhook tunnel. Incoming requests on this tunnel \
+                 are routed to the triage pipeline instead of the skill runtime.",
+            inputs: vec![
+                FieldSchema {
+                    name: "tunnel_uuid",
+                    ty: TypeSchema::String,
+                    comment: "Tunnel UUID from the backend.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "agent_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional agent definition id to pin for this tunnel.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "tunnel_name",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional human-readable tunnel name.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "backend_tunnel_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional backend tunnel id.",
+                    required: false,
+                },
+            ],
+            outputs: vec![json_output("result", "Updated webhook registrations.")],
+        },
+        "trigger_agent" => ControllerSchema {
+            namespace: "webhooks",
+            function: "trigger_agent",
+            description: "Trigger the triage/agent pipeline directly via RPC without requiring an \
+                 incoming webhook request. Useful for testing and manual escalation.",
+            inputs: vec![
+                FieldSchema {
+                    name: "caller_id",
+                    ty: TypeSchema::String,
+                    comment: "Stable identifier for the caller (tunnel UUID, job ID, etc.).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "source",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Trigger source slug: 'webhook', 'cron', or 'external' (default).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "reason",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Human-readable reason or label for the trigger.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "payload",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Optional trigger payload forwarded to the triage pipeline.",
+                    required: false,
+                },
+            ],
+            outputs: vec![json_output("result", "Triage decision result.")],
         },
         "list_tunnels" => ControllerSchema {
             namespace: "webhooks",
@@ -316,6 +413,39 @@ fn handle_unregister_echo(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_register_agent(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = deserialize_params::<WebhookRegisterAgentParams>(params)?;
+        to_json(
+            crate::openhuman::webhooks::ops::register_agent(
+                &payload.tunnel_uuid,
+                payload.agent_id,
+                payload.tunnel_name,
+                payload.backend_tunnel_id,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_trigger_agent(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = deserialize_params::<WebhookTriggerAgentParams>(params)?;
+        let source = payload.source.as_deref().unwrap_or("external");
+        let reason = payload.reason.as_deref().unwrap_or("rpc_trigger");
+        let trigger_payload = payload.payload.unwrap_or_else(|| serde_json::json!({}));
+        to_json(
+            crate::openhuman::webhooks::ops::trigger_agent(
+                source,
+                &payload.caller_id,
+                reason,
+                trigger_payload,
+            )
+            .await?,
+        )
+    })
+}
+
 fn handle_list_tunnels(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = crate::openhuman::config::rpc::load_config_with_timeout().await?;
@@ -413,6 +543,8 @@ mod tests {
         "clear_logs",
         "register_echo",
         "unregister_echo",
+        "register_agent",
+        "trigger_agent",
         "list_tunnels",
         "create_tunnel",
         "get_tunnel",
@@ -541,6 +673,30 @@ mod tests {
     fn unregister_echo_requires_tunnel_uuid_only() {
         let s = schemas("unregister_echo");
         assert_eq!(required_input_names(&s), vec!["tunnel_uuid"]);
+    }
+
+    #[test]
+    fn register_agent_requires_tunnel_uuid_and_has_optional_fields() {
+        let s = schemas("register_agent");
+        assert_eq!(required_input_names(&s), vec!["tunnel_uuid"]);
+        for optional in ["agent_id", "tunnel_name", "backend_tunnel_id"] {
+            assert!(
+                s.inputs.iter().any(|f| f.name == optional && !f.required),
+                "`register_agent` must accept optional `{optional}`"
+            );
+        }
+    }
+
+    #[test]
+    fn trigger_agent_requires_caller_id_only() {
+        let s = schemas("trigger_agent");
+        assert_eq!(required_input_names(&s), vec!["caller_id"]);
+        for optional in ["source", "reason", "payload"] {
+            assert!(
+                s.inputs.iter().any(|f| f.name == optional && !f.required),
+                "`trigger_agent` must accept optional `{optional}`"
+            );
+        }
     }
 
     #[test]

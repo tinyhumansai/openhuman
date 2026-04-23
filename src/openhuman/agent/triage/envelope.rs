@@ -27,8 +27,17 @@ pub enum TriggerSource {
         provider: String,
         account_id: String,
     },
-    // Cron / Webhook / … variants will be added in later commits as
-    // those callers wire up the triage pipeline.
+    /// An incoming webhook request routed through the webhook tunnel system.
+    Webhook {
+        tunnel_id: String,
+        method: String,
+        path: String,
+    },
+    /// A cron job that completed and whose output feeds the triage pipeline.
+    Cron { job_id: String, job_name: String },
+    /// An external caller (e.g. another service or RPC client) requesting
+    /// an agent trigger directly.
+    External { caller_id: String, reason: String },
 }
 
 impl TriggerSource {
@@ -38,6 +47,9 @@ impl TriggerSource {
         match self {
             Self::Composio { .. } => "composio",
             Self::WebviewIntegration { .. } => "webview",
+            Self::Webhook { .. } => "webhook",
+            Self::Cron { .. } => "cron",
+            Self::External { .. } => "external",
         }
     }
 }
@@ -108,6 +120,59 @@ impl TriggerEnvelope {
             received_at: Utc::now(),
         }
     }
+
+    /// Build a `TriggerEnvelope` from an incoming webhook request.
+    ///
+    /// `tunnel_id` is used as the correlation id so webhook responses
+    /// can be matched back to their trigger envelope.
+    pub fn from_webhook(tunnel_id: &str, method: &str, path: &str, payload: Value) -> Self {
+        Self {
+            source: TriggerSource::Webhook {
+                tunnel_id: tunnel_id.to_string(),
+                method: method.to_string(),
+                path: path.to_string(),
+            },
+            external_id: tunnel_id.to_string(),
+            display_label: format!("webhook/{method}/{path}"),
+            payload,
+            received_at: Utc::now(),
+        }
+    }
+
+    /// Build a `TriggerEnvelope` from a completed cron job.
+    ///
+    /// `job_id` is used as the correlation id; `output` is embedded in
+    /// the payload so the triage LLM can see what the job produced.
+    pub fn from_cron(job_id: &str, job_name: &str, output: &str) -> Self {
+        Self {
+            source: TriggerSource::Cron {
+                job_id: job_id.to_string(),
+                job_name: job_name.to_string(),
+            },
+            external_id: job_id.to_string(),
+            display_label: format!("cron/{job_name}"),
+            payload: serde_json::json!({ "output": output }),
+            received_at: Utc::now(),
+        }
+    }
+
+    /// Build a `TriggerEnvelope` from an external caller.
+    ///
+    /// `caller_id` is used as the correlation id. `reason` is a short
+    /// human-readable label explaining what prompted the trigger (e.g.
+    /// `"manual_rpc_test"`, `"ci_pipeline"`, …).
+    pub fn from_external(caller_id: &str, reason: &str, payload: Value) -> Self {
+        Self {
+            source: TriggerSource::External {
+                caller_id: caller_id.to_string(),
+                reason: reason.to_string(),
+            },
+            external_id: caller_id.to_string(),
+            display_label: format!("external/{caller_id}"),
+            payload,
+            received_at: Utc::now(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -132,7 +197,7 @@ mod tests {
                 assert_eq!(toolkit, "gmail");
                 assert_eq!(trigger, "GMAIL_NEW_GMAIL_MESSAGE");
             }
-            _ => panic!("expected Composio source"),
+            _ => panic!("expected Composio variant"),
         }
         assert_eq!(env.payload["from"], "a@b.com");
     }
@@ -147,5 +212,64 @@ mod tests {
             json!({}),
         );
         assert_eq!(env.external_id, "trig-fallback");
+    }
+
+    #[test]
+    fn webhook_envelope_builds_expected_label_and_slug() {
+        let env = TriggerEnvelope::from_webhook(
+            "tunnel-uuid-1",
+            "POST",
+            "/hooks/test",
+            json!({ "event": "push" }),
+        );
+        assert_eq!(env.display_label, "webhook/POST//hooks/test");
+        assert_eq!(env.external_id, "tunnel-uuid-1");
+        assert_eq!(env.source.slug(), "webhook");
+        match env.source {
+            TriggerSource::Webhook {
+                tunnel_id,
+                method,
+                path,
+            } => {
+                assert_eq!(tunnel_id, "tunnel-uuid-1");
+                assert_eq!(method, "POST");
+                assert_eq!(path, "/hooks/test");
+            }
+            _ => panic!("expected Webhook variant"),
+        }
+        assert_eq!(env.payload["event"], "push");
+    }
+
+    #[test]
+    fn cron_envelope_builds_expected_label_and_slug() {
+        let env = TriggerEnvelope::from_cron("job-1", "morning_briefing", "Briefing complete");
+        assert_eq!(env.display_label, "cron/morning_briefing");
+        assert_eq!(env.external_id, "job-1");
+        assert_eq!(env.source.slug(), "cron");
+        match env.source {
+            TriggerSource::Cron { job_id, job_name } => {
+                assert_eq!(job_id, "job-1");
+                assert_eq!(job_name, "morning_briefing");
+            }
+            _ => panic!("expected Cron variant"),
+        }
+        assert_eq!(env.payload["output"], "Briefing complete");
+    }
+
+    #[test]
+    fn external_envelope_builds_expected_label_and_slug() {
+        let env =
+            TriggerEnvelope::from_external("caller-abc", "ci_pipeline", json!({ "ref": "main" }));
+        assert_eq!(env.display_label, "external/caller-abc");
+        assert_eq!(env.external_id, "caller-abc");
+        assert_eq!(env.source.slug(), "external");
+        match env.source {
+            TriggerSource::External { caller_id, reason } => {
+                assert_eq!(caller_id, "caller-abc");
+                assert_eq!(reason, "ci_pipeline");
+            }
+            _ => panic!("expected External variant"),
+        }
+        assert_eq!(env.payload["ref"], "main");
     }
 }
