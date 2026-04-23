@@ -138,6 +138,7 @@ impl EventHandler for ProactiveMessageSubscriber {
             delta: None,
             delta_kind: None,
             tool_call_id: None,
+            citations: None,
         });
 
         // 2. If an active external channel is configured, deliver there too.

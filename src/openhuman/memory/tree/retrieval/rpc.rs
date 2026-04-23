@@ -46,7 +46,7 @@ pub async fn query_source_rpc(
     req: QuerySourceRequest,
 ) -> Result<RpcOutcome<QueryResponse>, String> {
     let source_kind = match req.source_kind.as_deref() {
-        Some(s) => Some(SourceKind::parse(s)?),
+        Some(s) => Some(SourceKind::parse(s).map_err(|e| format!("query_source: {e}"))?),
         None => None,
     };
     let limit = req.limit.unwrap_or(0);
@@ -169,8 +169,10 @@ pub async fn search_entities_rpc(
     let kinds = match req.kinds {
         None => None,
         Some(list) => {
-            let parsed: Result<Vec<EntityKind>, String> =
-                list.iter().map(|s| EntityKind::parse(s)).collect();
+            let parsed: Result<Vec<EntityKind>, String> = list
+                .iter()
+                .map(|s| EntityKind::parse(s).map_err(|e| format!("search_entities: {e}")))
+                .collect();
             Some(parsed?)
         }
     };

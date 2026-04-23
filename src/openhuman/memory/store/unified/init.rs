@@ -118,6 +118,58 @@ impl UnifiedMemory {
         // User profile accumulation table.
         conn.execute_batch(super::profile::PROFILE_INIT_SQL)?;
 
+        // Idempotent legacy-namespace migration.
+        //
+        // Older writes via MemoryStoreTool packed the intended namespace into
+        // the key as `"{namespace}/{actual_key}"` and stored the row under the
+        // GLOBAL_NAMESPACE. Split those rows now so the new trait surface can
+        // rely on the `namespace` column.
+        //
+        // The anti-join guard prevents duplicate-split collisions if a
+        // post-split row already exists (UNIQUE(namespace, key) would otherwise
+        // fail). Safe to run on every boot.
+        let migrated = conn.execute(
+            "UPDATE memory_docs
+             SET namespace = substr(key, 1, instr(key, '/') - 1),
+                 key = substr(key, instr(key, '/') + 1)
+             WHERE namespace = ?1
+               AND instr(key, '/') > 0
+               AND NOT EXISTS (
+                 SELECT 1 FROM memory_docs m2
+                 WHERE m2.namespace = substr(memory_docs.key, 1, instr(memory_docs.key, '/') - 1)
+                   AND m2.key = substr(memory_docs.key, instr(memory_docs.key, '/') + 1)
+               )",
+            rusqlite::params![GLOBAL_NAMESPACE],
+        )?;
+        if migrated > 0 {
+            log::info!(
+                "[memory] migrated {migrated} legacy `ns/key` rows out of the `{GLOBAL_NAMESPACE}` namespace"
+            );
+        }
+
+        // Companion migration: `vector_chunks` rows keyed by `document_id` still
+        // point at `GLOBAL_NAMESPACE` after the `memory_docs` split above, so
+        // namespace-scoped recall would miss them. Re-home each chunk to its
+        // document's new namespace. Idempotent: after both migrations run, no
+        // chunk under GLOBAL_NAMESPACE maps to a document in another namespace.
+        let chunks_migrated = conn.execute(
+            "UPDATE vector_chunks
+             SET namespace = (
+                 SELECT namespace FROM memory_docs
+                 WHERE memory_docs.document_id = vector_chunks.document_id
+             )
+             WHERE namespace = ?1
+               AND document_id IN (
+                 SELECT document_id FROM memory_docs WHERE namespace != ?1
+               )",
+            rusqlite::params![GLOBAL_NAMESPACE],
+        )?;
+        if chunks_migrated > 0 {
+            log::info!(
+                "[memory] migrated {chunks_migrated} vector_chunks rows out of the `{GLOBAL_NAMESPACE}` namespace"
+            );
+        }
+
         Ok(Self {
             workspace_dir: workspace_dir.to_path_buf(),
             db_path,

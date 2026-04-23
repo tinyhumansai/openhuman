@@ -101,10 +101,15 @@ async fn end_to_end_three_chat_batches() {
     let by_source_kind = query_source(&cfg, None, Some(SourceKind::Chat), None, None, 20)
         .await
         .unwrap();
-    // Each channel may or may not have sealed; what we lock in here is
-    // that the source-kind query returns a well-formed, possibly empty
-    // response. The stronger per-channel assertion lives in source.rs.
-    assert!(by_source_kind.total >= by_source_kind.hits.len());
+    // query_source returns summaries from sealed source trees only. With two
+    // messages per channel the seal budget is not reached, so sealed
+    // summaries may not exist yet. The invariant we lock in is that the
+    // response is well-formed: total accurately reflects hits.len() (or
+    // exceeds it when truncated) and never reports more hits than total.
+    assert!(
+        by_source_kind.total >= by_source_kind.hits.len(),
+        "query_source total must be >= hits.len()"
+    );
 
     // ── query_global: no daily digest has been built yet → empty.
     let global = query_global(&cfg, 7).await.unwrap();
@@ -117,18 +122,22 @@ async fn end_to_end_three_chat_batches() {
     let empty_drill = drill_down(&cfg, "bogus:id", 1, None, None).await.unwrap();
     assert!(empty_drill.is_empty());
 
-    // ── fetch_leaves can hydrate by a known chunk id. Find a real chunk
-    // id via the entity index hits (the email lookup populated it).
-    let first_hit = by_email
+    // ── fetch_leaves: find a guaranteed leaf hit from alice's topic results
+    // and assert that fetch_leaves hydrates it correctly.
+    use crate::openhuman::memory::tree::retrieval::types::NodeKind;
+    let leaf_hit = by_email
         .hits
-        .first()
-        .expect("expected at least one hit for alice");
-    let got = fetch_leaves(&cfg, &[first_hit.node_id.clone()])
+        .iter()
+        .find(|h| h.node_kind == NodeKind::Leaf)
+        .expect("alice's topic hits should include at least one leaf chunk");
+    let got = fetch_leaves(&cfg, &[leaf_hit.node_id.clone()])
         .await
         .unwrap();
-    // May be empty if the first hit is a summary (not a leaf). Either
-    // branch is acceptable — the wiring is what we're exercising.
-    assert!(got.len() <= 1);
+    assert_eq!(
+        got.len(),
+        1,
+        "fetch_leaves must hydrate the known leaf chunk id"
+    );
 }
 
 #[tokio::test]

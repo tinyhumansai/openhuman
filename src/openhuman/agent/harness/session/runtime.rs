@@ -187,6 +187,13 @@ impl Agent {
         self.history.clear();
     }
 
+    /// Drain and return memory citations collected for the latest completed turn.
+    pub fn take_last_turn_citations(
+        &mut self,
+    ) -> Vec<crate::openhuman::agent::memory_loader::MemoryCitation> {
+        std::mem::take(&mut self.last_turn_citations)
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // Static helpers for turn parsing + telemetry
     // ─────────────────────────────────────────────────────────────────

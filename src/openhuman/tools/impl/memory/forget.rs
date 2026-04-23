@@ -62,15 +62,28 @@ impl Tool for MemoryForgetTool {
             return Ok(ToolResult::error(error));
         }
 
-        let namespaced_key = format!("{}/{}", namespace.trim(), key);
-        match self.memory.forget(&namespaced_key).await {
-            Ok(true) => Ok(ToolResult::success(format!(
-                "Forgot memory: {namespaced_key}"
-            ))),
-            Ok(false) => Ok(ToolResult::success(format!(
-                "No memory found with key: {key}"
-            ))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to forget memory: {e}"))),
+        let namespace = namespace.trim();
+        let legacy_key = format!("{namespace}/{key}");
+        let display_key = format!("{namespace}/{key}");
+
+        // Try the new split namespace/key first (covers post-migration rows),
+        // then fall back to the legacy packed-key shape for rows that were
+        // stored before the boot migration ran (Phase A compatibility).
+        let deleted = match self.memory.forget(namespace, key).await {
+            Ok(true) => true,
+            Ok(false) => match self.memory.forget("", &legacy_key).await {
+                Ok(deleted) => deleted,
+                Err(e) => return Ok(ToolResult::error(format!("Failed to forget memory: {e}"))),
+            },
+            Err(e) => return Ok(ToolResult::error(format!("Failed to forget memory: {e}"))),
+        };
+
+        if deleted {
+            Ok(ToolResult::success(format!("Forgot memory: {display_key}")))
+        } else {
+            Ok(ToolResult::success(format!(
+                "No memory found with key: {display_key}"
+            )))
         }
     }
 }
@@ -104,6 +117,7 @@ mod tests {
     async fn forget_existing() {
         let (_tmp, mem) = test_mem();
         mem.store(
+            "",
             "global/temp",
             "temporary",
             MemoryCategory::Conversation,
@@ -120,7 +134,7 @@ mod tests {
         assert!(!result.is_error);
         assert!(result.output().contains("Forgot"));
 
-        assert!(mem.get("global/temp").await.unwrap().is_none());
+        assert!(mem.get("", "global/temp").await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -147,6 +161,7 @@ mod tests {
     async fn forget_blocked_in_readonly_mode() {
         let (_tmp, mem) = test_mem();
         mem.store(
+            "",
             "global/temp",
             "temporary",
             MemoryCategory::Conversation,
@@ -165,13 +180,14 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("read-only mode"));
-        assert!(mem.get("global/temp").await.unwrap().is_some());
+        assert!(mem.get("", "global/temp").await.unwrap().is_some());
     }
 
     #[tokio::test]
     async fn forget_blocked_when_rate_limited() {
         let (_tmp, mem) = test_mem();
         mem.store(
+            "",
             "global/temp",
             "temporary",
             MemoryCategory::Conversation,
@@ -190,6 +206,6 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("Rate limit exceeded"));
-        assert!(mem.get("global/temp").await.unwrap().is_some());
+        assert!(mem.get("", "global/temp").await.unwrap().is_some());
     }
 }

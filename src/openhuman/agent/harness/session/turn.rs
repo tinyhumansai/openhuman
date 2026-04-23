@@ -25,6 +25,7 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{ParsedToolCall, ToolExecutionResult};
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
+use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, PromptTool};
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
@@ -130,11 +131,39 @@ impl Agent {
         if self.auto_save {
             let _ = self
                 .memory
-                .store("user_msg", user_message, MemoryCategory::Conversation, None)
+                .store(
+                    "",
+                    "user_msg",
+                    user_message,
+                    MemoryCategory::Conversation,
+                    None,
+                )
                 .await;
         }
 
         log::info!("[agent] loading memory context for user message");
+        const MEMORY_CITATION_LIMIT: usize = 5;
+        const MEMORY_CITATION_MIN_RELEVANCE: f64 = 0.4;
+        match collect_recall_citations(
+            self.memory.as_ref(),
+            user_message,
+            MEMORY_CITATION_LIMIT,
+            MEMORY_CITATION_MIN_RELEVANCE,
+        )
+        .await
+        {
+            Ok(citations) => {
+                log::debug!(
+                    "[agent_loop] memory citations collected count={}",
+                    citations.len()
+                );
+                self.last_turn_citations = citations;
+            }
+            Err(err) => {
+                log::warn!("[agent_loop] memory citation collection failed: {err}");
+                self.last_turn_citations.clear();
+            }
+        }
         let context = self
             .memory_loader
             .load_context(self.memory.as_ref(), user_message)
@@ -505,7 +534,7 @@ impl Agent {
                         let summary = truncate_with_ellipsis(&final_text, 100);
                         let _ = self
                             .memory
-                            .store("assistant_resp", &summary, MemoryCategory::Daily, None)
+                            .store("", "assistant_resp", &summary, MemoryCategory::Daily, None)
                             .await;
                     }
 
@@ -1053,6 +1082,7 @@ impl Agent {
         let obs_entries = self
             .memory
             .list(
+                Some("learning_observations"),
                 Some(&MemoryCategory::Custom("learning_observations".into())),
                 None,
             )
@@ -1062,6 +1092,7 @@ impl Agent {
         let pat_entries = self
             .memory
             .list(
+                Some("learning_patterns"),
                 Some(&MemoryCategory::Custom("learning_patterns".into())),
                 None,
             )
@@ -1070,7 +1101,11 @@ impl Agent {
 
         let profile_entries = self
             .memory
-            .list(Some(&MemoryCategory::Custom("user_profile".into())), None)
+            .list(
+                Some("user_profile"),
+                Some(&MemoryCategory::Custom("user_profile".into())),
+                None,
+            )
             .await
             .unwrap_or_default();
 

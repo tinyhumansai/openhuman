@@ -13,6 +13,7 @@ struct ScriptedMemory {
 impl Memory for ScriptedMemory {
     async fn store(
         &self,
+        _namespace: &str,
         _key: &str,
         _content: &str,
         _category: MemoryCategory,
@@ -25,7 +26,7 @@ impl Memory for ScriptedMemory {
         &self,
         query: &str,
         _limit: usize,
-        _session_id: Option<&str>,
+        _opts: openhuman_core::openhuman::memory::RecallOpts<'_>,
     ) -> Result<Vec<MemoryEntry>> {
         if query.contains("working.user") {
             Ok(self.working.clone())
@@ -34,20 +35,27 @@ impl Memory for ScriptedMemory {
         }
     }
 
-    async fn get(&self, _key: &str) -> Result<Option<MemoryEntry>> {
+    async fn get(&self, _namespace: &str, _key: &str) -> Result<Option<MemoryEntry>> {
         Ok(None)
     }
 
     async fn list(
         &self,
+        _namespace: Option<&str>,
         _category: Option<&MemoryCategory>,
         _session_id: Option<&str>,
     ) -> Result<Vec<MemoryEntry>> {
         Ok(Vec::new())
     }
 
-    async fn forget(&self, _key: &str) -> Result<bool> {
+    async fn forget(&self, _namespace: &str, _key: &str) -> Result<bool> {
         Ok(false)
+    }
+
+    async fn namespace_summaries(
+        &self,
+    ) -> Result<Vec<openhuman_core::openhuman::memory::NamespaceSummary>> {
+        Ok(Vec::new())
     }
 
     async fn count(&self) -> Result<usize> {

@@ -17,7 +17,10 @@ pub(crate) async fn build_context(
     let mut seen_keys = HashSet::new();
 
     // Pull relevant memories for this message
-    if let Ok(entries) = mem.recall(user_msg, 5, None).await {
+    if let Ok(entries) = mem
+        .recall(user_msg, 5, crate::openhuman::memory::RecallOpts::default())
+        .await
+    {
         let relevant: Vec<_> = entries
             .iter()
             .filter(|e| match e.score {
@@ -40,7 +43,11 @@ pub(crate) async fn build_context(
     // facts can influence the turn in a controlled way.
     let working_query = format!("working.user {user_msg}");
     if let Ok(entries) = mem
-        .recall(&working_query, WORKING_MEMORY_LIMIT + 2, None)
+        .recall(
+            &working_query,
+            WORKING_MEMORY_LIMIT + 2,
+            crate::openhuman::memory::RecallOpts::default(),
+        )
         .await
     {
         let working: Vec<_> = entries
@@ -86,6 +93,7 @@ mod tests {
 
         async fn store(
             &self,
+            _namespace: &str,
             _key: &str,
             _content: &str,
             _category: MemoryCategory,
@@ -98,7 +106,7 @@ mod tests {
             &self,
             query: &str,
             _limit: usize,
-            _session_id: Option<&str>,
+            _opts: crate::openhuman::memory::RecallOpts<'_>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             if query.starts_with("working.user ") {
                 return Ok(self.working.clone());
@@ -109,20 +117,27 @@ mod tests {
             Ok(self.primary.clone())
         }
 
-        async fn get(&self, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+        async fn get(&self, _namespace: &str, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
             Ok(None)
         }
 
         async fn list(
             &self,
+            _namespace: Option<&str>,
             _category: Option<&MemoryCategory>,
             _session_id: Option<&str>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             Ok(Vec::new())
         }
 
-        async fn forget(&self, _key: &str) -> anyhow::Result<bool> {
+        async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
             Ok(false)
+        }
+
+        async fn namespace_summaries(
+            &self,
+        ) -> anyhow::Result<Vec<crate::openhuman::memory::NamespaceSummary>> {
+            Ok(Vec::new())
         }
 
         async fn count(&self) -> anyhow::Result<usize> {

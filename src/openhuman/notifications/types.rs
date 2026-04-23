@@ -1,10 +1,46 @@
-//! Core types for the integration notification domain.
-//!
-//! `IntegrationNotification` is the central record that flows from webview
-//! recipe events → triage pipeline → notification center UI.
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Core-bridge types (DomainEvent → socket.io → frontend notification center)
+// ---------------------------------------------------------------------------
+
+/// Category used by the frontend notification center to apply per-category
+/// preferences. Matches `NotificationCategory` in
+/// `app/src/store/notificationSlice.ts` — keep the two in sync.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CoreNotificationCategory {
+    Messages,
+    Agents,
+    Skills,
+    System,
+}
+
+/// Wire payload emitted on the `core_notification` socket event. Short,
+/// user-facing fields only — downstream UI shapes title/body/category into
+/// its own notification item structure.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CoreNotificationEvent {
+    /// Unique id for this notification publish (e.g. `"cron:<job_id>:<ts>"`).
+    /// Because the timestamp is embedded, each publish produces a distinct id —
+    /// every cron run, webhook failure, or subagent event gets its own entry in
+    /// the notification center rather than replacing a previous one.
+    pub id: String,
+    pub category: CoreNotificationCategory,
+    pub title: String,
+    pub body: String,
+    /// Optional in-app deep link the user is sent to when they click the
+    /// notification (mirrors the `deepLink` field on the frontend item).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deep_link: Option<String>,
+    /// Wall-clock milliseconds since the unix epoch at publish time.
+    pub timestamp_ms: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Integration notification types (webview recipe events → triage pipeline)
+// ---------------------------------------------------------------------------
 
 /// Lifecycle state for an ingested notification.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

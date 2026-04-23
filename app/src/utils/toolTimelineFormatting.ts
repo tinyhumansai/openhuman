@@ -35,7 +35,7 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
     return { title: 'Researching', detail: entry.detail };
   }
   if (entry.name === 'composio_list_connections') {
-    return { title: 'Viewing your Integrations', detail: entry.detail };
+    return { title: 'Viewing your Connections', detail: entry.detail };
   }
   if (entry.name === 'subagent:orchestrator' || entry.name === 'orchestrator') {
     return { title: 'Planning next steps', detail: entry.detail };

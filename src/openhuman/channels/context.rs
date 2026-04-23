@@ -154,7 +154,10 @@ pub(crate) async fn build_memory_context(
 ) -> String {
     let mut context = String::new();
 
-    if let Ok(entries) = mem.recall(user_msg, 5, None).await {
+    if let Ok(entries) = mem
+        .recall(user_msg, 5, crate::openhuman::memory::RecallOpts::default())
+        .await
+    {
         let mut included = 0usize;
         let mut used_chars = 0usize;
 
@@ -256,6 +259,7 @@ mod tests {
 
         async fn store(
             &self,
+            _namespace: &str,
             _key: &str,
             _content: &str,
             _category: MemoryCategory,
@@ -268,25 +272,32 @@ mod tests {
             &self,
             _query: &str,
             _limit: usize,
-            _session_id: Option<&str>,
+            _opts: crate::openhuman::memory::RecallOpts<'_>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             Ok(self.entries.clone())
         }
 
-        async fn get(&self, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+        async fn get(&self, _namespace: &str, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
             Ok(None)
         }
 
         async fn list(
             &self,
+            _namespace: Option<&str>,
             _category: Option<&MemoryCategory>,
             _session_id: Option<&str>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             Ok(Vec::new())
         }
 
-        async fn forget(&self, _key: &str) -> anyhow::Result<bool> {
+        async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
             Ok(false)
+        }
+
+        async fn namespace_summaries(
+            &self,
+        ) -> anyhow::Result<Vec<crate::openhuman::memory::NamespaceSummary>> {
+            Ok(Vec::new())
         }
 
         async fn count(&self) -> anyhow::Result<usize> {

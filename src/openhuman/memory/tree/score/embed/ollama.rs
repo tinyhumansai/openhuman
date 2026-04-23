@@ -132,6 +132,7 @@ impl Embedder for OllamaEmbedder {
             .client
             .post(self.embed_url())
             .json(&req)
+            .timeout(self.timeout)
             .send()
             .await
             .with_context(|| {
