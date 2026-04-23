@@ -556,6 +556,7 @@ jobs:
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
           MATRIX_ARGS: ${{ matrix.settings.args }}
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           # Inline NODE_OPTIONS so it reaches the vite child spawned by
           # beforeBuildCommand. Step-level env was observed not to propagate
