@@ -122,15 +122,6 @@ const AppRoutes = () => {
       />
 
       <Route
-        path="/notifications"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Notifications />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
         path="/settings/*"
         element={
           <ProtectedRoute requireAuth={true}>
