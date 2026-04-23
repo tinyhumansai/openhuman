@@ -162,4 +162,147 @@ describe('coreRpcClient', () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(result).toEqual({ state: 'ready' });
   });
+
+  test.each([
+    ['openhuman.get_config', 'openhuman.config_get'],
+    ['openhuman.get_runtime_flags', 'openhuman.config_get_runtime_flags'],
+    ['openhuman.set_browser_allow_all', 'openhuman.config_set_browser_allow_all'],
+    ['openhuman.update_browser_settings', 'openhuman.config_update_browser_settings'],
+    ['openhuman.update_memory_settings', 'openhuman.config_update_memory_settings'],
+    ['openhuman.update_model_settings', 'openhuman.config_update_model_settings'],
+    ['openhuman.update_runtime_settings', 'openhuman.config_update_runtime_settings'],
+    [
+      'openhuman.update_screen_intelligence_settings',
+      'openhuman.config_update_screen_intelligence_settings',
+    ],
+    [
+      'openhuman.workspace_onboarding_flag_exists',
+      'openhuman.config_workspace_onboarding_flag_exists',
+    ],
+    ['openhuman.workspace_onboarding_flag_set', 'openhuman.config_workspace_onboarding_flag_set'],
+  ])('rewrites legacy alias %s -> %s', async (incoming, expected) => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: {} }),
+    } as Response);
+
+    await callCoreRpc({ method: incoming });
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(body.method).toBe(expected);
+  });
+
+  test('passes through unknown methods unchanged', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: {} }),
+    } as Response);
+
+    await callCoreRpc({ method: 'openhuman.threads_list' });
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(body.method).toBe('openhuman.threads_list');
+  });
+
+  test('defaults params to empty object when omitted', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: {} }),
+    } as Response);
+
+    await callCoreRpc({ method: 'openhuman.threads_list' });
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(body.params).toEqual({});
+    expect(body.jsonrpc).toBe('2.0');
+    expect(typeof body.id).toBe('number');
+  });
+
+  test('passes through provided params verbatim', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: {} }),
+    } as Response);
+
+    const params = { thread_id: 't-1', nested: { flag: true } };
+    await callCoreRpc({ method: 'openhuman.threads_messages_list', params });
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(body.params).toEqual(params);
+  });
+
+  test('increments jsonrpc id on sequential calls', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 0, result: {} }),
+    } as Response);
+
+    await callCoreRpc({ method: 'openhuman.threads_list' });
+    await callCoreRpc({ method: 'openhuman.threads_list' });
+    const idA = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)).id;
+    const idB = JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body)).id;
+    expect(typeof idA).toBe('number');
+    expect(typeof idB).toBe('number');
+    expect(idB).toBe(idA + 1);
+  });
+
+  test('throws when JSON-RPC response is missing both result and error', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1 }),
+    } as Response);
+
+    await expect(callCoreRpc({ method: 'openhuman.threads_list' })).rejects.toThrow(
+      'Core RPC response missing result'
+    );
+  });
+
+  test('falls back to generic error message when error.message is blank', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: '' } }),
+    } as Response);
+
+    await expect(callCoreRpc({ method: 'openhuman.threads_list' })).rejects.toThrow(
+      'Core RPC returned an error'
+    );
+  });
+
+  test('wraps network errors with message propagated through', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED sidecar'));
+
+    await expect(callCoreRpc({ method: 'openhuman.threads_list' })).rejects.toThrow(
+      'ECONNREFUSED sidecar'
+    );
+  });
+
+  test('rewrites multi-segment auth methods (auth.sub.segment) to underscore form', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: {} }),
+    } as Response);
+
+    await callCoreRpc({ method: 'openhuman.auth.sub.segment' });
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(body.method).toBe('openhuman.auth_sub_segment');
+  });
+
+  test('sends content-type json header and POST method', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: {} }),
+    } as Response);
+
+    await callCoreRpc({ method: 'openhuman.threads_list' });
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe('POST');
+    const headers = init.headers as Record<string, string>;
+    expect(headers['Content-Type']).toBe('application/json');
+  });
 });

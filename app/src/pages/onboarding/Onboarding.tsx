@@ -103,11 +103,14 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
   };
 
   return (
-    <div className="min-h-full relative flex items-center justify-center">
+    <div
+      data-testid="onboarding-overlay"
+      className="min-h-full relative flex items-center justify-center">
       {onDefer && (
         <div className="fixed top-4 right-0 z-20 sm:top-6 sm:right-6">
           <button
             type="button"
+            data-testid="onboarding-skip-button"
             onClick={onDefer}
             className="text-sm text-stone-600 hover:text-stone-900 transition-colors">
             Skip

@@ -4,6 +4,9 @@ use crate::openhuman::memory::tree::score::extract::ExtractedEntities;
 use crate::openhuman::memory::tree::types::Metadata;
 
 /// Compute all signals for a chunk.
+///
+/// `llm_importance` is sourced from `ex.llm_importance` (defaults to `0.0`
+/// when the extractor didn't produce one — equivalent to "no LLM signal").
 pub fn compute(
     meta: &Metadata,
     content: &str,
@@ -17,6 +20,7 @@ pub fn compute(
         source_weight: source_weight::score(meta),
         interaction: interaction::score(meta),
         entity_density: entity_density_score(token_count, ex),
+        llm_importance: ex.llm_importance.unwrap_or(0.0).clamp(0.0, 1.0),
     }
 }
 
@@ -35,7 +39,38 @@ pub fn entity_density_score(token_count: u32, ex: &ExtractedEntities) -> f32 {
 }
 
 /// Weighted sum of signals, normalised to `[0.0, 1.0]`.
+///
+/// When `w.llm_importance == 0.0` (the default) the LLM signal contributes
+/// nothing to either the numerator or the denominator — output is identical
+/// to pre-LLM Phase 2.
 pub fn combine(signals: &ScoreSignals, w: &SignalWeights) -> f32 {
+    let total_weight = w.token_count
+        + w.unique_words
+        + w.metadata_weight
+        + w.source_weight
+        + w.interaction
+        + w.entity_density
+        + w.llm_importance;
+    if total_weight <= 0.0 {
+        return 0.0;
+    }
+    let weighted = signals.token_count * w.token_count
+        + signals.unique_words * w.unique_words
+        + signals.metadata_weight * w.metadata_weight
+        + signals.source_weight * w.source_weight
+        + signals.interaction * w.interaction
+        + signals.entity_density * w.entity_density
+        + signals.llm_importance * w.llm_importance;
+    (weighted / total_weight).clamp(0.0, 1.0)
+}
+
+/// Weighted sum **excluding the `llm_importance` signal**.
+///
+/// Used by the short-circuit logic in `score_chunk`: if the deterministic
+/// (cheap-signals-only) total is already firmly above or below the
+/// admission band, we skip the LLM call entirely. The LLM signal only
+/// participates in the *final* `combine` once it's been computed.
+pub fn combine_cheap_only(signals: &ScoreSignals, w: &SignalWeights) -> f32 {
     let total_weight = w.token_count
         + w.unique_words
         + w.metadata_weight
@@ -80,7 +115,7 @@ mod tests {
                     score: 1.0,
                 })
                 .collect(),
-            topics: vec![],
+            ..Default::default()
         }
     }
 
@@ -99,6 +134,7 @@ mod tests {
             source_weight: 1.0,
             interaction: 1.0,
             entity_density: 1.0,
+            llm_importance: 0.0, // default weight is 0 → contribution is zero
         };
         assert!((combine(&s, &SignalWeights::default()) - 1.0).abs() < 1e-6);
     }
@@ -112,6 +148,7 @@ mod tests {
             source_weight: 0.0,
             interaction: 1.0,
             entity_density: 0.0,
+            llm_importance: 0.0,
         };
         let total = combine(&s, &SignalWeights::default());
         assert!((total - (3.0 / 9.0)).abs() < 1e-6);

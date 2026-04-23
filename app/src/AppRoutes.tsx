@@ -9,6 +9,7 @@ import Channels from './pages/Channels';
 import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
 import Invites from './pages/Invites';
+import Notifications from './pages/Notifications';
 import Rewards from './pages/Rewards';
 import Settings from './pages/Settings';
 import Skills from './pages/Skills';
@@ -86,6 +87,15 @@ const AppRoutes = () => {
       />
 
       <Route
+        path="/notifications"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Notifications />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
         path="/rewards"
         element={
           <ProtectedRoute requireAuth={true}>
@@ -108,6 +118,15 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <Webhooks />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/notifications"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Notifications />
           </ProtectedRoute>
         }
       />

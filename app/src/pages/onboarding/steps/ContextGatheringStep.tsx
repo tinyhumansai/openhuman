@@ -7,8 +7,10 @@
  * progress animation while the pipeline runs and displays the log when
  * it finishes.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 
+import Button from '../../../components/ui/Button';
+import WhatLeavesLink from '../../../features/privacy/WhatLeavesLink';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 
@@ -88,30 +90,28 @@ const ContextGatheringStep = ({
   });
   const [stageDetails, setStageDetails] = useState<Record<string, string>>({});
   const [finished, setFinished] = useState(false);
+  const [started, setStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ranRef = useRef(false);
 
   const hasGmail = connectedSources.some(s => s.includes('gmail'));
 
-  useEffect(() => {
+  const handleStart = () => {
     if (ranRef.current) return;
     ranRef.current = true;
+    setStarted(true);
 
     if (!hasGmail) {
-      // Derive skipped state asynchronously to avoid synchronous setState in effect.
-      setTimeout(() => {
-        const skipped: Record<string, StageStatus> = {};
-        for (const s of STAGES) skipped[s.id] = 'skipped';
-        setStageStatuses(skipped);
-        setStageDetails({ 'gmail-search': 'Gmail not connected' });
-        setFinished(true);
-      }, 0);
+      const skipped: Record<string, StageStatus> = {};
+      for (const s of STAGES) skipped[s.id] = 'skipped';
+      setStageStatuses(skipped);
+      setStageDetails({ 'gmail-search': 'Gmail not connected' });
+      setFinished(true);
       return;
     }
 
     void runPipeline();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  };
 
   async function runPipeline() {
     console.debug('[onboarding:context] runPipeline started');
@@ -205,16 +205,53 @@ const ContextGatheringStep = ({
     }
   };
 
+  if (!started) {
+    return (
+      <div
+        className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up"
+        data-testid="context-gathering-intro">
+        <div className="text-center mb-5">
+          <h1 className="text-xl font-bold mb-2 text-stone-900">Getting to know you</h1>
+          <p className="text-stone-500 text-sm leading-relaxed max-w-sm mx-auto">
+            I can read what you've already connected and build a short profile so the first
+            conversation isn't cold. You're in charge — skip this and nothing is read.
+          </p>
+        </div>
+        <div className="rounded-xl border border-stone-100 bg-stone-50 p-4 mb-5 text-sm text-stone-600 leading-relaxed">
+          {hasGmail ? (
+            <>
+              Uses your <span className="font-medium text-stone-900">connected Gmail</span> to find
+              your LinkedIn URL, then pulls public profile info via a third-party LinkedIn scraper.
+              The resulting summary is saved to a local profile file.
+            </>
+          ) : (
+            <>You haven't connected Gmail. Nothing to read. You can skip this step.</>
+          )}
+        </div>
+        <OnboardingNextButton
+          label={hasGmail ? 'Start when ready' : 'Continue'}
+          onClick={handleStart}
+        />
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <Button variant="ghost" size="sm" onClick={() => void onNext()}>
+            Skip for now
+          </Button>
+          <WhatLeavesLink />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-5">
         <h1 className="text-xl font-bold mb-2 text-stone-900">
-          {finished ? 'Context Ready' : 'Preparing Your Context'}
+          {finished ? 'Context Ready' : 'Reading your connected accounts'}
         </h1>
         <p className="text-stone-500 text-sm">
           {finished
-            ? 'Your profile is ready. The assistant already knows who you are.'
-            : 'Learning about you from your connected accounts...'}
+            ? 'Short profile saved locally. Ready to chat.'
+            : 'Working from what you already connected…'}
         </p>
       </div>
 
@@ -317,6 +354,9 @@ const ContextGatheringStep = ({
       {error && <p className="text-coral-400 text-sm mb-3 text-center">{error}</p>}
 
       <OnboardingNextButton onClick={handleContinue} disabled={!finished} label="Continue" />
+      <div className="mt-3 flex justify-center">
+        <WhatLeavesLink />
+      </div>
     </div>
   );
 };

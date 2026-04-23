@@ -386,6 +386,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
         visible_tool_names: &empty_visible,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: &narrow_integrations,
+        connected_identities_md: crate::openhuman::agent::prompts::render_connected_identities(),
         include_profile: !definition.omit_profile,
         include_memory_md: !definition.omit_memory_md,
     };

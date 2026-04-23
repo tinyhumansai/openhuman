@@ -12,7 +12,8 @@
  *   Phase 2 — Onboarding steps (3 steps in Onboarding.tsx):
  *     Step 0: WelcomeStep            — "Continue"
  *     Step 1: SkillsStep             — "Continue" or "Skip for Now"
- *     Step 2: ContextGatheringStep   — "Continue" (skipped if no sources connected)
+ *     Step 2: ContextGatheringStep   — user-driven gate: "Start when ready" / "Continue" /
+ *                                       "Skip for now" (skipped entirely if no sources connected)
  *
  *   Phase 3 — Completion verification:
  *     - App calls POST /settings/onboarding-complete (from SkillsStep)
@@ -198,7 +199,9 @@ describe('Login flow — complete with mock data (Linux)', () => {
   // Steps in order:
   //   0: WelcomeStep            — "Continue" button
   //   1: SkillsStep             — "Continue" or "Skip for Now"
-  //   2: ContextGatheringStep   — "Continue" (skipped if no sources connected)
+  //   2: ContextGatheringStep   — user-driven gate: intro card with "Start when ready" /
+  //       "Continue" / "Skip for now". Step is skipped entirely when SkillsStep
+  //       produced zero connected sources (Onboarding.tsx → handleSkillsNext).
   // -----------------------------------------------------------------------
 
   it('onboarding overlay or home page is visible', async () => {
@@ -262,11 +265,22 @@ describe('Login flow — complete with mock data (Linux)', () => {
       }
     }
 
-    // Step 2: ContextGatheringStep — click "Continue" (skipped when no sources connected)
+    // Step 2: ContextGatheringStep — intro gate. Heading is "Getting to know you"
+    // (pre-start) or "Reading your connected accounts" / "Context Ready" (post-start).
+    // We don't actually want the real LinkedIn enrichment pipeline to run in E2E
+    // (it would hit the Rust core), so prefer "Skip for now" when present.
+    // "Continue" covers both the no-Gmail branch (skipped stages render Continue
+    // immediately after Start) and the completed-pipeline final state.
     {
-      const contextVisible = await textExists('Preparing Your Context');
+      const contextVisible =
+        (await textExists('Getting to know you')) ||
+        (await textExists('Reading your connected accounts')) ||
+        (await textExists('Context Ready'));
       if (contextVisible) {
-        const clicked = await clickFirstMatch(['Continue'], 10_000);
+        const clicked = await clickFirstMatch(
+          ['Skip for now', 'Continue', 'Start when ready'],
+          10_000
+        );
         if (clicked) {
           console.log(`[LoginFlow] ContextGatheringStep: clicked "${clicked}"`);
           await browser.pause(3_000);

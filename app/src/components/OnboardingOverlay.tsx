@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -17,34 +17,8 @@ const OnboardingOverlay = () => {
   const navigate = useNavigate();
   const { isBootstrapping, snapshot, setOnboardingCompletedFlag } = useCoreState();
   const token = snapshot.sessionToken;
-  const user = snapshot.currentUser;
-  /** Which session token the 3s profile-timeout applied to (ref avoids stale boolean across logins). */
-  const profileLoadTimedOutForTokenRef = useRef<string | null>(null);
-  const [, profileTimeoutBump] = useState(0);
   // Keep the overlay rendered while navigating away so the home page doesn't flash.
   const [isDismissing, setIsDismissing] = useState(false);
-
-  const prevTokenRef = useRef<string | null | undefined>(undefined);
-  if (prevTokenRef.current !== token) {
-    prevTokenRef.current = token;
-    profileLoadTimedOutForTokenRef.current = null;
-  }
-
-  // Timeout: if user profile hasn't loaded after 3s but we have token + bootstrap,
-  // proceed anyway so onboarding isn't permanently invisible.
-  useEffect(() => {
-    if (!token || isBootstrapping || user?._id) return;
-
-    const timer = setTimeout(() => {
-      profileLoadTimedOutForTokenRef.current = token;
-      profileTimeoutBump(n => n + 1);
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [token, isBootstrapping, user?._id]);
-
-  // User is ready when profile loaded or timeout elapsed for this session token.
-  const userReady =
-    !!user?._id || (token ? profileLoadTimedOutForTokenRef.current === token : false);
   const onboardingCompleted = snapshot.onboardingCompleted;
 
   const handleDone = useCallback(async () => {
@@ -74,8 +48,9 @@ const OnboardingOverlay = () => {
     setIsDismissing(false);
   }, [token]);
 
-  // Don't show if not logged in, bootstrap not complete, or user not ready
-  if (!token || isBootstrapping || !userReady) return null;
+  // Don't show if not logged in or bootstrap not complete.
+  // Showing immediately after bootstrap removes a first-launch delay.
+  if (!token || isBootstrapping) return null;
 
   const shouldShow = isDismissing || DEV_FORCE_ONBOARDING || !onboardingCompleted;
 

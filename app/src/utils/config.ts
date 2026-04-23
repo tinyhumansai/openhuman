@@ -96,7 +96,7 @@ export const SENTRY_RELEASE = BUILD_SHA
 export const MINIMUM_SUPPORTED_APP_VERSION =
   (import.meta.env.VITE_MINIMUM_SUPPORTED_APP_VERSION as string | undefined)?.trim() ?? '';
 
-/** Recovery link opened when OAuth is blocked due to an outdated app build (build-time default; override via CI). */
+/** URL for the latest app release download page. Used for OAuth version-gate recovery and crash-recovery prompts. Override via VITE_LATEST_APP_DOWNLOAD_URL for deployment-specific download pages. */
 export const LATEST_APP_DOWNLOAD_URL =
   (import.meta.env.VITE_LATEST_APP_DOWNLOAD_URL as string | undefined)?.trim() ||
   'https://github.com/tinyhumansai/openhuman/releases/latest';

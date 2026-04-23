@@ -40,6 +40,7 @@ tauri = { version = "2.10", default-features = false, features = [
     "macos-private-api",
     "tray-icon",
     "unstable",
+    "webview-data-url",
 ] }
 tauri-plugin-deep-link = "2.0.0"
 tauri-plugin-global-shortcut = "2"

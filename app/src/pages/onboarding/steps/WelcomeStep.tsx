@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import ProgressIndicator from '../../../components/ProgressIndicator';
+import WhatLeavesLink from '../../../features/privacy/WhatLeavesLink';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 
 interface WelcomeStepProps {
@@ -15,10 +16,20 @@ const AUTO_ADVANCE_MS = 5000;
 /* ------------------------------------------------------------------ */
 const WelcomeSlide = () => (
   <div className="flex flex-col items-center text-center">
-    <img src="/logo.png" alt="OpenHuman" className="w-24 h-24 rounded-2xl mb-6" />
-    <h1 className="text-2xl font-bold font-display text-stone-900 mb-3">Welcome On Board</h1>
-    <p className="text-stone-500 text-sm leading-relaxed">
-      All your tasks, tools, and conversations organized in one place.
+    <img src="/logo.png" alt="OpenHuman" className="w-20 h-20 rounded-2xl mb-5" />
+    <div className="flex items-center gap-2 mb-3">
+      <span
+        aria-hidden="true"
+        className="h-1.5 w-1.5 rounded-full bg-primary-500 animate-glow-pulse"
+      />
+      <span className="font-mono text-[11px] tracking-[0.12em] text-stone-500">
+        OPENHUMAN · LOCAL BY DEFAULT
+      </span>
+    </div>
+    <h1 className="text-3xl font-display text-stone-900 mb-3 leading-tight">Hi. I'm OpenHuman.</h1>
+    <p className="text-stone-500 text-sm leading-relaxed max-w-sm">
+      A private assistant that runs on your computer and routes to the cloud when you pick a cloud
+      model. No hidden traffic — the full list is one click below.
     </p>
   </div>
 );
@@ -74,7 +85,9 @@ const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
   }, []);
 
   return (
-    <div className="rounded-2xl bg-white p-10 shadow-soft animate-fade-up">
+    <div
+      data-testid="onboarding-welcome-step"
+      className="rounded-2xl bg-white p-10 shadow-soft animate-fade-up">
       <div className="h-[340px] flex flex-col items-center justify-center">
         {slide === 0 && <WelcomeSlide />}
         {slide === 1 && <IntegrationsSlide />}
@@ -84,6 +97,9 @@ const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
         <ProgressIndicator currentStep={slide} totalSteps={TOTAL_SLIDES} />
       </div>
       <OnboardingNextButton label="Let's Start" onClick={onNext} />
+      <div className="mt-4 flex justify-center">
+        <WhatLeavesLink />
+      </div>
     </div>
   );
 };

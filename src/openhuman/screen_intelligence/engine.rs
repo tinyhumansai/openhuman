@@ -478,6 +478,27 @@ impl AccessibilityEngine {
         }
     }
 
+    /// Save the image payload from a [`CaptureTestResult`] to disk, reconstructing
+    /// the minimum [`CaptureFrame`] needed by [`save_screenshot_to_disk`].
+    ///
+    /// Returns `None` when the result carries no `image_ref` (nothing to save).
+    /// Callers supply a `reason` string to label the frame (e.g. `"cli_capture"`).
+    pub(crate) fn save_capture_test_result(
+        workspace_dir: &std::path::Path,
+        result: &CaptureTestResult,
+        reason: &str,
+    ) -> Option<Result<PathBuf, String>> {
+        let image_ref = result.image_ref.as_ref()?.clone();
+        let frame = CaptureFrame {
+            captured_at_ms: chrono::Utc::now().timestamp_millis(),
+            reason: reason.to_string(),
+            app_name: result.context.as_ref().and_then(|c| c.app_name.clone()),
+            window_title: result.context.as_ref().and_then(|c| c.window_title.clone()),
+            image_ref: Some(image_ref),
+        };
+        Some(Self::save_screenshot_to_disk(workspace_dir, &frame))
+    }
+
     /// Save a screenshot PNG to `{workspace_dir}/screenshots/{timestamp}_{app}.png`.
     pub fn save_screenshot_to_disk(
         workspace_dir: &std::path::Path,
