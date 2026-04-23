@@ -1,3 +1,9 @@
+---
+paths:
+  - "**/capabilities/**"
+  - "**/tauri.conf.json"
+---
+
 # Permissions and Capabilities
 
 ## Overview

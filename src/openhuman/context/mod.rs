@@ -29,7 +29,6 @@
 //! migration lands (see plan `misty-bubbling-bunny.md`).
 
 pub mod channels_prompt;
-pub mod debug_dump;
 pub mod guard;
 pub mod manager;
 pub mod microcompact;

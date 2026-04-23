@@ -1,3 +1,9 @@
+---
+paths:
+  - "app/src-tauri/**"
+  - "src-tauri/**"
+---
+
 # Windows Platform Setup
 
 ## Prerequisites

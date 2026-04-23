@@ -830,6 +830,7 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
         }
 
         crate::openhuman::health::bus::register_health_subscriber();
+        crate::openhuman::notifications::register_notification_bridge_subscriber();
         crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),
         );
@@ -1109,7 +1110,10 @@ fn build_http_schema_dump() -> HttpSchemaDump {
 mod tests {
     use serde_json::json;
 
-    use super::{build_http_schema_dump, default_state, invoke_method};
+    use super::{
+        build_http_schema_dump, default_state, escape_html, invoke_method,
+        is_session_expired_error, params_to_object, parse_json_params, type_name,
+    };
 
     #[tokio::test]
     async fn invoke_health_snapshot_via_registry() {
@@ -1484,5 +1488,186 @@ mod tests {
                 "schema dump missing expected method: {expected}"
             );
         }
+    }
+
+    // --- helper coverage -----------------------------------------------------
+
+    #[test]
+    fn params_to_object_accepts_object() {
+        let map = params_to_object(json!({"a": 1, "b": "x"})).unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("a"), Some(&json!(1)));
+    }
+
+    #[test]
+    fn params_to_object_accepts_null_as_empty_map() {
+        let map = params_to_object(json!(null)).unwrap();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn params_to_object_rejects_array() {
+        let err = params_to_object(json!([1, 2, 3])).unwrap_err();
+        assert!(err.contains("invalid params"));
+        assert!(err.contains("array"));
+    }
+
+    #[test]
+    fn params_to_object_rejects_scalars() {
+        assert!(params_to_object(json!(42)).unwrap_err().contains("number"));
+        assert!(params_to_object(json!("hi"))
+            .unwrap_err()
+            .contains("string"));
+        assert!(params_to_object(json!(true)).unwrap_err().contains("bool"));
+    }
+
+    #[test]
+    fn type_name_labels_every_json_variant() {
+        assert_eq!(type_name(&json!(null)), "null");
+        assert_eq!(type_name(&json!(true)), "bool");
+        assert_eq!(type_name(&json!(3)), "number");
+        assert_eq!(type_name(&json!("s")), "string");
+        assert_eq!(type_name(&json!([])), "array");
+        assert_eq!(type_name(&json!({})), "object");
+    }
+
+    #[test]
+    fn parse_json_params_roundtrips_object() {
+        let v = parse_json_params(r#"{"k":1}"#).unwrap();
+        assert_eq!(v, json!({"k": 1}));
+    }
+
+    #[test]
+    fn parse_json_params_reports_error_message() {
+        let err = parse_json_params("{not json").unwrap_err();
+        assert!(err.contains("invalid JSON params"));
+    }
+
+    #[test]
+    fn is_session_expired_error_matches_401_unauthorized() {
+        assert!(is_session_expired_error(
+            "backend returned 401 Unauthorized"
+        ));
+        assert!(is_session_expired_error("401 UNAUTHORIZED"));
+        assert!(is_session_expired_error("got 401 and unauthorized body"));
+    }
+
+    #[test]
+    fn is_session_expired_error_requires_both_401_and_unauthorized() {
+        // 401 alone is not sufficient — could be HTTP/3.01 nonsense or
+        // unrelated text. We require the string "unauthorized" too.
+        assert!(!is_session_expired_error("server returned 401"));
+        assert!(!is_session_expired_error("unauthorized without code"));
+    }
+
+    #[test]
+    fn is_session_expired_error_matches_invalid_token_case_insensitive() {
+        assert!(is_session_expired_error("Invalid Token"));
+        assert!(is_session_expired_error("got an invalid token here"));
+    }
+
+    #[test]
+    fn is_session_expired_error_matches_session_expired_sentinel() {
+        // The SESSION_EXPIRED sentinel is case-sensitive by design.
+        assert!(is_session_expired_error("SESSION_EXPIRED: please re-auth"));
+        assert!(!is_session_expired_error("session_expired lowercase"));
+    }
+
+    #[test]
+    fn is_session_expired_error_does_not_match_unrelated_errors() {
+        assert!(!is_session_expired_error("network timeout"));
+        assert!(!is_session_expired_error("500 internal server error"));
+        assert!(!is_session_expired_error(""));
+    }
+
+    #[test]
+    fn escape_html_escapes_all_special_chars() {
+        let raw = r#"<script>alert("x&y'z")</script>"#;
+        let escaped = escape_html(raw);
+        assert!(!escaped.contains('<'));
+        assert!(!escaped.contains('>'));
+        assert!(!escaped.contains('"'));
+        assert!(!escaped.contains('\''));
+        assert!(escaped.contains("&lt;"));
+        assert!(escaped.contains("&gt;"));
+        assert!(escaped.contains("&quot;"));
+        assert!(escaped.contains("&#x27;"));
+        // `&` must be escaped first so later substitutions don't double-encode.
+        assert!(escaped.contains("&amp;y"));
+    }
+
+    #[test]
+    fn escape_html_is_noop_for_safe_text() {
+        assert_eq!(escape_html("safe text 123"), "safe text 123");
+        assert_eq!(escape_html(""), "");
+    }
+
+    // --- invoke_method parameter-shape errors ---------------------------------
+
+    #[tokio::test]
+    async fn invoke_method_rejects_array_params_for_registered_method() {
+        // Registered controllers expect named-argument style (JSON object).
+        // Passing an array must fail with a clear "invalid params" error
+        // instead of silently calling the handler with no args.
+        let err = invoke_method(
+            default_state(),
+            "openhuman.health_snapshot",
+            json!([1, 2, 3]),
+        )
+        .await
+        .expect_err("array params should be rejected");
+        assert!(err.contains("invalid params"));
+        assert!(err.contains("array"));
+    }
+
+    #[tokio::test]
+    async fn invoke_method_rejects_string_params_for_registered_method() {
+        let err = invoke_method(default_state(), "openhuman.health_snapshot", json!("oops"))
+            .await
+            .expect_err("string params should be rejected");
+        assert!(err.contains("invalid params"));
+        assert!(err.contains("string"));
+    }
+
+    #[tokio::test]
+    async fn invoke_method_accepts_null_params_for_registered_method() {
+        // JSON-RPC 2.0 allows omitting params; null must be treated like {}.
+        let result = invoke_method(default_state(), "openhuman.health_snapshot", json!(null)).await;
+        // Call should succeed or fail for domain reasons — but must NOT
+        // fail with the "invalid params" shape error.
+        if let Err(e) = result {
+            assert!(
+                !e.contains("invalid params"),
+                "null should be accepted as empty object, got: {e}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn invoke_method_unknown_method_returns_unknown_error() {
+        let err = invoke_method(default_state(), "openhuman.totally_made_up_xyz", json!({}))
+            .await
+            .expect_err("unknown methods must error");
+        assert!(err.contains("unknown method"));
+    }
+
+    #[tokio::test]
+    async fn invoke_method_core_ping_via_tier1() {
+        // core.* methods aren't in the registry; they route through tier 1.
+        let result = invoke_method(default_state(), "core.ping", json!({}))
+            .await
+            .expect("core.ping should succeed via tier 1");
+        assert_eq!(result, json!({ "ok": true }));
+    }
+
+    #[tokio::test]
+    async fn invoke_method_core_version_via_tier1_reflects_state() {
+        let state = super::AppState {
+            core_version: "0.0.1-abc".into(),
+        };
+        let result = invoke_method(state, "core.version", json!({}))
+            .await
+            .expect("core.version should succeed");
+        assert_eq!(result, json!({ "version": "0.0.1-abc" }));
     }
 }

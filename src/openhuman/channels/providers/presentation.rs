@@ -29,6 +29,7 @@ pub async fn deliver_response(
     request_id: &str,
     full_response: &str,
     user_message: &str,
+    citations: &[crate::openhuman::agent::memory_loader::MemoryCitation],
 ) {
     // Spawn reaction decision in parallel — it runs on the local model and
     // shouldn't block segmentation or delivery.
@@ -63,6 +64,11 @@ pub async fn deliver_response(
             delta: None,
             delta_kind: None,
             tool_call_id: None,
+            citations: if citations.is_empty() {
+                None
+            } else {
+                Some(serde_json::json!(citations))
+            },
         });
         return;
     }
@@ -97,6 +103,11 @@ pub async fn deliver_response(
             delta: None,
             delta_kind: None,
             tool_call_id: None,
+            citations: if i == 0 && !citations.is_empty() {
+                Some(serde_json::json!(citations))
+            } else {
+                None
+            },
         });
     }
 
@@ -121,6 +132,11 @@ pub async fn deliver_response(
         delta: None,
         delta_kind: None,
         tool_call_id: None,
+        citations: if citations.is_empty() {
+            None
+        } else {
+            Some(serde_json::json!(citations))
+        },
     });
 }
 

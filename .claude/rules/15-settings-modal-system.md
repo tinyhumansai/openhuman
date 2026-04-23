@@ -1,3 +1,8 @@
+---
+paths:
+  - "app/src/components/settings/**"
+---
+
 # Settings Modal System - URL-Based Modal Architecture
 
 ## Overview

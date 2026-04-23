@@ -91,7 +91,7 @@ pub async fn migrate_openclaw_memory(
             key = format!("openclaw_{idx}");
         }
 
-        if let Some(existing) = memory.get(&key).await? {
+        if let Some(existing) = memory.get("", &key).await? {
             if existing.content.trim() == entry.content.trim() {
                 stats.skipped_unchanged += 1;
                 continue;
@@ -103,7 +103,7 @@ pub async fn migrate_openclaw_memory(
         }
 
         memory
-            .store(&key, &entry.content, entry.category, None)
+            .store("", &key, &entry.content, entry.category, None)
             .await?;
         stats.imported += 1;
     }
@@ -395,7 +395,7 @@ async fn next_available_key(memory: &dyn Memory, key: &str) -> Result<String> {
     let mut idx = 1u32;
     loop {
         let candidate = format!("{key}_{idx}");
-        if memory.get(&candidate).await?.is_none() {
+        if memory.get("", &candidate).await?.is_none() {
             return Ok(candidate);
         }
         idx += 1;

@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { store } from '../../../store';
 import { setPreference } from '../../../store/notificationSlice';
-import { __handleChatDoneForTests, __resetForTests } from '../service';
+import {
+  __handleChatDoneForTests,
+  __handleCoreNotificationForTests,
+  __resetForTests,
+} from '../service';
 import { showNativeNotification } from '../tauriBridge';
 
 vi.mock('../tauriBridge', () => ({ showNativeNotification: vi.fn() }));
@@ -57,5 +61,33 @@ describe('nativeNotifications service', () => {
     expect(showNativeNotification).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Agent reply ready' })
     );
+  });
+
+  it('dispatches core_notification payloads with provided category and deep_link', () => {
+    store.dispatch(setPreference({ category: 'system', enabled: true }));
+    __handleCoreNotificationForTests({
+      id: 'webhook:s:1',
+      category: 'system',
+      title: 'Webhook error',
+      body: 'skill-x webhook returned HTTP 500',
+      deep_link: '/webhooks',
+      timestamp_ms: 1,
+    });
+    const items = store.getState().notifications.items;
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe('webhook:s:1');
+    expect(items[0].category).toBe('system');
+    expect(items[0].deepLink).toBe('/webhooks');
+  });
+
+  it('ignores core_notification payloads missing id/title', () => {
+    __handleCoreNotificationForTests({
+      id: '',
+      category: 'system',
+      title: '',
+      body: 'x',
+      timestamp_ms: 1,
+    });
+    expect(store.getState().notifications.items).toHaveLength(0);
   });
 });

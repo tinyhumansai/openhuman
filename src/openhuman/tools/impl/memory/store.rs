@@ -82,15 +82,21 @@ impl Tool for MemoryStoreTool {
             return Ok(ToolResult::error(error));
         }
 
-        let namespaced_key = format!("{}/{}", namespace.trim(), key);
+        let namespace = namespace.trim();
+        if namespace.is_empty() {
+            return Ok(ToolResult::error("namespace cannot be empty".to_string()));
+        }
+        let key = key.trim();
+        if key.is_empty() {
+            return Ok(ToolResult::error("key cannot be empty".to_string()));
+        }
+        let display_key = format!("{namespace}/{key}");
         match self
             .memory
-            .store(&namespaced_key, content, category, None)
+            .store(namespace, key, content, category, None)
             .await
         {
-            Ok(()) => Ok(ToolResult::success(format!(
-                "Stored memory: {namespaced_key}"
-            ))),
+            Ok(()) => Ok(ToolResult::success(format!("Stored memory: {display_key}"))),
             Err(e) => Ok(ToolResult::error(format!("Failed to store memory: {e}"))),
         }
     }
@@ -134,7 +140,7 @@ mod tests {
         assert!(!result.is_error);
         assert!(result.output().contains("lang"));
 
-        let entry = mem.get("global/lang").await.unwrap();
+        let entry = mem.get("global", "lang").await.unwrap();
         assert!(entry.is_some());
         assert_eq!(entry.unwrap().content, "Prefers Rust");
     }
@@ -164,7 +170,7 @@ mod tests {
             .unwrap();
         assert!(!result.is_error);
 
-        let entry = mem.get("global/proj_note").await.unwrap().unwrap();
+        let entry = mem.get("global", "proj_note").await.unwrap().unwrap();
         assert_eq!(entry.content, "Uses async runtime");
         assert_eq!(entry.category, MemoryCategory::Custom("project".into()));
     }
@@ -199,7 +205,7 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("read-only mode"));
-        assert!(mem.get("global/lang").await.unwrap().is_none());
+        assert!(mem.get("global", "lang").await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -216,6 +222,6 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("Rate limit exceeded"));
-        assert!(mem.get("global/lang").await.unwrap().is_none());
+        assert!(mem.get("global", "lang").await.unwrap().is_none());
     }
 }

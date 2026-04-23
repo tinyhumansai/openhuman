@@ -1,3 +1,9 @@
+---
+paths:
+  - "app/src-tauri/**"
+  - "src-tauri/**"
+---
+
 # macOS Platform Setup
 
 ## Prerequisites

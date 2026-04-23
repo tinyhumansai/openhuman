@@ -34,11 +34,11 @@ function ConnectionOptionRow({
   const isDisabled = option.comingSoon;
 
   const badge = option.comingSoon ? (
-    <span className="px-2 py-1 text-xs font-medium rounded-full border bg-stone-500/20 text-stone-400 border-stone-500/30">
-      Coming Soon
+    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-stone-100 text-stone-500 border border-stone-200">
+      Coming soon
     </span>
   ) : (
-    <span className="px-2 py-1 text-xs font-medium rounded-full border bg-primary-500/20 text-primary-400 border-primary-500/30">
+    <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-primary-50 text-primary-600 border border-primary-100">
       Connect
     </span>
   );
@@ -47,21 +47,24 @@ function ConnectionOptionRow({
     <button
       onClick={() => onConnect(option)}
       disabled={isDisabled}
-      className={`w-full flex items-center justify-between p-3 bg-white ${
+      className={`group w-full flex items-center justify-between p-4 bg-white text-left transition-colors duration-150 ${
         isLast ? '' : 'border-b border-stone-200'
-      } hover:bg-stone-50 transition-all duration-200 text-left ${
-        isFirst ? 'first:rounded-t-3xl' : ''
-      } ${
-        isLast ? 'last:rounded-b-3xl' : ''
-      } focus:outline-none focus:ring-0 focus:border-inherit relative ${
-        isDisabled ? 'opacity-60 cursor-not-allowed' : ''
-      }`}>
-      <div className="w-5 h-5 opacity-60 flex-shrink-0 mr-3 text-stone-700">{option.icon}</div>
-      <div className="flex-1">
-        <div className="font-medium text-sm mb-1 text-stone-900">{option.name}</div>
-        <p className="opacity-70 text-xs">{option.description}</p>
+      } ${isFirst ? 'rounded-t-2xl' : ''} ${isLast ? 'rounded-b-2xl' : ''} ${
+        isDisabled ? 'opacity-70 cursor-not-allowed' : 'hover:bg-stone-50 focus-visible:bg-stone-50'
+      } focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40`}>
+      <div
+        className={`w-5 h-5 flex-shrink-0 mr-3 text-stone-700 ${
+          isDisabled ? 'opacity-50' : 'opacity-80 group-hover:opacity-100'
+        } transition-opacity`}>
+        {option.icon}
       </div>
-      <div className="flex items-center space-x-3">{badge}</div>
+      <div className="flex-1 min-w-0">
+        <div className="font-medium text-sm text-stone-900 leading-snug">{option.name}</div>
+        <p className="text-xs text-stone-500 mt-0.5 leading-relaxed truncate">
+          {option.description}
+        </p>
+      </div>
+      <div className="flex items-center ml-3">{badge}</div>
     </button>
   );
 }
@@ -124,7 +127,7 @@ const ConnectionsPanel = () => {
       <div>
         <div className="p-4 space-y-4">
           {/* Connection Options */}
-          <div>
+          <div className="rounded-2xl border border-stone-200 overflow-hidden bg-white">
             {connectOptions.map((option, index) => (
               <ConnectionOptionRow
                 key={option.id}
@@ -136,24 +139,22 @@ const ConnectionsPanel = () => {
             ))}
           </div>
 
-          {/* Security notice */}
-          <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
-            <div className="flex items-start space-x-2">
+          {/* Security notice — palette aligned with Privacy & Security panel for cross-surface trust coherence */}
+          <div className="p-4 bg-stone-50 rounded-xl border border-stone-200">
+            <div className="flex items-start space-x-3">
               <svg
-                className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24">
+                className="w-5 h-5 text-stone-400 mt-0.5 flex-shrink-0"
+                fill="currentColor"
+                viewBox="0 0 20 20">
                 <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  fillRule="evenodd"
+                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                  clipRule="evenodd"
                 />
               </svg>
               <div>
-                <p className="font-medium text-blue-700 text-sm">Privacy & Security</p>
-                <p className="text-blue-600 text-xs mt-1">
+                <p className="font-medium text-stone-900 text-sm">Privacy & Security</p>
+                <p className="text-xs text-stone-500 mt-1 leading-relaxed">
                   All data and credentials are stored locally with zero-data retention policy. Your
                   information is encrypted and never shared with third parties.
                 </p>

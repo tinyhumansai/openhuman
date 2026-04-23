@@ -10,6 +10,7 @@ export interface UnifiedSkillCardProps {
   ctaLabel: string;
   ctaVariant?: 'primary' | 'sage' | 'amber';
   onCtaClick: () => void;
+  badge?: ReactNode;
   secondaryActions?: Array<{
     label: string;
     icon: ReactNode;

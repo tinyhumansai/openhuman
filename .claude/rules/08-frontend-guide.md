@@ -1,3 +1,11 @@
+---
+paths:
+  - "app/src/**"
+  - "app/*.ts"
+  - "app/*.tsx"
+  - "app/vite.config.*"
+---
+
 # Frontend Development Guide - Crypto Community Platform
 
 ## Overview

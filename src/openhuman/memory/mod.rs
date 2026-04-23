@@ -36,5 +36,5 @@ pub use store::{
     MemoryClientRef, MemoryItemKind, MemoryState, NamespaceDocumentInput, NamespaceMemoryHit,
     NamespaceQueryResult, NamespaceRetrievalContext, RetrievalScoreBreakdown, UnifiedMemory,
 };
-pub use traits::{Memory, MemoryCategory, MemoryEntry};
+pub use traits::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 pub use tree::{all_memory_tree_controller_schemas, all_memory_tree_registered_controllers};

@@ -65,7 +65,7 @@ describe('Skills page — Composio catalog fallback', () => {
 
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
-    expect(screen.getByText('Integrations are showing stale status')).toBeInTheDocument();
+    expect(screen.getByText('Connections are showing stale status')).toBeInTheDocument();
     expect(screen.getByText('Backend unavailable')).toBeInTheDocument();
 
     const productivitySection = screen

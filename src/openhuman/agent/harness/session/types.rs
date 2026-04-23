@@ -52,6 +52,9 @@ pub struct Agent {
     /// Last memory context loaded for the current turn. Stored so it can
     /// be forwarded to subagents via `ParentExecutionContext`.
     pub(super) last_memory_context: Option<String>,
+    /// Citation metadata collected from memory recall for the most recent turn.
+    /// Consumed by web-channel delivery to render source chips in the UI.
+    pub(super) last_turn_citations: Vec<crate::openhuman::agent::memory_loader::MemoryCitation>,
     pub(super) history: Vec<ConversationMessage>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,

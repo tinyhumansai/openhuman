@@ -490,3 +490,40 @@ Follow this order so behavior is **specified**, **proven in Rust**, **proven ove
 ---
 
 _Last aligned with monorepo layout (`app/` + root `src/`), QuickJS skills in `openhuman_core`, skills catalog on GitHub (`tinyhumansai/openhuman-skills`), and Tauri shell IPC as of repo state._
+
+
+<claude-mem-context>
+# Memory Context
+
+# [openhuman] recent context, 2026-04-22 9:52am PDT
+
+Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision
+Format: ID TIME TYPE TITLE
+Fetch details: get_observations([IDs]) | Search: mem-search skill
+
+Stats: 20 obs (8,333t read) | 593,112t work | 99% savings
+
+### Apr 22, 2026
+2848 9:07a ✅ openhuman: All Three Review Branches Pushed to Fork Successfully
+2849 " 🔵 openhuman review-daemon-lifecycle: Two Post-Push Issues — Unstaged Prettier Changes + Missing tauri-cef Vendor
+2851 9:08a ✅ openhuman daemon lifecycle: Prettier Format Committed as Follow-Up
+2855 9:09a ✅ openhuman: All Three Review Branches Fully Pushed — PRs Ready to Open
+2857 9:10a 🔵 openhuman: GitHub Connector Cannot Create PRs to tinyhumansai/openhuman — 403 Forbidden
+2858 9:11a 🔵 openhuman webhooks-ingress: Session Stalled — Instruction Not Processed After 10+ Minutes
+2860 " 🔵 openhuman webhooks: WebhooksDebugPanel Architecture for E2E Smoke Spec
+2861 9:13a 🔵 openhuman webhooks-ingress: Full Spec Surface Mapped — RPC Log Strings + UI Navigation Path
+2866 9:15a 🟣 openhuman webhooks-ingress: webhooks-ingress-flow.spec.ts Written
+2869 9:18a ⚖️ openhuman Memory Refactor Plan: Trait Shape, L1 Pointer, and Missing Pieces
+2871 " 🔵 openhuman Memory Architecture: Auto-Inject Pattern Has 3 Separate Implementations
+2873 9:31a 🟣 openhuman: Draft PR Opened — Config Runtime Dir Refactor for Testability
+2874 9:32a 🟣 openhuman: 3 More Draft PRs Opened — Threads Schema, Daemon Lifecycle, Webhooks E2E
+2875 9:33a 🔵 openhuman Memory Namespace: 3 Auto-Inject Sites, Not 1
+2876 " ⚖️ openhuman Memory Refactor: Breaking Trait Change + Flag-Off + ToolDiscovery Hybrid
+2877 " ✅ Memory Namespace Refactor Plan Written to docs/plans/memory-namespace-refactor.md
+2879 9:34a 🔵 openhuman Memory Trait: 15 Impls, Not 14; MemoryRecalled Has No Live Emit Site
+2880 " 🔵 openhuman SQLite Schema: memory_docs Already Has namespace Column; Migration Scope Minimal
+2881 " 🔵 openhuman Memory Trait Current Signatures: No Namespace Param on Any Method
+2882 " 🔵 openhuman Eval Infra: Does Not Exist; Phase D Requires Bootstrap from Scratch
+
+Access 593k tokens of past work via get_observations([IDs]) or mem-search skill.
+</claude-mem-context>

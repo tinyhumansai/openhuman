@@ -1387,6 +1387,7 @@ mod tests {
         impl crate::openhuman::memory::Memory for NoopMemory {
             async fn store(
                 &self,
+                _namespace: &str,
                 _key: &str,
                 _content: &str,
                 _category: crate::openhuman::memory::MemoryCategory,
@@ -1398,25 +1399,32 @@ mod tests {
                 &self,
                 _query: &str,
                 _limit: usize,
-                _session_id: Option<&str>,
+                _opts: crate::openhuman::memory::RecallOpts<'_>,
             ) -> anyhow::Result<Vec<crate::openhuman::memory::MemoryEntry>> {
                 Ok(vec![])
             }
             async fn get(
                 &self,
+                _namespace: &str,
                 _key: &str,
             ) -> anyhow::Result<Option<crate::openhuman::memory::MemoryEntry>> {
                 Ok(None)
             }
             async fn list(
                 &self,
+                _namespace: Option<&str>,
                 _category: Option<&crate::openhuman::memory::MemoryCategory>,
                 _session_id: Option<&str>,
             ) -> anyhow::Result<Vec<crate::openhuman::memory::MemoryEntry>> {
                 Ok(vec![])
             }
-            async fn forget(&self, _key: &str) -> anyhow::Result<bool> {
+            async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
                 Ok(true)
+            }
+            async fn namespace_summaries(
+                &self,
+            ) -> anyhow::Result<Vec<crate::openhuman::memory::NamespaceSummary>> {
+                Ok(vec![])
             }
             async fn count(&self) -> anyhow::Result<usize> {
                 Ok(0)

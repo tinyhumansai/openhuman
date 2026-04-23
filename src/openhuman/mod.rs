@@ -45,6 +45,7 @@ pub mod node_runtime;
 pub mod notifications;
 pub mod overlay;
 pub mod people;
+pub mod provider_surfaces;
 pub mod providers;
 pub mod referral;
 pub mod routing;

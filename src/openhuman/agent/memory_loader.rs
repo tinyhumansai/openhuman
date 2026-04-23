@@ -1,5 +1,6 @@
 use crate::openhuman::memory::Memory;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 use super::harness::memory_context::{WORKING_MEMORY_KEY_PREFIX, WORKING_MEMORY_LIMIT};
@@ -15,6 +16,22 @@ pub struct DefaultMemoryLoader {
     min_relevance_score: f64,
     /// Maximum characters of memory context to inject (0 = unlimited).
     max_context_chars: usize,
+}
+
+/// Lightweight citation object derived from recalled memory entries.
+///
+/// These citations are attached to agent responses so the UI can show
+/// provenance for memory-informed answers without exposing full raw memory.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryCitation {
+    pub id: String,
+    pub key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
+    pub timestamp: String,
+    pub snippet: String,
 }
 
 impl Default for DefaultMemoryLoader {
@@ -42,6 +59,50 @@ impl DefaultMemoryLoader {
     }
 }
 
+/// Collect citation metadata from semantic memory recall for a user turn.
+///
+/// This mirrors the primary recall path used by `DefaultMemoryLoader` so the
+/// UI can display trusted sources whenever memory context influenced a reply.
+pub async fn collect_recall_citations(
+    memory: &dyn Memory,
+    user_message: &str,
+    limit: usize,
+    min_relevance_score: f64,
+) -> anyhow::Result<Vec<MemoryCitation>> {
+    let entries = memory
+        .recall(
+            user_message,
+            limit.max(1),
+            crate::openhuman::memory::RecallOpts::default(),
+        )
+        .await?;
+
+    let citations = entries
+        .into_iter()
+        .filter(|entry| match entry.score {
+            Some(score) => score >= min_relevance_score,
+            None => true,
+        })
+        .map(|entry| {
+            let snippet = if entry.content.chars().count() > 280 {
+                crate::openhuman::util::truncate_with_ellipsis(&entry.content, 280)
+            } else {
+                entry.content
+            };
+            MemoryCitation {
+                id: entry.id,
+                key: entry.key,
+                namespace: entry.namespace,
+                score: entry.score,
+                timestamp: entry.timestamp,
+                snippet,
+            }
+        })
+        .collect();
+
+    Ok(citations)
+}
+
 #[async_trait]
 impl MemoryLoader for DefaultMemoryLoader {
     async fn load_context(
@@ -49,7 +110,13 @@ impl MemoryLoader for DefaultMemoryLoader {
         memory: &dyn Memory,
         user_message: &str,
     ) -> anyhow::Result<String> {
-        let entries = memory.recall(user_message, self.limit, None).await?;
+        let entries = memory
+            .recall(
+                user_message,
+                self.limit,
+                crate::openhuman::memory::RecallOpts::default(),
+            )
+            .await?;
         let mut context = String::new();
         let budget = if self.max_context_chars > 0 {
             self.max_context_chars
@@ -88,7 +155,11 @@ impl MemoryLoader for DefaultMemoryLoader {
         // Explicit bounded recall for sync-derived user working memory.
         let working_query = format!("working.user {user_message}");
         let working_entries = memory
-            .recall(&working_query, WORKING_MEMORY_LIMIT + 2, None)
+            .recall(
+                &working_query,
+                WORKING_MEMORY_LIMIT + 2,
+                crate::openhuman::memory::RecallOpts::default(),
+            )
             .await
             .unwrap_or_default();
         let mut appended_working_header = false;
@@ -128,5 +199,105 @@ impl MemoryLoader for DefaultMemoryLoader {
         }
         context.push('\n');
         Ok(context)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
+
+    struct MockMemory {
+        entries: Vec<MemoryEntry>,
+    }
+
+    #[async_trait]
+    impl Memory for MockMemory {
+        fn name(&self) -> &str {
+            "mock"
+        }
+
+        async fn store(
+            &self,
+            _namespace: &str,
+            _key: &str,
+            _content: &str,
+            _category: MemoryCategory,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn recall(
+            &self,
+            _query: &str,
+            _limit: usize,
+            _opts: crate::openhuman::memory::RecallOpts<'_>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(self.entries.clone())
+        }
+
+        async fn get(&self, _namespace: &str, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+            Ok(None)
+        }
+
+        async fn list(
+            &self,
+            _namespace: Option<&str>,
+            _category: Option<&MemoryCategory>,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
+
+        async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn namespace_summaries(
+            &self,
+        ) -> anyhow::Result<Vec<crate::openhuman::memory::NamespaceSummary>> {
+            Ok(Vec::new())
+        }
+
+        async fn count(&self) -> anyhow::Result<usize> {
+            Ok(self.entries.len())
+        }
+
+        async fn health_check(&self) -> bool {
+            true
+        }
+    }
+
+    fn entry(key: &str, content: &str, score: Option<f64>) -> MemoryEntry {
+        MemoryEntry {
+            id: format!("id-{key}"),
+            key: key.to_string(),
+            content: content.to_string(),
+            namespace: Some("test".to_string()),
+            category: MemoryCategory::Conversation,
+            timestamp: "2026-04-22T00:00:00Z".to_string(),
+            session_id: None,
+            score,
+        }
+    }
+
+    #[tokio::test]
+    async fn collect_recall_citations_filters_and_truncates_entries() {
+        let mem = MockMemory {
+            entries: vec![
+                entry("keep", "useful context", Some(0.9)),
+                entry("drop", "too weak", Some(0.1)),
+                entry("long", &"x".repeat(600), Some(0.8)),
+            ],
+        };
+
+        let citations = collect_recall_citations(&mem, "hello", 5, 0.4)
+            .await
+            .expect("citation collection should succeed");
+        assert_eq!(citations.len(), 2);
+        assert_eq!(citations[0].key, "keep");
+        assert_eq!(citations[1].key, "long");
+        assert!(citations[1].snippet.ends_with("..."));
     }
 }

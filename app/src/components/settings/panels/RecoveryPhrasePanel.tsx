@@ -217,19 +217,35 @@ const RecoveryPhrasePanel = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <p className="text-sm font-medium text-sage-400">Recovery phrase saved</p>
-              <p className="text-xs text-stone-400">Returning to settings...</p>
+              <p className="text-sm font-medium text-sage-500">Recovery phrase saved</p>
+              <p className="text-xs text-stone-500">Returning to settings...</p>
             </div>
           ) : (
             <>
               {mode === 'generate' ? (
                 <>
-                  <div className="mb-4">
-                    <p className="text-sm text-stone-400 leading-relaxed">
+                  <div className="mb-4 space-y-3">
+                    <p className="text-sm text-stone-600 leading-relaxed">
                       Write down these {MNEMONIC_GENERATE_WORD_COUNT} words in order and store them
-                      somewhere safe. This phrase encrypts your data and can never be recovered if
-                      lost.
+                      somewhere safe. This phrase encrypts your data.
                     </p>
+                    <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200/70">
+                      <svg
+                        className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}>
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+                        />
+                      </svg>
+                      <p className="text-xs text-amber-800 leading-relaxed">
+                        This phrase can never be recovered if lost.
+                      </p>
+                    </div>
                   </div>
 
                   <div className="bg-stone-50 rounded-2xl p-4 mb-4 border border-stone-200">
@@ -294,7 +310,7 @@ const RecoveryPhrasePanel = () => {
                       onChange={e => setConfirmed(e.target.checked)}
                       className="mt-0.5 w-4 h-4 rounded border-stone-500 text-primary-500 focus:ring-primary-500"
                     />
-                    <span className="text-sm opacity-80">
+                    <span className="text-sm text-stone-700">
                       I have saved my recovery phrase in a safe place
                     </span>
                   </label>
@@ -302,14 +318,14 @@ const RecoveryPhrasePanel = () => {
               ) : (
                 <>
                   <div className="mb-4">
-                    <p className="text-sm text-stone-400 leading-relaxed">
+                    <p className="text-sm text-stone-600 leading-relaxed">
                       Enter your recovery phrase below, or paste the full phrase into any field (12
                       words for new backups; 24-word phrases from older versions still work).
                     </p>
                   </div>
 
                   <div className="flex items-center gap-2 mb-3">
-                    <span className="text-xs text-stone-400">Words:</span>
+                    <span className="text-xs text-stone-500">Words:</span>
                     {BIP39_IMPORT_LENGTHS.map(len => (
                       <button
                         key={len}
@@ -378,7 +394,25 @@ const RecoveryPhrasePanel = () => {
                 </>
               )}
 
-              {error && <p className="text-coral-400 text-sm mb-3 text-center">{error}</p>}
+              {error && (
+                <div
+                  role="alert"
+                  className="flex items-start gap-2.5 p-3 mb-3 rounded-xl bg-coral-50 border border-coral-200/70">
+                  <svg
+                    className="w-4 h-4 text-coral-500 flex-shrink-0 mt-0.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}>
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+                    />
+                  </svg>
+                  <p className="text-xs text-coral-700 leading-relaxed">{error}</p>
+                </div>
+              )}
 
               <button
                 type="button"

@@ -1,3 +1,10 @@
+---
+paths:
+  - "**/*deep*link*"
+  - "**/tauri.conf.json"
+  - "app/src-tauri/**"
+---
+
 # Deep Link Platform Guide
 
 ## Overview

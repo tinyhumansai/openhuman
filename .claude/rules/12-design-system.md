@@ -1,3 +1,10 @@
+---
+paths:
+  - "app/src/**/*.tsx"
+  - "app/src/**/*.css"
+  - "**/tailwind.config.*"
+---
+
 # Design System - Crypto Community Platform
 
 ## Design Philosophy

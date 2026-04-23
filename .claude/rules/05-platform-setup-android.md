@@ -1,3 +1,9 @@
+---
+paths:
+  - "src-tauri/gen/android/**"
+  - "app/src-tauri/gen/android/**"
+---
+
 # Android Platform Setup
 
 ## Prerequisites

@@ -1,3 +1,10 @@
+---
+paths:
+  - "app/src-tauri/src/lib.rs"
+  - "**/Info.plist"
+  - "**/tauri.conf.json"
+---
+
 # macOS Background Execution - Menu Bar & Autostart
 
 ## Overview

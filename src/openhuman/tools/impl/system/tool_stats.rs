@@ -52,6 +52,7 @@ impl Tool for ToolStatsTool {
         let entries = self
             .memory
             .list(
+                Some("tool_effectiveness"),
                 Some(&MemoryCategory::Custom("tool_effectiveness".into())),
                 None,
             )
@@ -149,6 +150,7 @@ mod tests {
         }
         async fn store(
             &self,
+            namespace: &str,
             key: &str,
             content: &str,
             category: MemoryCategory,
@@ -160,7 +162,7 @@ mod tests {
                     id: key.to_string(),
                     key: key.to_string(),
                     content: content.to_string(),
-                    namespace: None,
+                    namespace: Some(namespace.to_string()),
                     category,
                     timestamp: "now".into(),
                     session_id: session_id.map(str::to_string),
@@ -173,22 +175,28 @@ mod tests {
             &self,
             _q: &str,
             _l: usize,
-            _s: Option<&str>,
+            _opts: crate::openhuman::memory::RecallOpts<'_>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             Ok(vec![])
         }
-        async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+        async fn get(&self, _namespace: &str, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
             Ok(self.entries.lock().get(key).cloned())
         }
         async fn list(
             &self,
+            _namespace: Option<&str>,
             _cat: Option<&MemoryCategory>,
             _s: Option<&str>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             Ok(self.entries.lock().values().cloned().collect())
         }
-        async fn forget(&self, key: &str) -> anyhow::Result<bool> {
+        async fn forget(&self, _namespace: &str, key: &str) -> anyhow::Result<bool> {
             Ok(self.entries.lock().remove(key).is_some())
+        }
+        async fn namespace_summaries(
+            &self,
+        ) -> anyhow::Result<Vec<crate::openhuman::memory::NamespaceSummary>> {
+            Ok(vec![])
         }
         async fn count(&self) -> anyhow::Result<usize> {
             Ok(self.entries.lock().len())
@@ -237,6 +245,7 @@ mod tests {
             common_error_patterns: vec![],
         };
         mem.store(
+            "tool_effectiveness",
             "tool/shell",
             &serde_json::to_string(&stats).unwrap(),
             MemoryCategory::Custom("tool_effectiveness".into()),
@@ -264,6 +273,7 @@ mod tests {
             common_error_patterns: vec![],
         };
         mem.store(
+            "tool_effectiveness",
             "tool/shell",
             &serde_json::to_string(&stats).unwrap(),
             MemoryCategory::Custom("tool_effectiveness".into()),

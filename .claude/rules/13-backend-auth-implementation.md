@@ -1,3 +1,12 @@
+---
+paths:
+  - "**/auth/**"
+  - "**/*auth*.ts"
+  - "**/*auth*.tsx"
+  - "**/*auth*.rs"
+  - "app/src-tauri/src/lib.rs"
+---
+
 # Backend Authentication Implementation Guide
 
 ## Overview

@@ -4,7 +4,6 @@ import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
 import Accounts from './pages/Accounts';
-import Agents from './pages/Agents';
 import Channels from './pages/Channels';
 import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
@@ -100,15 +99,6 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <Rewards />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/agents"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Agents />
           </ProtectedRoute>
         }
       />

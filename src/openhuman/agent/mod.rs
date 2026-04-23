@@ -20,6 +20,7 @@
 
 pub mod agents;
 pub mod bus;
+pub mod debug;
 pub mod dispatcher;
 pub mod error;
 pub mod harness;

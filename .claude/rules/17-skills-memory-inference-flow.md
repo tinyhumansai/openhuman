@@ -1,3 +1,12 @@
+---
+paths:
+  - "**/skills/**"
+  - "**/memory/**"
+  - "src/openhuman/**"
+  - "app/src/providers/SkillProvider.tsx"
+  - "app/src/lib/ai/**"
+---
+
 # Skills → Memory Layer → Agent Inference: Full Flow
 
 ## Overview

@@ -78,3 +78,97 @@ fn try_core_dispatch(
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn test_state() -> AppState {
+        AppState {
+            core_version: "9.9.9-test".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_core_ping_returns_ok_true() {
+        let out = dispatch(test_state(), "core.ping", json!({}))
+            .await
+            .expect("core.ping should succeed");
+        assert_eq!(out, json!({ "ok": true }));
+    }
+
+    #[tokio::test]
+    async fn dispatch_core_version_returns_state_version() {
+        let out = dispatch(test_state(), "core.version", json!({}))
+            .await
+            .expect("core.version should succeed");
+        assert_eq!(out, json!({ "version": "9.9.9-test" }));
+    }
+
+    #[tokio::test]
+    async fn dispatch_core_ignores_params() {
+        // Params must be tolerated even when the method takes none.
+        let out = dispatch(test_state(), "core.ping", json!({ "extra": 1 }))
+            .await
+            .expect("core.ping should ignore extra params");
+        assert_eq!(out, json!({ "ok": true }));
+    }
+
+    #[tokio::test]
+    async fn dispatch_unknown_method_returns_error() {
+        let err = dispatch(test_state(), "does.not.exist", json!({}))
+            .await
+            .expect_err("unknown methods must error");
+        assert!(err.contains("unknown method"));
+        assert!(err.contains("does.not.exist"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_empty_method_returns_unknown_method_error() {
+        let err = dispatch(test_state(), "", json!({}))
+            .await
+            .expect_err("empty method must error");
+        assert!(err.contains("unknown method"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_delegates_to_tier2_for_domain_method() {
+        // Tier 2 dispatcher handles `openhuman.security_policy_info`, so
+        // it must succeed and return a policy object.
+        let out = dispatch(test_state(), "openhuman.security_policy_info", json!({}))
+            .await
+            .expect("security_policy_info should route via tier 2");
+        // With logs present, payload is wrapped as { result, logs }.
+        assert!(out.get("result").is_some() || out.get("autonomy").is_some());
+    }
+
+    #[test]
+    fn try_core_dispatch_returns_none_for_non_core_namespace() {
+        let state = test_state();
+        assert!(try_core_dispatch(&state, "openhuman.memory_list_namespaces", json!({})).is_none());
+        assert!(try_core_dispatch(&state, "corez.ping", json!({})).is_none());
+    }
+
+    #[test]
+    fn try_core_dispatch_matches_exact_ping_and_version() {
+        let state = test_state();
+        assert!(try_core_dispatch(&state, "core.ping", json!({})).is_some());
+        assert!(try_core_dispatch(&state, "core.version", json!({})).is_some());
+        // Prefix match alone must not count.
+        assert!(try_core_dispatch(&state, "core.pingz", json!({})).is_none());
+        assert!(try_core_dispatch(&state, "core", json!({})).is_none());
+    }
+
+    #[test]
+    fn try_core_dispatch_version_reflects_appstate() {
+        let state = AppState {
+            core_version: "0.0.0-abc".into(),
+        };
+        let result = try_core_dispatch(&state, "core.version", json!({}))
+            .expect("core.version must be routed")
+            .expect("core.version must produce InvocationResult");
+        assert_eq!(result.value, json!({ "version": "0.0.0-abc" }));
+        assert!(result.logs.is_empty());
+    }
+}

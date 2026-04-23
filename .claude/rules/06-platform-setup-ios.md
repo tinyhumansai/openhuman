@@ -1,3 +1,9 @@
+---
+paths:
+  - "src-tauri/gen/apple/**"
+  - "app/src-tauri/gen/apple/**"
+---
+
 # iOS Platform Setup
 
 ## Prerequisites

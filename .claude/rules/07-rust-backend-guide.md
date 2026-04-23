@@ -1,3 +1,11 @@
+---
+paths:
+  - "app/src-tauri/**"
+  - "src-tauri/**"
+  - "src/**/*.rs"
+  - "**/Cargo.toml"
+---
+
 # Rust Backend Guide
 
 ## Structure

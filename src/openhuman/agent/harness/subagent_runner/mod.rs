@@ -40,7 +40,7 @@ mod types;
 pub use ops::run_subagent;
 pub use types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
 
-// Crate-internal re-exports: `debug_dump` calls the text-mode protocol
+// Crate-internal re-exports: `agent::debug` calls the text-mode protocol
 // renderer, and `session::builder` reuses the welcome-only guard. The
 // other `tool_prep` helpers are used only inside this module.
 pub(crate) use tool_prep::{build_text_mode_tool_instructions, is_welcome_only_tool};

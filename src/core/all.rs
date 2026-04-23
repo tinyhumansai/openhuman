@@ -133,6 +133,10 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::billing::all_billing_registered_controllers());
     // Team and role management
     controllers.extend(crate::openhuman::team::all_team_registered_controllers());
+    // Local assistive surfaces over third-party provider apps
+    controllers.extend(
+        crate::openhuman::provider_surfaces::all_provider_surfaces_registered_controllers(),
+    );
     // OS-level text input interactions
     controllers.extend(crate::openhuman::text_input::all_text_input_registered_controllers());
     // Voice transcription and synthesis
@@ -199,6 +203,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
     schemas.extend(crate::openhuman::team::all_team_controller_schemas());
+    schemas.extend(crate::openhuman::provider_surfaces::all_provider_surfaces_controller_schemas());
     schemas.extend(crate::openhuman::text_input::all_text_input_controller_schemas());
     schemas.extend(crate::openhuman::voice::all_voice_controller_schemas());
     schemas.extend(crate::openhuman::subconscious::all_subconscious_controller_schemas());
@@ -265,6 +270,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "referral" => Some("Referral codes, stats, and apply flows via the hosted backend API."),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "team" => Some("Team member management, invites, and role changes via the backend."),
+        "provider_surfaces" => Some(
+            "Local-first assistive surfaces for provider events, respond queues, and drafts.",
+        ),
         "voice" => Some("Speech-to-text and text-to-speech using local models."),
         "subconscious" => Some("Periodic local-model background awareness loop."),
         "text_input" => Some("Read, insert, and preview text in the OS-focused input field."),
@@ -666,6 +674,230 @@ mod tests {
             methods.len(),
             original_len,
             "duplicate RPC methods found in registry"
+        );
+    }
+
+    // --- validate_params edge cases -----------------------------------------
+
+    #[test]
+    fn validate_params_accepts_missing_optional_param() {
+        let s = schema(
+            "test",
+            "fn",
+            vec![FieldSchema {
+                name: "filter",
+                ty: TypeSchema::String,
+                comment: "optional filter",
+                required: false,
+            }],
+        );
+        assert!(validate_params(&s, &Map::new()).is_ok());
+    }
+
+    #[test]
+    fn validate_params_accepts_optional_param_when_present() {
+        let s = schema(
+            "test",
+            "fn",
+            vec![FieldSchema {
+                name: "filter",
+                ty: TypeSchema::String,
+                comment: "",
+                required: false,
+            }],
+        );
+        let mut p = Map::new();
+        p.insert("filter".into(), Value::String("abc".into()));
+        assert!(validate_params(&s, &p).is_ok());
+    }
+
+    #[test]
+    fn validate_params_missing_required_error_includes_comment() {
+        // The comment text helps callers (esp. the CLI/UI) understand what
+        // the missing field is for — lock this in so error messages don't
+        // regress to bare field names.
+        let s = schema(
+            "memory",
+            "doc_put",
+            vec![FieldSchema {
+                name: "namespace",
+                ty: TypeSchema::String,
+                comment: "namespace to write into",
+                required: true,
+            }],
+        );
+        let err = validate_params(&s, &Map::new()).unwrap_err();
+        assert!(err.contains("missing required param 'namespace'"));
+        assert!(err.contains("namespace to write into"));
+    }
+
+    #[test]
+    fn validate_params_unknown_error_includes_namespace_and_function() {
+        let s = schema("billing", "top_up", vec![]);
+        let mut p = Map::new();
+        p.insert("typo".into(), Value::Null);
+        let err = validate_params(&s, &p).unwrap_err();
+        assert!(err.contains("unknown param 'typo'"));
+        assert!(err.contains("billing.top_up"));
+    }
+
+    #[test]
+    fn validate_params_reports_missing_required_before_unknown() {
+        // If a call both omits a required param AND has an unknown one,
+        // the missing-required error fires first (it's strictly more
+        // actionable for callers).
+        let s = schema(
+            "test",
+            "fn",
+            vec![FieldSchema {
+                name: "key",
+                ty: TypeSchema::String,
+                comment: "",
+                required: true,
+            }],
+        );
+        let mut p = Map::new();
+        p.insert("unknown".into(), Value::Null);
+        let err = validate_params(&s, &p).unwrap_err();
+        assert!(err.contains("missing required param 'key'"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_params_null_for_required_is_acceptable() {
+        // JSON-RPC semantics: `null` is a valid value for an optional field
+        // sent explicitly. For a required field, presence (not value) is
+        // what we check — null does satisfy the "key present" check.
+        // Handlers enforce stronger type contracts downstream.
+        let s = schema(
+            "test",
+            "fn",
+            vec![FieldSchema {
+                name: "key",
+                ty: TypeSchema::String,
+                comment: "",
+                required: true,
+            }],
+        );
+        let mut p = Map::new();
+        p.insert("key".into(), Value::Null);
+        assert!(validate_params(&s, &p).is_ok());
+    }
+
+    // --- validate_registry edge cases ---------------------------------------
+
+    #[test]
+    fn validate_registry_rejects_empty_namespace() {
+        let declared = vec![schema("", "fn", vec![])];
+        let registered = vec![RegisteredController {
+            schema: declared[0].clone(),
+            handler: noop_handler,
+        }];
+        let err = validate_registry(&registered, &declared).unwrap_err();
+        assert!(err.contains("namespace must not be empty"));
+    }
+
+    #[test]
+    fn validate_registry_rejects_empty_function() {
+        let declared = vec![schema("ns", "", vec![])];
+        let registered = vec![RegisteredController {
+            schema: declared[0].clone(),
+            handler: noop_handler,
+        }];
+        let err = validate_registry(&registered, &declared).unwrap_err();
+        assert!(err.contains("function must not be empty"));
+    }
+
+    #[test]
+    fn validate_registry_rejects_whitespace_only_namespace() {
+        // `trim().is_empty()` is the invariant — a namespace of "   " must
+        // be rejected to prevent `openhuman.   _fn` nonsense RPC method names.
+        let declared = vec![schema("   ", "fn", vec![])];
+        let registered = vec![RegisteredController {
+            schema: declared[0].clone(),
+            handler: noop_handler,
+        }];
+        let err = validate_registry(&registered, &declared).unwrap_err();
+        assert!(err.contains("namespace must not be empty"));
+    }
+
+    #[test]
+    fn validate_registry_rejects_declared_without_registered() {
+        let declared = vec![schema("a", "b", vec![])];
+        let registered: Vec<RegisteredController> = vec![];
+        let err = validate_registry(&registered, &declared).unwrap_err();
+        assert!(err.contains("declared controller `a.b` has no registered handler"));
+    }
+
+    #[test]
+    fn validate_registry_rejects_registered_without_declared() {
+        let declared: Vec<ControllerSchema> = vec![];
+        let registered = vec![RegisteredController {
+            schema: schema("a", "b", vec![]),
+            handler: noop_handler,
+        }];
+        let err = validate_registry(&registered, &declared).unwrap_err();
+        assert!(err.contains("registered controller `a.b` has no declared schema"));
+    }
+
+    #[test]
+    fn validate_registry_rejects_duplicate_registered_controllers() {
+        let s = schema("a", "b", vec![]);
+        let declared = vec![s.clone()];
+        let registered = vec![
+            RegisteredController {
+                schema: s.clone(),
+                handler: noop_handler,
+            },
+            RegisteredController {
+                schema: s,
+                handler: noop_handler,
+            },
+        ];
+        let err = validate_registry(&registered, &declared).unwrap_err();
+        assert!(err.contains("duplicate registered controller `a.b`"));
+    }
+
+    // --- try_invoke_registered_rpc routing ---------------------------------
+
+    #[tokio::test]
+    async fn try_invoke_registered_rpc_returns_none_for_unknown_method() {
+        let out =
+            try_invoke_registered_rpc("openhuman.not_a_real_method_xyz_123", Map::new()).await;
+        assert!(out.is_none(), "unknown methods must return None");
+    }
+
+    #[tokio::test]
+    async fn try_invoke_registered_rpc_returns_some_for_known_method() {
+        // `openhuman.health_snapshot` is registered at startup and takes no
+        // required params — it must route and produce Some(_).
+        let out = try_invoke_registered_rpc("openhuman.health_snapshot", Map::new()).await;
+        assert!(out.is_some(), "known method must route");
+    }
+
+    #[test]
+    fn rpc_method_name_handles_multi_underscore_function() {
+        // Functions often contain underscores — the RPC method name must
+        // preserve them verbatim, separated from the namespace with `_`.
+        let s = schema("team", "change_member_role", vec![]);
+        assert_eq!(rpc_method_name(&s), "openhuman.team_change_member_role");
+    }
+
+    #[test]
+    fn every_registered_controller_has_matching_declared_schema() {
+        // Global invariant: the registry is consistent by construction.
+        // This test re-asserts the contract to catch drift.
+        use std::collections::BTreeSet;
+        let registered: BTreeSet<String> = all_registered_controllers()
+            .into_iter()
+            .map(|c| format!("{}.{}", c.schema.namespace, c.schema.function))
+            .collect();
+        let declared: BTreeSet<String> = all_controller_schemas()
+            .into_iter()
+            .map(|s| format!("{}.{}", s.namespace, s.function))
+            .collect();
+        assert_eq!(
+            registered, declared,
+            "registry/schema sets must be identical"
         );
     }
 }
