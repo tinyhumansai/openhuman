@@ -105,9 +105,25 @@ export async function getCoreRpcUrl(): Promise<string> {
     try {
       const url = await invoke<string>('core_rpc_url');
       const trimmed = String(url || '').trim();
+      if (!trimmed) {
+        // The Tauri command succeeded but returned an empty string. That's
+        // almost certainly a shell misconfiguration — prefer the build-time
+        // default but make the fallback visible rather than silent.
+        coreRpcError('core_rpc_url returned empty; using build-time default', {
+          fallback: CORE_RPC_URL,
+        });
+      }
       resolvedCoreRpcUrl = trimmed || CORE_RPC_URL;
       return resolvedCoreRpcUrl || CORE_RPC_URL;
-    } catch {
+    } catch (err) {
+      // Silent fallback hid port-mismatch bugs in the past: the UI connected
+      // to a stale default while the real core ran on a different port, and
+      // every call failed with an obscure ECONNREFUSED. Log the underlying
+      // error so the misconfig is visible in the console.
+      coreRpcError('core_rpc_url invoke failed; using build-time default', {
+        fallback: CORE_RPC_URL,
+        error: sanitizeError(err),
+      });
       resolvedCoreRpcUrl = CORE_RPC_URL;
       return CORE_RPC_URL;
     } finally {
