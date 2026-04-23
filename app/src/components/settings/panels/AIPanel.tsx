@@ -21,15 +21,6 @@ const AIPanel = () => {
   const [error, setError] = useState<string>('');
   const [localAiStatus, setLocalAiStatus] = useState<LocalAiStatus | null>(null);
 
-  useEffect(() => {
-    loadAIPreview();
-    void loadLocalAiStatus();
-    const timer = setInterval(() => {
-      void loadLocalAiStatus();
-    }, 5000);
-    return () => clearInterval(timer);
-  }, []);
-
   const loadAIPreview = async () => {
     setLoading(true);
     setError('');
@@ -55,6 +46,15 @@ const AIPanel = () => {
       setLocalAiStatus(null);
     }
   };
+
+  useEffect(() => {
+    void loadAIPreview();
+    void loadLocalAiStatus();
+    const timer = setInterval(() => {
+      void loadLocalAiStatus();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [loadAIPreview, loadLocalAiStatus]);
 
   const refreshConfig = async (target: 'soul' | 'tools' | 'all') => {
     setRefreshingComponent(target);

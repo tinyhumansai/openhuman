@@ -398,7 +398,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
 
     const sendingThreadId = selectedThreadId;
     const userMessage: ThreadMessage = {
-      id: `msg_${Date.now()}_${Math.random()}`,
+      id: `msg_${globalThis.crypto.randomUUID()}`,
       content: trimmed,
       type: 'text',
       extraMetadata: {},
