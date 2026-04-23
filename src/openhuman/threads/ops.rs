@@ -15,6 +15,7 @@ use crate::openhuman::memory::{
     UpsertConversationThreadRequest,
 };
 use crate::openhuman::providers::{self, ProviderRuntimeOptions};
+use crate::openhuman::threads::title::collapse_whitespace;
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -154,10 +155,6 @@ fn is_auto_generated_thread_title(title: &str) -> bool {
     idx += 3;
 
     matches!(&trimmed[idx..], "AM" | "PM")
-}
-
-fn collapse_whitespace(input: &str) -> String {
-    input.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn sanitize_generated_title(raw: &str) -> Option<String> {
