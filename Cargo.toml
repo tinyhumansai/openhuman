@@ -56,6 +56,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures = "0.3"
 rusqlite = { version = "0.37", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.31"
 sqlite-vec = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 cron = "0.12"
