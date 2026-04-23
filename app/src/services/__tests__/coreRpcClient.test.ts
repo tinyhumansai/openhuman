@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { dispatchLocalAiMethod } from '../../lib/ai/localCoreAiMemory';
+import { CORE_RPC_TIMEOUT_MS } from '../../utils/config';
 import type { AccessibilityStatus, CommandResponse } from '../../utils/tauriCommands';
 import { callCoreRpc } from '../coreRpcClient';
 
@@ -290,6 +291,58 @@ describe('coreRpcClient', () => {
     await callCoreRpc({ method: 'openhuman.auth.sub.segment' });
     const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
     expect(body.method).toBe('openhuman.auth_sub_segment');
+  });
+
+  test('rejects with a timeout error when fetch does not resolve within CORE_RPC_TIMEOUT_MS', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.mocked(fetch);
+      // Simulate a hung core: the fetch never resolves, but we honor the
+      // AbortSignal so the client's timeout can tear us down.
+      fetchMock.mockImplementationOnce(
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = (init as RequestInit).signal as AbortSignal | undefined;
+            if (!signal) return;
+            const onAbort = () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            };
+            if (signal.aborted) onAbort();
+            else signal.addEventListener('abort', onAbort, { once: true });
+          })
+      );
+
+      const pending = callCoreRpc({ method: 'openhuman.threads_list' });
+      // Swallow the unhandled rejection that would otherwise be raised when
+      // advancing timers triggers the abort before the `await expect` below.
+      pending.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(CORE_RPC_TIMEOUT_MS + 1);
+
+      await expect(pending).rejects.toThrow(
+        `Core RPC openhuman.threads_list timed out after ${CORE_RPC_TIMEOUT_MS}ms`
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('does not trigger the timeout path when fetch resolves promptly', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: { ok: true } }),
+    } as Response);
+
+    const result = await callCoreRpc<{ ok: boolean }>({ method: 'openhuman.threads_list' });
+    expect(result).toEqual({ ok: true });
+
+    // Signal on the request init must be populated so the timeout path
+    // can tear down a real hung call.
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   test('sends content-type json header and POST method', async () => {

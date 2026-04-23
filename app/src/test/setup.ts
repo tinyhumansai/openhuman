@@ -72,6 +72,7 @@ vi.mock('../utils/tauriCommands', () => ({
 // Mock the config module
 vi.mock('../utils/config', () => ({
   CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
+  CORE_RPC_TIMEOUT_MS: 30_000,
   IS_DEV: true,
   IS_PROD: false,
   DEV_FORCE_ONBOARDING: false,
