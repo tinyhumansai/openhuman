@@ -53,24 +53,22 @@ This file is a quick-reference checklist: what is done, what is still needed, an
 
 ## What Is Still Needed
 
-### 1. Re-enable the Slack scanner registry (BLOCKER for automatic notifications)
+### 1. ✅ Slack scanner registry re-enabled
 
 **File:** `app/src-tauri/src/lib.rs`
 
-The scanner-driven fallback notification path is fully coded but never runs because `ScannerRegistry` is not registered in the Tauri app state. The log confirms this every time:
+This fix has already been applied in this PR. `ScannerRegistry` is now registered in the Tauri app
+state, so the scanner-driven fallback notification path is active.
 
-```
-[webview-accounts] slack ScannerRegistry not in app state
-```
-
-**Fix:** In `lib.rs`, inside `tauri::Builder::default()...manage(...)`, add:
+The following was added to `lib.rs` inside `tauri::Builder::default()...manage(...)`:
 
 ```rust
+// already applied
 .manage(Arc::new(slack_scanner::ScannerRegistry::new()))
 ```
 
-After this change:
-- The scanner will track per-channel unread counts
+With this change:
+- The scanner tracks per-channel unread counts
 - When a channel's unread count increases, the scanner synthesizes a native OS notification
 - This is the fallback path because Slack's embedded session does not call `new Notification(...)` for real incoming messages
 

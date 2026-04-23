@@ -16,7 +16,7 @@ import NotificationCard from './NotificationCard';
 
 const NotificationCenter = () => {
   const dispatch = useAppDispatch();
-  const { items, unreadCount, loading, error } = useAppSelector(s => s.integrationNotifications);
+  const { items, loading, error } = useAppSelector(s => s.integrationNotifications);
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>(undefined);
   // All providers seen across unfiltered loads — kept separate so the filter
   // pill row doesn't collapse when a provider filter is active.
@@ -63,6 +63,9 @@ const NotificationCenter = () => {
     }
   };
 
+  // Unread count scoped to the currently displayed (filtered) items.
+  const filteredUnreadCount = items.filter(n => n.status === 'unread').length;
+
   const handleMarkAllRead = async () => {
     const unreadIds = items.filter(n => n.status === 'unread').map(n => n.id);
     for (const id of unreadIds) {
@@ -81,13 +84,13 @@ const NotificationCenter = () => {
       <div className="flex items-center justify-between px-4 py-3 border-b border-stone-200">
         <div className="flex items-center gap-2">
           <h2 className="text-base font-semibold text-stone-900">Notifications</h2>
-          {unreadCount > 0 && (
+          {filteredUnreadCount > 0 && (
             <span className="px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-primary-500 text-white">
-              {unreadCount}
+              {filteredUnreadCount}
             </span>
           )}
         </div>
-        {unreadCount > 0 && (
+        {filteredUnreadCount > 0 && (
           <button
             onClick={() => {
               void handleMarkAllRead();

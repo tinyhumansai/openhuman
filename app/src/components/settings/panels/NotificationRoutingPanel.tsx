@@ -26,27 +26,28 @@ const NotificationRoutingPanel = () => {
   >({});
 
   useEffect(() => {
-    void Promise.all(
+    void Promise.allSettled(
       providers.map(async provider => {
         const s = await getNotificationSettings(provider);
         return [provider, s] as const;
       })
-    )
-      .then(rows => {
-        const next: Record<
-          string,
-          { enabled: boolean; importance_threshold: number; route_to_orchestrator: boolean }
-        > = {};
-        rows.forEach(([provider, s]) => {
+    ).then(results => {
+      const next: Record<
+        string,
+        { enabled: boolean; importance_threshold: number; route_to_orchestrator: boolean }
+      > = {};
+      results.forEach(result => {
+        if (result.status === 'fulfilled') {
+          const [provider, s] = result.value;
           next[provider] = {
             enabled: s.enabled,
             importance_threshold: s.importance_threshold,
             route_to_orchestrator: s.route_to_orchestrator,
           };
-        });
-        setSettings(next);
-      })
-      .catch(() => {});
+        }
+      });
+      setSettings(next);
+    });
   }, [providers]);
 
   const updateSetting = async (

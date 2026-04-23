@@ -133,7 +133,7 @@ Skip suites that are clearly unrelated to the diff (e.g., skip `cargo test` for 
 
 ### 7. Push back to the PR branch (REQUIRED)
 
-```
+```bash
 git push
 ```
 
@@ -235,7 +235,7 @@ Branch: <headRefName>  Base: <baseRefName>  Author: <login>
 
 ## Guardrails
 
-- **Never** push to `main`, force-push, skip hooks, amend published commits, or run destructive git commands (`reset --hard`, `clean -fd`, `checkout -- .`) without explicit user approval.
+- **Never** push to `main`, skip hooks, amend published commits, or run destructive git commands (`reset --hard`, `clean -fd`, `checkout -- .`) without explicit user approval. Force-push is only permitted as `git push --force-with-lease` after a deliberate conflict-resolution rebase (phase 2b) — never plain `--force`, never to `main`.
 - **Never** commit files that could contain secrets (`.env`, `*.key`, credentials).
 - Resolve merge conflicts by understanding both sides. **Never** discard either side's changes without asking, and never use `git rebase --skip` or `--strategy=ours/theirs` wholesale as a shortcut.
 - If the working tree is dirty at start, **stop** — don't stash.

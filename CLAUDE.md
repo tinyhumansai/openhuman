@@ -250,5 +250,5 @@ Specify → prove in Rust → prove over RPC → surface in the UI → test.
 
 - **Vendored CEF-aware `tauri-cli`**: runtime is CEF; only the vendored CLI at `app/src-tauri/vendor/tauri-cef/crates/tauri-cli` bundles Chromium into `Contents/Frameworks/`. Stock `@tauri-apps/cli` produces a broken bundle (panic in `cef::library_loader::LibraryLoader::new`). `yarn dev:app` and all `cargo tauri` scripts call `yarn tauri:ensure` which runs [`scripts/ensure-tauri-cli.sh`](scripts/ensure-tauri-cli.sh). If overwritten, reinstall with `cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli`.
 - **macOS deep links**: often require a built `.app` bundle, not just `tauri dev`.
-- **`window.__TAURI__`**: not present at module load; guard Tauri usage.
+- **Tauri environment guard**: use `isTauri()` (from `app/src/services/webviewAccountService.ts`) or wrap `invoke(...)` in `try/catch`; do not check `window.__TAURI__` directly — it is not present at module load and bypasses the established wrapper contract.
 - **Core sidecar**: must be staged so `core_rpc` can reach the `openhuman` binary (see `scripts/stage-core-sidecar.mjs`).

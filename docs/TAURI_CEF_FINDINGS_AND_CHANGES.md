@@ -12,9 +12,9 @@ This note summarizes:
 
 Relevant codebases:
 
-- `/Users/megamind/tinyhuman/tauri-cef`
-- `/Users/megamind/tinyhuman/openhuman-cursor`
-- vendored submodule: `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-cef`
+- `(external clone, not in this repo)` — standalone `tauri-cef` repo
+- `.` (repo root)
+- vendored submodule: `app/src-tauri/vendor/tauri-cef`
 
 ## Initial Findings In `tauri-cef`
 
@@ -83,9 +83,9 @@ Renderer-side notification permission shims were added to `tauri-runtime-cef` so
 
 Files involved:
 
-- `/Users/megamind/tinyhuman/tauri-cef/crates/tauri-runtime-cef/src/notification.rs`
-- `/Users/megamind/tinyhuman/tauri-cef/crates/tauri-runtime-cef/src/cef_impl.rs`
-- `/Users/megamind/tinyhuman/tauri-cef/crates/tauri-runtime-cef/src/lib.rs`
+- `(external tauri-cef repo)/crates/tauri-runtime-cef/src/notification.rs`
+- `(external tauri-cef repo)/crates/tauri-runtime-cef/src/cef_impl.rs`
+- `(external tauri-cef repo)/crates/tauri-runtime-cef/src/lib.rs`
 
 Behavior provided by the shim:
 
@@ -106,7 +106,7 @@ The runtime app path now installs the render process handler needed for the noti
 
 In the vendored `tauri-cef` inside `openhuman-cursor`, an additional lifecycle cleanup was added:
 
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-cef/crates/tauri-runtime-cef/src/cef_impl.rs`
+- `app/src-tauri/vendor/tauri-cef/crates/tauri-runtime-cef/src/cef_impl.rs`
 
 Added on browser close:
 
@@ -134,7 +134,7 @@ The `openhuman-cursor` vendored submodule was then updated to the corresponding 
 
 File:
 
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/src/notification_settings/mod.rs`
+- `app/src-tauri/src/notification_settings/mod.rs`
 
 Change:
 
@@ -150,7 +150,7 @@ This ensures notifications are not disabled by default at the app layer.
 
 File:
 
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/src/webview_accounts/mod.rs`
+- `app/src-tauri/src/webview_accounts/mod.rs`
 
 Environment flag added:
 
@@ -175,16 +175,16 @@ To stop `window.Notification` from being overwritten inside external webviews, `
 
 New vendored path:
 
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-plugin-notification`
+- `app/src-tauri/vendor/tauri-plugin-notification`
 
 Two changes were made:
 
 1. The plugin dependency in:
-   - `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/Cargo.toml`
+   - `app/src-tauri/Cargo.toml`
    now points to the vendored path.
 
 2. The plugin init function in:
-   - `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-plugin-notification/src/lib.rs`
+   - `app/src-tauri/vendor/tauri-plugin-notification/src/lib.rs`
    no longer calls:
 
 ```rust
@@ -203,7 +203,7 @@ The result is:
 
 ### Build verification
 
-In `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri`:
+In `app/src-tauri`:
 
 - `cargo fmt` passed
 - `cargo check --features cef` passed for the main notification changes
@@ -278,7 +278,7 @@ That turned out to be a packaging issue:
 
 To prevent this from recurring, the local CLI bootstrap script was updated:
 
-- `/Users/megamind/tinyhuman/openhuman-cursor/scripts/ensure-tauri-cli.sh`
+- `scripts/ensure-tauri-cli.sh`
 
 It now reinstalls vendored `cargo-tauri` when vendored `tauri-cef` sources are newer than the installed CLI binary.
 
@@ -286,11 +286,11 @@ It now reinstalls vendored `cargo-tauri` when vendored `tauri-cef` sources are n
 
 An important debugging detail was that the actual live renderer helper on macOS was using:
 
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-cef/cef-helper/src/notification.rs`
+- `app/src-tauri/vendor/tauri-cef/cef-helper/src/notification.rs`
 
 and not only the runtime-side notification file in:
 
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-cef/crates/tauri-runtime-cef/src/notification.rs`
+- `app/src-tauri/vendor/tauri-cef/crates/tauri-runtime-cef/src/notification.rs`
 
 So the helper-side shim was instrumented directly with:
 
@@ -356,7 +356,7 @@ Once the manual helper path reached the app, native notification delivery initia
 
 The panic came from using `tokio::task::spawn_blocking(...)` from a CEF callback thread in:
 
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/src/webview_accounts/mod.rs`
+- `app/src-tauri/src/webview_accounts/mod.rs`
 
 Fix applied:
 
@@ -405,8 +405,8 @@ Current safe state:
 
 Because Slack’s own incoming-message path was not invoking browser notification APIs, a fallback path was added to the Slack scanner:
 
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/src/slack_scanner/mod.rs`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/src/webview_accounts/mod.rs`
+- `app/src-tauri/src/slack_scanner/mod.rs`
+- `app/src-tauri/src/webview_accounts/mod.rs`
 
 The scanner logic was updated to:
 
@@ -422,7 +422,7 @@ Observed log:
 
 So the scanner-based fallback is patched in code, but it still needs the app builder to manage `slack_scanner::ScannerRegistry::new()` in:
 
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/src/lib.rs`
+- `app/src-tauri/src/lib.rs`
 
 ## Current Outcome
 
@@ -470,33 +470,33 @@ Still not working automatically:
 
 ### In `tauri-cef`
 
-- `/Users/megamind/tinyhuman/tauri-cef/crates/tauri-runtime-cef/src/notification.rs`
-- `/Users/megamind/tinyhuman/tauri-cef/crates/tauri-runtime-cef/src/cef_impl.rs`
-- `/Users/megamind/tinyhuman/tauri-cef/crates/tauri-runtime-cef/src/lib.rs`
-- `/Users/megamind/tinyhuman/tauri-cef/CEF_NOTIFICATION_PERMISSION_CHANGES.md`
+- `(external tauri-cef repo)/crates/tauri-runtime-cef/src/notification.rs`
+- `(external tauri-cef repo)/crates/tauri-runtime-cef/src/cef_impl.rs`
+- `(external tauri-cef repo)/crates/tauri-runtime-cef/src/lib.rs`
+- `(external tauri-cef repo)/CEF_NOTIFICATION_PERMISSION_CHANGES.md`
 
 ### In `openhuman-cursor`
 
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/src/notification_settings/mod.rs`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/src/webview_accounts/mod.rs`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/src/slack_scanner/mod.rs`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/src/lib.rs`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/Cargo.toml`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-plugin-notification/Cargo.toml`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-plugin-notification/src/lib.rs`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-cef/crates/tauri-runtime-cef/src/cef_impl.rs`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-cef/crates/tauri-runtime-cef/src/notification.rs`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-cef/crates/tauri-runtime-cef/src/lib.rs`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-cef/cef-helper/src/notification.rs`
-- `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/vendor/tauri-cef/cef-helper/src/main.rs`
-- `/Users/megamind/tinyhuman/openhuman-cursor/scripts/ensure-tauri-cli.sh`
+- `app/src-tauri/src/notification_settings/mod.rs`
+- `app/src-tauri/src/webview_accounts/mod.rs`
+- `app/src-tauri/src/slack_scanner/mod.rs`
+- `app/src-tauri/src/lib.rs`
+- `app/src-tauri/Cargo.toml`
+- `app/src-tauri/vendor/tauri-plugin-notification/Cargo.toml`
+- `app/src-tauri/vendor/tauri-plugin-notification/src/lib.rs`
+- `app/src-tauri/vendor/tauri-cef/crates/tauri-runtime-cef/src/cef_impl.rs`
+- `app/src-tauri/vendor/tauri-cef/crates/tauri-runtime-cef/src/notification.rs`
+- `app/src-tauri/vendor/tauri-cef/crates/tauri-runtime-cef/src/lib.rs`
+- `app/src-tauri/vendor/tauri-cef/cef-helper/src/notification.rs`
+- `app/src-tauri/vendor/tauri-cef/cef-helper/src/main.rs`
+- `scripts/ensure-tauri-cli.sh`
 
 ## Suggested Follow-Up
 
 Recommended next functional fix:
 
 1. Re-enable `slack_scanner::ScannerRegistry::new()` in:
-   - `/Users/megamind/tinyhuman/openhuman-cursor/app/src-tauri/src/lib.rs`
+   - `app/src-tauri/src/lib.rs`
 2. Rebuild and verify unread-delta notifications from the scanner fallback path.
 
 Secondary cleanup work:

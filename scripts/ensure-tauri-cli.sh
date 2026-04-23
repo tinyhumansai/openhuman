@@ -49,7 +49,7 @@ if [[ -f "$CRATES_TOML" ]] && grep -q "tauri-cli.*$VENDOR_CLI" "$CRATES_TOML" 2>
       exit 0
     fi
   else
-    exit 0
+    echo "[ensure-tauri-cli] cargo-tauri binary missing; reinstalling"
   fi
 fi
 

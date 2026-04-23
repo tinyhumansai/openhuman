@@ -46,7 +46,12 @@ const NotificationsPanel = () => {
   const handleDndToggle = async () => {
     const next = !dnd;
     setDnd(next);
-    await setGlobalDnd(next);
+    try {
+      await setGlobalDnd(next);
+    } catch {
+      // Roll back optimistic UI update on failure.
+      setDnd(!next);
+    }
   };
 
   return (
@@ -80,7 +85,7 @@ const NotificationsPanel = () => {
                     onClick={() => {
                       void handleDndToggle();
                     }}
-                    className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 ${
                       dnd ? 'bg-primary-500' : 'bg-stone-400'
                     }`}
                     role="switch"
@@ -115,7 +120,7 @@ const NotificationsPanel = () => {
                     </div>
                     <button
                       onClick={() => handleToggle(cat.id)}
-                      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 ${
                         enabled ? 'bg-primary-500' : 'bg-stone-400'
                       }`}
                       role="switch"
