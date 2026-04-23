@@ -46,7 +46,6 @@ export function useRegisterAction(action: Action): void {
       disposeRegistry();
       if (bindingSym) hotkeyManager.unbind(frame, bindingSym);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     action.id,
     action.shortcut,
