@@ -164,8 +164,7 @@ async fn gmail_trigger_flows_into_personal_index() {
                 "expected ts normalised from millis to seconds: {hit}"
             );
             // Confirm the underlying item row is keyed by messageId.
-            let stats_env =
-                post_rpc(&base, "openhuman.life_capture_get_stats", json!({})).await;
+            let stats_env = post_rpc(&base, "openhuman.life_capture_get_stats", json!({})).await;
             let stats = stats_env
                 .pointer("/result")
                 .unwrap_or_else(|| panic!("missing stats /result: {stats_env}"));
@@ -188,8 +187,7 @@ async fn gmail_trigger_flows_into_personal_index() {
                 }),
             });
             tokio::time::sleep(Duration::from_millis(400)).await;
-            let stats2_env =
-                post_rpc(&base, "openhuman.life_capture_get_stats", json!({})).await;
+            let stats2_env = post_rpc(&base, "openhuman.life_capture_get_stats", json!({})).await;
             let stats2 = stats2_env.pointer("/result").unwrap();
             assert_eq!(
                 stats2["total_items"], stats["total_items"],
@@ -202,9 +200,7 @@ async fn gmail_trigger_flows_into_personal_index() {
         }
 
         if attempts >= 30 {
-            panic!(
-                "gmail trigger never produced a PersonalIndex hit after {attempts} attempts"
-            );
+            panic!("gmail trigger never produced a PersonalIndex hit after {attempts} attempts");
         }
     }
 }

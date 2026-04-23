@@ -153,11 +153,7 @@ impl<'a> HandleResolver<'a> {
                 Ok(pid) => {
                     // link all additional handles as aliases
                     for alias in handles.into_iter().skip(1) {
-                        if let Err(e) = self
-                            .store
-                            .add_alias(pid, alias.canonicalize())
-                            .await
-                        {
+                        if let Err(e) = self.store.add_alias(pid, alias.canonicalize()).await {
                             tracing::warn!(
                                 "[people::resolver] seed_from_address_book: add_alias failed: {e}"
                             );
@@ -303,7 +299,10 @@ mod tests {
 
         // Store must still be empty — no partial writes.
         let people = s.list().await.unwrap();
-        assert!(people.is_empty(), "no people should be inserted on permission denied");
+        assert!(
+            people.is_empty(),
+            "no people should be inserted on permission denied"
+        );
     }
 
     #[tokio::test]

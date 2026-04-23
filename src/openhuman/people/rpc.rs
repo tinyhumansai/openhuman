@@ -84,9 +84,7 @@ pub async fn handle_resolve(
 ///
 /// Returns counts of seeded and skipped contacts, plus a `permission_denied`
 /// flag so callers can surface an actionable message to the user.
-pub async fn handle_refresh_address_book(
-    store: &PeopleStore,
-) -> Result<RpcOutcome<Value>, String> {
+pub async fn handle_refresh_address_book(store: &PeopleStore) -> Result<RpcOutcome<Value>, String> {
     let resolver = HandleResolver::new(store);
     let source = SystemContactsSource;
     match resolver.seed_from_address_book(&source).await {
@@ -104,9 +102,7 @@ pub async fn handle_refresh_address_book(
             ))
         }
         Err(AddressBookError::PermissionDenied) => {
-            tracing::warn!(
-                "[people::rpc] refresh_address_book: contacts permission denied"
-            );
+            tracing::warn!("[people::rpc] refresh_address_book: contacts permission denied");
             Ok(RpcOutcome::new(
                 json!({
                     "seeded": 0,

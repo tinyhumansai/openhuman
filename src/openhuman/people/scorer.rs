@@ -49,8 +49,7 @@ pub fn score(interactions: &[Interaction], now: DateTime<Utc>) -> ScoreComponent
     // Frequency: count within the rolling window, saturated at FREQUENCY_CAP.
     // Using a window (rather than total-ever) prevents an old burst of
     // messages from inflating the score of a now-silent contact.
-    let window_cutoff = now
-        - chrono::Duration::days(FREQUENCY_WINDOW_DAYS as i64);
+    let window_cutoff = now - chrono::Duration::days(FREQUENCY_WINDOW_DAYS as i64);
     let window_count = interactions
         .iter()
         .filter(|i| i.ts >= window_cutoff)
