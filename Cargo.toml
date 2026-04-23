@@ -56,6 +56,9 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures = "0.3"
 rusqlite = { version = "0.37", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.31"
+sqlite-vec = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 cron = "0.12"
 futures-util = "0.3"
@@ -122,12 +125,19 @@ wa-rs-tokio-transport = { version = "0.2", optional = true, default-features = f
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }
+# Contacts framework bindings for address book seeding (A5).
+# Version matched to objc2-event-kit = "0.3.2" used by A7.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSError", "NSObject", "NSString", "NSPredicate"] }
+objc2-contacts = { version = "0.3.2", features = ["CNContact", "CNContactFetchRequest", "CNContactStore", "CNLabeledValue", "CNPhoneNumber"] }
+block2 = "0.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = { version = "0.4", optional = true }
 rppal = { version = "0.22", optional = true }
 
 [dev-dependencies]
+httpmock = "0.7"
 
 [features]
 sandbox-landlock = ["dep:landlock"]

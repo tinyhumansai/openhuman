@@ -409,6 +409,10 @@ impl AgentBuilder {
             // `omit_profile = false` through the builder.
             omit_profile: self.omit_profile.unwrap_or(true),
             omit_memory_md: self.omit_memory_md.unwrap_or(true),
+            // Populated on the first turn — see `ensure_curated_snapshot`
+            // in `turn.rs`. The builder is sync; taking the snapshot here
+            // would require blocking on a tokio task.
+            curated_snapshot: None,
             payload_summarizer: self.payload_summarizer,
         })
     }

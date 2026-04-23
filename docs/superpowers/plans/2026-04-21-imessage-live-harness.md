@@ -56,7 +56,16 @@ Prod path wraps: `HttpDeps { base_url }` implements `TickDeps` with existing JSO
 - [ ] Step 3: Move tick body 129-209 into `run_single_tick`. Green.
 - [ ] Step 4: Write `HttpDeps` wrapping existing gate+ingest fns. Use in `run_scanner`.
 - [ ] Step 5: Existing 9 unit tests + 2 ignored still green.
-- [ ] Step 6: Write ignored live-sidecar test. Needs sidecar binary staged; use `cargo build --bin openhuman` at root first.
+- [x] Step 6: Ingest bridge + ignored e2e test. Scanner now POSTs to
+      `openhuman.life_capture_ingest` (bridging into `PersonalIndex` via
+      `IndexWriter::upsert` — idempotent by `(source, external_id)`) instead
+      of `openhuman.memory_doc_ingest`. Verification surface is
+      `openhuman.life_capture_search`, not a raw `memory.db` query. Test at
+      `tests/imessage_ingest_e2e.rs` boots `build_core_http_router` in-process
+      with a deterministic embedder and asserts: (a) first ingest inserts,
+      (b) search surfaces the item with `source=="imessage"`, (c) re-ingest
+      with same external_id sets `replaced=true` and leaves
+      `get_stats.total_items` unchanged (process-once guarantee).
 - [ ] Step 7: Update `docs/superpowers/runbooks/imessage-verification.md` with harness commands.
 - [ ] Step 8: Run `cargo check` + `cargo fmt` in app/src-tauri.
 

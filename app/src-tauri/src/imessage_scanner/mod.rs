@@ -410,23 +410,26 @@ async fn ingest_group(account_id: &str, key: &str, transcript: String) -> anyhow
     let url = std::env::var("OPENHUMAN_CORE_RPC_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".into());
 
+    // Use anchor timestamp = start of the chat-day in UTC so re-ingests for the
+    // same day map to a stable `ts` field. Scanner's cursor + PersonalIndex's
+    // upsert-by-(source, external_id) together guarantee no duplicates.
+    let ts = parse_day_to_unix(day).unwrap_or_else(|| chrono::Utc::now().timestamp());
+
     let body = json!({
         "jsonrpc": "2.0",
         "id": 1,
-        "method": "openhuman.memory_doc_ingest",
+        "method": "openhuman.life_capture_ingest",
         "params": {
-            "namespace": format!("imessage:{}", account_id),
-            "key": key,
-            "title": format!("Messages — {} — {}", chat_id, day),
-            "content": transcript,
-            "source_type": "imessage",
-            "tags": ["chat", "imessage"],
+            "source": "imessage",
+            "external_id": key,
+            "ts": ts,
+            "subject": format!("Messages — {} — {}", chat_id, day),
+            "text": transcript,
             "metadata": {
                 "chat_identifier": chat_id,
                 "day": day,
-                "source": "imessage"
-            },
-            "category": "chat"
+                "account_id": account_id
+            }
         }
     });
 
@@ -436,8 +439,16 @@ async fn ingest_group(account_id: &str, key: &str, transcript: String) -> anyhow
         anyhow::bail!("core rpc {}: {}", res.status(), res.text().await?);
     }
 
-    log::info!("[imessage] memory upsert ok key={}", key);
+    log::info!("[imessage] life_capture ingest ok key={}", key);
     Ok(())
+}
+
+/// Parse a "YYYY-MM-DD" day string to a unix-seconds timestamp at 00:00 UTC.
+/// Returns None for malformed input; caller falls back to wall-clock time.
+#[cfg(target_os = "macos")]
+fn parse_day_to_unix(day: &str) -> Option<i64> {
+    let d = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()?;
+    Some(d.and_hms_opt(0, 0, 0)?.and_utc().timestamp())
 }
 
 // Non-macOS stub so the rest of the app compiles unchanged.

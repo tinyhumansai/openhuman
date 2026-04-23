@@ -530,6 +530,7 @@ async fn run_typed_mode(
         connected_identities_md: crate::openhuman::agent::prompts::render_connected_identities(),
         include_profile: !definition.omit_profile,
         include_memory_md: !definition.omit_memory_md,
+        curated_snapshot: parent.curated_snapshot.as_deref(),
     };
 
     let system_prompt = match &definition.system_prompt {
@@ -1376,6 +1377,7 @@ mod tests {
             tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
             session_key: "0_test".into(),
             session_parent_prefix: None,
+            curated_snapshot: None,
         }
     }
 
