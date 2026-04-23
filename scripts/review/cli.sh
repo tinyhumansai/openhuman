@@ -11,10 +11,14 @@ Usage: yarn review <command> <pr-number> [args]
 
 Commands:
   sync    <pr>                            Check out PR as pr/<num>, merge main, wire remotes
-  review  <pr> [--executor-llm <tool>]    Sync + pr-reviewer agent (review, comment, approve)
+  review  <pr> [--executor-llm <tool>] [extra-prompt]
+                                          Sync + pr-reviewer agent (review, comment, approve)
                                           Default executor: claude
-  fix     <pr> [--executor-llm <tool>]    Sync + pr-reviewer (apply fixes) + pr-manager-lite (push)
+                                          Trailing extra-prompt is appended to the executor prompt.
+  fix     <pr> [--executor-llm <tool>] [extra-prompt]
+                                          Sync + pr-reviewer (apply fixes) + pr-manager-lite (push)
                                           Default executor: claude
+                                          Trailing extra-prompt is appended to the executor prompt.
   merge   <pr> [--squash|--merge|--rebase] [--dry-run] [--force] [--admin|--auto] [--summary-llm <tool>]
                                           Merge via gh (default --squash, deletes branch).
                                           Requires reviewDecision=APPROVED and green required checks

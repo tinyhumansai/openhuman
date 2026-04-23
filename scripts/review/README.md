@@ -13,7 +13,9 @@ integration needed.
 ## LLM flags
 
 - `review` / `fix`: `--executor-llm <tool>` (default `claude`). Picks the CLI that
-  drives the agent prompt.
+  drives the agent prompt. An optional trailing positional `<extra-prompt>` is
+  appended verbatim to the executor's prompt (e.g.
+  `yarn review fix 123 "focus on the retry logic"`).
 - `merge`: `--summary-llm <tool>` (default `gemini`). The LLM that condenses the PR
   body + commit messages into a concise squash commit body. Use `--summary-llm none`
   to skip summarization and keep the raw PR body.
