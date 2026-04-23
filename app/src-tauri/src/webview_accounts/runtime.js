@@ -149,31 +149,82 @@
       : navigator.mediaDevices.getDisplayMedia
     ).bind(navigator.mediaDevices);
 
+    // Fire-and-forget session cleanup. Swallows errors because finalize
+    // is a no-op on the host side for unknown/expired tokens and we don't
+    // want a late IPC failure to leak into the getDisplayMedia rejection.
+    function finalizeSessionQuiet(token, pickedId) {
+      if (!token) return Promise.resolve();
+      return rawInvoke('screen_share_finalize_session', {
+        args: { token: token, pickedId: pickedId || null },
+      }).catch(function () {});
+    }
+
     const shim = async function (constraints) {
       constraints = constraints || {};
+      // User-activation gate (#812). `navigator.userActivation.isActive`
+      // is transient — true only during the direct call stack of a real
+      // gesture handler (click, key, touch). Third-party JS calling
+      // getDisplayMedia from a timer or async continuation gets filtered
+      // here, so our downstream commands (begin_session etc.) never open
+      // a session without a gesture. Fall through to the original
+      // implementation rather than throw so pages with legitimate
+      // non-gesture flows (rare but possible) aren't hard-blocked.
+      const hasActivation = !!(
+        typeof navigator !== 'undefined' &&
+        navigator.userActivation &&
+        navigator.userActivation.isActive
+      );
       send('log', {
         level: 'info',
-        msg: '[gdm-shim] getDisplayMedia intercepted audio=' + !!constraints.audio,
+        msg:
+          '[gdm-shim] getDisplayMedia intercepted audio=' +
+          !!constraints.audio +
+          ' activation=' +
+          hasActivation,
       });
-
-      let sources;
-      try {
-        sources = await rawInvoke('screen_share_list_sources', {});
-      } catch (e) {
+      if (!hasActivation) {
         send('log', {
-          level: 'error',
-          msg: '[gdm-shim] list_sources IPC failed: ' + (e && e.message ? e.message : String(e)),
+          level: 'warn',
+          msg: '[gdm-shim] no user activation, falling through to native getDisplayMedia',
         });
         return origGetDisplayMedia(constraints);
       }
-      if (!Array.isArray(sources) || sources.length === 0) {
+
+      let session;
+      try {
+        session = await rawInvoke('screen_share_begin_session', {
+          args: {
+            accountId: ctx.accountId,
+            origin: (typeof location !== 'undefined' && location.origin) || 'unknown',
+            hasUserActivation: hasActivation,
+          },
+        });
+      } catch (e) {
+        send('log', {
+          level: 'error',
+          msg: '[gdm-shim] begin_session IPC failed: ' + (e && e.message ? e.message : String(e)),
+        });
+        return origGetDisplayMedia(constraints);
+      }
+      if (!session || typeof session.token !== 'string' || !Array.isArray(session.sources)) {
+        send('log', {
+          level: 'warn',
+          msg: '[gdm-shim] begin_session returned malformed payload, falling back',
+        });
+        return origGetDisplayMedia(constraints);
+      }
+      const sessionToken = session.token;
+      const sources = session.sources;
+      if (sources.length === 0) {
         send('log', { level: 'warn', msg: '[gdm-shim] no sources enumerated, falling back' });
+        await finalizeSessionQuiet(sessionToken, null);
         return origGetDisplayMedia(constraints);
       }
 
-      const pick = await showInPagePicker(sources);
+      const pick = await showInPagePicker(sources, sessionToken);
       if (!pick) {
         send('log', { level: 'info', msg: '[gdm-shim] user cancelled picker' });
+        await finalizeSessionQuiet(sessionToken, null);
         // Meet (and other video-conf sites) treat `NotAllowedError` on
         // getDisplayMedia as "the browser blocked us" and pop a
         // "needs permission" modal. Real Chrome ALSO throws
@@ -185,6 +236,11 @@
         // included) dismiss it silently.
         throw new DOMException('User cancelled screen share picker', 'AbortError');
       }
+      // Finalize the session BEFORE getUserMedia: the Chromium capture
+      // path doesn't need the token, and leaving the session open past
+      // this point would just hold the `active` slot for the account
+      // until the 30s TTL fires.
+      await finalizeSessionQuiet(sessionToken, pick.id);
       send('log', {
         level: 'info',
         msg: '[gdm-shim] picked id=' + pick.id + ' kind=' + pick.kind,
@@ -273,7 +329,7 @@
     // UI) without any native-view gymnastics. All nodes are namespaced
     // under `__ohsp_*` class/ID prefixes and attached to a closed shadow
     // root where possible to avoid colliding with the host page's CSS.
-    function showInPagePicker(sources) {
+    function showInPagePicker(sources, sessionToken) {
       return new Promise(function (resolveOuter, rejectOuter) {
         function host() { return (document.body || document.documentElement); }
         if (!host()) {
@@ -283,7 +339,7 @@
           document.addEventListener(
             'DOMContentLoaded',
             function () {
-              showInPagePicker(sources).then(resolveOuter, rejectOuter);
+              showInPagePicker(sources, sessionToken).then(resolveOuter, rejectOuter);
             },
             { once: true }
           );
@@ -490,7 +546,7 @@
                 src.__thumbnailPromise.then(paintThumb, function () {});
               } else {
                 src.__thumbnailPromise = rawInvoke('screen_share_thumbnail', {
-                  args: { id: src.id },
+                  args: { token: sessionToken, id: src.id },
                 }).then(
                   function (b64) {
                     if (b64 && typeof b64 === 'string') {
@@ -629,7 +685,19 @@
           ? permDescriptor.value
           : navigator.permissions.query
         ).bind(navigator.permissions);
-        const spoofed = { 'display-capture': 'granted' };
+        // CEF Alloy's Permissions API doesn't reflect what our
+        // OnRequestMediaAccessPermission callback will grant dynamically,
+        // so it defaults to 'prompt' or 'denied' for the media permissions
+        // we do handle. Pages that consult the Permissions API up front
+        // (Meet for display-capture; some flows for camera/microphone)
+        // refuse to try the actual getUserMedia call if they see 'denied'
+        // here. Spoof all three to 'granted'; the real grant still goes
+        // through our CEF permission handler where it's scoped per-call.
+        const spoofed = {
+          'display-capture': 'granted',
+          camera: 'granted',
+          microphone: 'granted',
+        };
         const spoofedQuery = async function (descriptor) {
           const n = descriptor && descriptor.name;
           if (n && spoofed[n]) {
