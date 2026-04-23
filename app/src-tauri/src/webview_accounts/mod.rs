@@ -415,19 +415,6 @@ fn forward_native_notification<R: Runtime>(
         return;
     }
 
-    let mut builder = app.notification().builder().title(&notify_title);
-    if !body.is_empty() {
-        builder = builder.body(body);
-    }
-    if let Err(e) = builder.show() {
-        log::warn!(
-            "[notify-cef][{}] notification show failed: {}",
-            account_id,
-            e
-        );
-        return;
-    }
-
     // Fire the OS toast and wire a click callback that emits `notification:click`
     // so the frontend can bring the originating account into focus.
     //
