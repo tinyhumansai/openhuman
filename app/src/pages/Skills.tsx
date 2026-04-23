@@ -122,15 +122,22 @@ function composioStatusColor(connection: ComposioConnection | undefined): string
 
 // ─── Built-in skill definitions ────────────────────────────────────────────────
 
-const BUILT_IN_SKILLS = [
-  {
-    id: 'screen-intelligence',
-    title: 'Screen Intelligence',
-    description:
-      'Capture windows, summarize what is on screen, and feed useful context into memory.',
-    route: '/settings/screen-intelligence',
-    icon: BUILT_IN_SKILL_ICONS.screenIntelligence,
-  },
+const BUILT_IN_SKILLS: Array<{
+  id: string;
+  title: string;
+  description: string;
+  route: string;
+  icon: React.ReactNode;
+}> = [
+  // Hidden — not active yet. Uncomment to re-enable.
+  // {
+  //   id: 'screen-intelligence',
+  //   title: 'Screen Intelligence',
+  //   description:
+  //     'Capture windows, summarize what is on screen, and feed useful context into memory.',
+  //   route: '/settings/screen-intelligence',
+  //   icon: BUILT_IN_SKILL_ICONS.screenIntelligence,
+  // },
   // text-autocomplete + voice-stt hidden per #717 (modals/status hooks retained for re-enable).
 ];
 
