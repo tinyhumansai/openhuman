@@ -33,28 +33,19 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+          cache: true
+
       - name: Setup Node.js 24.x
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: "pnpm"
-
-      - name: Install pnpm
-        run: npm install -g pnpm
-
-      - name: Cache node modules
-        id: pnpm-cache
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-test-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-test-
-            ${{ runner.os }}-build-
 
       - name: Install dependencies
-        if: steps.pnpm-cache.outputs.cache-hit != 'true'
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Run tests with coverage
         run: pnpm test:coverage
@@ -190,7 +181,7 @@ jobs:
   #       run: cargo install tauri-driver --version 2.0.5
 
   #     - name: Install JS dependencies
-  #       run: pnpm install --frozen-lockfile
+  #       run: pnpm install --no-frozen-lockfile
 
   #     - name: Ensure .env exists for E2E build
   #       run: |

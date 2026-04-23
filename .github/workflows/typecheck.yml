@@ -23,14 +23,14 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Install pnpm
+        run: npm install -g pnpm
+
       - name: Setup Node.js 24.x
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
           cache: "pnpm"
-
-      - name: Install pnpm
-        run: npm install -g pnpm
 
       - name: Cache node modules
         id: pnpm-cache
