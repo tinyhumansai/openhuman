@@ -37,24 +37,24 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: "yarn"
+          cache: "pnpm"
 
       - name: Cache node modules
-        id: yarn-cache
+        id: pnpm-cache
         uses: actions/cache@v4
         with:
           path: node_modules
-          key: ${{ runner.os }}-test-${{ hashFiles('**/yarn.lock') }}
+          key: ${{ runner.os }}-test-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-test-
             ${{ runner.os }}-build-
 
       - name: Install dependencies
-        if: steps.yarn-cache.outputs.cache-hit != 'true'
-        run: yarn install --frozen-lockfile
+        if: steps.pnpm-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
 
       - name: Run tests with coverage
-        run: yarn test:coverage
+        run: pnpm test:coverage
         env:
           NODE_ENV: test
 
@@ -151,7 +151,7 @@ jobs:
   #       uses: actions/setup-node@v4
   #       with:
   #         node-version: 24.x
-  #         cache: "yarn"
+  #         cache: "pnpm"
 
   #     - name: Install Rust (rust-toolchain.toml)
   #       uses: dtolnay/rust-toolchain@1.93.0
@@ -187,7 +187,7 @@ jobs:
   #       run: cargo install tauri-driver --version 2.0.5
 
   #     - name: Install JS dependencies
-  #       run: yarn install --frozen-lockfile
+  #       run: pnpm install --frozen-lockfile
 
   #     - name: Ensure .env exists for E2E build
   #       run: |
@@ -195,7 +195,7 @@ jobs:
   #         touch app/.env
 
   #     - name: Build E2E app
-  #       run: yarn workspace openhuman-app test:e2e:build
+  #       run: pnpm --filter openhuman-app test:e2e:build
 
   #     - name: Stage sidecar next to app binary
   #       run: |

@@ -27,35 +27,35 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: "yarn"
+          cache: "pnpm"
 
       - name: Cache node modules
-        id: yarn-cache
+        id: pnpm-cache
         uses: actions/cache@v4
         with:
           path: node_modules
-          key: ${{ runner.os }}-typecheck-${{ hashFiles('**/yarn.lock') }}
+          key: ${{ runner.os }}-typecheck-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-typecheck-
             ${{ runner.os }}-test-
             ${{ runner.os }}-build-
 
       - name: Install dependencies
-        if: steps.yarn-cache.outputs.cache-hit != 'true'
-        run: yarn install --frozen-lockfile
+        if: steps.pnpm-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
 
       - name: Type check TypeScript files
-        run: yarn workspace openhuman-app compile
+        run: pnpm --filter openhuman-app compile
         env:
           NODE_ENV: test
 
       - name: Check Prettier formatting
-        run: yarn workspace openhuman-app format:check
+        run: pnpm --filter openhuman-app format:check
         env:
           NODE_ENV: test
 
       - name: Run ESLint
-        run: yarn workspace openhuman-app lint
+        run: pnpm --filter openhuman-app lint
         env:
           NODE_ENV: test
 
