@@ -233,7 +233,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "drill_down",
             description: "Walk a summary node's children one step (or more if \
                  `max_depth > 1`). Returns leaf chunks when the input is an L1 \
-                 summary, or lower-level summaries when the input is L2+.",
+                 summary, or lower-level summaries when the input is L2+. \
+                 When `query` is provided, children are reranked by cosine \
+                 similarity to the query embedding — useful when a summary \
+                 has many children and only the relevant ones are needed.",
             inputs: vec![
                 FieldSchema {
                     name: "node_id",
@@ -245,6 +248,20 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "max_depth",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
                     comment: "How many levels down to walk (default 1).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional free-text query; when set, children are \
+                        reranked by cosine similarity to the query embedding \
+                        and unembedded children sort to the bottom.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "limit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Optional cap on returned hits, applied after rerank.",
                     required: false,
                 },
             ],

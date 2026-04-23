@@ -114,7 +114,7 @@ async fn end_to_end_three_chat_batches() {
     );
 
     // ── drill_down on a bogus id returns empty (no error).
-    let empty_drill = drill_down(&cfg, "bogus:id", 1).await.unwrap();
+    let empty_drill = drill_down(&cfg, "bogus:id", 1, None, None).await.unwrap();
     assert!(empty_drill.is_empty());
 
     // ── fetch_leaves can hydrate by a known chunk id. Find a real chunk

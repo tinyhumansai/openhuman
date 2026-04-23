@@ -173,6 +173,15 @@ pub struct DrillDownRequest {
     pub node_id: String,
     #[serde(default)]
     pub max_depth: Option<u32>,
+    /// When set, visited children are reranked by cosine similarity between
+    /// the query embedding and each child's stored embedding. Legacy children
+    /// without an embedding sort to the bottom.
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Optional cap on the returned hit count, applied AFTER rerank so the
+    /// top-K is relevance-based when `query` is provided.
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -185,15 +194,19 @@ pub async fn drill_down_rpc(
     req: DrillDownRequest,
 ) -> Result<RpcOutcome<DrillDownResponse>, String> {
     let depth = req.max_depth.unwrap_or(1);
-    let hits = drill_down(config, &req.node_id, depth)
+    let hits = drill_down(config, &req.node_id, depth, req.query.as_deref(), req.limit)
         .await
         .map_err(|e| format!("drill_down: {e}"))?;
     let n = hits.len();
     Ok(RpcOutcome::single_log(
         DrillDownResponse { hits },
         format!(
-            "memory_tree: drill_down node_id={} depth={} n={}",
-            req.node_id, depth, n
+            "memory_tree: drill_down node_id={} depth={} query={} limit={:?} n={}",
+            req.node_id,
+            depth,
+            req.query.is_some(),
+            req.limit,
+            n
         ),
     ))
 }
