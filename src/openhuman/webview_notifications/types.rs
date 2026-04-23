@@ -27,13 +27,7 @@ pub struct WebviewNotificationEvent {
 /// v1 ships the plumbing but requires an explicit opt-in so the
 /// release doesn't suddenly start firing OS toasts for every
 /// background DM in an idle Slack tab.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 pub struct NotificationSettings {
     pub enabled: bool,
-}
-
-impl Default for NotificationSettings {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
 }
