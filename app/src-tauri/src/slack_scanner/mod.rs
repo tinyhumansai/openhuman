@@ -655,9 +655,43 @@ fn spawn_dom_poll<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix:
         let fragment = crate::cdp::target_url_fragment(&account_id);
         sleep(Duration::from_secs(8)).await;
         let mut last_hash: Option<u64> = None;
+        let mut last_unread_by_channel: Option<HashMap<String, u32>> = None;
         loop {
             match dom_scan_once(&url_prefix, &fragment).await {
                 Ok(scan) => {
+                    let current_unread_by_channel: HashMap<String, u32> = scan
+                        .rows
+                        .iter()
+                        .map(|row| (row.name.clone(), row.unread))
+                        .collect();
+                    if let Some(prev) = &last_unread_by_channel {
+                        for row in &scan.rows {
+                            let before = prev.get(&row.name).copied().unwrap_or(0);
+                            if row.unread > before && row.unread > 0 {
+                                let delta = row.unread - before;
+                                let body = if delta == 1 {
+                                    "1 new unread message".to_string()
+                                } else {
+                                    format!("{delta} new unread messages")
+                                };
+                                log::info!(
+                                    "[sl][{}] notifying channel={} unread_before={} unread_after={}",
+                                    account_id,
+                                    row.name,
+                                    before,
+                                    row.unread
+                                );
+                                crate::webview_accounts::forward_synthetic_notification(
+                                    &app,
+                                    &account_id,
+                                    "slack",
+                                    format!("#{}", row.name),
+                                    body,
+                                );
+                            }
+                        }
+                    }
+                    last_unread_by_channel = Some(current_unread_by_channel);
                     if Some(scan.hash) != last_hash {
                         log::info!(
                             "[sl][{}] dom scan rows={} unread={} hash={:x}",

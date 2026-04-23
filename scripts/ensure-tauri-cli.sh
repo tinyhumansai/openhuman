@@ -37,9 +37,20 @@ mkdir -p "$CEF_PATH"
 
 # Detect whether the currently installed cargo-tauri came from our vendored path.
 CRATES_TOML="${CARGO_HOME:-$HOME/.cargo}/.crates.toml"
+INSTALLED_CARGO_TAURI="${CARGO_HOME:-$HOME/.cargo}/bin/cargo-tauri"
 if [[ -f "$CRATES_TOML" ]] && grep -q "tauri-cli.*$VENDOR_CLI" "$CRATES_TOML" 2>/dev/null; then
-  # Already installed from this exact path. Cargo won't rebuild unless sources change.
-  exit 0
+  if [[ -x "$INSTALLED_CARGO_TAURI" ]]; then
+    # Reinstall if any vendored tauri-cef source is newer than the installed CLI.
+    # This is required because helper apps are embedded at tauri-bundler build time,
+    # so edits under vendor/tauri-cef are not picked up unless cargo-tauri itself is rebuilt.
+    if find "$ROOT_DIR/app/src-tauri/vendor/tauri-cef" -type f -newer "$INSTALLED_CARGO_TAURI" | grep -q .; then
+      echo "[ensure-tauri-cli] vendored tauri-cef changed since cargo-tauri was installed; reinstalling"
+    else
+      exit 0
+    fi
+  else
+    exit 0
+  fi
 fi
 
 echo "[ensure-tauri-cli] installing vendored CEF-aware tauri-cli from $VENDOR_CLI"

@@ -583,7 +583,7 @@ pub fn run() {
     let builder = builder.manage(std::sync::Arc::new(imessage_scanner::ScannerRegistry::new()));
     let builder = builder.manage(whatsapp_scanner::ScannerRegistry::new());
     #[cfg(feature = "cef")]
-    let builder = builder.manage(slack_scanner::ScannerRegistry::new());
+    let builder = builder.manage(std::sync::Arc::new(slack_scanner::ScannerRegistry::new()));
     #[cfg(feature = "cef")]
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
     #[cfg(feature = "cef")]

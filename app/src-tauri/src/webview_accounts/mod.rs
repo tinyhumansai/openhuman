@@ -27,7 +27,7 @@ use tauri::{
     webview::NewWindowResponse, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime,
     Url, WebviewBuilder, WebviewUrl,
 };
-#[cfg(feature = "cef")]
+#[cfg(all(feature = "cef", windows))]
 use tauri_plugin_notification::NotificationExt;
 // `ImplBrowser` exposes `Browser::identifier()` — bring the trait into scope
 // so the `with_webview` callback can read the CEF browser id.
@@ -286,6 +286,16 @@ impl From<&NotificationBypassPrefs> for NotificationBypassPrefsPayload {
 #[cfg(feature = "cef")]
 const OPENHUMAN_TITLE_PREFIX: &str = "OpenHuman: ";
 
+#[cfg(feature = "cef")]
+fn slack_scanner_enabled() -> bool {
+    std::env::var("OPENHUMAN_DISABLE_SLACK_SCANNER")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            !(v == "1" || v == "true" || v == "yes" || v == "on")
+        })
+        .unwrap_or(true)
+}
+
 /// Serialised fire-event payload shipped to the frontend over the
 /// `webview-notification:fired` Tauri event. Carries `account_id` +
 /// `provider` so the React side can route a subsequent click back to
@@ -393,10 +403,8 @@ fn forward_native_notification<R: Runtime>(
         );
     }
 
-    // Respect the Web Notification `silent` flag — the mirror event above
-    // still updates the in-app notification center, but the OS toast is
-    // suppressed so the user is not audibly/visually interrupted for
-    // notifications the page explicitly marked as silent.
+    // Respect the Web Notification `silent` flag — the in-app mirror event
+    // above still fires, but the OS toast is suppressed.
     if payload.silent {
         log::debug!(
             "[notify-cef][{}] silent=true, suppressing OS toast",
@@ -405,17 +413,141 @@ fn forward_native_notification<R: Runtime>(
         return;
     }
 
-    let mut builder = app.notification().builder().title(&notify_title);
-    if !body.is_empty() {
-        builder = builder.body(body);
+    // Fire the OS toast and wire a click callback that emits `notification:click`
+    // so the frontend can bring the originating account into focus.
+    //
+    // macOS: mac-notification-sys blocks in wait_for_click mode — run on a
+    //        blocking thread so the async executor is not stalled.
+    // Linux: notify_rust's wait_for_action hooks D-Bus action delivery.
+    // Windows: no click callback available; fall back to fire-and-forget.
+    let acct_for_click = account_id.to_string();
+    let prov_for_click = provider.to_string();
+    let app_for_click = app.clone();
+
+    #[cfg(target_os = "macos")]
+    {
+        let title_c = notify_title.clone();
+        let body_c = body.to_string();
+        let app_id = app.config().identifier.clone();
+        std::thread::spawn(move || {
+            let _ = mac_notification_sys::set_application(if tauri::is_dev() {
+                "com.apple.Terminal"
+            } else {
+                &app_id
+            });
+            use mac_notification_sys::{Notification as MacNotif, NotificationResponse};
+            let t = title_c;
+            let b = body_c;
+            let mut n = MacNotif::new();
+            n.title(&t).message(&b).wait_for_click(true);
+            match n.send() {
+                Ok(NotificationResponse::Click) | Ok(NotificationResponse::ActionButton(_)) => {
+                    log::info!(
+                        "[notify-click][{}] clicked provider={}",
+                        acct_for_click,
+                        prov_for_click
+                    );
+                    if let Err(e) = app_for_click.emit(
+                        "notification:click",
+                        serde_json::json!({
+                            "account_id": acct_for_click,
+                            "provider": prov_for_click,
+                        }),
+                    ) {
+                        log::warn!(
+                            "[notify-click][{}] emit notification:click failed: {}",
+                            acct_for_click,
+                            e
+                        );
+                    }
+                }
+                Ok(other) => {
+                    log::info!("[notify-click][{}] response={:?}", acct_for_click, other);
+                }
+                Err(e) => {
+                    log::warn!("[notify-click][{}] send error: {}", acct_for_click, e);
+                }
+            }
+        });
     }
-    if let Err(e) = builder.show() {
-        log::warn!(
-            "[notify-cef][{}] notification show failed: {}",
-            account_id,
-            e
-        );
+
+    #[cfg(target_os = "linux")]
+    {
+        let title_c = notify_title.clone();
+        let body_c = body.to_string();
+        std::thread::spawn(move || {
+            let t = title_c;
+            let b = body_c;
+            let mut n = notify_rust::Notification::new();
+            n.summary(&t).body(&b);
+            match n.show() {
+                Ok(handle) => {
+                    handle.wait_for_action(|action| {
+                        // "__closed" is the synthetic dismiss action; skip it.
+                        if action != "__closed" && !action.is_empty() {
+                            log::info!(
+                                "[notify-click][{}] action={} provider={}",
+                                acct_for_click,
+                                action,
+                                prov_for_click
+                            );
+                            if let Err(e) = app_for_click.emit(
+                                "notification:click",
+                                serde_json::json!({
+                                    "account_id": acct_for_click,
+                                    "provider": prov_for_click,
+                                }),
+                            ) {
+                                log::warn!(
+                                    "[notify-click][{}] emit notification:click failed: {}",
+                                    acct_for_click,
+                                    e
+                                );
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    log::warn!("[notify-click][{}] show failed: {}", acct_for_click, e);
+                }
+            }
+        });
     }
+
+    #[cfg(windows)]
+    {
+        let mut builder = app.notification().builder().title(&notify_title);
+        if !body.is_empty() {
+            builder = builder.body(body);
+        }
+        if let Err(e) = builder.show() {
+            log::warn!(
+                "[notify-cef][{}] notification show failed: {}",
+                account_id,
+                e
+            );
+        }
+    }
+}
+
+#[cfg(feature = "cef")]
+pub(crate) fn forward_synthetic_notification<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
+    provider: &str,
+    title: impl Into<String>,
+    body: impl Into<String>,
+) {
+    let payload = tauri_runtime_cef::notification::NotificationPayload {
+        source: tauri_runtime_cef::notification::NotificationSource::Window,
+        title: title.into(),
+        body: Some(body.into()),
+        icon: None,
+        tag: None,
+        silent: false,
+        origin: format!("synthetic://{}", provider),
+    };
+    forward_native_notification(app, account_id, provider, &payload);
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -613,12 +745,21 @@ pub async fn webview_account_open<R: Runtime>(
     // initial load.
     #[cfg(feature = "cef")]
     let scanner_url_prefix = format!("{}/", real_url.origin().ascii_serialization());
-    // Under cef we open the webview at a tiny `data:` placeholder URL so
-    // the CDP session opener can attach and apply the UA override BEFORE
-    // the real provider URL loads. Under wry there's no CDP, so navigate
-    // straight to the real URL and rely on the injected `ua_spoof.js`.
     #[cfg(feature = "cef")]
-    let initial_url_str = cdp::placeholder_data_url(&args.account_id);
+    let skip_cdp_for_debug = args.provider == "slack" && !slack_scanner_enabled();
+    // Under cef we normally open the webview at a tiny `data:` placeholder
+    // URL so the CDP session opener can attach and apply the UA override
+    // BEFORE the real provider URL loads. For Slack debug sessions we allow
+    // opting out via `OPENHUMAN_DISABLE_SLACK_SCANNER=1`, which also skips
+    // the long-lived CDP session so external DevTools can attach cleanly.
+    // Under wry there's no CDP, so navigate straight to the real URL and
+    // rely on the injected `ua_spoof.js`.
+    #[cfg(feature = "cef")]
+    let initial_url_str = if skip_cdp_for_debug {
+        real_url_str.clone()
+    } else {
+        cdp::placeholder_data_url(&args.account_id)
+    };
     #[cfg(not(feature = "cef"))]
     let initial_url_str = real_url_str.clone();
     let initial_url: Url = initial_url_str
@@ -775,10 +916,17 @@ pub async fn webview_account_open<R: Runtime>(
     // attach to a target that's been torn down).
     #[cfg(feature = "cef")]
     {
-        let handle = cdp::spawn_session(args.account_id.clone(), real_url_str.clone());
-        let mut sessions = state.cdp_sessions.lock().unwrap();
-        if let Some(old) = sessions.insert(args.account_id.clone(), handle) {
-            old.abort();
+        if skip_cdp_for_debug {
+            log::info!(
+                "[webview-accounts] skipping CDP session via OPENHUMAN_DISABLE_SLACK_SCANNER for account={}",
+                args.account_id
+            );
+        } else {
+            let handle = cdp::spawn_session(args.account_id.clone(), real_url_str.clone());
+            let mut sessions = state.cdp_sessions.lock().unwrap();
+            if let Some(old) = sessions.insert(args.account_id.clone(), handle) {
+                old.abort();
+            }
         }
     }
 
@@ -807,18 +955,25 @@ pub async fn webview_account_open<R: Runtime>(
                 log::warn!("[webview-accounts] CDP ScannerRegistry not in app state");
             }
         } else if args.provider == "slack" {
-            let registry = app
-                .try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
-                .map(|s| s.inner().clone());
-            if let Some(registry) = registry {
-                let app_clone = app.clone();
-                let acct = args.account_id.clone();
-                let prefix = scanner_url_prefix.clone();
-                tokio::spawn(async move {
-                    registry.ensure_scanner(app_clone, acct, prefix).await;
-                });
+            if slack_scanner_enabled() {
+                let registry = app
+                    .try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
+                    .map(|s| s.inner().clone());
+                if let Some(registry) = registry {
+                    let app_clone = app.clone();
+                    let acct = args.account_id.clone();
+                    let prefix = scanner_url_prefix.clone();
+                    tokio::spawn(async move {
+                        registry.ensure_scanner(app_clone, acct, prefix).await;
+                    });
+                } else {
+                    log::warn!("[webview-accounts] slack ScannerRegistry not in app state");
+                }
             } else {
-                log::warn!("[webview-accounts] slack ScannerRegistry not in app state");
+                log::info!(
+                    "[webview-accounts] slack scanner disabled via OPENHUMAN_DISABLE_SLACK_SCANNER for account={}",
+                    args.account_id
+                );
             }
         } else if args.provider == "telegram" {
             let registry = app
