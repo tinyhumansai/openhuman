@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "digitalocean": {
+      "command": "npx",
+      "args": ["-y", "@digitalocean/mcp"],
+      "env": { "DIGITALOCEAN_API_TOKEN": "${DIGITALOCEAN_API_TOKEN}" }
+    },
+    "daytona": {
+      "command": "daytona",
+      "args": ["mcp", "start"],
+      "env": { "DAYTONA_API_KEY": "${DAYTONA_API_KEY}" }
+    }
+  }
+}
