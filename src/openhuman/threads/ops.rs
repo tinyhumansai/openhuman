@@ -422,6 +422,7 @@ mod tests {
     //! provider calls — they pin the behaviour of the branches that all of
     //! the async `ops::*` entry points rely on.
     use super::*;
+    use crate::openhuman::threads::title::collapse_whitespace;
     use serde_json::{json, Value};
 
     // ── request_id ────────────────────────────────────────────────
