@@ -123,6 +123,17 @@ pub struct Agent {
     /// [`PromptContext::include_memory_md`] at prompt-build time. Same
     /// session-freeze contract as `omit_profile`.
     pub(super) omit_memory_md: bool,
+    /// Session-scoped snapshot of the curated-memory pair
+    /// (`MEMORY.md` + `USER.md`) read once from the
+    /// [`crate::openhuman::curated_memory::runtime`] singleton when the
+    /// agent is built. Forwarded into [`PromptContext::curated_snapshot`]
+    /// every turn so the rendered prompt bytes stay frozen for the
+    /// session's KV-cache prefix, while runtime writes via
+    /// `curated_memory.add/replace/remove` land on the NEXT session.
+    /// `None` when the curated-memory runtime isn't initialised (unit
+    /// tests, older embeds) — the renderer falls back to workspace files.
+    pub(super) curated_snapshot:
+        Option<std::sync::Arc<crate::openhuman::curated_memory::MemorySnapshot>>,
     /// Optional payload-summarizer wired in at agent-build time.
     /// Currently set only for the orchestrator session
     /// (see [`super::builder`]). When `Some`, oversized tool results

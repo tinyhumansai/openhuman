@@ -182,6 +182,13 @@ pub struct PromptContext<'a> {
     /// When `true`, inject `MEMORY.md` (archivist-curated long-term
     /// memory). Capped at [`USER_FILE_MAX_CHARS`] and frozen per session.
     pub include_memory_md: bool,
+    /// Session-scoped snapshot of the curated-memory pair
+    /// (`MEMORY.md` + `USER.md`). When set, [`UserFilesSection`] renders
+    /// from this snapshot instead of reading workspace files, so runtime
+    /// `curated_memory.add/replace/remove` writes are visible on the
+    /// NEXT session while the in-flight prompt bytes stay frozen (KV-
+    /// cache contract). `None` falls back to the workspace-file loader.
+    pub curated_snapshot: Option<&'a crate::openhuman::curated_memory::MemorySnapshot>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

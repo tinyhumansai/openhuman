@@ -138,6 +138,15 @@ impl Agent {
         self.session_parent_prefix.as_deref()
     }
 
+    /// Session-scoped curated-memory snapshot. `None` until the first
+    /// turn takes it, or when the curated-memory runtime isn't
+    /// initialised (unit tests).
+    pub fn curated_snapshot(
+        &self,
+    ) -> Option<std::sync::Arc<crate::openhuman::curated_memory::MemorySnapshot>> {
+        self.curated_snapshot.clone()
+    }
+
     /// Replace the agent's connected integrations (e.g. from a cached
     /// fetch result when the agent was built outside the normal turn loop).
     pub fn set_connected_integrations(
