@@ -598,7 +598,22 @@ pub fn run() {
     };
 
     let builder = builder
-        .plugin(tauri_plugin_opener::init())
+        // Explicitly disable `open_js_links_on_click`: tauri-plugin-opener
+        // defaults to injecting `init-iife.js` into *every* webview — a
+        // global click listener that invokes `plugin:opener|open_url` via
+        // HTTP-IPC. That violates our "no JS injection into CEF child
+        // webviews" rule (see CLAUDE.md) and also fails in practice
+        // because third-party origins (web.telegram.org, linkedin, …)
+        // trip Tauri's Origin header check and return 500. External link
+        // handling for `acct_*` webviews runs natively via
+        // `on_navigation` / `on_new_window` in webview_accounts/mod.rs;
+        // the main window uses `openUrl()` from `utils/openUrl.ts` when
+        // it needs to hand off a URL.
+        .plugin(
+            tauri_plugin_opener::Builder::default()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
