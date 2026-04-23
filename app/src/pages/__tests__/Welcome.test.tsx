@@ -90,6 +90,7 @@ describe('Welcome email login', () => {
 
     expect(screen.getByRole('button', { name: /sending link/i })).toBeDisabled();
     expect(screen.getByText('Sending link...')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Sending link...');
 
     deferred.resolve();
     await waitFor(() => {
@@ -108,7 +109,7 @@ describe('Welcome email login', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue with email' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Email service is down')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('Email service is down');
     });
   });
 
@@ -127,6 +128,7 @@ describe('Welcome email login', () => {
     });
 
     expect(screen.getByText('user@example.com')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Check your email');
   });
 
   it('resets the success state when using a different email', async () => {

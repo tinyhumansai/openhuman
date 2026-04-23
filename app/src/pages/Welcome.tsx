@@ -64,18 +64,28 @@ const Welcome = () => {
           </p>
 
           {errorMessage ? (
-            <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div
+              role="alert"
+              className="mb-5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {errorMessage}
             </div>
           ) : null}
 
           {isProcessing ? (
-            <div className="mb-5 flex flex-col items-center justify-center gap-3 py-2">
+            <div
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              className="mb-5 flex flex-col items-center justify-center gap-3 py-2">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-stone-300 border-t-primary-500" />
               <p className="text-sm font-medium text-stone-700">Signing you in...</p>
             </div>
           ) : isSent ? (
-            <div className="flex flex-col items-center gap-3 py-2 text-center">
+            <div
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              className="flex flex-col items-center gap-3 py-2 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary-50">
                 <svg
                   className="h-6 w-6 text-primary-500"
@@ -129,7 +139,9 @@ const Welcome = () => {
 
               <form onSubmit={handleEmailSubmit} className="space-y-3">
                 {emailError ? (
-                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  <div
+                    role="alert"
+                    className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
                     {emailError}
                   </div>
                 ) : null}
@@ -147,10 +159,10 @@ const Welcome = () => {
                   disabled={isSending || !email.trim()}
                   className="w-full py-3 bg-primary-500 hover:bg-primary-600 text-white font-medium text-sm rounded-xl transition-colors duration-200 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                   {isSending ? (
-                    <>
+                    <span role="status" aria-live="polite" aria-atomic="true" className="flex items-center justify-center gap-2">
                       <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
                       Sending link...
-                    </>
+                    </span>
                   ) : (
                     'Continue with email'
                   )}
