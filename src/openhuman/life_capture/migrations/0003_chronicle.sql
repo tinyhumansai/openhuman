@@ -15,10 +15,14 @@ CREATE TABLE IF NOT EXISTS chronicle_events (
     focused_element  TEXT,                       -- accessibility role + label, nullable
     visible_text     TEXT,                       -- PII-redacted body
     url              TEXT,                       -- only set for browser-class apps
-    created_at       INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+    -- unix MILLISECONDS (matches ts_ms). Was seconds; kept ms to avoid a unit
+    -- mismatch with ts_ms during downstream reductions.
+    created_at       INTEGER NOT NULL DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))
 );
 
-CREATE INDEX IF NOT EXISTS chronicle_events_ts_idx        ON chronicle_events(ts_ms DESC);
+-- Composite (ts_ms DESC, id DESC) matches the list_recent ORDER BY exactly so
+-- the query can walk the index without a filesort on ts_ms ties.
+CREATE INDEX IF NOT EXISTS chronicle_events_ts_id_idx     ON chronicle_events(ts_ms DESC, id DESC);
 CREATE INDEX IF NOT EXISTS chronicle_events_app_ts_idx    ON chronicle_events(focused_app, ts_ms DESC);
 
 CREATE TABLE IF NOT EXISTS chronicle_watermark (

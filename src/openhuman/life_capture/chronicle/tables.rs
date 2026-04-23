@@ -106,8 +106,11 @@ pub async fn set_watermark(idx: &PersonalIndex, source: String, ts_ms: i64) -> a
         let guard = conn.blocking_lock();
         guard
             .execute(
+                // MAX() guards against out-of-order / retry writes moving the
+                // cursor backward, which would replay already-processed rows.
                 "INSERT INTO chronicle_watermark(source, last_ts_ms) VALUES (?1, ?2) \
-                 ON CONFLICT(source) DO UPDATE SET last_ts_ms = excluded.last_ts_ms",
+                 ON CONFLICT(source) DO UPDATE SET \
+                   last_ts_ms = MAX(chronicle_watermark.last_ts_ms, excluded.last_ts_ms)",
                 params![source, ts_ms],
             )
             .context("upsert chronicle_watermark")?;
@@ -171,6 +174,31 @@ mod tests {
         assert_eq!(
             get_watermark(&idx, "focus".into()).await.unwrap(),
             Some(67890)
+        );
+    }
+
+    #[tokio::test]
+    async fn watermark_never_moves_backward() {
+        let idx = PersonalIndex::open_in_memory().await.unwrap();
+        set_watermark(&idx, "focus".into(), 100).await.unwrap();
+        // Stale / out-of-order write should be ignored.
+        set_watermark(&idx, "focus".into(), 50).await.unwrap();
+        assert_eq!(
+            get_watermark(&idx, "focus".into()).await.unwrap(),
+            Some(100),
+            "watermark must not regress below its previous value"
+        );
+        // Equal write is a no-op.
+        set_watermark(&idx, "focus".into(), 100).await.unwrap();
+        assert_eq!(
+            get_watermark(&idx, "focus".into()).await.unwrap(),
+            Some(100)
+        );
+        // Forward progress still works.
+        set_watermark(&idx, "focus".into(), 200).await.unwrap();
+        assert_eq!(
+            get_watermark(&idx, "focus".into()).await.unwrap(),
+            Some(200)
         );
     }
 

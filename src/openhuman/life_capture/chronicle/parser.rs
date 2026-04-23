@@ -60,16 +60,19 @@ fn non_empty(s: String) -> Option<String> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
         None
-    } else {
+    } else if trimmed.len() == s.len() {
         Some(s)
+    } else {
+        Some(trimmed.to_owned())
     }
 }
 
-/// Best-effort browser classifier over bundle id or exe name. Matches on
-/// substrings rather than exact equality so both macOS bundle ids
-/// (`com.google.Chrome`) and Linux exe names (`chromium-browser`) hit.
+/// Best-effort browser classifier over bundle id or exe name. Tokenises on
+/// non-alphanumeric chars so `com.google.Chrome` → `chrome` and
+/// `chromium-browser` → `chromium` both hit, without false-positives like
+/// `architecture` matching `arc` or `knowledge` matching `edge`. Arc's macOS
+/// bundle id (`company.thebrowser.Browser`) is matched explicitly.
 fn is_browser_app(app: &str) -> bool {
-    let a = app.to_lowercase();
     const BROWSER_HINTS: &[&str] = &[
         "chrome",
         "chromium",
@@ -81,8 +84,14 @@ fn is_browser_app(app: &str) -> bool {
         "opera",
         "vivaldi",
         "librewolf",
+        "thebrowser",
     ];
-    BROWSER_HINTS.iter().any(|h| a.contains(h))
+    app.split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .any(|tok| {
+            let lower = tok.to_lowercase();
+            BROWSER_HINTS.iter().any(|h| *h == lower)
+        })
 }
 
 #[cfg(test)]
@@ -152,6 +161,49 @@ mod tests {
         let ev = parse(raw("app", Some("   "), Some(""), None));
         assert_eq!(ev.focused_element, None);
         assert_eq!(ev.visible_text, None);
+    }
+
+    #[test]
+    fn surrounding_whitespace_is_trimmed() {
+        let ev = parse(raw("app", Some("  AXTextField  "), Some(" hello "), None));
+        assert_eq!(ev.focused_element.as_deref(), Some("AXTextField"));
+        assert_eq!(ev.visible_text.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn browser_classifier_rejects_substring_false_positives() {
+        for non_browser in [
+            "com.apple.Terminal",
+            "architecture",
+            "search",
+            "com.knowledge.app",
+            "com.cooperative.org",
+            "starcraft",
+            "com.adobe.fmbrowser",
+        ] {
+            assert!(
+                !is_browser_app(non_browser),
+                "{non_browser} should NOT classify as browser"
+            );
+        }
+    }
+
+    #[test]
+    fn browser_classifier_accepts_known_browsers() {
+        for browser in [
+            "com.google.Chrome",
+            "chromium-browser",
+            "firefox",
+            "com.apple.Safari",
+            "com.brave.Browser",
+            "company.thebrowser.Browser",
+            "org.mozilla.librewolf",
+        ] {
+            assert!(
+                is_browser_app(browser),
+                "{browser} should classify as browser"
+            );
+        }
     }
 
     #[test]
