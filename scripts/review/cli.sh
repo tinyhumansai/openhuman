@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dispatcher for `yarn review <cmd> <args…>`.
+# Dispatcher for `pnpm review <cmd> <args…>`.
 # Commands: sync | review | fix | merge
 
 set -euo pipefail
@@ -7,7 +7,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<EOF
-Usage: yarn review <command> <pr-number> [args]
+Usage: pnpm review <command> <pr-number> [args]
 
 Commands:
   sync    <pr>                            Check out PR as pr/<num>, merge main, wire remotes
