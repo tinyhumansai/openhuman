@@ -91,7 +91,7 @@ jobs:
 
       - name: Install JS dependencies
         if: steps.gate.outputs.present == 'true'
-        run: pnpm install --frozen-lockfile
+        run: pnpm install
 
       - name: Ensure .env exists for E2E build
         if: steps.gate.outputs.present == 'true'
