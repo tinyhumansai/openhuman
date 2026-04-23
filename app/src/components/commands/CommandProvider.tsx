@@ -49,7 +49,7 @@ export default function CommandProvider({ children }: Props) {
   useEffect(() => {
     if (!globalFrame) return;
     registry.setActiveStack(hotkeyManager.getStackSymbols());
-  });
+  }, [globalFrame]);
 
   const value = useMemo(() => globalFrame, [globalFrame]);
 
