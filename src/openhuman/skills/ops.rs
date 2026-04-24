@@ -151,6 +151,12 @@ fn extract_tags(fm: &SkillFrontmatter, warnings: &mut Vec<String>) -> Vec<String
 pub struct Skill {
     /// Display name (from frontmatter, falls back to directory name).
     pub name: String,
+    /// On-disk slug — the directory name under `~/.openhuman/skills/` (user
+    /// scope) or the workspace skills directory (project scope). This is the
+    /// identifier the uninstall RPC resolves against; it may differ from
+    /// [`Skill::name`] when frontmatter declares a mismatched display name.
+    #[serde(default)]
+    pub dir_name: String,
     /// Short description used in the catalog summary.
     pub description: String,
     /// Version string, if declared.
@@ -517,6 +523,7 @@ fn load_from_skill_md(skill_md: &Path, dir: &Path, dir_name: &str, scope: SkillS
 
     Skill {
         name,
+        dir_name: dir_name.to_string(),
         description,
         version,
         author,
@@ -579,6 +586,7 @@ fn load_from_legacy_manifest(
 
     Skill {
         name,
+        dir_name: dir_name.to_string(),
         description,
         version: manifest.version,
         author: manifest.author,
@@ -1741,6 +1749,203 @@ fn is_private_v6(ip: &Ipv6Addr) -> bool {
     false
 }
 
+/// Input for [`uninstall_skill`]. Mirrors the `skills.uninstall` JSON-RPC
+/// payload.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UninstallSkillParams {
+    /// On-disk slug of the installed skill — the directory name under
+    /// `~/.openhuman/skills/<slug>/`. This is `SkillSummary.id` on the wire,
+    /// which may diverge from the frontmatter display name exposed as
+    /// `Skill.name` when a skill's `SKILL.md` declares a name that does not
+    /// match its directory. Callers must send the slug (`SkillSummary.id`),
+    /// not the display name, or the RPC will return "not installed".
+    ///
+    /// Retained as `name` for wire-format back-compat with pre-existing
+    /// clients; the field's semantics are slug-only.
+    pub name: String,
+}
+
+/// Outcome of a successful uninstall.
+#[derive(Debug, Clone, Serialize)]
+pub struct UninstallSkillOutcome {
+    /// The normalised slug that was removed.
+    pub name: String,
+    /// Absolute on-disk path that was deleted (post-canonicalisation). Useful
+    /// for user-visible confirmations and for logs.
+    pub removed_path: String,
+    /// Scope the uninstall applied to. Always `User` today.
+    pub scope: SkillScope,
+}
+
+/// Remove an installed user-scope SKILL.md skill from `~/.openhuman/skills/`.
+///
+/// Only **user-scope** uninstalls are supported:
+///
+/// * Project-scope skills live inside the workspace — the user manages them
+///   via git / editor / filesystem directly. Exposing a destructive delete
+///   over RPC invites foot-guns, since a rogue skill's tool could uninstall
+///   other project skills.
+/// * Legacy `<ws>/skills/` skills are treated as read-only. They predate the
+///   install flow and we don't want to blow away content the user may have
+///   hand-authored.
+///
+/// Resolution is defensive:
+///   1. `skills_root = <home>/.openhuman/skills`, canonicalised.
+///   2. `candidate = skills_root.join(&name)`, canonicalised.
+///   3. Assert `candidate.starts_with(skills_root)` after canonicalisation —
+///      blocks `..` traversal and symlink escapes.
+///   4. Refuse anything that is not a plain directory (no symlinks).
+///   5. Require `SKILL.md` to be present — we only remove things that look
+///      like skills we installed, not arbitrary dirs the user dropped in.
+///   6. `fs::remove_dir_all`.
+///
+/// `home_dir_override` is threaded through for tests. Production callers
+/// pass `None`, which falls back to [`dirs::home_dir`].
+pub fn uninstall_skill(
+    params: UninstallSkillParams,
+    home_dir_override: Option<&Path>,
+) -> Result<UninstallSkillOutcome, String> {
+    let trimmed = params.name.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("skill name is required".to_string());
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
+        log::warn!(
+            "[skills] uninstall_skill: rejected name with path separators name={:?}",
+            trimmed
+        );
+        return Err(format!(
+            "skill name '{trimmed}' must not contain path separators"
+        ));
+    }
+    if trimmed.len() > MAX_NAME_LEN {
+        return Err(format!(
+            "skill name is {} chars (max {MAX_NAME_LEN})",
+            trimmed.len()
+        ));
+    }
+
+    let home = match home_dir_override
+        .map(|p| p.to_path_buf())
+        .or_else(dirs::home_dir)
+    {
+        Some(h) => h,
+        None => return Err("could not resolve user home directory".to_string()),
+    };
+
+    let skills_root = home.join(".openhuman").join("skills");
+    if !skills_root.exists() {
+        return Err(format!(
+            "no user skills directory at {}",
+            skills_root.display()
+        ));
+    }
+
+    // Refuse a symlinked skills root before canonicalisation would silently
+    // follow it. `canonicalize` dereferences every component, so by the time
+    // `starts_with` runs below a symlinked `~/.openhuman/skills` would have
+    // already resolved elsewhere and the guard is a no-op.
+    let root_meta = std::fs::symlink_metadata(&skills_root)
+        .map_err(|e| format!("stat {} failed: {e}", skills_root.display()))?;
+    if root_meta.file_type().is_symlink() {
+        log::warn!(
+            "[skills] uninstall_skill: refused symlinked skills root path={}",
+            skills_root.display()
+        );
+        return Err(format!(
+            "skills root {} is a symlink — refusing to resolve",
+            skills_root.display()
+        ));
+    }
+
+    let canonical_root = std::fs::canonicalize(&skills_root)
+        .map_err(|e| format!("canonicalize {} failed: {e}", skills_root.display()))?;
+
+    let candidate = skills_root.join(&trimmed);
+    // Reject `~/.openhuman/skills/<trimmed>` aliases that are themselves
+    // symlinks (e.g. `alias -> other-skill`). Same reasoning as the root
+    // check: canonicalise would follow the alias and `starts_with` would
+    // still pass, leading us to delete a different directory than the one
+    // the UI named.
+    match std::fs::symlink_metadata(&candidate) {
+        Ok(m) if m.file_type().is_symlink() => {
+            log::warn!(
+                "[skills] uninstall_skill: refused symlinked alias name={trimmed} path={}",
+                candidate.display()
+            );
+            return Err(format!(
+                "skill '{trimmed}' is a symlinked alias — refusing to resolve"
+            ));
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!("skill '{trimmed}' is not installed"));
+        }
+        Err(e) => {
+            return Err(format!("stat {} failed: {e}", candidate.display()));
+        }
+    }
+
+    // After the raw-path symlink guards above, canonicalise to resolve any
+    // `.` / `..` components introduced by a sneaky input that slipped past
+    // the earlier separator check, and map a still-possible NotFound race
+    // to the friendly message.
+    let canonical_candidate = std::fs::canonicalize(&candidate).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            format!("skill '{trimmed}' is not installed")
+        } else {
+            format!("canonicalize {} failed: {e}", candidate.display())
+        }
+    })?;
+
+    if !canonical_candidate.starts_with(&canonical_root) {
+        log::warn!(
+            "[skills] uninstall_skill: path escape rejected candidate={} root={}",
+            canonical_candidate.display(),
+            canonical_root.display()
+        );
+        return Err(format!(
+            "refused to remove {} — path escapes skills root",
+            canonical_candidate.display()
+        ));
+    }
+
+    let meta = std::fs::symlink_metadata(&canonical_candidate)
+        .map_err(|e| format!("stat {} failed: {e}", canonical_candidate.display()))?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(format!(
+            "{} is not a directory — refusing to remove",
+            canonical_candidate.display()
+        ));
+    }
+
+    // Best-effort guard: reject directories that don't look like SKILL.md
+    // skills before we commit to removing them.  The subsequent
+    // `remove_dir_all` is the authoritative operation; a TOCTOU race here
+    // (file disappears between the check and the remove) is benign — the
+    // remove would fail with a clear error anyway.
+    let skill_md = canonical_candidate.join(SKILL_MD);
+    if !skill_md.exists() {
+        return Err(format!(
+            "{} does not look like a SKILL.md skill (missing {SKILL_MD})",
+            canonical_candidate.display()
+        ));
+    }
+
+    log::info!(
+        "[skills] uninstall_skill: removing name={trimmed} path={}",
+        canonical_candidate.display()
+    );
+    std::fs::remove_dir_all(&canonical_candidate)
+        .map_err(|e| format!("remove {} failed: {e}", canonical_candidate.display()))?;
+
+    Ok(UninstallSkillOutcome {
+        name: trimmed,
+        removed_path: canonical_candidate.display().to_string(),
+        scope: SkillScope::User,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2708,6 +2913,208 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("frontmatter parse error")),
             "expected warning, got {warnings:?}"
+        );
+    }
+
+    /// Happy path: install a SKILL.md under a synthetic user home, verify
+    /// discovery sees it, uninstall, verify discovery no longer sees it and
+    /// the on-disk dir is gone.
+    #[test]
+    fn uninstall_skill_removes_user_scope_dir() {
+        let home = tempfile::tempdir().unwrap();
+        let skill_dir = home
+            .path()
+            .join(".openhuman")
+            .join("skills")
+            .join("weather-helper");
+        write(
+            &skill_dir.join("SKILL.md"),
+            "---\nname: weather-helper\ndescription: forecasts\n---\n\nbody\n",
+        );
+        let before = discover_skills(Some(home.path()), None, false);
+        assert_eq!(before.len(), 1, "setup: skill should be discoverable");
+
+        let outcome = uninstall_skill(
+            UninstallSkillParams {
+                name: "weather-helper".into(),
+            },
+            Some(home.path()),
+        )
+        .unwrap();
+        assert_eq!(outcome.name, "weather-helper");
+        assert_eq!(outcome.scope, SkillScope::User);
+        assert!(!skill_dir.exists(), "uninstall should remove the dir");
+
+        let after = discover_skills(Some(home.path()), None, false);
+        assert!(after.is_empty(), "discovery should no longer see it");
+    }
+
+    /// Names containing path separators or traversal sequences are rejected
+    /// before any filesystem access.
+    #[test]
+    fn uninstall_skill_rejects_path_traversal_names() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(".openhuman").join("skills")).unwrap();
+        for bad in ["../etc", "foo/bar", "foo\\bar", "..", "foo/../bar"] {
+            let err = uninstall_skill(UninstallSkillParams { name: bad.into() }, Some(home.path()))
+                .unwrap_err();
+            assert!(
+                err.contains("path separators") || err.contains("is not installed"),
+                "name {bad:?} should be rejected before fs access, got: {err}"
+            );
+        }
+    }
+
+    /// Empty and whitespace-only names return a clear required-field error.
+    #[test]
+    fn uninstall_skill_rejects_empty_name() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(".openhuman").join("skills")).unwrap();
+        for bad in ["", "   ", "\t"] {
+            let err = uninstall_skill(UninstallSkillParams { name: bad.into() }, Some(home.path()))
+                .unwrap_err();
+            assert!(err.contains("name is required"), "{bad:?} => {err}");
+        }
+    }
+
+    /// Uninstalling a skill that is not installed surfaces a recognizable
+    /// error rather than a generic I/O failure.
+    #[test]
+    fn uninstall_skill_missing_skill_errors_cleanly() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(".openhuman").join("skills")).unwrap();
+        let err = uninstall_skill(
+            UninstallSkillParams {
+                name: "ghost".into(),
+            },
+            Some(home.path()),
+        )
+        .unwrap_err();
+        assert!(err.contains("not installed"), "got: {err}");
+    }
+
+    /// A directory that does not contain a `SKILL.md` is refused — we only
+    /// remove things that look like skills we installed, not arbitrary
+    /// directories the user dropped in.
+    #[test]
+    fn uninstall_skill_refuses_dir_without_skill_md() {
+        let home = tempfile::tempdir().unwrap();
+        let bogus = home.path().join(".openhuman").join("skills").join("bogus");
+        std::fs::create_dir_all(&bogus).unwrap();
+        std::fs::write(bogus.join("random.txt"), "not a skill").unwrap();
+        let err = uninstall_skill(
+            UninstallSkillParams {
+                name: "bogus".into(),
+            },
+            Some(home.path()),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("does not look like a SKILL.md skill"),
+            "got: {err}"
+        );
+        assert!(bogus.exists(), "non-skill dir should not be deleted");
+    }
+
+    /// A symlink inside the skills root pointing outside the root must be
+    /// rejected by the raw-path symlink preflight before `canonicalize`
+    /// would follow the link. The earlier `starts_with` / `is_dir` guards
+    /// remain as defence-in-depth for anything that slips past the
+    /// preflight on future refactors.
+    #[cfg(unix)]
+    #[test]
+    fn uninstall_skill_rejects_symlink_escape() {
+        let home = tempfile::tempdir().unwrap();
+        let skills_root = home.path().join(".openhuman").join("skills");
+        std::fs::create_dir_all(&skills_root).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("real");
+        write(
+            &target.join("SKILL.md"),
+            "---\nname: real\ndescription: out of tree\n---\n",
+        );
+        std::os::unix::fs::symlink(&target, skills_root.join("real")).unwrap();
+        let err = uninstall_skill(
+            UninstallSkillParams {
+                name: "real".into(),
+            },
+            Some(home.path()),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("symlinked alias")
+                || err.contains("path escapes skills root")
+                || err.contains("is not a directory"),
+            "symlink out of tree must be rejected, got: {err}"
+        );
+        assert!(target.exists(), "symlink target must not be deleted");
+    }
+
+    /// An in-tree symlink alias (`skills/alias -> skills/real`) must be
+    /// rejected even though it does not escape the skills root — otherwise
+    /// the uninstall of `alias` would nuke the real skill directory behind
+    /// it, violating the invariant that the named slug is deleted.
+    #[cfg(unix)]
+    #[test]
+    fn uninstall_skill_rejects_symlinked_alias_in_tree() {
+        let home = tempfile::tempdir().unwrap();
+        let skills_root = home.path().join(".openhuman").join("skills");
+        std::fs::create_dir_all(&skills_root).unwrap();
+        let real_dir = skills_root.join("real");
+        write(
+            &real_dir.join("SKILL.md"),
+            "---\nname: real\ndescription: in tree\n---\n",
+        );
+        std::os::unix::fs::symlink(&real_dir, skills_root.join("alias")).unwrap();
+        let err = uninstall_skill(
+            UninstallSkillParams {
+                name: "alias".into(),
+            },
+            Some(home.path()),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("symlinked alias"),
+            "in-tree alias must be rejected by preflight, got: {err}"
+        );
+        assert!(
+            real_dir.join("SKILL.md").exists(),
+            "real skill behind the alias must survive"
+        );
+    }
+
+    /// A symlinked skills *root* (`~/.openhuman/skills -> elsewhere`) must
+    /// be refused before canonicalisation, since `canonicalize` would
+    /// resolve it to the target and the `starts_with` guard would then
+    /// compare against the resolved target, not the nominal root.
+    #[cfg(unix)]
+    #[test]
+    fn uninstall_skill_rejects_symlinked_skills_root() {
+        let home = tempfile::tempdir().unwrap();
+        let real_root = tempfile::tempdir().unwrap();
+        let real_skills = real_root.path().join("skills");
+        std::fs::create_dir_all(&real_skills).unwrap();
+        write(
+            &real_skills.join("real").join("SKILL.md"),
+            "---\nname: real\ndescription: in real root\n---\n",
+        );
+        std::fs::create_dir_all(home.path().join(".openhuman")).unwrap();
+        std::os::unix::fs::symlink(&real_skills, home.path().join(".openhuman").join("skills"))
+            .unwrap();
+        let err = uninstall_skill(
+            UninstallSkillParams {
+                name: "real".into(),
+            },
+            Some(home.path()),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("skills root") && err.contains("symlink"),
+            "symlinked skills root must be refused, got: {err}"
+        );
+        assert!(
+            real_skills.join("real").join("SKILL.md").exists(),
+            "target must survive"
         );
     }
 }

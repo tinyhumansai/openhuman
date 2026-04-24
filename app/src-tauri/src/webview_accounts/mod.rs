@@ -67,6 +67,7 @@ fn provider_url(provider: &str) -> Option<&'static str> {
         "slack" => Some("https://app.slack.com/client/"),
         "discord" => Some("https://discord.com/channels/@me"),
         "google-meet" => Some("https://meet.google.com/"),
+        "zoom" => Some("https://zoom.us/"),
         "browserscan" => Some("https://www.browserscan.net/bot-detection"),
         _ => None,
     }
@@ -75,7 +76,7 @@ fn provider_url(provider: &str) -> Option<&'static str> {
 fn provider_user_agent(provider: &str) -> Option<&'static str> {
     match provider {
         "whatsapp" | "telegram" | "linkedin" | "gmail" | "slack" | "discord" | "google-meet"
-        | "browserscan" => Some(CHROME_UA),
+        | "zoom" | "browserscan" => Some(CHROME_UA),
         _ => None,
     }
 }
@@ -106,7 +107,7 @@ fn provider_is_supported(provider: &str) -> bool {
 fn provider_ua_spoof(provider: &str) -> bool {
     matches!(
         provider,
-        "slack" | "gmail" | "linkedin" | "discord" | "google-meet" | "browserscan"
+        "slack" | "gmail" | "linkedin" | "discord" | "google-meet" | "zoom" | "browserscan"
     )
 }
 
@@ -139,8 +140,54 @@ fn provider_allowed_hosts(provider: &str) -> &'static [&'static str] {
             "gstatic.com",
             "googleapis.com",
         ],
+        "zoom" => &["zoom.us", "zoom.com", "zoomgov.com", "zdassets.com"],
         "browserscan" => &["browserscan.net"],
         _ => &[],
+    }
+}
+
+/// Rewrite a provider-specific native-app deep link (e.g. Zoom's
+/// `zoomus://zoom.us/join?...`) into a web-client URL so the meeting stays
+/// inside the embedded webview instead of failing with
+/// ERR_UNKNOWN_URL_SCHEME (CEF has no handler for these schemes).
+///
+/// Returns `Some(rewritten)` when the provider claims the scheme and a
+/// valid web-client URL can be built; `None` otherwise (caller should
+/// leave the navigation alone).
+fn rewrite_provider_deep_link(provider: &str, url: &Url) -> Option<Url> {
+    if provider != "zoom" {
+        return None;
+    }
+    if !matches!(url.scheme(), "zoomus" | "zoommtg") {
+        return None;
+    }
+    // Pull the meeting id out of the query string. Zoom uses `confno` on
+    // both `action=join` (joining) and `action=start` (hosting) flows.
+    let confno = url
+        .query_pairs()
+        .find(|(k, _)| k == "confno")
+        .map(|(_, v)| v.into_owned());
+    let pwd = url
+        .query_pairs()
+        .find(|(k, _)| k == "pwd" || k == "tk")
+        .map(|(_, v)| v.into_owned());
+    // Build the rewritten URL via `Url` so `confno` and `pwd` are
+    // percent-encoded — inbound Zoom tokens can contain reserved chars
+    // (`&`, `#`, `%`, `+`, …) that would corrupt a hand-rolled
+    // `format!(…)` string and silently break the join/host flow.
+    match confno {
+        Some(id) if !id.is_empty() => {
+            // Base without trailing slash; `path_segments_mut().push(id)`
+            // appends `/id` cleanly. A trailing `/` on the base would yield
+            // `/wc/join//id` (empty segment preserved by the Url spec).
+            let mut rewritten = Url::parse("https://app.zoom.us/wc/join").ok()?;
+            rewritten.path_segments_mut().ok()?.push(&id);
+            if let Some(p) = pwd.filter(|p| !p.is_empty()) {
+                rewritten.query_pairs_mut().append_pair("pwd", &p);
+            }
+            Some(rewritten)
+        }
+        _ => Url::parse("https://app.zoom.us/wc/home").ok(),
     }
 }
 
@@ -187,6 +234,19 @@ fn popup_should_stay_in_app(provider: &str, url: &Url) -> bool {
             }
             match url.host_str() {
                 Some(host) => host == "app.slack.com" || host.ends_with(".slack.com"),
+                None => false,
+            }
+        }
+        "zoom" => {
+            // Zoom's "Join from browser" / WebClient launch can go through a
+            // `window.open("https://app.zoom.us/wc/...")` popup instead of an
+            // in-page navigation. Keep those (and any deep-link-rewritten
+            // popup targeting the same path) inside the embedded webview so
+            // the meeting doesn't pop out to the system browser.
+            match url.host_str() {
+                Some(host) => {
+                    (host == "app.zoom.us" || host == "zoom.us") && url.path().starts_with("/wc/")
+                }
                 None => false,
             }
         }
@@ -258,6 +318,7 @@ pub fn provider_display_name(provider: &str) -> &'static str {
         "slack" => "Slack",
         "discord" => "Discord",
         "google-meet" => "Google Meet",
+        "zoom" => "Zoom",
         "browserscan" => "BrowserScan",
         _ => "OpenHuman",
     }
@@ -934,9 +995,35 @@ pub async fn webview_account_open<R: Runtime>(
     // Keep link clicks that leave the provider's host set in the OS
     // browser, not the embedded webview. Same-host navigations (including
     // OAuth hops to accounts.google.com etc., which we pre-declare per
-    // provider) stay in-app.
+    // provider) stay in-app. Provider-specific native-app deep links
+    // (`zoomus://`, `zoommtg://`, …) are rewritten to the web-client URL
+    // and re-navigated in-app so meetings don't bounce out.
     let nav_provider = args.provider.clone();
+    let nav_app = app.clone();
+    let nav_label = label.clone();
     builder = builder.on_navigation(move |url| {
+        if let Some(rewritten) = rewrite_provider_deep_link(&nav_provider, url) {
+            log::info!(
+                "[webview-accounts] deep-link rewrite {} → {} (provider={})",
+                url,
+                rewritten,
+                nav_provider
+            );
+            let app = nav_app.clone();
+            let label = nav_label.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(wv) = app.get_webview(&label) {
+                    if let Err(e) = wv.navigate(rewritten) {
+                        log::warn!(
+                            "[webview-accounts] post-rewrite navigate failed label={} err={}",
+                            label,
+                            e
+                        );
+                    }
+                }
+            });
+            return false;
+        }
         if url_is_internal(&nav_provider, url) {
             true
         } else {
@@ -970,7 +1057,31 @@ pub async fn webview_account_open<R: Runtime>(
     // For those URLs we allow CEF's default popup handling so an in-app
     // child window opens and the caller gets a real window handle.
     let popup_provider = args.provider.clone();
+    let popup_app = app.clone();
+    let popup_label = label.clone();
     builder = builder.on_new_window(move |url, _features| {
+        if let Some(rewritten) = rewrite_provider_deep_link(&popup_provider, &url) {
+            log::info!(
+                "[webview-accounts] new-window deep-link rewrite {} → {} (provider={})",
+                url,
+                rewritten,
+                popup_provider
+            );
+            let app = popup_app.clone();
+            let label = popup_label.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(wv) = app.get_webview(&label) {
+                    if let Err(e) = wv.navigate(rewritten) {
+                        log::warn!(
+                            "[webview-accounts] post-rewrite navigate (popup) failed label={} err={}",
+                            label,
+                            e
+                        );
+                    }
+                }
+            });
+            return NewWindowResponse::Deny;
+        }
         if popup_should_stay_in_app(&popup_provider, &url) {
             log::info!(
                 "[webview-accounts] new-window request {} → in-app popup (provider={})",
@@ -1631,4 +1742,254 @@ pub async fn webview_recipe_event<R: Runtime>(
     app.emit("webview:event", &event)
         .map_err(|e| format!("emit failed: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn url(s: &str) -> Url {
+        Url::parse(s).expect("valid url")
+    }
+
+    // ── provider registry match arms ──────────────────────────────────
+
+    #[test]
+    fn zoom_registered_in_provider_url() {
+        assert_eq!(provider_url("zoom"), Some("https://zoom.us/"));
+    }
+
+    #[test]
+    fn zoom_registered_in_user_agent() {
+        assert_eq!(provider_user_agent("zoom"), Some(CHROME_UA));
+    }
+
+    #[test]
+    fn zoom_has_no_recipe_js_injection() {
+        // Per the CLAUDE.md "no new JS injection" rule for CEF child
+        // webviews, Zoom must rely solely on Rust `on_navigation` +
+        // `on_new_window` (plus CDP from scanner modules, if any) — no
+        // `recipe.js` should be registered.
+        assert!(provider_recipe_js("zoom").is_none());
+    }
+
+    #[test]
+    fn zoom_enables_ua_spoof() {
+        assert!(provider_ua_spoof("zoom"));
+    }
+
+    #[test]
+    fn zoom_allowed_hosts_covers_core_domains() {
+        let hosts = provider_allowed_hosts("zoom");
+        assert!(hosts.contains(&"zoom.us"), "zoom.us in allowlist");
+        assert!(hosts.contains(&"zoomgov.com"), "zoomgov.com in allowlist");
+        assert!(hosts.contains(&"zdassets.com"), "zdassets.com in allowlist");
+    }
+
+    #[test]
+    fn zoom_is_supported() {
+        assert!(provider_is_supported("zoom"));
+    }
+
+    // ── url_is_internal: subdomain + exact match ──────────────────────
+
+    #[test]
+    fn zoom_web_client_subdomain_is_internal() {
+        assert!(url_is_internal(
+            "zoom",
+            &url("https://app.zoom.us/wc/join/123")
+        ));
+    }
+
+    #[test]
+    fn zoom_apex_domain_is_internal() {
+        assert!(url_is_internal("zoom", &url("https://zoom.us/signin")));
+    }
+
+    #[test]
+    fn zoom_external_host_is_not_internal() {
+        assert!(!url_is_internal(
+            "zoom",
+            &url("https://unrelated.example.com/")
+        ));
+    }
+
+    // ── rewrite_provider_deep_link: Zoom flows ────────────────────────
+
+    #[test]
+    fn rewrite_join_flow_with_confno() {
+        let rewritten = rewrite_provider_deep_link(
+            "zoom",
+            &url("zoomus://zoom.us/join?action=join&confno=9819254358"),
+        )
+        .expect("rewrite should succeed");
+        assert_eq!(rewritten.as_str(), "https://app.zoom.us/wc/join/9819254358");
+    }
+
+    #[test]
+    fn rewrite_start_flow_with_confno() {
+        let rewritten = rewrite_provider_deep_link(
+            "zoom",
+            &url("zoomus://zoom.us/start?action=start&confno=86449940711"),
+        )
+        .expect("rewrite should succeed");
+        assert_eq!(
+            rewritten.as_str(),
+            "https://app.zoom.us/wc/join/86449940711"
+        );
+    }
+
+    #[test]
+    fn rewrite_preserves_pwd_query_param() {
+        let rewritten = rewrite_provider_deep_link(
+            "zoom",
+            &url("zoomus://zoom.us/join?action=join&confno=111&pwd=secret"),
+        )
+        .expect("rewrite should succeed");
+        assert_eq!(
+            rewritten.as_str(),
+            "https://app.zoom.us/wc/join/111?pwd=secret"
+        );
+    }
+
+    #[test]
+    fn rewrite_falls_back_to_tk_when_pwd_absent() {
+        let rewritten = rewrite_provider_deep_link(
+            "zoom",
+            &url("zoommtg://zoom.us/join?confno=222&tk=tokenvalue"),
+        )
+        .expect("rewrite should succeed");
+        assert_eq!(
+            rewritten.as_str(),
+            "https://app.zoom.us/wc/join/222?pwd=tokenvalue"
+        );
+    }
+
+    #[test]
+    fn rewrite_accepts_zoommtg_scheme() {
+        let rewritten = rewrite_provider_deep_link(
+            "zoom",
+            &url("zoommtg://zoom.us/join?action=join&confno=333"),
+        )
+        .expect("rewrite should succeed");
+        assert_eq!(rewritten.as_str(), "https://app.zoom.us/wc/join/333");
+    }
+
+    #[test]
+    fn rewrite_without_confno_falls_back_to_home() {
+        let rewritten =
+            rewrite_provider_deep_link("zoom", &url("zoomus://zoom.us/home?action=home"))
+                .expect("rewrite should succeed");
+        assert_eq!(rewritten.as_str(), "https://app.zoom.us/wc/home");
+    }
+
+    #[test]
+    fn rewrite_with_empty_confno_falls_back_to_home() {
+        let rewritten =
+            rewrite_provider_deep_link("zoom", &url("zoomus://zoom.us/join?action=join&confno="))
+                .expect("rewrite should succeed");
+        assert_eq!(rewritten.as_str(), "https://app.zoom.us/wc/home");
+    }
+
+    #[test]
+    fn rewrite_rejects_non_zoom_provider() {
+        assert!(rewrite_provider_deep_link(
+            "slack",
+            &url("zoomus://zoom.us/join?action=join&confno=444")
+        )
+        .is_none());
+        assert!(rewrite_provider_deep_link(
+            "google-meet",
+            &url("zoomus://zoom.us/join?action=join&confno=555")
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn rewrite_rejects_http_zoom_url() {
+        // Ordinary https zoom.us navigations must pass through untouched so
+        // the existing `url_is_internal` flow decides.
+        assert!(rewrite_provider_deep_link("zoom", &url("https://zoom.us/j/9819254358")).is_none());
+    }
+
+    #[test]
+    fn rewrite_rejects_unknown_scheme() {
+        assert!(rewrite_provider_deep_link(
+            "zoom",
+            &url("msteams://teams.microsoft.com/l/meetup-join/666")
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn rewrite_percent_encodes_reserved_chars_in_pwd() {
+        // Zoom tokens commonly contain `&` / `=` / `%` / `#` / `+` which
+        // would corrupt a hand-rolled format!() URL. The `Url`-based
+        // builder must percent-encode them.
+        let rewritten = rewrite_provider_deep_link(
+            "zoom",
+            &url("zoomus://zoom.us/join?action=join&confno=777&pwd=a%26b%3Dc"),
+        )
+        .expect("rewrite should succeed");
+        // `url::Url` round-trips the encoded `%26` (`&`) and `%3D` (`=`)
+        // back into the rewritten query.
+        assert!(
+            rewritten.as_str().contains("pwd=a%26b%3Dc"),
+            "expected encoded pwd, got {}",
+            rewritten.as_str()
+        );
+    }
+
+    #[test]
+    fn rewrite_percent_encodes_confno_segment() {
+        // Defensive — path segments never should carry reserved chars but
+        // the helper must not corrupt them if they do.
+        let rewritten = rewrite_provider_deep_link(
+            "zoom",
+            &url("zoomus://zoom.us/join?action=join&confno=abc%2Fdef"),
+        )
+        .expect("rewrite should succeed");
+        // `/` inside the id must be percent-encoded, not merged into the path.
+        assert!(
+            rewritten.path().ends_with("/abc%2Fdef"),
+            "expected encoded path segment, got {}",
+            rewritten.path()
+        );
+    }
+
+    // ── popup_should_stay_in_app: Zoom WebClient popups ───────────────
+
+    #[test]
+    fn zoom_webclient_popup_stays_in_app() {
+        assert!(popup_should_stay_in_app(
+            "zoom",
+            &url("https://app.zoom.us/wc/join/999")
+        ));
+    }
+
+    #[test]
+    fn zoom_apex_webclient_popup_stays_in_app() {
+        assert!(popup_should_stay_in_app(
+            "zoom",
+            &url("https://zoom.us/wc/join/999")
+        ));
+    }
+
+    #[test]
+    fn zoom_non_wc_popup_does_not_stay_in_app() {
+        // Marketing / blog / download-link popups should hand off to the
+        // system browser, not grow an in-app child window.
+        assert!(!popup_should_stay_in_app(
+            "zoom",
+            &url("https://zoom.us/about")
+        ));
+    }
+
+    #[test]
+    fn zoom_popup_to_foreign_host_does_not_stay_in_app() {
+        assert!(!popup_should_stay_in_app(
+            "zoom",
+            &url("https://example.com/wc/join/888")
+        ));
+    }
 }

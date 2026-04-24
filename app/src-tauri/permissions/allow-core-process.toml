@@ -20,5 +20,8 @@ allow = [
     "webview_account_show",
     "webview_recipe_event",
     "activate_main_window",
+    "screen_share_begin_session",
+    "screen_share_thumbnail",
+    "screen_share_finalize_session",
 ]
 deny = []

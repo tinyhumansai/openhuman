@@ -9,6 +9,7 @@ import {
   KNOWN_COMPOSIO_TOOLKITS,
 } from '../components/composio/toolkitMeta';
 import ConnectionBadge, { isMessagingId } from '../components/ConnectionBadge';
+import { ToastContainer } from '../components/intelligence/Toast';
 import AutocompleteSetupModal from '../components/skills/AutocompleteSetupModal';
 import CreateSkillModal from '../components/skills/CreateSkillModal';
 import InstallSkillDialog from '../components/skills/InstallSkillDialog';
@@ -24,6 +25,7 @@ import {
   SkillCategoryIcon,
 } from '../components/skills/skillIcons';
 import SkillSearchBar from '../components/skills/SkillSearchBar';
+import UninstallSkillConfirmDialog from '../components/skills/UninstallSkillConfirmDialog';
 import VoiceSetupModal from '../components/skills/VoiceSetupModal';
 import { useAutocompleteSkillStatus } from '../features/autocomplete/useAutocompleteSkillStatus';
 import { useScreenIntelligenceSkillStatus } from '../features/screen-intelligence/useScreenIntelligenceSkillStatus';
@@ -35,6 +37,7 @@ import { type ComposioConnection, deriveComposioState } from '../lib/composio/ty
 import { skillsApi, type SkillSummary } from '../services/api/skillsApi';
 import { useAppSelector } from '../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../types/channels';
+import type { ToastNotification } from '../types/intelligence';
 import { IS_DEV } from '../utils/config';
 import { subconsciousEscalationsDismiss } from '../utils/tauriCommands';
 
@@ -194,6 +197,15 @@ export default function Skills() {
   const [selectedSkill, setSelectedSkill] = useState<SkillSummary | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
+  const [uninstallCandidate, setUninstallCandidate] = useState<SkillSummary | null>(null);
+  const [toasts, setToasts] = useState<ToastNotification[]>([]);
+  const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
+    const newToast: ToastNotification = { ...toast, id: `toast-${Date.now()}-${Math.random()}` };
+    setToasts(prev => [...prev, newToast]);
+  }, []);
+  const removeToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+  }, []);
   const pendingEscalationId =
     location.state &&
     typeof location.state === 'object' &&
@@ -631,6 +643,7 @@ export default function Skills() {
                             : skill.scope === 'project'
                               ? 'text-amber-600'
                               : 'text-stone-600';
+                        const canUninstall = skill.scope === 'user' && !skill.legacy;
                         return (
                           <UnifiedSkillCard
                             key={item.id}
@@ -647,6 +660,36 @@ export default function Skills() {
                               });
                               setSelectedSkill(skill);
                             }}
+                            secondaryActions={
+                              canUninstall
+                                ? [
+                                    {
+                                      label: 'Uninstall',
+                                      testId: `uninstall-skill-${skill.id}`,
+                                      icon: (
+                                        <svg
+                                          className="h-3.5 w-3.5"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="2"
+                                          viewBox="0 0 24 24">
+                                          <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"
+                                          />
+                                        </svg>
+                                      ),
+                                      onClick: () => {
+                                        console.debug('[skills][discovered] open uninstall', {
+                                          skillId: skill.id,
+                                        });
+                                        setUninstallCandidate(skill);
+                                      },
+                                    },
+                                  ]
+                                : undefined
+                            }
                           />
                         );
                       }
@@ -784,6 +827,34 @@ export default function Skills() {
           }}
         />
       )}
+
+      {uninstallCandidate && (
+        <UninstallSkillConfirmDialog
+          skill={uninstallCandidate}
+          onClose={() => setUninstallCandidate(null)}
+          onUninstalled={result => {
+            console.debug('[skills][uninstall] complete', {
+              name: result.name,
+              removedPath: result.removedPath,
+            });
+            addToast({
+              type: 'success',
+              title: 'Skill uninstalled',
+              message: `"${result.name}" was removed successfully.`,
+            });
+            // If the detail drawer was showing the skill we just removed,
+            // close it — the resource tree is now stale and any `read_resource`
+            // RPC would fail with a clean "not installed" error.
+            setSelectedSkill(prev => (prev && prev.id === result.name ? null : prev));
+            // Drop it from local state so the card disappears without a
+            // round-trip; refresh to pick up any side effects (e.g. a
+            // previously-shadowed project-scope skill now surfaces).
+            setDiscoveredSkills(prev => prev.filter(s => s.id !== result.name));
+            void refreshDiscoveredSkills();
+          }}
+        />
+      )}
+      <ToastContainer notifications={toasts} onRemove={removeToast} />
     </div>
   );
 }

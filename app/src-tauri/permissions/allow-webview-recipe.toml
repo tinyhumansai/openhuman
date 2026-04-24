@@ -1,7 +1,12 @@
 [[permission]]
 identifier = "allow-webview-recipe"
-description = "Allow injected per-provider recipe code (running inside the third-party site's origin) to invoke the recipe ingest command back to Rust."
+description = "Allow injected per-provider recipe code (running inside the third-party site's origin) to invoke the recipe ingest command back to Rust. Also includes the session-gated screen-share commands (#713 / #812) so the in-page getDisplayMedia shim can open a short-lived enumeration session after a real user gesture. The session gate prevents drive-by window-title / thumbnail exfiltration by third-party scripts running in the same origin."
 
 [permission.commands]
-allow = ["webview_recipe_event"]
+allow = [
+    "webview_recipe_event",
+    "screen_share_begin_session",
+    "screen_share_thumbnail",
+    "screen_share_finalize_session",
+]
 deny = []
