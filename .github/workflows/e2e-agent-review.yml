@@ -44,13 +44,13 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 10.10.0
+          cache: true
 
       - name: Setup Node.js 24.x
         if: steps.gate.outputs.present == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: "pnpm"
 
       - name: Install Rust (rust-toolchain.toml)
         if: steps.gate.outputs.present == 'true'
