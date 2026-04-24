@@ -55,9 +55,9 @@
       "deb": {
         "depends": [
           "libgtk-3-0",
-          "libwebkit2gtk-4.0-37",
+          "libwebkit2gtk-4.1-0",
           "libx11-6",
-          "libgdk-pixbuf2.0-0",
+          "libgdk-pixbuf-2.0-0",
           "libglib2.0-0"
         ]
       }
