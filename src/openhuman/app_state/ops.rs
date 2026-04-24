@@ -65,6 +65,13 @@ pub struct AppStateSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_user: Option<Value>,
     pub onboarding_completed: bool,
+    /// Whether the chat-based welcome-agent flow has completed. Sourced
+    /// from [`Config::chat_onboarding_completed`]. The React app hides
+    /// the bottom tab bar, thread sidebar, and account rail while this is
+    /// `false` (and `onboarding_completed` is `true`) so the user stays
+    /// with the welcome agent until it calls
+    /// `complete_onboarding(action="complete")`.
+    pub chat_onboarding_completed: bool,
     pub analytics_enabled: bool,
     pub local_state: StoredAppState,
     pub runtime: RuntimeSnapshot,
@@ -347,9 +354,10 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     let runtime = build_runtime_snapshot(&config).await;
 
     debug!(
-        "{LOG_PREFIX} snapshot auth={} onboarding={} analytics={} wallet_present={} si_active={} local_ai_state={} autocomplete_phase={} service_state={:?}",
+        "{LOG_PREFIX} snapshot auth={} onboarding={} chat_onboarding={} analytics={} wallet_present={} si_active={} local_ai_state={} autocomplete_phase={} service_state={:?}",
         auth.is_authenticated,
         config.onboarding_completed,
+        config.chat_onboarding_completed,
         config.observability.analytics_enabled,
         local_state.primary_wallet_address.is_some(),
         runtime.screen_intelligence.session.active,
@@ -364,6 +372,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             session_token,
             current_user,
             onboarding_completed: config.onboarding_completed,
+            chat_onboarding_completed: config.chat_onboarding_completed,
             analytics_enabled: config.observability.analytics_enabled,
             local_state,
             runtime,
