@@ -161,17 +161,6 @@ struct SkillsInstallFromUrlResult {
     new_skills: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct SkillsUninstallParamsWire {
-    name: String,
-}
-
-impl From<SkillsUninstallParamsWire> for UninstallSkillParams {
-    fn from(p: SkillsUninstallParamsWire) -> Self {
-        UninstallSkillParams { name: p.name }
-    }
-}
-
 #[derive(Debug, Serialize)]
 struct SkillsUninstallResult {
     name: String,
@@ -544,9 +533,8 @@ fn handle_skills_install_from_url(params: Map<String, Value>) -> ControllerFutur
 
 fn handle_skills_uninstall(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let wire = deserialize_params::<SkillsUninstallParamsWire>(params)?;
-        tracing::debug!(name = %wire.name, "[skills][rpc] uninstall");
-        let payload: UninstallSkillParams = wire.into();
+        let payload = deserialize_params::<UninstallSkillParams>(params)?;
+        tracing::debug!(name = %payload.name, "[skills][rpc] uninstall");
         match uninstall_skill(payload, None) {
             Ok(outcome) => {
                 tracing::debug!(
