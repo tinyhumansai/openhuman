@@ -210,22 +210,22 @@ def choose_asset():
     chosen = None
     if os_name == "darwin" and arch == "aarch64":
         for n in names:
-            if re.search(r"aarch64.*\\.app\\.tar\\.gz$", n):
+            if re.search(r"aarch64.*\.app\.tar\.gz$", n):
                 chosen = n
                 break
         if not chosen:
             for n in names:
-                if re.search(r"aarch64\\.dmg$", n):
+                if re.search(r"aarch64\.dmg$", n):
                     chosen = n
                     break
     elif os_name == "darwin" and arch == "x86_64":
         for n in names:
-            if re.search(r"(x86_64-apple-darwin|x64).*\\.app\\.tar\\.gz$", n):
+            if re.search(r"(x86_64-apple-darwin|x64).*\.app\.tar\.gz$", n):
                 chosen = n
                 break
         if not chosen:
             for n in names:
-                if re.search(r"x64\\.dmg$", n):
+                if re.search(r"x64\.dmg$", n):
                     chosen = n
                     break
     elif os_name == "linux" and arch == "x86_64":
@@ -415,7 +415,7 @@ install_macos() {
   local app_path="${apps_dir}/OpenHuman.app"
   mkdir -p "${apps_dir}"
 
-  if [[ "${ASSET_NAME}" == *.app.tar.gz ]]; then
+  if [[ "${ASSET_NAME}" =~ \.app\.tar\.gz$ ]]; then
     log_info "Installing OpenHuman.app into ${apps_dir}"
     if [ "${DRY_RUN}" = true ]; then
       echo "DRY RUN: tar -xzf ${DOWNLOAD_PATH} -C ${TMP_DIR}"
@@ -429,7 +429,7 @@ install_macos() {
       rm -rf "${app_path}"
       cp -R "${TMP_DIR}/OpenHuman.app" "${app_path}"
     fi
-  elif [[ "${ASSET_NAME}" == *.dmg ]]; then
+  elif [[ "${ASSET_NAME}" =~ \.dmg$ ]]; then
     log_info "Mounting DMG and copying OpenHuman.app"
     if [ "${DRY_RUN}" = true ]; then
       echo "DRY RUN: hdiutil attach ${DOWNLOAD_PATH}"
@@ -470,7 +470,7 @@ install_linux() {
 
   mkdir -p "${bin_dir}" "${desktop_dir}"
 
-  if [[ "${ASSET_NAME}" != *.AppImage ]]; then
+  if [[ ! "${ASSET_NAME}" =~ \.AppImage$ ]]; then
     log_err "Expected AppImage for Linux install, got: ${ASSET_NAME}"
     exit 1
   fi
@@ -494,6 +494,7 @@ Name=OpenHuman
 Comment=OpenHuman desktop assistant
 Exec=${app_path}
 TryExec=${app_path}
+Icon=${bin_dir}/openhuman.png
 Terminal=false
 Categories=Utility;
 EOF

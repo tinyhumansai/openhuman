@@ -10,16 +10,11 @@
 //!   → decoded back into typed GmailLabel Vec
 //! ```
 //!
-//! The bridge client caches a process-global connection and spawns its
-//! reader/writer tasks onto the current Tokio runtime. In production that's a
-//! single long-lived runtime, but in integration tests each `#[tokio::test]`
-//! gets its own runtime. To avoid reusing a cached client whose tasks belonged
-//! to a prior, already-dropped test runtime, this file keeps all assertions in
-//! one Tokio test.
+//! Tests are serial because they all mutate the `OPENHUMAN_WEBVIEW_APIS_PORT`
+//! env var and share the lazy global `CLIENT` inside
+//! `openhuman_core::openhuman::webview_apis::client`.
 
 use std::net::SocketAddr;
-use std::sync::mpsc;
-use std::thread;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -47,83 +42,96 @@ async fn ensure_mock_server() -> u16 {
     if let Some(port) = *guard {
         return port;
     }
-
-    let (port_tx, port_rx) = mpsc::channel();
-    thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .worker_threads(2)
-            .thread_name("webview-apis-mock-server")
-            .build()
-            .expect("build mock server runtime");
-
-        runtime.block_on(async move {
-            let listener = TcpListener::bind::<SocketAddr>("127.0.0.1:0".parse().unwrap())
-                .await
-                .expect("bind");
-            let port = listener.local_addr().unwrap().port();
-            port_tx.send(port).expect("send mock server port");
-
-loop {
-      let (stream, _peer) = match listener.accept().await {
-        Ok(v) => v,
-        Err(e) => {
-          eprintln!("[mock server] listener.accept failed: {}", e);
-          continue;
-        }
-      };
-      tokio::spawn(async move {
-        let ws = match tokio_tungstenite::accept_async(stream).await {
-          Ok(w) => w,
-          Err(e) => {
-            eprintln!("[mock server] accept_async handshake failed: {}", e);
-            return;
-          }
-        };
-                    let (mut sink, mut stream) = ws.split();
-                    while let Some(Ok(Message::Text(text))) = stream.next().await {
-                        let req: Value = serde_json::from_str(&text).unwrap();
-                        let id = req["id"].as_str().unwrap().to_string();
-                        let method = req["method"].as_str().unwrap().to_string();
-                        let resp = match method.as_str() {
-                            "gmail.list_labels" => json!({
-                                "kind": "response",
-                                "id": id,
-                                "ok": true,
-                                "result": [
-                                    {"id": "INBOX", "name": "Inbox", "kind": "system", "unread": 3},
-                                    {"id": "Receipts", "name": "Receipts", "kind": "user", "unread": null}
-                                ],
-                            }),
-                            "gmail.trash" => json!({
-                                "kind": "response",
-                                "id": id,
-                                "ok": false,
-                                "error": "simulated failure from mock bridge",
-                            }),
-                            _ => json!({
-                                "kind": "response",
-                                "id": id,
-                                "ok": false,
-                                "error": format!("mock bridge: unhandled method '{method}'"),
-                            }),
-                        };
-                        if sink.send(Message::Text(resp.to_string().into())).await.is_err() {
+    let listener = TcpListener::bind::<SocketAddr>("127.0.0.1:0".parse().unwrap())
+        .await
+        .expect("bind");
+    let port = listener.local_addr().unwrap().port();
+    std::env::set_var("OPENHUMAN_WEBVIEW_APIS_PORT", port.to_string());
+    *guard = Some(port);
+    tokio::spawn(async move {
+        loop {
+            tracing::debug!("[webview_apis_bridge:test] waiting for mock ws client");
+            let (stream, _peer) = match listener.accept().await {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            tokio::spawn(async move {
+                let ws = match tokio_tungstenite::accept_async(stream).await {
+                    Ok(w) => w,
+                    Err(_) => return,
+                };
+                let (mut sink, mut stream) = ws.split();
+                tracing::debug!("[webview_apis_bridge:test] mock ws client connected");
+                while let Some(msg) = stream.next().await {
+                    match msg {
+                        Ok(Message::Text(text)) => {
+                            let req: Value = serde_json::from_str(&text).unwrap();
+                            let id = req["id"].as_str().unwrap().to_string();
+                            let method = req["method"].as_str().unwrap().to_string();
+                            let redacted_id = if id.len() <= 4 {
+                                "***".to_string()
+                            } else {
+                                format!("***{}", &id[id.len() - 4..])
+                            };
+                            tracing::debug!(
+                                id = %redacted_id,
+                                method = %method,
+                                "[webview_apis_bridge:test] handling text rpc message"
+                            );
+                            let resp = match method.as_str() {
+                                "gmail.list_labels" => json!({
+                                    "kind": "response",
+                                    "id": id,
+                                    "ok": true,
+                                    "result": [
+                                        {"id": "INBOX", "name": "Inbox", "kind": "system", "unread": 3},
+                                        {"id": "Receipts", "name": "Receipts", "kind": "user", "unread": null}
+                                    ],
+                                }),
+                                "gmail.trash" => json!({
+                                    "kind": "response",
+                                    "id": id,
+                                    "ok": false,
+                                    "error": "simulated failure from mock bridge",
+                                }),
+                                _ => json!({
+                                    "kind": "response",
+                                    "id": id,
+                                    "ok": false,
+                                    "error": format!("mock bridge: unhandled method '{method}'"),
+                                }),
+                            };
+                            if sink.send(Message::Text(resp.to_string())).await.is_err() {
+                                tracing::warn!(
+                                    id = %redacted_id,
+                                    method = %method,
+                                    "[webview_apis_bridge:test] failed to send mock response"
+                                );
+                                break;
+                            }
+                        }
+                        Ok(Message::Close(_)) => {
+                            tracing::debug!("[webview_apis_bridge:test] client closed connection");
+                            break;
+                        }
+                        Ok(_) => {
+                            tracing::debug!(
+                                "[webview_apis_bridge:test] ignoring non-text ws message"
+                            );
+                            continue;
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                "[webview_apis_bridge:test] websocket receive error"
+                            );
                             break;
                         }
                     }
-                });
-            }
-        });
+                }
+            });
+        }
     });
-
-    let port = port_rx.recv().expect("receive mock server port");
-    // SAFETY: This is safe because it's a mock server port (not a secret),
-    // and the test controls concurrency (single-threaded test runner).
-    unsafe {
-        std::env::set_var("OPENHUMAN_WEBVIEW_APIS_PORT", port.to_string());
-    }
-    *guard = Some(port);
     port
 }
 
@@ -131,7 +139,6 @@ loop {
 async fn request_round_trips_and_surfaces_errors_through_mock_server() {
     let _request_guard = REQUEST_LOCK.lock().await;
     let _port = ensure_mock_server().await;
-
     let labels: Vec<GmailLabel> = client::request(
         "gmail.list_labels",
         serde_json::from_value(json!({"account_id": "gmail"})).unwrap(),
@@ -142,7 +149,6 @@ async fn request_round_trips_and_surfaces_errors_through_mock_server() {
     assert_eq!(labels[0].id, "INBOX");
     assert_eq!(labels[0].unread, Some(3));
     assert_eq!(labels[1].kind, "user");
-
     let err: Result<Vec<GmailLabel>, String> = client::request(
         "gmail.trash",
         serde_json::from_value(json!({"account_id": "gmail", "message_id": "m1"})).unwrap(),

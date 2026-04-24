@@ -56,7 +56,7 @@
   "dependencies": {
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",
-    "@radix-ui/react-dialog": "^1",
+    "@radix-ui/react-dialog": "^1.1.15",
     "@reduxjs/toolkit": "^2.11.2",
     "@scure/bip32": "^2.0.1",
     "@scure/bip39": "^2.0.1",
@@ -67,7 +67,7 @@
     "@tauri-apps/plugin-os": "^2.3.2",
     "@types/three": "^0.183.1",
     "buffer": "^6.0.3",
-    "cmdk": "^1",
+    "cmdk": "^1.1.1",
     "debug": "^4.4.3",
     "lottie-react": "^2.4.1",
     "os-browserify": "^0.3.0",
@@ -86,6 +86,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
+    "@sentry/vite-plugin": "^2.22.6",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/typography": "^0.5.19",
     "@tauri-apps/cli": "2.10.0",
@@ -101,7 +102,6 @@
     "@types/redux-logger": "^3.0.13",
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",
-    "@sentry/vite-plugin": "^2.22.6",
     "@vitejs/plugin-react": "^4.6.0",
     "@vitest/coverage-v8": "^4.0.18",
     "@wdio/appium-service": "^9.24.0",
