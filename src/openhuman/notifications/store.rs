@@ -33,6 +33,8 @@ CREATE INDEX IF NOT EXISTS idx_integration_notifications_provider
     ON integration_notifications(provider);
 CREATE INDEX IF NOT EXISTS idx_integration_notifications_status
     ON integration_notifications(status);
+CREATE INDEX IF NOT EXISTS idx_integration_notifications_dedup
+    ON integration_notifications(provider, account_id, title, body, received_at);
 
 CREATE TABLE IF NOT EXISTS notification_settings (
     provider              TEXT PRIMARY KEY,
@@ -296,39 +298,6 @@ pub fn unread_count(config: &Config) -> Result<i64> {
     })
 }
 
-/// Check whether a notification with identical content was received in the
-/// last 60 seconds. Used by `handle_ingest` to drop duplicate fires.
-pub fn exists_recent(
-    config: &Config,
-    provider: &str,
-    account_id: Option<&str>,
-    title: &str,
-    body: &str,
-) -> Result<bool> {
-    with_connection(config, |conn| {
-        let count: i64 = match account_id {
-            Some(aid) => conn.query_row(
-                "SELECT COUNT(*) FROM integration_notifications
-                 WHERE provider = ?1 AND account_id = ?2
-                   AND title = ?3 AND body = ?4
-                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
-                params![provider, aid, title, body],
-                |row| row.get(0),
-            ),
-            None => conn.query_row(
-                "SELECT COUNT(*) FROM integration_notifications
-                 WHERE provider = ?1 AND account_id IS NULL
-                   AND title = ?2 AND body = ?3
-                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
-                params![provider, title, body],
-                |row| row.get(0),
-            ),
-        }
-        .context("[notifications::store] exists_recent query failed")?;
-        Ok(count > 0)
-    })
-}
-
 /// Upsert provider-level notification settings.
 pub fn upsert_settings(config: &Config, settings: &NotificationSettings) -> Result<()> {
     with_connection(config, |conn| {
@@ -532,29 +501,6 @@ mod tests {
     }
 
     #[test]
-    fn exists_recent_detects_duplicate() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let n = sample_notification("dup1", "slack");
-        insert(&config, &n).unwrap();
-
-        assert!(exists_recent(&config, "slack", None, "Test notification", "Test body").unwrap());
-        assert!(!exists_recent(&config, "gmail", None, "Test notification", "Test body").unwrap());
-        assert!(!exists_recent(&config, "slack", None, "Different title", "Test body").unwrap());
-    }
-
-    #[test]
-    fn exists_recent_rejects_expired_notification() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let mut n = sample_notification("old1", "slack");
-        n.received_at = Utc::now() - chrono::Duration::seconds(120);
-        insert(&config, &n).unwrap();
-
-        assert!(!exists_recent(&config, "slack", None, "Test notification", "Test body").unwrap());
-    }
-
-    #[test]
     fn insert_if_not_recent_skips_duplicate() {
         let dir = TempDir::new().unwrap();
         let config = test_config(&dir);
@@ -563,6 +509,19 @@ mod tests {
 
         let n2 = sample_notification("dup-b", "slack");
         assert!(!insert_if_not_recent(&config, &n2).unwrap());
+    }
+
+    #[test]
+    fn insert_if_not_recent_rejects_expired_window_only() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+
+        let mut old = sample_notification("old1", "slack");
+        old.received_at = Utc::now() - chrono::Duration::seconds(120);
+        insert(&config, &old).unwrap();
+
+        let fresh_same_content = sample_notification("fresh1", "slack");
+        assert!(insert_if_not_recent(&config, &fresh_same_content).unwrap());
     }
 
     #[test]

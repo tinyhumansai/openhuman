@@ -97,7 +97,7 @@ function handleFired(payload: WebviewNotificationFired): void {
     account_id: accountId,
     title,
     body,
-    raw_payload: { tag, provider, account_id: accountId },
+    raw_payload: { tag, provider, account_id: accountId, title, body },
   })
     .then(result => {
       if (!result.skipped) {
@@ -109,9 +109,13 @@ function handleFired(payload: WebviewNotificationFired): void {
             account_id: accountId,
             title,
             body,
-            raw_payload: { tag, provider, account_id: accountId },
+            raw_payload: { tag, provider, account_id: accountId, title, body },
             status: 'unread',
             received_at: new Date().toISOString(),
+            importance_score: undefined,
+            triage_action: undefined,
+            triage_reason: undefined,
+            scored_at: undefined,
           })
         );
       } else {
