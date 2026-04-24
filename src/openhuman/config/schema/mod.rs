@@ -54,7 +54,7 @@ pub use proxy::{
 pub use routes::{EmbeddingRouteConfig, ModelRouteConfig};
 pub use runtime::{DockerRuntimeConfig, ReliabilityConfig, RuntimeConfig, SchedulerConfig};
 pub use storage_memory::{
-    MemoryConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
+    MemoryConfig, MemoryTreeConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
 };
 pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig,

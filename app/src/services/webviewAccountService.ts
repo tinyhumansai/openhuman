@@ -136,10 +136,13 @@ async function ensureNotificationPermission(): Promise<void> {
   if (permissionChecked) return;
   try {
     const state = await invoke<string>('webview_notification_permission_state');
-    permissionChecked = true;
     log('notification permission state=%s', state);
-    if (state === 'granted') return;
+    if (state === 'granted') {
+      permissionChecked = true;
+      return;
+    }
     const next = await invoke<string>('webview_notification_permission_request');
+    if (next === 'granted') permissionChecked = true;
     log('notification permission after request=%s', next);
   } catch (err) {
     errLog('notification permission check failed: %o', err);
@@ -816,6 +819,7 @@ export async function setGlobalDnd(enabled: boolean): Promise<void> {
     log('notify-bypass: global DND set to %s', enabled);
   } catch (e) {
     log('notify-bypass: setGlobalDnd error %o', e);
+    throw e;
   }
 }
 

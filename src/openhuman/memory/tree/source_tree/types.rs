@@ -123,6 +123,15 @@ pub struct SummaryNode {
     /// Tombstone flag — stays `false` in Phase 3a since summaries are
     /// immutable. Reserved for future cleanup passes (e.g. archive cascade).
     pub deleted: bool,
+    /// Phase 4 (#710): summary content embedding for semantic rerank.
+    ///
+    /// `Some` on new seals — populated before the write tx opens so a
+    /// failed embed aborts the seal (see `bucket_seal::seal_one_level`).
+    /// `None` on legacy summaries sealed before Phase 4, or on reads
+    /// where the blob column is NULL. Retrieval tolerates `None` by
+    /// dropping those rows to the bottom of semantic rerank results.
+    #[serde(default)]
+    pub embedding: Option<Vec<f32>>,
 }
 
 /// Unsealed frontier at a given `(tree_id, level)`. One row per level per

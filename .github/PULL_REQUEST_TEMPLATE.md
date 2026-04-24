@@ -30,5 +30,14 @@
 
 ## Related
 
-- Issue(s):
+<!--
+Use a closing keyword so GitHub auto-closes the issue on merge. One per line.
+Supported (case-insensitive): close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved.
+A bare "#123" reference is just a link — it does NOT close the issue.
+
+  Closes #123
+  Fixes  #456
+-->
+
+- Closes:
 - Follow-up PR(s)/TODOs:

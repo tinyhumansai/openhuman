@@ -71,6 +71,12 @@ struct InFlightEntry {
     handle: tokio::task::JoinHandle<()>,
 }
 
+#[derive(Debug, Clone)]
+struct WebChatTaskResult {
+    full_response: String,
+    citations: Vec<crate::openhuman::agent::memory_loader::MemoryCitation>,
+}
+
 static THREAD_SESSIONS: Lazy<Mutex<HashMap<String, SessionEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
@@ -161,6 +167,7 @@ pub async fn start_chat(
                 delta: None,
                 delta_kind: None,
                 tool_call_id: None,
+                citations: None,
             });
         }
     }
@@ -183,7 +190,7 @@ pub async fn start_chat(
         .await;
 
         match result {
-            Ok(full_response) => {
+            Ok(chat_result) => {
                 // ── Presentation layer (local model, fire-and-forget) ─────
                 // Segment the response into human-readable bubbles and
                 // decide whether to react — both run via local Ollama if
@@ -192,8 +199,9 @@ pub async fn start_chat(
                     &client_id_task,
                     &thread_id_task,
                     &request_id_task,
-                    &full_response,
+                    &chat_result.full_response,
                     &user_message,
+                    &chat_result.citations,
                 )
                 .await;
             }
@@ -225,6 +233,7 @@ pub async fn start_chat(
                     delta: None,
                     delta_kind: None,
                     tool_call_id: None,
+                    citations: None,
                 });
             }
         }
@@ -316,6 +325,7 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
             delta: None,
             delta_kind: None,
             tool_call_id: None,
+            citations: None,
         });
     }
 
@@ -329,7 +339,7 @@ async fn run_chat_task(
     message: &str,
     model_override: Option<String>,
     temperature: Option<f64>,
-) -> Result<String, String> {
+) -> Result<WebChatTaskResult, String> {
     let config = config_rpc::load_config_with_timeout().await?;
     let map_key = key_for(client_id, thread_id);
     let model_override = normalize_model_override(model_override);
@@ -399,7 +409,13 @@ async fn run_chat_task(
     );
 
     let result = match agent.run_single(message).await {
-        Ok(response) => Ok(response),
+        Ok(response) => {
+            let citations = agent.take_last_turn_citations();
+            Ok(WebChatTaskResult {
+                full_response: response,
+                citations,
+            })
+        }
         Err(err) => {
             let err_message = err.to_string();
             if is_inference_budget_exceeded_error(&err_message) {
@@ -409,7 +425,10 @@ async fn run_chat_task(
                     thread_id,
                     request_id
                 );
-                Ok(inference_budget_exceeded_user_message().to_string())
+                Ok(WebChatTaskResult {
+                    full_response: inference_budget_exceeded_user_message().to_string(),
+                    citations: Vec::new(),
+                })
             } else {
                 Err(err_message)
             }
@@ -566,6 +585,7 @@ fn spawn_progress_bridge(
                         delta: None,
                         delta_kind: None,
                         tool_call_id: None,
+                        citations: None,
                     });
                 }
                 AgentProgress::IterationStarted {
@@ -593,6 +613,7 @@ fn spawn_progress_bridge(
                         delta: None,
                         delta_kind: None,
                         tool_call_id: None,
+                        citations: None,
                     });
                 }
                 AgentProgress::ToolCallStarted {
@@ -660,6 +681,7 @@ fn spawn_progress_bridge(
                         delta: None,
                         delta_kind: None,
                         tool_call_id: None,
+                        citations: None,
                     });
                 }
                 AgentProgress::SubagentCompleted {
@@ -689,6 +711,7 @@ fn spawn_progress_bridge(
                         delta: None,
                         delta_kind: None,
                         tool_call_id: None,
+                        citations: None,
                     });
                 }
                 AgentProgress::SubagentFailed {
@@ -716,6 +739,7 @@ fn spawn_progress_bridge(
                         delta: None,
                         delta_kind: None,
                         tool_call_id: None,
+                        citations: None,
                     });
                 }
                 AgentProgress::TextDelta { delta, iteration } => {

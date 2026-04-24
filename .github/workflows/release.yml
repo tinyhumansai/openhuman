@@ -254,7 +254,7 @@ jobs:
             target: x86_64-apple-darwin
             artifact_suffix: x86_64-apple-darwin
           - platform: ubuntu-22.04
-            args: --target x86_64-unknown-linux-gnu
+            args: --target x86_64-unknown-linux-gnu --bundles deb
             target: x86_64-unknown-linux-gnu
             artifact_suffix: ubuntu
           - platform: windows-latest
@@ -445,25 +445,9 @@ jobs:
             const config = prepareTauriConfig();
             core.setOutput('json', JSON.stringify(config));
 
-      - name: Build frontend
-        run: yarn build
-        env:
-          NODE_ENV: production
-          VITE_OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
-          VITE_BACKEND_URL: ${{ needs.prepare-build.outputs.base_url }}
-          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
-          VITE_DEBUG: ${{ vars.VITE_DEBUG }}
-          # OAuth guardrails (#365): block openhuman://oauth/success on outdated desktop builds.
-          VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
-          VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
-          # Sentry release tracking (#405): baked into the bundle so every event
-          # groups under the same release, and @sentry/vite-plugin uploads the
-          # matching source maps when SENTRY_AUTH_TOKEN is present.
-          VITE_BUILD_SHA: ${{ needs.prepare-build.outputs.sha }}
-          SENTRY_RELEASE: openhuman@${{ needs.prepare-build.outputs.version }}+${{ needs.prepare-build.outputs.sha }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_FRONTEND }}
+      # Note: vite build runs via tauri.conf.json's beforeBuildCommand during
+      # the "Build and package Tauri app" step below. A separate frontend build
+      # here would just double memory pressure (sentry-vite-plugin peaks hard).
 
       - name: Resolve core manifest and binary names
         id: core-paths
@@ -573,7 +557,10 @@ jobs:
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
           MATRIX_ARGS: ${{ matrix.settings.args }}
         run: |
-          cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+          # Inline NODE_OPTIONS so it reaches the vite child spawned by
+          # beforeBuildCommand. Step-level env was observed not to propagate
+          # on macos-arm64 runners, causing OOM at node's ~2GB auto default.
+          NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
 
       # tauri-action previously uploaded non-macOS installer assets directly
       # to the release. Replicate that for Linux + Windows here (macOS goes

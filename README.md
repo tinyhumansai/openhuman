@@ -7,8 +7,11 @@
 <p align="center">
   <a href="https://discord.tinyhumans.ai/">Discord</a> •
   <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> •
-  <a href="https://x.com/tinyhumansai">X/Twitter</a> •
+  <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
   <a href="https://tinyhumans.gitbook.io/openhuman/">Docs</a>
+</p>
+<p align="center">
+  <a href="https://x.com/intent/follow?screen_name=senamakel">Follow @senamakel (Creator)</a>
 </p>
 
 <p align="center">
@@ -72,17 +75,17 @@ Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Contributor orient
 
 High-level comparison (products evolve—verify against each vendor). OpenHuman is built to **minimize vendor sprawl**, keep **workflow knowledge on-device**, and ship **deep desktop** features—not only chat.
 
-|                         | Claude Code/Cowork  | OpenClaw           | Hermes Agent       | OpenHuman                |
-| ----------------------- | ------------------- | ------------------ | ------------------ | ------------------------ |
-| **Open-source**         | 🚫 Proprietary      | ✅ MIT             | ✅ MIT             | ✅ GNU                   |
-| **Simple to start**     | ✅ Desktop + CLI    | ⚠️ Terminal-first  | ⚠️ Terminal-first  | ✅ Clean UI, minutes     |
-| **Cost**                | ⚠️ Sub + add-ons    | ⚠️ BYO models      | ⚠️ BYO models      | ✅ Local-friendly        |
-| **Memory & KB**         | ✅ Chat-scoped      | ⚠️ Plugin-reliant  | ✅ Self-learning   | 🚀 Local KB + learning   |
-| **API sprawl**          | 🚫 Extra keys       | 🚫 BYOK            | 🚫 Multi-vendor    | ✅ One account           |
-| **Extensibility**       | ✅ MCP              | ✅ SKILL.md        | ✅ SKILL.md        | 🚀 Rich Skills           |
-| **Desktop integration** | ⚠️ Basic            | ⚠️ Light           | ⚠️ Light           | ✅ STT/TTS/screen/more   |
+|                         | Claude Code/Cowork | OpenClaw          | Hermes Agent      | OpenHuman              |
+| ----------------------- | ------------------ | ----------------- | ----------------- | ---------------------- |
+| **Open-source**         | 🚫 Proprietary     | ✅ MIT            | ✅ MIT            | ✅ GNU                 |
+| **Simple to start**     | ✅ Desktop + CLI   | ⚠️ Terminal-first | ⚠️ Terminal-first | ✅ Clean UI, minutes   |
+| **Cost**                | ⚠️ Sub + add-ons   | ⚠️ BYO models     | ⚠️ BYO models     | ✅ Local-friendly      |
+| **Memory & KB**         | ✅ Chat-scoped     | ⚠️ Plugin-reliant | ✅ Self-learning  | 🚀 Local KB + learning |
+| **API sprawl**          | 🚫 Extra keys      | 🚫 BYOK           | 🚫 Multi-vendor   | ✅ One account         |
+| **Extensibility**       | ✅ MCP             | ✅ SKILL.md       | ✅ SKILL.md       | 🚀 Rich Skills         |
+| **Desktop integration** | ⚠️ Basic           | ⚠️ Light          | ⚠️ Light          | ✅ STT/TTS/screen/more |
 
-<!-- # Star us on GitHub
+# Star us on GitHub
 
 _Building toward AGI and artificial consciousness? Star the repo and help others find the path._
 
@@ -94,7 +97,7 @@ _Building toward AGI and artificial consciousness? Star the repo and help others
      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
     </picture>
   </a>
-</p> -->
+</p>
 
 # Contributors Hall of Fame
 

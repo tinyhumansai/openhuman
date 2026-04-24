@@ -184,6 +184,41 @@ pub struct Skill {
     pub warnings: Vec<String>,
 }
 
+impl Skill {
+    /// Re-read the SKILL.md body (everything after the YAML frontmatter
+    /// block) from disk. Returns `None` for legacy `skill.json` skills,
+    /// for skills whose `location` points nowhere, or when the file
+    /// cannot be parsed as a SKILL.md document.
+    ///
+    /// Used by the inference-time injector in
+    /// [`crate::openhuman::skills::inject`] — the body is the actual
+    /// instruction block that gets prepended to a user message when a
+    /// skill matches. Kept off the main `Skill` struct deliberately so
+    /// the catalog list stays cheap to construct; only the subset of
+    /// skills that match a turn pay the disk-read cost.
+    pub fn read_body(&self) -> Option<String> {
+        if self.legacy {
+            log::debug!(
+                "[skills:inject] read_body skipped for legacy skill.json skill name={}",
+                self.name
+            );
+            return None;
+        }
+        let path = self.location.as_ref()?;
+        match parse_skill_md(path) {
+            Some((_, body, _)) => Some(body),
+            None => {
+                log::warn!(
+                    "[skills:inject] read_body failed to parse {} for skill {}",
+                    path.display(),
+                    self.name
+                );
+                None
+            }
+        }
+    }
+}
+
 /// Internal structure for parsing legacy `skill.json` manifests.
 #[derive(Debug, Deserialize)]
 struct LegacySkillManifest {

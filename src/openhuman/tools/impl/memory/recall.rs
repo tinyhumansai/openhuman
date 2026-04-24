@@ -71,11 +71,15 @@ impl Tool for MemoryRecallTool {
             .and_then(serde_json::Value::as_u64)
             .map_or(5, |v| v as usize);
 
-        // Search with the user query only. Prefixing `namespace` into the recall string adds a
-        // redundant token that matches almost every row (e.g. all `global/...` keys contain "global").
-        // `namespace` is still required by the tool contract; unified memory scopes recall to the
-        // global document namespace until multi-namespace recall is wired through the `Memory` trait.
-        match self.memory.recall(query, limit, None).await {
+        // Search with the user query only. Prefixing `namespace` into the query
+        // string would add a redundant token matching almost every row. Instead,
+        // namespace scoping belongs in RecallOpts so the backend restricts the
+        // search to the correct namespace column.
+        let recall_opts = crate::openhuman::memory::RecallOpts {
+            namespace: Some(namespace),
+            ..crate::openhuman::memory::RecallOpts::default()
+        };
+        match self.memory.recall(query, limit, recall_opts).await {
             Ok(entries) if entries.is_empty() => Ok(ToolResult::success(
                 "No memories found matching that query.",
             )),
@@ -126,16 +130,23 @@ mod tests {
     async fn recall_finds_match() {
         let (_tmp, mem) = seeded_mem();
         mem.store(
-            "global/lang",
+            "global",
+            "lang",
             "User prefers Rust",
             MemoryCategory::Core,
             None,
         )
         .await
         .unwrap();
-        mem.store("global/tz", "Timezone is EST", MemoryCategory::Core, None)
-            .await
-            .unwrap();
+        mem.store(
+            "global",
+            "tz",
+            "Timezone is EST",
+            MemoryCategory::Core,
+            None,
+        )
+        .await
+        .unwrap();
 
         let tool = MemoryRecallTool::new(mem);
         let result = tool
@@ -152,7 +163,8 @@ mod tests {
         let (_tmp, mem) = seeded_mem();
         for i in 0..10 {
             mem.store(
-                &format!("global/k{i}"),
+                "global",
+                &format!("k{i}"),
                 &format!("Rust fact {i}"),
                 MemoryCategory::Core,
                 None,

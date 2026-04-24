@@ -60,7 +60,7 @@ describe('formatTimelineEntry', () => {
 
   it('formats composio_list_connections with user-facing copy', () => {
     expect(formatTimelineEntry(entry({ name: 'composio_list_connections' }))).toEqual({
-      title: 'Viewing your Integrations',
+      title: 'Viewing your Connections',
       detail: undefined,
     });
   });

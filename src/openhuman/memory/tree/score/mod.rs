@@ -5,6 +5,7 @@
 //! passes each chunk through [`score_chunk`] after chunking and before
 //! storing.
 
+pub mod embed;
 pub mod extract;
 pub mod resolver;
 pub mod signals;

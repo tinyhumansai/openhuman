@@ -8,6 +8,7 @@ import {
   type ComposioToolkitMeta,
   KNOWN_COMPOSIO_TOOLKITS,
 } from '../components/composio/toolkitMeta';
+import ConnectionBadge, { isMessagingId } from '../components/ConnectionBadge';
 import { ToastContainer } from '../components/intelligence/Toast';
 import AutocompleteSetupModal from '../components/skills/AutocompleteSetupModal';
 import CreateSkillModal from '../components/skills/CreateSkillModal';
@@ -37,6 +38,7 @@ import { skillsApi, type SkillSummary } from '../services/api/skillsApi';
 import { useAppSelector } from '../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../types/channels';
 import type { ToastNotification } from '../types/intelligence';
+import { IS_DEV } from '../utils/config';
 import { subconsciousEscalationsDismiss } from '../utils/tauriCommands';
 
 function channelStatusDot(status: ChannelConnectionStatus): string {
@@ -123,15 +125,22 @@ function composioStatusColor(connection: ComposioConnection | undefined): string
 
 // ─── Built-in skill definitions ────────────────────────────────────────────────
 
-const BUILT_IN_SKILLS = [
-  {
-    id: 'screen-intelligence',
-    title: 'Screen Intelligence',
-    description:
-      'Capture windows, summarize what is on screen, and feed useful context into memory.',
-    route: '/settings/screen-intelligence',
-    icon: BUILT_IN_SKILL_ICONS.screenIntelligence,
-  },
+const BUILT_IN_SKILLS: Array<{
+  id: string;
+  title: string;
+  description: string;
+  route: string;
+  icon: React.ReactNode;
+}> = [
+  // Hidden — not active yet. Uncomment to re-enable.
+  // {
+  //   id: 'screen-intelligence',
+  //   title: 'Screen Intelligence',
+  //   description:
+  //     'Capture windows, summarize what is on screen, and feed useful context into memory.',
+  //   route: '/settings/screen-intelligence',
+  //   icon: BUILT_IN_SKILL_ICONS.screenIntelligence,
+  // },
   // text-autocomplete + voice-stt hidden per #717 (modals/status hooks retained for re-enable).
 ];
 
@@ -270,7 +279,7 @@ export default function Skills() {
   }, [refreshDiscoveredSkills]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!IS_DEV) return;
     console.debug('[skills][composio] hook result', {
       toolkitCount: composioToolkits.length,
       connectionCount: composioConnectionByToolkit.size,
@@ -299,7 +308,7 @@ export default function Skills() {
     const missingKnownToolkits = KNOWN_COMPOSIO_TOOLKITS.filter(
       slug => !normalizedToolkits.includes(slug)
     );
-    if (import.meta.env.DEV && missingKnownToolkits.length > 0) {
+    if (IS_DEV && missingKnownToolkits.length > 0) {
       console.debug('[skills][composio] filling gaps from KNOWN_COMPOSIO_TOOLKITS', {
         toolkitCount: composioToolkits.length,
         connectionCount: composioConnectionByToolkit.size,
@@ -458,7 +467,7 @@ export default function Skills() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h2 className="text-sm font-semibold text-amber-900">
-                      Integrations are showing stale status
+                      Connections are showing stale status
                     </h2>
                     <p className="mt-1 text-xs leading-relaxed text-amber-800">{composioError}</p>
                   </div>
@@ -474,7 +483,7 @@ export default function Skills() {
 
             {filteredItems.length === 0 ? (
               <div className="py-8 text-center">
-                <p className="text-sm text-stone-400">No skills found</p>
+                <p className="text-sm text-stone-400">No connections found</p>
               </div>
             ) : (
               groupedItems.map(({ category, items }) => (
@@ -603,6 +612,11 @@ export default function Skills() {
                             statusColor={channelStatusColor(status)}
                             ctaLabel={status === 'connected' ? 'Manage' : 'Setup'}
                             onCtaClick={() => setChannelModalDef(item.channelDef!)}
+                            badge={
+                              isMessagingId(item.channelDef!.id) ? (
+                                <ConnectionBadge kind="messaging" />
+                              ) : undefined
+                            }
                           />
                         );
                       }
@@ -717,6 +731,7 @@ export default function Skills() {
                             }
                             ctaLabel={ctaLabel}
                             ctaVariant={ctaVariant}
+                            badge={<ConnectionBadge kind="composio" />}
                             onCtaClick={() => {
                               if (hasComposioError) {
                                 void refreshComposio();

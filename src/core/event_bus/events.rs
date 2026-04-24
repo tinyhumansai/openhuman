@@ -116,9 +116,17 @@ pub enum DomainEvent {
 
     // ── Cron ────────────────────────────────────────────────────────────
     /// A cron job was triggered for execution.
-    CronJobTriggered { job_id: String, job_type: String },
+    CronJobTriggered {
+        job_id: String,
+        job_name: String,
+        job_type: String,
+    },
     /// A cron job completed execution.
-    CronJobCompleted { job_id: String, success: bool },
+    CronJobCompleted {
+        job_id: String,
+        success: bool,
+        output: String,
+    },
     /// A cron job requests delivery of its output to a channel.
     CronDeliveryRequested {
         job_id: String,
@@ -527,6 +535,7 @@ mod tests {
             (
                 DomainEvent::CronJobTriggered {
                     job_id: "j".into(),
+                    job_name: "my-job".into(),
                     job_type: "t".into(),
                 },
                 "cron",
@@ -535,6 +544,7 @@ mod tests {
                 DomainEvent::CronJobCompleted {
                     job_id: "j".into(),
                     success: true,
+                    output: "ok".into(),
                 },
                 "cron",
             ),

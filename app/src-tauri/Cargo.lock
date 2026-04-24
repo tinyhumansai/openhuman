@@ -8,12 +8,15 @@ version = "0.52.28"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "cef",
  "chrono",
  "env_logger",
  "futures-util",
  "log",
+ "mac-notification-sys",
  "nix",
+ "notify-rust",
  "objc2",
  "objc2-app-kit",
  "parking_lot",
@@ -867,6 +870,17 @@ name = "data-url"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
+
+[[package]]
+name = "dbus"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b942602992bb7acfd1f51c49811c58a610ef9181b6e66f3e519d79b540a3bf73"
+dependencies = [
+ "libc",
+ "libdbus-sys",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "deranged"
@@ -2350,6 +2364,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
 
 [[package]]
+name = "libdbus-sys"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "328c4789d42200f1eeec05bd86c9c13c7f091d2ba9a6ea35acdf51f31bc0f043"
+dependencies = [
+ "pkg-config",
+]
+
+[[package]]
 name = "libloading"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2614,6 +2637,7 @@ version = "4.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c8146c105ae33d744e2d645f684d063b01176a99daf5986556266777b428816"
 dependencies = [
+ "dbus",
  "futures-lite",
  "log",
  "mac-notification-sys",
@@ -4626,7 +4650,6 @@ dependencies = [
 [[package]]
 name = "tauri-plugin-notification"
 version = "2.3.3"
-source = "git+https://github.com/tauri-apps/plugins-workspace?rev=c6561ab6b4f9e7f650d4fc8c53fd8acc9b65b9b2#c6561ab6b4f9e7f650d4fc8c53fd8acc9b65b9b2"
 dependencies = [
  "log",
  "notify-rust",
@@ -4695,6 +4718,7 @@ dependencies = [
  "html5ever 0.29.1",
  "http",
  "kuchikiki",
+ "log",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",

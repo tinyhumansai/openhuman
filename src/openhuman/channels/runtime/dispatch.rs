@@ -752,6 +752,7 @@ pub(crate) async fn process_channel_message(
         let _ = ctx
             .memory
             .store(
+                "",
                 &autosave_key,
                 &msg.content,
                 crate::openhuman::memory::MemoryCategory::Conversation,

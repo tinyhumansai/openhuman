@@ -22,6 +22,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::Transaction;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
 use crate::openhuman::memory::tree::source_tree::registry::new_summary_id;
 use crate::openhuman::memory::tree::source_tree::store;
 use crate::openhuman::memory::tree::source_tree::summariser::{
@@ -221,6 +222,27 @@ async fn seal_one_level(
         .await
         .context("summariser failed during seal")?;
 
+    // Phase 4 (#710): embed the summary BEFORE opening the write tx so an
+    // embedder failure aborts the seal cleanly — nothing is persisted,
+    // the buffer stays intact, and a retry re-embeds from scratch. The
+    // tx below would otherwise commit a summary with no embedding,
+    // polluting retrieval's semantic rerank.
+    let embedder = build_embedder_from_config(config).context("build embedder during seal")?;
+    let embedding = embedder.embed(&output.content).await.with_context(|| {
+        format!(
+            "embed summary during seal tree_id={} level={}",
+            tree.id, level
+        )
+    })?;
+    log::debug!(
+        "[source_tree::bucket_seal] embedded summary tree_id={} level={}→{} bytes={} provider={}",
+        tree.id,
+        level,
+        target_level,
+        output.content.len(),
+        embedder.name()
+    );
+
     // Build the new summary node.
     let now = Utc::now();
     let summary_id = new_summary_id(target_level);
@@ -240,6 +262,7 @@ async fn seal_one_level(
         score,
         sealed_at: now,
         deleted: false,
+        embedding: Some(embedding),
     };
 
     // Single write transaction: insert summary, clear this buffer, append
@@ -437,6 +460,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut cfg = Config::default();
         cfg.workspace_dir = tmp.path().to_path_buf();
+        // Phase 4 (#710): seal calls the embedder — force inert so
+        // tests don't require a running Ollama.
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.memory_tree.embedding_strict = false;
         (tmp, cfg)
     }
 

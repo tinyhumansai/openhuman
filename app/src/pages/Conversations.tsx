@@ -1,12 +1,13 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
+import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
 import { chatCancel, chatSend, useRustChat } from '../services/chatService';
 import {
@@ -127,7 +128,6 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   } = useUsageState();
   const [showLimitModal, setShowLimitModal] = useState(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -195,11 +195,12 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     }
   }, [selectedThreadId, messages.length, dispatch]);
 
-  useEffect(() => {
-    if (messages.length > 0) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages]);
+  const location = useLocation();
+  const { containerRef: messagesContainerRef, endRef: messagesEndRef } = useStickToBottom(
+    messages,
+    selectedThreadId,
+    location.pathname
+  );
 
   useEffect(() => {
     const onDictationInsert = (event: Event) => {
@@ -739,13 +740,23 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
               <p className="px-4 py-6 text-xs text-stone-400 text-center">No threads yet</p>
             ) : (
               sortedThreads.map(thread => (
-                <button
+                <div
                   key={thread.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => {
                     dispatch(setSelectedThread(thread.id));
                     void dispatch(loadThreadMessages(thread.id));
                   }}
-                  className={`w-full text-left px-4 py-3 border-b border-stone-50 transition-colors group ${
+                  onKeyDown={e => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      dispatch(setSelectedThread(thread.id));
+                      void dispatch(loadThreadMessages(thread.id));
+                    }
+                  }}
+                  className={`w-full text-left px-4 py-3 border-b border-stone-50 transition-colors group cursor-pointer ${
                     selectedThreadId === thread.id
                       ? 'bg-primary-50 border-l-2 border-l-primary-500'
                       : 'hover:bg-stone-50'
@@ -790,7 +801,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                       </span>
                     )}
                   </div> */}
-                </button>
+                </div>
               ))
             )}
           </div>
@@ -833,7 +844,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             </button>
           </div>
         )}
-        <div className="flex-1 overflow-y-auto px-5 py-4 bg-[#f6f6f6]">
+        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-5 py-4 bg-[#f6f6f6]">
           {isLoadingMessages ? (
             <div className="space-y-4">
               {Array.from({ length: 4 }).map((_, i) => (

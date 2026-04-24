@@ -71,6 +71,15 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      # Incremental compilation is pointless on fresh CI runners and just wastes
+      # disk and IO. Swatinem/rust-cache already handles cross-run warmup.
+      CARGO_INCREMENTAL: "0"
+      # Route rustc through sccache, backed by the GitHub Actions cache. This
+      # layers on top of Swatinem/rust-cache (which caches target/) by caching
+      # individual compilation units across branches.
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -102,6 +111,9 @@ jobs:
 
       - name: Install system dependencies (cmake, ALSA, X11)
         run: apt-get update && apt-get install -y --no-install-recommends cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev && rm -rf /var/lib/apt/lists/*
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Check formatting (cargo fmt)
         run: cargo fmt --all -- --check

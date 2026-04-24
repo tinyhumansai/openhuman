@@ -69,6 +69,9 @@ pub struct WebChannelEvent {
     /// `tool_result` events.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Optional citations attached to `chat_done` payloads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub citations: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -238,11 +241,12 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
 
 /// Spawns background bridges to forward various system events to Socket.IO clients.
 ///
-/// This function sets up four bridges:
+/// This function sets up five bridges:
 /// 1. **Web Channel Bridge**: Forwards chat-related events (messages, tool calls) to specific clients.
 /// 2. **Dictation Bridge**: Forwards hotkey events to all clients.
 /// 3. **Overlay Bridge**: Forwards attention bubble events to all clients.
-/// 4. **Transcription Bridge**: Forwards real-time speech-to-text results to all clients.
+/// 4. **Core Notification Bridge**: Forwards core notification events to all clients.
+/// 5. **Transcription Bridge**: Forwards real-time speech-to-text results to all clients.
 pub fn spawn_web_channel_bridge(io: SocketIo) {
     // 1. Web channel events → per-client rooms.
     let io_web = io.clone();
@@ -266,8 +270,9 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
         log::debug!("[socketio] web_channel bridge stopped");
     });
 
-    let io_transcription = io.clone();
     let io_overlay = io.clone();
+    let io_notify = io.clone();
+    let io_transcription = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -323,7 +328,39 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
         log::debug!("[socketio] overlay attention bridge stopped");
     });
 
-    // 4. Transcription results → broadcast to all connected clients.
+    // 4. Core notification events → broadcast to all connected clients so
+    //    the in-app notification center picks them up regardless of which
+    //    chat session is active. Pattern mirrors the overlay attention
+    //    bridge above — fire-and-forget, no per-client routing.
+    tokio::spawn(async move {
+        let mut rx = crate::openhuman::notifications::subscribe_core_notifications();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} core_notification events due to lag",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+
+            if let Ok(payload) = serde_json::to_value(&event) {
+                log::debug!(
+                    "[socketio] broadcast core_notification id={} category={:?}",
+                    event.id,
+                    event.category
+                );
+                let _ = io_notify.emit("core_notification", &payload);
+                let _ = io_notify.emit("core:notification", &payload);
+            }
+        }
+        log::debug!("[socketio] core_notification bridge stopped");
+    });
+
+    // 5. Transcription results → broadcast to all connected clients.
     tokio::spawn(async move {
         let mut rx = crate::openhuman::voice::dictation_listener::subscribe_transcription_results();
         loop {

@@ -2,3 +2,6 @@
 	path = app/src-tauri/vendor/tauri-cef
 	url = https://github.com/tinyhumansai/tauri-cef.git
 	branch = feat/cef
+[submodule "app/src-tauri/vendor/tauri-plugin-notification"]
+	path = app/src-tauri/vendor/tauri-plugin-notification
+	url = https://github.com/tinyhumansai/tauri-plugin-notification.git

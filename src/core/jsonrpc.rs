@@ -810,6 +810,7 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
         }
 
         crate::openhuman::health::bus::register_health_subscriber();
+        crate::openhuman::notifications::register_notification_bridge_subscriber();
         crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),
         );

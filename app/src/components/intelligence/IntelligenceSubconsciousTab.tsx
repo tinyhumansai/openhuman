@@ -257,7 +257,7 @@ export default function IntelligenceSubconsciousTab({
                       <button
                         onClick={() => handleFixInSkills(esc.id)}
                         className="px-3 py-1.5 text-xs bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-colors">
-                        Fix in Skills
+                        Fix in Connections
                       </button>
                     ) : (
                       <button

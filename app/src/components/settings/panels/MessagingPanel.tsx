@@ -158,7 +158,7 @@ const MessagingPanel = () => {
         {/* Channel cards — click to open the shared ChannelSetupModal */}
         {!loading && (
           <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-stone-900">Channel Integrations</h3>
+            <h3 className="text-sm font-semibold text-stone-900">Channel Connections</h3>
             <p className="text-xs text-stone-400">
               Configure auth modes for each messaging channel.
             </p>

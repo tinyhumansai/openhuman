@@ -95,7 +95,15 @@ export default defineConfig(async () => ({
           host,
           port: 1421,
         }
-      : undefined,
+      : {
+          // Tauri CEF loads the app from tauri.localhost; without this the
+          // HMR client tries ws://tauri.localhost/ and gets ERR_CONNECTION_REFUSED.
+          // Force the client to connect to the Vite dev server directly.
+          protocol: "ws",
+          host: "localhost",
+          port: 1420,
+          clientPort: 1420,
+        },
     watch: {
       // 3. tell Vite to ignore watching `src-tauri` directory (includes src-tauri/ai)
       ignored: ["**/src-tauri/**"],

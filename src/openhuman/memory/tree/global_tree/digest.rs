@@ -27,6 +27,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::global_tree::registry::get_or_create_global_tree;
 use crate::openhuman::memory::tree::global_tree::seal::append_daily_and_cascade;
 use crate::openhuman::memory::tree::global_tree::GLOBAL_TOKEN_BUDGET;
+use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
 use crate::openhuman::memory::tree::source_tree::registry::new_summary_id;
 use crate::openhuman::memory::tree::source_tree::store;
 use crate::openhuman::memory::tree::source_tree::summariser::{
@@ -144,6 +145,15 @@ pub async fn end_of_day_digest(
         .fold(f32::NEG_INFINITY, f32::max)
         .max(0.0);
 
+    // Phase 4 (#710): embed before opening the write tx so an embedder
+    // error aborts the digest without leaving a half-committed row.
+    let embedder =
+        build_embedder_from_config(config).context("build embedder during end_of_day_digest")?;
+    let embedding = embedder
+        .embed(&output.content)
+        .await
+        .context("embed daily summary during end_of_day_digest")?;
+
     let now = Utc::now();
     let daily_id = new_summary_id(0);
     let daily = SummaryNode {
@@ -162,6 +172,7 @@ pub async fn end_of_day_digest(
         score,
         sealed_at: now,
         deleted: false,
+        embedding: Some(embedding),
     };
 
     // Persist the daily node. Note: we do NOT backlink parent_id on the
@@ -331,6 +342,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut cfg = Config::default();
         cfg.workspace_dir = tmp.path().to_path_buf();
+        // Phase 4 (#710): digest embeds before committing — inert in tests.
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.memory_tree.embedding_strict = false;
         (tmp, cfg)
     }
 

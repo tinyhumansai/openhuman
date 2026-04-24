@@ -16,6 +16,7 @@ let started = false;
 // Retain listener references so stopNativeNotificationsService can remove them.
 let chatDoneListener: ((...args: unknown[]) => void) | null = null;
 let chatErrorListener: ((...args: unknown[]) => void) | null = null;
+let coreNotificationListener: ((...args: unknown[]) => void) | null = null;
 let disconnectListener: ((...args: unknown[]) => void) | null = null;
 
 interface ChatDonePayload {
@@ -31,6 +32,15 @@ interface ChatErrorPayload {
   message?: string;
 }
 
+interface CoreNotificationPayload {
+  id: string;
+  category: NotificationCategory;
+  title: string;
+  body: string;
+  deep_link?: string | null;
+  timestamp_ms: number;
+}
+
 function windowIsFocused(): boolean {
   if (typeof document === 'undefined') return true;
   return document.hasFocus();
@@ -38,14 +48,16 @@ function windowIsFocused(): boolean {
 
 function dispatchAndMaybeBanner(
   category: NotificationCategory,
-  item: Omit<NotificationItem, 'category' | 'timestamp' | 'read'>
+  item: Omit<NotificationItem, 'category' | 'timestamp' | 'read'>,
+  timestampOverride?: number
 ): void {
   const prefs = store.getState().notifications.preferences;
   if (!prefs[category]) {
     log('category %s disabled, skipping', category);
     return;
   }
-  const full: NotificationItem = { ...item, category, timestamp: Date.now(), read: false };
+  const timestamp = timestampOverride && timestampOverride > 0 ? timestampOverride : Date.now();
+  const full: NotificationItem = { ...item, category, timestamp, read: false };
   store.dispatch(notificationReceived(full));
   // Only fire OS-level banner when the user isn't already looking at the
   // window — otherwise the in-app center is enough and a native toast is
@@ -62,9 +74,9 @@ function truncate(input: string, max: number): string {
 
 /**
  * Subscribe to socket events that should surface as notifications (agent
- * completions, chat errors, connection drops). Idempotent. Safe to call at
- * app boot before the socket has connected — the socketService queues
- * listeners until the socket is ready.
+ * completions, chat errors, core-originated events, connection drops).
+ * Idempotent. Safe to call at app boot before the socket has connected —
+ * the socketService queues listeners until the socket is ready.
  */
 export function startNativeNotificationsService(): void {
   if (started) return;
@@ -90,6 +102,25 @@ export function startNativeNotificationsService(): void {
     });
   };
 
+  // Core-originated notifications (cron completions, webhook failures,
+  // sub-agent completions) bridged over socket.io from the Rust event
+  // bus. See src/openhuman/notifications/bus.rs.
+  coreNotificationListener = (...args: unknown[]) => {
+    const p = (args[0] ?? {}) as CoreNotificationPayload;
+    if (!p.id || !p.title) return;
+    const serverTs = p.timestamp_ms && p.timestamp_ms > 0 ? p.timestamp_ms : Date.now();
+    dispatchAndMaybeBanner(
+      p.category,
+      {
+        id: p.id,
+        title: truncate(p.title, 120),
+        body: truncate(p.body ?? '', 160),
+        deepLink: p.deep_link ?? undefined,
+      },
+      serverTs
+    );
+  };
+
   disconnectListener = (...args: unknown[]) => {
     const reason = typeof args[0] === 'string' ? args[0] : 'unknown';
     dispatchAndMaybeBanner('system', {
@@ -101,9 +132,10 @@ export function startNativeNotificationsService(): void {
 
   socketService.on('chat_done', chatDoneListener);
   socketService.on('chat_error', chatErrorListener);
+  socketService.on('core_notification', coreNotificationListener);
   socketService.on('disconnect', disconnectListener);
 
-  log('started — subscribed to chat_done, chat_error, disconnect');
+  log('started — subscribed to chat_done, chat_error, core_notification, disconnect');
 }
 
 export function stopNativeNotificationsService(): void {
@@ -116,6 +148,10 @@ export function stopNativeNotificationsService(): void {
   if (chatErrorListener) {
     socketService.off('chat_error', chatErrorListener);
     chatErrorListener = null;
+  }
+  if (coreNotificationListener) {
+    socketService.off('core_notification', coreNotificationListener);
+    coreNotificationListener = null;
   }
   if (disconnectListener) {
     socketService.off('disconnect', disconnectListener);
@@ -136,10 +172,28 @@ export function __handleChatDoneForTests(payload: ChatDonePayload): void {
   });
 }
 
+/** Exposed for tests — dispatch as if a core_notification arrived. */
+export function __handleCoreNotificationForTests(payload: CoreNotificationPayload): void {
+  if (!payload.id || !payload.title) return;
+  const serverTs =
+    payload.timestamp_ms && payload.timestamp_ms > 0 ? payload.timestamp_ms : Date.now();
+  dispatchAndMaybeBanner(
+    payload.category,
+    {
+      id: payload.id,
+      title: truncate(payload.title, 120),
+      body: truncate(payload.body ?? '', 160),
+      deepLink: payload.deep_link ?? undefined,
+    },
+    serverTs
+  );
+}
+
 /** Exposed for tests — resets module singletons between runs. */
 export function __resetForTests(): void {
   started = false;
   chatDoneListener = null;
   chatErrorListener = null;
+  coreNotificationListener = null;
   disconnectListener = null;
 }

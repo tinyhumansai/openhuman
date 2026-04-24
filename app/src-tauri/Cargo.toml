@@ -44,15 +44,24 @@ tauri = { version = "2.10", default-features = false, features = [
 ] }
 tauri-plugin-deep-link = "2.0.0"
 tauri-plugin-global-shortcut = "2"
-tauri-plugin-notification = "2"
+tauri-plugin-notification = { path = "vendor/tauri-plugin-notification" }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Used by gmail/cdp_fetch for decoding binary IO.read chunks. Base64 is
+# only emitted by CDP IO.read when the stream contains non-UTF-8 bytes,
+# but we opt into the feature to stay robust against unexpected responses.
+base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "process", "sync", "time", "net"] }
-# WebSocket client for the Chrome DevTools Protocol (used to talk to the
-# embedded CEF instance over `--remote-debugging-port=9222` and read
-# IndexedDB / drive `Runtime.evaluate` for the WhatsApp recipe).
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
+# WebSocket client + server for two uses:
+# - Client: Chrome DevTools Protocol connections to the embedded CEF
+#   instance over `--remote-debugging-port=9222` (IndexedDB reads,
+#   `Runtime.evaluate` for the WhatsApp recipe, DOMSnapshot / Network
+#   calls for the Gmail connector).
+# - Server: the `webview_apis` bridge at 127.0.0.1 that accepts
+#   JSON-RPC frames from the core sidecar so core-side handlers can
+#   reach the live-webview connectors via CDP.
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -81,9 +90,12 @@ nix = { version = "0.29", default-features = false, features = ["signal"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = "0.3.2"
-
+mac-notification-sys = "0.6"
 # iMessage scanner reads ~/Library/Messages/chat.db read-only on macOS.
 rusqlite = { version = "0.37", features = ["bundled"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust = { version = "4", default-features = false, features = ["dbus"] }
 
 [features]
 # Default runtime is CEF (bundled Chromium). The `wry` feature swaps in the
@@ -123,7 +135,7 @@ tauri-plugin = { path = "vendor/tauri-cef/crates/tauri-plugin" }
 tauri-plugin-opener = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "c6561ab6b4f9e7f650d4fc8c53fd8acc9b65b9b2" }
 tauri-plugin-deep-link = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "c6561ab6b4f9e7f650d4fc8c53fd8acc9b65b9b2" }
 tauri-plugin-global-shortcut = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "c6561ab6b4f9e7f650d4fc8c53fd8acc9b65b9b2" }
-tauri-plugin-notification = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "c6561ab6b4f9e7f650d4fc8c53fd8acc9b65b9b2" }
+tauri-plugin-notification = { path = "vendor/tauri-plugin-notification" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

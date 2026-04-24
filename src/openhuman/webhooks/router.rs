@@ -104,6 +104,7 @@ impl WebhookRouter {
             skill_id,
             tunnel_name,
             backend_tunnel_id,
+            None,
         )
     }
 
@@ -114,7 +115,38 @@ impl WebhookRouter {
         tunnel_name: Option<String>,
         backend_tunnel_id: Option<String>,
     ) -> Result<(), String> {
-        self.register_target(tunnel_uuid, "echo", "echo", tunnel_name, backend_tunnel_id)
+        self.register_target(
+            tunnel_uuid,
+            "echo",
+            "echo",
+            tunnel_name,
+            backend_tunnel_id,
+            None,
+        )
+    }
+
+    /// Register an agent-backed webhook tunnel.
+    ///
+    /// Requests arriving on this tunnel are routed into the triage
+    /// pipeline rather than the skill runtime. `agent_id` is stored
+    /// for observability and rebind validation; the triage evaluator
+    /// currently selects the target agent dynamically regardless of
+    /// this value.
+    pub fn register_agent(
+        &self,
+        tunnel_uuid: &str,
+        agent_id: Option<String>,
+        tunnel_name: Option<String>,
+        backend_tunnel_id: Option<String>,
+    ) -> Result<(), String> {
+        self.register_target(
+            tunnel_uuid,
+            "agent",
+            "agent",
+            tunnel_name,
+            backend_tunnel_id,
+            agent_id,
+        )
     }
 
     fn register_target(
@@ -124,6 +156,7 @@ impl WebhookRouter {
         skill_id: &str,
         tunnel_name: Option<String>,
         backend_tunnel_id: Option<String>,
+        agent_id: Option<String>,
     ) -> Result<(), String> {
         let mut routes = self.routes.write().map_err(|e| e.to_string())?;
 
@@ -134,11 +167,24 @@ impl WebhookRouter {
                     tunnel_uuid, existing.target_kind, existing.skill_id, target_kind, skill_id
                 ));
             }
+            // Prevent silent agent_id rebinding on agent tunnels.
+            if target_kind == "agent" && existing.agent_id.as_deref() != agent_id.as_deref() {
+                tracing::warn!(
+                    tunnel = %tunnel_uuid,
+                    existing_agent = ?existing.agent_id,
+                    requested_agent = ?agent_id,
+                    "[webhooks] rejecting agent tunnel rebind"
+                );
+                return Err(format!(
+                    "Tunnel {} is already bound to agent {:?}; cannot rebind to {:?}",
+                    tunnel_uuid, existing.agent_id, agent_id
+                ));
+            }
         }
 
         debug!(
-            "[webhooks] Registering tunnel {} → {} '{}'",
-            tunnel_uuid, target_kind, skill_id
+            "[webhooks] Registering tunnel {} → {} '{}' (agent={:?})",
+            tunnel_uuid, target_kind, skill_id, agent_id,
         );
 
         let tunnel_name_clone = tunnel_name.clone();
@@ -150,6 +196,7 @@ impl WebhookRouter {
                 skill_id: skill_id.to_string(),
                 tunnel_name,
                 backend_tunnel_id,
+                agent_id,
             },
         );
 
@@ -841,5 +888,61 @@ mod tests {
         }
         let logs = router.list_logs(Some(MAX_DEBUG_LOG_ENTRIES + 100));
         assert!(logs.len() <= MAX_DEBUG_LOG_ENTRIES);
+    }
+
+    #[test]
+    fn register_agent_persists_agent_id_and_name() {
+        let router = WebhookRouter::new(None);
+        router
+            .register_agent(
+                "uuid-a1",
+                Some("agent-42".into()),
+                Some("My Agent".into()),
+                None,
+            )
+            .unwrap();
+
+        let reg = router.registration("uuid-a1").unwrap();
+        assert_eq!(reg.target_kind, "agent");
+        assert_eq!(reg.agent_id.as_deref(), Some("agent-42"));
+        assert_eq!(reg.tunnel_name.as_deref(), Some("My Agent"));
+    }
+
+    #[test]
+    fn register_agent_same_id_succeeds() {
+        let router = WebhookRouter::new(None);
+        router
+            .register_agent("uuid-a2", Some("agent-1".into()), None, None)
+            .unwrap();
+        // Re-register with the same agent_id should succeed.
+        router
+            .register_agent(
+                "uuid-a2",
+                Some("agent-1".into()),
+                Some("Updated".into()),
+                None,
+            )
+            .unwrap();
+
+        let reg = router.registration("uuid-a2").unwrap();
+        assert_eq!(reg.agent_id.as_deref(), Some("agent-1"));
+        assert_eq!(reg.tunnel_name.as_deref(), Some("Updated"));
+    }
+
+    #[test]
+    fn register_agent_rejects_different_agent_id() {
+        let router = WebhookRouter::new(None);
+        router
+            .register_agent("uuid-a3", Some("agent-A".into()), None, None)
+            .unwrap();
+
+        let err = router
+            .register_agent("uuid-a3", Some("agent-B".into()), None, None)
+            .unwrap_err();
+        assert!(err.contains("already bound"));
+
+        // Original agent_id is preserved.
+        let reg = router.registration("uuid-a3").unwrap();
+        assert_eq!(reg.agent_id.as_deref(), Some("agent-A"));
     }
 }

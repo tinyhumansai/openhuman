@@ -18,6 +18,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::global_tree::{
     GLOBAL_TOKEN_BUDGET, MONTHLY_SEAL_THRESHOLD, WEEKLY_SEAL_THRESHOLD, YEARLY_SEAL_THRESHOLD,
 };
+use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
 use crate::openhuman::memory::tree::source_tree::registry::new_summary_id;
 use crate::openhuman::memory::tree::source_tree::store;
 use crate::openhuman::memory::tree::source_tree::summariser::{
@@ -185,6 +186,17 @@ async fn seal_one_level(
         .await
         .context("summariser failed during global seal")?;
 
+    // Phase 4 (#710): embed BEFORE opening the write tx so an embedder
+    // error aborts the cascade without half-committing the summary.
+    let embedder =
+        build_embedder_from_config(config).context("build embedder during global seal")?;
+    let embedding = embedder.embed(&output.content).await.with_context(|| {
+        format!(
+            "embed global summary during seal tree_id={} level={}",
+            tree.id, level
+        )
+    })?;
+
     let now = Utc::now();
     let summary_id = new_summary_id(target_level);
     let node = SummaryNode {
@@ -203,6 +215,7 @@ async fn seal_one_level(
         score,
         sealed_at: now,
         deleted: false,
+        embedding: Some(embedding),
     };
 
     // Single write transaction: insert the new summary, clear this level's
@@ -337,6 +350,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut cfg = Config::default();
         cfg.workspace_dir = tmp.path().to_path_buf();
+        // Phase 4 (#710): tests exercise the seal cascade which embeds
+        // output; force the inert path so no Ollama server is required.
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.memory_tree.embedding_strict = false;
         (tmp, cfg)
     }
 
@@ -358,6 +376,7 @@ mod tests {
             score: 0.5,
             sealed_at: ts,
             deleted: false,
+            embedding: None,
         }
     }
 

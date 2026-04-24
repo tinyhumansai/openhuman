@@ -593,7 +593,7 @@ mod tests {
         let tracker = CostTracker::new(config, tmp.path()).unwrap();
 
         // Record usage just under warning threshold (80% of 10 = 8.0)
-        let usage = TokenUsage::new("test/model", 100000, 50000, 1.0, 2.0);
+        let _usage = TokenUsage::new("test/model", 100000, 50000, 1.0, 2.0);
         // This has a cost, so let's just check the budget with a projected amount
         let check = tracker.check_budget(8.5).unwrap();
         assert!(

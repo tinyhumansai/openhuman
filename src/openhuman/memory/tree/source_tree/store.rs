@@ -9,12 +9,19 @@
 //! share the epoch convention with `mem_tree_chunks`. Writes are serialised
 //! through the sibling `tree::store::with_connection` so we inherit its
 //! busy-timeout, WAL, and schema-init behaviour.
+//!
+//! Phase 4 (#710) adds a nullable `embedding` blob on
+//! `mem_tree_summaries` — packed little-endian `f32` vectors via
+//! [`crate::openhuman::memory::tree::score::embed::pack_embedding`]. New
+//! writes populate it via [`insert_summary_tx`]; reads decode it when
+//! present.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::score::embed::{decode_optional_blob, pack_checked};
 use crate::openhuman::memory::tree::source_tree::types::{
     Buffer, SummaryNode, Tree, TreeKind, TreeStatus,
 };
@@ -169,15 +176,26 @@ fn row_to_tree(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tree> {
 /// Insert a sealed summary. Immutable — the caller must generate a fresh
 /// id per seal. Idempotent on the primary key so retries of the same seal
 /// transaction don't double-insert.
+///
+/// Phase 4 (#710): if `node.embedding` is `Some`, the packed vector is
+/// written to the `embedding` blob column; `None` writes NULL so legacy
+/// rows from Phases 1-3 (no embed) read back identically.
 pub(crate) fn insert_summary_tx(tx: &Transaction<'_>, node: &SummaryNode) -> Result<()> {
+    let embedding_blob: Option<Vec<u8>> = match node.embedding.as_deref() {
+        Some(v) => Some(
+            pack_checked(v)
+                .with_context(|| format!("Failed to pack embedding for summary id={}", node.id))?,
+        ),
+        None => None,
+    };
     tx.execute(
         "INSERT OR IGNORE INTO mem_tree_summaries (
             id, tree_id, tree_kind, level, parent_id,
             child_ids_json, content, token_count,
             entities_json, topics_json,
             time_range_start_ms, time_range_end_ms,
-            score, sealed_at_ms, deleted
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            score, sealed_at_ms, deleted, embedding
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             node.id,
             node.tree_id,
@@ -194,10 +212,54 @@ pub(crate) fn insert_summary_tx(tx: &Transaction<'_>, node: &SummaryNode) -> Res
             node.score,
             node.sealed_at.timestamp_millis(),
             node.deleted as i64,
+            embedding_blob,
         ],
     )
     .with_context(|| format!("Failed to insert summary id={}", node.id))?;
     Ok(())
+}
+
+/// Set (or overwrite) the embedding for an existing summary row.
+/// Exposed for a future backfill helper — not called by ingest/seal
+/// today. Returns the number of rows updated (0 if the id is unknown).
+pub fn set_summary_embedding(
+    config: &Config,
+    summary_id: &str,
+    embedding: &[f32],
+) -> Result<usize> {
+    let blob = pack_checked(embedding)
+        .with_context(|| format!("Failed to pack embedding for summary id={summary_id}"))?;
+    with_connection(config, |conn| {
+        let changed = conn.execute(
+            "UPDATE mem_tree_summaries SET embedding = ?1 WHERE id = ?2",
+            params![blob, summary_id],
+        )?;
+        if changed == 0 {
+            log::warn!(
+                "[source_tree::store] set_summary_embedding: no row for summary_id={summary_id}"
+            );
+        }
+        Ok(changed)
+    })
+}
+
+/// Fetch a summary's embedding, decoding the stored little-endian `f32`
+/// blob. Returns `Ok(None)` if the summary doesn't exist OR if it exists
+/// but has a NULL embedding (legacy / pre-Phase-4 rows).
+pub fn get_summary_embedding(config: &Config, summary_id: &str) -> Result<Option<Vec<f32>>> {
+    with_connection(config, |conn| {
+        let blob: Option<Option<Vec<u8>>> = conn
+            .query_row(
+                "SELECT embedding FROM mem_tree_summaries WHERE id = ?1",
+                params![summary_id],
+                |r| r.get::<_, Option<Vec<u8>>>(0),
+            )
+            .optional()?;
+        match blob {
+            None => Ok(None),
+            Some(inner) => decode_optional_blob(inner, &format!("summary_id={summary_id}")),
+        }
+    })
 }
 
 /// Fetch one summary by id. Soft-deleted rows are returned with
@@ -209,7 +271,7 @@ pub fn get_summary(config: &Config, id: &str) -> Result<Option<SummaryNode>> {
                     child_ids_json, content, token_count,
                     entities_json, topics_json,
                     time_range_start_ms, time_range_end_ms,
-                    score, sealed_at_ms, deleted
+                    score, sealed_at_ms, deleted, embedding
                FROM mem_tree_summaries WHERE id = ?1",
         )?;
         let row = stmt
@@ -233,7 +295,7 @@ pub fn list_summaries_at_level(
                     child_ids_json, content, token_count,
                     entities_json, topics_json,
                     time_range_start_ms, time_range_end_ms,
-                    score, sealed_at_ms, deleted
+                    score, sealed_at_ms, deleted, embedding
                FROM mem_tree_summaries
               WHERE tree_id = ?1 AND level = ?2 AND deleted = 0
               ORDER BY sealed_at_ms ASC",
@@ -277,6 +339,7 @@ fn row_to_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SummaryNode> {
     let score: f64 = row.get(12)?;
     let sealed_ms: i64 = row.get(13)?;
     let deleted: i64 = row.get(14)?;
+    let embedding_blob: Option<Vec<u8>> = row.get(15)?;
 
     let tree_kind = TreeKind::parse(&tree_kind_s).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, e.into())
@@ -290,6 +353,17 @@ fn row_to_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SummaryNode> {
     let topics: Vec<String> = serde_json::from_str(&topics_json).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(e))
     })?;
+    let embedding =
+        decode_optional_blob(embedding_blob, &format!("summary_id={id}")).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                15,
+                rusqlite::types::Type::Blob,
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                )),
+            )
+        })?;
 
     Ok(SummaryNode {
         id,
@@ -307,6 +381,7 @@ fn row_to_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SummaryNode> {
         score: score as f32,
         sealed_at: ms_to_utc(sealed_ms)?,
         deleted: deleted != 0,
+        embedding,
     })
 }
 
@@ -448,6 +523,7 @@ mod tests {
             score: 0.75,
             sealed_at: ts,
             deleted: false,
+            embedding: None,
         }
     }
 

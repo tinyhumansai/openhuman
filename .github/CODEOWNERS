@@ -1,0 +1,8 @@
+# Code owners for openhuman.
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+#
+# The @tinyhumansai/maintainers team is requested for review on every PR.
+# Team members must have at least "write" access on this repo for GitHub to
+# honour the assignment.
+
+*   @tinyhumansai/maintainers

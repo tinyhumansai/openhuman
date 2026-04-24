@@ -113,7 +113,7 @@ impl ToolTrackerHook {
         let _guard = lock.lock().await;
 
         let key = format!("tool/{tool_name}");
-        let mut stats: ToolStats = match self.memory.get(&key).await {
+        let mut stats: ToolStats = match self.memory.get("tool_effectiveness", &key).await {
             Ok(Some(entry)) => serde_json::from_str(&entry.content).unwrap_or_default(),
             _ => ToolStats::default(),
         };
@@ -123,6 +123,7 @@ impl ToolTrackerHook {
         let content = serde_json::to_string(&stats)?;
         self.memory
             .store(
+                "tool_effectiveness",
                 &key,
                 &content,
                 MemoryCategory::Custom("tool_effectiveness".into()),
@@ -198,6 +199,7 @@ mod tests {
 
         async fn store(
             &self,
+            namespace: &str,
             key: &str,
             content: &str,
             category: MemoryCategory,
@@ -209,7 +211,7 @@ mod tests {
                     id: key.to_string(),
                     key: key.to_string(),
                     content: content.to_string(),
-                    namespace: None,
+                    namespace: Some(namespace.to_string()),
                     category,
                     timestamp: "now".into(),
                     session_id: session_id.map(str::to_string),
@@ -223,25 +225,32 @@ mod tests {
             &self,
             _query: &str,
             _limit: usize,
-            _session_id: Option<&str>,
+            _opts: crate::openhuman::memory::RecallOpts<'_>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             Ok(Vec::new())
         }
 
-        async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+        async fn get(&self, _namespace: &str, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
             Ok(self.entries.lock().get(key).cloned())
         }
 
         async fn list(
             &self,
+            _namespace: Option<&str>,
             _category: Option<&MemoryCategory>,
             _session_id: Option<&str>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             Ok(self.entries.lock().values().cloned().collect())
         }
 
-        async fn forget(&self, key: &str) -> anyhow::Result<bool> {
+        async fn forget(&self, _namespace: &str, key: &str) -> anyhow::Result<bool> {
             Ok(self.entries.lock().remove(key).is_some())
+        }
+
+        async fn namespace_summaries(
+            &self,
+        ) -> anyhow::Result<Vec<crate::openhuman::memory::NamespaceSummary>> {
+            Ok(Vec::new())
         }
 
         async fn count(&self) -> anyhow::Result<usize> {
@@ -306,6 +315,7 @@ mod tests {
         let memory_impl = Arc::new(MockMemory::default());
         memory_impl
             .store(
+                "tool_effectiveness",
                 "tool/shell",
                 &serde_json::to_string(&ToolStats {
                     total_calls: 2,
@@ -333,7 +343,11 @@ mod tests {
 
         hook.update_stats("shell", true, 250, None).await.unwrap();
 
-        let stored = memory_impl.get("tool/shell").await.unwrap().unwrap();
+        let stored = memory_impl
+            .get("tool_effectiveness", "tool/shell")
+            .await
+            .unwrap()
+            .unwrap();
         let parsed: ToolStats = serde_json::from_str(&stored.content).unwrap();
         assert_eq!(parsed.total_calls, 3);
         assert_eq!(parsed.successes, 2);
@@ -397,7 +411,11 @@ mod tests {
 
         hook.on_turn_complete(&ctx).await.unwrap();
 
-        let stored = memory_impl.get("tool/shell").await.unwrap().unwrap();
+        let stored = memory_impl
+            .get("tool_effectiveness", "tool/shell")
+            .await
+            .unwrap()
+            .unwrap();
         let parsed: ToolStats = serde_json::from_str(&stored.content).unwrap();
         assert_eq!(parsed.total_calls, 2);
         assert_eq!(parsed.successes, 1);

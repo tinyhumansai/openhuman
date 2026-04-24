@@ -445,6 +445,12 @@ pub(crate) fn with_connection<T>(
     // the L0 buffer seals into an L1 summary so traversal can walk
     // leaf → parent without scanning `mem_tree_summaries.child_ids_json`.
     add_column_if_missing(&conn, "mem_tree_chunks", "parent_summary_id", "TEXT")?;
+    // Phase 4 (#710): sealed-summary embeddings for semantic rerank.
+    // Blob layout matches `mem_tree_chunks.embedding` — see
+    // `score::embed::{pack_embedding, unpack_embedding}`. Nullable so
+    // legacy summaries from Phases 1-3 read back as None; retrieval
+    // tolerates NULL by dropping the row to the bottom of a rerank.
+    add_column_if_missing(&conn, "mem_tree_summaries", "embedding", "BLOB")?;
     f(&conn)
 }
 

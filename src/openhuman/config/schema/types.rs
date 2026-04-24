@@ -81,6 +81,13 @@ pub struct Config {
     #[serde(default)]
     pub memory: MemoryConfig,
 
+    /// Phase 4 memory-tree embedding wiring (#710). Controls whether
+    /// ingest/seal pass new chunks/summaries through an Ollama embedder,
+    /// and whether missing endpoint config is fatal or warns and falls
+    /// back to inert zero vectors.
+    #[serde(default)]
+    pub memory_tree: MemoryTreeConfig,
+
     #[serde(default)]
     pub storage: StorageConfig,
 
@@ -227,6 +234,7 @@ impl Default for Config {
             cron: CronConfig::default(),
             channels_config: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
+            memory_tree: MemoryTreeConfig::default(),
             storage: StorageConfig::default(),
             composio: ComposioConfig::default(),
             secrets: SecretsConfig::default(),

@@ -54,6 +54,29 @@ impl std::fmt::Display for MemoryCategory {
     }
 }
 
+/// Optional filters for `Memory::recall`.
+///
+/// All fields default to `None`. `namespace = None` uses the backend's legacy
+/// default namespace (`GLOBAL_NAMESPACE`). Pass `Some("namespace")` to scope
+/// the semantic query to a specific namespace.
+#[derive(Debug, Default, Clone)]
+pub struct RecallOpts<'a> {
+    pub namespace: Option<&'a str>,
+    pub category: Option<MemoryCategory>,
+    pub session_id: Option<&'a str>,
+    pub min_score: Option<f64>,
+}
+
+/// Summary row returned by `Memory::namespace_summaries`, used for
+/// agent-side namespace discovery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NamespaceSummary {
+    pub namespace: String,
+    pub count: usize,
+    /// RFC3339 timestamp of most recent `updated_at` in the namespace, if any.
+    pub last_updated: Option<String>,
+}
+
 /// The core trait for memory storage and retrieval.
 ///
 /// Any persistence backend (SQLite, Postgres, Vector DB, etc.) should implement
@@ -64,14 +87,9 @@ pub trait Memory: Send + Sync {
     fn name(&self) -> &str;
 
     /// Stores a new memory entry or updates an existing one.
-    ///
-    /// # Arguments
-    /// * `key` - The lookup key for the memory.
-    /// * `content` - The actual data to store.
-    /// * `category` - The organizational category.
-    /// * `session_id` - Optional session scope.
     async fn store(
         &self,
+        namespace: &str,
         key: &str,
         content: &str,
         category: MemoryCategory,
@@ -80,31 +98,33 @@ pub trait Memory: Send + Sync {
 
     /// Recalls memories matching a query string using keyword or semantic search.
     ///
-    /// # Arguments
-    /// * `query` - The search term or natural language query.
-    /// * `limit` - Maximum number of results to return.
-    /// * `session_id` - Optional filter to scope search to a specific session.
+    /// Namespace is passed via `opts.namespace`; `None` uses the backend's
+    /// legacy default namespace (`GLOBAL_NAMESPACE`).
     async fn recall(
         &self,
         query: &str,
         limit: usize,
-        session_id: Option<&str>,
+        opts: RecallOpts<'_>,
     ) -> anyhow::Result<Vec<MemoryEntry>>;
 
-    /// Retrieves a specific memory entry by its exact key.
-    async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>>;
+    /// Retrieves a specific memory entry by exact (namespace, key).
+    async fn get(&self, namespace: &str, key: &str) -> anyhow::Result<Option<MemoryEntry>>;
 
-    /// Lists memory entries, optionally filtered by category and/or session.
+    /// Lists memory entries, optionally scoped by namespace, category, session.
     async fn list(
         &self,
+        namespace: Option<&str>,
         category: Option<&MemoryCategory>,
         session_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>>;
 
-    /// Deletes a memory entry associated with the given key.
+    /// Deletes a memory entry associated with the given (namespace, key).
     ///
     /// Returns `Ok(true)` if the entry was found and deleted, `Ok(false)` if not found.
-    async fn forget(&self, key: &str) -> anyhow::Result<bool>;
+    async fn forget(&self, namespace: &str, key: &str) -> anyhow::Result<bool>;
+
+    /// Lists all namespaces with aggregate stats, for agent-side discovery.
+    async fn namespace_summaries(&self) -> anyhow::Result<Vec<NamespaceSummary>>;
 
     /// Returns the total count of all memory entries in the backend.
     async fn count(&self) -> anyhow::Result<usize>;

@@ -113,8 +113,8 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
       <div className="text-center mb-4">
         <h1 className="text-xl font-bold mb-2 text-stone-900">Connect your tools</h1>
         <p className="text-stone-600 text-sm">
-          Connect the tools you already use so OpenHuman can build context for your agent. Your data
-          is saved locally and never leaves your device.
+          Connect the services you already use so OpenHuman can build context for your agent. Your
+          data is saved locally and never leaves your device.
         </p>
       </div>
 
@@ -122,7 +122,7 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
       <div className="mb-4 space-y-2">
         {composioError ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center">
-            <p className="text-sm text-amber-700 mb-2">Could not load integrations</p>
+            <p className="text-sm text-amber-700 mb-2">Could not load connections</p>
             <button
               type="button"
               onClick={() => void refreshComposio()}
@@ -132,7 +132,7 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
           </div>
         ) : composioLoading && displayToolkits.length === 0 ? (
           <div className="rounded-xl border border-stone-100 bg-stone-50 p-4 text-center">
-            <p className="text-sm text-stone-400 animate-pulse">Loading integrations…</p>
+            <p className="text-sm text-stone-400 animate-pulse">Loading connections…</p>
           </div>
         ) : (
           <>
@@ -191,7 +191,7 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
               );
             })}
 
-            {/* More integrations hint */}
+            {/* More connections hint */}
             <div className="rounded-xl border border-stone-100 bg-stone-50 px-3 py-2.5 text-center">
               <p className="text-xs text-stone-400">
                 Notion, Slack, GitHub, and more available after setup
@@ -203,7 +203,7 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
 
       {connectedCount > 0 && (
         <p className="text-xs text-sage-600 text-center mb-3">
-          {connectedCount} integration{connectedCount > 1 ? 's' : ''} connected
+          {connectedCount} connection{connectedCount > 1 ? 's' : ''} active
         </p>
       )}
 

@@ -466,27 +466,68 @@ fn check_workspace(config: &Config, items: &mut Vec<DiagnosticItem>) {
 }
 
 fn available_disk_space_mb(path: &Path) -> Option<u64> {
-    if std::env::consts::OS == "windows" {
-        let _ = path; // TODO: add a Windows-specific implementation
-        return None;
+    #[cfg(target_os = "windows")]
+    {
+        return available_disk_space_mb_windows(path);
     }
 
-    let output = std::process::Command::new("df")
-        .arg("-m")
-        .arg(path)
+    #[cfg(not(target_os = "windows"))]
+    {
+        let output = std::process::Command::new("df")
+            .arg("-m")
+            .arg(path)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_df_available_mb(&stdout)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn parse_df_available_mb(stdout: &str) -> Option<u64> {
+    let line = stdout.lines().rev().find(|line| !line.trim().is_empty())?;
+    let avail = line.split_whitespace().nth(3)?;
+    avail.parse::<u64>().ok()
+}
+
+#[cfg(target_os = "windows")]
+fn available_disk_space_mb_windows(path: &Path) -> Option<u64> {
+    use std::path::{Component, Prefix};
+
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let letter = canonical.components().find_map(|c| match c {
+        Component::Prefix(pc) => match pc.kind() {
+            Prefix::Disk(b) | Prefix::VerbatimDisk(b) => Some((b as char).to_ascii_uppercase()),
+            _ => None,
+        },
+        _ => None,
+    })?;
+
+    // PowerShell is ubiquitous on supported Windows; `Get-PSDrive` needs no admin
+    // and returns free bytes as a single integer line.
+    let script = format!("(Get-PSDrive -Name {letter} -ErrorAction Stop).Free");
+    let output = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
         .output()
         .ok()?;
     if !output.status.success() {
         return None;
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_df_available_mb(&stdout)
-}
-
-fn parse_df_available_mb(stdout: &str) -> Option<u64> {
-    let line = stdout.lines().rev().find(|line| !line.trim().is_empty())?;
-    let avail = line.split_whitespace().nth(3)?;
-    avail.parse::<u64>().ok()
+    let bytes: u64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .ok()?;
+    Some(bytes / (1024 * 1024))
 }
 
 fn workspace_probe_path(workspace_dir: &Path) -> std::path::PathBuf {

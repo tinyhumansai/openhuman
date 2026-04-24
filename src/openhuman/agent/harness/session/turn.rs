@@ -25,6 +25,7 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{ParsedToolCall, ToolExecutionResult};
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
+use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, PromptTool};
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
@@ -130,11 +131,39 @@ impl Agent {
         if self.auto_save {
             let _ = self
                 .memory
-                .store("user_msg", user_message, MemoryCategory::Conversation, None)
+                .store(
+                    "",
+                    "user_msg",
+                    user_message,
+                    MemoryCategory::Conversation,
+                    None,
+                )
                 .await;
         }
 
         log::info!("[agent] loading memory context for user message");
+        const MEMORY_CITATION_LIMIT: usize = 5;
+        const MEMORY_CITATION_MIN_RELEVANCE: f64 = 0.4;
+        match collect_recall_citations(
+            self.memory.as_ref(),
+            user_message,
+            MEMORY_CITATION_LIMIT,
+            MEMORY_CITATION_MIN_RELEVANCE,
+        )
+        .await
+        {
+            Ok(citations) => {
+                log::debug!(
+                    "[agent_loop] memory citations collected count={}",
+                    citations.len()
+                );
+                self.last_turn_citations = citations;
+            }
+            Err(err) => {
+                log::warn!("[agent_loop] memory citation collection failed: {err}");
+                self.last_turn_citations.clear();
+            }
+        }
         let context = self
             .memory_loader
             .load_context(self.memory.as_ref(), user_message)
@@ -152,6 +181,43 @@ impl Agent {
             );
             self.last_memory_context = Some(context.clone());
             format!("{context}{user_message}")
+        };
+
+        // ── SKILL.md body injection (#781) ───────────────────────────
+        // Match installed SKILL.md skills against the user message and
+        // prepend their bodies ahead of the memory-context block so the
+        // LLM sees them at the top of the user turn. See the module
+        // docs on [`crate::openhuman::skills::inject`] for the matching
+        // heuristic and size cap rationale.
+        let enriched = {
+            use crate::openhuman::skills::inject;
+            let matches = inject::match_skills(&self.skills, user_message);
+            if matches.is_empty() {
+                log::debug!(
+                    "[skills:inject] no skill matches for user message (skill_catalog_len={})",
+                    self.skills.len()
+                );
+                enriched
+            } else {
+                let injection = inject::render_injection(
+                    &matches,
+                    inject::DEFAULT_MAX_INJECTION_BYTES,
+                    |skill| skill.read_body(),
+                );
+                let matched_count = injection.decisions.iter().filter(|d| d.matched).count();
+                log::info!(
+                    "[skills:inject] summary candidates={} matched={} injected_bytes={} truncated_any={}",
+                    injection.decisions.len(),
+                    matched_count,
+                    injection.injected_bytes,
+                    injection.truncated
+                );
+                if injection.rendered.is_empty() {
+                    enriched
+                } else {
+                    format!("{}\n{}", injection.rendered, enriched)
+                }
+            }
         };
 
         self.history
@@ -505,7 +571,7 @@ impl Agent {
                         let summary = truncate_with_ellipsis(&final_text, 100);
                         let _ = self
                             .memory
-                            .store("assistant_resp", &summary, MemoryCategory::Daily, None)
+                            .store("", "assistant_resp", &summary, MemoryCategory::Daily, None)
                             .await;
                     }
 
@@ -1053,6 +1119,7 @@ impl Agent {
         let obs_entries = self
             .memory
             .list(
+                Some("learning_observations"),
                 Some(&MemoryCategory::Custom("learning_observations".into())),
                 None,
             )
@@ -1062,6 +1129,7 @@ impl Agent {
         let pat_entries = self
             .memory
             .list(
+                Some("learning_patterns"),
                 Some(&MemoryCategory::Custom("learning_patterns".into())),
                 None,
             )
@@ -1070,7 +1138,11 @@ impl Agent {
 
         let profile_entries = self
             .memory
-            .list(Some(&MemoryCategory::Custom("user_profile".into())), None)
+            .list(
+                Some("user_profile"),
+                Some(&MemoryCategory::Custom("user_profile".into())),
+                None,
+            )
             .await
             .unwrap_or_default();
 

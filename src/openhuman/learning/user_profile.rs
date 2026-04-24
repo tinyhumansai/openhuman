@@ -87,13 +87,14 @@ impl UserProfileHook {
             let key = format!("pref/{slug}");
 
             // Check for existing entry to avoid duplicates
-            if let Ok(Some(_)) = self.memory.get(&key).await {
+            if let Ok(Some(_)) = self.memory.get("user_profile", &key).await {
                 log::debug!("[learning] user preference already stored: {key}");
                 continue;
             }
 
             self.memory
                 .store(
+                    "user_profile",
                     &key,
                     pref,
                     MemoryCategory::Custom("user_profile".into()),
@@ -168,6 +169,7 @@ mod tests {
 
         async fn store(
             &self,
+            namespace: &str,
             key: &str,
             content: &str,
             category: MemoryCategory,
@@ -179,7 +181,7 @@ mod tests {
                     id: key.to_string(),
                     key: key.to_string(),
                     content: content.to_string(),
-                    namespace: None,
+                    namespace: Some(namespace.to_string()),
                     category,
                     timestamp: "now".into(),
                     session_id: session_id.map(str::to_string),
@@ -193,25 +195,32 @@ mod tests {
             &self,
             _query: &str,
             _limit: usize,
-            _session_id: Option<&str>,
+            _opts: crate::openhuman::memory::RecallOpts<'_>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             Ok(Vec::new())
         }
 
-        async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+        async fn get(&self, _namespace: &str, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
             Ok(self.entries.lock().get(key).cloned())
         }
 
         async fn list(
             &self,
+            _namespace: Option<&str>,
             _category: Option<&MemoryCategory>,
             _session_id: Option<&str>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             Ok(self.entries.lock().values().cloned().collect())
         }
 
-        async fn forget(&self, key: &str) -> anyhow::Result<bool> {
+        async fn forget(&self, _namespace: &str, key: &str) -> anyhow::Result<bool> {
             Ok(self.entries.lock().remove(key).is_some())
+        }
+
+        async fn namespace_summaries(
+            &self,
+        ) -> anyhow::Result<Vec<crate::openhuman::memory::NamespaceSummary>> {
+            Ok(Vec::new())
         }
 
         async fn count(&self) -> anyhow::Result<usize> {
@@ -265,6 +274,7 @@ mod tests {
         let memory_impl = Arc::new(MockMemory::default());
         memory_impl
             .store(
+                "user_profile",
                 "pref/i_prefer_rust",
                 "I prefer Rust",
                 MemoryCategory::Custom("user_profile".into()),

@@ -8,7 +8,7 @@
 //! indexed so later phases can resolve "which chunks mention Alice?" in
 //! O(lookup).
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::openhuman::config::Config;
@@ -19,6 +19,7 @@ use crate::openhuman::memory::tree::canonicalize::{
     CanonicalisedSource,
 };
 use crate::openhuman::memory::tree::chunker::{chunk_markdown, ChunkerInput, ChunkerOptions};
+use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, pack_checked};
 use crate::openhuman::memory::tree::score::{self, ScoreResult, ScoringConfig};
 use crate::openhuman::memory::tree::source_tree::{
     append_leaf, get_or_create_source_tree, InertSummariser, LeafRef,
@@ -166,14 +167,55 @@ async fn persist(
         dropped
     );
 
-    // 4. Persist (blocking SQLite — isolate on a dedicated thread)
+    // 3.5. Phase 4 (#710) — embed every kept chunk BEFORE writing. A failed
+    //      embed aborts the whole batch so a retry stays idempotent on
+    //      `chunk_id` (upsert_chunks_tx ON CONFLICT REPLACE). Serial per
+    //      chunk for now; parallelism is an explicit follow-up. We pack
+    //      each vector into its SQLite BLOB representation up front so the
+    //      write tx below doesn't have to juggle floats.
+    let embedder = build_embedder_from_config(config).context("build embedder during ingest")?;
+    log::debug!(
+        "[memory_tree::ingest] embedding source_id={} provider={} kept={}",
+        source_id,
+        embedder.name(),
+        kept_chunks.len()
+    );
+    let mut chunk_embedding_blobs: Vec<(String, Vec<u8>)> = Vec::with_capacity(kept_chunks.len());
+    for chunk in &kept_chunks {
+        let vector = embedder
+            .embed(&chunk.content)
+            .await
+            .with_context(|| format!("embed chunk_id={} during ingest", chunk.id))?;
+        let packed = pack_checked(&vector)
+            .with_context(|| format!("pack embedding for chunk_id={} during ingest", chunk.id))?;
+        chunk_embedding_blobs.push((chunk.id.clone(), packed));
+    }
+
+    // 4. Persist (blocking SQLite — isolate on a dedicated thread).
+    //    Chunks + scores + embeddings all commit in one tx so retries are
+    //    idempotent. The chunk upsert preserves any prior embedding on
+    //    conflict (see store::upsert_chunks_tx), so we follow with a
+    //    deliberate UPDATE that writes the fresh blob.
     let config_owned = config.clone();
     let kept_for_store = kept_chunks.clone();
     let results_for_store = all_results.clone();
+    let embeddings_for_store = chunk_embedding_blobs.clone();
     let written = tokio::task::spawn_blocking(move || -> Result<usize> {
         store::with_connection(&config_owned, |conn| {
             let tx = conn.unchecked_transaction()?;
             let n = store::upsert_chunks_tx(&tx, &kept_for_store)?;
+            for (chunk_id, blob) in &embeddings_for_store {
+                let changed = tx.execute(
+                    "UPDATE mem_tree_chunks SET embedding = ?1 WHERE id = ?2",
+                    rusqlite::params![blob, chunk_id],
+                )?;
+                if changed == 0 {
+                    log::warn!(
+                        "[memory_tree::ingest] embedding update affected 0 rows chunk_id={chunk_id} — \
+                         upsert missed the row?"
+                    );
+                }
+            }
             for (result, ts_ms) in &results_for_store {
                 // Persist rationale for EVERY chunk (kept or dropped).
                 // Index entities only for kept chunks (handled inside persist_score_tx).
@@ -282,6 +324,12 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut cfg = Config::default();
         cfg.workspace_dir = tmp.path().to_path_buf();
+        // Phase 4 (#710): disable Ollama-backed embeddings in tests.
+        // Ingest/seal call `build_embedder_from_config`; falling back to
+        // inert (zero vectors) keeps tests deterministic and network-free.
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.memory_tree.embedding_strict = false;
         (tmp, cfg)
     }
 
@@ -416,5 +464,48 @@ mod tests {
             rows[0].metadata.source_ref.as_ref().unwrap().value,
             "notion://x"
         );
+    }
+
+    // ── Phase 4 (#710) ──────────────────────────────────────────────
+
+    /// Ingesting with an inert embedder must still write embeddings for
+    /// every kept chunk. Use a trimmed test_config so we go through the
+    /// full embed → persist pipeline.
+    #[tokio::test]
+    async fn ingest_writes_chunk_embeddings() {
+        use crate::openhuman::memory::tree::score::embed::EMBEDDING_DIM;
+        use crate::openhuman::memory::tree::store::get_chunk_embedding;
+
+        let (_tmp, cfg) = test_config();
+        let out = ingest_chat(&cfg, "slack:#eng", "alice", vec![], substantive_batch())
+            .await
+            .unwrap();
+        assert!(out.chunks_written >= 1);
+        for id in &out.chunk_ids {
+            let v = get_chunk_embedding(&cfg, id)
+                .unwrap()
+                .unwrap_or_else(|| panic!("missing embedding for {id}"));
+            assert_eq!(v.len(), EMBEDDING_DIM);
+        }
+    }
+
+    /// When the embedder errors (here: Ollama required but unavailable),
+    /// ingest must fail and persist nothing. Point embedding at a dead
+    /// port so the HTTP call refuses, and flip `strict=true` so the
+    /// factory returns Ollama (not the inert fallback).
+    #[tokio::test]
+    async fn ingest_fails_when_embedder_fails_and_persists_nothing() {
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = Some("http://127.0.0.1:1".into());
+        cfg.memory_tree.embedding_model = Some("nomic-embed-text".into());
+        cfg.memory_tree.embedding_timeout_ms = Some(500);
+        cfg.memory_tree.embedding_strict = true;
+
+        let result = ingest_chat(&cfg, "slack:#eng", "alice", vec![], substantive_batch()).await;
+        assert!(result.is_err(), "expected ingest to bail when embed fails");
+
+        // No chunks, no scores persisted — retry stays clean.
+        assert_eq!(count_chunks(&cfg).unwrap(), 0);
+        assert_eq!(count_scores(&cfg).unwrap(), 0);
     }
 }

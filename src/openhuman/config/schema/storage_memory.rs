@@ -75,3 +75,77 @@ impl Default for MemoryConfig {
         }
     }
 }
+
+/// Phase 4 memory-tree configuration — embedding provider wiring for the
+/// hierarchical memory (#710).
+///
+/// When `embedding_endpoint` and `embedding_model` are both set, ingest
+/// and bucket-seal route every new chunk/summary through the Ollama
+/// embedder before writing. When unset, behaviour depends on
+/// `embedding_strict`:
+/// - `true` (default): ingest/seal bail with a clear config error.
+/// - `false`: fall back to the inert zero-vector embedder and warn.
+///
+/// Env overrides apply in [`super::load`]:
+/// - `OPENHUMAN_MEMORY_EMBED_ENDPOINT`
+/// - `OPENHUMAN_MEMORY_EMBED_MODEL`
+/// - `OPENHUMAN_MEMORY_EMBED_TIMEOUT_MS`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryTreeConfig {
+    /// Ollama endpoint for the embedder (e.g. `http://localhost:11434`).
+    /// `None` disables the Ollama path — see `embedding_strict` for the
+    /// resulting behaviour.
+    #[serde(default = "default_memory_tree_embedding_endpoint")]
+    pub embedding_endpoint: Option<String>,
+
+    /// Embedding model name. Must produce 768-dim vectors (see
+    /// `memory::tree::score::embed::EMBEDDING_DIM`). `None` disables
+    /// the Ollama path.
+    #[serde(default = "default_memory_tree_embedding_model")]
+    pub embedding_model: Option<String>,
+
+    /// Per-request timeout for the embedder, in milliseconds.
+    #[serde(default = "default_memory_tree_embedding_timeout_ms")]
+    pub embedding_timeout_ms: Option<u64>,
+
+    /// When true, ingest/seal refuse to run with embeddings disabled.
+    /// When false, an inert zero-vector embedder is used and retrieval
+    /// rerank falls back to scope + recency ordering only.
+    #[serde(default = "default_memory_tree_embedding_strict")]
+    pub embedding_strict: bool,
+}
+
+/// Returns `None` so that existing installs that never opted into Phase 4
+/// embeddings stay on the inert zero-vector path rather than suddenly
+/// attempting to reach a local Ollama daemon they haven't configured.
+/// Operators enable the Ollama path by setting either `embedding_endpoint`
+/// in TOML or the `OPENHUMAN_MEMORY_EMBED_ENDPOINT` env var.
+fn default_memory_tree_embedding_endpoint() -> Option<String> {
+    None
+}
+
+fn default_memory_tree_embedding_model() -> Option<String> {
+    None
+}
+
+fn default_memory_tree_embedding_timeout_ms() -> Option<u64> {
+    Some(10_000)
+}
+
+/// Defaults to `false` so installs without an embedding endpoint fall back
+/// to the inert zero-vector embedder (with a warn log) instead of refusing
+/// to run. Set to `true` in production configs that require embeddings.
+fn default_memory_tree_embedding_strict() -> bool {
+    false
+}
+
+impl Default for MemoryTreeConfig {
+    fn default() -> Self {
+        Self {
+            embedding_endpoint: default_memory_tree_embedding_endpoint(),
+            embedding_model: default_memory_tree_embedding_model(),
+            embedding_timeout_ms: default_memory_tree_embedding_timeout_ms(),
+            embedding_strict: default_memory_tree_embedding_strict(),
+        }
+    }
+}

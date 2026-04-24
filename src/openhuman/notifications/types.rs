@@ -1,10 +1,46 @@
-//! Core types for the integration notification domain.
-//!
-//! `IntegrationNotification` is the central record that flows from webview
-//! recipe events → triage pipeline → notification center UI.
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Core-bridge types (DomainEvent → socket.io → frontend notification center)
+// ---------------------------------------------------------------------------
+
+/// Category used by the frontend notification center to apply per-category
+/// preferences. Matches `NotificationCategory` in
+/// `app/src/store/notificationSlice.ts` — keep the two in sync.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CoreNotificationCategory {
+    Messages,
+    Agents,
+    Skills,
+    System,
+}
+
+/// Wire payload emitted on the `core_notification` socket event. Short,
+/// user-facing fields only — downstream UI shapes title/body/category into
+/// its own notification item structure.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CoreNotificationEvent {
+    /// Unique id for this notification publish (e.g. `"cron:<job_id>:<ts>"`).
+    /// Because the timestamp is embedded, each publish produces a distinct id —
+    /// every cron run, webhook failure, or subagent event gets its own entry in
+    /// the notification center rather than replacing a previous one.
+    pub id: String,
+    pub category: CoreNotificationCategory,
+    pub title: String,
+    pub body: String,
+    /// Optional in-app deep link the user is sent to when they click the
+    /// notification (mirrors the `deepLink` field on the frontend item).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deep_link: Option<String>,
+    /// Wall-clock milliseconds since the unix epoch at publish time.
+    pub timestamp_ms: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Integration notification types (webview recipe events → triage pipeline)
+// ---------------------------------------------------------------------------
 
 /// Lifecycle state for an ingested notification.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -40,6 +76,7 @@ pub struct IntegrationNotification {
     /// Provider slug: `"gmail"`, `"slack"`, `"whatsapp"`, etc.
     pub provider: String,
     /// Webview account id if the notification came from an embedded account.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
     /// Short subject / title text.
     pub title: String,
@@ -48,16 +85,20 @@ pub struct IntegrationNotification {
     /// Full raw event payload from the recipe for downstream use.
     pub raw_payload: serde_json::Value,
     /// 0.0–1.0 importance score produced by the triage pipeline (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub importance_score: Option<f32>,
     /// Triage action string: `"drop"` / `"acknowledge"` / `"react"` / `"escalate"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub triage_action: Option<String>,
     /// One-sentence justification from the classifier.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub triage_reason: Option<String>,
     /// Lifecycle status.
     pub status: NotificationStatus,
     /// Wall-clock time the notification arrived.
     pub received_at: DateTime<Utc>,
     /// Wall-clock time triage completed.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scored_at: Option<DateTime<Utc>>,
 }
 

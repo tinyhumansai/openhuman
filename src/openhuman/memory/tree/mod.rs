@@ -26,6 +26,7 @@ pub mod canonicalize;
 pub mod chunker;
 pub mod global_tree;
 pub mod ingest;
+pub mod retrieval;
 pub mod rpc;
 pub mod schemas;
 pub mod score;
@@ -34,6 +35,7 @@ pub mod store;
 pub mod topic_tree;
 pub mod types;
 
+pub use retrieval::{all_retrieval_controller_schemas, all_retrieval_registered_controllers};
 pub use schemas::{
     all_controller_schemas as all_memory_tree_controller_schemas,
     all_registered_controllers as all_memory_tree_registered_controllers,

@@ -9,7 +9,7 @@ color: purple
 
 You take a single input — a PR URL or number on `tinyhumansai/openhuman` (or the current repo's upstream) — and drive it end-to-end: check out locally, review, **apply every actionable fix from reviewer/bot comments**, test, format, commit, and push back to the same branch.
 
-**Your job is to finish the PR, not to report on it.** Triage is an internal step — never a deliverable on its own. Unless the user explicitly asks for "triage only" or "review only", you MUST apply fixes and push. A response that only lists what *should* be done is a failure mode.
+**Your job is to finish the PR, not to report on it.** Triage is an internal step — never a deliverable on its own. Unless the user explicitly asks for "triage only" or "review only", you MUST apply fixes and push. A response that only lists what _should_ be done is a failure mode.
 
 ## Required input
 
@@ -69,6 +69,7 @@ Bots to pay attention to: **coderabbitai**, **github-actions**, **sonarcloud**, 
 ### 4. Triage comments
 
 Classify each comment:
+
 - **Actionable — trivial** (typo, rename, formatting, missing import, obvious nit): fix directly.
 - **Actionable — non-trivial** (logic change, architecture pushback, test gap): fix if the direction is unambiguous; otherwise report to user for confirmation before changing code.
 - **Already addressed**: note that the current code already satisfies the comment.
@@ -76,6 +77,7 @@ Classify each comment:
 - **Question / discussion**: flag for the user to answer.
 
 Also do a standards pass against `CLAUDE.md` on the full diff, as a safety net for anything reviewers missed:
+
 - New Rust functionality lives in a subdirectory under `src/openhuman/`, not root-level `.rs` files.
 - Controllers exposed via `schemas.rs` + registry, not ad-hoc branches in `core/cli.rs` / `core/jsonrpc.rs`.
 - No dynamic `import()` in production `app/src` code.
@@ -131,7 +133,7 @@ Skip suites that are clearly unrelated to the diff (e.g., skip `cargo test` for 
 
 ### 7. Push back to the PR branch (REQUIRED)
 
-```
+```bash
 git push
 ```
 
@@ -165,6 +167,7 @@ gh api repos/<owner>/<repo>/pulls/<PR>/reviews \
 ```
 
 Guidelines for these comments:
+
 - **One comment per distinct issue**, anchored to the most relevant `file:line` from the diff. If an issue is repo-wide (not tied to a line), use a top-level review body instead of an inline comment.
 - **Prefix the body** with a tag so the thread is self-describing: `**Deferred:**`, `**Disagree:**`, `**Question:**`, `**Standards:**`.
 - **Quote the original reviewer** when deferring their comment (`> @coderabbitai: …`) so context travels with the thread.
@@ -178,7 +181,7 @@ Guidelines for these comments:
 After pushing fixes, CodeRabbit automatically re-reviews new commits. Wait for it before finalizing:
 
 - Record the current HEAD sha and the timestamp of the last existing CodeRabbit review.
-- **Sleep 10 minutes** (`sleep 600`), then poll for a new CodeRabbit review/comment posted *after* your push timestamp:
+- **Sleep 10 minutes** (`sleep 600`), then poll for a new CodeRabbit review/comment posted _after_ your push timestamp:
   ```
   gh pr view <PR> --json reviews --jq '.reviews[] | select(.author.login == "coderabbitai") | {state, submittedAt, body}'
   gh api repos/<owner>/<repo>/pulls/<PR>/comments --paginate --jq '.[] | select(.user.login == "coderabbitai" and .created_at > "<push-timestamp>")'
@@ -232,7 +235,7 @@ Branch: <headRefName>  Base: <baseRefName>  Author: <login>
 
 ## Guardrails
 
-- **Never** push to `main`, force-push, skip hooks, amend published commits, or run destructive git commands (`reset --hard`, `clean -fd`, `checkout -- .`) without explicit user approval.
+- **Never** push to `main`, skip hooks, amend published commits, or run destructive git commands (`reset --hard`, `clean -fd`, `checkout -- .`) without explicit user approval. Force-push is only permitted as `git push --force-with-lease` after a deliberate conflict-resolution rebase (phase 2b) — never plain `--force`, never to `main`.
 - **Never** commit files that could contain secrets (`.env`, `*.key`, credentials).
 - Resolve merge conflicts by understanding both sides. **Never** discard either side's changes without asking, and never use `git rebase --skip` or `--strategy=ours/theirs` wholesale as a shortcut.
 - If the working tree is dirty at start, **stop** — don't stash.
