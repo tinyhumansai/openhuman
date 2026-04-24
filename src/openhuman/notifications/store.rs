@@ -306,7 +306,9 @@ pub fn stats(config: &Config) -> Result<super::types::NotificationStats> {
     use std::collections::HashMap;
     with_connection(config, |conn| {
         let total: i64 = conn
-            .query_row("SELECT COUNT(*) FROM integration_notifications", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM integration_notifications", [], |r| {
+                r.get(0)
+            })
             .context("[notification_intel] stats total query failed")?;
 
         let unread: i64 = conn
@@ -329,13 +331,18 @@ pub fn stats(config: &Config) -> Result<super::types::NotificationStats> {
         let mut by_provider = HashMap::new();
         {
             let mut stmt = conn
-                .prepare("SELECT provider, COUNT(*) FROM integration_notifications GROUP BY provider")
+                .prepare(
+                    "SELECT provider, COUNT(*) FROM integration_notifications GROUP BY provider",
+                )
                 .context("[notification_intel] stats by_provider prepare failed")?;
             let rows = stmt
-                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
                 .context("[notification_intel] stats by_provider query failed")?;
             for row in rows {
-                let (provider, count) = row.context("[notification_intel] stats by_provider row failed")?;
+                let (provider, count) =
+                    row.context("[notification_intel] stats by_provider row failed")?;
                 by_provider.insert(provider, count);
             }
         }
@@ -350,10 +357,13 @@ pub fn stats(config: &Config) -> Result<super::types::NotificationStats> {
                 )
                 .context("[notification_intel] stats by_action prepare failed")?;
             let rows = stmt
-                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
                 .context("[notification_intel] stats by_action query failed")?;
             for row in rows {
-                let (action, count) = row.context("[notification_intel] stats by_action row failed")?;
+                let (action, count) =
+                    row.context("[notification_intel] stats by_action row failed")?;
                 by_action.insert(action, count);
             }
         }

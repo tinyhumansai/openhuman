@@ -343,8 +343,7 @@ pub async fn handle_stats(_params: Map<String, Value>) -> Result<Value, String> 
     let config = config_rpc::load_config_with_timeout().await?;
     tracing::debug!("[notification_intel] stats requested");
 
-    let s = store::stats(&config)
-        .map_err(|e| format!("[notification_intel] stats failed: {e}"))?;
+    let s = store::stats(&config).map_err(|e| format!("[notification_intel] stats failed: {e}"))?;
 
     let outcome = RpcOutcome::new(json!(s), vec![]);
     outcome.into_cli_compatible_json()
