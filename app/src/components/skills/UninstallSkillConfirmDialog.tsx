@@ -83,7 +83,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       log('confirm: error=%s', msg);
-      setError(msg);
+      setError(`Couldn't uninstall skill: ${msg}`);
       setSubmitting(false);
     }
   }, [skill.name, onUninstalled, onClose]);
