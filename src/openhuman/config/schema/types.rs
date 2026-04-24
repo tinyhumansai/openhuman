@@ -104,6 +104,12 @@ pub struct Config {
     pub http_request: HttpRequestConfig,
 
     #[serde(default)]
+    pub curl: CurlConfig,
+
+    #[serde(default)]
+    pub gitbooks: GitbooksConfig,
+
+    #[serde(default)]
     pub multimodal: MultimodalConfig,
 
     #[serde(default)]
@@ -240,6 +246,8 @@ impl Default for Config {
             secrets: SecretsConfig::default(),
             browser: BrowserConfig::default(),
             http_request: HttpRequestConfig::default(),
+            curl: CurlConfig::default(),
+            gitbooks: GitbooksConfig::default(),
             multimodal: MultimodalConfig::default(),
             web_search: WebSearchConfig::default(),
             proxy: ProxyConfig::default(),

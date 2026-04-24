@@ -168,6 +168,32 @@ pub fn all_tools_with_runtime(
         http_config.timeout_secs,
     )));
 
+    // curl — always registered. Shares `http_request.allowed_domains`,
+    // adds streaming-to-disk with a hard byte ceiling. Writes land
+    // under `<workspace>/<curl.dest_subdir>`.
+    tools.push(Box::new(CurlTool::new(
+        security.clone(),
+        http_config.allowed_domains.clone(),
+        workspace_dir.to_path_buf(),
+        root_config.curl.dest_subdir.clone(),
+        root_config.curl.max_download_bytes,
+        root_config.curl.timeout_secs,
+    )));
+
+    // gitbooks — answers questions about OpenHuman by calling the
+    // GitBook MCP server. Two tools mirroring the upstream MCP tools.
+    if root_config.gitbooks.enabled {
+        tools.push(Box::new(GitbooksSearchTool::new(
+            root_config.gitbooks.endpoint.clone(),
+            root_config.gitbooks.timeout_secs,
+        )));
+        tools.push(Box::new(GitbooksGetPageTool::new(
+            root_config.gitbooks.endpoint.clone(),
+            root_config.gitbooks.timeout_secs,
+        )));
+        tracing::debug!("[gitbooks] registered gitbooks_search + gitbooks_get_page");
+    }
+
     // Web search — always registered. Result/timeout budget
     // knobs still come from `config.web_search`, but there is no
     // enable flag: every session needs research as a baseline
