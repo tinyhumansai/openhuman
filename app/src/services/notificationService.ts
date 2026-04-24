@@ -48,6 +48,13 @@ export async function markNotificationRead(id: string): Promise<void> {
 }
 
 type NotificationIngestResult = { id: string; skipped?: false } | { skipped: true; reason: string };
+type NotificationStats = {
+  total: number;
+  unread: number;
+  unscored: number;
+  by_provider: Record<string, number>;
+  by_action: Record<string, number>;
+};
 
 /**
  * Ingest a new notification via the core RPC pipeline.
@@ -105,4 +112,22 @@ export async function setNotificationSettings(payload: {
     method: 'openhuman.notification_settings_set',
     params: payload,
   });
+}
+
+export async function dismissNotification(id: string): Promise<void> {
+  log('dismissNotification id=%s', id);
+  await callCoreRpc<{ ok: boolean }>({ method: 'openhuman.notification_dismiss', params: { id } });
+}
+
+export async function markNotificationActed(id: string): Promise<void> {
+  log('markNotificationActed id=%s', id);
+  await callCoreRpc<{ ok: boolean }>({
+    method: 'openhuman.notification_mark_acted',
+    params: { id },
+  });
+}
+
+export async function fetchNotificationStats(): Promise<NotificationStats> {
+  log('fetchNotificationStats');
+  return callCoreRpc<NotificationStats>({ method: 'openhuman.notification_stats', params: {} });
 }

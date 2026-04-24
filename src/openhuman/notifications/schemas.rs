@@ -390,7 +390,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_controller_schemas_covers_three_functions() {
+    fn all_controller_schemas_covers_registered_functions() {
         let names: Vec<_> = all_controller_schemas()
             .into_iter()
             .map(|s| s.function)
@@ -428,6 +428,54 @@ mod tests {
                 "stats",
             ]
         );
+    }
+
+    #[test]
+    fn schemas_dismiss_and_mark_acted_require_id_and_return_ok() {
+        let dismiss = schemas("dismiss");
+        assert_eq!(dismiss.inputs.len(), 1);
+        assert_eq!(dismiss.inputs[0].name, "id");
+        assert_eq!(dismiss.inputs[0].ty, TypeSchema::String);
+        assert!(dismiss.inputs[0].required);
+        assert_eq!(dismiss.outputs.len(), 1);
+        assert_eq!(dismiss.outputs[0].name, "ok");
+        assert_eq!(dismiss.outputs[0].ty, TypeSchema::Bool);
+        assert!(dismiss.outputs[0].required);
+
+        let mark_acted = schemas("mark_acted");
+        assert_eq!(mark_acted.inputs.len(), 1);
+        assert_eq!(mark_acted.inputs[0].name, "id");
+        assert_eq!(mark_acted.inputs[0].ty, TypeSchema::String);
+        assert!(mark_acted.inputs[0].required);
+        assert_eq!(mark_acted.outputs.len(), 1);
+        assert_eq!(mark_acted.outputs[0].name, "ok");
+        assert_eq!(mark_acted.outputs[0].ty, TypeSchema::Bool);
+        assert!(mark_acted.outputs[0].required);
+    }
+
+    #[test]
+    fn schemas_stats_matches_notification_stats_shape() {
+        let stats = schemas("stats");
+        assert!(stats.inputs.is_empty());
+        assert_eq!(stats.outputs.len(), 5);
+
+        let expected = [
+            ("total", TypeSchema::I64),
+            ("unread", TypeSchema::I64),
+            ("unscored", TypeSchema::I64),
+            ("by_provider", TypeSchema::Map(Box::new(TypeSchema::I64))),
+            ("by_action", TypeSchema::Map(Box::new(TypeSchema::I64))),
+        ];
+
+        for (name, ty) in expected {
+            let field = stats
+                .outputs
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap_or_else(|| panic!("missing stats output field `{name}`"));
+            assert_eq!(field.ty, ty, "unexpected type for stats.{name}");
+            assert!(field.required, "stats.{name} should be required");
+        }
     }
 
     #[test]

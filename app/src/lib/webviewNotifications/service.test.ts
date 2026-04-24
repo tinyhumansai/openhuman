@@ -18,6 +18,25 @@ const sampleAccount = {
   status: 'open' as const,
 };
 
+function makeFiredPayload(
+  overrides: Partial<{
+    account_id: string;
+    provider: 'slack';
+    title: string;
+    body: string;
+    tag: string | null;
+  }> = {}
+) {
+  return {
+    account_id: 'acct1',
+    provider: 'slack' as const,
+    title: 'OpenHuman: Slack - Ping',
+    body: 'hi',
+    tag: null,
+    ...overrides,
+  };
+}
+
 describe('webviewNotifications service', () => {
   const ingestNotificationMock = vi.mocked(ingestNotification);
 
@@ -35,24 +54,13 @@ describe('webviewNotifications service', () => {
 
   it('fired events increment unread via Redux', () => {
     const before = store.getState().accounts.unread.acct1 ?? 0;
-    __handleFiredForTests({
-      account_id: 'acct1',
-      provider: 'slack',
-      title: 'OpenHuman: Slack — Ping',
-      body: 'hi',
-      tag: null,
-    });
+    __handleFiredForTests(makeFiredPayload());
     const after = store.getState().accounts.unread.acct1 ?? 0;
     expect(after).toBe(before + 1);
   });
 
   it('handleNotificationClick focuses account and clears unread', () => {
-    __handleFiredForTests({
-      account_id: 'acct1',
-      provider: 'slack',
-      title: 'OpenHuman: Slack — Ping',
-      body: '',
-    });
+    __handleFiredForTests(makeFiredPayload({ body: '' }));
     expect(store.getState().accounts.unread.acct1).toBeGreaterThan(0);
 
     handleNotificationClick('acct1');
@@ -61,20 +69,13 @@ describe('webviewNotifications service', () => {
   });
 
   it('fired events for unknown accounts are no-ops', () => {
-    __handleFiredForTests({ account_id: 'ghost', provider: 'slack', title: 't', body: 'b' });
+    __handleFiredForTests(makeFiredPayload({ account_id: 'ghost', title: 't', body: 'b' }));
     expect(store.getState().accounts.unread.ghost).toBeUndefined();
   });
 
   it('ingest success adds integration notification', async () => {
     ingestNotificationMock.mockResolvedValue({ id: 'notif-1', skipped: false });
-
-    __handleFiredForTests({
-      account_id: 'acct1',
-      provider: 'slack',
-      title: 'Hello',
-      body: 'World',
-      tag: 'message',
-    });
+    __handleFiredForTests(makeFiredPayload({ title: 'Hello', body: 'World', tag: 'message' }));
 
     await Promise.resolve();
 
@@ -84,14 +85,7 @@ describe('webviewNotifications service', () => {
 
   it('ingest skipped does not add integration notification', async () => {
     ingestNotificationMock.mockResolvedValue({ skipped: true, reason: 'duplicate' });
-
-    __handleFiredForTests({
-      account_id: 'acct1',
-      provider: 'slack',
-      title: 'Hello',
-      body: 'World',
-      tag: 'message',
-    });
+    __handleFiredForTests(makeFiredPayload({ title: 'Hello', body: 'World', tag: 'message' }));
 
     await Promise.resolve();
 
@@ -101,14 +95,7 @@ describe('webviewNotifications service', () => {
 
   it('ingest error does not add integration notification', async () => {
     ingestNotificationMock.mockRejectedValue(new Error('network down'));
-
-    __handleFiredForTests({
-      account_id: 'acct1',
-      provider: 'slack',
-      title: 'Hello',
-      body: 'World',
-      tag: 'message',
-    });
+    __handleFiredForTests(makeFiredPayload({ title: 'Hello', body: 'World', tag: 'message' }));
 
     await Promise.resolve();
 

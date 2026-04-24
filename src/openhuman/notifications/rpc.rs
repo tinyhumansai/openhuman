@@ -1,9 +1,12 @@
 //! JSON-RPC handler functions for the notifications domain.
 //!
-//! Three endpoints:
+//! Notification endpoints:
 //!  - `notification_ingest`   — write a new notification, kick off background triage
 //!  - `notifications_list`    — paginated query with optional provider / min-score filters
 //!  - `notification_mark_read`— mark a single notification as read
+//!  - `notification_dismiss`  — mark a single notification as dismissed
+//!  - `notification_mark_acted` — mark a single notification as acted upon
+//!  - `notification_stats`    — return aggregate pipeline statistics
 
 use chrono::Utc;
 use serde_json::{json, Map, Value};
@@ -29,6 +32,7 @@ use super::types::{
 /// Writes the record immediately, returns the new `id`, then spawns a
 /// background task to run the triage pipeline and back-fill the score.
 pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> {
+    let ingest_started_at = Utc::now();
     let config = config_rpc::load_config_with_timeout().await?;
 
     let req: NotificationIngestRequest = serde_json::from_value(Value::Object(params.clone()))
@@ -55,7 +59,7 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
         triage_action: None,
         triage_reason: None,
         status: NotificationStatus::Unread,
-        received_at: Utc::now(),
+        received_at: ingest_started_at,
         scored_at: None,
     };
 
@@ -78,7 +82,6 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
     );
 
     // Spawn background triage — the ingest RPC returns immediately.
-    let ingest_time = Utc::now();
     let id_for_triage = id.clone();
     let config_for_triage = config.clone();
     tokio::spawn(async move {
@@ -98,7 +101,7 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
                 "body": req.body,
                 "raw": req.raw_payload,
             }),
-            received_at: Utc::now(),
+            received_at: ingest_started_at,
         };
 
         match run_triage(&envelope).await {
@@ -127,11 +130,12 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
                         error = %e,
                         "[notification_intel] failed to persist triage result"
                     );
+                    return;
                 }
 
                 // Compute triage latency from ingest time.
                 let latency_ms = Utc::now()
-                    .signed_duration_since(ingest_time)
+                    .signed_duration_since(ingest_started_at)
                     .num_milliseconds()
                     .max(0) as u64;
                 publish_global(DomainEvent::NotificationTriaged {

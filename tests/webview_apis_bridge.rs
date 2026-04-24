@@ -48,6 +48,7 @@ async fn ensure_mock_server() -> u16 {
     *guard = Some(port);
     tokio::spawn(async move {
         loop {
+            tracing::debug!("[webview_apis_bridge:test] waiting for mock ws client");
             let (stream, _peer) = match listener.accept().await {
                 Ok(v) => v,
                 Err(_) => continue,
@@ -58,12 +59,23 @@ async fn ensure_mock_server() -> u16 {
                     Err(_) => return,
                 };
                 let (mut sink, mut stream) = ws.split();
+                tracing::debug!("[webview_apis_bridge:test] mock ws client connected");
                 while let Some(msg) = stream.next().await {
                     match msg {
                         Ok(Message::Text(text)) => {
                             let req: Value = serde_json::from_str(&text).unwrap();
                             let id = req["id"].as_str().unwrap().to_string();
                             let method = req["method"].as_str().unwrap().to_string();
+                            let redacted_id = if id.len() <= 4 {
+                                "***".to_string()
+                            } else {
+                                format!("***{}", &id[id.len() - 4..])
+                            };
+                            tracing::debug!(
+                                id = %redacted_id,
+                                method = %method,
+                                "[webview_apis_bridge:test] handling text rpc message"
+                            );
                             let resp = match method.as_str() {
                                 "gmail.list_labels" => json!({
                                     "kind": "response",
@@ -88,12 +100,31 @@ async fn ensure_mock_server() -> u16 {
                                 }),
                             };
                             if sink.send(Message::Text(resp.to_string())).await.is_err() {
+                                tracing::warn!(
+                                    id = %redacted_id,
+                                    method = %method,
+                                    "[webview_apis_bridge:test] failed to send mock response"
+                                );
                                 break;
                             }
                         }
-                        Ok(Message::Close(_)) => break,
-                        Ok(_) => continue,
-                        Err(_) => break,
+                        Ok(Message::Close(_)) => {
+                            tracing::debug!("[webview_apis_bridge:test] client closed connection");
+                            break;
+                        }
+                        Ok(_) => {
+                            tracing::debug!(
+                                "[webview_apis_bridge:test] ignoring non-text ws message"
+                            );
+                            continue;
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                "[webview_apis_bridge:test] websocket receive error"
+                            );
+                            break;
+                        }
                     }
                 }
             });
