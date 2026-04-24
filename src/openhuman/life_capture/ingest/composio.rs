@@ -98,7 +98,6 @@ impl LifeCaptureComposioBridge {
             Ok(outcome) => {
                 tracing::debug!(
                     source = ?source,
-                    external_id = %external_id,
                     result = %outcome.value,
                     "[life_capture:composio] ingest ok"
                 );
@@ -106,7 +105,6 @@ impl LifeCaptureComposioBridge {
             Err(e) => {
                 tracing::warn!(
                     source = ?source,
-                    external_id = %external_id,
                     error = %e,
                     "[life_capture:composio] ingest failed"
                 );
