@@ -8,6 +8,7 @@ export type AccountProvider =
   | 'slack'
   | 'discord'
   | 'google-meet'
+  | 'zoom'
   | 'browserscan';
 
 export type AccountStatus = 'pending' | 'open' | 'error' | 'closed';
@@ -93,6 +94,12 @@ const BASE_PROVIDERS: ProviderDescriptor[] = [
     label: 'Google Meet',
     description: 'Join Google Meet calls and capture live captions.',
     serviceUrl: 'https://meet.google.com/',
+  },
+  {
+    id: 'zoom',
+    label: 'Zoom',
+    description: 'Zoom web client — log in and join meetings from inside the app.',
+    serviceUrl: 'https://zoom.us/',
   },
 ];
 

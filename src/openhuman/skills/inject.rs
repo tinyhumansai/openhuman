@@ -508,6 +508,7 @@ mod tests {
     fn skill(name: &str, description: &str) -> Skill {
         Skill {
             name: name.to_string(),
+            dir_name: name.to_string(),
             description: description.to_string(),
             version: "0.1.0".into(),
             author: None,

@@ -12,6 +12,8 @@ mod gmail;
 mod imessage_scanner;
 mod notification_settings;
 #[cfg(feature = "cef")]
+mod screen_capture;
+#[cfg(feature = "cef")]
 mod slack_scanner;
 #[cfg(feature = "cef")]
 mod telegram_scanner;
@@ -631,6 +633,8 @@ pub fn run() {
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
     #[cfg(feature = "cef")]
     let builder = builder.manage(telegram_scanner::ScannerRegistry::new());
+    #[cfg(feature = "cef")]
+    let builder = builder.manage(screen_capture::ScreenShareState::new());
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -1020,6 +1024,12 @@ pub fn run() {
             webview_accounts::webview_set_focused_account,
             notification_settings::notification_settings_get,
             notification_settings::notification_settings_set,
+            #[cfg(feature = "cef")]
+            screen_capture::screen_share_begin_session,
+            #[cfg(feature = "cef")]
+            screen_capture::screen_share_thumbnail,
+            #[cfg(feature = "cef")]
+            screen_capture::screen_share_finalize_session,
             gmail::gmail_list_labels,
             gmail::gmail_list_messages,
             gmail::gmail_search,
