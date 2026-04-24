@@ -119,6 +119,11 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
+        // Hybrid search over the user's PersonalIndex (iMessage +
+        // Gmail + Calendar). Pulls live `index` + `embedder` handles
+        // from `life_capture::runtime` on each call; surfaces a
+        // structured error if core startup hasn't initialised them.
+        Box::new(LifeCaptureSearchTool::new()),
         Box::new(ScheduleTool::new(security.clone(), root_config.clone())),
         Box::new(ProxyConfigTool::new(config.clone(), security.clone())),
         Box::new(GitOperationsTool::new(
