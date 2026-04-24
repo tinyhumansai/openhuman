@@ -1,13 +1,13 @@
 name: E2E (Linux) — agent-review
 
+# DISABLED: Linux E2E via tauri-driver requires WebKitWebDriver (webkit2gtk),
+# but this app uses the CEF runtime (tauri-runtime-cef) which has no WebDriver
+# automation support. tauri-driver sessions time out because WebKitWebDriver
+# cannot drive a CEF-backed webview. Re-enable once the CEF fork adds a
+# ChromeDriver-based automation path or an alternative E2E harness is wired.
+# See also: test.yml where the e2e-linux job is commented out for the same reason.
+
 on:
-  pull_request:
-    paths:
-      - "app/test/e2e/specs/agent-review.spec.ts"
-      - "app/test/e2e/helpers/**"
-      - "app/test/wdio.conf.ts"
-      - "app/scripts/e2e-*.sh"
-      - ".github/workflows/e2e-agent-review.yml"
   workflow_dispatch:
 
 permissions:
