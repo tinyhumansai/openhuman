@@ -122,7 +122,7 @@ const ReferralRewardsSection = () => {
       if ((e as Error)?.name !== 'AbortError') {
         try {
           await navigator.clipboard.writeText(shareText);
-          setCopyHint('Copied');
+          setCopyHint('Copied!');
           setTimeout(() => setCopyHint(null), 2000);
         } catch {
           setCopyHint('Copy failed');
