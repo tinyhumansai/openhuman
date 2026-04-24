@@ -2383,8 +2383,12 @@ async fn notification_ingest_list_dismiss_mark_acted_and_stats_roundtrip() {
         list_result.get("unread_count").and_then(Value::as_i64),
         Some(2)
     );
-    assert!(items.iter().any(|item| item.get("id") == Some(&json!(first_id))));
-    assert!(items.iter().any(|item| item.get("id") == Some(&json!(second_id))));
+    assert!(items
+        .iter()
+        .any(|item| item.get("id") == Some(&json!(first_id))));
+    assert!(items
+        .iter()
+        .any(|item| item.get("id") == Some(&json!(second_id))));
 
     let dismiss = post_json_rpc(
         &rpc_base,
@@ -2394,7 +2398,10 @@ async fn notification_ingest_list_dismiss_mark_acted_and_stats_roundtrip() {
     )
     .await;
     let dismiss_result = assert_no_jsonrpc_error(&dismiss, "notification_dismiss");
-    assert_eq!(dismiss_result.get("ok").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        dismiss_result.get("ok").and_then(Value::as_bool),
+        Some(true)
+    );
 
     let mark_acted = post_json_rpc(
         &rpc_base,
@@ -2404,7 +2411,10 @@ async fn notification_ingest_list_dismiss_mark_acted_and_stats_roundtrip() {
     )
     .await;
     let mark_acted_result = assert_no_jsonrpc_error(&mark_acted, "notification_mark_acted");
-    assert_eq!(mark_acted_result.get("ok").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        mark_acted_result.get("ok").and_then(Value::as_bool),
+        Some(true)
+    );
 
     let listed_after_actions = post_json_rpc(
         &rpc_base,
@@ -2437,7 +2447,10 @@ async fn notification_ingest_list_dismiss_mark_acted_and_stats_roundtrip() {
     assert_eq!(stats_result.get("total").and_then(Value::as_i64), Some(2));
     assert_eq!(stats_result.get("unread").and_then(Value::as_i64), Some(0));
     assert_eq!(stats_result.pointer("/by_provider/slack"), Some(&json!(1)));
-    assert_eq!(stats_result.pointer("/by_provider/discord"), Some(&json!(1)));
+    assert_eq!(
+        stats_result.pointer("/by_provider/discord"),
+        Some(&json!(1))
+    );
 
     mock_join.abort();
     rpc_join.abort();
@@ -2499,7 +2512,10 @@ async fn notification_ingest_async_triage_progresses_without_blocking_ingest() {
             .and_then(Value::as_array)
             .expect("items array");
 
-        if let Some(item) = items.iter().find(|item| item.get("id") == Some(&json!(ingested_id))) {
+        if let Some(item) = items
+            .iter()
+            .find(|item| item.get("id") == Some(&json!(ingested_id)))
+        {
             observed_pending_or_triaged = true;
             let has_action = item.get("triage_action").is_some_and(|v| !v.is_null());
             let has_score = item.get("importance_score").is_some_and(|v| !v.is_null());
