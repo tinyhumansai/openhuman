@@ -7,12 +7,12 @@
 //! session detaches. If we attached just once and dropped, subsequent HTTP
 //! requests + navigator reads would revert to WKWebView defaults.
 //!
-//! Pairs with the `data:` placeholder URL the webview is created with —
-//! the opener finds the target by its unique `openhuman:{account_id}`
-//! marker in the initial URL, applies the UA override, then navigates the
-//! target to the real provider URL with a `#openhuman-account-{id}`
-//! fragment appended so other scanners (discord/telegram/slack/whatsapp)
-//! can disambiguate multi-account setups without title-marker injection.
+//! Pairs with the placeholder URL the webview is created with — the opener
+//! finds the target by its unique `openhuman:{account_id}` marker in the
+//! initial URL, applies the UA override, then navigates the target to the
+//! real provider URL with a `#openhuman-account-{id}` fragment appended so
+//! other scanners (discord/telegram/slack/whatsapp) can disambiguate
+//! multi-account setups without title-marker injection.
 
 use std::time::Duration;
 
@@ -28,9 +28,7 @@ use super::{browser_ws_url, find_page_target_where, set_user_agent_override, Cdp
 const ATTACH_BACKOFF: Duration = Duration::from_secs(2);
 
 /// Returns the unique marker substring that the account's initial
-/// placeholder URL contains so `Target.getTargets` can identify it. Same
-/// marker is embedded into the document title of the placeholder so
-/// `TargetInfo.title` can also be used as a fallback match key.
+/// placeholder URL contains so `Target.getTargets` can identify it.
 pub fn placeholder_marker(account_id: &str) -> String {
     format!("openhuman-acct-{account_id}")
 }
@@ -41,15 +39,20 @@ pub fn target_url_fragment(account_id: &str) -> String {
     format!("#openhuman-account-{account_id}")
 }
 
-/// Build the `data:` URL used as the webview's initial location. Holding
-/// here for the ~hundreds of ms we need to attach CDP + apply overrides
-/// before the first real HTTP request. URL-encoded by hand (the payload
-/// is tiny, no external dep).
-pub fn placeholder_data_url(account_id: &str) -> String {
+/// Build the placeholder URL used as the webview's initial location.
+/// `about:blank` is sufficient for the short holding page we need while CDP
+/// attaches and applies overrides before the first real HTTP request.
+///
+/// We store the account marker in the fragment so `TargetInfo.url` stays
+/// unique per account without depending on Tauri's optional `data:` support.
+pub fn placeholder_url(account_id: &str) -> String {
+    format!("about:blank#{}", placeholder_marker(account_id))
+}
+
+fn target_matches_account_url(target_url: &str, account_id: &str) -> bool {
     let marker = placeholder_marker(account_id);
-    format!(
-        "data:text/html;charset=utf-8,%3C%21DOCTYPE%20html%3E%3Ctitle%3E{marker}%3C%2Ftitle%3E%3Cbody%20style%3D%22background%3A%23111%22%3E%3C%2Fbody%3E"
-    )
+    let fragment = target_url_fragment(account_id);
+    target_url.ends_with(&marker) || target_url.ends_with(&fragment)
 }
 
 /// Spawn the per-account CDP session. Returns immediately; the background
@@ -74,7 +77,7 @@ async fn run_session_forever(account_id: String, real_url: String) {
         placeholder_marker(&account_id)
     );
     // Let the webview's target appear in CDP before we start hammering
-    // `/json/version`. The placeholder URL is tiny so this is quick.
+    // `/json/version`. The placeholder URL is trivial so this is quick.
     sleep(Duration::from_millis(500)).await;
     loop {
         match run_session_cycle(&account_id, &real_url).await {
@@ -96,16 +99,13 @@ async fn run_session_cycle(account_id: &str, real_url: &str) -> Result<(), Strin
     let browser_ws = browser_ws_url().await?;
     let mut cdp = CdpConn::open(&browser_ws).await?;
 
-    // Account-unique match. Both the placeholder title and the real-URL
-    // fragment are appended verbatim, so we can use ends_with / exact
-    // equality instead of substring contains — that avoids cross-account
-    // collisions like `…account-abc` vs `…account-abcdef`.
-    let marker = placeholder_marker(account_id);
+    // Account-unique match. The placeholder URL and the real provider URL
+    // both carry account-specific fragments, so we can use ends_with and
+    // avoid substring collisions like `…account-abc` vs `…account-abcdef`.
     let fragment = target_url_fragment(account_id);
-    let target = find_page_target_where(&mut cdp, |t| {
-        t.title == marker || t.url.ends_with(&fragment)
-    })
-    .await?;
+    let target =
+        find_page_target_where(&mut cdp, |t| target_matches_account_url(&t.url, account_id))
+            .await?;
     log::info!(
         "[cdp-session][{}] attaching to target {} url={}",
         account_id,
@@ -231,4 +231,38 @@ async fn run_session_cycle(account_id: &str, real_url: &str) -> Result<(), Strin
         // attach their own sessions for Network / IndexedDB / DOMSnapshot.
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_url_uses_about_blank_fragment_marker() {
+        assert_eq!(
+            placeholder_url("acct-42"),
+            "about:blank#openhuman-acct-acct-42"
+        );
+    }
+
+    #[test]
+    fn target_match_accepts_placeholder_and_real_provider_fragments_only_for_same_account() {
+        assert!(target_matches_account_url(
+            "about:blank#openhuman-acct-acct-42",
+            "acct-42"
+        ));
+        assert!(target_matches_account_url(
+            "https://discord.com/channels/@me#openhuman-account-acct-42",
+            "acct-42"
+        ));
+
+        assert!(!target_matches_account_url(
+            "about:blank#openhuman-acct-acct-420",
+            "acct-42"
+        ));
+        assert!(!target_matches_account_url(
+            "https://discord.com/channels/@me#openhuman-account-acct-420",
+            "acct-42"
+        ));
+    }
 }

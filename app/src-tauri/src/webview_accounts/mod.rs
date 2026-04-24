@@ -921,18 +921,18 @@ pub async fn webview_account_open<R: Runtime>(
     let scanner_url_prefix = format!("{}/", real_url.origin().ascii_serialization());
     #[cfg(feature = "cef")]
     let skip_cdp_for_debug = args.provider == "slack" && !slack_scanner_enabled();
-    // Under cef we normally open the webview at a tiny `data:` placeholder
-    // URL so the CDP session opener can attach and apply the UA override
-    // BEFORE the real provider URL loads. For Slack debug sessions we allow
-    // opting out via `OPENHUMAN_DISABLE_SLACK_SCANNER=1`, which also skips
-    // the long-lived CDP session so external DevTools can attach cleanly.
-    // Under wry there's no CDP, so navigate straight to the real URL and
-    // rely on the injected `ua_spoof.js`.
+    // Under cef we normally open the webview at a tiny placeholder URL so
+    // the CDP session opener can attach and apply the UA override BEFORE the
+    // real provider URL loads. For Slack debug sessions we allow opting out
+    // via `OPENHUMAN_DISABLE_SLACK_SCANNER=1`, which also skips the
+    // long-lived CDP session so external DevTools can attach cleanly. Under
+    // wry there's no CDP, so navigate straight to the real URL and rely on
+    // the injected `ua_spoof.js`.
     #[cfg(feature = "cef")]
     let initial_url_str = if skip_cdp_for_debug {
         real_url_str.clone()
     } else {
-        cdp::placeholder_data_url(&args.account_id)
+        cdp::placeholder_url(&args.account_id)
     };
     #[cfg(not(feature = "cef"))]
     let initial_url_str = real_url_str.clone();
