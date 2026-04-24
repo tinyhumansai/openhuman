@@ -88,7 +88,7 @@ const ReferralRewardsSection = () => {
     void loadStats();
   }, [loadStats]);
 
-  const referralCodeToCopy = stats?.referralCode?.trim() || '';
+  const referralCodeToCopy = stats ? stats.referralCode.trim() : '';
 
   const handleCopy = async () => {
     if (!referralCodeToCopy) return;
@@ -122,7 +122,7 @@ const ReferralRewardsSection = () => {
       if ((e as Error)?.name !== 'AbortError') {
         try {
           await navigator.clipboard.writeText(shareText);
-          setCopyHint('Copied!');
+          setCopyHint('Copied');
           setTimeout(() => setCopyHint(null), 2000);
         } catch {
           setCopyHint('Copy failed');
@@ -135,7 +135,7 @@ const ReferralRewardsSection = () => {
   const handleApply = async () => {
     const trimmed = applyCode.trim();
     if (!trimmed) return;
-    const normalizedValue = /^https?:\/\//i.test(trimmed) ? trimmed : trimmed.toUpperCase();
+    const normalizedValue = trimmed.toUpperCase();
     setApplyLoading(true);
     setApplyError(null);
     try {
@@ -271,7 +271,7 @@ const ReferralRewardsSection = () => {
               value={applyCode}
               onChange={e => setApplyCode(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && void handleApply()}
-              placeholder="Referral code or link"
+              placeholder="Referral code"
               disabled={applyLoading}
               className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 bg-white font-mono text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-primary-500/40"
             />

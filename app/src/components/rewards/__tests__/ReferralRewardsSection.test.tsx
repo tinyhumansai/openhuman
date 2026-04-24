@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { LATEST_APP_DOWNLOAD_URL } from '../../../utils/config';
 import ReferralRewardsSection from '../ReferralRewardsSection';
 
 const mocks = vi.hoisted(() => ({
@@ -21,6 +22,13 @@ describe('ReferralRewardsSection', () => {
   const refetch = vi.fn();
   const writeText = vi.fn();
   const share = vi.fn();
+  const statsFixture = {
+    referralCode: 'GQ9F7LEV',
+    totals: { totalRewardUsd: 10, pendingCount: 0, convertedCount: 2 },
+    referrals: [],
+    canApplyReferral: true,
+    appliedReferralCode: null,
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -39,15 +47,8 @@ describe('ReferralRewardsSection', () => {
     share.mockResolvedValue(undefined);
   });
 
-  it('copies only the referral code and hides the referral link text', async () => {
-    mocks.mockReferralApi.getStats.mockResolvedValueOnce({
-      referralCode: 'GQ9F7LEV',
-      referralLink: 'https://tinyhumans.ai/signup?ref=GQ9F7LEV',
-      totals: { totalRewardUsd: 10, pendingCount: 0, convertedCount: 2 },
-      referrals: [],
-      canApplyReferral: true,
-      appliedReferralCode: null,
-    });
+  it('copies only the referral code', async () => {
+    mocks.mockReferralApi.getStats.mockResolvedValueOnce(statsFixture);
 
     render(<ReferralRewardsSection />);
 
@@ -57,19 +58,10 @@ describe('ReferralRewardsSection', () => {
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith('GQ9F7LEV');
     });
-    expect(screen.queryByText('Copy link or code')).not.toBeInTheDocument();
-    expect(screen.queryByText('https://tinyhumans.ai/signup?ref=GQ9F7LEV')).not.toBeInTheDocument();
   });
 
-  it('shares referral code text only (without referral url)', async () => {
-    mocks.mockReferralApi.getStats.mockResolvedValueOnce({
-      referralCode: 'GQ9F7LEV',
-      referralLink: 'https://tinyhumans.ai/signup?ref=GQ9F7LEV',
-      totals: { totalRewardUsd: 10, pendingCount: 0, convertedCount: 2 },
-      referrals: [],
-      canApplyReferral: true,
-      appliedReferralCode: null,
-    });
+  it('shares referral copy without a per-user referral link', async () => {
+    mocks.mockReferralApi.getStats.mockResolvedValueOnce(statsFixture);
 
     render(<ReferralRewardsSection />);
 
@@ -79,12 +71,39 @@ describe('ReferralRewardsSection', () => {
     await waitFor(() => {
       expect(share).toHaveBeenCalledWith({
         title: 'OpenHuman',
-        text: [
-          'Join me on OpenHuman.',
-          'Referral code: GQ9F7LEV',
-          'Download OpenHuman: https://github.com/tinyhumansai/openhuman/releases/latest',
-        ].join('\n'),
+        text: expect.stringContaining(`Download OpenHuman: ${LATEST_APP_DOWNLOAD_URL}`),
       });
     });
+    expect(share).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('signup?ref=') })
+    );
+  });
+
+  it('falls back to clipboard when navigator.share is absent', async () => {
+    Object.defineProperty(window.navigator, 'share', { value: undefined, configurable: true });
+    mocks.mockReferralApi.getStats.mockResolvedValueOnce(statsFixture);
+
+    render(<ReferralRewardsSection />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Share' }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Referral code: GQ9F7LEV'));
+    });
+    expect(writeText).toHaveBeenCalledWith(
+      expect.not.stringContaining('https://tinyhumans.ai/signup?ref=')
+    );
+    expect(await screen.findByText('Copied')).toBeInTheDocument();
+  });
+
+  it('shows Copy failed hint when clipboard throws', async () => {
+    writeText.mockRejectedValueOnce(new Error('NotAllowedError'));
+    mocks.mockReferralApi.getStats.mockResolvedValueOnce(statsFixture);
+
+    render(<ReferralRewardsSection />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy code' }));
+
+    expect(await screen.findByText('Copy failed')).toBeInTheDocument();
   });
 });
