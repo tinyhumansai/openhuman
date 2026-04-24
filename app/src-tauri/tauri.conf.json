@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "OpenHuman",
-        "width": 800,
-        "height": 720,
+        "width": 1000,
+        "height": 800,
         "visible": true,
         "decorations": true,
         "resizable": true,

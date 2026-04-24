@@ -54,7 +54,7 @@ const tabs = [
   },
   {
     id: 'intelligence',
-    label: 'Intelligence',
+    label: 'Memory',
     path: '/intelligence',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -181,7 +181,7 @@ const BottomTabBar = () => {
         onBlur={e => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setRevealed(false);
         }}>
-        <nav className="pointer-events-auto inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
+        <nav className="pointer-events-auto inline-flex items-center gap-1 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
           {tabs.map(tab => {
             const active = isActive(tab.path);
             const showBadge = tab.id === 'notifications' && unreadCount > 0;
@@ -189,7 +189,7 @@ const BottomTabBar = () => {
               <button
                 key={tab.id}
                 onClick={() => navigate(tab.path)}
-                className={`relative flex items-center gap-2 px-4 py-2 rounded-sm text-sm transition-colors duration-150 cursor-pointer ${
+                className={`group relative flex items-center px-2 py-2 rounded-sm text-sm transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
                   active
                     ? 'bg-white text-stone-900 font-semibold shadow-sm'
                     : 'bg-transparent text-stone-500 hover:bg-stone-300/50 hover:text-stone-700'
@@ -199,7 +199,7 @@ const BottomTabBar = () => {
                     ? `${tab.label} (${unreadCount} unread)`
                     : tab.label
                 }>
-                <span className="relative inline-flex">
+                <span className="relative inline-flex flex-shrink-0">
                   {tab.icon}
                   {showBadge && (
                     <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full bg-coral-500 text-[9px] font-bold text-white flex items-center justify-center leading-none">
@@ -207,7 +207,14 @@ const BottomTabBar = () => {
                     </span>
                   )}
                 </span>
-                <span>{tab.label}</span>
+                <span
+                  className={`overflow-hidden whitespace-nowrap transition-[max-width,margin-left,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                    active
+                      ? 'max-w-[160px] ml-2 opacity-100'
+                      : 'max-w-0 ml-0 opacity-0 group-hover:max-w-[160px] group-hover:ml-2 group-hover:opacity-100 group-focus-visible:max-w-[160px] group-focus-visible:ml-2 group-focus-visible:opacity-100'
+                  }`}>
+                  {tab.label}
+                </span>
               </button>
             );
           })}

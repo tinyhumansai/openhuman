@@ -7,6 +7,7 @@ mod core_process;
 mod core_update;
 #[cfg(feature = "cef")]
 mod discord_scanner;
+mod gmail;
 #[cfg(feature = "cef")]
 mod imessage_scanner;
 mod notification_settings;
@@ -15,6 +16,7 @@ mod slack_scanner;
 #[cfg(feature = "cef")]
 mod telegram_scanner;
 mod webview_accounts;
+mod webview_apis;
 mod whatsapp_scanner;
 
 use std::sync::Mutex;
@@ -598,7 +600,22 @@ pub fn run() {
     };
 
     let builder = builder
-        .plugin(tauri_plugin_opener::init())
+        // Explicitly disable `open_js_links_on_click`: tauri-plugin-opener
+        // defaults to injecting `init-iife.js` into *every* webview — a
+        // global click listener that invokes `plugin:opener|open_url` via
+        // HTTP-IPC. That violates our "no JS injection into CEF child
+        // webviews" rule (see CLAUDE.md) and also fails in practice
+        // because third-party origins (web.telegram.org, linkedin, …)
+        // trip Tauri's Origin header check and return 500. External link
+        // handling for `acct_*` webviews runs natively via
+        // `on_navigation` / `on_new_window` in webview_accounts/mod.rs;
+        // the main window uses `openUrl()` from `utils/openUrl.ts` when
+        // it needs to hand off a URL.
+        .plugin(
+            tauri_plugin_opener::Builder::default()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -609,7 +626,7 @@ pub fn run() {
     let builder = builder.manage(std::sync::Arc::new(imessage_scanner::ScannerRegistry::new()));
     let builder = builder.manage(whatsapp_scanner::ScannerRegistry::new());
     #[cfg(feature = "cef")]
-    let builder = builder.manage(slack_scanner::ScannerRegistry::new());
+    let builder = builder.manage(std::sync::Arc::new(slack_scanner::ScannerRegistry::new()));
     #[cfg(feature = "cef")]
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
     #[cfg(feature = "cef")]
@@ -621,6 +638,32 @@ pub fn run() {
                 if let Err(err) = app.deep_link().register_all() {
                     log::warn!("[deep-link] register_all failed (non-fatal): {err}");
                 }
+            }
+
+            // Start the webview_apis WebSocket bridge BEFORE spawning core —
+            // core reads OPENHUMAN_WEBVIEW_APIS_PORT on first connect, and
+            // connects lazily, so the env var must be set before the spawn.
+            //
+            // If the bridge fails to bind we clear any inherited port env so
+            // the core child can't accidentally connect to whichever loopback
+            // process already owns that port, then abort setup — the bridge
+            // is load-bearing for every webview_apis RPC method.
+            let bridge_ok = tauri::async_runtime::block_on(async {
+                match webview_apis::start().await {
+                    Ok(port) => {
+                        std::env::set_var(webview_apis::server::PORT_ENV, port.to_string());
+                        log::info!("[webview_apis] bridge ready on port {port}");
+                        true
+                    }
+                    Err(err) => {
+                        log::error!("[webview_apis] failed to start bridge: {err}");
+                        std::env::remove_var(webview_apis::server::PORT_ENV);
+                        false
+                    }
+                }
+            });
+            if !bridge_ok {
+                return Err("webview_apis bridge failed to start — aborting setup".into());
             }
 
             let core_run_mode = core_process::default_core_run_mode(daemon_mode);
@@ -877,6 +920,62 @@ pub fn run() {
                     });
                 }
             }
+            // OPENHUMAN_DEV_AUTO_GMAIL=<account-id> opens the Gmail account
+            // webview at startup so the webview_apis bridge has a live CDP
+            // target to attach to. Pair with:
+            //   curl -sS http://127.0.0.1:7788/rpc \
+            //     -H 'Content-Type: application/json' \
+            //     -d '{"jsonrpc":"2.0","id":1,"method":"openhuman.webview_apis_gmail_list_labels","params":{"account_id":"<account-id>"}}'
+            if let Ok(account_id) = std::env::var("OPENHUMAN_DEV_AUTO_GMAIL") {
+                let account_id = account_id.trim().to_string();
+                if !account_id.is_empty() {
+                    let app_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        let state = app_handle.state::<webview_accounts::WebviewAccountsState>();
+                        // Size the Gmail child webview to the parent window
+                        // so the inbox is usable without manual resizing.
+                        let (w, h) = app_handle
+                            .get_webview_window("main")
+                            .and_then(|main| {
+                                let scale = main.scale_factor().unwrap_or(1.0);
+                                main.inner_size()
+                                    .ok()
+                                    .map(|s| ((s.width as f64) / scale, (s.height as f64) / scale))
+                            })
+                            .unwrap_or((1100.0, 780.0));
+                        let args = webview_accounts::OpenArgs {
+                            account_id: account_id.clone(),
+                            provider: "gmail".to_string(),
+                            url: None,
+                            bounds: Some(webview_accounts::Bounds {
+                                x: 0.0,
+                                y: 0.0,
+                                width: w,
+                                height: h,
+                            }),
+                        };
+                        match webview_accounts::webview_account_open(
+                            app_handle.clone(),
+                            state,
+                            args,
+                        )
+                        .await
+                        {
+                            Ok(label) => log::info!(
+                                "[dev-auto-gmail] spawned label={} account={}",
+                                label,
+                                account_id
+                            ),
+                            Err(e) => log::error!(
+                                "[dev-auto-gmail] failed: {} (account={})",
+                                e,
+                                account_id
+                            ),
+                        }
+                    });
+                }
+            }
 
             #[cfg(all(target_os = "macos", feature = "cef"))]
             {
@@ -923,6 +1022,13 @@ pub fn run() {
             webview_accounts::webview_set_focused_account,
             notification_settings::notification_settings_get,
             notification_settings::notification_settings_set,
+            gmail::gmail_list_labels,
+            gmail::gmail_list_messages,
+            gmail::gmail_search,
+            gmail::gmail_get_message,
+            gmail::gmail_send,
+            gmail::gmail_trash,
+            gmail::gmail_add_label,
             activate_main_window,
             show_native_notification
         ])

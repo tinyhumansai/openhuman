@@ -81,15 +81,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build frontend
-        run: pnpm build
-        env:
-          NODE_ENV: production
-          VITE_BACKEND_URL: ${{ vars.BASE_URL }}
-          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
-          VITE_DEBUG: ${{ vars.VITE_DEBUG }}
-          VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
-          VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
+      # vite build runs via tauri.conf.json's beforeBuildCommand during the
+      # "Build Tauri app" step below — no separate frontend build needed.
 
       - name: Resolve core manifest and binary names
         id: core-paths
@@ -157,11 +150,14 @@ jobs:
         working-directory: app
         env:
           BASE_URL: ${{ vars.BASE_URL }}
+          VITE_BACKEND_URL: ${{ vars.BASE_URL }}
+          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+          VITE_DEBUG: ${{ vars.VITE_DEBUG }}
           VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
         run: |
-          cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --target x86_64-pc-windows-msvc
+          NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --target x86_64-pc-windows-msvc
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4

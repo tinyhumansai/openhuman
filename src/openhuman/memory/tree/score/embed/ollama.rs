@@ -38,7 +38,6 @@ pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 pub struct OllamaEmbedder {
     endpoint: String,
     model: String,
-    #[allow(dead_code)]
     timeout: Duration,
     client: reqwest::Client,
 }

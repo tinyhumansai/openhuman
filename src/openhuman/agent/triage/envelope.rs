@@ -215,6 +215,25 @@ mod tests {
     }
 
     #[test]
+    fn webview_source_has_stable_slug_and_fields() {
+        let source = TriggerSource::WebviewIntegration {
+            provider: "slack".to_string(),
+            account_id: "acct-123".to_string(),
+        };
+        assert_eq!(source.slug(), "webview");
+        match source {
+            TriggerSource::WebviewIntegration {
+                provider,
+                account_id,
+            } => {
+                assert_eq!(provider, "slack");
+                assert_eq!(account_id, "acct-123");
+            }
+            _ => panic!("expected WebviewIntegration variant"),
+        }
+    }
+
+    #[test]
     fn webhook_envelope_builds_expected_label_and_slug() {
         let env = TriggerEnvelope::from_webhook(
             "tunnel-uuid-1",

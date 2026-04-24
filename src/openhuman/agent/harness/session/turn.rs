@@ -183,6 +183,43 @@ impl Agent {
             format!("{context}{user_message}")
         };
 
+        // ── SKILL.md body injection (#781) ───────────────────────────
+        // Match installed SKILL.md skills against the user message and
+        // prepend their bodies ahead of the memory-context block so the
+        // LLM sees them at the top of the user turn. See the module
+        // docs on [`crate::openhuman::skills::inject`] for the matching
+        // heuristic and size cap rationale.
+        let enriched = {
+            use crate::openhuman::skills::inject;
+            let matches = inject::match_skills(&self.skills, user_message);
+            if matches.is_empty() {
+                log::debug!(
+                    "[skills:inject] no skill matches for user message (skill_catalog_len={})",
+                    self.skills.len()
+                );
+                enriched
+            } else {
+                let injection = inject::render_injection(
+                    &matches,
+                    inject::DEFAULT_MAX_INJECTION_BYTES,
+                    |skill| skill.read_body(),
+                );
+                let matched_count = injection.decisions.iter().filter(|d| d.matched).count();
+                log::info!(
+                    "[skills:inject] summary candidates={} matched={} injected_bytes={} truncated_any={}",
+                    injection.decisions.len(),
+                    matched_count,
+                    injection.injected_bytes,
+                    injection.truncated
+                );
+                if injection.rendered.is_empty() {
+                    enriched
+                } else {
+                    format!("{}\n{}", injection.rendered, enriched)
+                }
+            }
+        };
+
         self.history
             .push(ConversationMessage::Chat(ChatMessage::user(enriched)));
 

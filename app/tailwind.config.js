@@ -17,6 +17,18 @@ module.exports = {
 
       // Elevated color system - Clean, light, professional
       colors: {
+        // Command surface tokens — scoped to the ⌘K palette / help overlay.
+        // Expand this set only with intent; the full reskin design system
+        // is a separate decision.
+        'cmd-surface':          'var(--cmd-surface)',
+        'cmd-surface-elevated': 'var(--cmd-surface-elevated)',
+        'cmd-foreground':       'var(--cmd-foreground)',
+        'cmd-foreground-muted': 'var(--cmd-foreground-muted)',
+        'cmd-border':           'var(--cmd-border)',
+        'cmd-ring':             'var(--cmd-ring)',
+        'cmd-accent':           'var(--cmd-accent)',
+        'cmd-overlay':          'var(--cmd-overlay)',
+
         // Neutral - Light theme grayscale (from Figma design tokens)
         neutral: {
           0: '#FFFFFF',     // Base / surface
@@ -212,6 +224,7 @@ module.exports = {
         'large': '0 8px 24px -4px rgba(0, 0, 0, 0.10), 0 16px 32px -8px rgba(0, 0, 0, 0.10)',
         'float': '0 12px 32px -8px rgba(0, 0, 0, 0.12), 0 24px 48px -12px rgba(0, 0, 0, 0.12)',
         'crisp': '0 0 0 1px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.08)',
+        'cmd-palette': 'var(--cmd-shadow-palette)',
       },
 
       // Premium animations for polished interactions

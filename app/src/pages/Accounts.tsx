@@ -18,6 +18,12 @@ import { AgentChatPanel } from './Conversations';
 function makeAccountId(): string {
   const c = globalThis.crypto;
   if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  if (c && typeof c.getRandomValues === 'function') {
+    const bytes = new Uint8Array(4);
+    c.getRandomValues(bytes);
+    const suffix = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    return `acct-${Date.now().toString(36)}-${suffix}`;
+  }
   return `acct-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 

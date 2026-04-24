@@ -60,7 +60,7 @@ const NotificationCard = ({ notification: n, onMarkRead }: Props) => {
       onClick={() => {
         if (isUnread) onMarkRead(n.id);
       }}
-      className={`w-full text-left p-3 border-b border-stone-100 hover:bg-stone-50 transition-colors duration-150 focus:outline-none ${
+      className={`w-full text-left p-3 border-b border-stone-100 hover:bg-stone-50 transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 ${
         isUnread ? 'bg-primary-50/30' : 'bg-white'
       }`}>
       <div className="flex items-start gap-3">

@@ -27,6 +27,7 @@
     "test": "pnpm --filter openhuman-app test",
     "test:coverage": "pnpm --filter openhuman-app test:coverage",
     "test:rust": "pnpm --filter openhuman-app test:rust",
+    "mock:api": "node scripts/mock-api-server.mjs",
     "review": "bash scripts/review/cli.sh",
     "rust:check": "pnpm --filter openhuman-app rust:check",
     "typecheck": "pnpm --filter openhuman-app compile"

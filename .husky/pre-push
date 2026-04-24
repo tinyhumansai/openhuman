@@ -36,8 +36,14 @@ pnpm rust:check
 RUST_CHECK_EXIT=$?
 set -e
 
+# Enforce scoped cmd-* tokens in components/commands/
+set +e
+yarn --cwd app lint:commands-tokens
+CMD_TOKENS_EXIT=$?
+set -e
+
 # Exit with error if any command still fails after fixes
-if [ $FORMAT_EXIT -ne 0 ] || [ $LINT_EXIT -ne 0 ] || [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CHECK_EXIT -ne 0 ]; then
+if [ $FORMAT_EXIT -ne 0 ] || [ $LINT_EXIT -ne 0 ] || [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CHECK_EXIT -ne 0 ] || [ $CMD_TOKENS_EXIT -ne 0 ]; then
   echo "Pre-push checks failed. Please fix format (Prettier + cargo fmt for core and Tauri), lint, TypeScript, and/or Rust errors before pushing."
   exit 1
 fi

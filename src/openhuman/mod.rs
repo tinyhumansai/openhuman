@@ -63,5 +63,6 @@ pub mod update;
 pub mod util;
 pub mod voice;
 pub mod webhooks;
+pub mod webview_apis;
 pub mod webview_notifications;
 pub mod workspace;

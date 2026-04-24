@@ -31,6 +31,7 @@ const NotificationsPanel = () => {
   const dispatch = useAppDispatch();
   const [dnd, setDnd] = useState(false);
   const [dndLoading, setDndLoading] = useState(true);
+  const [dndSaving, setDndSaving] = useState(false);
 
   useEffect(() => {
     getBypassPrefs().then(prefs => {
@@ -44,9 +45,18 @@ const NotificationsPanel = () => {
   };
 
   const handleDndToggle = async () => {
+    if (dndSaving) return; // prevent concurrent writes
     const next = !dnd;
     setDnd(next);
-    await setGlobalDnd(next);
+    setDndSaving(true);
+    try {
+      await setGlobalDnd(next);
+    } catch {
+      // Roll back optimistic UI update on failure.
+      setDnd(!next);
+    } finally {
+      setDndSaving(false);
+    }
   };
 
   return (
@@ -80,7 +90,8 @@ const NotificationsPanel = () => {
                     onClick={() => {
                       void handleDndToggle();
                     }}
-                    className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    disabled={dndSaving}
+                    className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 disabled:opacity-70 ${
                       dnd ? 'bg-primary-500' : 'bg-stone-400'
                     }`}
                     role="switch"
@@ -115,7 +126,7 @@ const NotificationsPanel = () => {
                     </div>
                     <button
                       onClick={() => handleToggle(cat.id)}
-                      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 ${
                         enabled ? 'bg-primary-500' : 'bg-stone-400'
                       }`}
                       role="switch"
