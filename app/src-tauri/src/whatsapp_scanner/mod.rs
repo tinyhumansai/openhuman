@@ -777,13 +777,6 @@ fn emit_grouped_whatsapp<R: Runtime>(
     }
 }
 
-/// Resolve the core JSON-RPC URL — same rule as the `core_rpc_url` Tauri
-/// command in lib.rs: env var or default loopback port.
-fn core_rpc_url_value() -> String {
-    std::env::var("OPENHUMAN_CORE_RPC_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".to_string())
-}
-
 /// Build the `openhuman.memory_doc_ingest` payload for a single
 /// (chatId, day) group and POST it directly to the core. The shape
 /// mirrors `persistWhatsappChatDay` on the React side so the memory docs
@@ -887,13 +880,14 @@ async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), 
         "params": params,
     });
 
-    let url = core_rpc_url_value();
+    let url = crate::core_rpc::core_rpc_url_value();
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| format!("http client: {e}"))?;
-    let resp = client
-        .post(&url)
+    let req = crate::core_rpc::apply_auth(client.post(&url))
+        .map_err(|e| format!("prepare {url}: {e}"))?;
+    let resp = req
         .json(&body)
         .send()
         .await
