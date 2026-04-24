@@ -138,14 +138,19 @@ describe('UninstallSkillConfirmDialog', () => {
 
   it('disables buttons while the RPC is in flight', async () => {
     const { skillsApi } = await import('../../../services/api/skillsApi');
-    let resolveIt: ((v: {
+    type UninstallResolve = (v: {
       name: string;
       removedPath: string;
       scope: SkillSummary['scope'];
-    }) => void) | null = null;
+    }) => void;
+    const deferred: { resolve?: UninstallResolve } = {};
     vi.mocked(skillsApi.uninstallSkill).mockReturnValueOnce(
-      new Promise(resolve => {
-        resolveIt = resolve;
+      new Promise<{
+        name: string;
+        removedPath: string;
+        scope: SkillSummary['scope'];
+      }>(resolve => {
+        deferred.resolve = resolve;
       })
     );
 
@@ -166,8 +171,7 @@ describe('UninstallSkillConfirmDialog', () => {
       expect(confirm.textContent).toMatch(/Uninstalling/);
     });
 
-    // Cleanup — resolve the promise so the component settles before unmount.
-    resolveIt?.({
+    deferred.resolve?.({
       name: 'weather-helper',
       removedPath: '/Users/me/.openhuman/skills/weather-helper',
       scope: 'user',
