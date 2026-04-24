@@ -82,6 +82,7 @@ function normalizeSnapshot(
     sessionToken: result.sessionToken,
     currentUser: result.currentUser,
     onboardingCompleted: result.onboardingCompleted,
+    chatOnboardingCompleted: result.chatOnboardingCompleted,
     analyticsEnabled: result.analyticsEnabled,
     localState: {
       encryptionKey: result.localState.encryptionKey ?? null,
@@ -104,6 +105,7 @@ function toSignedOutSnapshot(snapshot: CoreAppSnapshot): CoreAppSnapshot {
     sessionToken: null,
     currentUser: null,
     onboardingCompleted: false,
+    chatOnboardingCompleted: false,
   };
 }
 
