@@ -525,9 +525,40 @@ jobs:
           # on macos-arm64 runners, causing OOM at node's ~2GB auto default.
           NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
 
-          # tauri-action previously uploaded non-macOS installer assets directly
-          # to the release. Replicate that for Linux + Windows here (macOS goes
-          # through the re-sign + notarize path below and uploads separately).
+      # Upload Rust debug info to Sentry so backend + Tauri-shell stack traces
+      # symbolicate in production. The frontend source maps are handled by
+      # sentry-vite-plugin in the build step above; this is the Rust half.
+      # Keyed by debug-ID, so it's safe to run per-matrix-target without
+      # collisions — Sentry merges artifacts across platforms.
+      - name: Upload Rust debug symbols to Sentry
+        if: needs.prepare-build.outputs.release_enabled == 'true' && env.SENTRY_AUTH_TOKEN
+          != ''
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          VERSION: ${{ needs.prepare-build.outputs.version }}
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+        run: |
+          set -euo pipefail
+          # Core crate deps (sidecar symbols) + Tauri shell deps (app binary
+          # symbols) both live under the per-target release dir. upload-dif
+          # scans recursively.
+          for deps_dir in \
+            "target/${MATRIX_TARGET}/release/deps" \
+            "app/src-tauri/target/${MATRIX_TARGET}/release/deps"; do
+            if [ -d "$deps_dir" ]; then
+              echo "==> Uploading symbols from $deps_dir"
+              bash scripts/upload_sentry_symbols.sh "$VERSION" "$deps_dir"
+            else
+              echo "==> Skipping $deps_dir (not present)"
+            fi
+          done
+
+      # tauri-action previously uploaded non-macOS installer assets directly
+      # to the release. Replicate that for Linux + Windows here (macOS goes
+      # through the re-sign + notarize path below and uploads separately).
       - name: Upload non-macOS installers to release
         if: needs.prepare-build.outputs.release_enabled == 'true' && matrix.settings.platform
           != 'macos-latest'
