@@ -31,10 +31,10 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
     let config = config_rpc::load_config_with_timeout().await?;
 
     let req: NotificationIngestRequest = serde_json::from_value(Value::Object(params.clone()))
-        .map_err(|e| format!("[notifications::rpc] invalid ingest params: {e}"))?;
+        .map_err(|e| format!("[notification_intel] invalid ingest params: {e}"))?;
 
     let provider_settings = store::get_settings(&config, &req.provider)
-        .map_err(|e| format!("[notifications::rpc] get_settings failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] get_settings failed: {e}"))?;
     if !provider_settings.enabled {
         let outcome = RpcOutcome::new(
             json!({ "skipped": true, "reason": "provider_disabled" }),
@@ -42,6 +42,29 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
         );
         return outcome.into_cli_compatible_json();
     }
+    // Dedup: skip if an identical notification arrived in the last 60 seconds.
+    let is_dup = store::exists_recent(
+        &config,
+        &req.provider,
+        req.account_id.as_deref(),
+        &req.title,
+        &req.body,
+    )
+    .map_err(|e| format!("[notification_intel] exists_recent failed: {e}"))?;
+
+    if is_dup {
+        tracing::debug!(
+            provider = %req.provider,
+            title = %req.title,
+            "[notification_intel] skipping duplicate notification"
+        );
+        let outcome = RpcOutcome::new(
+            json!({ "skipped": true, "reason": "duplicate" }),
+            vec![],
+        );
+        return outcome.into_cli_compatible_json();
+    }
+
     let id = Uuid::new_v4().to_string();
     let notification = IntegrationNotification {
         id: id.clone(),
@@ -59,12 +82,12 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
     };
 
     store::insert(&config, &notification)
-        .map_err(|e| format!("[notifications::rpc] insert failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] insert failed: {e}"))?;
 
     tracing::debug!(
         id = %id,
         provider = %req.provider,
-        "[notifications::rpc] ingested notification, spawning triage"
+        "[notification_intel] ingested notification, spawning triage"
     );
 
     // Spawn background triage — the ingest RPC returns immediately.
@@ -101,7 +124,7 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
                     id = %id_for_triage,
                     action = %action,
                     score = score,
-                    "[notifications::rpc] triage complete"
+                    "[notification_intel] triage complete"
                 );
 
                 if let Err(e) = store::update_triage(
@@ -114,7 +137,7 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
                     tracing::warn!(
                         id = %id_for_triage,
                         error = %e,
-                        "[notifications::rpc] failed to persist triage result"
+                        "[notification_intel] failed to persist triage result"
                     );
                 }
 
@@ -127,7 +150,7 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
                         tracing::warn!(
                             id = %id_for_triage,
                             error = %e,
-                            "[notifications::rpc] apply_decision failed"
+                            "[notification_intel] apply_decision failed"
                         );
                     }
                 }
@@ -136,7 +159,7 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
                 tracing::warn!(
                     id = %id_for_triage,
                     error = %e,
-                    "[notifications::rpc] triage pipeline failed"
+                    "[notification_intel] triage pipeline failed"
                 );
             }
         }
@@ -177,10 +200,10 @@ pub async fn handle_list(params: Map<String, Value>) -> Result<Value, String> {
         .map(|v| v as f32);
 
     let items = store::list(&config, limit, offset, provider.as_deref(), min_score)
-        .map_err(|e| format!("[notifications::rpc] list failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] list failed: {e}"))?;
 
     let unread = store::unread_count(&config)
-        .map_err(|e| format!("[notifications::rpc] unread_count failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] unread_count failed: {e}"))?;
 
     let outcome = RpcOutcome::new(json!({ "items": items, "unread_count": unread }), vec![]);
     outcome.into_cli_compatible_json()
@@ -197,13 +220,13 @@ pub async fn handle_mark_read(params: Map<String, Value>) -> Result<Value, Strin
     let id = params
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "[notifications::rpc] missing required param 'id'".to_string())?
+        .ok_or_else(|| "[notification_intel] missing required param 'id'".to_string())?
         .to_string();
 
     store::mark_read(&config, &id)
-        .map_err(|e| format!("[notifications::rpc] mark_read failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] mark_read failed: {e}"))?;
 
-    tracing::debug!(id = %id, "[notifications::rpc] marked read");
+    tracing::debug!(id = %id, "[notification_intel] marked read");
 
     let outcome = RpcOutcome::new(json!({ "ok": true }), vec![]);
     outcome.into_cli_compatible_json()
@@ -215,9 +238,9 @@ pub async fn handle_settings_get(params: Map<String, Value>) -> Result<Value, St
     let provider = params
         .get("provider")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "[notifications::rpc] missing required param 'provider'".to_string())?;
+        .ok_or_else(|| "[notification_intel] missing required param 'provider'".to_string())?;
     let settings = store::get_settings(&config, provider)
-        .map_err(|e| format!("[notifications::rpc] settings_get failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] settings_get failed: {e}"))?;
     let outcome = RpcOutcome::new(json!({ "settings": settings }), vec![]);
     outcome.into_cli_compatible_json()
 }
@@ -226,7 +249,7 @@ pub async fn handle_settings_get(params: Map<String, Value>) -> Result<Value, St
 pub async fn handle_settings_set(params: Map<String, Value>) -> Result<Value, String> {
     let config = config_rpc::load_config_with_timeout().await?;
     let req: NotificationSettingsUpsertRequest = serde_json::from_value(Value::Object(params))
-        .map_err(|e| format!("[notifications::rpc] invalid settings_set params: {e}"))?;
+        .map_err(|e| format!("[notification_intel] invalid settings_set params: {e}"))?;
     let clamped = NotificationSettings {
         provider: req.provider,
         enabled: req.enabled,
@@ -234,7 +257,7 @@ pub async fn handle_settings_set(params: Map<String, Value>) -> Result<Value, St
         route_to_orchestrator: req.route_to_orchestrator,
     };
     store::upsert_settings(&config, &clamped)
-        .map_err(|e| format!("[notifications::rpc] settings_set failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] settings_set failed: {e}"))?;
     let outcome = RpcOutcome::new(json!({ "ok": true, "settings": clamped }), vec![]);
     outcome.into_cli_compatible_json()
 }

@@ -232,6 +232,39 @@ pub fn unread_count(config: &Config) -> Result<i64> {
     })
 }
 
+/// Check whether a notification with identical content was received in the
+/// last 60 seconds. Used by `handle_ingest` to drop duplicate fires.
+pub fn exists_recent(
+    config: &Config,
+    provider: &str,
+    account_id: Option<&str>,
+    title: &str,
+    body: &str,
+) -> Result<bool> {
+    with_connection(config, |conn| {
+        let count: i64 = match account_id {
+            Some(aid) => conn.query_row(
+                "SELECT COUNT(*) FROM integration_notifications
+                 WHERE provider = ?1 AND account_id = ?2
+                   AND title = ?3 AND body = ?4
+                   AND received_at >= datetime('now', '-60 seconds')",
+                params![provider, aid, title, body],
+                |row| row.get(0),
+            ),
+            None => conn.query_row(
+                "SELECT COUNT(*) FROM integration_notifications
+                 WHERE provider = ?1 AND account_id IS NULL
+                   AND title = ?2 AND body = ?3
+                   AND received_at >= datetime('now', '-60 seconds')",
+                params![provider, title, body],
+                |row| row.get(0),
+            ),
+        }
+        .context("[notifications::store] exists_recent query failed")?;
+        Ok(count > 0)
+    })
+}
+
 /// Upsert provider-level notification settings.
 pub fn upsert_settings(config: &Config, settings: &NotificationSettings) -> Result<()> {
     with_connection(config, |conn| {
@@ -432,6 +465,18 @@ mod tests {
         let gmail = list(&config, 10, 0, Some("gmail"), None).unwrap();
         assert_eq!(gmail.len(), 1);
         assert_eq!(gmail[0].provider, "gmail");
+    }
+
+    #[test]
+    fn exists_recent_detects_duplicate() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let n = sample_notification("dup1", "slack");
+        insert(&config, &n).unwrap();
+
+        assert!(exists_recent(&config, "slack", None, "Test notification", "Test body").unwrap());
+        assert!(!exists_recent(&config, "gmail", None, "Test notification", "Test body").unwrap());
+        assert!(!exists_recent(&config, "slack", None, "Different title", "Test body").unwrap());
     }
 
     #[test]
