@@ -2277,3 +2277,115 @@ async fn notification_settings_roundtrip_and_disabled_ingest_skip() {
     mock_join.abort();
     rpc_join.abort();
 }
+
+/// End-to-end coverage for `openhuman.skills_uninstall`.
+///
+/// Validates that the RPC method is registered, wire-decodes
+/// `UninstallSkillParams`, resolves the slug against
+/// `~/.openhuman/skills/<slug>/`, removes the directory on success, and
+/// forwards the core error message verbatim for the two documented
+/// failure modes (missing SKILL.md and path traversal). Previously only
+/// the `uninstall_skill(...)` helper was tested — the wire layer
+/// (controller registration, param decoding, response shape) was not.
+#[tokio::test]
+async fn skills_uninstall_rpc_e2e() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+
+    let skills_root = home.join(".openhuman").join("skills");
+    std::fs::create_dir_all(&skills_root).expect("mkdir skills root");
+
+    // Seed a skill whose on-disk slug differs from its frontmatter name —
+    // mirrors the bug CodeRabbit flagged for #781: the UI must send the
+    // slug (`SkillSummary.id` / directory name), not the display name.
+    let slug = "weather-helper";
+    let skill_dir = skills_root.join(slug);
+    std::fs::create_dir_all(&skill_dir).expect("mkdir skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: Weather Helper\ndescription: fetches local weather\n---\n# body\n",
+    )
+    .expect("write SKILL.md");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // --- success path ------------------------------------------------------
+    let ok = post_json_rpc(
+        &rpc_base,
+        6001,
+        "openhuman.skills_uninstall",
+        json!({ "name": slug }),
+    )
+    .await;
+    let ok_result = assert_no_jsonrpc_error(&ok, "skills_uninstall success");
+    assert_eq!(
+        ok_result.get("name").and_then(Value::as_str),
+        Some(slug),
+        "response echoes the slug we passed"
+    );
+    assert_eq!(
+        ok_result.get("scope").and_then(Value::as_str),
+        Some("user"),
+        "uninstall is user-scope only"
+    );
+    let removed_path = ok_result
+        .get("removed_path")
+        .and_then(Value::as_str)
+        .expect("removed_path in response");
+    assert!(
+        removed_path.ends_with(slug)
+            || removed_path.contains(&format!("skills{}{slug}", std::path::MAIN_SEPARATOR)),
+        "removed_path should reference the slug dir, got: {removed_path}"
+    );
+    assert!(
+        !skill_dir.exists(),
+        "directory must be gone after uninstall"
+    );
+
+    // --- not-installed path: core error forwarded verbatim ----------------
+    let missing = post_json_rpc(
+        &rpc_base,
+        6002,
+        "openhuman.skills_uninstall",
+        json!({ "name": "does-not-exist" }),
+    )
+    .await;
+    let err = missing
+        .get("error")
+        .unwrap_or_else(|| panic!("expected error, got {missing}"));
+    let err_msg = err
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| err.get("data").and_then(Value::as_str))
+        .unwrap_or("");
+    assert!(
+        err_msg.contains("not installed") || err.to_string().contains("not installed"),
+        "expected verbatim 'not installed' error, got: {err}"
+    );
+
+    // --- path-traversal path: core error forwarded verbatim ---------------
+    let traversal = post_json_rpc(
+        &rpc_base,
+        6003,
+        "openhuman.skills_uninstall",
+        json!({ "name": "../etc" }),
+    )
+    .await;
+    let traversal_err = traversal
+        .get("error")
+        .unwrap_or_else(|| panic!("expected error, got {traversal}"));
+    let traversal_msg = traversal_err.to_string();
+    assert!(
+        traversal_msg.contains("path separators")
+            || traversal_msg.contains("path escapes")
+            || traversal_msg.contains("not installed"),
+        "expected traversal rejection error, got: {traversal_err}"
+    );
+
+    rpc_join.abort();
+}

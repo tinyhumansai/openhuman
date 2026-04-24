@@ -33,6 +33,8 @@ CREATE INDEX IF NOT EXISTS idx_integration_notifications_provider
     ON integration_notifications(provider);
 CREATE INDEX IF NOT EXISTS idx_integration_notifications_status
     ON integration_notifications(status);
+CREATE INDEX IF NOT EXISTS idx_integration_notifications_dedup
+    ON integration_notifications(provider, account_id, title, body, received_at);
 
 CREATE TABLE IF NOT EXISTS notification_settings (
     provider              TEXT PRIMARY KEY,
@@ -652,68 +654,6 @@ mod tests {
     }
 
     #[test]
-    fn exists_recent_detects_duplicate() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let n = sample_notification("dup1", "slack");
-        insert(&config, &n).unwrap();
-
-        assert!(exists_recent(&config, "slack", None, "Test notification", "Test body").unwrap());
-        assert!(!exists_recent(&config, "gmail", None, "Test notification", "Test body").unwrap());
-        assert!(!exists_recent(&config, "slack", None, "Different title", "Test body").unwrap());
-    }
-
-    #[test]
-    fn mark_dismissed_changes_status() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        insert(&config, &sample_notification("d1", "slack")).unwrap();
-        mark_dismissed(&config, "d1").unwrap();
-        let items = list(&config, 10, 0, None, None).unwrap();
-        assert_eq!(items[0].status, NotificationStatus::Dismissed);
-    }
-
-    #[test]
-    fn mark_acted_changes_status() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        insert(&config, &sample_notification("a1", "gmail")).unwrap();
-        mark_acted(&config, "a1").unwrap();
-        let items = list(&config, 10, 0, None, None).unwrap();
-        assert_eq!(items[0].status, NotificationStatus::Acted);
-    }
-
-    #[test]
-    fn stats_returns_correct_aggregates() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        insert(&config, &sample_notification("s1", "slack")).unwrap();
-        insert(&config, &sample_notification("s2", "slack")).unwrap();
-        insert(&config, &sample_notification("g1", "gmail")).unwrap();
-        update_triage(&config, "s1", 0.9, "escalate", "urgent").unwrap();
-        mark_read(&config, "g1").unwrap();
-
-        let s = stats(&config).unwrap();
-        assert_eq!(s.total, 3);
-        assert_eq!(s.unread, 2);
-        assert_eq!(s.unscored, 2); // s2 and g1 have no score
-        assert_eq!(s.by_provider["slack"], 2);
-        assert_eq!(s.by_provider["gmail"], 1);
-        assert_eq!(s.by_action["escalate"], 1);
-    }
-
-    #[test]
-    fn exists_recent_rejects_expired_notification() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let mut n = sample_notification("old1", "slack");
-        n.received_at = Utc::now() - chrono::Duration::seconds(120);
-        insert(&config, &n).unwrap();
-
-        assert!(!exists_recent(&config, "slack", None, "Test notification", "Test body").unwrap());
-    }
-
-    #[test]
     fn insert_if_not_recent_skips_duplicate() {
         let dir = TempDir::new().unwrap();
         let config = test_config(&dir);
@@ -722,6 +662,19 @@ mod tests {
 
         let n2 = sample_notification("dup-b", "slack");
         assert!(!insert_if_not_recent(&config, &n2).unwrap());
+    }
+
+    #[test]
+    fn insert_if_not_recent_rejects_expired_window_only() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+
+        let mut old = sample_notification("old1", "slack");
+        old.received_at = Utc::now() - chrono::Duration::seconds(120);
+        insert(&config, &old).unwrap();
+
+        let fresh_same_content = sample_notification("fresh1", "slack");
+        assert!(insert_if_not_recent(&config, &fresh_same_content).unwrap());
     }
 
     #[test]

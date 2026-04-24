@@ -27,7 +27,8 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::Config;
 use crate::openhuman::skills::ops::{
     create_skill, discover_skills, install_skill_from_url, is_workspace_trusted,
-    read_skill_resource, CreateSkillParams, InstallSkillFromUrlParams, Skill, SkillScope,
+    read_skill_resource, uninstall_skill, CreateSkillParams, InstallSkillFromUrlParams, Skill,
+    SkillScope, UninstallSkillParams,
 };
 use crate::rpc::RpcOutcome;
 
@@ -96,8 +97,17 @@ struct SkillSummary {
 
 impl From<Skill> for SkillSummary {
     fn from(s: Skill) -> Self {
+        // `id` is the on-disk slug the uninstall RPC resolves against.
+        // Prefer `dir_name`, but fall back to `name` for back-compat on
+        // deserialised `Skill` values written before `dir_name` existed
+        // (default empty string).
+        let id = if s.dir_name.is_empty() {
+            s.name.clone()
+        } else {
+            s.dir_name.clone()
+        };
         SkillSummary {
-            id: s.name.clone(),
+            id,
             name: s.name,
             description: s.description,
             version: s.version,
@@ -160,12 +170,20 @@ struct SkillsInstallFromUrlResult {
     new_skills: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct SkillsUninstallResult {
+    name: String,
+    removed_path: String,
+    scope: SkillScope,
+}
+
 pub fn all_skills_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         skills_schemas("skills_list"),
         skills_schemas("skills_read_resource"),
         skills_schemas("skills_create"),
         skills_schemas("skills_install_from_url"),
+        skills_schemas("skills_uninstall"),
     ]
 }
 
@@ -186,6 +204,10 @@ pub fn all_skills_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: skills_schemas("skills_install_from_url"),
             handler: handle_skills_install_from_url,
+        },
+        RegisteredController {
+            schema: skills_schemas("skills_uninstall"),
+            handler: handle_skills_uninstall,
         },
     ]
 }
@@ -349,6 +371,37 @@ pub fn skills_schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "skills_uninstall" => ControllerSchema {
+            namespace: "skills",
+            function: "uninstall",
+            description: "Remove an installed user-scope SKILL.md skill from `~/.openhuman/skills/<name>/`. Only user-scope installs are supported; project-scope and legacy skills are read-only. Rejects path separators and traversal; canonicalises before delete.",
+            inputs: vec![FieldSchema {
+                name: "name",
+                ty: TypeSchema::String,
+                comment: "Exact on-disk slug of the installed skill — matches SkillSummary.id (the directory under ~/.openhuman/skills/), which may differ from the frontmatter display name in Skill.name.",
+                required: true,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "name",
+                    ty: TypeSchema::String,
+                    comment: "Echo of the removed skill slug.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "removed_path",
+                    ty: TypeSchema::String,
+                    comment: "Canonical on-disk path that was deleted.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "scope",
+                    ty: TypeSchema::String,
+                    comment: "Scope the uninstall applied to. Always `user` today.",
+                    required: true,
+                },
+            ],
+        },
         _ => ControllerSchema {
             namespace: "skills",
             function: "unknown",
@@ -481,6 +534,34 @@ fn handle_skills_install_from_url(params: Map<String, Value>) -> ControllerFutur
             }
             Err(err) => {
                 tracing::debug!(error = %err, "[skills][rpc] install_from_url: rejected");
+                Err(err)
+            }
+        }
+    })
+}
+
+fn handle_skills_uninstall(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = deserialize_params::<UninstallSkillParams>(params)?;
+        tracing::debug!(name = %payload.name, "[skills][rpc] uninstall");
+        match uninstall_skill(payload, None) {
+            Ok(outcome) => {
+                tracing::debug!(
+                    name = %outcome.name,
+                    removed_path = %outcome.removed_path,
+                    "[skills][rpc] uninstall: ok"
+                );
+                to_json(RpcOutcome::new(
+                    SkillsUninstallResult {
+                        name: outcome.name,
+                        removed_path: outcome.removed_path,
+                        scope: outcome.scope,
+                    },
+                    Vec::new(),
+                ))
+            }
+            Err(err) => {
+                tracing::debug!(error = %err, "[skills][rpc] uninstall: rejected");
                 Err(err)
             }
         }

@@ -71,17 +71,6 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
         return outcome.into_cli_compatible_json();
     }
 
-    publish_global(DomainEvent::NotificationIngested {
-        id: id.clone(),
-        provider: req.provider.clone(),
-        account_id: req.account_id.clone(),
-    });
-    tracing::debug!(
-        id = %id,
-        provider = %req.provider,
-        "[notification_intel] published NotificationIngested event"
-    );
-
     tracing::debug!(
         id = %id,
         provider = %req.provider,

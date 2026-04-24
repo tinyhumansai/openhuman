@@ -53,6 +53,16 @@ From **`commands/openhuman.rs`** (see source for exact payloads):
 | `openhuman_service_status`         | Query status                                   |
 | `openhuman_service_uninstall`      | Uninstall service                              |
 
+## Screen share picker (CEF / macOS)
+
+From **`screen_capture/mod.rs`** (registered under `#[cfg(feature = "cef")]`). Backs the in-page `getDisplayMedia` shim in `webview_accounts/runtime.js`. Session-gated: the shim must open a session with a live user gesture before enumeration / thumbnail captures succeed. See issue #713 (picker UX) + #812 (session gating).
+
+| Command                           | Purpose                                                                                                                 |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `screen_share_begin_session`      | Open a 30s session from an account webview, after a `navigator.userActivation.isActive` gesture. Returns `{ token, sources }`. Rate-limited to 10/minute per account. |
+| `screen_share_thumbnail`          | Capture a single source's thumbnail as base64 PNG. Requires a live token and an `id` that the session was issued for. macOS only; other platforms return an error.    |
+| `screen_share_finalize_session`   | Close the session. Called by the shim on Share or Cancel; safe to call with an unknown/expired token (no-op).                                                         |
+
 ## Removed / not present
 
 The following **do not** exist in the current `generate_handler!` list: `exchange_token`, `get_auth_state`, `socket_connect`, `start_telegram_login`. Authentication and sockets are handled in the **React** app and **core** process, not via these IPC names.
