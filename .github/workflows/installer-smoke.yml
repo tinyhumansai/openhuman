@@ -16,8 +16,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu-22.04 temporarily disabled — no Linux release asset published yet
-        os: [macos-latest]
+        # ubuntu-22.04 re-enabled: install.sh --dry-run now warns + exits 0 when
+        # no Linux release asset is published (see #785).
+        os: [macos-latest, ubuntu-22.04]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
