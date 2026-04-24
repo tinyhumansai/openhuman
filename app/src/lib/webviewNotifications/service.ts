@@ -8,8 +8,7 @@ import {
   focusAccountFromNotification,
   noteWebviewNotificationFired,
 } from '../../store/accountsSlice';
-import { notificationReceived } from '../../store/notificationSlice';
-import { addNotification } from '../../store/notificationsSlice';
+import { addIntegrationNotification, notificationReceived } from '../../store/notificationSlice';
 import { WEBVIEW_NOTIFICATION_FIRED_EVENT, type WebviewNotificationFired } from './types';
 
 const log = debug('webview-notifications');
@@ -99,7 +98,7 @@ function handleFired(payload: WebviewNotificationFired): void {
       if (!result.skipped) {
         log('[notification_intel] ingest created id=%s', result.id);
         store.dispatch(
-          addNotification({
+          addIntegrationNotification({
             id: result.id,
             provider,
             account_id: accountId,

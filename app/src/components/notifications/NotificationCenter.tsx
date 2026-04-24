@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 
-import { fetchNotifications, markNotificationRead } from '../../services/notificationService';
+import { dismissNotification, fetchNotifications, markNotificationRead } from '../../services/notificationService';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
-  markRead as markReadAction,
-  setNotifications,
-  setNotificationsError,
-  setNotificationsLoading,
-} from '../../store/notificationsSlice';
+  dismissIntegrationNotification,
+  markIntegrationRead,
+  setIntegrationError,
+  setIntegrationLoading,
+  setIntegrationNotifications,
+} from '../../store/notificationSlice';
 import NotificationCard from './NotificationCard';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,7 +17,7 @@ import NotificationCard from './NotificationCard';
 
 const NotificationCenter = () => {
   const dispatch = useAppDispatch();
-  const { items, loading, error } = useAppSelector(s => s.integrationNotifications);
+  const { integrationItems: items, integrationLoading: loading, integrationError: error } = useAppSelector(s => s.notifications);
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>(undefined);
   // All providers seen across unfiltered loads — kept separate so the filter
   // pill row doesn't collapse when a provider filter is active.
@@ -26,11 +27,11 @@ const NotificationCenter = () => {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      dispatch(setNotificationsLoading(true));
+      dispatch(setIntegrationLoading(true));
       try {
         const result = await fetchNotifications({ provider: selectedProvider, limit: 100 });
         if (!cancelled) {
-          dispatch(setNotifications(result));
+          dispatch(setIntegrationNotifications(result));
           // Accumulate providers only from unfiltered loads so the pill row
           // stays stable when a filter is active.
           if (!selectedProvider) {
@@ -41,7 +42,7 @@ const NotificationCenter = () => {
       } catch (err) {
         if (!cancelled) {
           dispatch(
-            setNotificationsError(
+            setIntegrationError(
               err instanceof Error ? err.message : 'Failed to load notifications'
             )
           );
@@ -55,11 +56,20 @@ const NotificationCenter = () => {
   }, [dispatch, selectedProvider]);
 
   const handleMarkRead = async (id: string) => {
-    dispatch(markReadAction(id));
+    dispatch(markIntegrationRead(id));
     try {
       await markNotificationRead(id);
     } catch {
       // Optimistic update already applied; log failure silently.
+    }
+  };
+
+  const handleDismiss = async (id: string) => {
+    dispatch(dismissIntegrationNotification(id));
+    try {
+      await dismissNotification(id);
+    } catch {
+      // Optimistic update applied; failure is silent.
     }
   };
 
@@ -69,7 +79,7 @@ const NotificationCenter = () => {
   const handleMarkAllRead = async () => {
     const unreadIds = items.filter(n => n.status === 'unread').map(n => n.id);
     for (const id of unreadIds) {
-      dispatch(markReadAction(id));
+      dispatch(markIntegrationRead(id));
       try {
         await markNotificationRead(id);
       } catch {
@@ -171,6 +181,9 @@ const NotificationCenter = () => {
                 notification={n}
                 onMarkRead={id => {
                   void handleMarkRead(id);
+                }}
+                onDismiss={id => {
+                  void handleDismiss(id);
                 }}
               />
             ))}

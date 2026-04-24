@@ -1,6 +1,6 @@
 import debug from 'debug';
 
-import type { IntegrationNotification } from '../types/notifications';
+import type { IntegrationNotification, NotificationStats } from '../types/notifications';
 import { callCoreRpc } from './coreRpcClient';
 
 const log = debug('notifications');
@@ -105,4 +105,42 @@ export async function setNotificationSettings(payload: {
     method: 'openhuman.notification_settings_set',
     params: payload,
   });
+}
+
+export async function dismissNotification(id: string): Promise<void> {
+  log('dismissNotification id=%s', id);
+  try {
+    await callCoreRpc<{ ok: boolean }>({
+      method: 'openhuman.notification_dismiss',
+      params: { id },
+    });
+    log('dismissNotification ok id=%s', id);
+  } catch (err) {
+    errLog('dismissNotification failed id=%s: %o', id, err);
+    throw err;
+  }
+}
+
+export async function markNotificationActed(id: string): Promise<void> {
+  log('markNotificationActed id=%s', id);
+  try {
+    await callCoreRpc<{ ok: boolean }>({
+      method: 'openhuman.notification_mark_acted',
+      params: { id },
+    });
+    log('markNotificationActed ok id=%s', id);
+  } catch (err) {
+    errLog('markNotificationActed failed id=%s: %o', id, err);
+    throw err;
+  }
+}
+
+export async function fetchNotificationStats(): Promise<NotificationStats> {
+  log('fetchNotificationStats');
+  const result = await callCoreRpc<NotificationStats>({
+    method: 'openhuman.notification_stats',
+    params: {},
+  });
+  log('fetchNotificationStats result: total=%d unread=%d', result.total, result.unread);
+  return result;
 }

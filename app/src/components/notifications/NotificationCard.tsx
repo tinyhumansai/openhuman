@@ -50,9 +50,10 @@ function scoreBadgeClass(score: number): string {
 interface Props {
   notification: IntegrationNotification;
   onMarkRead: (id: string) => void;
+  onDismiss?: (id: string) => void;
 }
 
-const NotificationCard = ({ notification: n, onMarkRead }: Props) => {
+const NotificationCard = ({ notification: n, onMarkRead, onDismiss }: Props) => {
   const isUnread = n.status === 'unread';
 
   return (
@@ -96,6 +97,19 @@ const NotificationCard = ({ notification: n, onMarkRead }: Props) => {
             <span className="ml-auto text-[11px] text-stone-400 flex-shrink-0">
               {relativeTime(n.received_at)}
             </span>
+            {onDismiss && (
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  onDismiss(n.id);
+                }}
+                className="ml-1 flex-shrink-0 p-0.5 rounded hover:bg-stone-200 text-stone-400 hover:text-stone-600 transition-colors"
+                aria-label="Dismiss notification">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
 
           {/* Title */}
