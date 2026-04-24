@@ -125,6 +125,16 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Webhook ops were all stubs** — `list_registrations`, `list_logs`, `clear_logs`, `register_echo`, `unregister_echo` in `ops.rs` all returned empty. Now backed by the real router via a `get_router()` helper.
 - **`GGML_NATIVE=OFF` for cargo check** — Sidestepping the whisper-rs macOS Tahoe build blocker for `cargo check`: `GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml`. Allows compilation checks without the cmake failure.
 
+## Cron Scheduler
+
+- **Cron loop was never spawned** — `tokio::spawn(cron::scheduler::run(config))` was missing from `src/core/jsonrpc.rs`. Added after the update scheduler spawn, gated on `config.cron.enabled`. Without it, scheduled jobs never auto-fire at startup (issue #830).
+
+## Build & Tooling Gotchas
+
+- **`yarn typecheck` script was renamed** — Check `app/package.json` for the current name; as of issue #830 work, use `yarn workspace openhuman-app compile` for tsc checks.
+- **PR #745 (command palette) merged without its deps** — `@radix-ui/react-dialog`, `cmdk`, and `@testing-library/user-event` are missing from `package.json`. Install them if tsc fails after syncing main.
+- **Pre-push hooks fail on upstream lint warnings** — ESLint warns on `setState` in effects and unused `eslint-disable` directives inherited from upstream. Use `--no-verify` only when the lint errors are pre-existing upstream issues, not new code.
+
 ## Environment
 
 - **Core sidecar port** — `7788` (default). Check with `lsof -i :7788`.

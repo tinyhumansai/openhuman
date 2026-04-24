@@ -745,6 +745,25 @@ async fn run_server_inner(
         }
     });
 
+    // Cron scheduler — polls due_jobs() every ~5s and executes them automatically.
+    tokio::spawn(async {
+        match crate::openhuman::config::Config::load_or_init().await {
+            Ok(config) => {
+                if !config.cron.enabled {
+                    log::info!("[cron] scheduler disabled via config; skipping");
+                    return;
+                }
+                log::info!("[cron] spawning scheduler polling loop");
+                if let Err(e) = crate::openhuman::cron::scheduler::run(config).await {
+                    log::error!("[cron] scheduler loop ended with error: {e}");
+                }
+            }
+            Err(err) => {
+                log::warn!("[core] config load failed, skipping cron scheduler: {err}");
+            }
+        }
+    });
+
     // Realtime channel listeners (Telegram getUpdates, Discord gateway, etc.) live in
     // `start_channels`. Without this task, `openhuman run` would only expose RPC while
     // inbound bot messages are never polled.
