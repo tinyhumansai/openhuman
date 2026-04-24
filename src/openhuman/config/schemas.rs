@@ -9,11 +9,12 @@ use crate::rpc::RpcOutcome;
 
 const DEFAULT_ONBOARDING_FLAG_NAME: &str = ".skip_onboarding";
 
-#[derive(Debug, Deserialize)]
-struct ModelSettingsUpdate {
-    api_url: Option<String>,
-    default_model: Option<String>,
-    default_temperature: Option<f64>,
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelSettingsUpdate {
+    pub api_url: Option<String>,
+    pub api_key: Option<String>,
+    pub default_model: Option<String>,
+    pub default_temperature: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,6 +233,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Update model and backend connection settings.",
             inputs: vec![
                 optional_string("api_url", "Backend API URL."),
+                optional_string("api_key", "Backend API Key."),
                 optional_string("default_model", "Default model id."),
                 FieldSchema {
                     name: "default_temperature",
@@ -555,9 +557,13 @@ fn handle_get_config(_params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_update_model_settings(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let update = deserialize_params::<ModelSettingsUpdate>(params)?;
+        let update: ModelSettingsUpdate = match serde_json::from_value(serde_json::json!(params)) {
+            Ok(u) => u,
+            Err(e) => return Err(e.to_string()),
+        };
         let patch = config_rpc::ModelSettingsPatch {
             api_url: update.api_url,
+            api_key: update.api_key,
             default_model: update.default_model,
             default_temperature: update.default_temperature,
         };

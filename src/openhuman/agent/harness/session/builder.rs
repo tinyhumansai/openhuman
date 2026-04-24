@@ -619,6 +619,7 @@ impl Agent {
 
         let provider: Box<dyn Provider> = providers::create_intelligent_routing_provider(
             config.api_url.as_deref(),
+            config.api_key.as_deref(),
             config,
             &provider_runtime_options,
         )?;
@@ -730,6 +731,7 @@ impl Agent {
                     {
                         Some(Arc::from(providers::create_routed_provider(
                             config.api_url.as_deref(),
+                            config.api_key.as_deref(),
                             &config.reliability,
                             &config.model_routes,
                             &model_name,
