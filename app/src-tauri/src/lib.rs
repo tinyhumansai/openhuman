@@ -7,6 +7,7 @@ mod core_process;
 mod core_update;
 #[cfg(feature = "cef")]
 mod discord_scanner;
+mod gmail;
 #[cfg(feature = "cef")]
 mod imessage_scanner;
 mod notification_settings;
@@ -921,6 +922,13 @@ pub fn run() {
             webview_accounts::webview_set_focused_account,
             notification_settings::notification_settings_get,
             notification_settings::notification_settings_set,
+            gmail::gmail_list_labels,
+            gmail::gmail_list_messages,
+            gmail::gmail_search,
+            gmail::gmail_get_message,
+            gmail::gmail_send,
+            gmail::gmail_trash,
+            gmail::gmail_add_label,
             activate_main_window,
             show_native_notification
         ])
