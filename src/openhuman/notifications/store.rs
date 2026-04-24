@@ -111,6 +111,70 @@ pub fn insert(config: &Config, n: &IntegrationNotification) -> Result<()> {
     })
 }
 
+/// Atomically insert a notification unless a matching one arrived recently.
+///
+/// Returns `true` when inserted, `false` when skipped as duplicate.
+pub fn insert_if_not_recent(config: &Config, n: &IntegrationNotification) -> Result<bool> {
+    with_connection(config, |conn| {
+        let tx = conn
+            .unchecked_transaction()
+            .context("[notifications::store] begin insert_if_not_recent tx failed")?;
+
+        let count: i64 = match n.account_id.as_deref() {
+            Some(aid) => tx.query_row(
+                "SELECT COUNT(*) FROM integration_notifications
+                 WHERE provider = ?1 AND account_id = ?2
+                   AND title = ?3 AND body = ?4
+                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
+                params![&n.provider, aid, &n.title, &n.body],
+                |row| row.get(0),
+            ),
+            None => tx.query_row(
+                "SELECT COUNT(*) FROM integration_notifications
+                 WHERE provider = ?1 AND account_id IS NULL
+                   AND title = ?2 AND body = ?3
+                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
+                params![&n.provider, &n.title, &n.body],
+                |row| row.get(0),
+            ),
+        }
+        .context("[notifications::store] insert_if_not_recent dedup query failed")?;
+
+        if count > 0 {
+            tx.commit()
+                .context("[notifications::store] commit duplicate tx failed")?;
+            return Ok(false);
+        }
+
+        tx.execute(
+            "INSERT INTO integration_notifications
+             (id, provider, account_id, title, body, raw_payload,
+              importance_score, triage_action, triage_reason, status,
+              received_at, scored_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                n.id,
+                n.provider,
+                n.account_id,
+                n.title,
+                n.body,
+                n.raw_payload.to_string(),
+                n.importance_score,
+                n.triage_action,
+                n.triage_reason,
+                n.status.as_str(),
+                n.received_at.to_rfc3339(),
+                n.scored_at.map(|t| t.to_rfc3339()),
+            ],
+        )
+        .context("[notifications::store] insert_if_not_recent insert failed")?;
+
+        tx.commit()
+            .context("[notifications::store] commit insert_if_not_recent tx failed")?;
+        Ok(true)
+    })
+}
+
 /// List notifications with optional filtering.
 pub fn list(
     config: &Config,
@@ -247,7 +311,7 @@ pub fn exists_recent(
                 "SELECT COUNT(*) FROM integration_notifications
                  WHERE provider = ?1 AND account_id = ?2
                    AND title = ?3 AND body = ?4
-                   AND received_at >= datetime('now', '-60 seconds')",
+                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
                 params![provider, aid, title, body],
                 |row| row.get(0),
             ),
@@ -255,7 +319,7 @@ pub fn exists_recent(
                 "SELECT COUNT(*) FROM integration_notifications
                  WHERE provider = ?1 AND account_id IS NULL
                    AND title = ?2 AND body = ?3
-                   AND received_at >= datetime('now', '-60 seconds')",
+                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
                 params![provider, title, body],
                 |row| row.get(0),
             ),
@@ -636,6 +700,28 @@ mod tests {
         assert_eq!(s.by_provider["slack"], 2);
         assert_eq!(s.by_provider["gmail"], 1);
         assert_eq!(s.by_action["escalate"], 1);
+    }
+
+    #[test]
+    fn exists_recent_rejects_expired_notification() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let mut n = sample_notification("old1", "slack");
+        n.received_at = Utc::now() - chrono::Duration::seconds(120);
+        insert(&config, &n).unwrap();
+
+        assert!(!exists_recent(&config, "slack", None, "Test notification", "Test body").unwrap());
+    }
+
+    #[test]
+    fn insert_if_not_recent_skips_duplicate() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let n = sample_notification("dup-a", "slack");
+        assert!(insert_if_not_recent(&config, &n).unwrap());
+
+        let n2 = sample_notification("dup-b", "slack");
+        assert!(!insert_if_not_recent(&config, &n2).unwrap());
     }
 
     #[test]

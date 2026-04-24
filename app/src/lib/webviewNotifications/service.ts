@@ -86,7 +86,11 @@ function handleFired(payload: WebviewNotificationFired): void {
   );
 
   // Mirror into the core triage pipeline — fire-and-forget.
-  log('[notification_intel] forwarding to core ingest provider=%s account=%s', provider, accountId);
+  log(
+    '[notification_intel] forwarding to core ingest provider=%s account_present=%s',
+    provider,
+    accountId ? 'yes' : 'no'
+  );
   void ingestNotification({
     provider,
     account_id: accountId,

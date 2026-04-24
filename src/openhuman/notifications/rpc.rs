@@ -43,26 +43,6 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
         );
         return outcome.into_cli_compatible_json();
     }
-    // Dedup: skip if an identical notification arrived in the last 60 seconds.
-    let is_dup = store::exists_recent(
-        &config,
-        &req.provider,
-        req.account_id.as_deref(),
-        &req.title,
-        &req.body,
-    )
-    .map_err(|e| format!("[notification_intel] exists_recent failed: {e}"))?;
-
-    if is_dup {
-        tracing::debug!(
-            provider = %req.provider,
-            title = %req.title,
-            "[notification_intel] skipping duplicate notification"
-        );
-        let outcome = RpcOutcome::new(json!({ "skipped": true, "reason": "duplicate" }), vec![]);
-        return outcome.into_cli_compatible_json();
-    }
-
     let id = Uuid::new_v4().to_string();
     let notification = IntegrationNotification {
         id: id.clone(),
@@ -79,8 +59,17 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
         scored_at: None,
     };
 
-    store::insert(&config, &notification)
-        .map_err(|e| format!("[notification_intel] insert failed: {e}"))?;
+    let inserted = store::insert_if_not_recent(&config, &notification)
+        .map_err(|e| format!("[notification_intel] insert_if_not_recent failed: {e}"))?;
+    if !inserted {
+        tracing::debug!(
+            provider = %req.provider,
+            title_chars = req.title.chars().count(),
+            "[notification_intel] skipping duplicate notification"
+        );
+        let outcome = RpcOutcome::new(json!({ "skipped": true, "reason": "duplicate" }), vec![]);
+        return outcome.into_cli_compatible_json();
+    }
 
     publish_global(DomainEvent::NotificationIngested {
         id: id.clone(),
