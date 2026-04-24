@@ -10,6 +10,8 @@
 //! - `GET /`          — public info page
 //! - `GET /health`    — liveness probe
 //! - `GET /auth/telegram` — external browser callback (carries its own token)
+//! - `GET /schema`        — read-only schema discovery
+//! - `GET /events/webhooks` — public local webhook debug SSE
 //! - `OPTIONS *`      — CORS preflight (handled by outer CORS middleware)
 
 use std::io::Write as _;
@@ -25,7 +27,13 @@ use serde_json::json;
 static RPC_TOKEN: OnceLock<String> = OnceLock::new();
 
 /// Paths that bypass bearer-token authentication.
-const PUBLIC_PATHS: &[&str] = &["/", "/health", "/auth/telegram"];
+const PUBLIC_PATHS: &[&str] = &[
+    "/",
+    "/health",
+    "/auth/telegram",
+    "/schema",
+    "/events/webhooks",
+];
 
 /// The environment variable the Tauri shell sets before spawning the core.
 ///
@@ -113,7 +121,10 @@ pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Res
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    if bearer == format!("Bearer {expected}") {
+    if bearer
+        .strip_prefix("Bearer ")
+        .is_some_and(|token| token == expected)
+    {
         log::trace!("[auth] authorized request to {path}");
         next.run(req).await
     } else {

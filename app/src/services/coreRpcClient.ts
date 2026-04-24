@@ -49,6 +49,7 @@ let nextJsonRpcId = 1;
 let resolvedCoreRpcUrl: string | null = null;
 let resolvingCoreRpcUrl: Promise<string> | null = null;
 let resolvedCoreRpcToken: string | null = null;
+let didResolveCoreRpcToken = false;
 let resolvingCoreRpcToken: Promise<string | null> | null = null;
 const coreRpcLog = debug('core-rpc');
 const coreRpcError = debug('core-rpc:error');
@@ -130,7 +131,7 @@ export async function getCoreRpcUrl(): Promise<string> {
  * is not available so existing tests remain unaffected.
  */
 async function getCoreRpcToken(): Promise<string | null> {
-  if (resolvedCoreRpcToken) return resolvedCoreRpcToken;
+  if (didResolveCoreRpcToken) return resolvedCoreRpcToken;
   if (!coreIsTauri()) return null;
   if (resolvingCoreRpcToken) return resolvingCoreRpcToken;
 
@@ -138,10 +139,13 @@ async function getCoreRpcToken(): Promise<string | null> {
     try {
       const token = await invoke<string>('core_rpc_token');
       resolvedCoreRpcToken = token?.trim() || null;
+      didResolveCoreRpcToken = true;
       coreRpcLog('core RPC token loaded');
       return resolvedCoreRpcToken;
     } catch (err) {
       coreRpcError('failed to load core RPC token', err);
+      resolvedCoreRpcToken = null;
+      didResolveCoreRpcToken = true;
       return null;
     } finally {
       resolvingCoreRpcToken = null;

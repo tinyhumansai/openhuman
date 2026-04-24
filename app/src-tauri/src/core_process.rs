@@ -1,8 +1,9 @@
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
+use parking_lot::RwLock;
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -55,10 +56,10 @@ pub fn generate_rpc_token() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-static CURRENT_RPC_TOKEN: OnceLock<String> = OnceLock::new();
+static CURRENT_RPC_TOKEN: LazyLock<RwLock<Option<String>>> = LazyLock::new(|| RwLock::new(None));
 
-pub fn current_rpc_token() -> Option<&'static str> {
-    CURRENT_RPC_TOKEN.get().map(String::as_str)
+pub fn current_rpc_token() -> Option<String> {
+    CURRENT_RPC_TOKEN.read().clone()
 }
 
 #[derive(Clone)]
@@ -79,7 +80,7 @@ pub struct CoreProcessHandle {
 impl CoreProcessHandle {
     pub fn new(port: u16, core_bin: Option<PathBuf>, run_mode: CoreRunMode) -> Self {
         let rpc_token = generate_rpc_token();
-        let _ = CURRENT_RPC_TOKEN.set(rpc_token.clone());
+        *CURRENT_RPC_TOKEN.write() = Some(rpc_token.clone());
         Self {
             child: Arc::new(Mutex::new(None)),
             task: Arc::new(Mutex::new(None)),
@@ -681,6 +682,15 @@ mod tests {
     #[test]
     fn current_rpc_token_matches_handle_token() {
         let handle = CoreProcessHandle::new(7788, None, CoreRunMode::ChildProcess);
-        assert_eq!(super::current_rpc_token(), Some(handle.rpc_token()));
+        assert_eq!(super::current_rpc_token().as_deref(), Some(handle.rpc_token()));
+    }
+
+    #[test]
+    fn current_rpc_token_tracks_latest_handle_token() {
+        let first = CoreProcessHandle::new(7788, None, CoreRunMode::ChildProcess);
+        let second = CoreProcessHandle::new(8899, None, CoreRunMode::ChildProcess);
+
+        assert_ne!(first.rpc_token(), second.rpc_token());
+        assert_eq!(super::current_rpc_token().as_deref(), Some(second.rpc_token()));
     }
 }

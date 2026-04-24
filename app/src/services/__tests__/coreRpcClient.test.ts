@@ -344,4 +344,28 @@ describe('coreRpcClient', () => {
     );
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  test('caches a missing token result after the first Tauri lookup failure', async () => {
+    vi.resetModules();
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'core_rpc_url') return 'http://127.0.0.1:7788/rpc';
+      if (cmd === 'core_rpc_token') throw new Error('denied');
+      throw new Error(`unexpected command: ${cmd}`);
+    });
+    const { callCoreRpc: callFreshCoreRpc } = await import('../coreRpcClient');
+
+    await expect(callFreshCoreRpc({ method: 'openhuman.threads_list' })).rejects.toThrow(
+      'Core RPC token unavailable in Tauri; local RPC auth cannot be satisfied'
+    );
+    await expect(callFreshCoreRpc({ method: 'openhuman.threads_list' })).rejects.toThrow(
+      'Core RPC token unavailable in Tauri; local RPC auth cannot be satisfied'
+    );
+
+    const tokenCalls = vi
+      .mocked(invoke)
+      .mock.calls.filter(([cmd]) => cmd === 'core_rpc_token').length;
+    expect(tokenCalls).toBe(1);
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });
