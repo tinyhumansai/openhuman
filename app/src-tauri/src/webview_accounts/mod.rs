@@ -225,10 +225,7 @@ fn unwrap_provider_redirect(url: &Url) -> Option<Url> {
 fn open_in_system_browser(url: &str) {
     #[cfg(target_os = "macos")]
     {
-        match std::process::Command::new("/usr/bin/open")
-            .arg(url)
-            .spawn()
-        {
+        match std::process::Command::new("/usr/bin/open").arg(url).spawn() {
             Ok(_) => log::info!("[webview-accounts] opened externally (macos open): {}", url),
             Err(e) => log::warn!(
                 "[webview-accounts] /usr/bin/open {} failed: {} — falling back to opener plugin",
