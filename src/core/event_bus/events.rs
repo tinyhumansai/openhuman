@@ -310,6 +310,23 @@ pub enum DomainEvent {
     /// A full tree rebuild completed.
     TreeSummarizerRebuildCompleted { namespace: String, total_nodes: u64 },
 
+    // ── Notification ────────────────────────────────────────────────────
+    /// An integration notification was ingested from an embedded webview.
+    NotificationIngested {
+        id: String,
+        provider: String,
+        account_id: Option<String>,
+    },
+    /// An integration notification's triage scoring completed.
+    NotificationTriaged {
+        id: String,
+        provider: String,
+        /// One of: "drop", "acknowledge", "react", "escalate"
+        action: String,
+        importance_score: f32,
+        latency_ms: u64,
+    },
+
     // ── System lifecycle ────────────────────────────────────────────────
     /// A system component started up.
     SystemStartup { component: String },
@@ -378,6 +395,8 @@ impl DomainEvent {
             Self::TreeSummarizerHourCompleted { .. }
             | Self::TreeSummarizerPropagated { .. }
             | Self::TreeSummarizerRebuildCompleted { .. } => "tree_summarizer",
+
+            Self::NotificationIngested { .. } | Self::NotificationTriaged { .. } => "notification",
 
             Self::SystemStartup { .. }
             | Self::SystemShutdown { .. }
@@ -752,6 +771,25 @@ mod tests {
                     total_nodes: 10,
                 },
                 "tree_summarizer",
+            ),
+            // Notification
+            (
+                DomainEvent::NotificationIngested {
+                    id: "n1".into(),
+                    provider: "slack".into(),
+                    account_id: None,
+                },
+                "notification",
+            ),
+            (
+                DomainEvent::NotificationTriaged {
+                    id: "n1".into(),
+                    provider: "slack".into(),
+                    action: "escalate".into(),
+                    importance_score: 0.9,
+                    latency_ms: 150,
+                },
+                "notification",
             ),
             // System
             (

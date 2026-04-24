@@ -19,6 +19,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("mark_read"),
         schemas("settings_get"),
         schemas("settings_set"),
+        schemas("dismiss"),
+        schemas("mark_acted"),
+        schemas("stats"),
     ]
 }
 
@@ -43,6 +46,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("settings_set"),
             handler: handle_settings_set_wrap,
+        },
+        RegisteredController {
+            schema: schemas("dismiss"),
+            handler: handle_dismiss_wrap,
+        },
+        RegisteredController {
+            schema: schemas("mark_acted"),
+            handler: handle_mark_acted_wrap,
+        },
+        RegisteredController {
+            schema: schemas("stats"),
+            handler: handle_stats_wrap,
         },
     ]
 }
@@ -237,6 +252,53 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
         },
 
+        "dismiss" => ControllerSchema {
+            namespace: "notification",
+            function: "dismiss",
+            description: "Mark a notification as dismissed (user explicitly hid it).",
+            inputs: vec![FieldSchema {
+                name: "id",
+                ty: TypeSchema::String,
+                comment: "UUID of the notification to dismiss.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "ok",
+                ty: TypeSchema::Bool,
+                comment: "True when the update succeeded.",
+                required: true,
+            }],
+        },
+        "mark_acted" => ControllerSchema {
+            namespace: "notification",
+            function: "mark_acted",
+            description: "Mark a notification as acted upon (user took an action from it).",
+            inputs: vec![FieldSchema {
+                name: "id",
+                ty: TypeSchema::String,
+                comment: "UUID of the notification to mark as acted.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "ok",
+                ty: TypeSchema::Bool,
+                comment: "True when the update succeeded.",
+                required: true,
+            }],
+        },
+        "stats" => ControllerSchema {
+            namespace: "notification",
+            function: "stats",
+            description: "Return aggregate statistics for the notification intelligence pipeline.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "total",
+                ty: TypeSchema::I64,
+                comment: "Total notification count.",
+                required: true,
+            }],
+        },
+
         _other => ControllerSchema {
             namespace: "notification",
             function: "unknown",
@@ -281,6 +343,18 @@ fn handle_settings_set_wrap(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::handle_settings_set(params).await })
 }
 
+fn handle_dismiss_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::rpc::handle_dismiss(params).await })
+}
+
+fn handle_mark_acted_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::rpc::handle_mark_acted(params).await })
+}
+
+fn handle_stats_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::rpc::handle_stats(params).await })
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,7 +376,10 @@ mod tests {
                 "list",
                 "mark_read",
                 "settings_get",
-                "settings_set"
+                "settings_set",
+                "dismiss",
+                "mark_acted",
+                "stats",
             ]
         );
     }
@@ -310,7 +387,7 @@ mod tests {
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 5);
+        assert_eq!(controllers.len(), 8);
         let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
         assert_eq!(
             names,
@@ -319,7 +396,10 @@ mod tests {
                 "list",
                 "mark_read",
                 "settings_get",
-                "settings_set"
+                "settings_set",
+                "dismiss",
+                "mark_acted",
+                "stats",
             ]
         );
     }

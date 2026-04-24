@@ -265,6 +265,116 @@ pub fn exists_recent(
     })
 }
 
+/// Transition a notification status to 'dismissed'.
+pub fn mark_dismissed(config: &Config, id: &str) -> Result<()> {
+    with_connection(config, |conn| {
+        let updated = conn
+            .execute(
+                "UPDATE integration_notifications SET status = 'dismissed' WHERE id = ?1",
+                params![id],
+            )
+            .context("[notification_intel] mark_dismissed failed")?;
+        if updated == 0 {
+            tracing::warn!(id = %id, "[notification_intel] mark_dismissed matched no rows");
+        } else {
+            tracing::debug!(id = %id, "[notification_intel] mark_dismissed applied");
+        }
+        Ok(())
+    })
+}
+
+/// Transition a notification status to 'acted'.
+pub fn mark_acted(config: &Config, id: &str) -> Result<()> {
+    with_connection(config, |conn| {
+        let updated = conn
+            .execute(
+                "UPDATE integration_notifications SET status = 'acted' WHERE id = ?1",
+                params![id],
+            )
+            .context("[notification_intel] mark_acted failed")?;
+        if updated == 0 {
+            tracing::warn!(id = %id, "[notification_intel] mark_acted matched no rows");
+        } else {
+            tracing::debug!(id = %id, "[notification_intel] mark_acted applied");
+        }
+        Ok(())
+    })
+}
+
+/// Return aggregate statistics for the notification intelligence pipeline.
+pub fn stats(config: &Config) -> Result<super::types::NotificationStats> {
+    use std::collections::HashMap;
+    with_connection(config, |conn| {
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM integration_notifications", [], |r| r.get(0))
+            .context("[notification_intel] stats total query failed")?;
+
+        let unread: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM integration_notifications WHERE status = 'unread'",
+                [],
+                |r| r.get(0),
+            )
+            .context("[notification_intel] stats unread query failed")?;
+
+        let unscored: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM integration_notifications WHERE importance_score IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .context("[notification_intel] stats unscored query failed")?;
+
+        // Per-provider counts
+        let mut by_provider = HashMap::new();
+        {
+            let mut stmt = conn
+                .prepare("SELECT provider, COUNT(*) FROM integration_notifications GROUP BY provider")
+                .context("[notification_intel] stats by_provider prepare failed")?;
+            let rows = stmt
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+                .context("[notification_intel] stats by_provider query failed")?;
+            for row in rows {
+                let (provider, count) = row.context("[notification_intel] stats by_provider row failed")?;
+                by_provider.insert(provider, count);
+            }
+        }
+
+        // Per-action counts (only where triage_action is set)
+        let mut by_action = HashMap::new();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT triage_action, COUNT(*) FROM integration_notifications \
+                     WHERE triage_action IS NOT NULL GROUP BY triage_action",
+                )
+                .context("[notification_intel] stats by_action prepare failed")?;
+            let rows = stmt
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+                .context("[notification_intel] stats by_action query failed")?;
+            for row in rows {
+                let (action, count) = row.context("[notification_intel] stats by_action row failed")?;
+                by_action.insert(action, count);
+            }
+        }
+
+        tracing::debug!(
+            total = total,
+            unread = unread,
+            unscored = unscored,
+            "[notification_intel] stats query completed"
+        );
+
+        Ok(super::types::NotificationStats {
+            total,
+            unread,
+            unscored,
+            by_provider,
+            by_action,
+        })
+    })
+}
+
 /// Upsert provider-level notification settings.
 pub fn upsert_settings(config: &Config, settings: &NotificationSettings) -> Result<()> {
     with_connection(config, |conn| {
@@ -477,6 +587,45 @@ mod tests {
         assert!(exists_recent(&config, "slack", None, "Test notification", "Test body").unwrap());
         assert!(!exists_recent(&config, "gmail", None, "Test notification", "Test body").unwrap());
         assert!(!exists_recent(&config, "slack", None, "Different title", "Test body").unwrap());
+    }
+
+    #[test]
+    fn mark_dismissed_changes_status() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        insert(&config, &sample_notification("d1", "slack")).unwrap();
+        mark_dismissed(&config, "d1").unwrap();
+        let items = list(&config, 10, 0, None, None).unwrap();
+        assert_eq!(items[0].status, NotificationStatus::Dismissed);
+    }
+
+    #[test]
+    fn mark_acted_changes_status() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        insert(&config, &sample_notification("a1", "gmail")).unwrap();
+        mark_acted(&config, "a1").unwrap();
+        let items = list(&config, 10, 0, None, None).unwrap();
+        assert_eq!(items[0].status, NotificationStatus::Acted);
+    }
+
+    #[test]
+    fn stats_returns_correct_aggregates() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        insert(&config, &sample_notification("s1", "slack")).unwrap();
+        insert(&config, &sample_notification("s2", "slack")).unwrap();
+        insert(&config, &sample_notification("g1", "gmail")).unwrap();
+        update_triage(&config, "s1", 0.9, "escalate", "urgent").unwrap();
+        mark_read(&config, "g1").unwrap();
+
+        let s = stats(&config).unwrap();
+        assert_eq!(s.total, 3);
+        assert_eq!(s.unread, 2);
+        assert_eq!(s.unscored, 2); // s2 and g1 have no score
+        assert_eq!(s.by_provider["slack"], 2);
+        assert_eq!(s.by_provider["gmail"], 1);
+        assert_eq!(s.by_action["escalate"], 1);
     }
 
     #[test]
