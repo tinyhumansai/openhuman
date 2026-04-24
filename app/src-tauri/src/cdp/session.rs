@@ -51,8 +51,9 @@ pub fn placeholder_url(account_id: &str) -> String {
 
 fn target_matches_account_url(target_url: &str, account_id: &str) -> bool {
     let marker = placeholder_marker(account_id);
+    let marker_fragment = format!("#{marker}");
     let fragment = target_url_fragment(account_id);
-    target_url.ends_with(&marker) || target_url.ends_with(&fragment)
+    target_url.ends_with(&marker_fragment) || target_url.ends_with(&fragment)
 }
 
 /// Spawn the per-account CDP session. Returns immediately; the background
@@ -258,6 +259,10 @@ mod tests {
 
         assert!(!target_matches_account_url(
             "about:blank#openhuman-acct-acct-420",
+            "acct-42"
+        ));
+        assert!(!target_matches_account_url(
+            "https://example.com/openhuman-acct-acct-42",
             "acct-42"
         ));
         assert!(!target_matches_account_url(
