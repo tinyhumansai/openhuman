@@ -10,10 +10,13 @@ const EMPTY_QUEUE: RespondQueueList = { items: [], count: 0 };
 
 function parseQueueEnvelope(raw: unknown): RespondQueueList {
   if (!raw || typeof raw !== 'object') {
-    return EMPTY_QUEUE;
+    throw new Error('provider_surfaces_list_queue: unexpected empty response');
   }
 
-  const envelope = raw as ProviderSurfacesQueueEnvelope;
+  const envelope = raw as ProviderSurfacesQueueEnvelope & { error?: { message?: string } };
+  if (envelope.error) {
+    throw new Error(envelope.error.message ?? 'Core RPC returned an error');
+  }
   const candidate = envelope.result?.data ?? envelope.data;
   if (!candidate || !Array.isArray(candidate.items) || typeof candidate.count !== 'number') {
     return EMPTY_QUEUE;
