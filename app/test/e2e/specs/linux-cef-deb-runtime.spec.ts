@@ -18,7 +18,7 @@
  */
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { dumpAccessibilityTree, textExists, waitForText } from '../helpers/element-helpers';
+import { dumpAccessibilityTree, textExists } from '../helpers/element-helpers';
 import { supportsExecuteScript } from '../helpers/platform';
 import { startMockServer, stopMockServer } from '../mock-server';
 
@@ -100,7 +100,7 @@ describe('Linux CEF deb package runtime (UI → Tauri → sidecar)', () => {
       stepLog('core_rpc_url returned', { url });
 
       // Validate URL format: http://host:port/rpc
-      expect(url).toMatch(/^http:\/\/[^\/]+:\d+\/rpc$/);
+      expect(url).toMatch(/^http:\/\/[^/]+:\d+\/rpc$/);
 
       // Should be localhost or 127.0.0.1
       expect(url).toMatch(/http:\/\/(127\.0\.0\.1|localhost):/);
@@ -158,14 +158,14 @@ describe('Linux CEF deb package runtime (UI → Tauri → sidecar)', () => {
         }
       }
 
-// At least one method should succeed
-    const anySuccess = Object.values(results).some(v => v);
-    if (!anySuccess) {
-      throw new Error(
-        `Expected at least one health check to pass. Results: ${JSON.stringify(results)}`
-      );
-    }
-    expect(anySuccess).toBe(true);
+      // At least one method should succeed
+      const anySuccess = Object.values(results).some(v => v);
+      if (!anySuccess) {
+        throw new Error(
+          `Expected at least one health check to pass. Results: ${JSON.stringify(results)}`
+        );
+      }
+      expect(anySuccess).toBe(true);
     });
 
     it('sidecar binary was found and spawned (not self-subcommand fallback)', async () => {
