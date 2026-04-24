@@ -82,3 +82,39 @@ Manual download links (all platforms):
 
 - Website: https://tinyhuman.ai/openhuman
 - Latest release: https://github.com/tinyhumansai/openhuman/releases/latest
+
+## Troubleshooting
+
+### macOS: `yarn dev:app` exits with "CEF cache is held by another OpenHuman instance"
+
+**Symptom**
+
+`yarn dev:app` (or any debug build of the Tauri shell) exits before the window appears with a message like:
+
+```
+[openhuman] CEF cache at /Users/<you>/Library/Caches/com.openhuman.app/cef is held by another OpenHuman instance (host <hostname>, pid 12345).
+Quit the running instance and try again.
+Workaround:
+  pkill -f "OpenHuman.app/Contents"
+  pkill -f "openhuman-core"
+```
+
+**Cause**
+
+CEF (Chromium Embedded Framework) holds an exclusive lock on its user-data directory via a `SingletonLock` symlink under `~/Library/Caches/com.openhuman.app/cef`. Both the installed `.app` bundle and the dev binary use the same identifier (`com.openhuman.app`), so they cannot run side-by-side. Without the preflight, `cef::initialize` returns failure and the vendored `tauri-runtime-cef` panics with a Rust backtrace and no actionable message (this was issue #864 before the preflight landed).
+
+**Fix**
+
+Quit the other OpenHuman instance and re-run. Fastest path:
+
+```bash
+pkill -f "OpenHuman.app/Contents"
+pkill -f "openhuman-core"
+yarn dev:app
+```
+
+If the lock is left behind by a crashed process (PID no longer alive), the preflight removes the stale `SingletonLock` automatically and dev startup proceeds — no manual cleanup required.
+
+**Known limitation**
+
+Dev and release builds still share `com.openhuman.app` as the cache identifier. Isolating dev to a separate `com.openhuman.app.dev` cache requires changes to the vendored `tauri-runtime-cef` (cache path is built inside the runtime from the bundle identifier, not exposed to the openhuman shell). Tracked as a follow-up to #864.
