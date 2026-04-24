@@ -1,10 +1,9 @@
+---
 name: Build
-
 on:
   push:
     branches: [main]
   pull_request:
-
 permissions:
   contents: read
   pull-requests: read
@@ -12,12 +11,9 @@ permissions:
   actions: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref
+    || github.ref }}
   cancel-in-progress: true
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     name: Build Tauri App
@@ -30,7 +26,6 @@ jobs:
         with:
           fetch-depth: 1
           submodules: recursive
-
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -54,45 +49,39 @@ jobs:
       # ghcr.io/tinyhumansai/openhuman_ci image (see .github/Dockerfile),
       # so `cargo tauri build` below resolves to the fork without any
       # per-run compile step.
-
-- name: Setup pnpm
-      uses: pnpm/action-setup@v4
-      with:
-        cache: true
-
-    - name: Setup Node.js 24.x
-      uses: actions/setup-node@v4
-      with:
-        node-version: 24.x
-
-    - name: Install dependencies
-      run: pnpm install --frozen-lockfile
-
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          cache: true
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - name: Install cmake (for whisper-rs)
-        run: apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
-
+        run: apt-get update && apt-get install -y --no-install-recommends cmake &&
+          rm -rf /var/lib/apt/lists/*
       - name: Build sidecar core binary
         run: cargo build --profile ci --target x86_64-unknown-linux-gnu --bin openhuman-core
-
       - name: Stage sidecar for Tauri bundler
         run: |
           mkdir -p app/src-tauri/binaries
           cp target/x86_64-unknown-linux-gnu/ci/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
           chmod +x app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
-
       - name: Build Tauri app (CEF default)
         working-directory: app
         run: |
           TAURI_CONFIG_OVERRIDE='{"plugins":{"updater":{"active":false}}}'
           cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
         env:
-          NODE_OPTIONS: "--max-old-space-size=4096"
           NODE_ENV: production
-          CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
-          CARGO_PROFILE_RELEASE_LTO: "false"
-          CARGO_PROFILE_RELEASE_STRIP: "true"
-          CARGO_PROFILE_RELEASE_DEBUG: "false"
+<<<<<<< HEAD
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+          CARGO_PROFILE_RELEASE_LTO: 'false'
+          CARGO_PROFILE_RELEASE_STRIP: 'true'
+          CARGO_PROFILE_RELEASE_DEBUG: 'false'
 
       - name: Upload Rust debug symbols to Sentry
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -127,3 +116,9 @@ jobs:
 
           sentry-cli releases finalize "${RELEASE}"
           echo "Sentry symbol upload complete for ${RELEASE}"
+=======
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+          CARGO_PROFILE_RELEASE_LTO: 'false'
+          CARGO_PROFILE_RELEASE_STRIP: 'true'
+          CARGO_PROFILE_RELEASE_DEBUG: 'false'

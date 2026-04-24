@@ -1,18 +1,16 @@
+---
 name: Type Check
-
 on:
   push:
     branches: [main]
   pull_request:
-
 permissions:
   contents: read
   pull-requests: read
-
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref
+    || github.ref }}
   cancel-in-progress: true
-
 jobs:
   typecheck:
     name: Type Check TypeScript
@@ -22,35 +20,36 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
-- name: Setup pnpm
-      uses: pnpm/action-setup@v4
-      with:
-        cache: true
-
       - name: Setup Node.js 24.x
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-
-- name: Install dependencies
-      run: pnpm install --frozen-lockfile
-
+          cache: yarn
+      - name: Cache node modules
+        id: yarn-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-typecheck-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-typecheck-
+            ${{ runner.os }}-test-
+            ${{ runner.os }}-build-
+      - name: Install dependencies
+        if: steps.yarn-cache.outputs.cache-hit != 'true'
+        run: yarn install --frozen-lockfile
       - name: Type check TypeScript files
-        run: pnpm --filter openhuman-app compile
+        run: yarn workspace openhuman-app compile
         env:
           NODE_ENV: test
-
       - name: Check Prettier formatting
-        run: pnpm --filter openhuman-app format:check
+        run: yarn workspace openhuman-app format:check
         env:
           NODE_ENV: test
-
-- name: Run ESLint
-      run: pnpm --filter openhuman-app lint
+      - name: Run ESLint
+        run: yarn workspace openhuman-app lint
         env:
           NODE_ENV: test
-
   rust-quality:
     name: Rust Quality (fmt + clippy)
     runs-on: ubuntu-22.04
@@ -61,19 +60,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             . -> target
           cache-on-failure: true
-
       - name: Install cmake (for whisper-rs)
-        run: apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
-
+        run: apt-get update && apt-get install -y --no-install-recommends cmake &&
+          rm -rf /var/lib/apt/lists/*
       - name: Check formatting (cargo fmt)
         run: cargo fmt --all -- --check
-
       - name: Run clippy (core crate)
         run: cargo clippy -p openhuman

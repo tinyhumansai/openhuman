@@ -1,5 +1,5 @@
+---
 name: Release Packages
-
 # Triggered after the main release.yml publishes a release.
 # By the time this fires, macOS (aarch64 + x86_64) and Linux x86_64
 # CLI tarballs are already attached to the release by release.yml.
@@ -11,21 +11,17 @@ name: Release Packages
 #   4. npm package publish
 #   5. Smoke tests for each channel
 #   6. One-time backlog issue for future package managers
-
 on:
   release:
     types: [published]
-
 permissions:
   contents: write
   pages: write
   id-token: write
   issues: write
-
 concurrency:
   group: release-packages-${{ github.event.release.tag_name }}
   cancel-in-progress: false
-
 jobs:
 
   # ────────────────────────────────────────────────────────────────────────────
@@ -45,21 +41,17 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 1
           submodules: true
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.93.0
-
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           key: linux-arm64-release
-
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             pkg-config libssl-dev build-essential cmake
-
       - name: Verify Sentry DSN is present
         shell: bash
         env:
@@ -74,7 +66,6 @@ jobs:
             exit 1
           fi
           echo "OPENHUMAN_SENTRY_DSN is set (length=${#OPENHUMAN_SENTRY_DSN})"
-
       - name: Build CLI binary and package tarball
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -106,14 +97,12 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
           path: src
-
       - name: Checkout Homebrew tap
         uses: actions/checkout@v4
         with:
           repository: tinyhumansai/homebrew-openhuman
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
-
       - name: Update Homebrew formula
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -139,27 +128,23 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 1
-
       - name: Install apt-repo build tools
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             dpkg-dev apt-utils gnupg2
-
       - name: Import GPG signing key
         env:
           APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
         run: |
           echo "$APT_SIGNING_KEY" | gpg --batch --import
           gpg --list-secret-keys
-
       - name: Checkout gh-pages branch
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: gh-pages
           fetch-depth: 0
-
       - name: Build .deb packages, apt repo, and deploy to gh-pages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -182,13 +167,11 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 1
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          registry-url: 'https://registry.npmjs.org'
-
+          registry-url: https://registry.npmjs.org
       - name: Set version and publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -212,12 +195,10 @@ jobs:
         run: |
           /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
           echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
-
       - name: Tap and install
         run: |
           brew tap tinyhumansai/openhuman
           brew install openhuman
-
       - name: Smoke test
         run: openhuman --version
 
@@ -238,7 +219,6 @@ jobs:
           echo "deb [signed-by=/etc/apt/keyrings/openhuman.gpg arch=amd64] \
             https://tinyhumansai.github.io/openhuman/apt stable main" \
             | sudo tee /etc/apt/sources.list.d/openhuman.list
-
       - name: Install and smoke test
         run: |
           sudo apt-get update
@@ -262,7 +242,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-
       - name: Wait for npm propagation, then install
         run: |
           VERSION="${{ github.event.release.tag_name }}"
@@ -271,7 +250,6 @@ jobs:
           for i in 1 2 3 4 5; do
             npm install -g "openhuman@${VERSION}" && break || sleep 30
           done
-
       - name: Smoke test
         run: openhuman --version
 
@@ -285,11 +263,10 @@ jobs:
       - name: Create issue if it doesn't exist
         uses: actions/github-script@v7
         with:
-          script: |
+          script: |-
             const { owner, repo } = context.repo;
             const label = 'distribution-backlog';
             const title = '[Backlog] Package manager distribution — next tiers';
-
             // Check for existing open or closed issue with this exact title
             const { data: existing } = await github.rest.issues.listForRepo({
               owner, repo,
@@ -301,7 +278,6 @@ jobs:
               core.info('Backlog issue already exists — skipping.');
               return;
             }
-
             // Ensure the label exists
             try {
               await github.rest.issues.createLabel({
@@ -311,7 +287,6 @@ jobs:
                 description: 'Package distribution backlog',
               });
             } catch (_) { /* label may already exist */ }
-
             const body = [
               '## Summary',
               '',

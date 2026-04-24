@@ -1,14 +1,12 @@
+---
 name: Installer Smoke
-
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   smoke-unix:
     name: Smoke install.sh (${{ matrix.os }})
@@ -22,7 +20,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Run installer dry-run
         run: bash scripts/install.sh --dry-run --verbose
 
