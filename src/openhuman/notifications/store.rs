@@ -118,62 +118,71 @@ pub fn insert(config: &Config, n: &IntegrationNotification) -> Result<()> {
 /// Returns `true` when inserted, `false` when skipped as duplicate.
 pub fn insert_if_not_recent(config: &Config, n: &IntegrationNotification) -> Result<bool> {
     with_connection(config, |conn| {
-        let tx = conn
-            .unchecked_transaction()
+        conn.execute_batch("BEGIN IMMEDIATE")
             .context("[notifications::store] begin insert_if_not_recent tx failed")?;
 
-        let count: i64 = match n.account_id.as_deref() {
-            Some(aid) => tx.query_row(
-                "SELECT COUNT(*) FROM integration_notifications
-                 WHERE provider = ?1 AND account_id = ?2
-                   AND title = ?3 AND body = ?4
-                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
-                params![&n.provider, aid, &n.title, &n.body],
-                |row| row.get(0),
-            ),
-            None => tx.query_row(
-                "SELECT COUNT(*) FROM integration_notifications
-                 WHERE provider = ?1 AND account_id IS NULL
-                   AND title = ?2 AND body = ?3
-                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
-                params![&n.provider, &n.title, &n.body],
-                |row| row.get(0),
-            ),
+        let result: Result<bool> = (|| {
+            let count: i64 = match n.account_id.as_deref() {
+                Some(aid) => conn.query_row(
+                    "SELECT COUNT(*) FROM integration_notifications
+                     WHERE provider = ?1 AND account_id = ?2
+                       AND title = ?3 AND body = ?4
+                       AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
+                    params![&n.provider, aid, &n.title, &n.body],
+                    |row| row.get(0),
+                ),
+                None => conn.query_row(
+                    "SELECT COUNT(*) FROM integration_notifications
+                     WHERE provider = ?1 AND account_id IS NULL
+                       AND title = ?2 AND body = ?3
+                       AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
+                    params![&n.provider, &n.title, &n.body],
+                    |row| row.get(0),
+                ),
+            }
+            .context("[notifications::store] insert_if_not_recent dedup query failed")?;
+
+            if count > 0 {
+                return Ok(false);
+            }
+
+            conn.execute(
+                "INSERT INTO integration_notifications
+                 (id, provider, account_id, title, body, raw_payload,
+                  importance_score, triage_action, triage_reason, status,
+                  received_at, scored_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    n.id,
+                    n.provider,
+                    n.account_id,
+                    n.title,
+                    n.body,
+                    n.raw_payload.to_string(),
+                    n.importance_score,
+                    n.triage_action,
+                    n.triage_reason,
+                    n.status.as_str(),
+                    n.received_at.to_rfc3339(),
+                    n.scored_at.map(|t| t.to_rfc3339()),
+                ],
+            )
+            .context("[notifications::store] insert_if_not_recent insert failed")?;
+
+            Ok(true)
+        })();
+
+        if result.is_ok() {
+            conn.execute_batch("COMMIT")
+                .context("[notifications::store] commit insert_if_not_recent tx failed")?;
+        } else if let Err(rollback_err) = conn.execute_batch("ROLLBACK") {
+            tracing::warn!(
+                error = %rollback_err,
+                "[notifications::store] rollback insert_if_not_recent tx failed"
+            );
         }
-        .context("[notifications::store] insert_if_not_recent dedup query failed")?;
 
-        if count > 0 {
-            tx.commit()
-                .context("[notifications::store] commit duplicate tx failed")?;
-            return Ok(false);
-        }
-
-        tx.execute(
-            "INSERT INTO integration_notifications
-             (id, provider, account_id, title, body, raw_payload,
-              importance_score, triage_action, triage_reason, status,
-              received_at, scored_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![
-                n.id,
-                n.provider,
-                n.account_id,
-                n.title,
-                n.body,
-                n.raw_payload.to_string(),
-                n.importance_score,
-                n.triage_action,
-                n.triage_reason,
-                n.status.as_str(),
-                n.received_at.to_rfc3339(),
-                n.scored_at.map(|t| t.to_rfc3339()),
-            ],
-        )
-        .context("[notifications::store] insert_if_not_recent insert failed")?;
-
-        tx.commit()
-            .context("[notifications::store] commit insert_if_not_recent tx failed")?;
-        Ok(true)
+        result
     })
 }
 
@@ -581,6 +590,7 @@ fn row_to_notification(row: &rusqlite::Row<'_>) -> Result<IntegrationNotificatio
 mod tests {
     use super::*;
     use crate::openhuman::config::Config;
+    use std::sync::{Arc, Barrier};
     use tempfile::TempDir;
 
     fn test_config(dir: &TempDir) -> Config {
@@ -681,6 +691,34 @@ mod tests {
 
         let fresh_same_content = sample_notification("fresh1", "slack");
         assert!(insert_if_not_recent(&config, &fresh_same_content).unwrap());
+    }
+
+    #[test]
+    fn insert_if_not_recent_is_atomic_under_concurrent_calls() {
+        let dir = TempDir::new().unwrap();
+        let config = Arc::new(test_config(&dir));
+        let gate = Arc::new(Barrier::new(3));
+
+        let run = |id: &'static str, gate: Arc<Barrier>, config: Arc<Config>| {
+            std::thread::spawn(move || {
+                let n = sample_notification(id, "slack");
+                gate.wait();
+                insert_if_not_recent(&config, &n)
+            })
+        };
+
+        let t1 = run("race-a", Arc::clone(&gate), Arc::clone(&config));
+        let t2 = run("race-b", Arc::clone(&gate), Arc::clone(&config));
+
+        gate.wait();
+        let inserted_1 = t1.join().unwrap().unwrap();
+        let inserted_2 = t2.join().unwrap().unwrap();
+
+        let inserted_total = usize::from(inserted_1) + usize::from(inserted_2);
+        assert_eq!(inserted_total, 1);
+
+        let items = list(&config, 10, 0, Some("slack"), None).unwrap();
+        assert_eq!(items.len(), 1);
     }
 
     #[test]
