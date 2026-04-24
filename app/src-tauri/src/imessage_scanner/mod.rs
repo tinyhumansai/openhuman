@@ -186,8 +186,7 @@ async fn fetch_imessage_gate() -> anyhow::Result<Option<Vec<String>>> {
         "method": "openhuman.config_get",
         "params": {}
     });
-    let req = crate::core_rpc::apply_auth(http_client().post(&url))
-        .map_err(anyhow::Error::msg)?;
+    let req = crate::core_rpc::apply_auth(http_client().post(&url)).map_err(anyhow::Error::msg)?;
     let res = req.json(&body).send().await?;
     if !res.status().is_success() {
         anyhow::bail!("config_get http {}", res.status());
@@ -430,8 +429,7 @@ async fn ingest_group(account_id: &str, key: &str, transcript: String) -> anyhow
         }
     });
 
-    let req = crate::core_rpc::apply_auth(http_client().post(&url))
-        .map_err(anyhow::Error::msg)?;
+    let req = crate::core_rpc::apply_auth(http_client().post(&url)).map_err(anyhow::Error::msg)?;
     let res = req.json(&body).send().await?;
 
     if !res.status().is_success() {

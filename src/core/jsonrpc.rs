@@ -617,12 +617,11 @@ async fn run_server_inner(
 
     // Initialize the per-process RPC bearer token.
     // Written to {workspace_dir}/core.token so the Tauri shell can read it.
-    let token_dir = crate::openhuman::config::default_root_openhuman_dir()
-        .unwrap_or_else(|_| {
-            dirs::home_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join(".openhuman")
-        });
+    let token_dir = crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
+        dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".openhuman")
+    });
     crate::core::auth::init_rpc_token(&token_dir)?;
 
     let (resolved_port, port_source) = match port {

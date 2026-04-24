@@ -184,8 +184,7 @@ mod tests {
 
     #[test]
     fn write_and_read_token_roundtrips() {
-        let tmp =
-            std::env::temp_dir().join(format!("core-auth-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("core-auth-test-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("core.token");
         let token = "cafebabe1234567890abcdef0123456789abcdef0123456789abcdef01234567";
@@ -199,8 +198,7 @@ mod tests {
     #[test]
     fn token_file_has_owner_only_permissions() {
         use std::os::unix::fs::PermissionsExt as _;
-        let tmp =
-            std::env::temp_dir().join(format!("core-auth-perms-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("core-auth-perms-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("core.token");
         write_token_file(&path, "abc").unwrap();

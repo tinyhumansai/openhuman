@@ -3,8 +3,8 @@ compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supp
 
 #[cfg(feature = "cef")]
 mod cdp;
-mod core_rpc;
 mod core_process;
+mod core_rpc;
 mod core_update;
 #[cfg(feature = "cef")]
 mod discord_scanner;
@@ -96,9 +96,7 @@ fn core_rpc_url() -> String {
 /// `OPENHUMAN_CORE_TOKEN`, and stored in the handle — available immediately
 /// with no file I/O or timing issues.
 #[tauri::command]
-fn core_rpc_token(
-    state: tauri::State<'_, core_process::CoreProcessHandle>,
-) -> String {
+fn core_rpc_token(state: tauri::State<'_, core_process::CoreProcessHandle>) -> String {
     log::debug!("[auth] core_rpc_token: returning token to frontend");
     state.inner().rpc_token().to_string()
 }
