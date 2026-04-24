@@ -121,7 +121,11 @@ const Accounts = () => {
     [accounts]
   );
 
-  const selectedId = activeAccountId ?? AGENT_ID;
+  // While welcome-locked, derive the effective selection directly from
+  // `welcomeLocked` so the first paint after a lock flip never renders the
+  // stale `activeAccountId`. The post-paint `useEffect` above still
+  // syncs Redux so other consumers observe the forced selection.
+  const selectedId = welcomeLocked ? AGENT_ID : (activeAccountId ?? AGENT_ID);
   const active = selectedId === AGENT_ID ? null : (accountsById[selectedId] ?? null);
   const isAgentSelected = selectedId === AGENT_ID;
 
