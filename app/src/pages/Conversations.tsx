@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
+import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
@@ -28,6 +29,7 @@ import {
   setActiveThread,
   setSelectedThread,
 } from '../store/threadSlice';
+import type { ConfirmationModal as ConfirmationModalType } from '../types/intelligence';
 import type { ThreadMessage } from '../types/thread';
 import { splitAgentMessageIntoBubbles } from '../utils/agentMessageBubbles';
 import {
@@ -127,6 +129,13 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     currentTier,
   } = useUsageState();
   const [showLimitModal, setShowLimitModal] = useState(false);
+  const [deleteModal, setDeleteModal] = useState<ConfirmationModalType>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    onCancel: () => {},
+  });
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -773,7 +782,18 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                     <button
                       onClick={e => {
                         e.stopPropagation();
-                        void dispatch(deleteThread(thread.id));
+                        setDeleteModal({
+                          isOpen: true,
+                          title: 'Delete thread',
+                          message: `Are you sure you want to delete "${thread.title || 'Untitled thread'}"? This cannot be undone.`,
+                          confirmText: 'Delete',
+                          cancelText: 'Cancel',
+                          destructive: true,
+                          onConfirm: () => {
+                            void dispatch(deleteThread(thread.id));
+                          },
+                          onCancel: () => {},
+                        });
                       }}
                       className="ml-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-stone-200 text-stone-400 hover:text-coral-500 transition-all flex-shrink-0"
                       title="Delete thread">
@@ -1398,6 +1418,10 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
         isBudgetExhausted={isBudgetExhausted}
         resetTime={isBudgetExhausted ? teamUsage?.cycleEndsAt : teamUsage?.fiveHourResetsAt}
         currentTier={currentTier}
+      />
+      <ConfirmationModal
+        modal={deleteModal}
+        onClose={() => setDeleteModal(prev => ({ ...prev, isOpen: false }))}
       />
     </div>
   );
