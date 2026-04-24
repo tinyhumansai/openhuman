@@ -787,43 +787,6 @@ pub async fn webview_account_open<R: Runtime>(
         }
     });
 
-    // Emit a main-frame load-state event to the React side so it can
-    // hide the loading overlay once the provider's UI is ready. Only
-    // fires for top-level navigations; sub-frame loads are ignored.
-    let load_app = app.clone();
-    let load_account_id = args.account_id.clone();
-    let load_provider = args.provider.clone();
-    builder = builder.on_page_load(move |webview, payload| {
-        // Ignore sub-frame events — the webview argument is always the
-        // top-level one from the builder, but `payload.url()` reflects
-        // whichever frame triggered. We filter by checking the URL is
-        // http(s) (sub-frames are commonly data:/about:blank/chrome://).
-        let url = payload.url().to_string();
-        let state = match payload.event() {
-            tauri::webview::PageLoadEvent::Started => "started",
-            tauri::webview::PageLoadEvent::Finished => "finished",
-        };
-        let _ = webview;
-        let event = serde_json::json!({
-            "account_id": load_account_id,
-            "provider": load_provider,
-            "state": state,
-            "url": url,
-        });
-        log::debug!(
-            "[webview-accounts] page_load account={} state={} url={}",
-            load_account_id,
-            state,
-            payload.url()
-        );
-        if let Err(e) = load_app.emit("webview-account:load", &event) {
-            log::warn!(
-                "[webview-accounts] emit webview-account:load failed: {}",
-                e
-            );
-        }
-    });
-
     // Enable devtools on child webviews in debug builds only so recipe
     // diagnostics and IndexedDB state can be inspected. Access on macOS is via
     //   Safari → Develop → <App name> → <webview label>
