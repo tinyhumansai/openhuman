@@ -10,9 +10,12 @@
 //!   → decoded back into typed GmailLabel Vec
 //! ```
 //!
-//! Tests are serial because they all mutate the `OPENHUMAN_WEBVIEW_APIS_PORT`
-//! env var and share the lazy global `CLIENT` inside
-//! `openhuman_core::openhuman::webview_apis::client`.
+//! The bridge client caches a process-global connection and spawns its
+//! reader/writer tasks onto the current Tokio runtime. In production that's a
+//! single long-lived runtime, but in integration tests each `#[tokio::test]`
+//! gets its own runtime. To avoid reusing a cached client whose tasks belonged
+//! to a prior, already-dropped test runtime, this file keeps all assertions in
+//! one Tokio test.
 
 use std::net::SocketAddr;
 use std::sync::mpsc;
@@ -111,8 +114,9 @@ async fn ensure_mock_server() -> u16 {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn request_round_trips_list_labels_through_mock_server() {
+async fn request_round_trips_and_surfaces_errors_through_mock_server() {
     let _port = ensure_mock_server().await;
+
     let labels: Vec<GmailLabel> = client::request(
         "gmail.list_labels",
         serde_json::from_value(json!({"account_id": "gmail"})).unwrap(),
@@ -123,11 +127,7 @@ async fn request_round_trips_list_labels_through_mock_server() {
     assert_eq!(labels[0].id, "INBOX");
     assert_eq!(labels[0].unread, Some(3));
     assert_eq!(labels[1].kind, "user");
-}
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn request_surfaces_bridge_error_verbatim() {
-    let _port = ensure_mock_server().await;
     let err: Result<Vec<GmailLabel>, String> = client::request(
         "gmail.trash",
         serde_json::from_value(json!({"account_id": "gmail", "message_id": "m1"})).unwrap(),
