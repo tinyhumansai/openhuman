@@ -462,10 +462,48 @@ fn forward_native_notification<R: Runtime>(
 
     #[cfg(target_os = "macos")]
     {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        // Each `wait_for_click` thread blocks at ~100% CPU until the user
+        // clicks or the toast auto-dismisses. Under notification bursts this
+        // can pin many cores; cap concurrent click-wait threads and fall back
+        // to fire-and-forget (no click callback) once the budget is reached.
+        const MAX_CLICK_WAIT_THREADS: usize = 8;
+        static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
         let title_c = notify_title.clone();
         let body_c = body.to_string();
         let app_id = app.config().identifier.clone();
+        let prev = IN_FLIGHT.fetch_add(1, Ordering::AcqRel);
+        if prev >= MAX_CLICK_WAIT_THREADS {
+            IN_FLIGHT.fetch_sub(1, Ordering::AcqRel);
+            log::debug!(
+                "[notify-cef][{}] click-wait budget exhausted ({}), firing without click callback",
+                account_id,
+                prev
+            );
+            std::thread::spawn(move || {
+                let _ = mac_notification_sys::set_application(if tauri::is_dev() {
+                    "com.apple.Terminal"
+                } else {
+                    &app_id
+                });
+                use mac_notification_sys::Notification as MacNotif;
+                let mut n = MacNotif::new();
+                n.title(&title_c).message(&body_c);
+                let _ = n.send();
+            });
+            return;
+        }
+
         std::thread::spawn(move || {
+            struct Guard;
+            impl Drop for Guard {
+                fn drop(&mut self) {
+                    IN_FLIGHT.fetch_sub(1, Ordering::AcqRel);
+                }
+            }
+            let _guard = Guard;
+
             let _ = mac_notification_sys::set_application(if tauri::is_dev() {
                 "com.apple.Terminal"
             } else {
