@@ -6,6 +6,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Gmail label as scraped from the sidebar DOM.
+///
+/// Known limitations:
+///
+/// * `id` is currently set to the **display name**, not Gmail's internal
+///   stable id (`INBOX`, `STARRED`, `Label_123`, …). DOM scraping can't
+///   recover those without either Network MITM of the sync endpoints
+///   or an authenticated API call. Treat `id` as an opaque display key
+///   within the webview_apis surface; callers that need stable ids for
+///   downstream Gmail API calls must wait for the Network-interception
+///   follow-up tracked in the plan.
+/// * `kind` is derived from an English name table in `reads.rs`. Users
+///   on non-English Gmail locales will see every label classified as
+///   `"user"` until localised detection lands.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GmailLabel {
     pub id: String,

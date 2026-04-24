@@ -628,17 +628,28 @@ pub fn run() {
             // Start the webview_apis WebSocket bridge BEFORE spawning core —
             // core reads OPENHUMAN_WEBVIEW_APIS_PORT on first connect, and
             // connects lazily, so the env var must be set before the spawn.
-            tauri::async_runtime::block_on(async {
+            //
+            // If the bridge fails to bind we clear any inherited port env so
+            // the core child can't accidentally connect to whichever loopback
+            // process already owns that port, then abort setup — the bridge
+            // is load-bearing for every webview_apis RPC method.
+            let bridge_ok = tauri::async_runtime::block_on(async {
                 match webview_apis::start().await {
                     Ok(port) => {
                         std::env::set_var(webview_apis::server::PORT_ENV, port.to_string());
                         log::info!("[webview_apis] bridge ready on port {port}");
+                        true
                     }
                     Err(err) => {
                         log::error!("[webview_apis] failed to start bridge: {err}");
+                        std::env::remove_var(webview_apis::server::PORT_ENV);
+                        false
                     }
                 }
             });
+            if !bridge_ok {
+                return Err("webview_apis bridge failed to start — aborting setup".into());
+            }
 
             let core_run_mode = core_process::default_core_run_mode(daemon_mode);
             let core_bin = if matches!(core_run_mode, core_process::CoreRunMode::ChildProcess) {

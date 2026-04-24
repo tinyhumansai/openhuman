@@ -276,6 +276,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "webhooks" => {
             Some("Webhook tunnel registrations and captured request/response debug logs.")
         }
+        "webview_apis" => Some(
+            "Typed connector APIs (Gmail, …) proxied over a loopback WebSocket to the Tauri shell so core-side JSON-RPC reaches live-webview CDP operations.",
+        ),
         "update" => {
             Some("Self-update: check GitHub Releases for newer core binary and stage updates.")
         }

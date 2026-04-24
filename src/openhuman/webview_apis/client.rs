@@ -149,6 +149,9 @@ impl Client {
         let (tx, mut rx) = mpsc::channel::<String>(32);
 
         // Writer task: pull frames from rx and push them onto the ws sink.
+        // On exit we must clear `self.sink` so `ensure_connected` opens a
+        // fresh WS next time instead of handing out a dead sender.
+        let sink_for_writer = Arc::clone(&self.sink);
         tokio::spawn(async move {
             while let Some(frame) = rx.recv().await {
                 if let Err(e) = sink.send(Message::Text(frame)).await {
@@ -157,10 +160,12 @@ impl Client {
                 }
             }
             let _ = sink.send(Message::Close(None)).await;
+            *sink_for_writer.lock().await = None;
         });
 
         // Reader task: decode responses and resolve pending oneshots.
         let pending = Arc::clone(&self.pending);
+        let sink_for_reader = Arc::clone(&self.sink);
         tokio::spawn(async move {
             while let Some(msg) = stream.next().await {
                 match msg {
@@ -196,7 +201,10 @@ impl Client {
                     _ => {}
                 }
             }
-            // On exit, fail every still-pending request so callers don't hang.
+            // On exit, drop the cached sender so `ensure_connected`
+            // reconnects on the next request, and fail every still-
+            // pending request so callers don't hang.
+            *sink_for_reader.lock().await = None;
             let mut pending = pending.lock().await;
             for (_id, tx) in pending.drain() {
                 let _ = tx.send(Err("connection dropped".into()));

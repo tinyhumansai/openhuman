@@ -246,6 +246,11 @@ fn parse_aria_label(aria: &str) -> (String, Option<u64>) {
     (name.trim().to_string(), unread)
 }
 
+/// English-only catalog of Gmail's built-in label names. Users on
+/// non-English locales will see their labels classified as `"user"`
+/// until we switch to a locale-agnostic detector (structural DOM cue
+/// or a localised translation table). Tracked as a follow-up in the
+/// plan — see `GmailLabel` doc for the caller-facing implication.
 fn is_system_label(name: &str) -> bool {
     matches!(
         name,

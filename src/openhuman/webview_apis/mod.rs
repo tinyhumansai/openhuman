@@ -12,6 +12,7 @@
 //! spawning this process.
 
 pub mod client;
+mod rpc;
 mod schemas;
 pub mod types;
 

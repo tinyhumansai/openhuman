@@ -12,8 +12,22 @@ use crate::gmail;
 /// Dispatch a single webview_apis request to its handler. Returns the
 /// `result` JSON on success or a string error that the server relays
 /// back as `{ ok: false, error }`.
+///
+/// Outcome logging lives here so the bridge has a single chokepoint
+/// for success/failure traces — callers (tests, the WS server) keep
+/// their own entry/exit logs but rely on this function to summarise
+/// each dispatch decision.
 pub async fn dispatch(method: &str, params: Map<String, Value>) -> Result<Value, String> {
     log::debug!("[webview_apis] dispatch method={method}");
+    let out = dispatch_inner(method, params).await;
+    match &out {
+        Ok(_) => log::debug!("[webview_apis] dispatch ok method={method}"),
+        Err(e) => log::warn!("[webview_apis] dispatch err method={method} error={e}"),
+    }
+    out
+}
+
+async fn dispatch_inner(method: &str, params: Map<String, Value>) -> Result<Value, String> {
     match method {
         "gmail.list_labels" => {
             serialize(gmail::cdp_list_labels(&read_string(&params, "account_id")?).await)
@@ -81,19 +95,26 @@ fn serialize<T: serde::Serialize>(res: Result<T, String>) -> Result<Value, Strin
 
 // ── param helpers ───────────────────────────────────────────────────────
 
+/// Read a required string param, trimmed. Empty / whitespace-only
+/// values are rejected at this boundary so CDP helpers downstream
+/// never see a meaningless account_id / message_id.
 fn read_string(params: &Map<String, Value>, key: &str) -> Result<String, String> {
-    params
+    let s = params
         .get(key)
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| format!("missing required string param '{key}'"))
+        .ok_or_else(|| format!("missing required string param '{key}'"))?;
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err(format!("invalid '{key}': must be non-empty"));
+    }
+    Ok(trimmed.to_string())
 }
 
 fn read_optional_string(params: &Map<String, Value>, key: &str) -> Result<Option<String>, String> {
     match params.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
-        Some(_) => Err(format!("invalid 'label': expected string")),
+        Some(_) => Err(format!("invalid '{key}': expected string")),
     }
 }
 
@@ -128,5 +149,28 @@ mod tests {
         p.insert("account_id".into(), json!("gmail"));
         let err = dispatch("gmail.list_messages", p).await.unwrap_err();
         assert!(err.contains("limit"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn blank_account_id_is_rejected() {
+        let mut p = Map::new();
+        p.insert("account_id".into(), json!("   "));
+        let err = dispatch("gmail.list_labels", p).await.unwrap_err();
+        assert!(
+            err.contains("must be non-empty"),
+            "expected non-empty complaint, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn optional_string_error_uses_actual_key_name() {
+        // Covers the read_optional_string path: the key 'label' used to be
+        // hardcoded in the error; now it must echo the real param name.
+        let mut p = Map::new();
+        p.insert("account_id".into(), json!("gmail"));
+        p.insert("limit".into(), json!(5));
+        p.insert("label".into(), json!(42)); // wrong type — not a string
+        let err = dispatch("gmail.list_messages", p).await.unwrap_err();
+        assert!(err.contains("'label'"), "got: {err}");
     }
 }

@@ -4,16 +4,9 @@
 //! incoming JSON, call [`super::client::request`] with the matching
 //! bridge method name, return the decoded response.
 
-use serde::de::DeserializeOwned;
-use serde_json::{Map, Value};
-
-use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::core::all::RegisteredController;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
-use crate::openhuman::webview_apis::client;
-use crate::openhuman::webview_apis::types::{
-    Ack, GmailLabel, GmailMessage, GmailSendRequest, SendAck,
-};
-use crate::rpc::RpcOutcome;
+use crate::openhuman::webview_apis::rpc;
 
 // ── registration ────────────────────────────────────────────────────────
 
@@ -33,31 +26,31 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
         RegisteredController {
             schema: schemas("gmail_list_labels"),
-            handler: handle_gmail_list_labels,
+            handler: rpc::handle_gmail_list_labels,
         },
         RegisteredController {
             schema: schemas("gmail_list_messages"),
-            handler: handle_gmail_list_messages,
+            handler: rpc::handle_gmail_list_messages,
         },
         RegisteredController {
             schema: schemas("gmail_search"),
-            handler: handle_gmail_search,
+            handler: rpc::handle_gmail_search,
         },
         RegisteredController {
             schema: schemas("gmail_get_message"),
-            handler: handle_gmail_get_message,
+            handler: rpc::handle_gmail_get_message,
         },
         RegisteredController {
             schema: schemas("gmail_send"),
-            handler: handle_gmail_send,
+            handler: rpc::handle_gmail_send,
         },
         RegisteredController {
             schema: schemas("gmail_trash"),
-            handler: handle_gmail_trash,
+            handler: rpc::handle_gmail_trash,
         },
         RegisteredController {
             schema: schemas("gmail_add_label"),
-            handler: handle_gmail_add_label,
+            handler: rpc::handle_gmail_add_label,
         },
     ]
 }
@@ -216,117 +209,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-// ── handlers ────────────────────────────────────────────────────────────
-
-fn handle_gmail_list_labels(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        require_string(&params, "account_id")?;
-        let labels: Vec<GmailLabel> = client::request("gmail.list_labels", params).await?;
-        finish(RpcOutcome::single_log(
-            labels,
-            "[webview_apis] gmail_list_labels ok",
-        ))
-    })
-}
-
-fn handle_gmail_list_messages(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        require_string(&params, "account_id")?;
-        require_number(&params, "limit")?;
-        let messages: Vec<GmailMessage> = client::request("gmail.list_messages", params).await?;
-        finish(RpcOutcome::single_log(
-            messages,
-            "[webview_apis] gmail_list_messages ok",
-        ))
-    })
-}
-
-fn handle_gmail_search(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        require_string(&params, "account_id")?;
-        require_string(&params, "query")?;
-        require_number(&params, "limit")?;
-        let messages: Vec<GmailMessage> = client::request("gmail.search", params).await?;
-        finish(RpcOutcome::single_log(
-            messages,
-            "[webview_apis] gmail_search ok",
-        ))
-    })
-}
-
-fn handle_gmail_get_message(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        require_string(&params, "account_id")?;
-        require_string(&params, "message_id")?;
-        let msg: GmailMessage = client::request("gmail.get_message", params).await?;
-        finish(RpcOutcome::single_log(
-            msg,
-            "[webview_apis] gmail_get_message ok",
-        ))
-    })
-}
-
-fn handle_gmail_send(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        require_string(&params, "account_id")?;
-        let _: GmailSendRequest = read_required(&params, "request")?;
-        let ack: SendAck = client::request("gmail.send", params).await?;
-        finish(RpcOutcome::single_log(ack, "[webview_apis] gmail_send ok"))
-    })
-}
-
-fn handle_gmail_trash(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        require_string(&params, "account_id")?;
-        require_string(&params, "message_id")?;
-        let ack: Ack = client::request("gmail.trash", params).await?;
-        finish(RpcOutcome::single_log(ack, "[webview_apis] gmail_trash ok"))
-    })
-}
-
-fn handle_gmail_add_label(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        require_string(&params, "account_id")?;
-        require_string(&params, "message_id")?;
-        require_string(&params, "label")?;
-        let ack: Ack = client::request("gmail.add_label", params).await?;
-        finish(RpcOutcome::single_log(
-            ack,
-            "[webview_apis] gmail_add_label ok",
-        ))
-    })
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────
-
-fn finish<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
-
-fn require_string(params: &Map<String, Value>, key: &str) -> Result<(), String> {
-    match params.get(key) {
-        Some(Value::String(s)) if !s.is_empty() => Ok(()),
-        Some(Value::String(_)) => Err(format!("invalid '{key}': must be non-empty")),
-        Some(_) => Err(format!("invalid '{key}': expected string")),
-        None => Err(format!("missing required param '{key}'")),
-    }
-}
-
-fn require_number(params: &Map<String, Value>, key: &str) -> Result<(), String> {
-    match params.get(key) {
-        Some(Value::Number(_)) => Ok(()),
-        Some(_) => Err(format!("invalid '{key}': expected number")),
-        None => Err(format!("missing required param '{key}'")),
-    }
-}
-
-fn read_required<T: DeserializeOwned>(params: &Map<String, Value>, key: &str) -> Result<T, String> {
-    let v = params
-        .get(key)
-        .cloned()
-        .ok_or_else(|| format!("missing required param '{key}'"))?;
-    serde_json::from_value(v).map_err(|e| format!("invalid '{key}': {e}"))
-}
+// Handler bodies live in `rpc.rs` per project convention —
+// `schemas.rs` is registry-only.
 
 #[cfg(test)]
 mod tests {
@@ -364,13 +248,6 @@ mod tests {
         assert_eq!(all_registered_controllers().len(), 7);
     }
 
-    #[test]
-    fn require_string_rejects_missing_and_empty() {
-        let mut p = Map::new();
-        assert!(require_string(&p, "account_id").is_err());
-        p.insert("account_id".into(), Value::String(String::new()));
-        assert!(require_string(&p, "account_id").is_err());
-        p.insert("account_id".into(), Value::String("gmail".into()));
-        assert!(require_string(&p, "account_id").is_ok());
-    }
+    // Param-helper coverage moved with the helpers into `rpc.rs` —
+    // see the tests there for `require_string` / `require_u32`.
 }

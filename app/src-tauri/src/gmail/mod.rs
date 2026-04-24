@@ -164,8 +164,14 @@ pub async fn cdp_add_label(
 
 // ── Tauri commands (frontend path) ──────────────────────────────────────
 
+// Entry-point logging at the Tauri command layer distinguishes
+// frontend `invoke` paths from the webview_apis bridge path — both
+// ultimately call the same `cdp_*` helpers in `reads.rs` / `writes.rs`,
+// but the upstream origin matters when tracing a failing flow.
+
 #[tauri::command]
 pub async fn gmail_list_labels(account_id: String) -> Result<Vec<GmailLabel>, String> {
+    log::debug!("[gmail][tauri] gmail_list_labels account_id={account_id}");
     cdp_list_labels(&account_id).await
 }
 
@@ -175,6 +181,9 @@ pub async fn gmail_list_messages(
     limit: u32,
     label: Option<String>,
 ) -> Result<Vec<GmailMessage>, String> {
+    log::debug!(
+        "[gmail][tauri] gmail_list_messages account_id={account_id} limit={limit} label={label:?}"
+    );
     cdp_list_messages(&account_id, limit, label).await
 }
 
@@ -184,6 +193,10 @@ pub async fn gmail_search(
     query: String,
     limit: u32,
 ) -> Result<Vec<GmailMessage>, String> {
+    log::debug!(
+        "[gmail][tauri] gmail_search account_id={account_id} query_len={} limit={limit}",
+        query.len()
+    );
     cdp_search(&account_id, query, limit).await
 }
 
@@ -192,16 +205,25 @@ pub async fn gmail_get_message(
     account_id: String,
     message_id: String,
 ) -> Result<GmailMessage, String> {
+    log::debug!("[gmail][tauri] gmail_get_message account_id={account_id} message_id={message_id}");
     cdp_get_message(&account_id, message_id).await
 }
 
 #[tauri::command]
 pub async fn gmail_send(account_id: String, request: GmailSendRequest) -> Result<SendAck, String> {
+    log::debug!(
+        "[gmail][tauri] gmail_send account_id={account_id} to={} cc={} bcc={} body_len={}",
+        request.to.len(),
+        request.cc.len(),
+        request.bcc.len(),
+        request.body.len()
+    );
     cdp_send(&account_id, request).await
 }
 
 #[tauri::command]
 pub async fn gmail_trash(account_id: String, message_id: String) -> Result<Ack, String> {
+    log::debug!("[gmail][tauri] gmail_trash account_id={account_id} message_id={message_id}");
     cdp_trash(&account_id, message_id).await
 }
 
@@ -211,5 +233,8 @@ pub async fn gmail_add_label(
     message_id: String,
     label: String,
 ) -> Result<Ack, String> {
+    log::debug!(
+        "[gmail][tauri] gmail_add_label account_id={account_id} message_id={message_id} label={label}"
+    );
     cdp_add_label(&account_id, message_id, label).await
 }
