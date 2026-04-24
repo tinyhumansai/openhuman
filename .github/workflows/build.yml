@@ -53,8 +53,10 @@ jobs:
       # so `cargo tauri build` below resolves to the fork without any
       # per-run compile step.
 
-      - name: Install pnpm
-        run: npm install -g pnpm
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
 
       - name: Setup Node.js 24.x
         uses: actions/setup-node@v4

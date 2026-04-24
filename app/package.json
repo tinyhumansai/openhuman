@@ -23,7 +23,7 @@
     "macos:build:release:signed": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && source ../scripts/load-env.sh && cargo tauri build --bundles app dmg -- --bin OpenHuman",
     "macos:build:sign:release": "pnpm macos:build:release:signed",
     "macos:run": "open '../target/debug/bundle/macos/OpenHuman.app'",
-    "macos:dev": "yarn macos:build:debug && open '../target/debug/bundle/macos/OpenHuman.app'",
+    "macos:dev": "pnpm macos:build:debug && open '../target/debug/bundle/macos/OpenHuman.app'",
     "test": "vitest run --config test/vitest.config.ts",
     "test:unit": "vitest run --config test/vitest.config.ts",
     "test:unit:watch": "vitest --config test/vitest.config.ts",

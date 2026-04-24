@@ -39,9 +39,11 @@ jobs:
             echo "agent-review.spec.ts not present — skipping remaining steps."
           fi
 
-      - name: Install pnpm
+      - name: Setup pnpm
         if: steps.gate.outputs.present == 'true'
-        run: npm install -g pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
 
       - name: Setup Node.js 24.x
         if: steps.gate.outputs.present == 'true'

@@ -8,7 +8,7 @@ This guide covers two paths:
 ## Prerequisites
 
 - `git`
-- `node` + `yarn`
+- `node` + `pnpm` (see `pnpm-workspace.yaml`)
 - Rust toolchain (see `rust-toolchain.toml`)
 
 ## Build from source (local compile)
@@ -21,23 +21,23 @@ git clone https://github.com/tinyhumansai/openhuman.git
 cd openhuman
 
 # 2) Install JS deps (workspace)
-yarn install
+pnpm install
 
 # 3) Build Rust core binary
 cargo build --manifest-path Cargo.toml --bin openhuman
 
 # 4) Stage core sidecar for the desktop app
 cd app
-yarn core:stage
+pnpm core:stage
 
 # 5) Build desktop app artifacts
-yarn build
+pnpm build
 ```
 
 For local development instead of production build:
 
 ```bash
-yarn dev
+pnpm dev
 ```
 
 ## Install latest stable release (macOS/Linux)
@@ -102,15 +102,16 @@ The binary requires the CEF library path to be set:
 
 ```bash
 # Option 1: Direct invocation
-CEF_DIR=app/src-tauri/target/aarch64-unknown-linux-gnu/release/build/cef-dll-sys-06f9a023be70e68b/out/cef_linux_aarch64
 REL_DIR=app/src-tauri/target/aarch64-unknown-linux-gnu/release
-LD_LIBRARY_PATH="$CEF_DIR:$REL_DIR/deps:$REL_DIR" $REL_DIR/OpenHuman --no-sandbox
+CEF_DIR=$(ls -d "$REL_DIR"/build/cef-dll-sys-*/out/cef_linux_aarch64 2>/dev/null | head -n1)
+export LD_LIBRARY_PATH="$CEF_DIR:$REL_DIR/deps:$REL_DIR"
+$REL_DIR/OpenHuman --no-sandbox
 
 # Option 2: Wrapper script (recommended)
 # Create ~/bin/openhuman:
 #!/bin/bash
-CEF_DIR=/path/to/app/src-tauri/target/aarch64-unknown-linux-gnu/release/build/cef-dll-sys-06f9a023be70e68b/out/cef_linux_aarch64
 REL_DIR=/path/to/app/src-tauri/target/aarch64-unknown-linux-gnu/release
+CEF_DIR=$(ls -d "$REL_DIR"/build/cef-dll-sys-*/out/cef_linux_aarch64 2>/dev/null | head -n1)
 export LD_LIBRARY_PATH="$CEF_DIR:$REL_DIR/deps:$REL_DIR"
 exec $REL_DIR/OpenHuman --no-sandbox "$@"
 ```
@@ -118,7 +119,8 @@ exec $REL_DIR/OpenHuman --no-sandbox "$@"
 ### DEB package install
 
 ```bash
-sudo dpkg -i app/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/OpenHuman_0.52.28_arm64.deb
+DEB_FILE=$(ls app/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/OpenHuman_*_arm64.deb | head -n1)
+sudo dpkg -i "$DEB_FILE"
 OpenHuman
 ```
 
