@@ -6,20 +6,13 @@
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-green?style=for-the-badge" alt="Platform">
   <img src="https://img.shields.io/badge/Architecture-Rust%20%2B%20React-purple?style=for-the-badge" alt="Architecture">
   <img src="https://img.shields.io/badge/AI-Local%20%2B%20Cloud%20Ready-yellow?style=for-the-badge" alt="AI">
-  <img src="https://img.shields.io/discord/123456789012345678?style=for-the-badge&logo=discord&logoColor=white&label=Discord" alt="Discord">
+  <a href="https://discord.tinyhumans.ai/"><img src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
 </p>
 
 <p align="center">
   <strong>The age of super intelligence is here.</strong><br>
   OpenHuman is your Personal AI super intelligence.<br>
   <em>Private, Simple and extremely powerful.</em>
-</p>
-
-<p align="center">
-  <a href="https://discord.tinyhumans.ai/"><img src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="https://www.reddit.com/r/tinyhumansai/"><img src="https://img.shields.io/badge/Reddit-Join%20r%2Ftinyhumansai-FF4500?style=for-the-badge&logo=reddit&logoColor=white" alt="Reddit"></a>
-  <a href="https://x.com/intent/follow?screen_name=tinyhumansai"><img src="https://img.shields.io/badge/X%2FTwitter-Follow-1DA1F2?style=for-the-badge&logo=twitter&logoColor=white" alt="X"></a>
-  <a href="https://tinyhumans.gitbook.io/openhuman/"><img src="https://img.shields.io/badge/Docs-Documentation-4DB6AC?style=for-the-badge" alt="Documentation"></a>
 </p>
 
 <p align="center">
@@ -37,10 +30,17 @@
   </a>
 </p>
 
+<p align="center">
+  <a href="https://discord.tinyhumans.ai/"><img src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://www.reddit.com/r/tinyhumansai/"><img src="https://img.shields.io/badge/Reddit-Join%20r%2Ftinyhumansai-FF4500?style=for-the-badge&logo=reddit&logoColor=white" alt="Reddit"></a>
+  <a href="https://x.com/intent/follow?screen_name=tinyhumansai"><img src="https://img.shields.io/badge/X%2FTwitter-Follow-1DA1F2?style=for-the-badge&logo=twitter&logoColor=white" alt="X"></a>
+  <a href="https://tinyhumans.gitbook.io/openhuman/"><img src="https://img.shields.io/badge/Docs-Documentation-4DB6AC?style=for-the-badge" alt="Documentation"></a>
+</p>
+
 ---
 
 <h2 align="center">
-  <img src="https://img.icons8.com/fluency/48/rocket.png" alt="🚀" width="24" height="24">
+  <img src="https://img.icons8.com/fluency/48/rocket.png" alt="Quick Start" width="24" height="24">
   Quick Start
 </h2>
 
@@ -48,11 +48,13 @@
 
 ### One-Line Installation
 
+**macOS / Linux:**
 ```bash
-# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
+```
 
-# Windows (PowerShell)
+**Windows (PowerShell - Run as Administrator):**
+```powershell
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
 
@@ -61,7 +63,7 @@ Or download directly from **[tinyhumans.ai/openhuman](https://tinyhumans.ai/open
 ---
 
 <h2 align="center">
-  <img src="https://img.icons8.com/fluency/48/question-mark.png" alt="❓" width="24" height="24">
+  <img src="https://img.icons8.com/fluency/48/question-mark.png" alt="What is OpenHuman" width="24" height="24">
   What is OpenHuman?
 </h2>
 
@@ -69,10 +71,10 @@ OpenHuman is an **open-source AI agentic assistant** designed to integrate seaml
 
 ---
 
-<h3 align="center">
-  <img src="https://img.icons8.com/fluency/48/star.png" alt="⭐" width="20" height="20">
+<h2 align="center">
+  <img src="https://img.icons8.com/fluency/48/star.png" alt="Key Features" width="24" height="24">
   Key Features
-</h3>
+</h2>
 
 <div align="center">
 
@@ -89,7 +91,10 @@ OpenHuman is an **open-source AI agentic assistant** designed to integrate seaml
 
 ---
 
-### Why OpenHuman?
+<h2 align="center">
+  <img src="https://img.icons8.com/fluency/48/light-on.png" alt="Why OpenHuman" width="24" height="24">
+  Why OpenHuman?
+</h2>
 
 #### 🔒 **Privacy-First Architecture**
 - All workflow data is **stored on your machine**
@@ -104,7 +109,7 @@ OpenHuman is an **open-source AI agentic assistant** designed to integrate seaml
 
 #### 🧠 **Intelligent Memory**
 - **Neocortex** — local-first knowledge base that learns from your activity
-- **The Subconscious** — background self-learning loops
+- **The Subconscious** — background self-learning loops that turn usage into workflow-aware intelligence
 - Context compounds across tools, sessions, and services
 - Day-to-day context persists without becoming a cloud dossier
 
@@ -121,23 +126,23 @@ OpenHuman is an **open-source AI agentic assistant** designed to integrate seaml
 ---
 
 <h2 align="center">
-  <img src="https://img.icons8.com/fluency/48/high-importance.png" alt="⭐" width="24" height="24">
+  <img src="https://img.icons8.com/fluency/48/science-fiction.png" alt="Core Technologies" width="24" height="24">
   Core Technologies
 </h2>
 
 | Technology | Status | Description |
 |------------|--------|-------------|
-| **Neocortex** | <img src="https://img.shields.io/badge/Active-brightgreen"> | Local-first knowledge base that learns from your data and activity |
-| **The Subconscious** | <img src="https://img.shields.io/badge/Active-brightgreen"> | Background self-learning loops that turn usage into workflow-aware intelligence |
-| **Screen Intelligence** | <img src="https://img.shields.io/badge/Active-brightgreen"> | Agent sees what's on your screen and feeds context into local knowledge |
-| **Inline Autocomplete** | <img src="https://img.shields.io/badge/Active-brightgreen"> | Memory-aware keyboard autocomplete anywhere on desktop |
-| **Voice (STT + TTS)** | <img src="https://img.shields.io/badge/Active-brightgreen"> | Speak to OpenHuman and hear it reply, natively on desktop |
-| **Skills & Integrations** | <img src="https://img.shields.io/badge/Active-brightgreen"> | One-click skills with local encryption and webhooks |
+| <img src="https://img.icons8.com/fluency/48/brain.png" width="18"> **Neocortex** | <img src="https://img.shields.io/badge/Active-brightgreen"> | Local-first knowledge base that learns from your data and activity |
+| <img src="https://img.icons8.com/fluency/48/quantum.png" width="18"> **The Subconscious** | <img src="https://img.shields.io/badge/Active-brightgreen"> | Background self-learning loops that turn usage into workflow-aware intelligence |
+| <img src="https://img.icons8.com/fluency/48/display.png" width="18"> **Screen Intelligence** | <img src="https://img.shields.io/badge/Active-brightgreen"> | Agent sees what's on your screen and feeds context into local knowledge |
+| <img src="https://img.icons8.com/fluency/48/keyboard.png" width="18"> **Inline Autocomplete** | <img src="https://img.shields.io/badge/Active-brightgreen"> | Memory-aware keyboard autocomplete anywhere on desktop |
+| <img src="https://img.icons8.com/fluency/48/microphone.png" width="18"> **Voice (STT + TTS)** | <img src="https://img.shields.io/badge/Active-brightgreen"> | Speak to OpenHuman and hear it reply, natively on desktop |
+| <img src="https://img.icons8.com/fluency/48/link.png" width="18"> **Skills & Integrations** | <img src="https://img.shields.io/badge/Active-brightgreen"> | One-click skills with local encryption and webhooks |
 
 ---
 
 <h2 align="center">
-  <img src="https://img.icons8.com/fluency/48/compare.png" alt="📊" width="24" height="24">
+  <img src="https://img.icons8.com/fluency/48/compare.png" alt="Comparison" width="24" height="24">
   OpenHuman vs Other Agents
 </h2>
 
@@ -157,23 +162,30 @@ OpenHuman is an **open-source AI agentic assistant** designed to integrate seaml
 ---
 
 <h2 align="center">
-  <img src="https://img.icons8.com/fluency/48/installing-updates.png" alt="⚙️" width="24" height="24">
+  <img src="https://img.icons8.com/fluency/48/installing-updates.png" alt="Installation" width="24" height="24">
   Installation
 </h2>
 
 ### Requirements
 
-- **macOS** 12+ (Apple Silicon or Intel)
-- **Windows** 10/11 (64-bit)
-- **Linux** Ubuntu 20.04+ or equivalent
+| Platform | Version | Architecture |
+|----------|---------|--------------|
+| <img src="https://img.icons8.com/fluency/48/mac-os.png" width="18"> **macOS** | 12+ | Apple Silicon / Intel |
+| <img src="https://img.icons8.com/fluency/48/windows-logo.png" width="18"> **Windows** | 10/11 | 64-bit |
+| <img src="https://img.icons8.com/fluency/48/linux.png" width="18"> **Linux** | Ubuntu 20.04+ | x86_64 / ARM64 |
 
 ### Install via Script
 
-```bash
-# macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
+#### macOS / Linux
 
-# Windows (PowerShell - Run as Administrator)
+```bash
+curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
+```
+
+#### Windows
+
+```powershell
+# Run PowerShell as Administrator
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
 
@@ -188,21 +200,25 @@ For development setup, see the [installation docs](docs/install.md#running-from-
 ---
 
 <h2 align="center">
-  <img src="https://img.icons8.com/fluency/48/book.png" alt="📚" width="24" height="24">
+  <img src="https://img.icons8.com/fluency/48/book.png" alt="Documentation" width="24" height="24">
   Documentation
 </h2>
 
+<div align="center">
+
 | Resource | Description |
 |----------|-------------|
-| 📖 [Documentation](https://tinyhumans.gitbook.io/openhuman/) | Full documentation and guides |
-| 🏗️ [Architecture](docs/ARCHITECTURE.md) | System architecture overview |
-| 🤝 [Contributing](CONTRIBUTING.md) | Contributor orientation guide |
-| 💻 [Installation](docs/install.md) | Detailed installation instructions |
+| <img src="https://img.icons8.com/fluency/48/open-book.png" width="20"> [Documentation](https://tinyhumans.gitbook.io/openhuman/) | Full documentation and guides |
+| <img src="https://img.icons8.com/fluency/48/blueprint.png" width="20"> [Architecture](docs/ARCHITECTURE.md) | System architecture overview |
+| <img src="https://img.icons8.com/fluency/48/collaboration.png" width="20"> [Contributing](CONTRIBUTING.md) | Contributor orientation guide |
+| <img src="https://img.icons8.com/fluency/48/installing-updates.png" width="20"> [Installation](docs/install.md) | Detailed installation instructions |
+
+</div>
 
 ---
 
 <h2 align="center">
-  <img src="https://img.icons8.com/fluency/48/collaboration.png" alt="👥" width="24" height="24">
+  <img src="https://img.icons8.com/fluency/48/collaboration.png" alt="Community" width="24" height="24">
   Community & Support
 </h2>
 
@@ -216,26 +232,26 @@ For development setup, see the [installation docs](docs/install.md#running-from-
 ---
 
 <h2 align="center">
-  <img src="https://img.icons8.com/fluency/48/star.png" alt="⭐" width="24" height="24">
+  <img src="https://img.icons8.com/fluency/48/star.png" alt="Star History" width="24" height="24">
   Star History
 </h2>
 
 <p align="center">
   <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
-    <img src="https://api.star-history.com/image?type=starHistory&owner=tinyhumansai&repo=openhuman&theme=light" alt="Star History" width="600">
+    <img src="https://api.star-history.com/image?type=starHistory&owner=tinyhumansai&repo=openhuman&theme=light" alt="OpenHuman Star History - GitHub star growth over time" width="600">
   </a>
 </p>
 
 ---
 
 <h2 align="center">
-  <img src="https://img.icons8.com/fluency/48/user-group.png" alt="👑" width="24" height="24">
+  <img src="https://img.icons8.com/fluency/48/user-group.png" alt="Contributors" width="24" height="24">
   Contributors
 </h2>
 
 <p align="center">
   <a href="https://github.com/tinyhumansai/openhuman/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=tinyhumansai/openhuman&columns=8&max=48&count=true" alt="Contributors" width="600">
+    <img src="https://contrib.rocks/image?repo=tinyhumansai/openhuman&columns=8&max=48&count=true" alt="OpenHuman Contributors - Hall of Fame" width="600">
   </a>
 </p>
 
@@ -246,7 +262,7 @@ For development setup, see the [installation docs](docs/install.md#running-from-
 ---
 
 <h2 align="center">
-  <img src="https://img.icons8.com/fluency/48/key.png" alt="🔑" width="24" height="24">
+  <img src="https://img.icons8.com/fluency/48/key.png" alt="License" width="24" height="24">
   License
 </h2>
 
