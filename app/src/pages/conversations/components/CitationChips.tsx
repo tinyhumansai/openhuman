@@ -23,8 +23,9 @@ export function CitationChips({ citations }: { citations: MessageCitation[] }) {
           <details key={citation.id} className="group">
             <summary
               className="list-none cursor-pointer rounded-full border border-stone-300 bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600 hover:bg-stone-200"
+              aria-label={title}
               title={title}>
-              {citation.key}
+              {citation.namespace ?? citation.key}
               {scoreLabel}
             </summary>
             <div className="mt-1 max-w-md rounded-md border border-stone-200 bg-white px-2 py-1 text-[11px] text-stone-600 shadow-sm">
