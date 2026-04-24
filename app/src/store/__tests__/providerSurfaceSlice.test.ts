@@ -53,4 +53,13 @@ describe('providerSurfaceSlice', () => {
     const state = reducer(undefined, fetchRespondQueue.pending('', { silent: true }));
     expect(state.status).toBe('idle');
   });
+
+  it('silent rejection does not change status', () => {
+    const state = reducer(
+      undefined,
+      fetchRespondQueue.rejected(new Error('network'), '', { silent: true }, 'network')
+    );
+    expect(state.status).toBe('idle');
+    expect(state.error).toBeNull();
+  });
 });
