@@ -30,6 +30,9 @@ const NotificationCenter = () => {
   // All providers seen across unfiltered loads — kept separate so the filter
   // pill row doesn't collapse when a provider filter is active.
   const [allProviders, setAllProviders] = useState<string[]>([]);
+  const visibleItems = items.filter(
+    n => n.status !== 'dismissed' && (!selectedProvider || n.provider === selectedProvider)
+  );
 
   // Fetch on mount and when provider filter changes.
   useEffect(() => {
@@ -80,10 +83,10 @@ const NotificationCenter = () => {
   };
 
   // Unread count scoped to the currently displayed (filtered) items.
-  const filteredUnreadCount = items.filter(n => n.status === 'unread').length;
+  const filteredUnreadCount = visibleItems.filter(n => n.status === 'unread').length;
 
   const handleMarkAllRead = async () => {
-    const unreadIds = items.filter(n => n.status === 'unread').map(n => n.id);
+    const unreadIds = visibleItems.filter(n => n.status === 'unread').map(n => n.id);
     for (const id of unreadIds) {
       dispatch(markIntegrationRead(id));
       try {
@@ -158,7 +161,7 @@ const NotificationCenter = () => {
           </div>
         )}
 
-        {!loading && !error && items.length === 0 && (
+        {!loading && !error && visibleItems.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-stone-400">
             <svg
               className="w-10 h-10 mb-3 opacity-40"
@@ -179,9 +182,9 @@ const NotificationCenter = () => {
           </div>
         )}
 
-        {!loading && !error && items.length > 0 && (
+        {!loading && !error && visibleItems.length > 0 && (
           <div className="divide-y-0">
-            {items.map(n => (
+            {visibleItems.map(n => (
               <NotificationCard
                 key={n.id}
                 notification={n}
