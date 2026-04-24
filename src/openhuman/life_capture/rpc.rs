@@ -90,7 +90,10 @@ pub async fn handle_search(
     if text.trim().is_empty() {
         return Err("search text must not be empty".into());
     }
-    let k = k.clamp(1, 100);
+    if k == 0 {
+        return Err("k must be at least 1".into());
+    }
+    let k = k.min(100);
 
     // The sqlite-vec column is fixed-width; reject mismatched embedders up
     // front with a clear RPC error instead of a low-level sqlite-vec failure.
@@ -151,4 +154,63 @@ pub async fn handle_search(
         payload.len()
     );
     Ok(RpcOutcome::new(Value::Array(payload), vec![]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use crate::openhuman::life_capture::embedder::Embedder;
+
+    /// Stub embedder with fixed dimension; panics if embed_batch is called so
+    /// tests that reach it will fail with a clear message.
+    struct StubEmbedder {
+        dim: usize,
+    }
+
+    #[async_trait]
+    impl Embedder for StubEmbedder {
+        async fn embed_batch(&self, _texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+            panic!("StubEmbedder.embed_batch should not be called in this test");
+        }
+        fn dim(&self) -> usize {
+            self.dim
+        }
+    }
+
+    fn stub_embedder(dim: usize) -> Arc<dyn Embedder> {
+        Arc::new(StubEmbedder { dim })
+    }
+
+    /// `k == 0` must be a clear error, not a silent clamp to 1.
+    #[tokio::test]
+    async fn search_rejects_k_zero() {
+        let idx = crate::openhuman::life_capture::index::PersonalIndex::open_in_memory()
+            .await
+            .unwrap();
+        let embedder = stub_embedder(1536);
+        let err = handle_search(&idx, &embedder, "hello".into(), 0)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("k must be at least 1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// Empty text must be rejected before any SQL.
+    #[tokio::test]
+    async fn search_rejects_empty_text() {
+        let idx = crate::openhuman::life_capture::index::PersonalIndex::open_in_memory()
+            .await
+            .unwrap();
+        let embedder = stub_embedder(1536);
+        let err = handle_search(&idx, &embedder, "   ".into(), 5)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("search text must not be empty"),
+            "unexpected error: {err}"
+        );
+    }
 }
