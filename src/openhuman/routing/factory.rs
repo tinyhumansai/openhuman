@@ -66,17 +66,11 @@ pub fn new_provider(
         )
     };
 
-    let auth_style = if local_ai_config.api_key.is_some() {
-        AuthStyle::Bearer
-    } else {
-        AuthStyle::Bearer
-    };
-
     let local: Box<dyn Provider> = Box::new(OpenAiCompatibleProvider::new(
         provider_label,
         &local_base,
         local_ai_config.api_key.as_deref(), // local servers do not require authentication, but custom endpoints might
-        auth_style,
+        AuthStyle::Bearer,
     ));
 
     IntelligentRoutingProvider::new(

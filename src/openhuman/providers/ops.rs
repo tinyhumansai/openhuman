@@ -154,12 +154,14 @@ pub fn create_backend_inference_provider(
     options: &ProviderRuntimeOptions,
 ) -> anyhow::Result<Box<dyn Provider>> {
     if let (Some(url), Some(key)) = (api_url, api_key) {
-        Ok(Box::new(crate::openhuman::providers::compatible::OpenAiCompatibleProvider::new(
-            "custom_openai",
-            url,
-            Some(key),
-            crate::openhuman::providers::compatible::AuthStyle::Bearer,
-        )))
+        Ok(Box::new(
+            crate::openhuman::providers::compatible::OpenAiCompatibleProvider::new(
+                "custom_openai",
+                url,
+                Some(key),
+                crate::openhuman::providers::compatible::AuthStyle::Bearer,
+            ),
+        ))
     } else {
         Ok(Box::new(openhuman_backend::OpenHumanBackendProvider::new(
             api_url, options,
@@ -173,7 +175,12 @@ pub fn create_resilient_provider(
     api_key: Option<&str>,
     reliability: &crate::openhuman::config::ReliabilityConfig,
 ) -> anyhow::Result<Box<dyn Provider>> {
-    create_resilient_provider_with_options(api_url, api_key, reliability, &ProviderRuntimeOptions::default())
+    create_resilient_provider_with_options(
+        api_url,
+        api_key,
+        reliability,
+        &ProviderRuntimeOptions::default(),
+    )
 }
 
 /// Create provider chain with retry/fallback behavior and auth runtime options.
