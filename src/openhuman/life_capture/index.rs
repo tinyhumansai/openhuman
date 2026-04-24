@@ -499,6 +499,12 @@ impl IndexReader {
             k
         );
         let query = fts5_quote(query);
+        // fts5_quote of a whitespace-only string is empty — FTS5 MATCH ""
+        // is undefined and may error. Return empty results early.
+        if query.is_empty() {
+            debug!("[life_capture] keyword_search: empty pattern after fts5_quote, returning no hits");
+            return Ok(vec![]);
+        }
         self.with_read_conn("keyword_search", move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT i.id, i.source, i.external_id, i.ts, i.author_json, i.subject, i.text, i.metadata_json, \
@@ -827,6 +833,16 @@ mod reader_keyword_tests {
         let hits = reader.keyword_search("ledger contract", 10).await.unwrap();
         assert!(!hits.is_empty(), "expected at least one hit");
         assert_eq!(hits[0].item.external_id, "a", "best match should be 'a'");
+    }
+
+    #[tokio::test]
+    async fn keyword_search_whitespace_only_returns_empty_not_error() {
+        // fts5_quote("   ") yields "" — the guard must return Ok(vec![]) rather
+        // than forwarding the empty pattern to SQLite FTS5 MATCH which is UB.
+        let idx = PersonalIndex::open_in_memory().await.unwrap();
+        let reader = IndexReader::new(&idx);
+        let hits = reader.keyword_search("   ", 10).await.unwrap();
+        assert!(hits.is_empty(), "whitespace-only query should yield no hits");
     }
 }
 
