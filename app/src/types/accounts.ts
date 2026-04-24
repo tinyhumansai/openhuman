@@ -10,7 +10,14 @@ export type AccountProvider =
   | 'google-meet'
   | 'browserscan';
 
-export type AccountStatus = 'pending' | 'open' | 'error' | 'closed';
+// Status lifecycle for an embedded webview account:
+//   'pending'  — openWebviewAccount invoked, Rust-side add_child not yet confirmed
+//   'loading'  — CEF child webview spawned off-screen, waiting for first page-loaded
+//                signal; WebviewHost shows its spinner
+//   'open'     — page loaded, webview_account_reveal completed, webview on-screen
+//   'closed'   — webview destroyed
+//   'error'    — open/reveal failed (lastError populated)
+export type AccountStatus = 'pending' | 'loading' | 'open' | 'error' | 'closed';
 
 export interface Account {
   id: string;
