@@ -52,8 +52,11 @@ const providerSurfaceSlice = createSlice({
         state.lastSyncedAt = Date.now();
       })
       .addCase(fetchRespondQueue.rejected, (state, action) => {
-        state.status = 'failed';
-        state.error = (action.payload as string) ?? 'Failed to load provider respond queue';
+        if (!action.meta.arg?.silent) {
+          state.status = 'failed';
+          state.error = (action.payload as string) ?? 'Failed to load provider respond queue';
+        }
+        // silent failures: leave status/error as-is; a subsequent successful poll will clear
       });
   },
 });
