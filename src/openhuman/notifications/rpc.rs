@@ -58,10 +58,7 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
             title = %req.title,
             "[notification_intel] skipping duplicate notification"
         );
-        let outcome = RpcOutcome::new(
-            json!({ "skipped": true, "reason": "duplicate" }),
-            vec![],
-        );
+        let outcome = RpcOutcome::new(json!({ "skipped": true, "reason": "duplicate" }), vec![]);
         return outcome.into_cli_compatible_json();
     }
 
