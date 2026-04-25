@@ -6,7 +6,7 @@
 //! process, and restarts with the new binary.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -160,13 +160,53 @@ fn platform_triple() -> &'static str {
 }
 
 /// Find the right asset for this platform.
+///
+/// Current release format (since 0.52.x): `openhuman-core-<version>-<triple>.tar.gz`
+/// on Unix, `.zip` on Windows. The archive contains a single `openhuman-core`
+/// (or `openhuman-core.exe`) file with no wrapping directory.
+///
+/// Legacy format (kept as fallback for older releases): a raw binary named
+/// `openhuman-core-<triple>` (or `.exe`).
 fn find_platform_asset(assets: &[GitHubAsset]) -> Option<&GitHubAsset> {
     let triple = platform_triple();
-    let expected = format!("openhuman-core-{triple}");
+    let archive_ext = if cfg!(windows) { ".zip" } else { ".tar.gz" };
+
+    // New versioned-archive format: `openhuman-core-0.52.26-aarch64-apple-darwin.tar.gz`
+    let archive_match = assets.iter().find(|a| {
+        a.name.starts_with("openhuman-core-")
+            && a.name.contains(triple)
+            && a.name.ends_with(archive_ext)
+            // Defensive: avoid matching detached signatures or checksums that
+            // happen to share the prefix (e.g. `…tar.gz.sha256`, `…tar.gz.sig`).
+            && !a.name.ends_with(".sha256")
+            && !a.name.ends_with(".sig")
+    });
+    if archive_match.is_some() {
+        return archive_match;
+    }
+
+    // Legacy raw-binary format.
+    let legacy = format!("openhuman-core-{triple}");
+    let legacy_exe = format!("{legacy}.exe");
     assets
         .iter()
-        .find(|a| a.name == expected || a.name == format!("{expected}.exe"))
-        .or_else(|| assets.iter().find(|a| a.name.starts_with(&expected)))
+        .find(|a| a.name == legacy || a.name == legacy_exe)
+}
+
+/// Filename the staged core binary must be saved as for `core_process::default_core_bin`
+/// to discover it on subsequent runs.
+fn staged_binary_name() -> String {
+    let triple = platform_triple();
+    if cfg!(windows) {
+        format!("openhuman-core-{triple}.exe")
+    } else {
+        format!("openhuman-core-{triple}")
+    }
+}
+
+/// True if the asset name looks like an archive we need to extract (vs. a raw binary).
+fn is_archive_asset(name: &str) -> bool {
+    name.ends_with(".tar.gz") || name.ends_with(".tgz") || name.ends_with(".zip")
 }
 
 /// Fetch the latest release from GitHub.
@@ -195,11 +235,109 @@ async fn fetch_latest_release() -> Result<GitHubRelease, String> {
         .map_err(|e| format!("failed to parse release: {e}"))
 }
 
-/// Download a binary from `url` and stage it at `dest`.
+/// Build a unique sibling temp path next to `dest` to stage writes before an atomic rename.
+fn unique_tmp_path(dest: &Path) -> PathBuf {
+    let tmp_name = format!(
+        ".openhuman-update-{}.tmp",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    dest.parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(tmp_name)
+}
+
+/// Make a file executable (Unix) and rename it atomically to `dest`. On rename
+/// failure the temp file is best-effort cleaned up.
+fn finalize_executable(tmp: &Path, dest: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(tmp, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("set permissions: {e}"))?;
+    }
+    std::fs::rename(tmp, dest).map_err(|e| {
+        let _ = std::fs::remove_file(tmp);
+        format!("rename staged binary: {e}")
+    })
+}
+
+/// Extract the inner core binary from a downloaded archive into `dest`.
 ///
-/// Uses a unique temp file (UUID-based) to avoid conflicts from concurrent downloads.
-/// Sets executable permissions on Unix before the atomic rename.
-async fn download_binary(url: &str, dest: &PathBuf) -> Result<(), String> {
+/// The archive is expected to contain a single file named `openhuman-core`
+/// (or `openhuman-core.exe`) at the root — matching the layout produced by
+/// the release workflow. `dest` must be the final binary path (with the
+/// platform-triple-suffixed name `default_core_bin` looks for).
+fn extract_archive(archive_path: &Path, dest: &Path) -> Result<(), String> {
+    let inner_name = if cfg!(windows) {
+        "openhuman-core.exe"
+    } else {
+        "openhuman-core"
+    };
+
+    let archive_name = archive_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+
+    let file =
+        std::fs::File::open(archive_path).map_err(|e| format!("open archive: {e}"))?;
+
+    if archive_name.ends_with(".zip") {
+        let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("read zip: {e}"))?;
+        let mut entry = zip
+            .by_name(inner_name)
+            .map_err(|e| format!("zip entry '{inner_name}' missing: {e}"))?;
+        let tmp = unique_tmp_path(dest);
+        {
+            let mut out =
+                std::fs::File::create(&tmp).map_err(|e| format!("create temp: {e}"))?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| format!("extract zip: {e}"))?;
+            out.flush().map_err(|e| format!("flush extracted: {e}"))?;
+        }
+        finalize_executable(&tmp, dest)?;
+        return Ok(());
+    }
+
+    // Default: tar.gz / tgz
+    let gz = flate2::read::GzDecoder::new(file);
+    let mut tar = tar::Archive::new(gz);
+    let entries = tar
+        .entries()
+        .map_err(|e| format!("read tar entries: {e}"))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| format!("tar entry: {e}"))?;
+        let entry_path = entry.path().map_err(|e| format!("entry path: {e}"))?;
+        let matches = entry_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|n| n == inner_name)
+            .unwrap_or(false);
+        if !matches {
+            continue;
+        }
+        let tmp = unique_tmp_path(dest);
+        {
+            let mut out =
+                std::fs::File::create(&tmp).map_err(|e| format!("create temp: {e}"))?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| format!("extract tar: {e}"))?;
+            out.flush().map_err(|e| format!("flush extracted: {e}"))?;
+        }
+        finalize_executable(&tmp, dest)?;
+        return Ok(());
+    }
+
+    Err(format!(
+        "archive {} contained no entry named '{inner_name}'",
+        archive_path.display()
+    ))
+}
+
+/// Download `url` to `dest` atomically. Used for both raw binaries (legacy
+/// release format) and archive files (current format — caller then extracts).
+async fn download_to_file(url: &str, dest: &Path) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .user_agent("openhuman-tauri-updater")
         .timeout(std::time::Duration::from_secs(300))
@@ -227,19 +365,7 @@ async fn download_binary(url: &str, dest: &PathBuf) -> Result<(), String> {
         dest.display()
     );
 
-    // Use a unique temp filename to avoid collisions from concurrent writes.
-    let tmp_name = format!(
-        ".openhuman-update-{}.tmp",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    );
-    let tmp = dest
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join(tmp_name);
-
+    let tmp = unique_tmp_path(dest);
     {
         let mut file = std::fs::File::create(&tmp).map_err(|e| format!("create temp file: {e}"))?;
         file.write_all(&bytes)
@@ -247,17 +373,11 @@ async fn download_binary(url: &str, dest: &PathBuf) -> Result<(), String> {
         file.flush().map_err(|e| format!("flush temp file: {e}"))?;
     }
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("set permissions: {e}"))?;
-    }
-
+    // Move into place. Caller is responsible for marking executable when the
+    // payload is a raw binary; archives stay non-executable on disk.
     std::fs::rename(&tmp, dest).map_err(|e| {
-        // Best-effort cleanup of temp file on rename failure.
         let _ = std::fs::remove_file(&tmp);
-        format!("rename staged binary: {e}")
+        format!("rename downloaded file: {e}")
     })?;
 
     Ok(())
@@ -385,10 +505,17 @@ UI features (e.g. channel connect) may not match RPC until the core is updated."
         }
     }
 
-    let dest = staging_dir
+    // Where the downloaded asset lands (named after the release asset).
+    let download_dest = staging_dir
         .as_ref()
         .map(|d| d.join(&asset.name))
         .unwrap_or_else(|| PathBuf::from(&asset.name));
+    // Final binary path that `default_core_bin` will pick up next launch.
+    let binary_dest = staging_dir
+        .as_ref()
+        .map(|d| d.join(staged_binary_name()))
+        .unwrap_or_else(|| PathBuf::from(staged_binary_name()));
+    let asset_is_archive = is_archive_asset(&asset.name);
 
     // Step 4: Acquire restart lock, shutdown old process, download, stage, restart.
     // Hold the lock across download + staging + restart to prevent concurrent updates.
@@ -409,12 +536,48 @@ UI features (e.g. channel connect) may not match RPC until the core is updated."
             waited += 50;
         }
 
-        // Download and stage the new binary.
-        download_binary(&asset.browser_download_url, &dest).await?;
-        log::info!("[core-update] staged new binary at {}", dest.display());
+        // Download the asset.
+        download_to_file(&asset.browser_download_url, &download_dest).await?;
+        log::info!(
+            "[core-update] downloaded asset to {}",
+            download_dest.display()
+        );
+
+        if asset_is_archive {
+            // Extract the inner `openhuman-core` binary into the staged location.
+            extract_archive(&download_dest, &binary_dest)?;
+            log::info!(
+                "[core-update] extracted core binary to {}",
+                binary_dest.display()
+            );
+            // Best-effort cleanup of the archive (don't fail the update if this fails).
+            if let Err(e) = std::fs::remove_file(&download_dest) {
+                log::warn!(
+                    "[core-update] could not remove archive {}: {e}",
+                    download_dest.display()
+                );
+            }
+        } else {
+            // Legacy raw-binary asset: rename into the canonical staged path
+            // and mark executable.
+            if download_dest != binary_dest {
+                std::fs::rename(&download_dest, &binary_dest)
+                    .map_err(|e| format!("rename legacy binary: {e}"))?;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&binary_dest, std::fs::Permissions::from_mode(0o755))
+                    .map_err(|e| format!("set permissions on staged binary: {e}"))?;
+            }
+            log::info!(
+                "[core-update] staged legacy raw binary at {}",
+                binary_dest.display()
+            );
+        }
 
         // Point the handle at the new binary so ensure_running launches it.
-        handle.set_core_bin(dest).await;
+        handle.set_core_bin(binary_dest).await;
 
         emit_event(&app, "core-update:status", "restarting");
 
@@ -484,6 +647,111 @@ fn emit_event(app: &Option<tauri::AppHandle<crate::AppRuntime>>, event: &str, pa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn asset(name: &str) -> GitHubAsset {
+        GitHubAsset {
+            name: name.to_string(),
+            browser_download_url: format!("https://example.test/{name}"),
+        }
+    }
+
+    #[test]
+    fn find_platform_asset_matches_versioned_archive() {
+        let triple = platform_triple();
+        let archive_ext = if cfg!(windows) { "zip" } else { "tar.gz" };
+        let archive_name = format!("openhuman-core-0.52.26-{triple}.{archive_ext}");
+        let assets = vec![
+            asset("latest.json"),
+            asset(&format!("{archive_name}.sha256")),
+            asset(&archive_name),
+            asset(&format!("{archive_name}.sig")),
+            asset(&format!("OpenHuman_0.52.26_{triple}.app.tar.gz")),
+        ];
+        let m = find_platform_asset(&assets).expect("should match versioned archive");
+        assert_eq!(m.name, archive_name);
+    }
+
+    #[test]
+    fn find_platform_asset_falls_back_to_legacy_raw_binary() {
+        let triple = platform_triple();
+        let legacy_name = if cfg!(windows) {
+            format!("openhuman-core-{triple}.exe")
+        } else {
+            format!("openhuman-core-{triple}")
+        };
+        let assets = vec![asset("latest.json"), asset(&legacy_name)];
+        let m = find_platform_asset(&assets).expect("legacy raw binary should match");
+        assert_eq!(m.name, legacy_name);
+    }
+
+    #[test]
+    fn find_platform_asset_skips_signatures_and_checksums() {
+        let triple = platform_triple();
+        let archive_ext = if cfg!(windows) { "zip" } else { "tar.gz" };
+        let assets = vec![
+            asset(&format!("openhuman-core-0.52.26-{triple}.{archive_ext}.sha256")),
+            asset(&format!("openhuman-core-0.52.26-{triple}.{archive_ext}.sig")),
+        ];
+        assert!(find_platform_asset(&assets).is_none());
+    }
+
+    #[test]
+    fn is_archive_asset_recognises_known_extensions() {
+        assert!(is_archive_asset("openhuman-core-0.52.26-aarch64-apple-darwin.tar.gz"));
+        assert!(is_archive_asset("openhuman-core-0.52.26-x86_64-pc-windows-msvc.zip"));
+        assert!(is_archive_asset("foo.tgz"));
+        assert!(!is_archive_asset("openhuman-core-aarch64-apple-darwin"));
+        assert!(!is_archive_asset("openhuman-core.exe"));
+    }
+
+    #[test]
+    fn extract_archive_pulls_inner_binary_from_targz() {
+        use std::io::Read;
+
+        let dir = std::env::temp_dir().join(format!(
+            "oh-extract-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Build an in-memory tar.gz with a single `openhuman-core` (or .exe) entry.
+        let inner = if cfg!(windows) {
+            "openhuman-core.exe"
+        } else {
+            "openhuman-core"
+        };
+        let payload = b"#!fake-binary-bytes";
+
+        let archive_path = dir.join("test.tar.gz");
+        {
+            let tar_gz = std::fs::File::create(&archive_path).unwrap();
+            let enc = flate2::write::GzEncoder::new(tar_gz, flate2::Compression::default());
+            let mut builder = tar::Builder::new(enc);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(payload.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, inner, &payload[..])
+                .unwrap();
+            builder.into_inner().unwrap().finish().unwrap();
+        }
+
+        let dest = dir.join("openhuman-core-staged");
+        extract_archive(&archive_path, &dest).expect("extract should succeed");
+
+        let mut got = Vec::new();
+        std::fs::File::open(&dest)
+            .unwrap()
+            .read_to_end(&mut got)
+            .unwrap();
+        assert_eq!(got, payload);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn outdated_detection() {
