@@ -14,4 +14,25 @@ omit_skills_catalog = true
 hint = "agentic"
 
 [tools]
-named = ["http_request", "curl", "web_search", "file_read", "memory_recall"]
+named = [
+    "http_request",
+    "curl",
+    "web_search",
+    "web_search_tool",
+    "file_read",
+    "memory_recall",
+    # Parallel — full surface (search/extract are also delegated by web_search_tool;
+    # chat/research/enrich/dataset unlock grounded answers and deep multi-step research).
+    "parallel_search",
+    "parallel_extract",
+    "parallel_chat",
+    "parallel_research",
+    "parallel_enrich",
+    "parallel_dataset",
+    # Stock / FX / crypto / commodity market data via the financial-apis backend.
+    "stock_quote",
+    "stock_exchange_rate",
+    "stock_options",
+    "stock_crypto_series",
+    "stock_commodity",
+]

@@ -334,4 +334,8 @@ pub struct IntegrationsConfig {
     /// Parallel web search & content extraction integration.
     #[serde(default)]
     pub parallel: IntegrationToggle,
+
+    /// Stock-price / market-data integration (Alpha Vantage on the backend).
+    #[serde(default)]
+    pub stock_prices: IntegrationToggle,
 }

@@ -300,9 +300,41 @@ pub fn all_tools_with_runtime(
             tools.push(Box::new(
                 crate::openhuman::integrations::ParallelExtractTool::new(Arc::clone(&client)),
             ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::ParallelChatTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::ParallelResearchTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::ParallelEnrichTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::ParallelDatasetTool::new(Arc::clone(&client)),
+            ));
             tracing::debug!("[integrations] registered parallel tools");
         } else {
             tracing::debug!("[integrations] parallel disabled — skipping");
+        }
+        if root_config.integrations.stock_prices.enabled {
+            tools.push(Box::new(
+                crate::openhuman::integrations::StockQuoteTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::StockExchangeRateTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::StockOptionsTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::StockCryptoSeriesTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::StockCommodityTool::new(Arc::clone(&client)),
+            ));
+            tracing::debug!("[integrations] registered stock_prices tools");
+        } else {
+            tracing::debug!("[integrations] stock_prices disabled — skipping");
         }
         if root_config.integrations.twilio.enabled {
             tools.push(Box::new(
