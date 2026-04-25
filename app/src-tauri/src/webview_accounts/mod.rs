@@ -271,7 +271,7 @@ fn popup_should_navigate_parent(provider: &str, url: &Url) -> Option<Url> {
             if url.scheme() == "about" {
                 return None;
             }
-            if url_is_internal(provider, url) {
+            if is_google_auth_popup(url) {
                 Some(url.clone())
             } else {
                 None
@@ -279,6 +279,37 @@ fn popup_should_navigate_parent(provider: &str, url: &Url) -> Option<Url> {
         }
         _ => None,
     }
+}
+
+fn is_google_auth_popup(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let is_google_auth_host =
+        host == "accounts.google.com" || host == "accounts.googleusercontent.com";
+    if !is_google_auth_host {
+        return false;
+    }
+
+    let path = url.path().to_ascii_lowercase();
+    if path.contains("signin") || path.contains("accountchooser") || path.contains("chooseaccount")
+    {
+        return true;
+    }
+
+    url.query_pairs().any(|(key, value)| {
+        let k = key.to_ascii_lowercase();
+        let v = value.to_ascii_lowercase();
+        matches!(k.as_str(), "flowname" | "service" | "continue")
+            && (v.contains("signin") || v.contains("accountchooser") || v.contains("chooseaccount"))
+    })
+}
+
+fn redact_navigation_url(url: &Url) -> String {
+    let mut safe = url.clone();
+    safe.set_query(None);
+    safe.set_fragment(None);
+    safe.to_string()
 }
 /// Unwrap provider-side "link safety" redirects so the system browser
 /// lands on the real destination.
@@ -1225,7 +1256,7 @@ pub async fn webview_account_open<R: Runtime>(
             serde_json::json!({
                 "account_id": nav_account_id,
                 "provider": nav_provider,
-                "url": url.to_string(),
+                "url": redact_navigation_url(url),
             }),
         ) {
             log::debug!(
@@ -2477,11 +2508,28 @@ mod tests {
     }
 
     #[test]
+    fn gmail_internal_non_auth_popup_does_not_navigate_parent() {
+        assert!(popup_should_navigate_parent(
+            "gmail",
+            &url("https://mail.google.com/mail/u/0/#inbox")
+        )
+        .is_none());
+    }
+
+    #[test]
     fn google_meet_accounts_popup_navigates_parent() {
         assert!(popup_should_navigate_parent(
             "google-meet",
             &url("https://accounts.google.com/signin/v2/identifier"),
         )
         .is_some());
+    }
+
+    #[test]
+    fn redact_navigation_url_strips_query_and_fragment() {
+        let redacted = redact_navigation_url(&url(
+            "https://accounts.google.com/o/oauth2/v2/auth?code=secret#frag",
+        ));
+        assert_eq!(redacted, "https://accounts.google.com/o/oauth2/v2/auth");
     }
 }

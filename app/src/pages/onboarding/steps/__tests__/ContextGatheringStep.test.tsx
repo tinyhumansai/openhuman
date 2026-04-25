@@ -133,4 +133,36 @@ describe('ContextGatheringStep', () => {
     });
     expect(callCoreRpc).toHaveBeenCalledTimes(1);
   });
+
+  it('surfaces a build-profile error when learning_save_profile rejects', async () => {
+    callCoreRpc.mockImplementation(async (req: { method: string; params: unknown }) => {
+      if (req.method === 'openhuman.tools_composio_execute') {
+        return {
+          successful: true,
+          data: { messages: [{ messageText: 'https://www.linkedin.com/in/jane-doe' }] },
+        };
+      }
+      if (req.method === 'openhuman.tools_apify_linkedin_scrape') {
+        return { data: { name: 'Jane Doe' }, markdown: '# Jane Doe\n\nFounder at Acme.' };
+      }
+      if (req.method === 'openhuman.learning_save_profile') {
+        throw new Error('disk full');
+      }
+      throw new Error(`unexpected RPC ${req.method}`);
+    });
+
+    renderWithProviders(
+      <ContextGatheringStep
+        connectedSources={['composio:gmail']}
+        onNext={() => Promise.resolve()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: "Let's go!" }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Context Ready')).toBeInTheDocument();
+    });
+    expect(screen.getByText('disk full')).toBeInTheDocument();
+  });
 });

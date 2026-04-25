@@ -32,8 +32,8 @@ function statusDotClass(connection: ComposioConnection | undefined): string {
   }
 }
 
-function statusLabel(connection: ComposioConnection | undefined): string {
-  switch (deriveComposioState(connection)) {
+function statusLabel(state: ReturnType<typeof deriveComposioState>): string {
+  switch (state) {
     case 'connected':
       return 'Connected';
     case 'pending':
@@ -45,8 +45,8 @@ function statusLabel(connection: ComposioConnection | undefined): string {
   }
 }
 
-function statusColor(connection: ComposioConnection | undefined): string {
-  switch (deriveComposioState(connection)) {
+function statusColor(state: ReturnType<typeof deriveComposioState>): string {
+  switch (state) {
     case 'connected':
       return 'text-sage-600';
     case 'pending':
@@ -123,13 +123,13 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
                 <span className="truncate text-sm font-semibold text-stone-900">
                   {gmailMeta.name}
                 </span>
-                {statusLabel(gmailConnection) && (
+                {statusLabel(gmailState) && (
                   <>
                     <div
                       className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${statusDotClass(gmailConnection)}`}
                     />
-                    <span className={`flex-shrink-0 text-xs ${statusColor(gmailConnection)}`}>
-                      {statusLabel(gmailConnection)}
+                    <span className={`flex-shrink-0 text-xs ${statusColor(gmailState)}`}>
+                      {statusLabel(gmailState)}
                     </span>
                   </>
                 )}

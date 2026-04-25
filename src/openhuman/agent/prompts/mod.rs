@@ -859,6 +859,8 @@ pub fn render_subagent_system_prompt_with_format(
     // 6. Runtime banner — model name only. Stable for the lifetime of
     //    this sub-agent's definition.
     let _ = writeln!(out, "## Runtime\n\nModel: {model_name}");
+    out.push('\n');
+    out.push_str(GLOBAL_STYLE_SUFFIX);
 
     out
 }
@@ -1078,6 +1080,8 @@ mod tests {
         assert!(rendered.contains("## Tools"));
         assert!(rendered.contains("test_tool"));
         assert!(rendered.contains("instr"));
+        assert!(rendered.contains("## Output style"));
+        assert!(rendered.contains("Do **not** use em-dashes"));
     }
 
     #[test]
@@ -1400,6 +1404,7 @@ mod tests {
         assert!(rendered.contains("## Project Context"));
         assert!(rendered.contains("### SOUL.md"));
         assert!(rendered.contains("## Safety"));
+        assert!(rendered.contains("## Output style"));
         // Json is a prompt-driven format (the model wraps JSON tool
         // calls in `<tool_call>` tags); it does NOT use the provider's
         // native function-calling channel. So the prose `## Tools`

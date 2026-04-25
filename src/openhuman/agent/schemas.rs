@@ -159,7 +159,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![FieldSchema {
                 name: "spawned",
                 ty: TypeSchema::Bool,
-                comment: "Always true once the task has been scheduled.",
+                comment: "True when the welcome task was scheduled, false when skipped.",
                 required: true,
             }],
         },
@@ -271,6 +271,16 @@ struct TriageEvaluateParams {
 fn handle_spawn_welcome(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
+        if config.chat_onboarding_completed {
+            tracing::info!(
+                "[rpc][agent] spawn_welcome skipped — chat_onboarding_completed already true"
+            );
+            return RpcOutcome::new(
+                serde_json::json!({ "spawned": false }),
+                vec!["proactive welcome skipped: chat onboarding already completed".into()],
+            )
+            .into_cli_compatible_json();
+        }
         tracing::info!("[rpc][agent] spawn_welcome — firing proactive welcome on detached task");
         crate::openhuman::agent::welcome_proactive::spawn_proactive_welcome(config);
         RpcOutcome::new(

@@ -221,8 +221,10 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
          **Voice: long-lost friend.** Warm, familiar, a little excited to see them, like you're \
          picking up a thread. Not formal, not a host welcoming a guest. If a `### PROFILE.md` \
          block is in your system prompt, USE IT — reference one specific thing about them \
-         (their work, where they live, something they're into) the way a friend would mention \
-         it, not the way a CRM would log it. No PROFILE.md? Skip the personal bit, stay casual.\n\n\
+         (their work, interests, something they're into) the way a friend would mention \
+         it, not the way a CRM would log it. Do not surface location or other sensitive \
+         profile details unless the user already brought them up. No PROFILE.md? Skip the \
+         personal bit, stay casual.\n\n\
          Lowercase fine. No corporate language, no \"I'm OpenHuman\", no feature pitch. Short. \
          Then nudge once toward connecting Gmail (only if not already connected per the snapshot \
          you fetch) — phrased as a question, not a sell.\n\n\

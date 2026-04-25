@@ -269,6 +269,6 @@ pub async fn gmail_add_label(
 /// { accountId })`) ahead of the full bridge / core wiring.
 #[tauri::command]
 pub async fn gmail_find_linkedin_profile_url(account_id: String) -> Result<Option<String>, String> {
-    log::info!("[gmail][tauri] gmail_find_linkedin_profile_url account_id={account_id}");
+    log::debug!("[gmail][tauri] gmail_find_linkedin_profile_url account_id={account_id}");
     cdp_find_linkedin_profile_url(&account_id).await
 }

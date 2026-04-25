@@ -1,7 +1,7 @@
 //! WhatsApp Web scanner driven over the Chrome DevTools Protocol (CDP).
 //!
 //! We talk to the embedded CEF instance through its remote-debugging port
-//! (set via `--remote-debugging-port=9222` in `lib.rs`). Per tracked
+//! (set via `--remote-debugging-port=19222` in `lib.rs`). Per tracked
 //! WhatsApp-account webview, two interleaved loops run:
 //!
 //!   * **Fast tick** (`FAST_SCAN_INTERVAL`, 2s) — `dom_scan.js` scrapes

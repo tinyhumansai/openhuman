@@ -635,27 +635,12 @@ pub async fn get_message(account_id: &str, message_id: String) -> Result<GmailMe
 /// plain-HTML rendering of a single message/thread with subject/from/
 /// to/date/body in a predictable structure.
 ///
-/// Gmail exposes two id formats on this endpoint:
-///
-/// * Hex thread ids via `th=<hex>` — what the inbox UI uses internally
-///   and what `<tr class="zA">` rows surface via
-///   `data-legacy-thread-id` / `data-thread-id`.
-/// * Decimal `thread-f:` ids via `permthid=thread-f:<dec>&permmsgid=msg-f:<dec>`
-///   — this is what the Atom feed gives us.
-///
-/// We auto-detect: pure-digit ids go to the decimal form (compatible
-/// with `list_messages` callers), anything containing hex chars uses
-/// the `th=<hex>` form (what `search` returns).
+/// Gmail exposes multiple id formats on this endpoint, but the `th=<id>`
+/// form works across the ids we scrape from the live web UI and avoids
+/// misclassifying pure-digit hex thread ids.
 fn print_view_url(message_id: &str) -> String {
     let escaped = url_path_escape(message_id);
-    if message_id.chars().all(|c| c.is_ascii_digit()) {
-        format!(
-            "https://mail.google.com/mail/u/0/?ui=2&view=pt&search=all\
-             &permthid=thread-f:{escaped}&permmsgid=msg-f:{escaped}"
-        )
-    } else {
-        format!("https://mail.google.com/mail/u/0/?ui=2&view=pt&search=all&th={escaped}")
-    }
+    format!("https://mail.google.com/mail/u/0/?ui=2&view=pt&search=all&th={escaped}")
 }
 
 // ── label scrape ────────────────────────────────────────────────────────

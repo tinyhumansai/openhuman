@@ -320,7 +320,11 @@ pub async fn summarise_profile_with_llm(config: &Config, raw_md: &str) -> anyhow
     // under a custom `OPENHUMAN_WORKSPACE`.
     let options = ProviderRuntimeOptions {
         auth_profile_override: None,
-        openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
+        openhuman_dir: config
+            .config_path
+            .parent()
+            .map(std::path::PathBuf::from)
+            .or_else(|| Some(config.workspace_dir.clone())),
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };

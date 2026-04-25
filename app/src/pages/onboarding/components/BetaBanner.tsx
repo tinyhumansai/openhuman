@@ -1,5 +1,7 @@
 import { useState } from 'react';
 
+import { DISCORD_INVITE_URL } from '../../../utils/links';
+
 const DISMISSED_KEY = 'openhuman_beta_banner_dismissed';
 
 const BetaBanner = () => {
@@ -32,7 +34,16 @@ const BetaBanner = () => {
       {/* Message */}
       <p className="flex-1 text-xs leading-relaxed text-stone-700">
         OpenHuman is in beta. You may hit rough edges. Early users who give feedback get free
-        credits. Join our Discord to claim!
+        credits.{' '}
+        <a
+          href={DISCORD_INVITE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Join OpenHuman Discord"
+          className="font-medium text-amber-800 underline underline-offset-2 hover:text-amber-900">
+          Join our Discord
+        </a>{' '}
+        to claim!
       </p>
 
       {/* Dismiss */}

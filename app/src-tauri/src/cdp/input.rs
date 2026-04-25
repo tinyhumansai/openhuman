@@ -27,6 +27,13 @@ use serde_json::{json, Value};
 
 use super::CdpConn;
 
+#[allow(dead_code)] // helper is used by currently gated input paths.
+#[cfg(target_os = "macos")]
+const SELECT_ALL_MODIFIER: u32 = 4;
+#[allow(dead_code)] // helper is used by currently gated input paths.
+#[cfg(not(target_os = "macos"))]
+const SELECT_ALL_MODIFIER: u32 = 2;
+
 /// Names recognised by `Input.dispatchKeyEvent`'s `key` field. We
 /// hand-pick the ones Gmail's keyboard handlers care about so callers
 /// can use a typed value rather than stringly-typed literals scattered
@@ -62,9 +69,11 @@ impl Key {
 /// Issues mouseMoved → mousePressed → mouseReleased so hover handlers
 /// (Gmail's search-box has one) fire correctly before the click.
 pub async fn click(cdp: &mut CdpConn, session: &str, x: f64, y: f64) -> Result<(), String> {
+    log::debug!("[cdp::input] click session={session} x={x:.1} y={y:.1}");
     let _ = mouse_event(cdp, session, "mouseMoved", x, y, 0).await?;
     let _ = mouse_event(cdp, session, "mousePressed", x, y, 1).await?;
     let _ = mouse_event(cdp, session, "mouseReleased", x, y, 1).await?;
+    log::debug!("[cdp::input] click complete session={session}");
     Ok(())
 }
 
@@ -76,6 +85,9 @@ async fn mouse_event(
     y: f64,
     click_count: u32,
 ) -> Result<Value, String> {
+    log::debug!(
+        "[cdp::input] mouse_event session={session} kind={kind} x={x:.1} y={y:.1} clicks={click_count}"
+    );
     cdp.call(
         "Input.dispatchMouseEvent",
         json!({
@@ -99,6 +111,10 @@ async fn mouse_event(
 /// + `keyUp` pair is still needed so listeners (autocomplete,
 /// keystroke counters) see a normal keystroke.
 pub async fn type_text(cdp: &mut CdpConn, session: &str, text: &str) -> Result<(), String> {
+    log::debug!(
+        "[cdp::input] type_text session={session} chars={}",
+        text.chars().count()
+    );
     for ch in text.chars() {
         let s = ch.to_string();
         // keyDown — Gmail's command/keyboard router observes these.
@@ -140,6 +156,7 @@ pub async fn type_text(cdp: &mut CdpConn, session: &str, text: &str) -> Result<(
         .await
         .map_err(|e| format!("Input.dispatchKeyEvent keyUp {ch:?}: {e}"))?;
     }
+    log::debug!("[cdp::input] type_text complete session={session}");
     Ok(())
 }
 
@@ -147,6 +164,7 @@ pub async fn type_text(cdp: &mut CdpConn, session: &str, text: &str) -> Result<(
 /// `keyUp`; no `char` because non-printables don't insert text.
 pub async fn press_key(cdp: &mut CdpConn, session: &str, key: Key) -> Result<(), String> {
     let (key_name, code, vk) = key.cdp_fields();
+    log::debug!("[cdp::input] press_key session={session} key={key_name}");
     cdp.call(
         "Input.dispatchKeyEvent",
         json!({
@@ -173,17 +191,18 @@ pub async fn press_key(cdp: &mut CdpConn, session: &str, key: Key) -> Result<(),
     )
     .await
     .map_err(|e| format!("Input.dispatchKeyEvent keyUp {key_name}: {e}"))?;
+    log::debug!("[cdp::input] press_key complete session={session} key={key_name}");
     Ok(())
 }
 
-/// Triple-click to select-all the focused contenteditable / input.
+/// Dispatch Cmd/Ctrl+A to select-all in the focused contenteditable / input.
 /// Useful when the search box already has a previous query in it that
 /// we need to overwrite — Gmail keeps the last query rendered in the
 /// search input so a fresh visit sees stale text.
 pub async fn select_all_in_focused(cdp: &mut CdpConn, session: &str) -> Result<(), String> {
-    // Cmd-A on macOS, Ctrl-A elsewhere. Gmail's keyboard router accepts
-    // either modifier; meta covers macOS Chrome and Linux/Windows
-    // re-binds shouldn't matter inside the embedded webview.
+    log::debug!(
+        "[cdp::input] select_all_in_focused session={session} modifier={SELECT_ALL_MODIFIER}"
+    );
     cdp.call(
         "Input.dispatchKeyEvent",
         json!({
@@ -192,7 +211,7 @@ pub async fn select_all_in_focused(cdp: &mut CdpConn, session: &str) -> Result<(
             "code": "KeyA",
             "windowsVirtualKeyCode": 65,
             "nativeVirtualKeyCode": 65,
-            "modifiers": 4, // Meta (Cmd) on macOS; harmless elsewhere
+            "modifiers": SELECT_ALL_MODIFIER,
         }),
         Some(session),
     )
@@ -206,11 +225,12 @@ pub async fn select_all_in_focused(cdp: &mut CdpConn, session: &str) -> Result<(
             "code": "KeyA",
             "windowsVirtualKeyCode": 65,
             "nativeVirtualKeyCode": 65,
-            "modifiers": 4,
+            "modifiers": SELECT_ALL_MODIFIER,
         }),
         Some(session),
     )
     .await
     .map_err(|e| format!("Input.dispatchKeyEvent select-all keyUp: {e}"))?;
+    log::debug!("[cdp::input] select_all_in_focused complete session={session}");
     Ok(())
 }

@@ -211,10 +211,13 @@ fn handle_save_profile(params: Map<String, Value>) -> ControllerFuture {
 
         let path = config.workspace_dir.join("PROFILE.md");
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
+            tokio::fs::create_dir_all(parent)
+                .await
                 .map_err(|e| format!("create workspace dir failed: {e}"))?;
         }
-        std::fs::write(&path, &body).map_err(|e| format!("write PROFILE.md failed: {e}"))?;
+        tokio::fs::write(&path, &body)
+            .await
+            .map_err(|e| format!("write PROFILE.md failed: {e}"))?;
 
         let bytes = body.len();
         let path_display = path.display().to_string();

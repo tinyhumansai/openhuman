@@ -10,20 +10,15 @@ export interface PrivacyLeaveItem {
  * the point is to not lie about "100% local".
  */
 export const WHAT_LEAVES_ITEMS: PrivacyLeaveItem[] = [
-  // {
-  //   id: 'model-downloads',
-  //   title: 'Model downloads & updates',
-  //   body: 'Local model weights are pulled from the model hub when you install or update them. After that, inference runs on your machine.',
-  // },
   {
     id: 'cloud-providers',
     title: 'Cloud AI Inference',
-    body: 'Most conversations are routed to the cloud for inference. This is the only way to get access to the most powerful AI models. Low-level tasks like summarizing chats are done using a local AI model.',
+    body: 'Core assistant features run locally by default. Cloud inference is only used when a feature explicitly needs stronger hosted models or network-backed services.',
   },
   {
     id: 'skill-integrations',
-    title: '3rd Party Integrations',
-    body: '3rd Party integrations like Gmail, Slack, or Notion talk to those services on your behalf only with your explicit permission',
+    title: 'Third-party integrations',
+    body: 'Third-party integrations like Gmail, Slack, or Notion talk to those services on your behalf only with your explicit permission.',
   },
   {
     id: 'sentry',

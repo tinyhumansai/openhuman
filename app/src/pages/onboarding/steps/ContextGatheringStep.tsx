@@ -5,8 +5,8 @@
  *
  *   1. Composio Gmail search (`tools_composio_execute` -> `GMAIL_FETCH_EMAILS`)
  *      to find a LinkedIn profile URL in the user's recent mail.
- *   2. Parallel web search (`tools_web_search`) for the profile slug to
- *      collect public summary excerpts (no Apify involvement).
+ *   2. Apify LinkedIn scrape (`tools_apify_linkedin_scrape`) to pull a
+ *      structured public profile snapshot and render it as markdown.
  *   3. Persist the assembled markdown via `learning_save_profile` with
  *      `summarize=true` so the core LLM compresses it into PROFILE.md.
  *
@@ -40,13 +40,13 @@ function unwrapCliEnvelope<T>(value: unknown): T {
 }
 
 interface Stage {
-  id: 'gmail-search' | 'web-search' | 'build-profile';
+  id: 'gmail-search' | 'linkedin-scrape' | 'build-profile';
   label: string;
 }
 
 const STAGES: Stage[] = [
   { id: 'gmail-search', label: 'Reading your Gmail' },
-  { id: 'web-search', label: 'Researching you online' },
+  { id: 'linkedin-scrape', label: 'Researching you online' },
   { id: 'build-profile', label: 'Building your profile' },
 ];
 
@@ -195,7 +195,7 @@ const ContextGatheringStep = ({
         setStage('gmail-search', 'done', profileUrl);
       } else {
         setStage('gmail-search', 'skipped', 'No LinkedIn URL found in mailbox');
-        setStage('web-search', 'skipped');
+        setStage('linkedin-scrape', 'skipped');
         setStage('build-profile', 'skipped');
         setFinished(true);
         return;
@@ -203,25 +203,25 @@ const ContextGatheringStep = ({
     } catch (e) {
       console.warn('[onboarding:context] gmail stage failed', e);
       setStage('gmail-search', 'error', e instanceof Error ? e.message : String(e));
-      setStage('web-search', 'skipped');
+      setStage('linkedin-scrape', 'skipped');
       setStage('build-profile', 'skipped');
       setFinished(true);
       return;
     }
 
     // Stage 2 — Apify LinkedIn scrape
-    setStage('web-search', 'active');
+    setStage('linkedin-scrape', 'active');
     let scrapedMarkdown = '';
     try {
       scrapedMarkdown = await apifyScrapeLinkedIn(profileUrl);
       setStage(
-        'web-search',
+        'linkedin-scrape',
         scrapedMarkdown.trim() ? 'done' : 'skipped',
         scrapedMarkdown.trim() ? 'Profile scraped' : 'No scraped data'
       );
     } catch (e) {
       console.warn('[onboarding:context] apify_linkedin_scrape stage failed', e);
-      setStage('web-search', 'error', e instanceof Error ? e.message : String(e));
+      setStage('linkedin-scrape', 'error', e instanceof Error ? e.message : String(e));
       // Continue — save_profile can still write a URL-only file.
     }
 

@@ -227,8 +227,9 @@ fn handle_web_search(params: Map<String, Value>) -> ControllerFuture {
         })?;
 
         // Body matches `parallelSearchSchema` (backend-2/.../validators/agentIntegration.validator.ts).
-        // `timeout_secs` is no longer sent — the validator strips unknown keys
-        // and Parallel's own per-call deadline is governed by the search mode.
+        // `timeout_secs` remains accepted in our RPC schema for compatibility
+        // with existing callers, but the upstream validator currently strips
+        // unknown keys and Parallel governs its own per-mode deadline.
         let _ = timeout_secs;
         let body = json!({
             "objective": objective,
