@@ -9,6 +9,7 @@ import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
+import Onboarding from './pages/onboarding/Onboarding';
 import Rewards from './pages/Rewards';
 import Settings from './pages/Settings';
 import Skills from './pages/Skills';
@@ -25,6 +26,16 @@ const AppRoutes = () => {
           <PublicRoute>
             <Welcome />
           </PublicRoute>
+        }
+      />
+
+      {/* Onboarding (full-page stepper, gated by onboarding_completed) */}
+      <Route
+        path="/onboarding/*"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Onboarding />
+          </ProtectedRoute>
         }
       />
 

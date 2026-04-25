@@ -31,7 +31,8 @@ const BetaBanner = () => {
 
       {/* Message */}
       <p className="flex-1 text-xs leading-relaxed text-stone-700">
-        OpenHuman is in beta &mdash; you may hit rough edges. Your feedback helps us ship faster.
+        OpenHuman is in beta. You may hit rough edges. Early users who give feedback get free
+        credits. Join our Discord to claim!
       </p>
 
       {/* Dismiss */}

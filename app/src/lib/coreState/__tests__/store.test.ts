@@ -25,7 +25,7 @@ describe('isWelcomeLocked', () => {
     expect(isWelcomeLocked(makeSnapshot({ chatOnboardingCompleted: true }))).toBe(false);
   });
 
-  it('stays unlocked while the wizard is still up — OnboardingOverlay owns that gate', () => {
+  it('stays unlocked while the wizard is still up — the /onboarding route owns that gate', () => {
     expect(isWelcomeLocked(makeSnapshot({ onboardingCompleted: false }))).toBe(false);
   });
 

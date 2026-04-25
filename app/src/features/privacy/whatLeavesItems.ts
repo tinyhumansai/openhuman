@@ -10,33 +10,27 @@ export interface PrivacyLeaveItem {
  * the point is to not lie about "100% local".
  */
 export const WHAT_LEAVES_ITEMS: PrivacyLeaveItem[] = [
-  {
-    id: 'model-downloads',
-    title: 'Model downloads & updates',
-    body: 'Local model weights are pulled from the model hub when you install or update them. After that, inference runs on your machine.',
-  },
+  // {
+  //   id: 'model-downloads',
+  //   title: 'Model downloads & updates',
+  //   body: 'Local model weights are pulled from the model hub when you install or update them. After that, inference runs on your machine.',
+  // },
   {
     id: 'cloud-providers',
-    title: 'Cloud AI providers — only when you pick one',
-    body: 'If you route a task to OpenAI, Anthropic, a search API, or any webhook target, that message goes to them. Your choice, per task.',
+    title: 'Cloud AI Inference',
+    body: 'Most conversations are routed to the cloud for inference. This is the only way to get access to the most powerful AI models. Low-level tasks like summarizing chats are done using a local AI model.',
   },
   {
     id: 'skill-integrations',
-    title: 'Skill integrations you connect',
-    body: "Skills like Gmail, Slack, or Notion talk to those services on your behalf — you authorized them. After each sync, a summary of that skill's state is sent to our memory service so the assistant can recall it across sessions.",
+    title: '3rd Party Integrations',
+    body: '3rd Party integrations like Gmail, Slack, or Notion talk to those services on your behalf only with your explicit permission',
   },
   {
     id: 'sentry',
-    title: 'Crash reports (opt-in)',
-    body: 'Anonymous crash reports help us fix bugs. Toggle anytime in Settings → Privacy & Security.',
-  },
-  {
-    id: 'auth-and-routing',
-    title: 'Account, billing, and chat routing',
-    body: 'Sign-in and billing go through our auth service. Chat messages are routed through our backend to the model you picked — local or cloud. Your files on disk stay on disk.',
+    title: 'Crash Reports & Usage Data (opt-out)',
+    body: 'Anonymous crash reports help us fix bugs. Usage data helps us improve the product. Toggle anytime in Settings → Privacy & Security.',
   },
 ];
 
 export const WHAT_LEAVES_HEADLINE = 'Local by default. Cloud when you ask.';
-export const WHAT_LEAVES_SUBHEAD =
-  "We won't claim nothing ever leaves your computer — that would be a lie. Here's exactly what does, and when.";
+export const WHAT_LEAVES_SUBHEAD = "For full transparency, here's exactly what does, and when.";

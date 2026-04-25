@@ -1,78 +1,59 @@
 import { fireEvent, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import '../../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../../test/test-utils';
 import SkillsStep from './SkillsStep';
 
-const refreshComposio = vi.fn();
-let composioToolkits: string[] = [];
-let composioConnections = new Map();
-let composioLoading = false;
-let composioError: string | null = null;
-
-vi.mock('../../../lib/composio/hooks', () => ({
-  useComposioIntegrations: () => ({
-    toolkits: composioToolkits,
-    connectionByToolkit: composioConnections,
-    loading: composioLoading,
-    error: composioError,
-    refresh: refreshComposio,
-  }),
-}));
-
-vi.mock('../../../components/composio/ComposioConnectModal', () => ({
-  default: ({ toolkit, onClose }: { toolkit: { name: string }; onClose: () => void }) => (
-    <div>
-      <h2>Connect {toolkit.name}</h2>
-      <button onClick={onClose}>Close</button>
+vi.mock('../components/WebviewLoginModal', () => ({
+  default: ({
+    label,
+    onConnected,
+    onClose,
+  }: {
+    label: string;
+    onConnected: (accountId: string) => void;
+    onClose: () => void;
+  }) => (
+    <div role="dialog">
+      <p>Sign in to {label}</p>
+      <button onClick={() => onConnected('acct-test')}>Mark connected</button>
+      <button onClick={onClose}>Cancel</button>
     </div>
   ),
 }));
 
 describe('Onboarding SkillsStep', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    composioToolkits = [];
-    composioConnections = new Map();
-    composioLoading = false;
-    composioError = null;
-  });
-
-  it('falls back to the curated composio catalog when the backend allowlist is empty', () => {
-    const onNext = vi.fn();
+  it('shows the gmail webview-login card and skips when nothing is connected', async () => {
+    const onNext = vi.fn().mockResolvedValue(undefined);
     renderWithProviders(<SkillsStep onNext={onNext} />);
 
     expect(screen.getByText('Gmail')).toBeInTheDocument();
-    expect(screen.getByText('Google Calendar')).toBeInTheDocument();
-    expect(screen.getByText('Google Drive')).toBeInTheDocument();
-    expect(screen.getByText('Notion')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Skip for Now' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip for Now' }));
+    expect(onNext).toHaveBeenCalledWith([]);
   });
 
-  it('only surfaces the onboarding subset when the backend returns a larger toolkit allowlist', () => {
-    composioToolkits = ['gmail', 'github', 'slack', 'notion'];
-
+  it('opens the webview login modal when the gmail card is clicked', () => {
     renderWithProviders(<SkillsStep onNext={vi.fn()} />);
 
-    expect(screen.getByText('Gmail')).toBeInTheDocument();
-    expect(screen.getByText('Notion')).toBeInTheDocument();
-    expect(screen.queryByText('GitHub')).not.toBeInTheDocument();
-    expect(screen.queryByText('Slack')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('onboarding-skills-gmail-button'));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('Sign in to Gmail')).toBeInTheDocument();
   });
 
-  it('passes connected composio sources through on continue', async () => {
-    composioToolkits = ['gmail', 'notion'];
-    composioConnections = new Map([
-      ['gmail', { id: 'conn_gmail', toolkit: 'gmail', status: 'ACTIVE' }],
-      ['notion', { id: 'conn_notion', toolkit: 'notion', status: 'ACTIVE' }],
-    ]);
+  it('marks gmail connected and forwards webview:gmail on continue', async () => {
     const onNext = vi.fn().mockResolvedValue(undefined);
-
     renderWithProviders(<SkillsStep onNext={onNext} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByTestId('onboarding-skills-gmail-button'));
+    fireEvent.click(screen.getByRole('button', { name: 'Mark connected' }));
 
-    expect(onNext).toHaveBeenCalledWith(['composio:gmail', 'composio:notion']);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByText('Connected')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(onNext).toHaveBeenCalledWith(['webview:gmail']);
   });
 });

@@ -250,6 +250,19 @@ fn popup_should_stay_in_app(provider: &str, url: &Url) -> bool {
                 None => false,
             }
         }
+        "gmail" | "google-meet" => {
+            // Google's "Sign in" CTA opens `accounts.google.com` in a new
+            // window (and sometimes seeds it with `about:blank` first before
+            // navigating). Routing that to the system browser breaks the
+            // login flow because the embedded webview's cookie jar never
+            // sees the auth response. Keep any same-suite Google host
+            // in-app so the OAuth round-trip completes against the
+            // provider's session.
+            if url.scheme() == "about" {
+                return true;
+            }
+            url_is_internal(provider, url)
+        }
         _ => false,
     }
 }
@@ -2362,6 +2375,43 @@ mod tests {
         assert!(!popup_should_stay_in_app(
             "zoom",
             &url("https://example.com/wc/join/888")
+        ));
+    }
+
+    // ── popup_should_stay_in_app: Gmail Google-auth popups ────────────
+
+    #[test]
+    fn gmail_accounts_popup_stays_in_app() {
+        // Clicking "Sign in" on mail.google.com opens accounts.google.com
+        // in a popup; routing it to the system browser breaks the OAuth
+        // round-trip because the auth response would land in the wrong
+        // cookie jar.
+        assert!(popup_should_stay_in_app(
+            "gmail",
+            &url("https://accounts.google.com/signin/v2/identifier")
+        ));
+    }
+
+    #[test]
+    fn gmail_about_blank_popup_stays_in_app() {
+        // Google occasionally seeds a popup with about:blank before
+        // navigating it; deny would short-circuit the flow.
+        assert!(popup_should_stay_in_app("gmail", &url("about:blank")));
+    }
+
+    #[test]
+    fn gmail_foreign_host_popup_does_not_stay_in_app() {
+        assert!(!popup_should_stay_in_app(
+            "gmail",
+            &url("https://example.com/share?u=…")
+        ));
+    }
+
+    #[test]
+    fn google_meet_accounts_popup_stays_in_app() {
+        assert!(popup_should_stay_in_app(
+            "google-meet",
+            &url("https://accounts.google.com/signin/v2/identifier")
         ));
     }
 }

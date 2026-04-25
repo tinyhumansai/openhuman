@@ -43,9 +43,6 @@ const WhatLeavesMyComputerSheet = ({ open, onClose }: WhatLeavesMyComputerSheetP
         className="relative w-full max-w-lg bg-neutral-0 rounded-2xl shadow-large border border-neutral-200 p-6 animate-fade-up outline-none">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
-            <p className="font-mono text-xs text-neutral-500 tracking-wider mb-1">
-              PRIVACY · WHAT LEAVES MY COMPUTER
-            </p>
             <h2
               id="what-leaves-title"
               className="font-display text-2xl text-neutral-900 leading-tight">
