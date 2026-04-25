@@ -5,26 +5,53 @@ import '../../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../../test/test-utils';
 import SkillsStep from './SkillsStep';
 
-vi.mock('../components/WebviewLoginModal', () => ({
+const useComposioIntegrationsMock = vi.hoisted(() => vi.fn());
+vi.mock('../../../lib/composio/hooks', () => ({
+  useComposioIntegrations: useComposioIntegrationsMock,
+}));
+
+vi.mock('../../../components/composio/ComposioConnectModal', () => ({
   default: ({
-    label,
-    onConnected,
+    toolkit,
     onClose,
+    onChanged,
   }: {
-    label: string;
-    onConnected: (accountId: string) => void;
+    toolkit: { name: string };
     onClose: () => void;
+    onChanged: () => void;
   }) => (
     <div role="dialog">
-      <p>Sign in to {label}</p>
-      <button onClick={() => onConnected('acct-test')}>Mark connected</button>
+      <p>Sign in to {toolkit.name}</p>
+      <button
+        onClick={() => {
+          onChanged();
+          onClose();
+        }}>
+        Mark connected
+      </button>
       <button onClick={onClose}>Cancel</button>
     </div>
   ),
 }));
 
+function setComposioState(opts: { connected?: boolean; error?: string | null }): void {
+  const { connected = false, error = null } = opts;
+  const map = new Map();
+  if (connected) {
+    map.set('gmail', { toolkit: 'gmail', status: 'ACTIVE', composioState: 'connected' });
+  }
+  useComposioIntegrationsMock.mockReturnValue({
+    toolkits: ['gmail'],
+    connectionByToolkit: map,
+    loading: false,
+    error,
+    refresh: vi.fn(),
+  });
+}
+
 describe('Onboarding SkillsStep', () => {
-  it('shows the gmail webview-login card and skips when nothing is connected', async () => {
+  it('shows the Composio gmail card and skips when nothing is connected', async () => {
+    setComposioState({});
     const onNext = vi.fn().mockResolvedValue(undefined);
     renderWithProviders(<SkillsStep onNext={onNext} />);
 
@@ -32,10 +59,11 @@ describe('Onboarding SkillsStep', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Skip for Now' }));
-    expect(onNext).toHaveBeenCalledWith({ sources: [], gmailAccountId: undefined });
+    expect(onNext).toHaveBeenCalledWith({ sources: [] });
   });
 
-  it('opens the webview login modal when the gmail card is clicked', () => {
+  it('opens the Composio connect modal when the gmail card is clicked', () => {
+    setComposioState({});
     renderWithProviders(<SkillsStep onNext={vi.fn()} />);
 
     fireEvent.click(screen.getByTestId('onboarding-skills-gmail-button'));
@@ -43,20 +71,14 @@ describe('Onboarding SkillsStep', () => {
     expect(screen.getByText('Sign in to Gmail')).toBeInTheDocument();
   });
 
-  it('marks gmail connected and forwards webview:gmail on continue', async () => {
+  it('forwards composio:gmail on continue when gmail is connected', async () => {
+    setComposioState({ connected: true });
     const onNext = vi.fn().mockResolvedValue(undefined);
     renderWithProviders(<SkillsStep onNext={onNext} />);
 
-    fireEvent.click(screen.getByTestId('onboarding-skills-gmail-button'));
-    fireEvent.click(screen.getByRole('button', { name: 'Mark connected' }));
-
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByText('Connected')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(onNext).toHaveBeenCalledWith({
-      sources: ['webview:gmail'],
-      gmailAccountId: 'acct-test',
-    });
+    expect(onNext).toHaveBeenCalledWith({ sources: ['composio:gmail'] });
   });
 });

@@ -97,7 +97,9 @@ pub async fn run_linkedin_enrichment(
     // ── Stage 1: search Gmail for LinkedIn emails ───────────────────
     let profile_url = if let Some(url) = preset_profile_url {
         tracing::info!(url = %url, "[linkedin_enrichment] stage 1: using preset profile URL");
-        result.log.push(format!("Using preset LinkedIn profile: {url}"));
+        result
+            .log
+            .push(format!("Using preset LinkedIn profile: {url}"));
         result.stages.push(EnrichmentStage {
             id: "gmail-search".into(),
             status: StageStatus::Success,

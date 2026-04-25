@@ -1,19 +1,17 @@
 import { useState } from 'react';
 
-import { ProviderIcon } from '../../../components/accounts/providerIcons';
+import ComposioConnectModal from '../../../components/composio/ComposioConnectModal';
+import {
+  composioToolkitMeta,
+  type ComposioToolkitMeta,
+} from '../../../components/composio/toolkitMeta';
+import { useComposioIntegrations } from '../../../lib/composio/hooks';
+import { type ComposioConnection, deriveComposioState } from '../../../lib/composio/types';
 import OnboardingNextButton from '../components/OnboardingNextButton';
-import WebviewLoginModal from '../components/WebviewLoginModal';
 
 export interface SkillsConnections {
-  /** Wire-format source ids (e.g. `webview:gmail`, `composio:notion`). */
+  /** Wire-format source ids (e.g. `composio:gmail`). */
   sources: string[];
-  /**
-   * Account id of the embedded gmail webview the user just signed into,
-   * if any. Forwarded so downstream onboarding steps can drive that
-   * webview's CDP session (e.g. running the LinkedIn-enrichment Gmail
-   * scanner) without reopening the modal.
-   */
-  gmailAccountId?: string;
 }
 
 interface SkillsStepProps {
@@ -21,32 +19,67 @@ interface SkillsStepProps {
   onBack?: () => void;
 }
 
-/**
- * Onboarding "Connect your tools" step. Replaces the previous Composio
- * OAuth list with the in-app webview-login flow. For the first cut we
- * support Gmail only; more providers will follow the same pattern
- * (open a webview, let the user sign in, mark connected).
- */
+function statusDotClass(connection: ComposioConnection | undefined): string {
+  switch (deriveComposioState(connection)) {
+    case 'connected':
+      return 'bg-sage-500';
+    case 'pending':
+      return 'bg-amber-500 animate-pulse';
+    case 'error':
+      return 'bg-coral-500';
+    default:
+      return 'bg-stone-300';
+  }
+}
+
+function statusLabel(connection: ComposioConnection | undefined): string {
+  switch (deriveComposioState(connection)) {
+    case 'connected':
+      return 'Connected';
+    case 'pending':
+      return 'Connecting';
+    case 'error':
+      return 'Error';
+    default:
+      return '';
+  }
+}
+
+function statusColor(connection: ComposioConnection | undefined): string {
+  switch (deriveComposioState(connection)) {
+    case 'connected':
+      return 'text-sage-600';
+    case 'pending':
+      return 'text-amber-600';
+    case 'error':
+      return 'text-coral-600';
+    default:
+      return 'text-stone-400';
+  }
+}
+
 const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [gmailAccountId, setGmailAccountId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeToolkit, setActiveToolkit] = useState<ComposioToolkitMeta | null>(null);
 
-  const gmailConnected = gmailAccountId != null;
+  const {
+    connectionByToolkit,
+    error: composioError,
+    refresh: refreshComposio,
+  } = useComposioIntegrations();
 
-  const handleConnected = (accountId: string) => {
-    console.debug('[onboarding:skills] gmail connected via webview', { accountId });
-    setGmailAccountId(accountId);
-    setLoginOpen(false);
-  };
+  const gmailMeta = composioToolkitMeta('gmail');
+  const gmailConnection = connectionByToolkit.get('gmail');
+  const gmailState = deriveComposioState(gmailConnection);
+  const gmailConnected = gmailState === 'connected';
 
   const handleContinue = async () => {
     setError(null);
     setSubmitting(true);
     try {
-      const sources = gmailAccountId != null ? ['webview:gmail'] : [];
-      await onNext({ sources, gmailAccountId: gmailAccountId ?? undefined });
+      const sources = gmailConnected ? ['composio:gmail'] : [];
+      await onNext({ sources });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.');
     } finally {
@@ -57,51 +90,71 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-4">
-        <h1 className="text-xl font-bold mb-2 text-stone-900">Connect Your Socials</h1>
+        <h1 className="text-xl font-bold mb-2 text-stone-900">Connect your Gmail</h1>
         <p className="text-stone-600 text-sm">
-          Sign in to the social apps you already use so OpenHuman can build context for your agent.
-          Your credentials stay saved securely within your device.
+          Sign in to Gmail so OpenHuman can build a short profile about you. Your data stays on your
+          device.
         </p>
       </div>
 
       <div className="mb-4 space-y-2">
-        <button
-          type="button"
-          onClick={() => setLoginOpen(true)}
-          data-testid="onboarding-skills-gmail-button"
-          className="w-full flex items-center gap-3 rounded-xl border border-stone-100 bg-white p-3 transition-colors hover:bg-stone-50 text-left">
-          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center">
-            <ProviderIcon provider="gmail" className="h-6 w-6" />
+        {composioError ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center">
+            <p className="text-sm text-amber-700 mb-2">Could not load integrations</p>
+            <button
+              type="button"
+              onClick={() => void refreshComposio()}
+              className="text-xs font-medium text-amber-800 border border-amber-300 rounded-lg px-3 py-1 hover:bg-amber-100 transition-colors">
+              Retry
+            </button>
           </div>
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-sm font-semibold text-stone-900">Gmail</span>
-              {gmailConnected && (
-                <>
-                  <div className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-sage-500" />
-                  <span className="flex-shrink-0 text-xs text-sage-600">Connected</span>
-                </>
-              )}
+        ) : (
+          <button
+            type="button"
+            onClick={() => setActiveToolkit(gmailMeta)}
+            data-testid="onboarding-skills-gmail-button"
+            className="w-full flex items-center gap-3 rounded-xl border border-stone-100 bg-white p-3 transition-colors hover:bg-stone-50 text-left">
+            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center text-lg">
+              {gmailMeta.icon}
             </div>
-            <p className="mt-0.5 line-clamp-1 text-xs leading-relaxed text-stone-500">
-              Sign in to Gmail in an embedded browser. Used to find context about you.
-            </p>
-          </div>
 
-          <span
-            className={`flex-shrink-0 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-colors ${
-              gmailConnected
-                ? 'border-sage-200 bg-sage-50 text-sage-700'
-                : 'border-primary-200 bg-primary-50 text-primary-700'
-            }`}>
-            {gmailConnected ? 'Manage' : 'Connect'}
-          </span>
-        </button>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-semibold text-stone-900">
+                  {gmailMeta.name}
+                </span>
+                {statusLabel(gmailConnection) && (
+                  <>
+                    <div
+                      className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${statusDotClass(gmailConnection)}`}
+                    />
+                    <span className={`flex-shrink-0 text-xs ${statusColor(gmailConnection)}`}>
+                      {statusLabel(gmailConnection)}
+                    </span>
+                  </>
+                )}
+              </div>
+              <p className="mt-0.5 line-clamp-1 text-xs leading-relaxed text-stone-500">
+                {gmailMeta.description}
+              </p>
+            </div>
+
+            <span
+              className={`flex-shrink-0 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                gmailConnected
+                  ? 'border-sage-200 bg-sage-50 text-sage-700'
+                  : gmailState === 'pending'
+                    ? 'border-amber-200 bg-amber-50 text-amber-700'
+                    : 'border-primary-200 bg-primary-50 text-primary-700'
+              }`}>
+              {gmailConnected ? 'Manage' : gmailState === 'pending' ? 'Waiting' : 'Connect'}
+            </span>
+          </button>
+        )}
 
         <div className="rounded-xl border border-stone-100 bg-stone-50 px-3 py-2.5 text-center">
           <p className="text-xs text-stone-400">
-            More providers (Slack, Notion, GitHub, …) available after setup
+            More providers (Slack, Notion, Drive, …) available after setup
           </p>
         </div>
       </div>
@@ -115,16 +168,12 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
         label={gmailConnected ? 'Continue' : 'Skip for Now'}
       />
 
-      {loginOpen && (
-        <WebviewLoginModal
-          provider="gmail"
-          label="Gmail"
-          onClose={() => setLoginOpen(false)}
-          onConnected={handleConnected}
-          // Keep the gmail webview alive after sign-in so the next step
-          // (ContextGatheringStep / LinkedIn enrichment) can drive its
-          // CDP session without reopening the modal.
-          keepAliveOnConnected
+      {activeToolkit && (
+        <ComposioConnectModal
+          toolkit={activeToolkit}
+          connection={connectionByToolkit.get(activeToolkit.slug)}
+          onChanged={() => void refreshComposio()}
+          onClose={() => setActiveToolkit(null)}
         />
       )}
     </div>

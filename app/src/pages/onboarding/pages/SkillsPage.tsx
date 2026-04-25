@@ -7,16 +7,14 @@ const SkillsPage = () => {
   const navigate = useNavigate();
   const { setDraft, completeAndExit } = useOnboardingContext();
 
-  const handleNext = async ({ sources, gmailAccountId }: SkillsConnections) => {
-    console.debug('[onboarding:skills-page] next', { sources, gmailAccountId });
-    setDraft(prev => ({ ...prev, connectedSources: sources, gmailAccountId }));
+  const handleNext = async ({ sources }: SkillsConnections) => {
+    console.debug('[onboarding:skills-page] next', { sources });
+    setDraft(prev => ({ ...prev, connectedSources: sources }));
 
-    // Route to ContextGatheringStep when there's a gmail source the
-    // pipeline can drive — webview gmail (via CDP) or composio gmail
-    // (via API). Otherwise jump straight to onboarding completion.
-    const hasGmailWebview = sources.includes('webview:gmail') && !!gmailAccountId;
+    // Route to ContextGatheringStep when there's a Composio source the
+    // pipeline can drive. Otherwise jump straight to onboarding completion.
     const hasComposioSource = sources.some(s => s.startsWith('composio:'));
-    if (hasGmailWebview || hasComposioSource) {
+    if (hasComposioSource) {
       navigate('/onboarding/context');
     } else {
       await completeAndExit();

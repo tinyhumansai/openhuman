@@ -10,7 +10,6 @@ const ContextPage = () => {
   return (
     <ContextGatheringStep
       connectedSources={draft.connectedSources}
-      gmailAccountId={draft.gmailAccountId}
       // Chat-provider step is disabled for now, so context-gathering is
       // the final step when it runs — finish onboarding directly.
       onNext={() => completeAndExit()}

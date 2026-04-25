@@ -89,10 +89,7 @@ const WebviewLoginModal = ({
 
     return () => {
       const shouldPurge = !(keepAliveOnConnected && connectedRef.current);
-      console.debug('[onboarding:webview-login] tearing down', {
-        accountId,
-        purge: shouldPurge,
-      });
+      console.debug('[onboarding:webview-login] tearing down', { accountId, purge: shouldPurge });
       if (shouldPurge) {
         // Best-effort: purge the embedded webview and drop the account
         // from the store so cancel/close doesn't leave a zombie behind.

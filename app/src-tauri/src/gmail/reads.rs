@@ -123,7 +123,11 @@ pub async fn search(
     query: String,
     limit: u32,
 ) -> Result<Vec<GmailMessage>, String> {
-    log::info!("[gmail][{account_id}] search query={:?} limit={}", query, limit);
+    log::info!(
+        "[gmail][{account_id}] search query={:?} limit={}",
+        query,
+        limit
+    );
     let limit = if limit == 0 { 10 } else { limit.min(50) };
 
     let (mut cdp, session) = session::attach(account_id).await?;
@@ -248,11 +252,12 @@ fn scrape_search_results(snap: &crate::cdp::Snapshot, limit: usize) -> Vec<Gmail
     let mut out: Vec<GmailMessage> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    let rows = snap.find_all(|s, i| {
-        eq_ignore_case(s.tag(i), "tr") && s.classes(i).any(|c| c == "zA")
-    });
+    let rows =
+        snap.find_all(|s, i| eq_ignore_case(s.tag(i), "tr") && s.classes(i).any(|c| c == "zA"));
     for row in rows {
-        let Some(id) = scrape_row_thread_id(snap, row) else { continue };
+        let Some(id) = scrape_row_thread_id(snap, row) else {
+            continue;
+        };
         if id.is_empty() || !seen.insert(id.clone()) {
             continue;
         }
@@ -277,12 +282,13 @@ fn scrape_search_results(snap: &crate::cdp::Snapshot, limit: usize) -> Vec<Gmail
     // Fallback when the `tr.zA` shape isn't in use: scan anchors for
     // `permthid=thread-f:<digits>` (older Gmail/print-view bundle).
     if out.is_empty() {
-        let anchors = snap.find_all(|s, i| {
-            eq_ignore_case(s.tag(i), "a") && s.attr(i, "href").is_some()
-        });
+        let anchors =
+            snap.find_all(|s, i| eq_ignore_case(s.tag(i), "a") && s.attr(i, "href").is_some());
         for idx in anchors {
             let href = snap.attr(idx, "href").unwrap_or("");
-            let Some(id) = extract_permthid(href) else { continue };
+            let Some(id) = extract_permthid(href) else {
+                continue;
+            };
             if !seen.insert(id.clone()) {
                 continue;
             }
@@ -390,7 +396,7 @@ pub async fn find_linkedin_profile_url(account_id: &str) -> Result<Option<String
 
     // Try a sequence of progressively broader queries. The first two
     // are Gmail's transactional LinkedIn senders — `invitations-` and
-    // `notifications-` mails always carry the `comm/in/<recipient>`
+    // `notifications-` mails reliably carry the `comm/in/<recipient>`
     // footer URL. The last one is broad `from:linkedin.com` for
     // accounts whose only LinkedIn mail is promotional/company —
     // those usually don't carry the personal footer but we try
@@ -400,72 +406,76 @@ pub async fn find_linkedin_profile_url(account_id: &str) -> Result<Option<String
         "from:notifications-noreply@linkedin.com",
         "from:linkedin.com",
     ];
-
-    let mut messages: Vec<GmailMessage> = Vec::new();
-    for q in QUERIES {
-        log::info!("[gmail][{account_id}] find: trying query {:?}", q);
-        let hits = search(account_id, q.to_string(), 10).await?;
-        if !hits.is_empty() {
-            messages = hits;
-            break;
-        }
-    }
-
-    log::info!(
-        "[gmail][{account_id}] find_linkedin_profile_url got {} candidate threads",
-        messages.len()
-    );
-    if messages.is_empty() {
-        return Ok(None);
-    }
+    // Cap how many rows we open per query — opening a thread is a
+    // 2 s round-trip (navigate + iframe render), and the user's
+    // first invite/digest almost always contains the footer.
+    const ROWS_PER_QUERY: usize = 5;
 
     let (mut cdp, session) = session::attach(account_id).await?;
     let mut found: Option<String> = None;
-    for msg in &messages {
-        let url = format!("https://mail.google.com/mail/u/0/#inbox/{}", msg.id);
-        log::debug!(
-            "[gmail][{account_id}] opening thread id={} via {}",
-            msg.id,
-            url
-        );
-        if let Err(e) = cdp
-            .call(
-                "Page.navigate",
-                serde_json::json!({ "url": url }),
-                Some(&session),
-            )
-            .await
-        {
-            log::warn!(
-                "[gmail][{account_id}] thread navigate failed id={} err={}",
-                msg.id,
-                e
-            );
+    'outer: for q in QUERIES {
+        log::info!("[gmail][{account_id}] find: navigating search {:?}", q);
+        if let Err(e) = navigate_to_search(&mut cdp, &session, account_id, q).await {
+            log::warn!("[gmail][{account_id}] navigate-to-search failed: {}", e);
             continue;
         }
-        // Wait for the thread view to render and re-snapshot up to 6
-        // times. Gmail's SPA finishes lazily after the hash change; the
-        // body iframe takes a beat. The Snapshot is now iframe-aware so
-        // a successful render exposes the email body anchors here.
-        for _ in 0..6 {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let snap = match crate::cdp::Snapshot::capture(&mut cdp, &session).await {
-                Ok(s) => s,
-                Err(e) => {
-                    log::warn!(
-                        "[gmail][{account_id}] thread snapshot failed id={} err={}",
-                        msg.id, e
-                    );
-                    continue;
+        // Capture with rects so we can click each row by its bounds —
+        // Gmail's URL hash thread id is NOT the same value as the
+        // row's `data-legacy-thread-id`, so direct hash navigation
+        // doesn't open threads. A real mouse click is the only
+        // reliable way (no JS injection).
+        let snap = match crate::cdp::Snapshot::capture_with_rects(&mut cdp, &session).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("[gmail][{account_id}] result snapshot failed: {}", e);
+                continue;
+            }
+        };
+        let rows = collect_row_click_targets(&snap, ROWS_PER_QUERY);
+        log::info!(
+            "[gmail][{account_id}] find: query {:?} -> {} clickable rows",
+            q,
+            rows.len()
+        );
+        if rows.is_empty() {
+            continue;
+        }
+        for (i, rect) in rows.iter().enumerate() {
+            let (cx, cy) = rect.center();
+            log::debug!(
+                "[gmail][{account_id}] clicking row {} at ({:.0},{:.0})",
+                i,
+                cx,
+                cy
+            );
+            if let Err(e) = crate::cdp::input::click(&mut cdp, &session, cx, cy).await {
+                log::warn!("[gmail][{account_id}] row click failed: {}", e);
+                continue;
+            }
+            // Wait for the thread view + body iframe to render.
+            for _ in 0..6 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let s = match crate::cdp::Snapshot::capture(&mut cdp, &session).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        log::warn!("[gmail][{account_id}] thread snapshot failed: {}", e);
+                        continue;
+                    }
+                };
+                if let Some(u) = scrape_linkedin_url_from_dom(&s) {
+                    found = Some(u);
+                    break;
                 }
-            };
-            if let Some(u) = scrape_linkedin_url_from_dom(&snap) {
-                found = Some(u);
+            }
+            if found.is_some() {
+                break 'outer;
+            }
+            // Navigate back to the search results so the next iteration
+            // sees the row list, not the thread we just opened.
+            if let Err(e) = navigate_to_search(&mut cdp, &session, account_id, q).await {
+                log::warn!("[gmail][{account_id}] back-to-search failed: {}", e);
                 break;
             }
-        }
-        if found.is_some() {
-            break;
         }
     }
     session::detach(&mut cdp, &session).await;
@@ -476,6 +486,53 @@ pub async fn find_linkedin_profile_url(account_id: &str) -> Result<Option<String
     Ok(found)
 }
 
+/// Navigate the attached Gmail webview to a search results URL. Used
+/// both to perform the initial search and to bounce back from a
+/// thread view to the row list. Sleeps long enough for Gmail's SPA
+/// to finish swapping the panel.
+async fn navigate_to_search(
+    cdp: &mut crate::cdp::CdpConn,
+    session: &str,
+    account_id: &str,
+    query: &str,
+) -> Result<(), String> {
+    use serde_json::json;
+    let url = format!(
+        "https://mail.google.com/mail/u/0/#search/{}",
+        url_path_escape(query)
+    );
+    cdp.call(
+        "Page.navigate",
+        json!({ "url": url.clone() }),
+        Some(session),
+    )
+    .await
+    .map_err(|e| format!("gmail[{account_id}] navigate {url}: {e}"))?;
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    Ok(())
+}
+
+/// Collect bounding rects for the first `limit` `<tr class="zA">`
+/// thread rows in the result list, ready to feed to
+/// `Input.dispatchMouseEvent`. Rows without a layout rect (off-screen
+/// or `display:none`) are skipped.
+fn collect_row_click_targets(snap: &crate::cdp::Snapshot, limit: usize) -> Vec<crate::cdp::Rect> {
+    let rows =
+        snap.find_all(|s, i| eq_ignore_case(s.tag(i), "tr") && s.classes(i).any(|c| c == "zA"));
+    let mut out = Vec::with_capacity(limit);
+    for row in rows {
+        if let Some(rect) = snap.rect(row) {
+            if rect.width >= 50.0 && rect.height >= 10.0 {
+                out.push(rect);
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Walk the rendered Gmail thread-view DOM for any `<a>` whose `href`
 /// points at a LinkedIn profile (`linkedin.com/comm/in/<u>` or
 /// `linkedin.com/in/<u>`), and return the canonical profile URL.
@@ -484,9 +541,8 @@ pub async fn find_linkedin_profile_url(account_id: &str) -> Result<Option<String
 /// through `https://www.google.com/url?q=<destination>&...`, so we
 /// also scan that wrapper form.
 fn scrape_linkedin_url_from_dom(snap: &crate::cdp::Snapshot) -> Option<String> {
-    let anchors = snap.find_all(|s, i| {
-        eq_ignore_case(s.tag(i), "a") && s.attr(i, "href").is_some()
-    });
+    let anchors =
+        snap.find_all(|s, i| eq_ignore_case(s.tag(i), "a") && s.attr(i, "href").is_some());
     for idx in anchors {
         let href = snap.attr(idx, "href").unwrap_or("");
         // Direct LinkedIn link.
@@ -598,9 +654,7 @@ fn print_view_url(message_id: &str) -> String {
              &permthid=thread-f:{escaped}&permmsgid=msg-f:{escaped}"
         )
     } else {
-        format!(
-            "https://mail.google.com/mail/u/0/?ui=2&view=pt&search=all&th={escaped}"
-        )
+        format!("https://mail.google.com/mail/u/0/?ui=2&view=pt&search=all&th={escaped}")
     }
 }
 
@@ -734,7 +788,8 @@ mod tests {
 
     #[test]
     fn extract_linkedin_url_prefers_comm_in() {
-        let body = "<p>See <a href=\"https://www.linkedin.com/comm/in/jane-doe-123/\">profile</a></p>";
+        let body =
+            "<p>See <a href=\"https://www.linkedin.com/comm/in/jane-doe-123/\">profile</a></p>";
         assert_eq!(
             extract_linkedin_url(body),
             Some("https://www.linkedin.com/in/jane-doe-123".into())

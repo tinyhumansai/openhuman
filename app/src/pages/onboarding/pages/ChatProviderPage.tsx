@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
-import { useOnboardingContext } from '../OnboardingContext';
 import OnboardingNextButton from '../components/OnboardingNextButton';
+import { useOnboardingContext } from '../OnboardingContext';
 
 /**
  * Final onboarding step: pick a single chat provider.

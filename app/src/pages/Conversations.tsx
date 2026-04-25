@@ -1290,9 +1290,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
           {/* Quota / usage pills — hidden during welcome lockdown so the
               onboarding chat doesn't surface billing affordances. */}
           <div
-            className={`flex items-center justify-end gap-2 mb-2 ${
-              welcomeLocked ? 'hidden' : ''
-            }`}>
+            className={`flex items-center justify-end gap-2 mb-2 ${welcomeLocked ? 'hidden' : ''}`}>
             {(isLoadingBudget || teamUsage) && (
               <div className="relative group">
                 {teamUsage ? (
