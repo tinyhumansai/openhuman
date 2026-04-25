@@ -10,6 +10,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useRef, useState } from 'react';
 
+import WebviewHost from '../../../components/accounts/WebviewHost';
 import Button from '../../../components/ui/Button';
 import WhatLeavesLink from '../../../features/privacy/WhatLeavesLink';
 import { callCoreRpc } from '../../../services/coreRpcClient';
@@ -133,14 +134,12 @@ const ContextGatheringStep = ({
     let profileUrl: string | null = null;
     if (gmailAccountId) {
       try {
-        profileUrl = (await invoke<string | null>('gmail_find_linkedin_profile_url', {
-          accountId: gmailAccountId,
-        })) ?? null;
+        profileUrl =
+          (await invoke<string | null>('gmail_find_linkedin_profile_url', {
+            accountId: gmailAccountId,
+          })) ?? null;
         console.debug('[onboarding:context] webview gmail search result', { profileUrl });
-        setStageStatuses(prev => ({
-          ...prev,
-          'gmail-search': profileUrl ? 'done' : 'skipped',
-        }));
+        setStageStatuses(prev => ({ ...prev, 'gmail-search': profileUrl ? 'done' : 'skipped' }));
         setStageDetails(prev => ({
           ...prev,
           'gmail-search': profileUrl ?? 'No LinkedIn email found in mailbox',
@@ -285,18 +284,15 @@ const ContextGatheringStep = ({
         <div className="rounded-xl border border-stone-100 bg-stone-50 p-4 mb-5 text-sm text-stone-600 leading-relaxed">
           {hasGmail ? (
             <>
-              Uses your <span className="font-medium text-stone-900">connected Gmail</span> to find
-              your LinkedIn URL, then pulls public profile info via a third-party LinkedIn scraper.
-              The resulting summary is saved to a local profile file.
+              Using your <span className="font-medium text-stone-900">connected Gmail</span> we will
+              build a short profile about you. Everything happens in your device itself for maximum
+              privacy.
             </>
           ) : (
             <>You haven't connected Gmail. Nothing to read. You can skip this step.</>
           )}
         </div>
-        <OnboardingNextButton
-          label={hasGmail ? 'Start when ready' : 'Continue'}
-          onClick={handleStart}
-        />
+        <OnboardingNextButton label={hasGmail ? "Let's go!" : 'Continue'} onClick={handleStart} />
         <div className="mt-3 flex items-center justify-between gap-3">
           <Button variant="ghost" size="sm" onClick={() => void onNext()}>
             Skip for now
@@ -422,6 +418,35 @@ const ContextGatheringStep = ({
       <div className="mt-3 flex justify-center">
         <WhatLeavesLink />
       </div>
+
+      {/*
+        Offscreen-but-not-hidden gmail webview. The kept-alive webview
+        from SkillsStep was hidden by the modal's WebviewHost cleanup —
+        but a hidden CEF surface stops rendering, so CDP can't drive
+        Gmail's UI for the search. Mounting another WebviewHost here
+        triggers the warm-reuse path in `openWebviewAccount` which
+        repositions the same webview to *these* bounds. Setting them
+        to (-10000, -10000) at full size keeps Chromium's occlusion
+        detection happy (NSView is in the window's view hierarchy and
+        not hidden) so the page keeps rendering, but the user never
+        sees it. Mounted only while the pipeline is running and
+        unmounted on `finished` so the webview hides itself again
+        before completeAndExit purges it.
+      */}
+      {gmailAccountId && isRunning && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'fixed',
+            left: '-10000px',
+            top: '-10000px',
+            width: '1280px',
+            height: '900px',
+            pointerEvents: 'none',
+          }}>
+          <WebviewHost accountId={gmailAccountId} provider="gmail" />
+        </div>
+      )}
     </div>
   );
 };

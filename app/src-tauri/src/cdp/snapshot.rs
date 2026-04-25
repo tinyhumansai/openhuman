@@ -123,9 +123,63 @@ impl Snapshot {
         let snap: CaptureSnapshot =
             serde_json::from_value(raw).map_err(|e| format!("decode DOMSnapshot: {e}"))?;
         let strings = snap.strings;
-        let document = snap.documents.into_iter().next().unwrap_or_default();
-        let nodes = document.nodes;
-        let layout = document.layout;
+        // Merge every document (main frame + all iframes) into a single
+        // flat node array. CDP returns each frame as its own document
+        // with its own indices; we offset child node ids by the running
+        // total so cross-document attr/tag/children lookups stay
+        // consistent.
+        //
+        // Gmail email bodies render inside an iframe so without this
+        // merge our scrapers couldn't see message HTML at all. The cost
+        // is a slightly larger flat tree, but the snapshot is
+        // throwaway per call.
+        let mut merged_parent_index: Vec<i32> = Vec::new();
+        let mut merged_node_type: Vec<i32> = Vec::new();
+        let mut merged_node_name: Vec<i32> = Vec::new();
+        let mut merged_node_value: Vec<i32> = Vec::new();
+        let mut merged_attributes: Vec<Vec<i32>> = Vec::new();
+        let mut merged_layout_node_index: Vec<i32> = Vec::new();
+        let mut merged_layout_bounds: Vec<Vec<f64>> = Vec::new();
+        for document in snap.documents {
+            let doc_offset = merged_node_type.len() as i32;
+            let doc_nodes = document.nodes;
+            let doc_count = doc_nodes.node_type.len();
+            for &p in &doc_nodes.parent_index {
+                merged_parent_index.push(if p < 0 { -1 } else { p + doc_offset });
+            }
+            merged_node_type.extend(doc_nodes.node_type);
+            merged_node_name.extend(doc_nodes.node_name);
+            merged_node_value.extend(doc_nodes.node_value);
+            merged_attributes.extend(doc_nodes.attributes);
+            // Pad short vectors so they all match doc_count length —
+            // CDP is sparse when no attributes / values exist.
+            while merged_node_name.len() < merged_node_type.len() {
+                merged_node_name.push(-1);
+            }
+            while merged_node_value.len() < merged_node_type.len() {
+                merged_node_value.push(-1);
+            }
+            while merged_attributes.len() < merged_node_type.len() {
+                merged_attributes.push(Vec::new());
+            }
+            // Per-document layout indices need the same offset.
+            for &li in &document.layout.node_index {
+                merged_layout_node_index.push(if li < 0 { -1 } else { li + doc_offset });
+            }
+            merged_layout_bounds.extend(document.layout.bounds);
+            let _ = doc_count;
+        }
+        let nodes = NodeTreeSnap {
+            parent_index: merged_parent_index,
+            node_type: merged_node_type,
+            node_name: merged_node_name,
+            node_value: merged_node_value,
+            attributes: merged_attributes,
+        };
+        let layout = LayoutSnap {
+            node_index: merged_layout_node_index,
+            bounds: merged_layout_bounds,
+        };
         let count = nodes.node_type.len();
         let mut children: Vec<Vec<usize>> = vec![Vec::new(); count];
         for (i, &p) in nodes.parent_index.iter().enumerate() {

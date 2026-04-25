@@ -34,7 +34,9 @@ mod dom_snapshot;
 mod idb;
 
 const CDP_HOST: &str = "127.0.0.1";
-const CDP_PORT: u16 = 9222;
+// Must match `--remote-debugging-port=19222` in lib.rs and
+// `cdp::CDP_PORT`. Was 9222, moved to dodge ollama's listener.
+const CDP_PORT: u16 = 19222;
 /// Cadence for the expensive full scan — pages the whole IDB via CDP and
 /// captures a fresh DOM snapshot. Each pass serialises thousands of
 /// message records, so we pay this cost infrequently.

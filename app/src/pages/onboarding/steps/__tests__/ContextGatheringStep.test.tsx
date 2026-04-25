@@ -10,6 +10,13 @@ vi.mock('../../../../services/coreRpcClient', () => ({ callCoreRpc }));
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 
+// WebviewHost reads from the redux accounts slice; the offscreen mount
+// in ContextGatheringStep is purely a side-effect-free webview anchor
+// for these tests.
+vi.mock('../../../../components/accounts/WebviewHost', () => ({
+  default: () => null,
+}));
+
 describe('ContextGatheringStep', () => {
   beforeEach(() => {
     callCoreRpc.mockReset();
@@ -77,7 +84,7 @@ describe('ContextGatheringStep', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Start when ready' }));
+    fireEvent.click(screen.getByRole('button', { name: "Let's go!" }));
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('gmail_find_linkedin_profile_url', {
@@ -103,7 +110,7 @@ describe('ContextGatheringStep', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Start when ready' }));
+    fireEvent.click(screen.getByRole('button', { name: "Let's go!" }));
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledTimes(1);

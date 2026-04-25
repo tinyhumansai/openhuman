@@ -1381,15 +1381,18 @@ pub async fn webview_account_open<R: Runtime>(
     // the CDP `Page.loadEventFired` subscription and the 15 s watchdog through
     // `emit_load_finished` so we only fire the first winning signal per open.
     //
-    // Skip `data:` and `about:` URLs: both forms are used as the initial
-    // CDP placeholder before the real provider URL is navigated to.
-    // `data:` was the original placeholder format and we still see it on
-    // some platforms; `about:blank#openhuman-acct-…` is the current
-    // placeholder shape from `cdp::session::placeholder_url`. Either
-    // fires `Finished` synchronously on spawn — emitting on it would
-    // dedup-claim the load slot, suppress the real-page load event, and
-    // leave the user looking at the unloaded (black) child surface
-    // forever because the watchdog reveal already ran.
+    // Skip `data:` URLs: an early placeholder shape on some platforms
+    // fires `Finished` synchronously and we don't want to dedup-claim
+    // the load slot on it.
+    //
+    // We deliberately do NOT skip `about:blank#…` here: in practice the
+    // CDP `Page.loadEventFired` subscription isn't reaching us reliably
+    // (Gmail finishes loading but the event doesn't fire through
+    // pump_events — separate triage). The `about:blank` native load
+    // fires within ~50ms of spawn and is the only fast-path reveal we
+    // get. The downside is the user sees the placeholder briefly until
+    // the real provider page paints — better than waiting 15 s for the
+    // watchdog timeout.
     let page_load_app = app.clone();
     let page_load_account_id = args.account_id.clone();
     builder = builder.on_page_load(move |_webview, payload| {
@@ -1397,12 +1400,7 @@ pub async fn webview_account_open<R: Runtime>(
             return;
         }
         let url = payload.url();
-        if matches!(url.scheme(), "data" | "about") {
-            log::debug!(
-                "[webview-accounts][{}] on_page_load skipping placeholder scheme={}",
-                page_load_account_id,
-                url.scheme()
-            );
+        if url.scheme() == "data" {
             return;
         }
         emit_load_finished(

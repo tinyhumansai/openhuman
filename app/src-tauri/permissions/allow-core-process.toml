@@ -1,6 +1,6 @@
 [[permission]]
 identifier = "allow-core-process"
-description = "Core RPC URL, sidecar restart, dictation hotkey, and webview-account commands"
+description = "Core RPC URL, sidecar restart, dictation hotkey, webview-account, and gmail-CDP commands"
 
 [permission.commands]
 allow = [
@@ -25,5 +25,17 @@ allow = [
     "screen_share_begin_session",
     "screen_share_thumbnail",
     "screen_share_finalize_session",
+    # Gmail-CDP surface (see app/src-tauri/src/gmail/). Drives the
+    # logged-in Gmail webview through DOMSnapshot + Input events. Used
+    # by onboarding's LinkedIn-enrichment pipeline today and by future
+    # agent tools.
+    "gmail_list_labels",
+    "gmail_list_messages",
+    "gmail_search",
+    "gmail_get_message",
+    "gmail_send",
+    "gmail_trash",
+    "gmail_add_label",
+    "gmail_find_linkedin_profile_url",
 ]
 deny = []
