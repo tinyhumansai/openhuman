@@ -43,6 +43,7 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
 use crate::openhuman::tools::implementations::agent::onboarding_status::build_status_snapshot;
+use std::collections::HashSet;
 
 /// Event-bus `source` label attached to the proactive welcome message.
 /// Kept as a constant so tests and channel-side filters have a stable
@@ -197,6 +198,7 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
     let mut agent = Agent::from_config_for_agent(&config, "welcome").map_err(|e| {
         anyhow::anyhow!("build welcome agent: {e} — ensure AgentDefinitionRegistry is initialised")
     })?;
+    agent.set_visible_tool_names(HashSet::from([String::from("check_onboarding_status")]));
     agent.set_event_context(
         format!("proactive:{PROACTIVE_WELCOME_JOB_NAME}"),
         "proactive",
@@ -213,29 +215,32 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
     // morning / Hey there" — the personalised setup summary should
     // start immediately.
     let prompt = format!(
-        "[PROACTIVE INVOCATION — the user just finished the desktop onboarding wizard; \
-         this is not a reply to anything they typed, it is your opening message.]\n\n\
-         [TEMPLATE MESSAGES ALREADY DELIVERED — two short placeholder messages have \
-         already appeared in the chat before your response arrives:\n\
-         1. A time-of-day greeting naming the user's connected channels (shown immediately).\n\
-         2. \"Getting everything ready for you...\" (shown ~4 seconds later).\n\
-         Do NOT open with any greeting (\"Good morning\", \"Hey there\", \"Hi!\", etc.). \
-         Jump straight into the personalised welcome content about their specific setup.]\n\n\
-         Do NOT call `check_onboarding_status`, `complete_onboarding`, or any \
-         other tool in this run. The snapshot that `check_onboarding_status` \
-         would have returned is already provided below — `onboarding_status` is \
-         `\"pending\"` and `ready_to_complete` is `false` because no user messages \
-         have been exchanged yet. Write the personalised welcome message per your \
-         system prompt. Do NOT call `complete_onboarding` — the user has not yet \
-         had a real conversation.\n\n\
-         Output format is STRICT JSON only:\n\
-         {{\"messages\":[\"<message 1>\",\"<message 2>\",\"<message 3>\"]}}\n\
-         - Return 2-4 assistant messages.\n\
-         - Each message should be short and conversational (1-3 sentences).\n\
-         - Do not include markdown code fences or any text outside the JSON object.\n\n\
-         Status snapshot (treat exactly as if it were the tool return value):\n\
+        "[PROACTIVE — the user just finished the desktop onboarding wizard. This is your \
+         opening message, not a reply.]\n\n\
+         [Two template messages already appeared before your turn: a time-of-day greeting \
+         and \"Getting everything ready for you...\" — so DO NOT open with \"hey\", \
+         \"good morning\", \"hi\", or any greeting. Jump straight into the personalised bit.]\n\n\
+         **Voice: long-lost friend.** Warm, familiar, a little excited to see them, like you're \
+         picking up a thread. Not formal, not a host welcoming a guest. If a `### PROFILE.md` \
+         block is in your system prompt, USE IT — reference one specific thing about them \
+         (their work, interests, something they're into) the way a friend would mention \
+         it, not the way a CRM would log it. Do not surface location or other sensitive \
+         profile details unless the user already brought them up. No PROFILE.md? Skip the \
+         personal bit, stay casual.\n\n\
+         Lowercase fine. No corporate language, no \"I'm OpenHuman\", no feature pitch. Short. \
+         Then nudge once toward connecting Gmail (only if not already connected per the snapshot \
+         you fetch) — phrased as a question, not a sell.\n\n\
+         **Make exactly one tool call: `check_onboarding_status` with no args.** Use the result \
+         to know what's connected before you write. Do NOT call `complete_onboarding` — the \
+         user has not had any conversation yet. Do NOT call any other tool.\n\n\
+         A pre-built snapshot is below for context (treat as a hint; the live tool call is \
+         the source of truth):\n\
          ```json\n{snapshot_json}\n```\n\n\
-         Write your welcome messages now."
+         After the tool call, output STRICT JSON only as your final assistant message:\n\
+         {{\"messages\":[\"<m1>\",\"<m2>\"]}}\n\
+         - 2 messages. Maximum 3.\n\
+         - Each message: 1-2 short sentences. No markdown headings, no bullet lists.\n\
+         - No code fences, no text outside the JSON."
     );
     tracing::debug!(
         prompt_chars = prompt.len(),

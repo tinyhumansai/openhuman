@@ -12,7 +12,6 @@ import DictationHotkeyManager from './components/DictationHotkeyManager';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import MeshGradient from './components/MeshGradient';
-import OnboardingOverlay from './components/OnboardingOverlay';
 import RouteLoadingScreen from './components/RouteLoadingScreen';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
 import { isWelcomeLocked } from './lib/coreState/store';
@@ -26,6 +25,7 @@ import { startWebviewAccountService } from './services/webviewAccountService';
 import { persistor, store } from './store';
 import { useAppSelector } from './store/hooks';
 import { isAccountsFullscreen } from './utils/accountsFullscreen';
+import { DEV_FORCE_ONBOARDING } from './utils/config';
 
 // Attach the `webview:event` listener at app boot so background recipe
 // events (Google Meet captions → transcript flush, WhatsApp ingest, …)
@@ -53,7 +53,6 @@ function App() {
                   <CommandProvider>
                     <ServiceBlockingGate>
                       <AppShell />
-                      <OnboardingOverlay />
                       <DictationHotkeyManager />
                       <LocalAIDownloadSnackbar />
                     </ServiceBlockingGate>
@@ -79,31 +78,61 @@ function AppShell() {
   // full viewport so the embedded webview goes edge-to-edge.
   const fullscreen = isAccountsFullscreen(location.pathname, activeAccountId);
   const welcomeLocked = isWelcomeLocked(snapshot);
+  const onOnboardingRoute = location.pathname.startsWith('/onboarding');
+  const onboardingPending =
+    !!snapshot.sessionToken && (DEV_FORCE_ONBOARDING || !snapshot.onboardingCompleted);
+
+  // Onboarding gate: while `onboarding_completed=false`, force any non-
+  // onboarding route back to `/onboarding`. Once completed, bounce the
+  // user off `/onboarding` so they don't get stuck on the stepper.
+  useEffect(() => {
+    if (isBootstrapping || !snapshot.sessionToken) return;
+    if (onboardingPending && !onOnboardingRoute) {
+      console.debug(
+        `[onboarding-gate] redirecting ${location.pathname} -> /onboarding (onboarding incomplete)`
+      );
+      navigate('/onboarding', { replace: true });
+    } else if (!onboardingPending && onOnboardingRoute) {
+      console.debug(
+        `[onboarding-gate] redirecting ${location.pathname} -> /home (onboarding complete)`
+      );
+      navigate('/home', { replace: true });
+    }
+  }, [
+    isBootstrapping,
+    snapshot.sessionToken,
+    onboardingPending,
+    onOnboardingRoute,
+    location.pathname,
+    navigate,
+  ]);
 
   // Welcome lockdown (#883) — force any route other than `/chat` back to
   // `/chat` while the welcome-agent conversation is still in progress.
-  // Wait for bootstrap so we don't fight the router during initial paint,
-  // and skip while the onboarding overlay is still covering the screen
-  // (`!onboardingCompleted` — overlay handles its own navigation on
-  // dismiss).
+  // Skipped while onboarding is still pending (the onboarding gate above
+  // owns the route during that phase).
   useEffect(() => {
     if (!welcomeLocked || isBootstrapping) return;
+    if (onboardingPending) return;
     if (location.pathname === '/chat') return;
     console.debug(
       `[welcome-lock] redirecting ${location.pathname} -> /chat (chat onboarding incomplete)`
     );
     navigate('/chat', { replace: true });
-  }, [welcomeLocked, isBootstrapping, location.pathname, navigate]);
+  }, [welcomeLocked, isBootstrapping, onboardingPending, location.pathname, navigate]);
 
   return (
     <div className="relative h-screen flex flex-col overflow-hidden">
       <MeshGradient />
       <div className="app-dotted-canvas relative z-10 flex-1 flex flex-col overflow-hidden">
-        <div className={`flex-1 overflow-y-auto ${fullscreen || welcomeLocked ? '' : 'pb-16'}`}>
+        <div
+          className={`flex-1 overflow-y-auto ${
+            fullscreen || welcomeLocked || onOnboardingRoute ? '' : 'pb-16'
+          }`}>
           <GlobalUpsellBanner />
           <AppRoutes />
         </div>
-        <BottomTabBar />
+        {!onOnboardingRoute && <BottomTabBar />}
       </div>
     </div>
   );

@@ -1189,12 +1189,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let default_workspace = root.join("workspace");
+        let env = MapEnv::default();
 
         // No active user → falls back to the pre-login user directory so
         // memory/state/config are still encapsulated under users/.
-        let (oh_dir, ws_dir, source) = resolve_runtime_config_dirs(root, &default_workspace)
-            .await
-            .unwrap();
+        let (oh_dir, ws_dir, source) =
+            resolve_runtime_config_dirs_with(root, &default_workspace, &env)
+                .await
+                .unwrap();
         let expected_pre_login_dir = root.join("users").join(PRE_LOGIN_USER_ID);
         assert_eq!(oh_dir, expected_pre_login_dir);
         assert_eq!(ws_dir, expected_pre_login_dir.join("workspace"));
@@ -1202,9 +1204,10 @@ mod tests {
 
         // With active user → scopes to user dir.
         write_active_user_id(root, "u-test").unwrap();
-        let (oh_dir, ws_dir, source) = resolve_runtime_config_dirs(root, &default_workspace)
-            .await
-            .unwrap();
+        let (oh_dir, ws_dir, source) =
+            resolve_runtime_config_dirs_with(root, &default_workspace, &env)
+                .await
+                .unwrap();
         let expected_user_dir = root.join("users").join("u-test");
         assert_eq!(oh_dir, expected_user_dir);
         assert_eq!(ws_dir, expected_user_dir.join("workspace"));

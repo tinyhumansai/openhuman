@@ -16,6 +16,7 @@ use crate::openhuman::providers::{self, ConversationMessage, Provider, ToolCall}
 use crate::openhuman::tools::{Tool, ToolSpec};
 use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 impl Agent {
@@ -180,6 +181,23 @@ impl Agent {
         tx: Option<tokio::sync::mpsc::Sender<crate::openhuman::agent::progress::AgentProgress>>,
     ) {
         self.on_progress = tx;
+    }
+
+    /// Restrict which tools the main agent can see and call for this
+    /// session. An empty set restores the default "all visible"
+    /// behavior.
+    pub fn set_visible_tool_names(&mut self, names: HashSet<String>) {
+        self.visible_tool_names = names;
+        let visible_specs = if self.visible_tool_names.is_empty() {
+            (*self.tool_specs).clone()
+        } else {
+            self.tool_specs
+                .iter()
+                .filter(|spec| self.visible_tool_names.contains(&spec.name))
+                .cloned()
+                .collect()
+        };
+        self.visible_tool_specs = Arc::new(visible_specs);
     }
 
     /// Clears the agent's conversation history.

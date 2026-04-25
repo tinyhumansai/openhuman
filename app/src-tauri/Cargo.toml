@@ -70,6 +70,12 @@ tokio-tungstenite = { version = "0.24", default-features = false, features = ["c
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Tauri's vendored dev-server proxy (see `vendor/tauri-cef/.../protocol/tauri.rs`)
+# builds a reqwest 0.13 client that requires a process-wide rustls
+# `CryptoProvider`. Without one, `ClientBuilder::build()` panics with
+# "No provider set" the first time `tauri dev` proxies a request. We install
+# the ring provider at startup in `lib.rs::run()`.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 semver = "1"
 # Auto-update archive extraction. GitHub release assets ship as
 # `openhuman-core-<version>-<triple>.tar.gz` on Unix and `…<triple>.zip`

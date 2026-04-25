@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import AddAccountModal from '../components/accounts/AddAccountModal';
 import { AgentIcon, ProviderIcon } from '../components/accounts/providerIcons';
-import RespondQueuePanel from '../components/accounts/RespondQueuePanel';
+// import RespondQueuePanel from '../components/accounts/RespondQueuePanel';
 import WebviewHost from '../components/accounts/WebviewHost';
 import { isWelcomeLocked } from '../lib/coreState/store';
 import { useCoreState } from '../providers/CoreStateProvider';
@@ -81,10 +81,11 @@ const Accounts = () => {
   const unreadByAccount = useAppSelector(state => state.accounts.unread);
   const { snapshot } = useCoreState();
   const welcomeLocked = isWelcomeLocked(snapshot);
-  const respondQueue = useAppSelector(state => state.providerSurfaces.queue);
-  const respondQueueCount = useAppSelector(state => state.providerSurfaces.count);
-  const respondQueueStatus = useAppSelector(state => state.providerSurfaces.status);
-  const respondQueueError = useAppSelector(state => state.providerSurfaces.error);
+  // Respond-queue selectors disabled while RespondQueuePanel is hidden.
+  // const respondQueue = useAppSelector(state => state.providerSurfaces.queue);
+  // const respondQueueCount = useAppSelector(state => state.providerSurfaces.count);
+  // const respondQueueStatus = useAppSelector(state => state.providerSurfaces.status);
+  // const respondQueueError = useAppSelector(state => state.providerSurfaces.error);
 
   const [addOpen, setAddOpen] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
@@ -248,7 +249,9 @@ const Accounts = () => {
             <div className="min-w-0 flex-1">
               <AgentChatPanel />
             </div>
-            <RespondQueuePanel
+            {/* Respond queue side panel hidden for now — bring back when
+                the cross-provider surface is ready to ship. */}
+            {/* <RespondQueuePanel
               items={respondQueue}
               count={respondQueueCount}
               status={respondQueueStatus}
@@ -256,7 +259,7 @@ const Accounts = () => {
               onRefresh={() => {
                 void dispatch(fetchRespondQueue());
               }}
-            />
+            /> */}
           </div>
         ) : active ? (
           <div className="flex-1">

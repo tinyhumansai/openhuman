@@ -24,12 +24,17 @@ const SettingsHome = () => {
   };
 
   const clearAllAppData = async () => {
+    // 1. Logout — clear session in core (auth_clear_session). Best-effort:
+    //    if the core process is wedged we still want to wipe local data.
     try {
       await clearSession();
     } catch (err) {
       console.warn('[Settings] Rust logout failed during clearAllAppData:', err);
     }
 
+    // 2. Delete workspace folder + restart core. The core RPC removes both
+    //    the active openhuman_dir and the default ~/.openhuman, then we
+    //    restart the sidecar so it boots from a clean slate.
     try {
       await resetOpenHumanDataAndRestartCore();
     } catch (err) {
@@ -37,9 +42,24 @@ const SettingsHome = () => {
       throw err;
     }
 
-    await persistor.purge();
+    // 3. Purge redux-persist storage + browser storage. `persistor.purge()`
+    //    wipes the persisted backend; localStorage/sessionStorage clears
+    //    everything else (auth flags, theme, etc.).
+    try {
+      await persistor.purge();
+    } catch (err) {
+      console.warn('[Settings] persistor.purge failed:', err);
+      setError('Failed to clear persisted app state. Please try again.');
+      return;
+    }
     window.localStorage.clear();
     window.sessionStorage.clear();
+
+    // 4. Hard-reload to reset in-memory Redux + React state. Without this
+    //    the live store still holds user/socket/account data even though
+    //    the persisted copy is gone — the UI would look logged-in until
+    //    the user manually refreshes.
+    window.location.reload();
   };
 
   const handleLogoutAndClearData = async () => {
@@ -49,6 +69,7 @@ const SettingsHome = () => {
       await clearAllAppData(); // This will redirect to login
     } catch (_error) {
       setError('Failed to clear data and logout. Please try again.');
+    } finally {
       setIsLoading(false);
     }
   };

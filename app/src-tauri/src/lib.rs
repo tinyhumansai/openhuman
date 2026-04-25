@@ -330,6 +330,42 @@ async fn restart_core_process(
     state.inner().restart().await
 }
 
+/// Fire the proactive welcome agent on a detached core-side task.
+///
+/// Returns immediately; the agent runs in the background and publishes
+/// its messages over the proactive channel. The renderer calls this
+/// once the chat surface is ready (e.g. after onboarding completes and
+/// `/home` mounts) instead of relying on the core to auto-spawn the
+/// welcome on a config-flag transition.
+#[tauri::command]
+async fn spawn_welcome_agent() -> Result<(), String> {
+    let url = core_rpc_url();
+    log::info!("[welcome] spawn_welcome_agent: invoking openhuman.agent_spawn_welcome via {url}");
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "openhuman.agent_spawn_welcome",
+        "params": {},
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("build reqwest client: {e}"))?;
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("POST {url} failed: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let txt = resp.text().await.unwrap_or_default();
+        return Err(format!("core returned {status}: {txt}"));
+    }
+    Ok(())
+}
+
 /// Information about an available shell-app update returned to the frontend.
 #[derive(Debug, Clone, serde::Serialize)]
 struct AppUpdateInfo {
@@ -711,6 +747,14 @@ pub fn run() {
         .parse_filters(&default_filter)
         .try_init();
 
+    // The vendored tauri-cef dev-server proxy builds a reqwest 0.13 client
+    // (see vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) which calls
+    // rustls 0.23's `CryptoProvider::get_default()`. rustls 0.23 no longer
+    // picks a provider implicitly — without one installed, the proxy panics
+    // with "No provider set" the first time `tauri dev` forwards a request.
+    // Install the ring provider once before any HTTPS client is built.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // CEF cache-lock preflight (macOS only): if another OpenHuman instance
     // is already holding the CEF user-data-dir, the vendored
     // `tauri-runtime-cef` panics inside `cef::initialize` with a Rust
@@ -742,11 +786,20 @@ pub fn run() {
         // manager. Both are no-ops on Windows/Linux, so safe to always set.
         //
         // In debug builds we additionally expose the Chrome DevTools
-        // Protocol on localhost:9222 so every CEF webview can be inspected
-        // from a regular browser (right-click "Inspect" does not propagate
-        // to CEF child webviews on macOS). Release builds intentionally do
-        // NOT open the CDP port — it would let any process on the machine
-        // drive the embedded WhatsApp/Slack/etc. webviews.
+        // Protocol on localhost:19222 so every CEF webview can be
+        // inspected from a regular browser (right-click "Inspect" does
+        // not propagate to CEF child webviews on macOS). Release builds
+        // intentionally do NOT open the CDP port — it would let any
+        // process on the machine drive the embedded WhatsApp/Slack/etc.
+        // webviews.
+        //
+        // The port was 9222 (Chromium's default) but ollama's
+        // OpenAI-compatible server squats on 127.0.0.1:9222 in some
+        // installs, which silently broke CDP attach (our client hit
+        // ollama, the WS handshake failed, child webviews stayed at
+        // about:blank → black screen). Picked 19222 to dodge that
+        // collision; if you change it here also update
+        // `cdp::CDP_PORT` and `whatsapp_scanner::CDP_PORT`.
         //
         // NOTE: flags must be prefixed with `--`. The runtime's
         // `on_before_command_line_processing` dispatch (in
@@ -766,7 +819,7 @@ pub fn run() {
             ("--enable-features", Some("SharedArrayBuffer")),
         ];
         if cfg!(debug_assertions) {
-            args.push(("--remote-debugging-port", Some("9222")));
+            args.push(("--remote-debugging-port", Some("19222")));
         }
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
@@ -933,6 +986,14 @@ pub fn run() {
             // until the Ready event fires. Creating the tray here would panic on
             // Linux with "GTK has not been initialized".
             log::info!("[tray] deferring tray setup to RunEvent::Ready");
+
+            // CEF cold-start warmup was here — disabled while we triage a
+            // blank-webview report on first onboarding open. Restore once
+            // we can repro that the warmup child doesn't interfere with
+            // subsequent child-webview spawns on the main window. The
+            // build/test code we removed:
+            //   - 500ms post-setup timer
+            //   - parent.add_child("cef-warmup", about:blank, (-10000,-10000), 1x1)
 
             // Dev convenience: if OPENHUMAN_DEV_AUTO_WHATSAPP=<account-id>
             // is set, spawn that account's webview at startup so the
@@ -1205,6 +1266,7 @@ pub fn run() {
             check_app_update,
             apply_app_update,
             restart_core_process,
+            spawn_welcome_agent,
             service_install_direct,
             service_start_direct,
             service_stop_direct,
@@ -1241,6 +1303,7 @@ pub fn run() {
             gmail::gmail_send,
             gmail::gmail_trash,
             gmail::gmail_add_label,
+            gmail::gmail_find_linkedin_profile_url,
             activate_main_window,
             show_native_notification
         ])

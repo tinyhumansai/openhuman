@@ -880,10 +880,10 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             : 'flex-1 flex flex-col min-w-0 max-w-2xl bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden'
         }>
         {/* Chat header — only shown in page mode; the sidebar embed uses the
-            parent page's chrome instead. During welcome lockdown (#883)
-            the sidebar toggle and "+ New" are hidden because the user has
-            no sidebar to toggle and cannot spawn new threads. */}
-        {!isSidebar && (
+            parent page's chrome instead. Hidden entirely during welcome
+            lockdown (#883) so the onboarding chat is just the conversation
+            with no chrome around it. */}
+        {!isSidebar && !welcomeLocked && (
           <div className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100">
             {!welcomeLocked && (
               <button
@@ -1238,121 +1238,127 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
         )}
 
         <div className="flex-shrink-0 border-t border-stone-200 px-4 py-3">
-          {isNearLimit &&
-            !isAtLimit &&
-            isFreeTier &&
-            shouldShowBanner('conversations-warning', 24 * 60 * 60 * 1000) && (
-              <div className="mb-3">
-                <UpsellBanner
-                  variant="warning"
-                  title="Approaching usage limit"
-                  message={`You've used ${Math.round(Math.max(usagePct10h, usagePct7d) * 100)}% of your inference budget. Upgrade for higher limits.`}
-                  ctaLabel="Upgrade"
-                  onCtaClick={() => navigate('/settings/billing')}
-                  dismissible
-                  onDismiss={() => dismissBanner('conversations-warning')}
-                />
-              </div>
-            )}
-          {teamUsage && (shouldShowBudgetCompletedMessage || isRateLimited) && (
-            <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <svg
-                  className="w-4 h-4 text-coral-400 flex-shrink-0"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                  />
-                </svg>
-                <p className="text-xs text-coral-600 truncate">
-                  {shouldShowBudgetCompletedMessage
-                    ? teamUsage.cycleBudgetUsd > 0
-                      ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
-                      : 'Your included budget is complete. Add credits or upgrade to continue.'
-                    : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
-                </p>
-              </div>
-              {shouldShowBudgetCompletedMessage && (
-                <button
-                  onClick={() => navigate('/settings/billing')}
-                  className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
-                  Top Up
-                </button>
-              )}
-            </div>
-          )}
-
-          <div className="flex items-center justify-end gap-2 mb-2">
-            {(isLoadingBudget || teamUsage) && (
-              <div className="relative group">
-                {teamUsage ? (
-                  <div className="flex items-center gap-2">
-                    {!teamUsage.bypassCycleLimit && (
-                      <LimitPill
-                        label="5h"
-                        usedPct={
-                          teamUsage.fiveHourCapUsd > 0
-                            ? Math.min(1, teamUsage.cycleLimit5hr / teamUsage.fiveHourCapUsd)
-                            : 0
-                        }
-                      />
-                    )}
-                    <LimitPill
-                      label="7d"
-                      usedPct={
-                        teamUsage.cycleBudgetUsd > 0
-                          ? Math.min(
-                              1,
-                              (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) /
-                                teamUsage.cycleBudgetUsd
-                            )
-                          : 0
-                      }
+          {!welcomeLocked && (
+            <>
+              {isNearLimit &&
+                !isAtLimit &&
+                isFreeTier &&
+                shouldShowBanner('conversations-warning', 24 * 60 * 60 * 1000) && (
+                  <div className="mb-3">
+                    <UpsellBanner
+                      variant="warning"
+                      title="Approaching usage limit"
+                      message={`You've used ${Math.round(Math.max(usagePct10h, usagePct7d) * 100)}% of your inference budget. Upgrade for higher limits.`}
+                      ctaLabel="Upgrade"
+                      onCtaClick={() => navigate('/settings/billing')}
+                      dismissible
+                      onDismiss={() => dismissBanner('conversations-warning')}
                     />
                   </div>
-                ) : (
-                  <span className="text-[10px] text-stone-400 animate-pulse">loading…</span>
                 )}
-                {teamUsage && (
-                  <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
-                    <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
-                      {!teamUsage.bypassCycleLimit && (
-                        <div className="flex items-center justify-between gap-4">
-                          <span className="text-stone-400">5-hour limit</span>
-                          <span>
-                            ${(teamUsage.cycleLimit5hr ?? 0).toFixed(2)} / $
-                            {(teamUsage.fiveHourCapUsd ?? 0).toFixed(2)}
-                            {teamUsage.fiveHourResetsAt && (
-                              <span className="text-stone-400 ml-1">
-                                — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="text-stone-400">Weekly limit</span>
-                        <span>
-                          ${(teamUsage.remainingUsd ?? 0).toFixed(2)} / $
-                          {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} left
-                          {teamUsage.cycleEndsAt && (
-                            <span className="text-stone-400 ml-1">
-                              — resets {formatResetTime(teamUsage.cycleEndsAt)}
-                            </span>
-                          )}
-                        </span>
+              {teamUsage && (shouldShowBudgetCompletedMessage || isRateLimited) && (
+                <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <svg
+                      className="w-4 h-4 text-coral-400 flex-shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                      />
+                    </svg>
+                    <p className="text-xs text-coral-600 truncate">
+                      {shouldShowBudgetCompletedMessage
+                        ? teamUsage.cycleBudgetUsd > 0
+                          ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
+                          : 'Your included budget is complete. Add credits or upgrade to continue.'
+                        : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
+                    </p>
+                  </div>
+                  {shouldShowBudgetCompletedMessage && (
+                    <button
+                      onClick={() => navigate('/settings/billing')}
+                      className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
+                      Top Up
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Quota / usage pills — hidden during welcome lockdown so the
+                  onboarding chat doesn't surface billing affordances. */}
+              <div className="flex items-center justify-end gap-2 mb-2">
+                {(isLoadingBudget || teamUsage) && (
+                  <div className="relative group">
+                    {teamUsage ? (
+                      <div className="flex items-center gap-2">
+                        {!teamUsage.bypassCycleLimit && (
+                          <LimitPill
+                            label="5h"
+                            usedPct={
+                              teamUsage.fiveHourCapUsd > 0
+                                ? Math.min(1, teamUsage.cycleLimit5hr / teamUsage.fiveHourCapUsd)
+                                : 0
+                            }
+                          />
+                        )}
+                        <LimitPill
+                          label="7d"
+                          usedPct={
+                            teamUsage.cycleBudgetUsd > 0
+                              ? Math.min(
+                                  1,
+                                  (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) /
+                                    teamUsage.cycleBudgetUsd
+                                )
+                              : 0
+                          }
+                        />
                       </div>
-                    </div>
+                    ) : (
+                      <span className="text-[10px] text-stone-400 animate-pulse">loading…</span>
+                    )}
+                    {teamUsage && (
+                      <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
+                        <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
+                          {!teamUsage.bypassCycleLimit && (
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="text-stone-400">5-hour limit</span>
+                              <span>
+                                ${(teamUsage.cycleLimit5hr ?? 0).toFixed(2)} / $
+                                {(teamUsage.fiveHourCapUsd ?? 0).toFixed(2)}
+                                {teamUsage.fiveHourResetsAt && (
+                                  <span className="text-stone-400 ml-1">
+                                    — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-stone-400">Weekly limit</span>
+                            <span>
+                              ${(teamUsage.remainingUsd ?? 0).toFixed(2)} / $
+                              {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} left
+                              {teamUsage.cycleEndsAt && (
+                                <span className="text-stone-400 ml-1">
+                                  — resets {formatResetTime(teamUsage.cycleEndsAt)}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-          </div>
+            </>
+          )}
 
           {sendError && (
             <div className="flex items-center justify-between mb-2">

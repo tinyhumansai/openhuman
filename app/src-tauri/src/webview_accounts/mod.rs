@@ -253,6 +253,70 @@ fn popup_should_stay_in_app(provider: &str, url: &Url) -> bool {
         _ => false,
     }
 }
+
+/// `true` if a popup request should be denied AND the parent webview
+/// should be navigated to the popup URL instead.
+///
+/// Used for Google's "Sign in" / "Use another account" flow: clicking
+/// the link issues `window.open("https://accounts.google.com/...")`. We
+/// can't route that to the system browser (the auth cookie would land
+/// in the wrong jar) and we don't want to let CEF spawn an unmanaged
+/// child window (it has no host rect, so it renders blank/black). The
+/// safe option is to deny the popup and replace the parent's URL — the
+/// in-app webview was already at mail.google.com so taking over the
+/// frame to finish auth is exactly what the user expects.
+fn popup_should_navigate_parent(provider: &str, url: &Url) -> Option<Url> {
+    match provider {
+        "gmail" | "google-meet" => {
+            if url.scheme() == "about" {
+                return None;
+            }
+            if is_google_auth_popup(url) {
+                Some(url.clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn is_google_auth_popup(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let is_google_auth_host =
+        host == "accounts.google.com" || host == "accounts.googleusercontent.com";
+    if !is_google_auth_host {
+        return false;
+    }
+
+    let path = url.path().to_ascii_lowercase();
+    if path.contains("signin")
+        || path.contains("servicelogin")
+        || path.contains("accountchooser")
+        || path.contains("chooseaccount")
+    {
+        return true;
+    }
+
+    url.query_pairs().any(|(key, value)| {
+        let k = key.to_ascii_lowercase();
+        let v = value.to_ascii_lowercase();
+        matches!(k.as_str(), "flowname" | "service" | "continue")
+            && (v.contains("signin")
+                || v.contains("servicelogin")
+                || v.contains("accountchooser")
+                || v.contains("chooseaccount"))
+    })
+}
+
+fn redact_navigation_url(url: &Url) -> String {
+    let mut safe = url.clone();
+    safe.set_query(None);
+    safe.set_fragment(None);
+    safe.to_string()
+}
 /// Unwrap provider-side "link safety" redirects so the system browser
 /// lands on the real destination.
 ///
@@ -1185,7 +1249,27 @@ pub async fn webview_account_open<R: Runtime>(
     let nav_provider = args.provider.clone();
     let nav_app = app.clone();
     let nav_label = label.clone();
+    let nav_account_id = args.account_id.clone();
     builder = builder.on_navigation(move |url| {
+        // Notify the frontend on every committed navigation. The
+        // `webview-account:load` event is dedup'd per cold open, so it
+        // can't be used to spot post-login redirects (e.g. Gmail's
+        // accounts.google.com → mail.google.com hop). Frontends that
+        // care about live URL transitions — onboarding's auto-detect
+        // for "user finished signing in", for instance — listen here.
+        if let Err(err) = nav_app.emit(
+            "webview-account:navigate",
+            serde_json::json!({
+                "account_id": nav_account_id,
+                "provider": nav_provider,
+                "url": redact_navigation_url(url),
+            }),
+        ) {
+            log::debug!(
+                "[webview-accounts] emit webview-account:navigate failed: {}",
+                err
+            );
+        }
         if let Some(rewritten) = rewrite_provider_deep_link(&nav_provider, url) {
             log::info!(
                 "[webview-accounts] deep-link rewrite {} → {} (provider={})",
@@ -1266,6 +1350,27 @@ pub async fn webview_account_open<R: Runtime>(
             });
             return NewWindowResponse::Deny;
         }
+        if let Some(target) = popup_should_navigate_parent(&popup_provider, &url) {
+            log::info!(
+                "[webview-accounts] new-window {} → navigate parent (provider={})",
+                redact_navigation_url(&url),
+                popup_provider
+            );
+            let app = popup_app.clone();
+            let label = popup_label.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(wv) = app.get_webview(&label) {
+                    if let Err(e) = wv.navigate(target) {
+                        log::warn!(
+                            "[webview-accounts] popup→parent navigate failed label={} err={}",
+                            label,
+                            e
+                        );
+                    }
+                }
+            });
+            return NewWindowResponse::Deny;
+        }
         if popup_should_stay_in_app(&popup_provider, &url) {
             log::info!(
                 "[webview-accounts] new-window request {} → in-app popup (provider={})",
@@ -1313,10 +1418,18 @@ pub async fn webview_account_open<R: Runtime>(
     // the CDP `Page.loadEventFired` subscription and the 15 s watchdog through
     // `emit_load_finished` so we only fire the first winning signal per open.
     //
-    // Skip `data:` URLs: the initial CDP placeholder also fires `Finished`
-    // before the real provider URL is navigated to — emitting on the
-    // placeholder would release the overlay too early and the user would
-    // briefly see the blank placeholder before the real page paints.
+    // Skip `data:` URLs: an early placeholder shape on some platforms
+    // fires `Finished` synchronously and we don't want to dedup-claim
+    // the load slot on it.
+    //
+    // We deliberately do NOT skip `about:blank#…` here: in practice the
+    // CDP `Page.loadEventFired` subscription isn't reaching us reliably
+    // (Gmail finishes loading but the event doesn't fire through
+    // pump_events — separate triage). The `about:blank` native load
+    // fires within ~50ms of spawn and is the only fast-path reveal we
+    // get. The downside is the user sees the placeholder briefly until
+    // the real provider page paints — better than waiting 15 s for the
+    // watchdog timeout.
     let page_load_app = app.clone();
     let page_load_account_id = args.account_id.clone();
     builder = builder.on_page_load(move |_webview, payload| {
@@ -2363,5 +2476,81 @@ mod tests {
             "zoom",
             &url("https://example.com/wc/join/888")
         ));
+    }
+
+    // ── popup_should_navigate_parent: Gmail Google-auth popups ────────
+
+    #[test]
+    fn gmail_accounts_popup_navigates_parent() {
+        // Clicking "Sign in" on mail.google.com opens accounts.google.com
+        // in a popup; routing it to the system browser breaks the OAuth
+        // round-trip because the auth response would land in the wrong
+        // cookie jar. Allowing CEF to spawn an unmanaged popup leaves it
+        // blank/black (no host slot, no bounds). Navigate the parent
+        // instead so the auth flow lands in the existing webview.
+        assert_eq!(
+            popup_should_navigate_parent(
+                "gmail",
+                &url("https://accounts.google.com/signin/v2/identifier"),
+            )
+            .map(|u| u.to_string()),
+            Some("https://accounts.google.com/signin/v2/identifier".to_string())
+        );
+    }
+
+    #[test]
+    fn gmail_about_blank_popup_does_not_navigate_parent() {
+        // about:blank popups are non-actionable — there's no URL yet to
+        // navigate the parent to. Fall through to the popup branch.
+        assert!(popup_should_navigate_parent("gmail", &url("about:blank")).is_none());
+    }
+
+    #[test]
+    fn gmail_foreign_host_popup_does_not_navigate_parent() {
+        // External link popups still belong in the system browser.
+        assert!(
+            popup_should_navigate_parent("gmail", &url("https://example.com/share?u=…")).is_none()
+        );
+    }
+
+    #[test]
+    fn gmail_internal_non_auth_popup_does_not_navigate_parent() {
+        assert!(popup_should_navigate_parent(
+            "gmail",
+            &url("https://mail.google.com/mail/u/0/#inbox")
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn google_meet_accounts_popup_navigates_parent() {
+        assert!(popup_should_navigate_parent(
+            "google-meet",
+            &url("https://accounts.google.com/signin/v2/identifier"),
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn gmail_service_login_popup_navigates_parent() {
+        assert_eq!(
+            popup_should_navigate_parent(
+                "gmail",
+                &url("https://accounts.google.com/ServiceLogin?continue=https://mail.google.com"),
+            )
+            .map(|u| u.to_string()),
+            Some(
+                "https://accounts.google.com/ServiceLogin?continue=https://mail.google.com"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn redact_navigation_url_strips_query_and_fragment() {
+        let redacted = redact_navigation_url(&url(
+            "https://accounts.google.com/o/oauth2/v2/auth?code=secret#frag",
+        ));
+        assert_eq!(redacted, "https://accounts.google.com/o/oauth2/v2/auth");
     }
 }
