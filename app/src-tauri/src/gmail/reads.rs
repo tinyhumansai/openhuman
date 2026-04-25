@@ -848,7 +848,8 @@ mod tests {
 
     #[test]
     fn extract_google_redirect_target_returns_decoded_q_param() {
-        let href = "https://www.google.com/url?q=https%3A%2F%2Fwww.linkedin.com%2Fin%2Fjane-doe&sa=D";
+        let href =
+            "https://www.google.com/url?q=https%3A%2F%2Fwww.linkedin.com%2Fin%2Fjane-doe&sa=D";
         assert_eq!(
             extract_google_redirect_target(href),
             Some("https://www.linkedin.com/in/jane-doe".into())
@@ -858,7 +859,9 @@ mod tests {
     #[test]
     fn extract_google_redirect_target_ignores_non_google_or_missing_q() {
         assert_eq!(
-            extract_google_redirect_target("https://example.com/url?q=https://www.linkedin.com/in/nope"),
+            extract_google_redirect_target(
+                "https://example.com/url?q=https://www.linkedin.com/in/nope"
+            ),
             None
         );
         assert_eq!(

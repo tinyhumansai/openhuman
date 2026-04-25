@@ -542,8 +542,7 @@ mod tests {
             .and_then(Value::as_array)
             .expect("logs array");
         assert!(logs.iter().any(|entry| {
-            entry.as_str()
-                == Some("proactive welcome skipped: desktop onboarding not completed")
+            entry.as_str() == Some("proactive welcome skipped: desktop onboarding not completed")
         }));
 
         unsafe {
@@ -581,8 +580,7 @@ mod tests {
             .and_then(Value::as_array)
             .expect("logs array");
         assert!(logs.iter().any(|entry| {
-            entry.as_str()
-                == Some("proactive welcome skipped: chat onboarding already completed")
+            entry.as_str() == Some("proactive welcome skipped: chat onboarding already completed")
         }));
 
         unsafe {
