@@ -282,8 +282,7 @@ fn extract_archive(archive_path: &Path, dest: &Path) -> Result<(), String> {
         .and_then(|s| s.to_str())
         .unwrap_or("");
 
-    let file =
-        std::fs::File::open(archive_path).map_err(|e| format!("open archive: {e}"))?;
+    let file = std::fs::File::open(archive_path).map_err(|e| format!("open archive: {e}"))?;
 
     if archive_name.ends_with(".zip") {
         let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("read zip: {e}"))?;
@@ -292,8 +291,7 @@ fn extract_archive(archive_path: &Path, dest: &Path) -> Result<(), String> {
             .map_err(|e| format!("zip entry '{inner_name}' missing: {e}"))?;
         let tmp = unique_tmp_path(dest);
         {
-            let mut out =
-                std::fs::File::create(&tmp).map_err(|e| format!("create temp: {e}"))?;
+            let mut out = std::fs::File::create(&tmp).map_err(|e| format!("create temp: {e}"))?;
             std::io::copy(&mut entry, &mut out).map_err(|e| format!("extract zip: {e}"))?;
             out.flush().map_err(|e| format!("flush extracted: {e}"))?;
         }
@@ -320,8 +318,7 @@ fn extract_archive(archive_path: &Path, dest: &Path) -> Result<(), String> {
         }
         let tmp = unique_tmp_path(dest);
         {
-            let mut out =
-                std::fs::File::create(&tmp).map_err(|e| format!("create temp: {e}"))?;
+            let mut out = std::fs::File::create(&tmp).map_err(|e| format!("create temp: {e}"))?;
             std::io::copy(&mut entry, &mut out).map_err(|e| format!("extract tar: {e}"))?;
             out.flush().map_err(|e| format!("flush extracted: {e}"))?;
         }
@@ -689,16 +686,24 @@ mod tests {
         let triple = platform_triple();
         let archive_ext = if cfg!(windows) { "zip" } else { "tar.gz" };
         let assets = vec![
-            asset(&format!("openhuman-core-0.52.26-{triple}.{archive_ext}.sha256")),
-            asset(&format!("openhuman-core-0.52.26-{triple}.{archive_ext}.sig")),
+            asset(&format!(
+                "openhuman-core-0.52.26-{triple}.{archive_ext}.sha256"
+            )),
+            asset(&format!(
+                "openhuman-core-0.52.26-{triple}.{archive_ext}.sig"
+            )),
         ];
         assert!(find_platform_asset(&assets).is_none());
     }
 
     #[test]
     fn is_archive_asset_recognises_known_extensions() {
-        assert!(is_archive_asset("openhuman-core-0.52.26-aarch64-apple-darwin.tar.gz"));
-        assert!(is_archive_asset("openhuman-core-0.52.26-x86_64-pc-windows-msvc.zip"));
+        assert!(is_archive_asset(
+            "openhuman-core-0.52.26-aarch64-apple-darwin.tar.gz"
+        ));
+        assert!(is_archive_asset(
+            "openhuman-core-0.52.26-x86_64-pc-windows-msvc.zip"
+        ));
         assert!(is_archive_asset("foo.tgz"));
         assert!(!is_archive_asset("openhuman-core-aarch64-apple-darwin"));
         assert!(!is_archive_asset("openhuman-core.exe"));
