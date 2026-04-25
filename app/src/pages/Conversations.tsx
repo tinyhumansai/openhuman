@@ -10,6 +10,8 @@ import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDism
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
+import { isWelcomeLocked } from '../lib/coreState/store';
+import { useCoreState } from '../providers/CoreStateProvider';
 import { chatCancel, chatSend, useRustChat } from '../services/chatService';
 import {
   beginInferenceTurn,
@@ -90,6 +92,16 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     isLoadingSuggestions,
     activeThreadId,
   } = useAppSelector(state => state.thread);
+
+  const { snapshot } = useCoreState();
+  const welcomeLocked = isWelcomeLocked(snapshot);
+  const chatOnboardingCompleted = snapshot.chatOnboardingCompleted;
+  const previousChatOnboardingCompletedRef = useRef<boolean | null>(null);
+  // Guard against the mount-time `loadThreads()` promise resolving AFTER
+  // the welcome-lock unlock transition creates a fresh thread. Without
+  // this, the stale `.then(...)` would re-select the old welcome thread
+  // and clobber the auto-created one (#883 CodeRabbit feedback).
+  const skipInitialThreadSelectionRef = useRef(false);
 
   const [showSidebar, setShowSidebar] = useState(true);
   const [inputValue, setInputValue] = useState('');
@@ -177,7 +189,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     void dispatch(loadThreads())
       .unwrap()
       .then(data => {
-        if (cancelled) return;
+        if (cancelled || skipInitialThreadSelectionRef.current) return;
         if (data.threads.length > 0) {
           const mostRecent = data.threads[0];
           dispatch(setSelectedThread(mostRecent.id));
@@ -198,6 +210,28 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       void dispatch(loadThreadMessages(selectedThreadId));
     }
   }, [selectedThreadId, dispatch]);
+
+  // Welcome lockdown unlock (#883) — when `chatOnboardingCompleted`
+  // transitions from `false` → `true` (the welcome agent just called
+  // `complete_onboarding(action: "complete")`), open a fresh thread so
+  // the user starts their first "real" conversation with the orchestrator
+  // instead of continuing the welcome thread. Ref-tracked one-shot so
+  // the 2s snapshot poll cannot re-fire this.
+  useEffect(() => {
+    const prev = previousChatOnboardingCompletedRef.current;
+    previousChatOnboardingCompletedRef.current = chatOnboardingCompleted;
+    if (prev === false && chatOnboardingCompleted === true) {
+      // Signal the mount-time `loadThreads()` promise to bail if it is
+      // still pending — otherwise its stale resolution would overwrite
+      // our freshly created thread selection.
+      skipInitialThreadSelectionRef.current = true;
+      console.debug('[welcome-lock] chat onboarding completed — opening new thread');
+      void handleCreateNewThread();
+    }
+    // handleCreateNewThread is stable for the component lifetime (only
+    // uses `dispatch`); the ref guards against duplicate fires.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatOnboardingCompleted]);
 
   useEffect(() => {
     if (selectedThreadId && messages.length === 0) {
@@ -372,6 +406,13 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const handleSlashCommand = (command: string): boolean => {
     const cmd = command.toLowerCase();
     if (cmd === '/new' || cmd === '/clear') {
+      // Welcome lockdown (#883) — consume the command so it is not sent
+      // to the agent, but skip thread creation/reset so the user cannot
+      // escape the welcome conversation via `/new` or `/clear`.
+      if (welcomeLocked) {
+        setInputValue('');
+        return true;
+      }
       setInputValue('');
       void handleCreateNewThread();
       return true;
@@ -726,8 +767,10 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
           : 'h-full relative z-10 flex justify-center overflow-hidden p-4 pt-6 gap-3'
       }>
       {/* Thread sidebar — only shown in page mode (when Conversations itself
-          is a top-level route, not embedded as a sidebar in another page). */}
-      {!isSidebar && showSidebar && (
+          is a top-level route, not embedded as a sidebar in another page).
+          Suppressed during welcome lockdown (#883) — the user must stay in
+          the welcome conversation. */}
+      {!isSidebar && showSidebar && !welcomeLocked && (
         <div className="w-64 flex-shrink-0 flex flex-col bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100">
             <h2 className="text-sm font-semibold text-stone-700">Threads</h2>
@@ -837,32 +880,38 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             : 'flex-1 flex flex-col min-w-0 max-w-2xl bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden'
         }>
         {/* Chat header — only shown in page mode; the sidebar embed uses the
-            parent page's chrome instead. */}
+            parent page's chrome instead. During welcome lockdown (#883)
+            the sidebar toggle and "+ New" are hidden because the user has
+            no sidebar to toggle and cannot spawn new threads. */}
         {!isSidebar && (
           <div className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100">
-            <button
-              onClick={() => setShowSidebar(prev => !prev)}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
-              title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}>
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 6h16M4 12h16M4 18h16"
-                />
-              </svg>
-            </button>
+            {!welcomeLocked && (
+              <button
+                onClick={() => setShowSidebar(prev => !prev)}
+                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
+                title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6h16M4 12h16M4 18h16"
+                  />
+                </svg>
+              </button>
+            )}
             <h3 className="text-sm font-medium text-stone-700 truncate flex-1">
               {threads.find(t => t.id === selectedThreadId)?.title ?? 'Select a thread'}
             </h3>
             <TokenUsagePill />
-            <button
-              onClick={() => void handleCreateNewThread()}
-              className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
-              title="New thread (/new)">
-              + New
-            </button>
+            {!welcomeLocked && (
+              <button
+                onClick={() => void handleCreateNewThread()}
+                className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
+                title="New thread (/new)">
+                + New
+              </button>
+            )}
           </div>
         )}
         <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-5 py-4 bg-[#f6f6f6]">

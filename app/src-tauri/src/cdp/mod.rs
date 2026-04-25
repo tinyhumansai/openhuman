@@ -16,7 +16,9 @@ pub mod target;
 
 pub use conn::CdpConn;
 pub use emulation::{set_user_agent_override, UaSpec};
-pub use session::{placeholder_marker, placeholder_url, spawn_session, target_url_fragment};
+pub use session::{
+    placeholder_marker, placeholder_url, spawn_session, target_url_fragment, SpawnedSession,
+};
 pub use snapshot::Snapshot;
 pub use target::{
     browser_ws_url, connect_and_attach_matching, detach_session, find_page_target_where,

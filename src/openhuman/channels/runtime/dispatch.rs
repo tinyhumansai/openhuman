@@ -310,7 +310,7 @@ impl AgentScoping {
 ///   so the LLM cannot accidentally send messages or write files
 ///   while guiding the user through setup. The welcome agent decides
 ///   when the user is ready and calls
-///   `complete_onboarding(action="complete")`, which flips the flag.
+///   `complete_onboarding`, which flips the flag.
 ///
 /// * **`true`** → route to the `orchestrator` agent. Orchestrator
 ///   delegates real work to specialist subagents via a `subagents`
@@ -356,10 +356,10 @@ async fn resolve_target_agent(channel: &str) -> AgentScoping {
         "orchestrator"
     } else {
         // Increment the process-global exchange counter every time a user
-        // message is routed to the welcome agent. The `complete_onboarding`
-        // tool reads this counter to decide whether `ready_to_complete` is
-        // `true` and to enforce the minimum-engagement guard in `complete`.
-        crate::openhuman::tools::implementations::agent::complete_onboarding::increment_welcome_exchange_count();
+        // message is routed to the welcome agent. The `check_onboarding_status`
+        // tool reads this counter to surface `ready_to_complete`, and
+        // `complete_onboarding` enforces it as the minimum-engagement guard.
+        crate::openhuman::tools::implementations::agent::onboarding_status::increment_welcome_exchange_count();
         "welcome"
     };
 

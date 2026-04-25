@@ -46,6 +46,11 @@ tauri-plugin-deep-link = "2.0.0"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification = { path = "vendor/tauri-plugin-notification" }
 tauri-plugin-opener = "2"
+# Auto-update for the Tauri shell itself. The core sidecar already has its own
+# updater (see `core_update.rs`); this plugin handles the .app/.exe/.AppImage
+# bundle. Both are needed because shipping a new RPC method requires both
+# pieces in lockstep, and on macOS the .app bundle is what carries TCC grants.
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Used by gmail/cdp_fetch for decoding binary IO.read chunks. Base64 is
@@ -66,6 +71,13 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 semver = "1"
+# Auto-update archive extraction. GitHub release assets ship as
+# `openhuman-core-<version>-<triple>.tar.gz` on Unix and `…<triple>.zip`
+# on Windows; the inner binary is `openhuman-core` (or `.exe`) with no
+# wrapping directory. See `core_update.rs::extract_archive`.
+flate2 = "1"
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 log = "0.4"
 env_logger = "0.11"

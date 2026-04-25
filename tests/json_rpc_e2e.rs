@@ -1314,6 +1314,20 @@ async fn json_rpc_app_state_snapshot_returns_runtime_shape() {
         body.get("localState").and_then(Value::as_object).is_some(),
         "expected localState object: {body}"
     );
+    assert_eq!(
+        body.get("onboardingCompleted").and_then(Value::as_bool),
+        Some(false),
+        "expected onboardingCompleted=false default: {body}"
+    );
+    // Welcome-lockdown frontend gate (#883). `write_min_config` sets
+    // `chat_onboarding_completed = true` so the test harness bypasses the
+    // welcome agent; the snapshot must surface the same camelCase key the
+    // React app reads.
+    assert_eq!(
+        body.get("chatOnboardingCompleted").and_then(Value::as_bool),
+        Some(true),
+        "expected chatOnboardingCompleted=true from test config: {body}"
+    );
 
     let runtime = body.get("runtime").expect("expected runtime object");
     assert!(
@@ -1337,6 +1351,66 @@ async fn json_rpc_app_state_snapshot_returns_runtime_shape() {
     assert!(
         runtime.get("service").and_then(Value::as_object).is_some(),
         "expected runtime.service object: {runtime}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+/// #883 — when `chat_onboarding_completed` is unset in config.toml (fresh
+/// user), the `openhuman.app_state_snapshot` RPC must surface the flag as
+/// `false` so the React welcome-lockdown kicks in.
+#[tokio::test]
+async fn json_rpc_app_state_snapshot_chat_onboarding_defaults_false() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+
+    // Fresh-user config: no `chat_onboarding_completed` key → serde default
+    // of `false`. Cannot reuse `write_min_config` because it hard-codes the
+    // flag to `true` so the e2e mock can bypass the welcome agent.
+    let cfg = format!(
+        r#"api_url = "{mock_origin}"
+default_model = "e2e-mock-model"
+default_temperature = 0.7
+
+[secrets]
+encrypt = false
+"#
+    );
+    std::fs::create_dir_all(&openhuman_home).expect("mkdir openhuman");
+    std::fs::write(openhuman_home.join("config.toml"), &cfg).expect("write config");
+    std::fs::create_dir_all(openhuman_home.join("users").join("local")).expect("mkdir users/local");
+    std::fs::write(
+        openhuman_home
+            .join("users")
+            .join("local")
+            .join("config.toml"),
+        &cfg,
+    )
+    .expect("write user config");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let snapshot = post_json_rpc(&rpc_base, 1005, "openhuman.app_state_snapshot", json!({})).await;
+    let result = assert_no_jsonrpc_error(&snapshot, "app_state_snapshot");
+    let body = result.get("result").unwrap_or(result);
+
+    assert_eq!(
+        body.get("chatOnboardingCompleted").and_then(Value::as_bool),
+        Some(false),
+        "fresh-user config without chat_onboarding_completed must surface chatOnboardingCompleted=false: {body}"
     );
 
     mock_join.abort();

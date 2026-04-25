@@ -330,6 +330,146 @@ async fn restart_core_process(
     state.inner().restart().await
 }
 
+/// Information about an available shell-app update returned to the frontend.
+#[derive(Debug, Clone, serde::Serialize)]
+struct AppUpdateInfo {
+    /// The currently-running app version (matches `tauri.conf.json::version`).
+    current_version: String,
+    /// True when the configured updater endpoint advertises a newer version.
+    available: bool,
+    /// Newer version reported by the updater endpoint, if any.
+    available_version: Option<String>,
+    /// Release notes / body for the new version, if the manifest provided one.
+    body: Option<String>,
+}
+
+/// Probe the updater endpoint and report whether a newer shell build is available.
+/// Does NOT download or install. Pair with `apply_app_update` to actually upgrade.
+#[tauri::command]
+async fn check_app_update(app: tauri::AppHandle<AppRuntime>) -> Result<AppUpdateInfo, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let current_version = app.package_info().version.to_string();
+    log::info!("[app-update] check requested (current: {current_version})");
+
+    let updater = app
+        .updater()
+        .map_err(|e| format!("updater plugin not initialized: {e}"))?;
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            log::info!(
+                "[app-update] update available: {} -> {}",
+                current_version,
+                update.version
+            );
+            Ok(AppUpdateInfo {
+                current_version,
+                available: true,
+                available_version: Some(update.version.clone()),
+                body: update.body.clone(),
+            })
+        }
+        Ok(None) => {
+            log::info!("[app-update] no update available");
+            Ok(AppUpdateInfo {
+                current_version,
+                available: false,
+                available_version: None,
+                body: None,
+            })
+        }
+        Err(e) => {
+            log::warn!("[app-update] check failed: {e}");
+            Err(format!("update check failed: {e}"))
+        }
+    }
+}
+
+/// Download and install the latest shell update, then relaunch.
+///
+/// Shuts the core sidecar down before download begins so the install step
+/// (which on macOS replaces the entire `.app` bundle) does not race against
+/// a live sidecar holding file handles inside `Contents/Resources/`. The
+/// new bundled sidecar is launched fresh after `app.restart()`.
+///
+/// Emits Tauri events `app-update:status` and `app-update:progress` so the
+/// frontend can show a snackbar / progress bar.
+#[tauri::command]
+async fn apply_app_update(
+    state: tauri::State<'_, core_process::CoreProcessHandle>,
+    app: tauri::AppHandle<AppRuntime>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
+
+    log::info!("[app-update] manual apply_app_update invoked from frontend");
+
+    let updater = app
+        .updater()
+        .map_err(|e| format!("updater plugin not initialized: {e}"))?;
+
+    let _ = app.emit("app-update:status", "checking");
+
+    let update = match updater.check().await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            log::info!("[app-update] no update available");
+            let _ = app.emit("app-update:status", "up_to_date");
+            return Ok(());
+        }
+        Err(e) => {
+            log::warn!("[app-update] check failed: {e}");
+            let _ = app.emit("app-update:status", "error");
+            return Err(format!("update check failed: {e}"));
+        }
+    };
+
+    let new_version = update.version.clone();
+    log::info!(
+        "[app-update] downloading {} (size hint: {:?})",
+        new_version,
+        update.signature
+    );
+    let _ = app.emit("app-update:status", "downloading");
+
+    // Shut the core sidecar down before the install step replaces the .app.
+    // We hold the restart lock until app.restart() so nothing tries to
+    // respawn the sidecar from the in-flight (or freshly-replaced) bundle.
+    let _guard = state.inner().restart_lock().await;
+    log::debug!("[app-update] acquired core restart lock");
+    state.inner().shutdown().await;
+
+    let progress_app = app.clone();
+    let install_app = app.clone();
+    let download_result = update
+        .download_and_install(
+            move |chunk_length, content_length| {
+                let payload = serde_json::json!({
+                    "chunk": chunk_length,
+                    "total": content_length,
+                });
+                let _ = progress_app.emit("app-update:progress", payload);
+            },
+            move || {
+                log::info!("[app-update] download complete — installing");
+                let _ = install_app.emit("app-update:status", "installing");
+            },
+        )
+        .await;
+
+    if let Err(e) = download_result {
+        log::error!("[app-update] download/install failed: {e}");
+        let _ = app.emit("app-update:status", "error");
+        return Err(format!("download_and_install failed: {e}"));
+    }
+
+    log::info!("[app-update] install complete — relaunching");
+    let _ = app.emit("app-update:status", "restarting");
+    // Note: app.restart() never returns. Anything after this is unreachable.
+    app.restart();
+}
+
 /// Register (or re-register) the global dictation toggle hotkey.
 /// Emits `dictation://toggle` to all webviews when the shortcut is pressed.
 #[tauri::command]
@@ -651,6 +791,11 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // Auto-updater for the Tauri shell. Endpoint and minisign pubkey live
+        // in `tauri.conf.json` under `plugins.updater`. Releases are signed at
+        // build time with `TAURI_SIGNING_PRIVATE_KEY` (+ `_PASSWORD`); see
+        // docs/AUTO_UPDATE.md for the full pipeline.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DictationHotkeyState(Mutex::new(Vec::new())))
         .manage(webview_accounts::WebviewAccountsState::default())
         .manage(notification_settings::NotificationSettingsState::new());
@@ -716,6 +861,26 @@ pub fn run() {
                 core_run_mode,
             );
             std::env::set_var("OPENHUMAN_CORE_RPC_URL", core_handle.rpc_url());
+
+            // Expose the shared CEF cookies SQLite path to the core sidecar
+            // so `check_onboarding_status` can detect which webview
+            // providers (gmail, whatsapp, slack, …) already have a live
+            // session cookie. Best-effort — if we can't resolve the path
+            // the core treats every provider as logged_out.
+            if let Ok(cache_dir) = app.path().app_cache_dir() {
+                let cookies_db = cache_dir.join("cef").join("Default").join("Cookies");
+                log::debug!("[webview_accounts] exposing cookies DB path to core");
+                std::env::set_var("OPENHUMAN_CEF_COOKIES_DB", &cookies_db);
+            } else {
+                // Clear any inherited value so the core can't pick up a
+                // stale path from a previous run or the parent shell.
+                std::env::remove_var("OPENHUMAN_CEF_COOKIES_DB");
+                log::warn!(
+                    "[webview_accounts] could not resolve app_cache_dir — core \
+                     will report all webview providers as logged_out"
+                );
+            }
+
             app.manage(core_handle.clone());
             let app_handle_for_update = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -1037,6 +1202,8 @@ pub fn run() {
             overlay_parent_rpc_url,
             check_core_update,
             apply_core_update,
+            check_app_update,
+            apply_app_update,
             restart_core_process,
             service_install_direct,
             service_start_direct,
@@ -1049,6 +1216,7 @@ pub fn run() {
             webview_accounts::webview_account_close,
             webview_accounts::webview_account_purge,
             webview_accounts::webview_account_bounds,
+            webview_accounts::webview_account_reveal,
             webview_accounts::webview_account_hide,
             webview_accounts::webview_account_show,
             webview_accounts::webview_recipe_event,

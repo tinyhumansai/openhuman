@@ -113,10 +113,11 @@ jobs:
             "${{ steps.core-paths.outputs.sidecar_base }}"
       - name: Define Tauri configuration overrides
         id: config-overrides
+        # `prepareTauriConfig.js` only emits the Windows DigiCert sign
+        # command at this point (`WITH_UPDATER` defaults to off here so
+        # this PR-build matrix doesn't try to mint signed updater
+        # artifacts it has no key for).
         uses: actions/github-script@v7
-        env:
-          BASE_URL: ${{ vars.BASE_URL }}
-          WITH_UPDATER: 'false'
         with:
           script: |
             const workspacePath = process.env.GITHUB_WORKSPACE.replace(/\\/g, '/');

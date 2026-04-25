@@ -340,6 +340,21 @@ pub struct WebviewAccountsState {
     /// close/purge so reopen cycles don't stack multiple live loops.
     #[cfg(feature = "cef")]
     cdp_sessions: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// account_id -> 15s `webview-account:load{state:"timeout"}` watchdog.
+    /// Aborted in close/purge so a watchdog spawned for a now-closed
+    /// account can't fire a stale timeout against a freshly-reused id.
+    #[cfg(feature = "cef")]
+    load_watchdogs: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// account_id of webviews that have already emitted their first
+    /// `webview-account:load{state:"finished"}` event. Used to dedup
+    /// triple-signal fires (native on_page_load, CDP `Page.loadEventFired`,
+    /// 15 s watchdog) so the frontend only reveals once per cold open.
+    loaded_accounts: Mutex<HashSet<String>>,
+    /// Last bounds requested by the frontend for a given account, captured at
+    /// `webview_account_open` time so the off-screen-spawned webview can be
+    /// revealed at the right rect without the frontend having to round-trip
+    /// them again.
+    requested_bounds: Mutex<HashMap<String, Bounds>>,
     /// Runtime notification-bypass controls used by the settings UI.
     notification_bypass: Mutex<NotificationBypassPrefs>,
 }
@@ -773,6 +788,150 @@ pub struct WebviewEvent {
     pub ts: Option<i64>,
 }
 
+/// Strip query string and fragment from a URL before emitting to the log.
+/// Provider URLs occasionally embed auth material (Telegram WebApp data,
+/// OAuth callback codes, sometimes session tokens) and we don't want those
+/// to land in the long-lived shell log file. Returns the original input on
+/// parse failure so we still surface *something* useful for debugging.
+fn redact_url_for_log(raw: &str) -> String {
+    match Url::parse(raw) {
+        Ok(mut u) => {
+            u.set_query(None);
+            u.set_fragment(None);
+            u.to_string()
+        }
+        Err(_) => {
+            // Fallback: drop everything from the first '?' or '#'.
+            raw.split(['?', '#']).next().unwrap_or(raw).to_string()
+        }
+    }
+}
+
+/// Grow the first-cold-open webview back to its full requested bounds and
+/// notify the frontend — exactly once per account open. Called from the
+/// three independent signals (native `WebviewBuilder::on_page_load`, CDP
+/// `Page.loadEventFired`, 15 s watchdog) — the first one wins and the rest
+/// short-circuit via `WebviewAccountsState.loaded_accounts`. Resetting
+/// happens in `webview_account_close` / `webview_account_purge` so a reopen
+/// fires again.
+///
+/// Doing the `set_size` server-side (instead of waiting for the frontend to
+/// invoke `webview_account_reveal`) avoids an extra IPC round-trip and the
+/// brief blank frame that would otherwise sit between the load event and
+/// the frontend's reveal call.
+pub(crate) fn emit_load_finished<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
+    state: &str,
+    url: &str,
+) {
+    let Some(app_state) = app.try_state::<WebviewAccountsState>() else {
+        // No state => emit anyway so the frontend doesn't hang; best-effort.
+        log::warn!(
+            "[webview-accounts][{}] WebviewAccountsState missing — emitting without reveal",
+            account_id
+        );
+        let _ = app.emit(
+            "webview-account:load",
+            serde_json::json!({"account_id": account_id, "state": state, "url": url}),
+        );
+        return;
+    };
+
+    let is_first = app_state
+        .loaded_accounts
+        .lock()
+        .unwrap()
+        .insert(account_id.to_string());
+    if !is_first {
+        log::debug!(
+            "[webview-accounts][{}] load event deduped state={} url={}",
+            account_id,
+            state,
+            url
+        );
+        return;
+    }
+
+    // Restore the webview to its full requested size. The spawn path created
+    // it at 1×1 so the React loading spinner wasn't covered; now that the page
+    // is painted we can grow it into the placeholder rect.
+    let label = app_state.inner.lock().unwrap().get(account_id).cloned();
+    let bounds = app_state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .get(account_id)
+        .copied();
+    match (label, bounds) {
+        (Some(label), Some(b)) => {
+            if let Some(wv) = app.get_webview(&label) {
+                if let Err(e) = wv.set_size(LogicalSize::new(b.width, b.height)) {
+                    log::warn!(
+                        "[webview-accounts][{}] reveal set_size failed: {}",
+                        account_id,
+                        e
+                    );
+                }
+                if let Err(e) = wv.set_position(LogicalPosition::new(b.x, b.y)) {
+                    log::warn!(
+                        "[webview-accounts][{}] reveal set_position failed: {}",
+                        account_id,
+                        e
+                    );
+                }
+                let _ = wv.show();
+                log::info!(
+                    "[webview-accounts][{}] revealed label={} bounds={:?} state={}",
+                    account_id,
+                    label,
+                    b,
+                    state
+                );
+            } else {
+                log::warn!(
+                    "[webview-accounts][{}] reveal: webview {} missing",
+                    account_id,
+                    label
+                );
+            }
+        }
+        _ => {
+            log::info!(
+                "[webview-accounts][{}] reveal skipped (account closed before load) state={}",
+                account_id,
+                state
+            );
+        }
+    }
+
+    // Redact the URL in the log: providers like Telegram (`#tgWebAppData=…`)
+    // and OAuth callbacks embed auth material in the query/fragment. The full
+    // URL still flows to the frontend listener over the Tauri event so any
+    // consumer that needs it has access; we just don't persist it to the
+    // shell's log file.
+    log::info!(
+        "[webview-accounts][{}] load event state={} url={}",
+        account_id,
+        state,
+        redact_url_for_log(url)
+    );
+    if let Err(err) = app.emit(
+        "webview-account:load",
+        serde_json::json!({
+            "account_id": account_id,
+            "state": state,
+            "url": url,
+        }),
+    ) {
+        log::warn!(
+            "[webview-accounts][{}] emit webview-account:load failed: {}",
+            account_id,
+            err
+        );
+    }
+}
+
 /// Reject any `account_id` that isn't strictly `[A-Za-z0-9_-]+`. The ID comes
 /// from IPC (React shell, but also from injected recipe code running inside
 /// third-party origins via `webview_recipe_event`), so treat it as untrusted.
@@ -949,6 +1108,11 @@ pub async fn webview_account_open<R: Runtime>(
                 if let Some(b) = args.bounds {
                     let _ = existing.set_position(LogicalPosition::new(b.x, b.y));
                     let _ = existing.set_size(LogicalSize::new(b.width, b.height));
+                    state
+                        .requested_bounds
+                        .lock()
+                        .unwrap()
+                        .insert(args.account_id.clone(), b);
                 }
                 let _ = existing.show();
                 log::info!(
@@ -956,6 +1120,26 @@ pub async fn webview_account_open<R: Runtime>(
                     existing_label,
                     args.account_id
                 );
+                // Warm re-open: the page is already painted, so skip the
+                // loading overlay cycle and tell the frontend to go straight
+                // to `open`. We bypass `emit_load_finished` because the
+                // `loaded_accounts` dedup set would swallow the emit after
+                // the first cold open of this account.
+                let reuse_url = existing.url().map(|u| u.to_string()).unwrap_or_default();
+                if let Err(err) = app.emit(
+                    "webview-account:load",
+                    serde_json::json!({
+                        "account_id": args.account_id,
+                        "state": "reused",
+                        "url": reuse_url,
+                    }),
+                ) {
+                    log::warn!(
+                        "[webview-accounts][{}] emit reused event failed: {}",
+                        args.account_id,
+                        err
+                    );
+                }
                 return Ok(existing_label);
             }
             // Stale entry — fall through and rebuild
@@ -1124,6 +1308,33 @@ pub async fn webview_account_open<R: Runtime>(
         builder = builder.user_agent(ua);
     }
 
+    // Wire the native page-load signal so the frontend can hide its spinner as
+    // soon as CEF's LoadHandler reports the main frame finished. Dedup against
+    // the CDP `Page.loadEventFired` subscription and the 15 s watchdog through
+    // `emit_load_finished` so we only fire the first winning signal per open.
+    //
+    // Skip `data:` URLs: the initial CDP placeholder also fires `Finished`
+    // before the real provider URL is navigated to — emitting on the
+    // placeholder would release the overlay too early and the user would
+    // briefly see the blank placeholder before the real page paints.
+    let page_load_app = app.clone();
+    let page_load_account_id = args.account_id.clone();
+    builder = builder.on_page_load(move |_webview, payload| {
+        if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+            return;
+        }
+        let url = payload.url();
+        if url.scheme() == "data" {
+            return;
+        }
+        emit_load_finished(
+            &page_load_app,
+            &page_load_account_id,
+            "finished",
+            url.as_str(),
+        );
+    });
+
     let bounds = args.bounds.unwrap_or(Bounds {
         x: 0.0,
         y: 0.0,
@@ -1131,18 +1342,67 @@ pub async fn webview_account_open<R: Runtime>(
         height: 600.0,
     });
 
+    // Park the webview off-screen during its first page load so the React
+    // placeholder's loading spinner is not covered by the native CEF subview.
+    // `webview_account_reveal` (invoked from the frontend after the load event
+    // arrives, or by the 15 s watchdog) moves it back to `bounds` + shows it.
+    // We use positive coords well below the parent window rather than large
+    // negative values so multi-monitor layouts stay well-defined.
+    //
+    // Warm-open reuse (when a webview already exists for this account) earlier
+    // in this function returns before we get here, so existing webviews keep
+    // their current position — we only off-screen the first cold spawn.
+    // Spawn strategy: keep the webview at the caller's requested position
+    // but shrink the initial size to 1×1 under CEF so the native subview
+    // doesn't paint over the React loading spinner. `webview_account_reveal`
+    // grows it back to `bounds.width × bounds.height` once the page-loaded
+    // signal arrives.
+    //
+    // Why not move off-screen: moving the NSView after a cold CEF spawn on
+    // macOS sometimes leaves the page painted but not repainted at the new
+    // origin, leaving the user looking at a blank viewport until they
+    // reload. Keeping the position stable and only toggling size sidesteps
+    // that repaint edge case while still keeping the webview visually
+    // hidden (1 px under the overlay) during load.
+    //
+    // Warm-open reuse returned earlier in this function, so this only
+    // affects the first cold spawn.
+    #[cfg(feature = "cef")]
+    let initial_size = if skip_cdp_for_debug {
+        LogicalSize::new(bounds.width, bounds.height)
+    } else {
+        LogicalSize::new(1.0, 1.0)
+    };
+    #[cfg(not(feature = "cef"))]
+    let initial_size = LogicalSize::new(bounds.width, bounds.height);
+    let initial_position = LogicalPosition::new(bounds.x, bounds.y);
+
+    // Remember the bounds the frontend wanted so `webview_account_reveal` has a
+    // rect to restore to even if the frontend's bounds cache is empty (e.g.
+    // after a page reload races the load event).
+    state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .insert(args.account_id.clone(), bounds);
+    // Defensive reset: if a prior close/purge was raced by a stale emit we
+    // could still have the account marked as "already loaded". Clear here so
+    // the fresh spawn is allowed to fire the first event again.
+    state
+        .loaded_accounts
+        .lock()
+        .unwrap()
+        .remove(&args.account_id);
+
     let webview = parent_window
-        .add_child(
-            builder,
-            LogicalPosition::new(bounds.x, bounds.y),
-            LogicalSize::new(bounds.width, bounds.height),
-        )
+        .add_child(builder, initial_position, initial_size)
         .map_err(|e| format!("add_child failed: {e}"))?;
 
     log::info!(
-        "[webview-accounts] spawned label={} bounds={:?}",
+        "[webview-accounts] spawned label={} requested_bounds={:?} initial_size={:?}",
         webview.label(),
-        bounds
+        bounds,
+        initial_size
     );
 
     state
@@ -1168,9 +1428,22 @@ pub async fn webview_account_open<R: Runtime>(
                 args.account_id
             );
         } else {
-            let handle = cdp::spawn_session(args.account_id.clone(), real_url_str.clone());
-            let mut sessions = state.cdp_sessions.lock().unwrap();
-            if let Some(old) = sessions.insert(args.account_id.clone(), handle) {
+            let cdp::SpawnedSession { session, watchdog } =
+                cdp::spawn_session(app.clone(), args.account_id.clone(), real_url_str.clone());
+            if let Some(old) = state
+                .cdp_sessions
+                .lock()
+                .unwrap()
+                .insert(args.account_id.clone(), session)
+            {
+                old.abort();
+            }
+            if let Some(old) = state
+                .load_watchdogs
+                .lock()
+                .unwrap()
+                .insert(args.account_id.clone(), watchdog)
+            {
                 old.abort();
             }
         }
@@ -1374,7 +1647,31 @@ pub async fn webview_account_close<R: Runtime>(
                 args.account_id
             );
         }
+        if let Some(task) = state
+            .load_watchdogs
+            .lock()
+            .unwrap()
+            .remove(&args.account_id)
+        {
+            task.abort();
+            log::debug!(
+                "[webview-accounts] aborted load watchdog for account={}",
+                args.account_id
+            );
+        }
     }
+    // Reset load-overlay bookkeeping so the next open of this account starts
+    // with a fresh "not yet loaded" state.
+    state
+        .loaded_accounts
+        .lock()
+        .unwrap()
+        .remove(&args.account_id);
+    state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .remove(&args.account_id);
     log::info!("[webview-accounts] closed label={}", label);
     Ok(())
 }
@@ -1445,7 +1742,29 @@ pub async fn webview_account_purge<R: Runtime>(
                 args.account_id
             );
         }
+        if let Some(task) = state
+            .load_watchdogs
+            .lock()
+            .unwrap()
+            .remove(&args.account_id)
+        {
+            task.abort();
+            log::debug!(
+                "[webview-accounts] purge aborted load watchdog for account={}",
+                args.account_id
+            );
+        }
     }
+    state
+        .loaded_accounts
+        .lock()
+        .unwrap()
+        .remove(&args.account_id);
+    state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .remove(&args.account_id);
 
     let data_dir = data_directory_for(&app, &args.account_id)?;
     if data_dir.exists() {
@@ -1489,6 +1808,59 @@ pub async fn webview_account_bounds<R: Runtime>(
         .map_err(|e| format!("set_size: {e}"))?;
     log::trace!(
         "[webview-accounts] bounds label={} -> {:?}",
+        label,
+        args.bounds
+    );
+    // Keep the in-state bounds synced so `webview_account_reveal` has the
+    // latest rect even if the frontend's own cache is cleared between the
+    // `webview_account_open` call and the `webview-account:load` signal.
+    state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .insert(args.account_id.clone(), args.bounds);
+    Ok(())
+}
+
+/// Move an off-screen-spawned webview back to the frontend's desired rect and
+/// show it. Invoked by the frontend when it receives the `webview-account:load`
+/// event so the loading spinner is uncovered only after the page has painted.
+///
+/// Called as the final step of the first-open flow:
+///   1. `webview_account_open` — CEF subview spawned off-screen
+///   2. native `on_page_load` OR CDP `Page.loadEventFired` OR 15 s watchdog
+///   3. frontend listener → `webview_account_reveal`
+#[tauri::command]
+pub async fn webview_account_reveal<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, WebviewAccountsState>,
+    args: BoundsArgs,
+) -> Result<(), String> {
+    let label_opt = state.inner.lock().unwrap().get(&args.account_id).cloned();
+    let Some(label) = label_opt else {
+        // Reveal race: the webview was closed before the load event arrived.
+        // Return Ok so the frontend doesn't surface an error.
+        log::debug!(
+            "[webview-accounts] reveal: no webview for account {}",
+            args.account_id
+        );
+        return Ok(());
+    };
+    let wv = app
+        .get_webview(&label)
+        .ok_or_else(|| format!("webview {label} missing"))?;
+    wv.set_position(LogicalPosition::new(args.bounds.x, args.bounds.y))
+        .map_err(|e| format!("set_position: {e}"))?;
+    wv.set_size(LogicalSize::new(args.bounds.width, args.bounds.height))
+        .map_err(|e| format!("set_size: {e}"))?;
+    wv.show().map_err(|e| format!("show: {e}"))?;
+    state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .insert(args.account_id.clone(), args.bounds);
+    log::info!(
+        "[webview-accounts] revealed label={} -> {:?}",
         label,
         args.bounds
     );

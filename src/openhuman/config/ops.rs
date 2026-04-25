@@ -582,7 +582,7 @@ pub async fn get_onboarding_completed() -> Result<RpcOutcome<bool>, String> {
 /// **`chat_onboarding_completed` is NOT flipped here.** That flag is
 /// the exclusive responsibility of the welcome agent: it is set to
 /// `true` only after the user has had a meaningful onboarding
-/// conversation (via `complete_onboarding(action="complete")`). See
+/// conversation (via `complete_onboarding`). See
 /// [`crate::openhuman::tools::impl::agent::complete_onboarding`] for
 /// the guard criteria.
 ///

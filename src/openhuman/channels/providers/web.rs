@@ -845,7 +845,7 @@ fn build_session_agent(
     // type in the chat pane. If we routed on that flag the welcome
     // agent could never run from the Tauri desktop app. The chat
     // flag is set only by the welcome agent itself via
-    // `complete_onboarding(action="complete")`, so it stays `false`
+    // `complete_onboarding`, so it stays `false`
     // for the user's actual first chat message regardless of what
     // the React layer did, then flips on the welcome turn so the
     // very next message routes to orchestrator.

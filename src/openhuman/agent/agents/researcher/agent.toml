@@ -14,4 +14,4 @@ omit_skills_catalog = true
 hint = "agentic"
 
 [tools]
-named = ["http_request", "web_search", "file_read", "memory_recall"]
+named = ["http_request", "curl", "web_search", "file_read", "memory_recall"]

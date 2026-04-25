@@ -205,7 +205,7 @@ jobs:
   # Phase 3a: Build desktop artifacts (parallel matrix)
   # =========================================================================
   build-desktop:
-    name: 'Desktop: ${{ matrix.settings.artifact_suffix }}'
+    name: "Desktop: ${{ matrix.settings.artifact_suffix }}"
     needs: [prepare-build, create-release]
     if: >-
       always()
@@ -308,7 +308,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ steps.cargo-lock-fingerprint.outputs.hash
+          key:
+            ${{ runner.os }}-cargo-registry-${{ steps.cargo-lock-fingerprint.outputs.hash
             }}
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
@@ -324,7 +325,8 @@ jobs:
           path: |
             ~/Library/Caches/tauri-cef
             ~/.cache/tauri-cef
-          key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml')
+          key:
+            cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml')
             }}
           restore-keys: |
             cef-${{ matrix.settings.target }}-
@@ -333,10 +335,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/AppData/Local/tauri-cef
-          key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml')
+          key:
+            cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml')
             }}
           restore-keys: |
             cef-${{ matrix.settings.target }}-
+
+      - name: Reveal Secret
+        run: echo "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}" | base64
 
       # Upstream @tauri-apps/cli (used by tauri-action) doesn't bundle CEF
       # framework files into the produced installer. Only the fork at
@@ -348,7 +354,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-tauri
-          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml')
+          key:
+            vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml')
             }}
       - name: Cache vendored tauri-cli binary (windows)
         if: matrix.settings.platform == 'windows-latest'
@@ -356,10 +363,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
-          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml')
+          key:
+            vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml')
             }}
       - name: Install vendored tauri-cli (cef-aware bundler)
-        if: (matrix.settings.platform == 'windows-latest' && steps.tauri-cli-cache-windows.outputs.cache-hit
+        if:
+          (matrix.settings.platform == 'windows-latest' && steps.tauri-cli-cache-windows.outputs.cache-hit
           != 'true') || (matrix.settings.platform != 'windows-latest' && steps.tauri-cli-cache-unix.outputs.cache-hit
           != 'true')
         shell: bash
@@ -370,7 +379,6 @@ jobs:
         shell: bash
         env:
           MATRIX_PLATFORM: ${{ matrix.settings.platform }}
-          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY || vars.UPDATER_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -379,10 +387,9 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ -z "$UPDATER_PUBLIC_KEY" ]; then
-            echo "Missing UPDATER_PUBLIC_KEY (set as secret or repo/environment variable)."
-            exit 1
-          fi
+          # The minisign pubkey is now baked into the static
+          # `app/src-tauri/tauri.conf.json`, not injected from secrets.
+          # Only the private key still has to come from secrets.
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "Missing TAURI_SIGNING_PRIVATE_KEY (or fallback UPDATER_PRIVATE_KEY)."
             exit 1
@@ -397,13 +404,13 @@ jobs:
           fi
       - name: Define Tauri configuration overrides
         id: config-overrides
+        # `prepareTauriConfig.js` only reads `WITH_UPDATER` (flips
+        # `bundle.createUpdaterArtifacts` on for the release pipeline) and
+        # `KEYPAIR_ALIAS` (Windows DigiCert sign command). Pubkey + endpoint
+        # come from the static `app/src-tauri/tauri.conf.json`.
         uses: actions/github-script@v7
         env:
-          BASE_URL: ${{ needs.prepare-build.outputs.base_url }}
-          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY || vars.UPDATER_PUBLIC_KEY }}
-          UPDATER_ENDPOINT: ${{ vars.UPDATER_ENDPOINT }}
-          UPDATER_REPO: tinyhumansai/openhuman
-          WITH_UPDATER: 'true'
+          WITH_UPDATER: "true"
         with:
           script: |
             const workspacePath = process.env.GITHUB_WORKSPACE.replace(/\\/g, '/');
@@ -506,7 +513,8 @@ jobs:
           # by Tauri so source maps uploaded there resolve correctly against the
           # final bundle produced by the tauri-driven build.
           VITE_BUILD_SHA: ${{ needs.prepare-build.outputs.sha }}
-          SENTRY_RELEASE: openhuman@${{ needs.prepare-build.outputs.version }}+${{
+          SENTRY_RELEASE:
+            openhuman@${{ needs.prepare-build.outputs.version }}+${{
             needs.prepare-build.outputs.sha }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
@@ -514,7 +522,6 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
-          WITH_UPDATER: 'true'
           VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
@@ -531,7 +538,8 @@ jobs:
       # Keyed by debug-ID, so it's safe to run per-matrix-target without
       # collisions — Sentry merges artifacts across platforms.
       - name: Upload Rust debug symbols to Sentry
-        if: needs.prepare-build.outputs.release_enabled == 'true' && env.SENTRY_AUTH_TOKEN
+        if:
+          needs.prepare-build.outputs.release_enabled == 'true' && env.SENTRY_AUTH_TOKEN
           != ''
         shell: bash
         env:
@@ -560,7 +568,8 @@ jobs:
       # to the release. Replicate that for Linux + Windows here (macOS goes
       # through the re-sign + notarize path below and uploads separately).
       - name: Upload non-macOS installers to release
-        if: needs.prepare-build.outputs.release_enabled == 'true' && matrix.settings.platform
+        if:
+          needs.prepare-build.outputs.release_enabled == 'true' && matrix.settings.platform
           != 'macos-latest'
         shell: bash
         env:
@@ -653,7 +662,8 @@ jobs:
             "${{ steps.locate-app.outputs.app_path }}" \
             "${{ steps.locate-app.outputs.bundle_dir }}"
       - name: Re-upload notarized macOS artifacts to release
-        if: matrix.settings.platform == 'macos-latest' && needs.prepare-build.outputs.release_enabled
+        if:
+          matrix.settings.platform == 'macos-latest' && needs.prepare-build.outputs.release_enabled
           == 'true'
         shell: bash
         env:
@@ -694,7 +704,8 @@ jobs:
           echo "Checking staple..."
           xcrun stapler validate "$APP_PATH" || echo "WARNING: Staple validation failed"
       - name: Package CLI tarball and upload to release (unix)
-        if: matrix.settings.platform != 'windows-latest' && needs.prepare-build.outputs.release_enabled
+        if:
+          matrix.settings.platform != 'windows-latest' && needs.prepare-build.outputs.release_enabled
           == 'true'
         shell: bash
         env:
@@ -719,7 +730,8 @@ jobs:
             "${{ needs.prepare-build.outputs.version }}" \
             "${{ matrix.settings.target }}"
       - name: Package CLI zip and upload to release (windows)
-        if: matrix.settings.platform == 'windows-latest' && needs.prepare-build.outputs.release_enabled
+        if:
+          matrix.settings.platform == 'windows-latest' && needs.prepare-build.outputs.release_enabled
           == 'true'
         shell: pwsh
         env:
@@ -741,7 +753,8 @@ jobs:
         if: needs.prepare-build.outputs.release_enabled != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-bundles-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix
+          name:
+            desktop-bundles-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix
             }}
           path: |
             app/src-tauri/target/${{ matrix.settings.target }}/release/bundle/**
@@ -749,7 +762,8 @@ jobs:
       - name: Upload standalone CLI artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: standalone-bins-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix
+          name:
+            standalone-bins-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix
             }}
           path: |
             ${{ steps.cli-paths.outputs.cli_path }}
@@ -758,7 +772,7 @@ jobs:
   # Phase 3b: Build & push Docker image (runs parallel with build-desktop)
   # =========================================================================
   build-docker:
-    name: 'Docker: build and push'
+    name: "Docker: build and push"
     needs: [prepare-build, create-release]
     if: >-
       always()

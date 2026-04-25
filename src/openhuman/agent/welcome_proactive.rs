@@ -42,7 +42,7 @@
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
-use crate::openhuman::tools::implementations::agent::complete_onboarding::build_status_snapshot;
+use crate::openhuman::tools::implementations::agent::onboarding_status::build_status_snapshot;
 
 /// Event-bus `source` label attached to the proactive welcome message.
 /// Kept as a constant so tests and channel-side filters have a stable
@@ -161,19 +161,21 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
     );
 
     // `chat_onboarding_completed` is still `false` at this point —
-    // `set_onboarding_completed` no longer pre-flips it (see
-    // `config/ops.rs`). The flag is only flipped when the welcome
-    // agent calls `complete_onboarding(action="complete")` after
-    // meeting the engagement criteria. We pass `"pending"` as the
-    // status, `0` as the initial exchange count, and `false` for
-    // `ready_to_complete` because this proactive invocation is the
-    // opening greeting — no exchanges have happened yet.
+    // `set_onboarding_completed` no longer pre-flips it. The flag
+    // only flips when the welcome agent calls `complete_onboarding`
+    // after meeting the engagement criteria. Proactive welcome is
+    // the opening greeting — no exchanges yet, no snapshot-driven
+    // toolkit/webview personalisation. Pass empty lists so the
+    // snapshot shape matches `check_onboarding_status` without
+    // paying for the Composio/cookie lookup here.
     let snapshot = build_status_snapshot(
         &config,
         "pending",
         0,
         false,
         "fewer_than_min_exchanges_and_no_skills_connected",
+        &[],
+        serde_json::Value::Object(Default::default()),
     );
     let snapshot_json = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| anyhow::anyhow!("serialize status snapshot: {e}"))?;
@@ -201,10 +203,10 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
     );
 
     // The reactive welcome prompt asks for visible prose plus
-    // `complete_onboarding(check_status)` on the first iteration. Here we
+    // `check_onboarding_status` on the first iteration. Here we
     // pre-inject the snapshot so the model can write the long welcome
-    // without a tool round-trip. If it calls `check_status` anyway, the
-    // result is consistent: pending, not ready to complete.
+    // without a tool round-trip. If it calls `check_onboarding_status`
+    // anyway, the result is consistent: pending, not ready to complete.
     //
     // We also tell the agent that two greeting template messages have
     // already been shown so it does not open with a redundant "Good
@@ -219,13 +221,13 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
          2. \"Getting everything ready for you...\" (shown ~4 seconds later).\n\
          Do NOT open with any greeting (\"Good morning\", \"Hey there\", \"Hi!\", etc.). \
          Jump straight into the personalised welcome content about their specific setup.]\n\n\
-         Do NOT call `complete_onboarding` or any other tool in this run. The \
-         status snapshot that `complete_onboarding({{\"action\":\"check_status\"}})` \
+         Do NOT call `check_onboarding_status`, `complete_onboarding`, or any \
+         other tool in this run. The snapshot that `check_onboarding_status` \
          would have returned is already provided below — `onboarding_status` is \
          `\"pending\"` and `ready_to_complete` is `false` because no user messages \
          have been exchanged yet. Write the personalised welcome message per your \
-         system prompt. Do NOT call `complete_onboarding` with `complete` — the user \
-         has not yet had a real conversation.\n\n\
+         system prompt. Do NOT call `complete_onboarding` — the user has not yet \
+         had a real conversation.\n\n\
          Output format is STRICT JSON only:\n\
          {{\"messages\":[\"<message 1>\",\"<message 2>\",\"<message 3>\"]}}\n\
          - Return 2-4 assistant messages.\n\
