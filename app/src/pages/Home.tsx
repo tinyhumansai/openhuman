@@ -43,10 +43,11 @@ const Home = () => {
   const _userName = resolveHomeUserName(user);
   const userName = _userName.split(' ')[0]; // Get first name only
   const promoCredits = user?.usage?.promotionBalanceUsd ?? 0;
-  const showPromoBanner =
-    user?.subscription?.plan === 'FREE' &&
-    user?.subscription?.hasActiveSubscription === false &&
-    promoCredits > 0;
+  const isFreeTier =
+    user?.subscription?.plan === 'FREE' || !user?.subscription?.hasActiveSubscription;
+  const showPromoBanner = isFreeTier && promoCredits > 0;
+
+  console.log('showPromoBanner', showPromoBanner, user, promoCredits);
   const welcomeVariants = useMemo(
     () => [`Welcome, ${userName} 👋`, `Let's cook, ${userName} 🧑‍🍳.`, `Time to Zone In 🧘🏻`],
     [userName]

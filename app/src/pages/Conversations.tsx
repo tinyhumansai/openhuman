@@ -78,6 +78,39 @@ interface ConversationsProps {
   variant?: 'page' | 'sidebar';
 }
 
+export function isComposerInteractionBlocked(args: {
+  activeThreadId: string | null;
+  welcomePending: boolean;
+  rustChat: boolean;
+}): boolean {
+  return !args.rustChat || Boolean(args.activeThreadId) || args.welcomePending;
+}
+
+function WelcomeThinkingTypewriter() {
+  const text = 'Your agent is thinking...';
+  const [visibleChars, setVisibleChars] = useState(0);
+
+  useEffect(() => {
+    const isComplete = visibleChars >= text.length;
+    const delayMs = isComplete ? 950 : 42;
+    const timeoutId = window.setTimeout(() => {
+      setVisibleChars(current => (current >= text.length ? 0 : current + 1));
+    }, delayMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [text.length, visibleChars]);
+
+  return (
+    <p className="flex items-center text-sm text-stone-600 font-mono tracking-tight">
+      <span>{text.slice(0, visibleChars)}</span>
+      <span
+        aria-hidden="true"
+        className="ml-0.5 inline-block h-4 w-px bg-stone-400 animate-pulse"
+      />
+    </p>
+  );
+}
+
 const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
@@ -422,7 +455,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     const normalized = text ?? inputValue;
     const trimmed = normalized.trim();
 
-    if (!trimmed || !selectedThreadId || composerBlocked) return;
+    if (!trimmed || !selectedThreadId || composerInteractionBlocked) return;
 
     if (handleSlashCommand(trimmed)) return;
 
@@ -443,7 +476,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       return;
     }
 
-    if (composerBlocked) return;
+    if (composerInteractionBlocked) return;
 
     const sendingThreadId = selectedThreadId;
     const userMessage: ThreadMessage = {
@@ -743,9 +776,14 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     ? (streamingAssistantByThread[selectedThreadId] ?? null)
     : null;
   const inlineCompletionSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
-  // composerBlocked: any thread is in-flight (blocks ALL sends/voice actions).
+  // Blocks all composer interaction while a turn is in-flight, the
+  // proactive welcome opener is pending, or Rust chat is unavailable.
   // isSending: the *selected* thread is in-flight (drives selected-thread UI only).
-  const composerBlocked = Boolean(activeThreadId);
+  const composerInteractionBlocked = isComposerInteractionBlocked({
+    activeThreadId,
+    welcomePending,
+    rustChat,
+  });
   const isSending = Boolean(
     selectedThreadId &&
     (inferenceTurnLifecycleByThread[selectedThreadId] === 'started' ||
@@ -1227,14 +1265,14 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             // the first agent message lands (which flips us into the
             // `hasVisibleMessages` branch above).
             <div className="flex-1 flex flex-col items-center justify-center h-full gap-3">
-              <div className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
-                <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
-                <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:300ms]" />
-              </div>
-              <p className="text-sm text-stone-600">Your agent is thinking...</p>
+            <div className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
+              <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
+              <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:300ms]" />
             </div>
-          ) : (
+            <WelcomeThinkingTypewriter />
+          </div>
+        ) : (
             <div className="flex-1 flex items-center justify-center h-full">
               <p className="text-sm text-stone-600">No messages yet</p>
             </div>
@@ -1406,7 +1444,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                   onKeyDown={handleInputKeyDown}
                   placeholder="Type a message..."
                   rows={1}
-                  disabled={isSending || !rustChat}
+                  disabled={composerInteractionBlocked}
                   className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 placeholder:text-stone-400 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
@@ -1415,7 +1453,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                 onClick={() => {
                   void handleSendMessage();
                 }}
-                disabled={!inputValue.trim() || isSending || !rustChat}
+                disabled={!inputValue.trim() || composerInteractionBlocked}
                 className="w-10 h-10 flex items-center justify-center rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0">
                 {isSending ? (
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
