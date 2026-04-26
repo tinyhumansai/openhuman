@@ -4,6 +4,14 @@ import OAuthProviderButton from '../components/oauth/OAuthProviderButton';
 import { oauthProviderConfigs } from '../components/oauth/providerConfigs';
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
 import { sendEmailMagicLink } from '../services/api/authApi';
+import {
+  clearStoredRpcUrl,
+  getDefaultRpcUrl,
+  getStoredRpcUrl,
+  isValidRpcUrl,
+  normalizeRpcUrl,
+  storeRpcUrl,
+} from '../utils/configPersistence';
 import { useDeepLinkAuthState } from '../store/deepLinkAuthState';
 import { isTauri } from '../utils/tauriCommands';
 
@@ -17,6 +25,85 @@ const Welcome = () => {
   const [isSending, setIsSending] = useState(false);
   const [isSent, setIsSent] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
+
+  // RPC URL configuration state
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [rpcUrl, setRpcUrl] = useState(getStoredRpcUrl());
+  const [rpcUrlError, setRpcUrlError] = useState<string | null>(null);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [connectionTested, setConnectionTested] = useState(false);
+
+  // Persist RPC URL changes to localStorage
+  const handleRpcUrlChange = (value: string) => {
+    setRpcUrl(value);
+    setRpcUrlError(null);
+    setConnectionTested(false);
+  };
+
+  // Save RPC URL preference
+  const handleSaveRpcUrl = () => {
+    const normalized = normalizeRpcUrl(rpcUrl);
+
+    if (!isValidRpcUrl(normalized)) {
+      setRpcUrlError('Please enter a valid HTTP or HTTPS URL');
+      return;
+    }
+
+    storeRpcUrl(normalized);
+    setRpcUrlError(null);
+    setConnectionTested(true);
+
+    // Show brief success feedback
+    setTimeout(() => setConnectionTested(false), 2000);
+  };
+
+  // Reset RPC URL to default
+  const handleResetRpcUrl = () => {
+    clearStoredRpcUrl();
+    setRpcUrl(getDefaultRpcUrl());
+    setRpcUrlError(null);
+    setConnectionTested(false);
+  };
+
+  // Test RPC connection
+  const handleTestConnection = async () => {
+    const normalized = normalizeRpcUrl(rpcUrl);
+
+    if (!isValidRpcUrl(normalized)) {
+      setRpcUrlError('Please enter a valid HTTP or HTTPS URL');
+      return;
+    }
+
+    setIsTestingConnection(true);
+    setRpcUrlError(null);
+
+    try {
+      // Simple health check - try to fetch the RPC endpoint
+      const response = await fetch(normalized, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'openhuman.ping',
+          params: {},
+        }),
+      });
+
+      if (response.ok || response.status === 400 || response.status === 405) {
+        // 400/405 means the endpoint exists but method not found - still valid
+        setConnectionTested(true);
+        storeRpcUrl(normalized);
+      } else {
+        setRpcUrlError(`Connection failed: ${response.status} ${response.statusText}`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to reach the RPC endpoint';
+      setRpcUrlError(message);
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,6 +148,73 @@ const Welcome = () => {
             Welcome to <span className="font-medium text-stone-900">OpenHuman</span>! Your Personal
             AI Super Intelligence. Private, Simple and extremely powerful.
           </p>
+
+          {/* RPC URL Configuration (Advanced) */}
+          {showAdvanced ? (
+            <div className="mb-5 p-4 bg-stone-50 rounded-xl border border-stone-200">
+              <div className="flex items-center justify-between mb-3">
+                <label htmlFor="rpc-url-input" className="text-xs font-medium text-stone-700">
+                  Core RPC URL
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(false)}
+                  className="text-xs text-stone-500 hover:text-stone-700">
+                  Close
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  id="rpc-url-input"
+                  type="url"
+                  value={rpcUrl}
+                  onChange={e => handleRpcUrlChange(e.target.value)}
+                  placeholder="http://127.0.0.1:7788/rpc"
+                  className="flex-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-xs text-stone-900 placeholder:text-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={isTestingConnection}
+                  className="px-3 py-2 bg-stone-200 hover:bg-stone-300 text-stone-700 text-xs font-medium rounded-lg transition-colors disabled:opacity-60">
+                  {isTestingConnection ? (
+                    <span className="flex items-center gap-1">
+                      <span className="h-3 w-3 animate-spin rounded-full border border-stone-400 border-t-transparent" />
+                      Testing
+                    </span>
+                  ) : (
+                    'Test'
+                  )}
+                </button>
+              </div>
+              {rpcUrlError ? (
+                <p className="mt-2 text-xs text-red-600">{rpcUrlError}</p>
+              ) : connectionTested ? (
+                <p className="mt-2 text-xs text-green-600">Connection successful! URL saved.</p>
+              ) : null}
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleSaveRpcUrl}
+                  className="px-3 py-1.5 bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium rounded-lg transition-colors">
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetRpcUrl}
+                  className="px-3 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-700 text-xs font-medium rounded-lg transition-colors">
+                  Reset to Default
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(true)}
+              className="mb-5 text-xs text-stone-500 hover:text-stone-700 underline">
+              Configure RPC URL (Advanced)
+            </button>
+          )}
 
           {errorMessage ? (
             <div
