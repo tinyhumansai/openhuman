@@ -189,7 +189,7 @@ mod tests {
         let ts_ms = 1_700_000_000_000 + (seq as i64) * 1_000;
         let ts = Utc.timestamp_millis_opt(ts_ms).unwrap();
         let c = Chunk {
-            id: chunk_id(SourceKind::Chat, source_tree, seq),
+            id: chunk_id(SourceKind::Chat, source_tree, seq, "test-content"),
             content: format!("mentioning entity in {source_tree}#{seq}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,

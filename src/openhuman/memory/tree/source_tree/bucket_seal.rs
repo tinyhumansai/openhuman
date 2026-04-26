@@ -1,11 +1,20 @@
 //! Append + cascade-seal for summary trees (#709).
 //!
-//! `append_leaf` pushes a persisted chunk into the L0 buffer of a tree. If
-//! the buffer's running `token_sum` crosses `TOKEN_BUDGET`, the buffer
-//! seals into a level-1 summary, its items move into the summary's
+//! `append_leaf` pushes a persisted chunk into the L0 buffer of a tree.
+//! Seal gates differ by level:
+//!
+//! - **L0 (leaves → L1)**: seal when `token_sum >= TOKEN_BUDGET`. Bounds
+//!   the summariser's raw input.
+//! - **L≥1 (summaries → next level)**: seal when `item_ids.len() >=
+//!   SUMMARY_FANOUT`. Per-summary token size depends on summariser
+//!   quality, so a token-based gate collapses to a 1:1:1 chain when the
+//!   summariser is weak. Counting siblings keeps the tree's fan-in
+//!   stable regardless.
+//!
+//! When a buffer seals, its items move into the new summary's
 //! `child_ids`, the buffer clears, and the new summary id is queued at
-//! level 2. The cascade continues upward until a buffer stays under the
-//! token budget.
+//! the next level. The cascade continues upward until a buffer fails its
+//! gate.
 //!
 //! Concurrency: Phase 3a assumes a single-process SQLite workspace. All
 //! writes in one seal step run in a single transaction; the async
@@ -29,7 +38,7 @@ use crate::openhuman::memory::tree::source_tree::summariser::{
     Summariser, SummaryContext, SummaryInput,
 };
 use crate::openhuman::memory::tree::source_tree::types::{
-    Buffer, SummaryNode, Tree, TreeKind, TOKEN_BUDGET,
+    Buffer, SummaryNode, Tree, TreeKind, SUMMARY_FANOUT, TOKEN_BUDGET,
 };
 use crate::openhuman::memory::tree::store::with_connection;
 
@@ -168,8 +177,23 @@ pub async fn cascade_all_from(
     Ok(sealed_ids)
 }
 
+/// Level-aware seal gate.
+///
+/// L0 buffers (raw leaves) gate on `token_sum` so the summariser's input
+/// stays bounded. L≥1 buffers gate on sibling count so the tree's
+/// fan-in is independent of per-summary token size — without this,
+/// summarisers that emit at the full token budget (e.g. the inert
+/// fallback) collapse the cascade into a 1:1:1 chain instead of a real
+/// tree.
 fn should_seal(buf: &Buffer) -> bool {
-    !buf.is_empty() && buf.token_sum >= TOKEN_BUDGET as i64
+    if buf.is_empty() {
+        return false;
+    }
+    if buf.level == 0 {
+        buf.token_sum >= TOKEN_BUDGET as i64
+    } else {
+        (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
+    }
 }
 
 /// Seal `buf` at `level` into one summary at `level + 1`. Returns the new
@@ -227,8 +251,26 @@ async fn seal_one_level(
     // the buffer stays intact, and a retry re-embeds from scratch. The
     // tx below would otherwise commit a summary with no embedding,
     // polluting retrieval's semantic rerank.
+    //
+    // Embedder context-window guard: `nomic-embed-text-v1.5` accepts
+    // up to 8192 tokens of input. Summary content is bounded by
+    // `ctx.token_budget = TOKEN_BUDGET = 10_000` so a worst-case
+    // summary overshoots the embedder. We truncate the input passed
+    // to `embed()` to fit (the persisted summary content stays full;
+    // only the embedding's "view" of it is clamped). 6000 tokens
+    // leaves headroom for tokenizer differences across embedders.
     let embedder = build_embedder_from_config(config).context("build embedder during seal")?;
-    let embedding = embedder.embed(&output.content).await.with_context(|| {
+    // Conservative cap. Slack-style chat content (URLs, mentions,
+    // emoji) tokenizes 2-4× higher than the 4-chars/token heuristic.
+    // 1000 approx-tokens (~4000 chars) is comfortably under 8192
+    // even at 4× tokenizer ratio.
+    let embed_input = truncate_for_embed(&output.content, 1_000);
+    log::info!(
+        "[source_tree::bucket_seal] embed input: original_chars={} truncated_chars={}",
+        output.content.len(),
+        embed_input.len()
+    );
+    let embedding = embedder.embed(&embed_input).await.with_context(|| {
         format!(
             "embed summary during seal tree_id={} level={}",
             tree.id, level
@@ -363,6 +405,21 @@ async fn seal_one_level(
     );
 
     Ok(summary_id)
+}
+
+/// Clamp `text` to roughly `max_tokens` tokens before passing to the
+/// embedder. Uses the same ~4 chars/token heuristic as
+/// `approx_token_count`. Embedders have hard input-size limits (e.g.
+/// `nomic-embed-text-v1.5` = 8192 tokens) and an overshoot returns
+/// HTTP 500 from Ollama rather than auto-truncating, which would
+/// abort the seal transaction.
+fn truncate_for_embed(text: &str, max_tokens: u32) -> String {
+    let approx = crate::openhuman::memory::tree::types::approx_token_count(text);
+    if approx <= max_tokens {
+        return text.to_string();
+    }
+    let char_ceiling = (max_tokens as usize).saturating_mul(4);
+    text.chars().take(char_ceiling).collect()
 }
 
 fn refresh_last_sealed_tx(
@@ -513,7 +570,7 @@ mod tests {
         // Persist two chunks that the hydrator can load during seal.
         let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
         let mk_chunk = |seq: u32, tokens: u32| Chunk {
-            id: chunk_id(SourceKind::Chat, "slack:#eng", seq),
+            id: chunk_id(SourceKind::Chat, "slack:#eng", seq, "test-content"),
             content: format!("substantive chunk content {seq}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
@@ -590,5 +647,154 @@ mod tests {
         })
         .unwrap();
         assert_eq!(parent.as_deref(), Some(summary_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn fanout_at_l1_triggers_l2_seal() {
+        use crate::openhuman::memory::tree::source_tree::types::SUMMARY_FANOUT;
+        use crate::openhuman::memory::tree::store::upsert_chunks;
+        use crate::openhuman::memory::tree::types::{
+            chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+        };
+        use chrono::TimeZone;
+
+        let (_tmp, cfg) = test_config();
+        let tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+        let summariser = InertSummariser::new();
+
+        let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        let mk_chunk = |seq: u32| {
+            let content = format!("substantive chunk content {seq}");
+            Chunk {
+                id: chunk_id(SourceKind::Chat, "slack:#eng", seq, &content),
+                content,
+                metadata: Metadata {
+                    source_kind: SourceKind::Chat,
+                    source_id: "slack:#eng".into(),
+                    owner: "alice".into(),
+                    timestamp: ts,
+                    time_range: (ts, ts),
+                    tags: vec![],
+                    source_ref: Some(SourceRef::new("slack://x")),
+                },
+                // Each leaf alone busts TOKEN_BUDGET so the L0→L1 seal
+                // fires on every append. After SUMMARY_FANOUT seals, the
+                // L1 buffer's count-based gate trips and cascades to L2.
+                token_count: 10_000,
+                seq_in_source: seq,
+                created_at: ts,
+            }
+        };
+
+        let fanout = SUMMARY_FANOUT;
+        let mut all_sealed: Vec<String> = Vec::new();
+        for seq in 0..fanout {
+            let chunk = mk_chunk(seq);
+            upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
+            let leaf = LeafRef {
+                chunk_id: chunk.id.clone(),
+                token_count: chunk.token_count,
+                timestamp: ts,
+                content: chunk.content.clone(),
+                entities: vec![],
+                topics: vec![],
+                score: 0.5,
+            };
+            let sealed = append_leaf(&cfg, &tree, &leaf, &summariser).await.unwrap();
+            all_sealed.extend(sealed);
+        }
+
+        // First (fanout-1) appends each emit one L1 seal. The final
+        // append emits an L1 seal AND cascades into one L2 seal.
+        assert_eq!(
+            all_sealed.len() as u32,
+            fanout + 1,
+            "expected {} L1 seals + 1 L2 seal, got {}",
+            fanout,
+            all_sealed.len()
+        );
+
+        let t = store::get_tree(&cfg, &tree.id).unwrap().unwrap();
+        assert_eq!(t.max_level, 2, "tree should have climbed to L2");
+
+        let l1 = store::get_buffer(&cfg, &tree.id, 1).unwrap();
+        assert!(
+            l1.is_empty(),
+            "L1 buffer should clear when the fanout seal fires"
+        );
+
+        let l2 = store::get_buffer(&cfg, &tree.id, 2).unwrap();
+        assert_eq!(l2.item_ids.len(), 1, "exactly one L2 summary queued");
+
+        let l2_summary = store::get_summary(&cfg, &l2.item_ids[0]).unwrap().unwrap();
+        assert_eq!(l2_summary.level, 2);
+        assert_eq!(
+            l2_summary.child_ids.len() as u32,
+            fanout,
+            "L2 summary should fold all {fanout} L1 children"
+        );
+    }
+
+    #[tokio::test]
+    async fn upper_level_does_not_seal_below_fanout() {
+        use crate::openhuman::memory::tree::source_tree::types::SUMMARY_FANOUT;
+        use crate::openhuman::memory::tree::store::upsert_chunks;
+        use crate::openhuman::memory::tree::types::{
+            chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+        };
+        use chrono::TimeZone;
+
+        let (_tmp, cfg) = test_config();
+        let tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+        let summariser = InertSummariser::new();
+
+        let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        // Emit (fanout - 1) L1 summaries — should leave the L1 buffer
+        // populated but BELOW the count gate, so no L2 seal.
+        let stop_before = SUMMARY_FANOUT.saturating_sub(1);
+        for seq in 0..stop_before {
+            let content = format!("c{seq}");
+            let chunk = Chunk {
+                id: chunk_id(SourceKind::Chat, "slack:#eng", seq, &content),
+                content,
+                metadata: Metadata {
+                    source_kind: SourceKind::Chat,
+                    source_id: "slack:#eng".into(),
+                    owner: "alice".into(),
+                    timestamp: ts,
+                    time_range: (ts, ts),
+                    tags: vec![],
+                    source_ref: Some(SourceRef::new("slack://x")),
+                },
+                token_count: 10_000,
+                seq_in_source: seq,
+                created_at: ts,
+            };
+            upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
+            let leaf = LeafRef {
+                chunk_id: chunk.id,
+                token_count: chunk.token_count,
+                timestamp: ts,
+                content: chunk.content,
+                entities: vec![],
+                topics: vec![],
+                score: 0.5,
+            };
+            let _ = append_leaf(&cfg, &tree, &leaf, &summariser).await.unwrap();
+        }
+
+        let t = store::get_tree(&cfg, &tree.id).unwrap().unwrap();
+        assert_eq!(t.max_level, 1, "should plateau at L1 below fanout");
+
+        let l1 = store::get_buffer(&cfg, &tree.id, 1).unwrap();
+        assert_eq!(
+            l1.item_ids.len() as u32,
+            stop_before,
+            "L1 buffer should hold the unsealed siblings"
+        );
+        assert_eq!(
+            store::count_summaries(&cfg, &tree.id).unwrap(),
+            stop_before as u64
+        );
     }
 }

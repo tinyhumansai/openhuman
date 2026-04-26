@@ -66,8 +66,9 @@ pub fn chunk_markdown(input: &ChunkerInput, opts: &ChunkerOptions) -> Vec<Chunk>
         .map(|(idx, content)| {
             let seq = idx as u32;
             let token_count = approx_token_count(&content);
+            let id = super::types::chunk_id(input.source_kind, &input.source_id, seq, &content);
             Chunk {
-                id: super::types::chunk_id(input.source_kind, &input.source_id, seq),
+                id,
                 content,
                 metadata: input.metadata.clone(),
                 token_count,

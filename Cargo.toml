@@ -9,6 +9,10 @@ autobins = false
 name = "openhuman-core"
 path = "src/main.rs"
 
+[[bin]]
+name = "slack-backfill"
+path = "src/bin/slack_backfill.rs"
+
 [lib]
 name = "openhuman_core"
 crate-type = ["rlib"]

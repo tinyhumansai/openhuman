@@ -356,7 +356,7 @@ mod tests {
         let summariser = InertSummariser::new();
 
         let c1 = Chunk {
-            id: chunk_id(SourceKind::Chat, scope, 0),
+            id: chunk_id(SourceKind::Chat, scope, 0, "test-content"),
             content: format!("chunk 1 in {scope}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
@@ -372,7 +372,7 @@ mod tests {
             created_at: ts,
         };
         let c2 = Chunk {
-            id: chunk_id(SourceKind::Chat, scope, 1),
+            id: chunk_id(SourceKind::Chat, scope, 1, "test-content"),
             content: format!("chunk 2 in {scope}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,

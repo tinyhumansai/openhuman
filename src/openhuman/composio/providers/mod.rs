@@ -45,6 +45,7 @@ pub mod gmail;
 pub mod notion;
 pub mod profile;
 pub mod registry;
+pub mod slack;
 pub mod sync_state;
 
 /// Static toolkit → curated catalog map.

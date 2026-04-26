@@ -243,7 +243,7 @@ mod tests {
         let mut leaf_ids: Vec<String> = Vec::new();
         for seq in 0..2u32 {
             let c = Chunk {
-                id: chunk_id(SourceKind::Chat, "slack:#eng", seq),
+                id: chunk_id(SourceKind::Chat, "slack:#eng", seq, "test-content"),
                 content: format!("content-{seq}"),
                 metadata: Metadata {
                     source_kind: SourceKind::Chat,

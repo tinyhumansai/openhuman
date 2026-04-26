@@ -202,7 +202,7 @@ mod tests {
         let tree = get_or_create_source_tree(cfg, scope).unwrap();
         let summariser = InertSummariser::new();
         let c1 = Chunk {
-            id: chunk_id(SourceKind::Chat, scope, 0),
+            id: chunk_id(SourceKind::Chat, scope, 0, "test-content"),
             content: format!("c1-{scope}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
@@ -218,7 +218,7 @@ mod tests {
             created_at: ts,
         };
         let c2 = Chunk {
-            id: chunk_id(SourceKind::Chat, scope, 1),
+            id: chunk_id(SourceKind::Chat, scope, 1, "test-content"),
             content: format!("c2-{scope}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,

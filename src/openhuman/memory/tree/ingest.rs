@@ -22,7 +22,7 @@ use crate::openhuman::memory::tree::chunker::{chunk_markdown, ChunkerInput, Chun
 use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, pack_checked};
 use crate::openhuman::memory::tree::score::{self, ScoreResult, ScoringConfig};
 use crate::openhuman::memory::tree::source_tree::{
-    append_leaf, get_or_create_source_tree, InertSummariser, LeafRef,
+    append_leaf, get_or_create_source_tree, LeafRef,
 };
 use crate::openhuman::memory::tree::store;
 use crate::openhuman::memory::tree::topic_tree::route_leaf_to_topic_trees;
@@ -134,8 +134,11 @@ async fn persist(
         return Ok(IngestResult::empty(source_id));
     }
 
-    // 2. Score (async; uses configured extractor)
-    let scoring_cfg = ScoringConfig::default_regex_only();
+    // 2. Score (async; extractor chain driven by config.memory_tree —
+    //    regex-only unless llm_extractor_endpoint + model are set, in
+    //    which case LlmEntityExtractor runs as second-pass on borderline
+    //    chunks with soft-fallback to regex on LLM failure).
+    let scoring_cfg = ScoringConfig::from_config(config);
     let scores = score::score_chunks(&chunks, &scoring_cfg).await?;
 
     // Fail fast on scorer length mismatch — silently truncating via zip would
@@ -252,8 +255,10 @@ async fn persist(
 
 /// Push every kept chunk into its source tree. Scoped to Phase 3a — all
 /// chunks from one ingest batch share the same `source_id`, so they share
-/// one tree lookup. The inert summariser is the default; future wiring
-/// can swap in an LLM summariser here.
+/// one tree lookup. The summariser comes from `build_summariser(config)`:
+/// Ollama-backed [`LlmSummariser`] when `memory_tree.llm_summariser_*` is
+/// set, else deterministic [`InertSummariser`]. Both share the same trait,
+/// so the seal cascade doesn't notice the difference.
 async fn append_leaves_to_tree(
     config: &Config,
     source_id: &str,
@@ -264,7 +269,7 @@ async fn append_leaves_to_tree(
         return Ok(());
     }
     let tree = get_or_create_source_tree(config, source_id)?;
-    let summariser = InertSummariser::new();
+    let summariser = crate::openhuman::memory::tree::source_tree::build_summariser(config);
 
     // Build a chunk_id → (score, entities, topics) map for quick lookup.
     use std::collections::HashMap;
@@ -294,12 +299,14 @@ async fn append_leaves_to_tree(
             topics,
             score: score_value,
         };
-        append_leaf(config, &tree, &leaf, &summariser).await?;
+        append_leaf(config, &tree, &leaf, summariser.as_ref()).await?;
 
         // Phase 3c (#709): route the leaf to every matching topic tree
         // and tick the curator for each entity. Non-fatal on error —
         // the source-tree append has already succeeded above.
-        if let Err(e) = route_leaf_to_topic_trees(config, &leaf, &entities, &summariser).await {
+        if let Err(e) =
+            route_leaf_to_topic_trees(config, &leaf, &entities, summariser.as_ref()).await
+        {
             log::warn!(
                 "[memory_tree::ingest] topic_tree routing failed chunk_id={} err={:#}",
                 chunk.id,

@@ -120,7 +120,7 @@ mod tests {
         let summariser = InertSummariser::new();
         for seq in 0..2u32 {
             let c = Chunk {
-                id: chunk_id(SourceKind::Chat, scope, seq),
+                id: chunk_id(SourceKind::Chat, scope, seq, "test-content"),
                 content: format!("daily-{scope}-{seq}"),
                 metadata: Metadata {
                     source_kind: SourceKind::Chat,

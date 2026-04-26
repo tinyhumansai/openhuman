@@ -110,7 +110,7 @@ mod tests {
         // Persist one chunk with an old timestamp (10 days ago).
         let old_ts = Utc::now() - Duration::days(10);
         let c = Chunk {
-            id: chunk_id(SourceKind::Chat, "slack:#eng", 0),
+            id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "test-content"),
             content: "old content that should get sealed".into(),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
@@ -158,7 +158,7 @@ mod tests {
         // Persist a leaf stamped now so it's NOT stale.
         let now = Utc::now();
         let c = Chunk {
-            id: chunk_id(SourceKind::Chat, "slack:#eng", 0),
+            id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "test-content"),
             content: "fresh".into(),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
