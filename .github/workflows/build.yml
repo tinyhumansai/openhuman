@@ -7,6 +7,8 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  # Required for Sentry to associate commits with releases
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
@@ -75,8 +77,42 @@ jobs:
           cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
         env:
           NODE_ENV: production
-          CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
-          CARGO_PROFILE_RELEASE_LTO: 'false'
-          CARGO_PROFILE_RELEASE_STRIP: 'true'
-          CARGO_PROFILE_RELEASE_DEBUG: 'false'
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_STRIP: "true"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+
+      - name: Upload Rust debug symbols to Sentry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          # Install sentry-cli if not available (container runs as root, no sudo needed)
+          if ! command -v sentry-cli &> /dev/null; then
+            curl -sSL https://github.com/getsentry/sentry-cli/releases/download/2.34.2/sentry-cli-Linux-x86_64 -o /tmp/sentry-cli
+            chmod +x /tmp/sentry-cli
+            mv /tmp/sentry-cli /usr/local/bin/sentry-cli
+          fi
+
+          # Create Sentry release and upload debug symbols
+          VERSION=$(grep -m1 '^version\s*=' app/src-tauri/Cargo.toml | sed 's/version\s*=\s*"\([^"]*\)"/\1/')
+          RELEASE="openhuman@${VERSION}"
+
+          echo "Creating Sentry release: ${RELEASE}"
+          sentry-cli releases new "${RELEASE}" || true
+          # Use --ignore-missing because fetch-depth: 1 means shallow clone
+          sentry-cli releases set-commits --auto --ignore-missing "${RELEASE}" || true
+
+          echo "Uploading debug symbols..."
+          # Debug symbols are indexed by debug-ID, not release-scoped, so no --release flag
+          sentry-cli upload-dif \
+            --org "$SENTRY_ORG" \
+            --project "$SENTRY_PROJECT" \
+            --log-level=warning \
+            app/src-tauri/target/release/deps/
+
+          sentry-cli releases finalize "${RELEASE}"
+          echo "Sentry symbol upload complete for ${RELEASE}"

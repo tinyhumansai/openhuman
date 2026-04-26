@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Users can now set core JSON-RPC URL on login screen without build-time configuration
   - RPC URL persisted to localStorage and restored on next launch
   - Added "Test Connection" button to validate RPC endpoint before saving
-  - Core now exposes `openhuman.config_get_client_config` RPC method returning safe client fields
+  - Core now exposes `openhuman.config_get_client` RPC method returning safe client fields
   - Frontend `coreRpcClient` respects user-configured URL over build-time defaults
   - Unit tests added for URL persistence and validation utilities
 
@@ -48,21 +48,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.52.28] - 2026-04-18
 
 See [release notes](https://github.com/tinyhumansai/openhuman/releases/tag/v0.52.28) for details.
-
-## [0.52.27] - 2026-04-16
-
-### Added
-
-- **Skills**: Enhanced skill creation with code generation and GitHub integration
-  - New skill templates with intelligent defaults
-  - Improved skill editor with syntax highlighting
-  - GitHub sync for skill versioning
-
-## [0.52.26] - 2026-04-14
-
-### Fixed
-
-- **Conversations**: Fixed thread pagination and loading states
-  - Improved infinite scroll behavior
-  - Added proper loading indicators
-  - Resolved race conditions in message fetching
