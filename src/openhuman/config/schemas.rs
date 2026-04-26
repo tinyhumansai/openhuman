@@ -9,12 +9,11 @@ use crate::rpc::RpcOutcome;
 
 const DEFAULT_ONBOARDING_FLAG_NAME: &str = ".skip_onboarding";
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct ModelSettingsUpdate {
-    pub api_url: Option<String>,
-    pub api_key: Option<String>,
-    pub default_model: Option<String>,
-    pub default_temperature: Option<f64>,
+#[derive(Debug, Deserialize)]
+struct ModelSettingsUpdate {
+    api_url: Option<String>,
+    default_model: Option<String>,
+    default_temperature: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,6 +100,7 @@ struct VoiceServerSettingsUpdate {
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("get_config"),
+        schemas("get_client_config"),
         schemas("update_model_settings"),
         schemas("update_memory_settings"),
         schemas("update_screen_intelligence_settings"),
@@ -129,6 +129,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get_config"),
             handler: handle_get_config,
+        },
+        RegisteredController {
+            schema: schemas("get_client_config"),
+            handler: handle_get_client_config,
         },
         RegisteredController {
             schema: schemas("update_model_settings"),
@@ -216,69 +220,95 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
         "get_config" => ControllerSchema {
-            namespace: "config",
-            function: "get",
-            description: "Read persisted config snapshot and resolved paths.",
+            namespace: "config".to_string(),
+            function: "get".to_string(),
+            description: "Read persisted config snapshot and resolved paths.".to_string(),
             inputs: vec![],
             outputs: vec![FieldSchema {
-                name: "snapshot",
+                name: "snapshot".to_string(),
                 ty: TypeSchema::Json,
-                comment: "Config snapshot with workspace and config paths.",
+                comment: "Config snapshot with workspace and config paths.".to_string(),
                 required: true,
             }],
         },
+        "get_client_config" => ControllerSchema {
+            namespace: "config".to_string(),
+            function: "get_client_config".to_string(),
+            description:
+                "Read safe client-facing config fields (api_url, feature flags). No secrets.".to_string(),
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "api_url".to_string(),
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Configured backend API URL, if any.".to_string(),
+                    required: false,
+                },
+                FieldSchema {
+                    name: "default_model".to_string(),
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Default model identifier.".to_string(),
+                    required: false,
+                },
+                FieldSchema {
+                    name: "app_version".to_string(),
+                    ty: TypeSchema::String,
+                    comment: "OpenHuman core version.".to_string(),
+                    required: true,
+                },
+            ],
+        },
         "update_model_settings" => ControllerSchema {
-            namespace: "config",
-            function: "update_model_settings",
-            description: "Update model and backend connection settings.",
+            namespace: "config".to_string(),
+            function: "update_model_settings".to_string(),
+            description: "Update model and backend connection settings.".to_string(),
             inputs: vec![
                 optional_string("api_url", "Backend API URL."),
-                optional_string("api_key", "Backend API Key."),
                 optional_string("default_model", "Default model id."),
                 FieldSchema {
-                    name: "default_temperature",
+                    name: "default_temperature".to_string(),
                     ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
-                    comment: "Default model temperature.",
+                    comment: "Default model temperature.".to_string(),
                     required: false,
                 },
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_memory_settings" => ControllerSchema {
-            namespace: "config",
-            function: "update_memory_settings",
-            description: "Update memory backend and embedding settings.",
+            namespace: "config".to_string(),
+            function: "update_memory_settings".to_string(),
+            description: "Update memory backend and embedding settings.".to_string(),
             inputs: vec![
                 optional_string("backend", "Memory backend identifier."),
                 FieldSchema {
-                    name: "auto_save",
+                    name: "auto_save".to_string(),
                     ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
-                    comment: "Enable auto-save.",
+                    comment: "Enable auto-save.".to_string(),
                     required: false,
                 },
                 optional_string("embedding_provider", "Embedding provider identifier."),
                 optional_string("embedding_model", "Embedding model identifier."),
                 FieldSchema {
-                    name: "embedding_dimensions",
+                    name: "embedding_dimensions".to_string(),
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-                    comment: "Embedding dimensions.",
+                    comment: "Embedding dimensions.".to_string(),
                     required: false,
                 },
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_screen_intelligence_settings" => ControllerSchema {
-            namespace: "config",
-            function: "update_screen_intelligence_settings",
-            description: "Update screen intelligence runtime settings.",
+            namespace: "config".to_string(),
+            function: "update_screen_intelligence_settings".to_string(),
+            description: "Update screen intelligence runtime settings.".to_string(),
             inputs: vec![
                 optional_bool("enabled", "Enable screen intelligence."),
                 optional_string("capture_policy", "Capture policy mode."),
                 optional_string("policy_mode", "Policy mode override."),
                 FieldSchema {
-                    name: "baseline_fps",
+                    name: "baseline_fps".to_string(),
                     ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
-                    comment: "Baseline capture FPS.",
+                    comment: "Baseline capture FPS.".to_string(),
                     required: false,
                 },
                 optional_bool("vision_enabled", "Enable vision analysis."),
@@ -289,28 +319,28 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 ),
                 optional_bool("keep_screenshots", "Keep screenshots on disk after vision processing."),
                 FieldSchema {
-                    name: "allowlist",
+                    name: "allowlist".to_string(),
                     ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
                         TypeSchema::String,
                     )))),
-                    comment: "Allowed app list.",
+                    comment: "Allowed app list.".to_string(),
                     required: false,
                 },
                 FieldSchema {
-                    name: "denylist",
+                    name: "denylist".to_string(),
                     ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
                         TypeSchema::String,
                     )))),
-                    comment: "Denied app list.",
+                    comment: "Denied app list.".to_string(),
                     required: false,
                 },
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_runtime_settings" => ControllerSchema {
-            namespace: "config",
-            function: "update_runtime_settings",
-            description: "Update runtime execution strategy settings.",
+            namespace: "config".to_string(),
+            function: "update_runtime_settings".to_string(),
+            description: "Update runtime execution strategy settings.".to_string(),
             inputs: vec![
                 optional_string("kind", "Runtime kind."),
                 optional_bool("reasoning_enabled", "Enable reasoning mode."),
@@ -318,99 +348,99 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_browser_settings" => ControllerSchema {
-            namespace: "config",
-            function: "update_browser_settings",
-            description: "Update browser automation settings.",
+            namespace: "config".to_string(),
+            function: "update_browser_settings".to_string(),
+            description: "Update browser automation settings.".to_string(),
             inputs: vec![optional_bool("enabled", "Enable browser integration.")],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "resolve_api_url" => ControllerSchema {
-            namespace: "config",
-            function: "resolve_api_url",
-            description: "Resolve effective API base URL using config/env/default from core.",
+            namespace: "config".to_string(),
+            function: "resolve_api_url".to_string(),
+            description: "Resolve effective API base URL using config/env/default from core.".to_string(),
             inputs: vec![],
             outputs: vec![FieldSchema {
-                name: "api_url",
+                name: "api_url".to_string(),
                 ty: TypeSchema::String,
-                comment: "Resolved backend API URL.",
+                comment: "Resolved backend API URL.".to_string(),
                 required: true,
             }],
         },
         "get_runtime_flags" => ControllerSchema {
-            namespace: "config",
-            function: "get_runtime_flags",
-            description: "Read environment-driven runtime flags.",
+            namespace: "config".to_string(),
+            function: "get_runtime_flags".to_string(),
+            description: "Read environment-driven runtime flags.".to_string(),
             inputs: vec![],
             outputs: vec![FieldSchema {
-                name: "flags",
-                ty: TypeSchema::Ref("RuntimeFlagsOut"),
-                comment: "Runtime flag state.",
+                name: "flags".to_string(),
+                ty: TypeSchema::Ref("RuntimeFlagsOut".to_string()),
+                comment: "Runtime flag state.".to_string(),
                 required: true,
             }],
         },
         "set_browser_allow_all" => ControllerSchema {
-            namespace: "config",
-            function: "set_browser_allow_all",
-            description: "Set OPENHUMAN_BROWSER_ALLOW_ALL runtime flag.",
+            namespace: "config".to_string(),
+            function: "set_browser_allow_all".to_string(),
+            description: "Set OPENHUMAN_BROWSER_ALLOW_ALL runtime flag.".to_string(),
             inputs: vec![FieldSchema {
-                name: "enabled",
+                name: "enabled".to_string(),
                 ty: TypeSchema::Bool,
-                comment: "Whether to enable browser allow-all mode.",
+                comment: "Whether to enable browser allow-all mode.".to_string(),
                 required: true,
             }],
             outputs: vec![FieldSchema {
-                name: "flags",
-                ty: TypeSchema::Ref("RuntimeFlagsOut"),
-                comment: "Updated runtime flag state.",
+                name: "flags".to_string(),
+                ty: TypeSchema::Ref("RuntimeFlagsOut".to_string()),
+                comment: "Updated runtime flag state.".to_string(),
                 required: true,
             }],
         },
         "workspace_onboarding_flag_exists" => ControllerSchema {
-            namespace: "config",
-            function: "workspace_onboarding_flag_exists",
-            description: "Check if onboarding flag file exists in workspace.",
+            namespace: "config".to_string(),
+            function: "workspace_onboarding_flag_exists".to_string(),
+            description: "Check if onboarding flag file exists in workspace.".to_string(),
             inputs: vec![FieldSchema {
-                name: "flag_name",
+                name: "flag_name".to_string(),
                 ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                comment: "Optional onboarding flag name override.",
+                comment: "Optional onboarding flag name override.".to_string(),
                 required: false,
             }],
             outputs: vec![FieldSchema {
-                name: "exists",
+                name: "exists".to_string(),
                 ty: TypeSchema::Bool,
-                comment: "True when the flag file is present.",
+                comment: "True when the flag file is present.".to_string(),
                 required: true,
             }],
         },
         "workspace_onboarding_flag_set" => ControllerSchema {
-            namespace: "config",
-            function: "workspace_onboarding_flag_set",
-            description: "Create or remove the onboarding flag file in workspace.",
+            namespace: "config".to_string(),
+            function: "workspace_onboarding_flag_set".to_string(),
+            description: "Create or remove the onboarding flag file in workspace.".to_string(),
             inputs: vec![
                 FieldSchema {
-                    name: "flag_name",
+                    name: "flag_name".to_string(),
                     ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Optional onboarding flag name override.",
+                    comment: "Optional onboarding flag name override.".to_string(),
                     required: false,
                 },
                 FieldSchema {
-                    name: "value",
+                    name: "value".to_string(),
                     ty: TypeSchema::Bool,
-                    comment: "True to create, false to remove.",
+                    comment: "True to create, false to remove.".to_string(),
                     required: true,
                 },
             ],
             outputs: vec![FieldSchema {
-                name: "exists",
+                name: "exists".to_string(),
                 ty: TypeSchema::Bool,
-                comment: "True when the flag file is present after the operation.",
+                comment: "True when the flag file is present after the operation.".to_string(),
                 required: true,
             }],
         },
         "update_analytics_settings" => ControllerSchema {
-            namespace: "config",
-            function: "update_analytics_settings",
-            description: "Enable or disable anonymized analytics and error reporting.",
+            namespace: "config".to_string(),
+            function: "update_analytics_settings".to_string(),
+            description: "Enable or disable anonymized analytics and error reporting.".to_string(),
             inputs: vec![optional_bool(
                 "enabled",
                 "Enable anonymized analytics and crash reports.",
@@ -418,55 +448,55 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "get_analytics_settings" => ControllerSchema {
-            namespace: "config",
-            function: "get_analytics_settings",
-            description: "Read current analytics settings.",
+            namespace: "config".to_string(),
+            function: "get_analytics_settings".to_string(),
+            description: "Read current analytics settings.".to_string(),
             inputs: vec![],
             outputs: vec![FieldSchema {
-                name: "enabled",
+                name: "enabled".to_string(),
                 ty: TypeSchema::Bool,
-                comment: "Whether anonymized analytics is enabled.",
+                comment: "Whether anonymized analytics is enabled.".to_string(),
                 required: true,
             }],
         },
         "agent_server_status" => ControllerSchema {
-            namespace: "config",
-            function: "agent_server_status",
-            description: "Return agent server runtime URL and status.",
+            namespace: "config".to_string(),
+            function: "agent_server_status".to_string(),
+            description: "Return agent server runtime URL and status.".to_string(),
             inputs: vec![],
             outputs: vec![json_output("status", "Agent server status payload.")],
         },
         "reset_local_data" => ControllerSchema {
-            namespace: "config",
-            function: "reset_local_data",
+            namespace: "config".to_string(),
+            function: "reset_local_data".to_string(),
             description:
-                "Delete local OpenHuman data for the active config/workspace so the next restart boots clean.",
+                "Delete local OpenHuman data for the active config/workspace so the next restart boots clean.".to_string(),
             inputs: vec![],
             outputs: vec![json_output("result", "Reset result with removed paths.")],
         },
         "get_onboarding_completed" => ControllerSchema {
-            namespace: "config",
-            function: "get_onboarding_completed",
-            description: "Read whether the user has completed the onboarding flow.",
+            namespace: "config".to_string(),
+            function: "get_onboarding_completed".to_string(),
+            description: "Read whether the user has completed the onboarding flow.".to_string(),
             inputs: vec![],
             outputs: vec![FieldSchema {
-                name: "completed",
+                name: "completed".to_string(),
                 ty: TypeSchema::Bool,
-                comment: "True when onboarding has been completed.",
+                comment: "True when onboarding has been completed.".to_string(),
                 required: true,
             }],
         },
         "get_dictation_settings" => ControllerSchema {
-            namespace: "config",
-            function: "get_dictation_settings",
-            description: "Read current voice dictation settings.",
+            namespace: "config".to_string(),
+            function: "get_dictation_settings".to_string(),
+            description: "Read current voice dictation settings.".to_string(),
             inputs: vec![],
             outputs: vec![json_output("settings", "Dictation settings payload.")],
         },
         "update_dictation_settings" => ControllerSchema {
-            namespace: "config",
-            function: "update_dictation_settings",
-            description: "Update voice dictation settings.",
+            namespace: "config".to_string(),
+            function: "update_dictation_settings".to_string(),
+            description: "Update voice dictation settings.".to_string(),
             inputs: vec![
                 optional_bool("enabled", "Enable voice dictation."),
                 optional_string("hotkey", "Global hotkey string (e.g. Fn)."),
@@ -474,77 +504,77 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_bool("llm_refinement", "Enable LLM post-processing of transcription."),
                 optional_bool("streaming", "Enable WebSocket streaming transcription."),
                 FieldSchema {
-                    name: "streaming_interval_ms",
+                    name: "streaming_interval_ms".to_string(),
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-                    comment: "Interval between streaming inference passes (ms).",
+                    comment: "Interval between streaming inference passes (ms).".to_string(),
                     required: false,
                 },
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "get_voice_server_settings" => ControllerSchema {
-            namespace: "config",
-            function: "get_voice_server_settings",
-            description: "Read current voice server settings.",
+            namespace: "config".to_string(),
+            function: "get_voice_server_settings".to_string(),
+            description: "Read current voice server settings.".to_string(),
             inputs: vec![],
             outputs: vec![json_output("settings", "Voice server settings payload.")],
         },
         "update_voice_server_settings" => ControllerSchema {
-            namespace: "config",
-            function: "update_voice_server_settings",
-            description: "Update voice server settings.",
+            namespace: "config".to_string(),
+            function: "update_voice_server_settings".to_string(),
+            description: "Update voice server settings.".to_string(),
             inputs: vec![
                 optional_bool("auto_start", "Start the voice server automatically with the core."),
                 optional_string("hotkey", "Voice server hotkey string (e.g. Fn)."),
                 optional_string("activation_mode", "Activation mode: tap or push."),
                 optional_bool("skip_cleanup", "Skip LLM cleanup and keep dictation verbatim."),
                 FieldSchema {
-                    name: "min_duration_secs",
+                    name: "min_duration_secs".to_string(),
                     ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
-                    comment: "Minimum recording duration in seconds.",
+                    comment: "Minimum recording duration in seconds.".to_string(),
                     required: false,
                 },
                 FieldSchema {
-                    name: "silence_threshold",
+                    name: "silence_threshold".to_string(),
                     ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
-                    comment: "RMS energy threshold for silence detection.",
+                    comment: "RMS energy threshold for silence detection.".to_string(),
                     required: false,
                 },
                 FieldSchema {
-                    name: "custom_dictionary",
+                    name: "custom_dictionary".to_string(),
                     ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
-                    comment: "Custom vocabulary words to bias whisper toward.",
+                    comment: "Custom vocabulary words to bias whisper toward.".to_string(),
                     required: false,
                 },
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "set_onboarding_completed" => ControllerSchema {
-            namespace: "config",
-            function: "set_onboarding_completed",
-            description: "Mark the onboarding flow as completed or reset it.",
+            namespace: "config".to_string(),
+            function: "set_onboarding_completed".to_string(),
+            description: "Mark the onboarding flow as completed or reset it.".to_string(),
             inputs: vec![FieldSchema {
-                name: "value",
+                name: "value".to_string(),
                 ty: TypeSchema::Bool,
-                comment: "True to mark completed, false to reset.",
+                comment: "True to mark completed, false to reset.".to_string(),
                 required: true,
             }],
             outputs: vec![FieldSchema {
-                name: "completed",
+                name: "completed".to_string(),
                 ty: TypeSchema::Bool,
-                comment: "Updated onboarding completed state.",
+                comment: "Updated onboarding completed state.".to_string(),
                 required: true,
             }],
         },
         _ => ControllerSchema {
-            namespace: "config",
-            function: "unknown",
-            description: "Unknown config controller function.",
+            namespace: "config".to_string(),
+            function: "unknown".to_string(),
+            description: "Unknown config controller function.".to_string(),
             inputs: vec![],
             outputs: vec![FieldSchema {
-                name: "error",
+                name: "error".to_string(),
                 ty: TypeSchema::String,
-                comment: "Lookup error details.",
+                comment: "Lookup error details.".to_string(),
                 required: true,
             }],
         },
@@ -555,15 +585,24 @@ fn handle_get_config(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::load_and_get_config_snapshot().await?) })
 }
 
+fn handle_get_client_config(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let app_version = std::env::var("OPENHUMAN_APP_VERSION")
+            .unwrap_or_else(|_| "unknown".to_string());
+        to_json(serde_json::json!({
+            "api_url": config.api_url,
+            "default_model": config.default_model,
+            "app_version": app_version,
+        }))
+    })
+}
+
 fn handle_update_model_settings(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let update: ModelSettingsUpdate = match serde_json::from_value(serde_json::json!(params)) {
-            Ok(u) => u,
-            Err(e) => return Err(e.to_string()),
-        };
+        let update = deserialize_params::<ModelSettingsUpdate>(params)?;
         let patch = config_rpc::ModelSettingsPatch {
             api_url: update.api_url,
-            api_key: update.api_key,
             default_model: update.default_model,
             default_temperature: update.default_temperature,
         };
@@ -730,7 +769,7 @@ fn handle_update_voice_server_settings(params: Map<String, Value>) -> Controller
         let update = deserialize_params::<VoiceServerSettingsUpdate>(params)?;
         let patch = config_rpc::VoiceServerSettingsPatch {
             auto_start: update.auto_start,
-            hotkey: update.hotkey,
+            hotkey: update.hotoken,
             activation_mode: update.activation_mode,
             skip_cleanup: update.skip_cleanup,
             min_duration_secs: update.min_duration_secs,
@@ -754,36 +793,36 @@ fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result
 
 fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
-        name,
+        name: name.to_string(),
         ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
+        comment: comment.to_string(),
         required: false,
     }
 }
 
 fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
-        name,
+        name: name.to_string(),
         ty: TypeSchema::String,
-        comment,
+        comment: comment.to_string(),
         required: true,
     }
 }
 
 fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
-        name,
+        name: name.to_string(),
         ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
-        comment,
+        comment: comment.to_string(),
         required: false,
     }
 }
 
 fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
-        name,
+        name: name.to_string(),
         ty: TypeSchema::Json,
-        comment,
+        comment: comment.to_string(),
         required: true,
     }
 }
@@ -793,195 +832,5 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn catalog_counts_match_and_nonempty() {
-        let s = all_controller_schemas();
-        let h = all_registered_controllers();
-        assert_eq!(s.len(), h.len());
-        assert!(s.len() >= 20, "config namespace should expose ≥20 fns");
-    }
-
-    #[test]
-    fn all_schemas_use_config_namespace_and_have_descriptions() {
-        for s in all_controller_schemas() {
-            assert_eq!(s.namespace, "config", "function {}", s.function);
-            assert!(!s.description.is_empty(), "function {} desc", s.function);
-            assert!(!s.outputs.is_empty(), "function {} outputs", s.function);
-        }
-    }
-
-    #[test]
-    fn unknown_function_returns_unknown_schema() {
-        let s = schemas("no_such_fn");
-        assert_eq!(s.function, "unknown");
-        assert_eq!(s.namespace, "config");
-    }
-
-    #[test]
-    fn every_registered_key_resolves_to_non_unknown_schema() {
-        let keys = [
-            "get_config",
-            "update_model_settings",
-            "update_memory_settings",
-            "update_screen_intelligence_settings",
-            "update_runtime_settings",
-            "update_browser_settings",
-            "resolve_api_url",
-            "get_runtime_flags",
-            "set_browser_allow_all",
-            "workspace_onboarding_flag_exists",
-            "workspace_onboarding_flag_set",
-            "update_analytics_settings",
-            "get_analytics_settings",
-            "agent_server_status",
-            "reset_local_data",
-            "get_onboarding_completed",
-            "set_onboarding_completed",
-            "get_dictation_settings",
-            "update_dictation_settings",
-            "get_voice_server_settings",
-            "update_voice_server_settings",
-        ];
-        for k in keys {
-            let s = schemas(k);
-            assert_ne!(s.function, "unknown", "`{k}` fell through to unknown");
-            assert_eq!(s.namespace, "config");
-        }
-    }
-
-    #[test]
-    fn registered_controllers_all_use_config_namespace() {
-        for h in all_registered_controllers() {
-            assert_eq!(h.schema.namespace, "config");
-            assert!(!h.schema.function.is_empty());
-        }
-    }
-
-    #[test]
-    fn json_output_helper_builds_required_json_field() {
-        let f = json_output("result", "desc");
-        assert!(f.required);
-        assert!(matches!(f.ty, TypeSchema::Json));
-    }
-
-    #[test]
-    fn to_json_wraps_rpc_outcome() {
-        let v = to_json(RpcOutcome::single_log(serde_json::json!({"ok": true}), "l"))
-            .expect("serialize");
-        assert!(v.get("logs").is_some() || v.get("result").is_some());
-    }
-
-    // ── Field builder helpers ────────────────────────────────────
-
-    #[test]
-    fn required_string_builds_required_string_field() {
-        let f = required_string("api_key", "Auth key");
-        assert_eq!(f.name, "api_key");
-        assert_eq!(f.comment, "Auth key");
-        assert!(f.required);
-        assert!(matches!(f.ty, TypeSchema::String));
-    }
-
-    #[test]
-    fn optional_string_builds_option_string_field() {
-        let f = optional_string("model", "model name");
-        assert!(!f.required);
-        match &f.ty {
-            TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::String)),
-            other => panic!("expected Option<String>, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn optional_bool_builds_option_bool_field() {
-        let f = optional_bool("enabled", "Whether enabled");
-        assert!(!f.required);
-        match &f.ty {
-            TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Bool)),
-            other => panic!("expected Option<Bool>, got {other:?}"),
-        }
-    }
-
-    // ── deserialize_params helper ────────────────────────────────
-
-    #[test]
-    fn deserialize_params_parses_model_settings_update() {
-        let mut m = Map::new();
-        m.insert(
-            "default_temperature".into(),
-            Value::Number(serde_json::Number::from_f64(0.7).unwrap()),
-        );
-        let out: ModelSettingsUpdate = deserialize_params(m).unwrap();
-        assert_eq!(out.default_temperature, Some(0.7));
-        assert!(out.api_url.is_none());
-        assert!(out.default_model.is_none());
-    }
-
-    #[test]
-    fn deserialize_params_parses_memory_settings_update() {
-        let mut m = Map::new();
-        m.insert("backend".into(), Value::String("sqlite".into()));
-        m.insert("auto_save".into(), Value::Bool(true));
-        m.insert(
-            "embedding_dimensions".into(),
-            Value::Number(serde_json::Number::from(1536)),
-        );
-        let out: MemorySettingsUpdate = deserialize_params(m).unwrap();
-        assert_eq!(out.backend.as_deref(), Some("sqlite"));
-        assert_eq!(out.auto_save, Some(true));
-        assert_eq!(out.embedding_dimensions, Some(1536));
-    }
-
-    #[test]
-    fn deserialize_params_parses_workspace_onboarding_flag_params() {
-        let out: WorkspaceOnboardingFlagParams = deserialize_params(Map::new()).unwrap();
-        assert!(out.flag_name.is_none());
-
-        let mut m = Map::new();
-        m.insert("flag_name".into(), Value::String(".custom_marker".into()));
-        let out: WorkspaceOnboardingFlagParams = deserialize_params(m).unwrap();
-        assert_eq!(out.flag_name.as_deref(), Some(".custom_marker"));
-    }
-
-    #[test]
-    fn deserialize_params_parses_workspace_onboarding_flag_set_params() {
-        let mut m = Map::new();
-        m.insert("value".into(), Value::Bool(true));
-        let out: WorkspaceOnboardingFlagSetParams = deserialize_params(m).unwrap();
-        assert_eq!(out.value, true);
-        assert!(out.flag_name.is_none());
-    }
-
-    #[test]
-    fn deserialize_params_rejects_wrong_types_with_invalid_params_prefix() {
-        let mut m = Map::new();
-        m.insert(
-            "default_temperature".into(),
-            Value::String("not-a-number".into()),
-        );
-        let err = deserialize_params::<ModelSettingsUpdate>(m).unwrap_err();
-        assert!(err.starts_with("invalid params"));
-    }
-
-    #[test]
-    fn deserialize_params_requires_value_on_set_onboarding() {
-        let err = deserialize_params::<OnboardingCompletedSetParams>(Map::new()).unwrap_err();
-        assert!(err.contains("invalid params"));
-    }
-
-    #[test]
-    fn deserialize_params_rejects_missing_required_for_set_browser_allow_all() {
-        let err = deserialize_params::<SetBrowserAllowAllParams>(Map::new()).unwrap_err();
-        assert!(err.contains("invalid params"));
-    }
-
-    #[test]
-    fn default_onboarding_flag_constant_points_to_hidden_marker() {
-        // Keeps the constant's observable value pinned so tool behavior
-        // stays stable across refactors.
-        assert_eq!(DEFAULT_ONBOARDING_FLAG_NAME, ".skip_onboarding");
-    }
-}
+#[path = "schemas_tests.rs"]
+mod tests;
