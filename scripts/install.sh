@@ -5,6 +5,14 @@
 
 set -euo pipefail
 
+# Allow tests to source this file without executing the install flow.
+SOURCE_ONLY=0
+for _arg in "$@"; do
+  if [[ "$_arg" == "--source-only" ]]; then
+    SOURCE_ONLY=1
+  fi
+done
+
 INSTALLER_VERSION="1.0.0"
 REPO="tinyhumansai/openhuman"
 LATEST_JSON_URL="https://github.com/${REPO}/releases/latest/download/latest.json"
@@ -72,6 +80,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --verbose)
       VERBOSE=true
+      shift
+      ;;
+    --source-only)
+      # handled above before argument parsing loop; skip silently
       shift
       ;;
     *)
@@ -152,6 +164,58 @@ ASSET_URL=""
 ASSET_NAME=""
 ASSET_SHA256=""
 
+# Resolves an asset URL from a latest.json file for a given OS/arch.
+# Args: $1 = path to latest.json, $2 = os (linux|darwin|windows), $3 = arch (x86_64|aarch64)
+# Stdout: the URL on success.
+# Exit code: 0 on success; 2 on parse error (with diagnostic on stderr); 3 on missing platform.
+resolve_asset_url() {
+  local json_path="$1" os="$2" arch="$3"
+  local key="${os}-${arch}"
+  local url
+  url=$(python3 - "$json_path" "$key" <<'PY'
+import json, sys
+path, key = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        data = json.load(f)
+except Exception as e:
+    print(f"ERR_PARSE: {e}", file=sys.stderr)
+    sys.exit(2)
+plat = data.get("platforms", {}).get(key)
+if not plat:
+    available = ", ".join(sorted(data.get("platforms", {}).keys()))
+    print(f"ERR_PLATFORM: {key} not in [{available}]", file=sys.stderr)
+    sys.exit(3)
+url = plat.get("url")
+if not url:
+    print(f"ERR_URL: no url field for {key}", file=sys.stderr)
+    sys.exit(2)
+print(url)
+PY
+  )
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    return $rc
+  fi
+  printf '%s\n' "$url"
+}
+
+# Retries an HTTP HEAD on the asset URL, fails loudly with the URL.
+verify_asset_reachable() {
+  local url="$1" max_attempts=5 delay=2
+  for i in $(seq 1 $max_attempts); do
+    if curl -fsSI --max-time 10 "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ $i -lt $max_attempts ]]; then
+      sleep "$delay"
+      delay=$((delay * 2))
+    fi
+  done
+  echo "ERR_UNREACHABLE: $url not reachable after $max_attempts attempts" >&2
+  return 4
+}
+
 resolve_from_latest_json() {
   if ! curl -fsSL "${LATEST_JSON_URL}" -o "${LATEST_JSON_PATH}"; then
     return 1
@@ -162,26 +226,27 @@ resolve_from_latest_json() {
     return 1
   fi
 
-  local parsed
-  parsed="$(python3 - "${LATEST_JSON_PATH}" "${PLATFORM_KEY}" <<'PY'
-import json, sys
-path, key = sys.argv[1], sys.argv[2]
-with open(path, "r", encoding="utf-8") as f:
-    data = json.load(f)
-version = data.get("version", "")
-platforms = data.get("platforms", {})
-entry = platforms.get(key) or platforms.get(f"{key}-appimage") or platforms.get(f"{key}-app")
-url = ""
-if isinstance(entry, dict):
-    url = entry.get("url", "")
-print(version)
-print(url)
-PY
-)" || return 1
+  local url
+  url=$(resolve_asset_url "${LATEST_JSON_PATH}" "${OS}" "${ARCH}") || {
+    local rc=$?
+    if [[ $rc -eq 3 ]]; then
+      log_warn "Platform ${OS}-${ARCH} not found in latest.json. Resolved URL will be empty — check if a Linux build has been published."
+      log_warn "$(cat "${LATEST_JSON_PATH}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("Available platforms: " + ", ".join(sorted(d.get("platforms",{}).keys())))' 2>/dev/null || true)"
+    else
+      log_warn "Failed to parse latest.json (exit $rc)."
+    fi
+    return 1
+  }
 
-  LATEST_VERSION="$(echo "${parsed}" | sed -n '1p')"
-  ASSET_URL="$(echo "${parsed}" | sed -n '2p')"
+  ASSET_URL="$url"
   ASSET_NAME="$(basename "${ASSET_URL}")"
+
+  # Extract version from latest.json
+  LATEST_VERSION="$(python3 -c "
+import json, sys
+with open('${LATEST_JSON_PATH}') as f: d = json.load(f)
+print(d.get('version', ''))
+" 2>/dev/null || true)"
 
   [ -n "${ASSET_URL}" ]
 }
@@ -293,6 +358,11 @@ PY
   fi
 }
 
+# Exit early after functions are defined so tests can source and call them.
+if [[ "${SOURCE_ONLY}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 if resolve_from_latest_json; then
   log_ok "Resolved latest release via latest.json (${LATEST_VERSION})"
 else
@@ -325,7 +395,7 @@ else
       exit 0
     fi
     log_err "Could not resolve a compatible asset for ${OS}/${ARCH}."
-    log_err "Check https://github.com/${REPO}/releases/latest for available assets."
+    log_err "Resolved URL was empty. Check https://github.com/${REPO}/releases/latest for available assets."
     exit 1
   fi
   log_ok "Resolved latest release via releases API (${LATEST_VERSION})"
@@ -336,6 +406,15 @@ resolve_release_digest
 if [ -z "${ASSET_URL}" ]; then
   log_err "Could not determine download URL for ${OS}/${ARCH}."
   exit 1
+fi
+
+if [ "${DRY_RUN}" = true ]; then
+  echo "DRY RUN: verify_asset_reachable ${ASSET_URL}"
+else
+  if ! verify_asset_reachable "${ASSET_URL}"; then
+    log_err "Asset URL is not reachable after retries: ${ASSET_URL}"
+    exit 1
+  fi
 fi
 
 DOWNLOAD_PATH="${TMP_DIR}/${ASSET_NAME}"

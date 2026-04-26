@@ -20,6 +20,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolver unit test
+        run: bash scripts/test_install.sh
+
+
       - name: Run installer dry-run
         run: bash scripts/install.sh --dry-run --verbose
 

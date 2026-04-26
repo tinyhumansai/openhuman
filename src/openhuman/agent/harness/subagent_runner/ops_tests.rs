@@ -120,7 +120,9 @@ fn subagent_mode_as_str_roundtrip() {
 // ── End-to-end runner tests with mock provider ────────────────────────
 
 use crate::openhuman::agent::harness::fork_context::{with_fork_context, with_parent_context};
-use crate::openhuman::providers::{ChatRequest as PChatRequest, ChatResponse, Provider, ToolCall};
+use crate::openhuman::providers::{
+    ChatRequest as PChatRequest, ChatResponse, Provider, ToolCall,
+};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -206,7 +208,10 @@ fn tool_response(name: &str, args: &str) -> ChatResponse {
 
 /// Build a minimal `ParentExecutionContext` suitable for runner tests.
 /// Uses a no-op memory backend so we don't have to spin up a real one.
-fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> ParentExecutionContext {
+fn make_parent(
+    provider: Arc<dyn Provider>,
+    tools: Vec<Box<dyn Tool>>,
+) -> ParentExecutionContext {
     let tool_specs: Vec<crate::openhuman::tools::ToolSpec> =
         tools.iter().map(|t| t.spec()).collect();
     ParentExecutionContext {
@@ -227,6 +232,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
         session_key: "0_test".into(),
         session_parent_prefix: None,
+        curated_snapshot: None,
     }
 }
 
