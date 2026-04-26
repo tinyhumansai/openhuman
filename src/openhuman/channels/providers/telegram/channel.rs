@@ -54,6 +54,7 @@ pub struct TelegramChannel {
     typing_handle: Mutex<Option<TelegramTypingTask>>,
     stream_mode: StreamMode,
     draft_update_interval_ms: u64,
+    silent_streaming: bool,
     last_draft_edit: Mutex<std::collections::HashMap<String, std::time::Instant>>,
     mention_only: bool,
     bot_username: Mutex<Option<String>>,
@@ -81,6 +82,7 @@ impl TelegramChannel {
             client: reqwest::Client::new(),
             stream_mode: StreamMode::Off,
             draft_update_interval_ms: 1000,
+            silent_streaming: true,
             last_draft_edit: Mutex::new(std::collections::HashMap::new()),
             typing_handle: Mutex::new(None),
             mention_only,
@@ -94,9 +96,11 @@ impl TelegramChannel {
         mut self,
         stream_mode: StreamMode,
         draft_update_interval_ms: u64,
+        silent_streaming: bool,
     ) -> Self {
         self.stream_mode = stream_mode;
         self.draft_update_interval_ms = draft_update_interval_ms;
+        self.silent_streaming = silent_streaming;
         self
     }
 
@@ -913,6 +917,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         chat_id: &str,
         thread_id: Option<&str>,
         reply_to_message_id: Option<i64>,
+        disable_notification: bool,
     ) -> anyhow::Result<()> {
         let chunks = split_message_for_telegram(message);
 
@@ -932,7 +937,8 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             let mut markdown_body = serde_json::json!({
                 "chat_id": chat_id,
                 "text": text,
-                "parse_mode": "Markdown"
+                "parse_mode": "Markdown",
+                "disable_notification": disable_notification,
             });
 
             // Add message_thread_id for forum topic support
@@ -969,6 +975,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             let mut plain_body = serde_json::json!({
                 "chat_id": chat_id,
                 "text": text,
+                "disable_notification": disable_notification,
             });
 
             // Add message_thread_id for forum topic support
@@ -1533,6 +1540,7 @@ impl Channel for TelegramChannel {
         let mut body = serde_json::json!({
             "chat_id": chat_id,
             "text": initial_text,
+            "disable_notification": self.silent_streaming,
         });
         if let Some(tid) = thread_id {
             body["message_thread_id"] = serde_json::Value::String(tid.to_string());
@@ -1613,6 +1621,7 @@ impl Channel for TelegramChannel {
             "chat_id": chat_id,
             "message_id": message_id_parsed,
             "text": display_text,
+            "disable_notification": self.silent_streaming,
         });
 
         let resp = self
@@ -1656,7 +1665,13 @@ impl Channel for TelegramChannel {
                 Err(e) => {
                     tracing::warn!("Invalid Telegram message_id '{message_id}': {e}");
                     return self
-                        .send_text_chunks(text, &chat_id, thread_id.as_deref(), parent_message_id)
+                        .send_text_chunks(
+                            text,
+                            &chat_id,
+                            thread_id.as_deref(),
+                            parent_message_id,
+                            false,
+                        )
                         .await;
                 }
             };
@@ -1674,7 +1689,13 @@ impl Channel for TelegramChannel {
 
             // Fall back to chunked send
             return self
-                .send_text_chunks(text, &chat_id, thread_id.as_deref(), parent_message_id)
+                .send_text_chunks(
+                    text,
+                    &chat_id,
+                    thread_id.as_deref(),
+                    parent_message_id,
+                    false,
+                )
                 .await;
         }
 
@@ -1683,7 +1704,13 @@ impl Channel for TelegramChannel {
             Err(e) => {
                 tracing::warn!("Invalid Telegram message_id '{message_id}': {e}");
                 return self
-                    .send_text_chunks(text, &chat_id, thread_id.as_deref(), parent_message_id)
+                    .send_text_chunks(
+                        text,
+                        &chat_id,
+                        thread_id.as_deref(),
+                        parent_message_id,
+                        false,
+                    )
                     .await;
             }
         };
@@ -1727,8 +1754,14 @@ impl Channel for TelegramChannel {
 
         // Edit failed entirely — fall back to new message
         tracing::warn!("Telegram finalize_draft edit failed; falling back to sendMessage");
-        self.send_text_chunks(text, &chat_id, thread_id.as_deref(), parent_message_id)
-            .await
+        self.send_text_chunks(
+            text,
+            &chat_id,
+            thread_id.as_deref(),
+            parent_message_id,
+            false,
+        )
+        .await
     }
 
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
@@ -1777,8 +1810,14 @@ impl Channel for TelegramChannel {
 
         if !attachments.is_empty() {
             if !text_without_markers.is_empty() {
-                self.send_text_chunks(&text_without_markers, chat_id, thread_id, parent_message_id)
-                    .await?;
+                self.send_text_chunks(
+                    &text_without_markers,
+                    chat_id,
+                    thread_id,
+                    parent_message_id,
+                    false,
+                )
+                .await?;
             }
 
             for attachment in &attachments {
@@ -1794,8 +1833,14 @@ impl Channel for TelegramChannel {
             return Ok(());
         }
 
-        self.send_text_chunks(&reactionless_content, chat_id, thread_id, parent_message_id)
-            .await
+        self.send_text_chunks(
+            &reactionless_content,
+            chat_id,
+            thread_id,
+            parent_message_id,
+            false,
+        )
+        .await
     }
 
     async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {

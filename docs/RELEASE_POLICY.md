@@ -17,7 +17,7 @@ Production web builds embed a **minimum supported app semver** at **build time**
 | `VITE_MINIMUM_SUPPORTED_APP_VERSION` | e.g. `0.51.0` — desktop app must be **≥** this to finish `openhuman://oauth/success`.                                 |
 | `VITE_LATEST_APP_DOWNLOAD_URL`       | Optional; defaults to `https://github.com/tinyhumansai/openhuman/releases/latest`. Opened when the gate blocks OAuth. |
 
-Configure these as **GitHub Actions variables**. They must be present on **both** the standalone **`yarn build`** step and the **`tauri-apps/tauri-action`** step env in `.github/workflows/release.yml` and `build-windows.yml` so the Vite bundle embedded in shipped installers includes the gate. Leave `VITE_MINIMUM_SUPPORTED_APP_VERSION` **unset** for local dev (gate disabled).
+Configure these as **GitHub Actions variables**. They must be present on **both** the standalone **`pnpm build`** step and the **`tauri-apps/tauri-action`** step env in `.github/workflows/release.yml` and `build-windows.yml` so the Vite bundle embedded in shipped installers includes the gate. Leave `VITE_MINIMUM_SUPPORTED_APP_VERSION` **unset** for local dev (gate disabled).
 
 Implementation: `app/src/utils/oauthAppVersionGate.ts`, `app/src/utils/desktopDeepLinkListener.ts`.
 

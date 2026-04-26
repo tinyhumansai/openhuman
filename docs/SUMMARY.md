@@ -59,18 +59,18 @@ Frontend — permission round-trip + dormant click listener.
 
 | Gate | Result | Time |
 |---|---|---|
-| `yarn compile` (tsc --noEmit) | pass | 32.30s |
-| `yarn lint` (biome) | pass | 63.65s |
-| `yarn rust:format:check` | pass | — |
+| `pnpm compile` (tsc --noEmit) | pass | 32.30s |
+| `pnpm lint` (eslint) | pass | 63.65s |
+| `pnpm rust:format:check` | pass | — |
 | `cargo check --features cef --no-default-features` | pass | 22.21s |
 | `cargo check --features wry --no-default-features` | pass | 6m 29s (cold) |
 
 **Skipped:**
-- `yarn format:check` — flags only `app/src/pages/Home.tsx` (local build-tag pill `#714`, `skip-worktree` flagged, per workflow Phase 3 Step 6). Confirmed via `git ls-files -v | grep '^S '` → `S app/src/pages/Home.tsx`.
+- `pnpm format:check` — flags only `app/src/pages/Home.tsx` (local build-tag pill `#714`, `skip-worktree` flagged, per workflow Phase 3 Step 6). Confirmed via `git ls-files -v | grep '^S '` → `S app/src/pages/Home.tsx`.
 - `cargo clippy` — pre-existing errors in `src/slack_scanner/extract.rs` (type_complexity) and `src/lib.rs:212` (unnecessary_map_or) unrelated to this feature. Verified with `git diff upstream/main -- app/src-tauri/src/lib.rs` shows only the 2-line invoke handler addition.
 
 **Not yet done:**
-- Manual verification in built `.app` bundle with real Slack/Discord/Gmail notifications. Requires `yarn macOS:build:debug` (~10 min), install, open, trigger notifications, confirm provider-prefixed titles fire natively.
+- Manual verification in built `.app` bundle with real Slack/Discord/Gmail notifications. Requires `pnpm macOS:build:debug` (~10 min), install, open, trigger notifications, confirm provider-prefixed titles fire natively.
 
 ---
 

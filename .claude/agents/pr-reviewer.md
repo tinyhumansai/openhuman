@@ -185,10 +185,10 @@ Run in parallel where independent. Skip suites clearly unrelated to the diff; al
 
 ```
 # Frontend (if app/ changed)
-cd app && yarn typecheck
-cd app && yarn lint
-cd app && yarn format       # auto-fix
-cd app && yarn test:unit
+cd app && pnpm typecheck
+cd app && pnpm lint
+cd app && pnpm format       # auto-fix
+cd app && pnpm test:unit
 
 # Rust (if src/ or app/src-tauri changed)
 cargo fmt --manifest-path Cargo.toml

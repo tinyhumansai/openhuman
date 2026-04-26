@@ -37,7 +37,7 @@ runtime for this app).
 
 ### 0. Pre-work: find stable DOM / IDB hooks
 
-Open the site in the CEF webview (any build with `yarn dev:cef`), then open
+Open the site in the CEF webview (any build with `pnpm dev:cef`), then open
 DevTools at <http://localhost:9222>. Look for:
 
 - **Stable selectors** — `data-*` attributes, `role`, `aria-label`. CSS
@@ -103,7 +103,7 @@ if let Ok(account_id) = std::env::var("OPENHUMAN_DEV_AUTO_INSTAGRAM") {
 Then during development:
 
 ```bash
-OPENHUMAN_DEV_AUTO_INSTAGRAM=<account-uuid> yarn dev:cef >/tmp/oh-cef.log 2>&1 &
+OPENHUMAN_DEV_AUTO_INSTAGRAM=<account-uuid> pnpm dev:cef >/tmp/oh-cef.log 2>&1 &
 ```
 
 The account UUID is stable across runs so the webview profile persists

@@ -22,10 +22,10 @@ Desktop E2E tests use **WebDriverIO (WDIO)** to drive the Tauri app via two auto
 cargo install tauri-driver
 
 # Build the E2E app
-yarn workspace openhuman-app test:e2e:build
+pnpm workspace openhuman-app test:e2e:build
 
 # Run all flows
-yarn workspace openhuman-app test:e2e:all:flows
+pnpm workspace openhuman-app test:e2e:all:flows
 
 # Run a single spec
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
@@ -41,10 +41,10 @@ npm install -g appium
 appium driver install mac2
 
 # Build the .app bundle
-yarn workspace openhuman-app test:e2e:build
+pnpm workspace openhuman-app test:e2e:build
 
 # Run all flows
-yarn workspace openhuman-app test:e2e:all:flows
+pnpm workspace openhuman-app test:e2e:all:flows
 ```
 
 ### Docker on macOS (Linux E2E locally)
@@ -57,7 +57,7 @@ docker compose -f e2e/docker-compose.yml run --rm e2e
 
 # Build the app first (if needed)
 docker compose -f e2e/docker-compose.yml run --rm e2e \
-  yarn workspace openhuman-app test:e2e:build
+  pnpm workspace openhuman-app test:e2e:build
 
 # Run a single spec
 docker compose -f e2e/docker-compose.yml run --rm e2e \
@@ -168,7 +168,7 @@ cargo install tauri-driver
 
 ### macOS: Deep links not working in `tauri dev`
 
-Deep links require a `.app` bundle. Use `yarn tauri build --debug --bundles app` instead.
+Deep links require a `.app` bundle. Use `pnpm tauri build --debug --bundles app` instead.
 
 ### Docker: Build is slow on first run
 

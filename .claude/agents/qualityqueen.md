@@ -201,7 +201,7 @@ Next: [What I'll validate/fix next]
 ```bash
 # Frontend
 npm run lint && npm run type-check && npm run build
-yarn lint && yarn type-check && yarn build
+pnpm lint && pnpm type-check && pnpm build
 
 # Python
 flake8 . && black --check . && mypy . && pytest
