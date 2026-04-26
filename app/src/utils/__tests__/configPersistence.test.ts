@@ -1,6 +1,10 @@
-# Test configuration for configPersistence module
+/**
+ * Unit tests for configPersistence utilities.
+ * Tests URL storage, validation, and normalization.
+ */
 
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+
 import {
   clearStoredRpcUrl,
   getDefaultRpcUrl,
@@ -14,10 +18,12 @@ const STORAGE_KEY = 'openhuman_core_rpc_url';
 
 describe('configPersistence', () => {
   beforeEach(() => {
+    // Clear localStorage before each test
     localStorage.removeItem(STORAGE_KEY);
   });
 
   afterEach(() => {
+    // Clean up after each test
     localStorage.removeItem(STORAGE_KEY);
   });
 
