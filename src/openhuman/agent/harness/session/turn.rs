@@ -1223,6 +1223,7 @@ impl Agent {
             ),
             include_profile: !self.omit_profile,
             include_memory_md: !self.omit_memory_md,
+            user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
         };
         // Route through the global context manager so every
         // prompt-building call-site — main agent, sub-agent runner,

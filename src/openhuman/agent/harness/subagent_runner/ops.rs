@@ -530,6 +530,7 @@ async fn run_typed_mode(
         connected_identities_md: crate::openhuman::agent::prompts::render_connected_identities(),
         include_profile: !definition.omit_profile,
         include_memory_md: !definition.omit_memory_md,
+        user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
     };
 
     let system_prompt = match &definition.system_prompt {

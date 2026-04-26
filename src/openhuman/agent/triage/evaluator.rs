@@ -343,6 +343,7 @@ fn extract_inline_prompt(def: &AgentDefinition) -> Option<String> {
                 connected_identities_md: String::new(),
                 include_profile: false,
                 include_memory_md: false,
+                user_identity: None,
             };
             match build(&ctx) {
                 Ok(body) if !body.is_empty() => Some(body),

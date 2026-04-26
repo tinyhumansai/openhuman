@@ -48,6 +48,7 @@ fn prompt_builder_assembles_sections() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        user_identity: None,
     };
     let rendered = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
     assert!(rendered.contains("## Tools"));
@@ -77,6 +78,7 @@ fn identity_section_creates_missing_workspace_files() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        user_identity: None,
     };
 
     let section = IdentitySection;
@@ -115,6 +117,7 @@ fn datetime_section_includes_timestamp_and_timezone() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        user_identity: None,
     };
 
     let rendered = DateTimeSection.build(&ctx).unwrap();
@@ -133,6 +136,117 @@ fn datetime_section_includes_timestamp_and_timezone() {
         "rendered payload missing IANA timezone: {payload}"
     );
     assert!(payload.contains("UTC"), "missing UTC offset: {payload}");
+}
+
+fn ctx_with_identity(identity: Option<UserIdentity>) -> PromptContext<'static> {
+    use std::sync::OnceLock;
+    static EMPTY_VISIBLE: OnceLock<HashSet<String>> = OnceLock::new();
+    let visible = EMPTY_VISIBLE.get_or_init(HashSet::new);
+    static EMPTY_TOOLS: &[PromptTool<'static>] = &[];
+    static EMPTY_INTEGRATIONS: &[ConnectedIntegration] = &[];
+    PromptContext {
+        workspace_dir: Path::new("/tmp"),
+        model_name: "test-model",
+        agent_id: "",
+        tools: EMPTY_TOOLS,
+        skills: &[],
+        dispatcher_instructions: "",
+        learned: LearnedContextData::default(),
+        visible_tool_names: visible,
+        tool_call_format: ToolCallFormat::PFormat,
+        connected_integrations: EMPTY_INTEGRATIONS,
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: false,
+        user_identity: identity,
+    }
+}
+
+#[test]
+fn user_identity_section_empty_when_unset() {
+    let ctx = ctx_with_identity(None);
+    let rendered = UserIdentitySection.build(&ctx).unwrap();
+    assert!(rendered.is_empty());
+}
+
+#[test]
+fn user_identity_section_renders_populated_fields_only() {
+    let identity = UserIdentity {
+        id: Some("u_42".to_string()),
+        name: Some("Ada Lovelace".to_string()),
+        email: None,
+    };
+    let ctx = ctx_with_identity(Some(identity));
+    let rendered = UserIdentitySection.build(&ctx).unwrap();
+    assert!(rendered.starts_with("## User\n\n"));
+    assert!(rendered.contains("- name: Ada Lovelace"));
+    assert!(rendered.contains("- id: u_42"));
+    assert!(
+        !rendered.contains("email:"),
+        "empty email field must be skipped — leaking placeholders \
+         confuses agents into asking the user to confirm them"
+    );
+}
+
+#[test]
+fn user_identity_section_skips_when_every_field_is_blank() {
+    // Backend payloads that arrive with every field set to an empty
+    // or whitespace string would otherwise pass the `is_empty()`
+    // guard (None-only) and leave the prompt with an orphan
+    // `## User` heading + intro paragraph pointing at zero fields —
+    // exactly the failure mode the section is meant to suppress.
+    let identity = UserIdentity {
+        id: Some(String::new()),
+        name: Some("   ".to_string()),
+        email: Some("\t".to_string()),
+    };
+    let ctx = ctx_with_identity(Some(identity));
+    let rendered = UserIdentitySection.build(&ctx).unwrap();
+    assert!(
+        rendered.is_empty(),
+        "all-blank identity must produce no output, got:\n{rendered}"
+    );
+}
+
+#[test]
+fn user_identity_section_skips_blank_strings() {
+    // Backend payloads sometimes carry empty-string fields rather than
+    // null. Treat both the same so the prompt never renders
+    // `- email: ` (which would invite the agent to "confirm" the
+    // missing value with the user).
+    let identity = UserIdentity {
+        id: Some("   ".to_string()),
+        name: Some(String::new()),
+        email: Some("ada@example.com".to_string()),
+    };
+    let ctx = ctx_with_identity(Some(identity));
+    let rendered = UserIdentitySection.build(&ctx).unwrap();
+    assert!(rendered.starts_with("## User\n\n"));
+    assert!(rendered.contains("- email: ada@example.com"));
+    assert!(!rendered.contains("- name:"));
+    assert!(!rendered.contains("- id:"));
+}
+
+#[test]
+fn ambient_environment_orders_runtime_user_datetime() {
+    let identity = UserIdentity {
+        id: None,
+        name: Some("Ada".to_string()),
+        email: None,
+    };
+    let ctx = ctx_with_identity(Some(identity));
+    let rendered = render_ambient_environment(&ctx).unwrap();
+    let runtime_pos = rendered.find("## Runtime").expect("runtime missing");
+    let user_pos = rendered.find("## User").expect("user missing");
+    let dt_pos = rendered
+        .find("## Current Date & Time")
+        .expect("datetime missing");
+    assert!(
+        runtime_pos < user_pos && user_pos < dt_pos,
+        "ambient block must order runtime → user → datetime so the \
+         time-volatile section sits at the prompt tail (KV cache \
+         convention from `with_defaults`); got:\n{rendered}"
+    );
 }
 
 #[test]
@@ -182,6 +296,7 @@ fn tools_section_pformat_renders_signature_not_schema() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        user_identity: None,
     };
 
     let rendered = ToolsSection.build(&ctx).unwrap();
@@ -226,6 +341,7 @@ fn tools_section_uses_pformat_signature_for_every_dispatcher() {
             connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
+            user_identity: None,
         };
         let rendered = ToolsSection.build(&ctx).unwrap();
         assert!(
@@ -266,6 +382,7 @@ fn user_memory_section_renders_namespaces_with_headings() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        user_identity: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.starts_with("## User Memory\n\n"));
@@ -294,6 +411,7 @@ fn user_memory_section_returns_empty_when_no_summaries() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        user_identity: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.is_empty());
@@ -941,6 +1059,7 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         connected_identities_md: String::new(),
         include_profile: true,
         include_memory_md: true,
+        user_identity: None,
     };
 
     // Mirror the welcome agent runtime path:
@@ -982,6 +1101,7 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        user_identity: None,
     };
     let narrow = builder.build(&ctx_narrow).unwrap();
     assert!(
@@ -1060,6 +1180,7 @@ fn prompt_tool_constructors_and_user_memory_skip_empty_bodies() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        user_identity: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.contains("### user"));

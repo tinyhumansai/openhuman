@@ -154,6 +154,32 @@ pub enum ToolCallFormat {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Authenticated user identity
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Non-secret user identity fields surfaced to the prompt layer so
+/// agents stop asking the user for information the app already has —
+/// see issue #926.
+///
+/// Only **identifying** fields land here; tokens, refresh tokens, and
+/// any opaque credential material are forbidden. The struct is
+/// constructed from the cached `auth_get_me` response in
+/// `app_state::ops::peek_cached_current_user_identity`, which strips
+/// everything but `id` / `email` / `name` before returning.
+#[derive(Debug, Clone, Default)]
+pub struct UserIdentity {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
+impl UserIdentity {
+    pub fn is_empty(&self) -> bool {
+        self.id.is_none() && self.name.is_none() && self.email.is_none()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Prompt context (everything a section needs)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -182,6 +208,11 @@ pub struct PromptContext<'a> {
     /// When `true`, inject `MEMORY.md` (archivist-curated long-term
     /// memory). Capped at [`USER_FILE_MAX_CHARS`] and frozen per session.
     pub include_memory_md: bool,
+    /// Authenticated user identity (id/name/email) when available — see
+    /// [`UserIdentity`]. `None` for unauthenticated paths (CLI without a
+    /// session, tests). Pre-fetched by the caller from the
+    /// `auth_get_me` cache so prompt builders never reach the network.
+    pub user_identity: Option<UserIdentity>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

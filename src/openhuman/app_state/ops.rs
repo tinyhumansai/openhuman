@@ -357,6 +357,48 @@ async fn fetch_current_user_cached(config: &Config, token: &str) -> Result<Optio
     Ok(fetched)
 }
 
+/// Synchronous, network-free peek at the cached `auth_get_me` response,
+/// returning only the identifying fields the prompt layer is allowed to
+/// embed (`id`, `name`, `email`). Tokens stay locked behind the JWT
+/// helpers — never returned through this path. See issue #926.
+///
+/// Returns `None` when no `auth_get_me` call has populated the cache
+/// yet (CLI-only flows, fresh installs, signed-out sessions). The
+/// cache TTL is **ignored** here intentionally — for prompt rendering
+/// a slightly stale identity is fine; the freshness check only
+/// matters for the snapshot RPC that fronts the React shell.
+pub fn peek_cached_current_user_identity() -> Option<crate::openhuman::agent::prompts::UserIdentity>
+{
+    let cache = CURRENT_USER_CACHE.lock();
+    let entry = cache.as_ref()?;
+    let user = entry.user.as_object()?;
+
+    let pluck = |key: &str| -> Option<String> {
+        user.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+
+    let id = pluck("id")
+        .or_else(|| pluck("user_id"))
+        .or_else(|| pluck("userId"));
+    let name = pluck("name")
+        .or_else(|| pluck("displayName"))
+        .or_else(|| pluck("display_name"))
+        .or_else(|| pluck("full_name"))
+        .or_else(|| pluck("fullName"));
+    let email = pluck("email");
+
+    let identity = crate::openhuman::agent::prompts::UserIdentity { id, name, email };
+    if identity.is_empty() {
+        None
+    } else {
+        Some(identity)
+    }
+}
+
 async fn build_runtime_snapshot(config: &Config) -> RuntimeSnapshot {
     let screen_intelligence = {
         let _ = crate::openhuman::screen_intelligence::global_engine()
