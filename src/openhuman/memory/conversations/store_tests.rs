@@ -18,6 +18,7 @@ fn store_roundtrips_threads_and_messages() {
             id: "default-thread".to_string(),
             title: "Conversation".to_string(),
             created_at: created_at.clone(),
+            labels: None,
         })
         .expect("ensure thread");
     assert_eq!(thread.message_count, 0);
@@ -54,6 +55,7 @@ fn store_updates_message_metadata() {
             id: "default-thread".to_string(),
             title: "Conversation".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
         })
         .expect("ensure thread");
     store
@@ -93,6 +95,7 @@ fn purge_removes_threads_and_messages() {
             id: "default-thread".to_string(),
             title: "Conversation".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
         })
         .expect("ensure thread");
     store
@@ -122,6 +125,7 @@ fn ensure_thread_is_idempotent() {
         id: "t1".to_string(),
         title: "Thread".to_string(),
         created_at: "2026-04-10T12:00:00Z".to_string(),
+        labels: None,
     };
     store.ensure_thread(req.clone()).unwrap();
     store.ensure_thread(req).unwrap();
@@ -137,6 +141,7 @@ fn delete_thread_removes_thread_and_messages() {
             id: "t1".to_string(),
             title: "Thread".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
         })
         .unwrap();
     store
@@ -174,6 +179,7 @@ fn get_messages_empty_thread() {
             id: "t1".to_string(),
             title: "Empty".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
         })
         .unwrap();
     let messages = store.get_messages("t1").unwrap();
@@ -196,6 +202,7 @@ fn multiple_threads_and_messages() {
                 id: format!("t{i}"),
                 title: format!("Thread {i}"),
                 created_at: format!("2026-04-10T12:0{i}:00Z"),
+                labels: None,
             })
             .unwrap();
         store
@@ -232,6 +239,7 @@ fn update_message_nonexistent_returns_error() {
             id: "t1".to_string(),
             title: "Thread".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
         })
         .unwrap();
     let result = store.update_message(
@@ -252,6 +260,7 @@ fn update_thread_title_persists_latest_title() {
             id: "t1".to_string(),
             title: "Chat Apr 10 12:00 PM".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
         })
         .unwrap();
 
@@ -263,6 +272,80 @@ fn update_thread_title_persists_latest_title() {
     let threads = store.list_threads().unwrap();
     assert_eq!(threads[0].title, "Invoice follow-up");
     assert_eq!(threads[0].created_at, "2026-04-10T12:00:00Z");
+}
+
+#[test]
+fn store_handles_labels_and_inference() {
+    let (_temp, store) = make_store();
+
+    // 1. Explicit labels on ensure
+    store
+        .ensure_thread(CreateConversationThread {
+            id: "t1".to_string(),
+            title: "Thread 1".to_string(),
+            created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: Some(vec!["custom".to_string()]),
+        })
+        .unwrap();
+
+    // 2. Inferred labels for morning briefing
+    store
+        .ensure_thread(CreateConversationThread {
+            id: "proactive:morning_briefing".to_string(),
+            title: "Morning Briefing".to_string(),
+            created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
+        })
+        .unwrap();
+
+    // 3. Inferred labels for other proactive
+    store
+        .ensure_thread(CreateConversationThread {
+            id: "proactive:system".to_string(),
+            title: "System Notification".to_string(),
+            created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
+        })
+        .unwrap();
+
+    // 4. Default inferred labels (work)
+    store
+        .ensure_thread(CreateConversationThread {
+            id: "user-thread".to_string(),
+            title: "User Chat".to_string(),
+            created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: None,
+        })
+        .unwrap();
+
+    let threads = store.list_threads().unwrap();
+    let get_thread = |id: &str| threads.iter().find(|t| t.id == id).unwrap();
+
+    assert_eq!(get_thread("t1").labels, vec!["custom"]);
+    assert_eq!(
+        get_thread("proactive:morning_briefing").labels,
+        vec!["briefing"]
+    );
+    assert_eq!(
+        get_thread("proactive:system").labels,
+        vec!["notification"]
+    );
+    assert_eq!(get_thread("user-thread").labels, vec!["work"]);
+
+    // 5. Update labels
+    store
+        .update_thread_labels("t1", vec!["updated".to_string()], "2026-04-10T12:05:00Z")
+        .unwrap();
+    let threads = store.list_threads().unwrap();
+    assert_eq!(get_thread("t1").labels, vec!["updated"]);
+
+    // 6. Title update preserves labels
+    store
+        .update_thread_title("t1", "New Title", "2026-04-10T12:06:00Z")
+        .unwrap();
+    let threads = store.list_threads().unwrap();
+    assert_eq!(get_thread("t1").labels, vec!["updated"]);
+    assert_eq!(get_thread("t1").title, "New Title");
 }
 
 #[test]

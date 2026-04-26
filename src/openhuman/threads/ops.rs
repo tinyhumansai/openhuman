@@ -9,9 +9,10 @@ use crate::openhuman::memory::conversations::{
 use crate::openhuman::memory::{
     ApiEnvelope, ApiMeta, AppendConversationMessageRequest, ConversationMessageRecord,
     ConversationMessagesRequest, ConversationMessagesResponse, ConversationThreadSummary,
-    ConversationThreadsListResponse, DeleteConversationThreadRequest,
-    DeleteConversationThreadResponse, EmptyRequest, GenerateConversationThreadTitleRequest,
-    PaginationMeta, PurgeConversationThreadsResponse, UpdateConversationMessageRequest,
+    ConversationThreadsListResponse, CreateConversationThreadRequest,
+    DeleteConversationThreadRequest, DeleteConversationThreadResponse, EmptyRequest,
+    GenerateConversationThreadTitleRequest, PaginationMeta, PurgeConversationThreadsResponse,
+    UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
     UpsertConversationThreadRequest,
 };
 use crate::openhuman::providers::{self, ProviderRuntimeOptions};
@@ -73,6 +74,7 @@ fn thread_to_summary(thread: ConversationThread) -> ConversationThreadSummary {
         message_count: thread.message_count,
         last_message_at: thread.last_message_at,
         created_at: thread.created_at,
+        labels: thread.labels,
     }
 }
 
@@ -126,6 +128,7 @@ pub async fn thread_upsert(
             id: request.id,
             title: request.title,
             created_at: request.created_at,
+            labels: request.labels,
         },
     )?;
     Ok(envelope(
@@ -137,7 +140,7 @@ pub async fn thread_upsert(
 
 /// Creates a new conversation thread with auto-generated ID and title.
 pub async fn thread_create_new(
-    _request: EmptyRequest,
+    request: CreateConversationThreadRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<ConversationThreadSummary>>, String> {
     let dir = workspace_dir().await?;
     let id = format!("thread-{}", uuid::Uuid::new_v4());
@@ -150,6 +153,7 @@ pub async fn thread_create_new(
             id,
             title,
             created_at,
+            labels: request.labels.or(Some(vec!["work".to_string()])),
         },
     )?;
     Ok(envelope(
@@ -224,7 +228,7 @@ pub async fn thread_generate_title(
         .iter()
         .find(|message| message.sender == "user" && !message.content.trim().is_empty())
         .map(|message| message.content.trim().to_string())
-    else {
+  else {
         tracing::debug!(
             thread_id = %request.thread_id,
             "{THREAD_TITLE_LOG_PREFIX} no user message yet; skipping"
@@ -358,6 +362,24 @@ pub async fn thread_generate_title(
 
     Ok(envelope(
         thread_to_summary(updated),
+        Some(counts([("num_threads", 1)])),
+        None,
+    ))
+}
+
+/// Updates labels for a conversation thread.
+pub async fn thread_update_labels(
+    request: UpdateConversationThreadLabelsRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ConversationThreadSummary>>, String> {
+    let dir = workspace_dir().await?;
+    let thread = conversations::update_thread_labels(
+        dir,
+        &request.thread_id,
+        request.labels,
+        &chrono::Utc::now().to_rfc3339(),
+    )?;
+    Ok(envelope(
+        thread_to_summary(thread),
         Some(counts([("num_threads", 1)])),
         None,
     ))

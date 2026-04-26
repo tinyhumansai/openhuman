@@ -68,9 +68,9 @@ export const loadThreads = createAsyncThunk(
 
 export const createNewThread = createAsyncThunk(
   'thread/createNewThread',
-  async (_, { dispatch, rejectWithValue }) => {
+  async (labels: string[] | undefined, { dispatch, rejectWithValue }) => {
     try {
-      const thread = await threadApi.createNewThread();
+      const thread = await threadApi.createNewThread(labels);
       await dispatch(loadThreads()).unwrap();
       return thread;
     } catch (error) {
@@ -220,6 +220,21 @@ export const persistReaction = createAsyncThunk(
   }
 );
 
+export const updateThreadLabels = createAsyncThunk(
+  'thread/updateThreadLabels',
+  async (payload: { threadId: string; labels: string[] }, { dispatch, rejectWithValue }) => {
+    try {
+      const thread = await threadApi.updateLabels(payload.threadId, payload.labels);
+      await dispatch(loadThreads()).unwrap();
+      return thread;
+    } catch (error) {
+      return rejectWithValue(
+        error instanceof Error ? error.message : 'Failed to update thread labels'
+      );
+    }
+  }
+);
+
 export const purgeThreads = createAsyncThunk(
   'thread/purgeThreads',
   async (_, { dispatch, rejectWithValue }) => {
@@ -315,6 +330,12 @@ const threadSlice = createSlice({
       })
       .addCase(persistReaction.fulfilled, (state, action) => {
         appendMessageToCache(state, action.payload.threadId, action.payload.message, true);
+      })
+      .addCase(updateThreadLabels.fulfilled, (state, action) => {
+        const idx = state.threads.findIndex(thread => thread.id === action.payload.id);
+        if (idx >= 0) {
+          state.threads[idx] = action.payload;
+        }
       })
       .addCase(deleteThread.fulfilled, (state, action) => {
         delete state.messagesByThreadId[action.payload.threadId];

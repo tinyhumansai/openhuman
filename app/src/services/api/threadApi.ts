@@ -24,9 +24,10 @@ function unwrapEnvelope<T>(response: Envelope<T> | T): T {
 const generateTitleLog = debug('threadApi.generateTitleIfNeeded');
 
 export const threadApi = {
-  createNewThread: async (): Promise<Thread> => {
+  createNewThread: async (labels?: string[]): Promise<Thread> => {
     const response = await callCoreRpc<Envelope<Thread>>({
       method: 'openhuman.threads_create_new',
+      params: { labels },
     });
     return unwrapEnvelope(response);
   },
@@ -49,7 +50,7 @@ export const threadApi = {
   appendMessage: async (threadId: string, message: ThreadMessage): Promise<ThreadMessage> => {
     const response = await callCoreRpc<Envelope<ThreadMessage>>({
       method: 'openhuman.threads_message_append',
-      params: { thread_id: threadId, message },
+      params: { thread_id: thread_id, message },
     });
     return unwrapEnvelope(response);
   },
@@ -82,7 +83,7 @@ export const threadApi = {
   ): Promise<ThreadMessage> => {
     const response = await callCoreRpc<Envelope<ThreadMessage>>({
       method: 'openhuman.threads_message_update',
-      params: { thread_id: threadId, message_id: messageId, extra_metadata: extraMetadata },
+      params: { thread_id: thread_id, message_id: messageId, extra_metadata: extraMetadata },
     });
     return unwrapEnvelope(response);
   },
@@ -98,6 +99,14 @@ export const threadApi = {
   purge: async (): Promise<PurgeResultData> => {
     const response = await callCoreRpc<Envelope<PurgeResultData>>({
       method: 'openhuman.threads_purge',
+    });
+    return unwrapEnvelope(response);
+  },
+
+  updateLabels: async (threadId: string, labels: string[]): Promise<Thread> => {
+    const response = await callCoreRpc<Envelope<Thread>>({
+      method: 'openhuman.threads_update_labels',
+      params: { thread_id: threadId, labels },
     });
     return unwrapEnvelope(response);
   },

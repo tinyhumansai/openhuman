@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
+import PillTabBar from '../components/PillTabBar';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import UpsellBanner from '../components/upsell/UpsellBanner';
@@ -149,6 +150,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
   const [isPlayingReply, setIsPlayingReply] = useState(false);
+  const [selectedLabel, setSelectedLabel] = useState<string>('all');
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
   const socketStatus = useAppSelector(selectSocketStatus);
@@ -790,9 +792,23 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const shouldRenderTimelineBeforeLatestAgentMessage =
     selectedThreadToolTimeline.length > 0 && !isSending && Boolean(latestVisibleAgentMessage);
 
-  const sortedThreads = [...threads].sort(
+  const filteredThreads = threads.filter(t => {
+    if (selectedLabel === 'all') return true;
+    return t.labels.includes(selectedLabel);
+  });
+
+  const sortedThreads = [...filteredThreads].sort(
     (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
   );
+
+  const allLabels = Array.from(new Set(threads.flatMap(t => t.labels))).sort();
+  const labelTabs = [
+    { label: 'All', value: 'all' },
+    ...allLabels.map(l => ({
+      label: l.charAt(0).toUpperCase() + l.slice(1),
+      value: l,
+    })),
+  ];
 
   const isSidebar = variant === 'sidebar';
 
@@ -824,6 +840,14 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                 />
               </svg>
             </button>
+          </div>
+          <div className="px-4 py-2 border-b border-stone-50">
+            <PillTabBar
+              items={labelTabs}
+              selected={selectedLabel}
+              onChange={setSelectedLabel}
+              containerClassName="flex gap-1 overflow-x-auto py-1 scrollbar-hide"
+            />
           </div>
           <div className="flex-1 overflow-y-auto">
             {sortedThreads.length === 0 ? (

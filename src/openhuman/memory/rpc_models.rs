@@ -67,6 +67,14 @@ pub struct ApiEnvelope<T> {
 #[serde(deny_unknown_fields)]
 pub struct EmptyRequest {}
 
+/// Request to create a new conversation thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateConversationThreadRequest {
+    #[serde(default)]
+    pub labels: Option<Vec<String>>,
+}
+
 /// Request payload for `openhuman.memory_init`.
 ///
 /// `jwt_token` is accepted for backward compatibility but **not used** — memory
@@ -102,6 +110,8 @@ pub struct ConversationThreadSummary {
     pub message_count: usize,
     pub last_message_at: String,
     pub created_at: String,
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 /// A single persisted conversation message.
@@ -125,6 +135,16 @@ pub struct UpsertConversationThreadRequest {
     pub id: String,
     pub title: String,
     pub created_at: String,
+    #[serde(default)]
+    pub labels: Option<Vec<String>>,
+}
+
+/// Request to update labels for a conversation thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateConversationThreadLabelsRequest {
+    pub thread_id: String,
+    pub labels: Vec<String>,
 }
 
 /// Response payload for thread list operations.
