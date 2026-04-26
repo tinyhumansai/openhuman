@@ -109,6 +109,27 @@ impl WhatsAppWebChannel {
             || self.allowed_numbers.iter().any(|n| n == "*" || n == phone)
     }
 
+    /// Recognise WhatsApp group JIDs (`...@g.us`). Group recipients bypass
+    /// the per-number outbound allowlist because group membership is
+    /// governed by WhatsApp itself; the inbound side already gated on the
+    /// participant's allowlist status before we ever decided to reply.
+    fn is_group_jid(recipient: &str) -> bool {
+        recipient.trim().ends_with("@g.us")
+    }
+
+    /// Outbound gate combining group-bypass with the per-number allowlist.
+    /// Without this special-case, group reply targets — which are JIDs of
+    /// the form `<id>@g.us` — would be normalised to `+<id>` and fail an
+    /// otherwise-correctly-configured `allowed_numbers = ["+1555..."]`,
+    /// silently dropping every group reply.
+    fn should_allow_outbound(&self, recipient: &str) -> bool {
+        if Self::is_group_jid(recipient) {
+            return true;
+        }
+        let normalized = self.normalize_phone(recipient);
+        self.is_number_allowed(&normalized)
+    }
+
     /// Pick the address downstream replies should be sent back to.
     ///
     /// Group chats are addressed by the group JID (`...@g.us`); a reply that
@@ -191,8 +212,7 @@ impl Channel for WhatsAppWebChannel {
             anyhow::bail!("WhatsApp Web client not connected. Initialize the bot first.");
         };
 
-        let normalized = self.normalize_phone(&message.recipient);
-        if !self.is_number_allowed(&normalized) {
+        if !self.should_allow_outbound(&message.recipient) {
             tracing::warn!(
                 "WhatsApp Web: recipient {} not in allowed list",
                 message.recipient
@@ -396,14 +416,34 @@ impl Channel for WhatsAppWebChannel {
         let bot_handle = bot.run().await?;
         *self.bot_handle.lock() = Some(bot_handle);
 
-        tokio::signal::ctrl_c().await.ok();
-        tracing::info!("WhatsApp Web channel received Ctrl+C — shutting down");
+        // Wire into the shared shutdown machinery in `core::shutdown` so
+        // SIGTERM and SIGINT both trigger a coordinated tear-down. The
+        // previous `tokio::signal::ctrl_c()` path silently ignored
+        // SIGTERM and bypassed the registered cleanup hooks the rest of
+        // the process uses.
+        let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+        let bot_handle_for_hook = Arc::clone(&self.bot_handle);
+        let connected_for_hook = Arc::clone(&self.connected);
+        let client_for_hook = Arc::clone(&self.client);
+        let notify_for_hook = Arc::clone(&shutdown_notify);
+        crate::core::shutdown::register(move || {
+            let bot_handle = Arc::clone(&bot_handle_for_hook);
+            let connected = Arc::clone(&connected_for_hook);
+            let client = Arc::clone(&client_for_hook);
+            let notify = Arc::clone(&notify_for_hook);
+            async move {
+                tracing::info!("[whatsapp_web] graceful shutdown hook firing — aborting bot");
+                connected.store(false, Ordering::Release);
+                *client.lock() = None;
+                if let Some(handle) = bot_handle.lock().take() {
+                    handle.abort();
+                }
+                notify.notify_waiters();
+            }
+        });
 
-        self.connected.store(false, Ordering::Release);
-        *self.client.lock() = None;
-        if let Some(handle) = self.bot_handle.lock().take() {
-            handle.abort();
-        }
+        shutdown_notify.notified().await;
+        tracing::info!("WhatsApp Web channel exited via shared shutdown");
 
         Ok(())
     }
@@ -418,8 +458,7 @@ impl Channel for WhatsAppWebChannel {
             anyhow::bail!("WhatsApp Web client not connected. Initialize the bot first.");
         };
 
-        let normalized = self.normalize_phone(recipient);
-        if !self.is_number_allowed(&normalized) {
+        if !self.should_allow_outbound(recipient) {
             tracing::warn!(
                 "WhatsApp Web: typing target {} not in allowed list",
                 recipient
@@ -444,8 +483,7 @@ impl Channel for WhatsAppWebChannel {
             anyhow::bail!("WhatsApp Web client not connected. Initialize the bot first.");
         };
 
-        let normalized = self.normalize_phone(recipient);
-        if !self.is_number_allowed(&normalized) {
+        if !self.should_allow_outbound(recipient) {
             tracing::warn!(
                 "WhatsApp Web: typing target {} not in allowed list",
                 recipient
@@ -671,5 +709,60 @@ mod tests {
     #[cfg(feature = "whatsapp-web")]
     fn whatsapp_web_extract_message_text_empty_when_missing() {
         assert_eq!(WhatsAppWebChannel::extract_message_text(None, None), "");
+    }
+
+    #[test]
+    #[cfg(feature = "whatsapp-web")]
+    fn whatsapp_web_is_group_jid_recognises_group() {
+        assert!(WhatsAppWebChannel::is_group_jid("123456@g.us"));
+        assert!(WhatsAppWebChannel::is_group_jid("  4567@g.us  "));
+    }
+
+    #[test]
+    #[cfg(feature = "whatsapp-web")]
+    fn whatsapp_web_is_group_jid_rejects_non_group() {
+        assert!(!WhatsAppWebChannel::is_group_jid("+1234567890"));
+        assert!(!WhatsAppWebChannel::is_group_jid("123@s.whatsapp.net"));
+        assert!(!WhatsAppWebChannel::is_group_jid("abc@lid"));
+        assert!(!WhatsAppWebChannel::is_group_jid(""));
+    }
+
+    /// Regression for CodeRabbit finding: an `@g.us` reply target was being
+    /// silently dropped because the outbound path normalised the JID to
+    /// `+<group-id>` and missed the per-number allowlist. The group bypass
+    /// must let an allowed user reply back into the group they came from.
+    #[test]
+    #[cfg(feature = "whatsapp-web")]
+    fn whatsapp_web_should_allow_outbound_group_bypasses_allowlist() {
+        let ch = make_channel(); // allowed_numbers = ["+1234567890"]
+        assert!(ch.should_allow_outbound("987654321@g.us"));
+    }
+
+    #[test]
+    #[cfg(feature = "whatsapp-web")]
+    fn whatsapp_web_should_allow_outbound_dm_blocks_unallowed() {
+        let ch = make_channel();
+        assert!(!ch.should_allow_outbound("+9999999999"));
+    }
+
+    #[test]
+    #[cfg(feature = "whatsapp-web")]
+    fn whatsapp_web_should_allow_outbound_dm_allows_match() {
+        let ch = make_channel();
+        assert!(ch.should_allow_outbound("+1234567890"));
+    }
+
+    #[test]
+    #[cfg(feature = "whatsapp-web")]
+    fn whatsapp_web_should_allow_outbound_wildcard_passes_dm() {
+        let ch = WhatsAppWebChannel::new("/tmp/t.db".into(), None, None, vec!["*".into()]);
+        assert!(ch.should_allow_outbound("+9999999999"));
+    }
+
+    #[test]
+    #[cfg(feature = "whatsapp-web")]
+    fn whatsapp_web_should_allow_outbound_empty_allowlist_passes_dm() {
+        let ch = WhatsAppWebChannel::new("/tmp/t.db".into(), None, None, vec![]);
+        assert!(ch.should_allow_outbound("+9999999999"));
     }
 }
