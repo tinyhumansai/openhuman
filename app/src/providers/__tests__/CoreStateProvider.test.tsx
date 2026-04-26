@@ -15,16 +15,18 @@ function makeSnapshot(overrides: {
   userId?: string | null;
   sessionToken?: string | null;
   isAuthenticated?: boolean;
+  authUser?: unknown | null;
+  currentUser?: unknown | null;
 }): Snapshot {
   return {
     auth: {
       isAuthenticated: overrides.isAuthenticated ?? Boolean(overrides.userId),
       userId: overrides.userId ?? null,
-      user: null,
+      user: overrides.authUser ?? null,
       profileId: null,
     },
     sessionToken: overrides.sessionToken ?? null,
-    currentUser: null,
+    currentUser: overrides.currentUser ?? null,
     onboardingCompleted: false,
     chatOnboardingCompleted: false,
     analyticsEnabled: false,
@@ -210,5 +212,31 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
 
     expect(screen.getByTestId('ready').textContent).toBe('boot');
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+  });
+
+  it('backfills snapshot.currentUser from auth.user when currentUser is missing', async () => {
+    fetchSnapshot.mockResolvedValue(
+      makeSnapshot({
+        userId: 'u1',
+        sessionToken: 'tok1',
+        authUser: { first_name: 'Ada', username: 'ada' },
+        currentUser: null,
+      })
+    );
+    listTeams.mockResolvedValue([]);
+
+    let ctx: CoreStateContextValue | undefined;
+    render(
+      <CoreStateProvider>
+        <Consumer
+          captureCtx={next => {
+            ctx = next;
+          }}
+        />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+    expect(ctx?.snapshot.currentUser).toEqual({ first_name: 'Ada', username: 'ada' });
   });
 });
