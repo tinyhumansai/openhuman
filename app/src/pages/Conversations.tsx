@@ -1,5 +1,5 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
@@ -792,20 +792,29 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const shouldRenderTimelineBeforeLatestAgentMessage =
     selectedThreadToolTimeline.length > 0 && !isSending && Boolean(latestVisibleAgentMessage);
 
-  const filteredThreads = threads.filter(t => {
-    if (selectedLabel === 'all') return true;
-    return t.labels.includes(selectedLabel);
-  });
+  const filteredThreads = useMemo(() => {
+    return threads.filter(t => {
+      if (selectedLabel === 'all') return true;
+      return t.labels?.includes(selectedLabel);
+    });
+  }, [threads, selectedLabel]);
 
-  const sortedThreads = [...filteredThreads].sort(
-    (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
-  );
+  const sortedThreads = useMemo(() => {
+    return [...filteredThreads].sort(
+      (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+    );
+  }, [filteredThreads]);
 
-  const allLabels = Array.from(new Set(threads.flatMap(t => t.labels))).sort();
-  const labelTabs = [
-    { label: 'All', value: 'all' },
-    ...allLabels.map(l => ({ label: l.charAt(0).toUpperCase() + l.slice(1), value: l })),
-  ];
+  const allLabels = useMemo(() => {
+    return Array.from(new Set(threads.flatMap(t => t.labels ?? []))).sort();
+  }, [threads]);
+
+  const labelTabs = useMemo(() => {
+    return [
+      { label: 'All', value: 'all' },
+      ...allLabels.map(l => ({ label: l.charAt(0).toUpperCase() + l.slice(1), value: l })),
+    ];
+  }, [allLabels]);
 
   const isSidebar = variant === 'sidebar';
 
