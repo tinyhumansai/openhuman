@@ -41,8 +41,6 @@ pub struct LocalAiConfig {
     pub download_url: Option<String>,
     #[serde(default = "default_autosummary_debounce_ms")]
     pub autosummary_debounce_ms: u64,
-    #[serde(default = "default_max_suggestions")]
-    pub max_suggestions: usize,
     #[serde(default)]
     pub selected_tier: Option<String>,
     /// Explicit MVP opt-in marker. Bootstrap disables local AI unless this is
@@ -145,10 +143,6 @@ fn default_autosummary_debounce_ms() -> u64 {
     2500
 }
 
-fn default_max_suggestions() -> usize {
-    5
-}
-
 fn default_whisper_in_process() -> bool {
     true
 }
@@ -178,7 +172,6 @@ impl Default for LocalAiConfig {
             preload_tts_voice: default_preload_tts_voice(),
             download_url: default_download_url(),
             autosummary_debounce_ms: default_autosummary_debounce_ms(),
-            max_suggestions: default_max_suggestions(),
             selected_tier: None,
             opt_in_confirmed: false,
             ollama_binary_path: None,

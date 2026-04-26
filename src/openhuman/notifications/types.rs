@@ -126,6 +126,16 @@ impl Default for NotificationSettings {
     }
 }
 
+/// Aggregate statistics for the notification intelligence pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationStats {
+    pub total: i64,
+    pub unread: i64,
+    pub unscored: i64,
+    pub by_provider: std::collections::HashMap<String, i64>,
+    pub by_action: std::collections::HashMap<String, i64>,
+}
+
 /// Payload for the `notification_ingest` RPC endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationIngestRequest {

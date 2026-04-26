@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 
 import ConnectionIndicator from '../components/ConnectionIndicator';
 import { useUser } from '../hooks/useUser';
+import { useAppSelector } from '../store/hooks';
+import { selectSocketStatus } from '../store/socketSelectors';
 import {
   bootstrapLocalAiWithRecommendedPreset,
   ensureRecommendedLocalAiPresetIfNeeded,
@@ -21,6 +23,18 @@ const Home = () => {
   const { user } = useUser();
   const navigate = useNavigate();
   const userName = user?.firstName || 'User';
+  // Mirror the same socket status the `ConnectionIndicator` pill consumes
+  // so the description copy below the pill never contradicts it (the old
+  // hard-coded "connected" message lied while the pill said "Connecting"
+  // / "Disconnected").
+  const socketStatus = useAppSelector(selectSocketStatus);
+  const statusCopy = {
+    connected:
+      'Your device is connected to OpenHuman AI. Keep the app running to keep the connection alive — message your assistant with the button below.',
+    connecting: 'Connecting to OpenHuman AI. Hang tight, this usually takes a second.',
+    disconnected:
+      'Your device is offline right now. Check your network or restart the app to reconnect.',
+  }[socketStatus];
   const [localAiStatus, setLocalAiStatus] = useState<LocalAiStatus | null>(null);
   const [localAiAssets, setLocalAiAssets] = useState<LocalAiAssetsStatus | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
@@ -258,11 +272,10 @@ const Home = () => {
             <ConnectionIndicator />
           </div>
 
-          {/* Description */}
-          <p className="text-sm text-stone-500 text-center mb-6 leading-relaxed">
-            Your device is now connected to the OpenHuman AI. Keep the app running to keep the
-            connection alive. You can message your assistant with the button below.
-          </p>
+          {/* Description — mirrors the pill's socket status to avoid
+              telling the user they're connected while the pill shows
+              "Connecting" / "Disconnected". */}
+          <p className="text-sm text-stone-500 text-center mb-6 leading-relaxed">{statusCopy}</p>
 
           {/* CTA button */}
           <button

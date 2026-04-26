@@ -387,6 +387,7 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
 mod tests {
     use super::*;
     use crate::core::TypeSchema;
+    use crate::openhuman::config::TEST_ENV_LOCK as ENV_LOCK;
     use serde_json::json;
 
     #[test]

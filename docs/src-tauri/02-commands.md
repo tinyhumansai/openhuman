@@ -55,7 +55,7 @@ From **`commands/openhuman.rs`** (see source for exact payloads):
 
 ## Screen share picker (CEF / macOS)
 
-From **`screen_capture/mod.rs`** (registered under `#[cfg(feature = "cef")]`). Backs the in-page `getDisplayMedia` shim in `webview_accounts/runtime.js`. Session-gated: the shim must open a session with a live user gesture before enumeration / thumbnail captures succeed. See issue #713 (picker UX) + #812 (session gating).
+From **`screen_capture/mod.rs`**. Backs the in-page `getDisplayMedia` shim in `webview_accounts/runtime.js`. Session-gated: the shim must open a session with a live user gesture before enumeration / thumbnail captures succeed. See issue #713 (picker UX) + #812 (session gating).
 
 | Command                           | Purpose                                                                                                                 |
 | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |

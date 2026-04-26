@@ -21,40 +21,29 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
-#[cfg(all(feature = "cef", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 use std::sync::{mpsc::sync_channel, OnceLock};
+use std::time::Duration;
 
+use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tauri::{
     webview::NewWindowResponse, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime,
     Url, WebviewBuilder, WebviewUrl,
 };
-#[cfg(all(feature = "cef", windows))]
+#[cfg(windows)]
 use tauri_plugin_notification::NotificationExt;
 // `ImplBrowser` exposes `Browser::identifier()` — bring the trait into scope
 // so the `with_webview` callback can read the CEF browser id.
-#[cfg(feature = "cef")]
 use cef::ImplBrowser;
 
-#[cfg(feature = "cef")]
 use crate::cdp;
 
 const RUNTIME_JS: &str = include_str!("runtime.js");
-// UA spoofing moved from injected JS to CDP `Emulation.setUserAgentOverride`
-// under the cef feature; wry builds still need the old JS shim so the recipes
-// that emit an `ingest` payload (gmail / linkedin / google-meet) survive
-// fingerprint gates on Slack/Google's login flow.
-const UA_SPOOF_JS: &str = include_str!("ua_spoof.js");
 const LINKEDIN_RECIPE_JS: &str = include_str!("../../recipes/linkedin/recipe.js");
 const GMAIL_RECIPE_JS: &str = include_str!("../../recipes/gmail/recipe.js");
 const GOOGLE_MEET_RECIPE_JS: &str = include_str!("../../recipes/google-meet/recipe.js");
-
-/// User agent we pretend to be for all external services. Web-app services
-/// (WhatsApp, Gmail, Google's login flow) reject "unknown" WebView UAs with
-/// upgrade-your-browser / unsupported-browser pages, so we announce as a
-/// recent desktop Chrome build for everything.
-const CHROME_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
-                         (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 /// Registered providers and their service URLs. Add a new arm here plus a
 /// recipe.js file under `recipes/<id>/` to support another provider.
@@ -69,14 +58,6 @@ fn provider_url(provider: &str) -> Option<&'static str> {
         "google-meet" => Some("https://meet.google.com/"),
         "zoom" => Some("https://zoom.us/"),
         "browserscan" => Some("https://www.browserscan.net/bot-detection"),
-        _ => None,
-    }
-}
-
-fn provider_user_agent(provider: &str) -> Option<&'static str> {
-    match provider {
-        "whatsapp" | "telegram" | "linkedin" | "gmail" | "slack" | "discord" | "google-meet"
-        | "zoom" | "browserscan" => Some(CHROME_UA),
         _ => None,
     }
 }
@@ -99,16 +80,6 @@ fn provider_recipe_js(provider: &str) -> Option<&'static str> {
 /// to the `provider_url` match automatically become "supported" here.
 fn provider_is_supported(provider: &str) -> bool {
     provider_url(provider).is_some()
-}
-
-/// Whether to pre-load `ua_spoof.js` for a given provider (wry only — cef
-/// handles UA via CDP `Emulation.setUserAgentOverride`). Enabled for
-/// services known to run Chromium-specific fingerprinting checks.
-fn provider_ua_spoof(provider: &str) -> bool {
-    matches!(
-        provider,
-        "slack" | "gmail" | "linkedin" | "discord" | "google-meet" | "zoom" | "browserscan"
-    )
 }
 
 /// Host suffixes the embedded webview is allowed to navigate within. Any
@@ -253,6 +224,70 @@ fn popup_should_stay_in_app(provider: &str, url: &Url) -> bool {
         _ => false,
     }
 }
+
+/// `true` if a popup request should be denied AND the parent webview
+/// should be navigated to the popup URL instead.
+///
+/// Used for Google's "Sign in" / "Use another account" flow: clicking
+/// the link issues `window.open("https://accounts.google.com/...")`. We
+/// can't route that to the system browser (the auth cookie would land
+/// in the wrong jar) and we don't want to let CEF spawn an unmanaged
+/// child window (it has no host rect, so it renders blank/black). The
+/// safe option is to deny the popup and replace the parent's URL — the
+/// in-app webview was already at mail.google.com so taking over the
+/// frame to finish auth is exactly what the user expects.
+fn popup_should_navigate_parent(provider: &str, url: &Url) -> Option<Url> {
+    match provider {
+        "gmail" | "google-meet" => {
+            if url.scheme() == "about" {
+                return None;
+            }
+            if is_google_auth_popup(url) {
+                Some(url.clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn is_google_auth_popup(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let is_google_auth_host =
+        host == "accounts.google.com" || host == "accounts.googleusercontent.com";
+    if !is_google_auth_host {
+        return false;
+    }
+
+    let path = url.path().to_ascii_lowercase();
+    if path.contains("signin")
+        || path.contains("servicelogin")
+        || path.contains("accountchooser")
+        || path.contains("chooseaccount")
+    {
+        return true;
+    }
+
+    url.query_pairs().any(|(key, value)| {
+        let k = key.to_ascii_lowercase();
+        let v = value.to_ascii_lowercase();
+        matches!(k.as_str(), "flowname" | "service" | "continue")
+            && (v.contains("signin")
+                || v.contains("servicelogin")
+                || v.contains("accountchooser")
+                || v.contains("chooseaccount"))
+    })
+}
+
+fn redact_navigation_url(url: &Url) -> String {
+    let mut safe = url.clone();
+    safe.set_query(None);
+    safe.set_fragment(None);
+    safe.to_string()
+}
 /// Unwrap provider-side "link safety" redirects so the system browser
 /// lands on the real destination.
 ///
@@ -305,10 +340,132 @@ fn open_in_system_browser(url: &str) {
     }
 }
 
+fn payload_string(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn payload_bool(payload: &serde_json::Value, key: &str) -> Option<bool> {
+    payload.get(key).and_then(|v| v.as_bool())
+}
+
+fn payload_i64(payload: &serde_json::Value, key: &str) -> Option<i64> {
+    payload.get(key).and_then(|v| v.as_i64())
+}
+
+fn first_message_field(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .and_then(|messages| messages.first())
+        .and_then(|message| message.get(key))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn event_timestamp_rfc3339(ts_ms: Option<i64>) -> String {
+    ts_ms
+        .and_then(|ts| Utc.timestamp_millis_opt(ts).single())
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339()
+}
+
+fn normalize_provider_surfaces_event(args: &RecipeEventArgs) -> Option<serde_json::Value> {
+    if args.kind != "ingest" {
+        return None;
+    }
+
+    let entity_id = payload_string(&args.payload, "entity_id")
+        .or_else(|| payload_string(&args.payload, "threadId"))
+        .or_else(|| payload_string(&args.payload, "chatId"))
+        .or_else(|| payload_string(&args.payload, "snapshotKey"))
+        .unwrap_or_else(|| {
+            format!(
+                "{}:{}:{}",
+                args.provider,
+                args.account_id,
+                args.ts.unwrap_or_else(|| Utc::now().timestamp_millis())
+            )
+        });
+
+    let thread_id = payload_string(&args.payload, "threadId")
+        .or_else(|| payload_string(&args.payload, "chatId"))
+        .or_else(|| payload_string(&args.payload, "conversationId"));
+    let title = payload_string(&args.payload, "title")
+        .or_else(|| payload_string(&args.payload, "chatName"))
+        .or_else(|| payload_string(&args.payload, "channelName"));
+    let snippet = payload_string(&args.payload, "snippet")
+        .or_else(|| first_message_field(&args.payload, "body"));
+    let sender_name = payload_string(&args.payload, "senderName")
+        .or_else(|| first_message_field(&args.payload, "from"));
+    let sender_handle = payload_string(&args.payload, "senderHandle");
+    let deep_link = payload_string(&args.payload, "deepLink");
+    let unread = payload_i64(&args.payload, "unread").unwrap_or(0);
+    let requires_attention = payload_bool(&args.payload, "requires_attention")
+        .unwrap_or(unread > 0 || sender_name.is_some() || snippet.is_some());
+
+    Some(json!({
+        "provider": args.provider,
+        "account_id": args.account_id,
+        "event_kind": args.kind,
+        "entity_id": entity_id,
+        "thread_id": thread_id,
+        "title": title,
+        "snippet": snippet,
+        "sender_name": sender_name,
+        "sender_handle": sender_handle,
+        "timestamp": event_timestamp_rfc3339(args.ts),
+        "deep_link": deep_link,
+        "requires_attention": requires_attention,
+        "raw_payload": args.payload,
+    }))
+}
+
+async fn post_provider_surfaces_event(args: &RecipeEventArgs) -> Result<(), String> {
+    let Some(params) = normalize_provider_surfaces_event(args) else {
+        return Ok(());
+    };
+
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "openhuman.provider_surfaces_ingest_event",
+        "params": params,
+    });
+
+    let url = std::env::var("OPENHUMAN_CORE_RPC_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".to_string());
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("POST {url}: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body}"));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| format!("decode: {e}"))?;
+    if let Some(err) = v.get("error") {
+        return Err(format!("rpc error: {err}"));
+    }
+    Ok(())
+}
+
 /// Human-readable label used as the title prefix on native notifications
 /// so users can tell which provider fired the ping. Matches the labels
 /// in the frontend `PROVIDERS` registry.
-#[cfg(feature = "cef")]
 pub fn provider_display_name(provider: &str) -> &'static str {
     match provider {
         "whatsapp" => "WhatsApp",
@@ -333,15 +490,150 @@ pub struct WebviewAccountsState {
     /// browser handle, and consumed at close/purge time so we can call
     /// `tauri_runtime_cef::notification::unregister` without leaking
     /// per-browser handler entries across account churn.
-    #[cfg(feature = "cef")]
     browser_ids: Mutex<HashMap<String, i32>>,
     /// account_id -> CDP session task. One long-lived task per account
     /// keeps the UA override resident (see `cdp::session`); aborted on
     /// close/purge so reopen cycles don't stack multiple live loops.
-    #[cfg(feature = "cef")]
     cdp_sessions: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// account_id -> 15s `webview-account:load{state:"timeout"}` watchdog.
+    /// Aborted in close/purge so a watchdog spawned for a now-closed
+    /// account can't fire a stale timeout against a freshly-reused id.
+    load_watchdogs: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// account_id of webviews that have already emitted their first
+    /// `webview-account:load{state:"finished"}` event. Used to dedup
+    /// triple-signal fires (native on_page_load, CDP `Page.loadEventFired`,
+    /// 15 s watchdog) so the frontend only reveals once per cold open.
+    loaded_accounts: Mutex<HashSet<String>>,
+    /// Last bounds requested by the frontend for a given account, captured at
+    /// `webview_account_open` time so the off-screen-spawned webview can be
+    /// revealed at the right rect without the frontend having to round-trip
+    /// them again.
+    requested_bounds: Mutex<HashMap<String, Bounds>>,
     /// Runtime notification-bypass controls used by the settings UI.
     notification_bypass: Mutex<NotificationBypassPrefs>,
+}
+
+impl WebviewAccountsState {
+    /// Drain every per-account resource owned by this state and abort the
+    /// associated background tasks. Returns the `(account_id, label)`
+    /// pairs of webviews that still need closing — the caller does the
+    /// actual `wv.close()` because that needs an `AppHandle`. Splitting
+    /// it out keeps the rest of the teardown unit-testable without
+    /// constructing a Tauri runtime.
+    ///
+    /// Aborts CDP session tasks and load watchdogs, unregisters CEF
+    /// notification handlers, and clears the loaded-accounts /
+    /// requested-bounds bookkeeping. All collections are drained — a
+    /// repeat call returns an empty `Vec` and is a safe no-op.
+    fn drain_for_shutdown(&self) -> Vec<(String, String)> {
+        let cdp_tasks: Vec<_> = self
+            .cdp_sessions
+            .lock()
+            .ok()
+            .map(|mut g| g.drain().collect())
+            .unwrap_or_default();
+        for (acct, task) in cdp_tasks {
+            task.abort();
+            log::debug!("[webview-accounts] shutdown abort cdp account={}", acct);
+        }
+        let watchdogs: Vec<_> = self
+            .load_watchdogs
+            .lock()
+            .ok()
+            .map(|mut g| g.drain().collect())
+            .unwrap_or_default();
+        for (acct, task) in watchdogs {
+            task.abort();
+            log::debug!(
+                "[webview-accounts] shutdown abort watchdog account={}",
+                acct
+            );
+        }
+        let browser_ids: Vec<_> = self
+            .browser_ids
+            .lock()
+            .ok()
+            .map(|mut g| g.drain().collect())
+            .unwrap_or_default();
+        for (acct, browser_id) in browser_ids {
+            tauri_runtime_cef::notification::unregister(browser_id);
+            log::debug!(
+                "[notify-cef] shutdown unregistered handler account={} browser_id={}",
+                acct,
+                browser_id
+            );
+        }
+        if let Ok(mut g) = self.loaded_accounts.lock() {
+            g.clear();
+        }
+        if let Ok(mut g) = self.requested_bounds.lock() {
+            g.clear();
+        }
+        self.inner
+            .lock()
+            .ok()
+            .map(|mut g| g.drain().collect())
+            .unwrap_or_default()
+    }
+
+    /// Tear down every per-account resource owned by this state — used by
+    /// the app's `RunEvent::ExitRequested` path so nothing outlives the
+    /// tokio runtime / `AppHandle` (issue #920).
+    ///
+    /// On top of [`drain_for_shutdown`], this closes every `acct_*` child
+    /// webview so CEF browsers tear down before `cef::shutdown()` runs,
+    /// and tells the per-account scanner registries to forget the
+    /// account so a future open of the same id starts from a clean slate.
+    /// All collections are drained — repeat calls are cheap no-ops.
+    pub fn shutdown_all<R: Runtime>(&self, app: &AppHandle<R>) {
+        let labels = self.drain_for_shutdown();
+        for (acct, label) in labels {
+            teardown_account_scanners(app, &acct);
+            if let Some(wv) = app.get_webview(&label) {
+                if let Err(e) = wv.close() {
+                    log::warn!(
+                        "[webview-accounts] shutdown close({label}) failed account={acct}: {e}"
+                    );
+                }
+            }
+        }
+        log::info!("[webview-accounts] shutdown_all complete");
+    }
+}
+
+/// Tell the per-account scanner registries (whatsapp / slack / discord /
+/// telegram) to forget `account_id`. Each `forget` is fire-and-forget so
+/// the caller doesn't need to be `async`. Shared by `webview_account_close`,
+/// `webview_account_purge`, and `WebviewAccountsState::shutdown_all` so
+/// every exit path goes through the same teardown.
+fn teardown_account_scanners<R: Runtime>(app: &AppHandle<R>, account_id: &str) {
+    if let Some(registry) =
+        app.try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
+    {
+        let registry = registry.inner().clone();
+        let acct = account_id.to_string();
+        tokio::spawn(async move { registry.forget(&acct).await });
+    }
+    if let Some(registry) = app.try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
+    {
+        let registry = registry.inner().clone();
+        let acct = account_id.to_string();
+        tokio::spawn(async move { registry.forget(&acct).await });
+    }
+    if let Some(registry) =
+        app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
+    {
+        let registry = registry.inner().clone();
+        let acct = account_id.to_string();
+        tokio::spawn(async move { registry.forget(&acct).await });
+    }
+    if let Some(registry) =
+        app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
+    {
+        let registry = registry.inner().clone();
+        let acct = account_id.to_string();
+        tokio::spawn(async move { registry.forget(&acct).await });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -388,10 +680,8 @@ impl From<&NotificationBypassPrefs> for NotificationBypassPrefsPayload {
 /// — kept inline here so the shell crate doesn't take a build-time dep on
 /// the core library. Disambiguates from natively-installed apps (Slack,
 /// Discord, Gmail desktop) firing the same message twice.
-#[cfg(feature = "cef")]
 const OPENHUMAN_TITLE_PREFIX: &str = "OpenHuman: ";
 
-#[cfg(feature = "cef")]
 fn slack_scanner_enabled() -> bool {
     std::env::var("OPENHUMAN_DISABLE_SLACK_SCANNER")
         .map(|v| {
@@ -405,7 +695,6 @@ fn slack_scanner_enabled() -> bool {
 /// `webview-notification:fired` Tauri event. Carries `account_id` +
 /// `provider` so the React side can route a subsequent click back to
 /// the originating webview via Redux.
-#[cfg(feature = "cef")]
 #[derive(Debug, Clone, Serialize)]
 struct WebviewNotificationFired {
     account_id: String,
@@ -418,14 +707,14 @@ struct WebviewNotificationFired {
 
 /// Linux: one worker thread + bounded queue so a burst of toasts does not
 /// spawn unbounded `std::thread` handles (each would block in `wait_for_action`).
-#[cfg(all(feature = "cef", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 const LINUX_NOTIFY_QUEUE_CAP: usize = 16;
 
-#[cfg(all(feature = "cef", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 static LINUX_NOTIFY_TX: OnceLock<std::sync::mpsc::SyncSender<Box<dyn FnOnce() + Send>>> =
     OnceLock::new();
 
-#[cfg(all(feature = "cef", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 fn enqueue_linux_notification(job: Box<dyn FnOnce() + Send>) {
     let tx = LINUX_NOTIFY_TX.get_or_init(|| {
         let (tx, rx) = sync_channel::<Box<dyn FnOnce() + Send>>(LINUX_NOTIFY_QUEUE_CAP);
@@ -455,7 +744,6 @@ fn enqueue_linux_notification(job: Box<dyn FnOnce() + Send>) {
 /// Gated on the runtime `NotificationSettings` flag (OFF by default) so
 /// v1 ships the plumbing without surprising users with a toast storm the
 /// first time they open a busy Slack tab.
-#[cfg(feature = "cef")]
 fn forward_native_notification<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
@@ -707,7 +995,6 @@ fn forward_native_notification<R: Runtime>(
     }
 }
 
-#[cfg(feature = "cef")]
 pub(crate) fn forward_synthetic_notification<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
@@ -773,6 +1060,150 @@ pub struct WebviewEvent {
     pub ts: Option<i64>,
 }
 
+/// Strip query string and fragment from a URL before emitting to the log.
+/// Provider URLs occasionally embed auth material (Telegram WebApp data,
+/// OAuth callback codes, sometimes session tokens) and we don't want those
+/// to land in the long-lived shell log file. Returns the original input on
+/// parse failure so we still surface *something* useful for debugging.
+fn redact_url_for_log(raw: &str) -> String {
+    match Url::parse(raw) {
+        Ok(mut u) => {
+            u.set_query(None);
+            u.set_fragment(None);
+            u.to_string()
+        }
+        Err(_) => {
+            // Fallback: drop everything from the first '?' or '#'.
+            raw.split(['?', '#']).next().unwrap_or(raw).to_string()
+        }
+    }
+}
+
+/// Grow the first-cold-open webview back to its full requested bounds and
+/// notify the frontend — exactly once per account open. Called from the
+/// three independent signals (native `WebviewBuilder::on_page_load`, CDP
+/// `Page.loadEventFired`, 15 s watchdog) — the first one wins and the rest
+/// short-circuit via `WebviewAccountsState.loaded_accounts`. Resetting
+/// happens in `webview_account_close` / `webview_account_purge` so a reopen
+/// fires again.
+///
+/// Doing the `set_size` server-side (instead of waiting for the frontend to
+/// invoke `webview_account_reveal`) avoids an extra IPC round-trip and the
+/// brief blank frame that would otherwise sit between the load event and
+/// the frontend's reveal call.
+pub(crate) fn emit_load_finished<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
+    state: &str,
+    url: &str,
+) {
+    let Some(app_state) = app.try_state::<WebviewAccountsState>() else {
+        // No state => emit anyway so the frontend doesn't hang; best-effort.
+        log::warn!(
+            "[webview-accounts][{}] WebviewAccountsState missing — emitting without reveal",
+            account_id
+        );
+        let _ = app.emit(
+            "webview-account:load",
+            serde_json::json!({"account_id": account_id, "state": state, "url": url}),
+        );
+        return;
+    };
+
+    let is_first = app_state
+        .loaded_accounts
+        .lock()
+        .unwrap()
+        .insert(account_id.to_string());
+    if !is_first {
+        log::debug!(
+            "[webview-accounts][{}] load event deduped state={} url={}",
+            account_id,
+            state,
+            url
+        );
+        return;
+    }
+
+    // Restore the webview to its full requested size. The spawn path created
+    // it at 1×1 so the React loading spinner wasn't covered; now that the page
+    // is painted we can grow it into the placeholder rect.
+    let label = app_state.inner.lock().unwrap().get(account_id).cloned();
+    let bounds = app_state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .get(account_id)
+        .copied();
+    match (label, bounds) {
+        (Some(label), Some(b)) => {
+            if let Some(wv) = app.get_webview(&label) {
+                if let Err(e) = wv.set_size(LogicalSize::new(b.width, b.height)) {
+                    log::warn!(
+                        "[webview-accounts][{}] reveal set_size failed: {}",
+                        account_id,
+                        e
+                    );
+                }
+                if let Err(e) = wv.set_position(LogicalPosition::new(b.x, b.y)) {
+                    log::warn!(
+                        "[webview-accounts][{}] reveal set_position failed: {}",
+                        account_id,
+                        e
+                    );
+                }
+                let _ = wv.show();
+                log::info!(
+                    "[webview-accounts][{}] revealed label={} bounds={:?} state={}",
+                    account_id,
+                    label,
+                    b,
+                    state
+                );
+            } else {
+                log::warn!(
+                    "[webview-accounts][{}] reveal: webview {} missing",
+                    account_id,
+                    label
+                );
+            }
+        }
+        _ => {
+            log::info!(
+                "[webview-accounts][{}] reveal skipped (account closed before load) state={}",
+                account_id,
+                state
+            );
+        }
+    }
+
+    // Redact the URL in the log: providers like Telegram (`#tgWebAppData=…`)
+    // and OAuth callbacks embed auth material in the query/fragment. The full
+    // URL still flows to the frontend listener over the Tauri event so any
+    // consumer that needs it has access; we just don't persist it to the
+    // shell's log file.
+    log::info!(
+        "[webview-accounts][{}] load event state={} url={}",
+        account_id,
+        state,
+        redact_url_for_log(url)
+    );
+    if let Err(err) = app.emit(
+        "webview-account:load",
+        serde_json::json!({
+            "account_id": account_id,
+            "state": state,
+            "url": url,
+        }),
+    ) {
+        log::warn!(
+            "[webview-accounts][{}] emit webview-account:load failed: {}",
+            account_id,
+            err
+        );
+    }
+}
+
 /// Reject any `account_id` that isn't strictly `[A-Za-z0-9_-]+`. The ID comes
 /// from IPC (React shell, but also from injected recipe code running inside
 /// third-party origins via `webview_recipe_event`), so treat it as untrusted.
@@ -821,56 +1252,22 @@ fn data_directory_for<R: Runtime>(app: &AppHandle<R>, account_id: &str) -> Resul
 
 /// Produce the `initialization_script` payload for this webview.
 ///
-/// Under **cef** (production): empty for the 5 migrated providers
-/// (whatsapp, telegram, slack, discord, browserscan) — they load with
-/// ZERO injected JS; their scraping + UA override runs via CDP. The 3
-/// deferred providers (gmail, linkedin, google-meet) still get the JS
-/// recipe bridge.
-///
-/// Under **wry**: there is no CDP, so migrated providers that fingerprint
-/// on `navigator.*` still need the `ua_spoof.js` shim even though their
-/// scraper is gone. Non-migrated providers keep the full legacy path
-/// (spoof + runtime + recipe).
-#[cfg(feature = "cef")]
+/// Empty for the 5 migrated providers (whatsapp, telegram, slack, discord,
+/// browserscan) — they load with ZERO injected JS; their scraping runs via
+/// CDP, and the per-account CDP session opener (`cdp::session`) injects the
+/// notification-permission shim via `Page.addScriptToEvaluateOnNewDocument`
+/// before the real provider URL loads. The 3 deferred providers (gmail,
+/// linkedin, google-meet) still get the JS recipe bridge.
 fn build_init_script(account_id: &str, provider: &str) -> String {
-    let spoof = if provider_ua_spoof(provider) {
-        UA_SPOOF_JS
-    } else {
-        ""
-    };
     let Some(recipe_js) = provider_recipe_js(provider) else {
-        return spoof.to_string();
+        return String::new();
     };
     let ctx = serde_json::json!({
         "accountId": account_id,
         "provider": provider,
     });
     format!(
-        "{spoof}\n\nwindow.__OPENHUMAN_RECIPE_CTX__ = {ctx};\n\n{runtime}\n\n{recipe}\n",
-        spoof = spoof,
-        ctx = ctx,
-        runtime = RUNTIME_JS,
-        recipe = recipe_js
-    )
-}
-
-#[cfg(not(feature = "cef"))]
-fn build_init_script(account_id: &str, provider: &str) -> String {
-    let spoof = if provider_ua_spoof(provider) {
-        UA_SPOOF_JS
-    } else {
-        ""
-    };
-    let Some(recipe_js) = provider_recipe_js(provider) else {
-        return spoof.to_string();
-    };
-    let ctx = serde_json::json!({
-        "accountId": account_id,
-        "provider": provider,
-    });
-    format!(
-        "{spoof}\n\nwindow.__OPENHUMAN_RECIPE_CTX__ = {ctx};\n\n{runtime}\n\n{recipe}\n",
-        spoof = spoof,
+        "window.__OPENHUMAN_RECIPE_CTX__ = {ctx};\n\n{runtime}\n\n{recipe}\n",
         ctx = ctx,
         runtime = RUNTIME_JS,
         recipe = recipe_js
@@ -917,25 +1314,20 @@ pub async fn webview_account_open<R: Runtime>(
     // prefix needs to be the ORIGIN (scheme + host), not the full URL
     // — same-host intra-app navigations must keep matching after the
     // initial load.
-    #[cfg(feature = "cef")]
     let scanner_url_prefix = format!("{}/", real_url.origin().ascii_serialization());
-    #[cfg(feature = "cef")]
     let skip_cdp_for_debug = args.provider == "slack" && !slack_scanner_enabled();
-    // Under cef we normally open the webview at a tiny `data:` placeholder
-    // URL so the CDP session opener can attach and apply the UA override
-    // BEFORE the real provider URL loads. For Slack debug sessions we allow
-    // opting out via `OPENHUMAN_DISABLE_SLACK_SCANNER=1`, which also skips
-    // the long-lived CDP session so external DevTools can attach cleanly.
-    // Under wry there's no CDP, so navigate straight to the real URL and
-    // rely on the injected `ua_spoof.js`.
-    #[cfg(feature = "cef")]
+    // We normally open the webview at a tiny placeholder URL so the CDP
+    // session opener can attach and inject the notification-permission
+    // shim (see `cdp/session.rs`) BEFORE the real provider URL loads;
+    // without it Slack/Gmail surface in-app "enable notifications"
+    // banners. For Slack debug sessions we allow opting out via
+    // `OPENHUMAN_DISABLE_SLACK_SCANNER=1`, which also skips the long-lived
+    // CDP session so external DevTools can attach cleanly.
     let initial_url_str = if skip_cdp_for_debug {
         real_url_str.clone()
     } else {
-        cdp::placeholder_data_url(&args.account_id)
+        cdp::placeholder_url(&args.account_id)
     };
-    #[cfg(not(feature = "cef"))]
-    let initial_url_str = real_url_str.clone();
     let initial_url: Url = initial_url_str
         .parse()
         .map_err(|e| format!("invalid initial url {initial_url_str}: {e}"))?;
@@ -949,6 +1341,11 @@ pub async fn webview_account_open<R: Runtime>(
                 if let Some(b) = args.bounds {
                     let _ = existing.set_position(LogicalPosition::new(b.x, b.y));
                     let _ = existing.set_size(LogicalSize::new(b.width, b.height));
+                    state
+                        .requested_bounds
+                        .lock()
+                        .unwrap()
+                        .insert(args.account_id.clone(), b);
                 }
                 let _ = existing.show();
                 log::info!(
@@ -956,6 +1353,26 @@ pub async fn webview_account_open<R: Runtime>(
                     existing_label,
                     args.account_id
                 );
+                // Warm re-open: the page is already painted, so skip the
+                // loading overlay cycle and tell the frontend to go straight
+                // to `open`. We bypass `emit_load_finished` because the
+                // `loaded_accounts` dedup set would swallow the emit after
+                // the first cold open of this account.
+                let reuse_url = existing.url().map(|u| u.to_string()).unwrap_or_default();
+                if let Err(err) = app.emit(
+                    "webview-account:load",
+                    serde_json::json!({
+                        "account_id": args.account_id,
+                        "state": "reused",
+                        "url": reuse_url,
+                    }),
+                ) {
+                    log::warn!(
+                        "[webview-accounts][{}] emit reused event failed: {}",
+                        args.account_id,
+                        err
+                    );
+                }
                 return Ok(existing_label);
             }
             // Stale entry — fall through and rebuild
@@ -1001,7 +1418,27 @@ pub async fn webview_account_open<R: Runtime>(
     let nav_provider = args.provider.clone();
     let nav_app = app.clone();
     let nav_label = label.clone();
+    let nav_account_id = args.account_id.clone();
     builder = builder.on_navigation(move |url| {
+        // Notify the frontend on every committed navigation. The
+        // `webview-account:load` event is dedup'd per cold open, so it
+        // can't be used to spot post-login redirects (e.g. Gmail's
+        // accounts.google.com → mail.google.com hop). Frontends that
+        // care about live URL transitions — onboarding's auto-detect
+        // for "user finished signing in", for instance — listen here.
+        if let Err(err) = nav_app.emit(
+            "webview-account:navigate",
+            serde_json::json!({
+                "account_id": nav_account_id,
+                "provider": nav_provider,
+                "url": redact_navigation_url(url),
+            }),
+        ) {
+            log::debug!(
+                "[webview-accounts] emit webview-account:navigate failed: {}",
+                err
+            );
+        }
         if let Some(rewritten) = rewrite_provider_deep_link(&nav_provider, url) {
             log::info!(
                 "[webview-accounts] deep-link rewrite {} → {} (provider={})",
@@ -1082,6 +1519,27 @@ pub async fn webview_account_open<R: Runtime>(
             });
             return NewWindowResponse::Deny;
         }
+        if let Some(target) = popup_should_navigate_parent(&popup_provider, &url) {
+            log::info!(
+                "[webview-accounts] new-window {} → navigate parent (provider={})",
+                redact_navigation_url(&url),
+                popup_provider
+            );
+            let app = popup_app.clone();
+            let label = popup_label.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(wv) = app.get_webview(&label) {
+                    if let Err(e) = wv.navigate(target) {
+                        log::warn!(
+                            "[webview-accounts] popup→parent navigate failed label={} err={}",
+                            label,
+                            e
+                        );
+                    }
+                }
+            });
+            return NewWindowResponse::Deny;
+        }
         if popup_should_stay_in_app(&popup_provider, &url) {
             log::info!(
                 "[webview-accounts] new-window request {} → in-app popup (provider={})",
@@ -1120,9 +1578,40 @@ pub async fn webview_account_open<R: Runtime>(
         builder = builder.devtools(true);
     }
 
-    if let Some(ua) = provider_user_agent(&args.provider) {
-        builder = builder.user_agent(ua);
-    }
+    // Wire the native page-load signal so the frontend can hide its spinner as
+    // soon as CEF's LoadHandler reports the main frame finished. Dedup against
+    // the CDP `Page.loadEventFired` subscription and the 15 s watchdog through
+    // `emit_load_finished` so we only fire the first winning signal per open.
+    //
+    // Skip `data:` URLs: an early placeholder shape on some platforms
+    // fires `Finished` synchronously and we don't want to dedup-claim
+    // the load slot on it.
+    //
+    // We deliberately do NOT skip `about:blank#…` here: in practice the
+    // CDP `Page.loadEventFired` subscription isn't reaching us reliably
+    // (Gmail finishes loading but the event doesn't fire through
+    // pump_events — separate triage). The `about:blank` native load
+    // fires within ~50ms of spawn and is the only fast-path reveal we
+    // get. The downside is the user sees the placeholder briefly until
+    // the real provider page paints — better than waiting 15 s for the
+    // watchdog timeout.
+    let page_load_app = app.clone();
+    let page_load_account_id = args.account_id.clone();
+    builder = builder.on_page_load(move |_webview, payload| {
+        if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+            return;
+        }
+        let url = payload.url();
+        if url.scheme() == "data" {
+            return;
+        }
+        emit_load_finished(
+            &page_load_app,
+            &page_load_account_id,
+            "finished",
+            url.as_str(),
+        );
+    });
 
     let bounds = args.bounds.unwrap_or(Bounds {
         x: 0.0,
@@ -1131,18 +1620,64 @@ pub async fn webview_account_open<R: Runtime>(
         height: 600.0,
     });
 
+    // Park the webview off-screen during its first page load so the React
+    // placeholder's loading spinner is not covered by the native CEF subview.
+    // `webview_account_reveal` (invoked from the frontend after the load event
+    // arrives, or by the 15 s watchdog) moves it back to `bounds` + shows it.
+    // We use positive coords well below the parent window rather than large
+    // negative values so multi-monitor layouts stay well-defined.
+    //
+    // Warm-open reuse (when a webview already exists for this account) earlier
+    // in this function returns before we get here, so existing webviews keep
+    // their current position — we only off-screen the first cold spawn.
+    // Spawn strategy: keep the webview at the caller's requested position
+    // but shrink the initial size to 1×1 under CEF so the native subview
+    // doesn't paint over the React loading spinner. `webview_account_reveal`
+    // grows it back to `bounds.width × bounds.height` once the page-loaded
+    // signal arrives.
+    //
+    // Why not move off-screen: moving the NSView after a cold CEF spawn on
+    // macOS sometimes leaves the page painted but not repainted at the new
+    // origin, leaving the user looking at a blank viewport until they
+    // reload. Keeping the position stable and only toggling size sidesteps
+    // that repaint edge case while still keeping the webview visually
+    // hidden (1 px under the overlay) during load.
+    //
+    // Warm-open reuse returned earlier in this function, so this only
+    // affects the first cold spawn.
+    let initial_size = if skip_cdp_for_debug {
+        LogicalSize::new(bounds.width, bounds.height)
+    } else {
+        LogicalSize::new(1.0, 1.0)
+    };
+    let initial_position = LogicalPosition::new(bounds.x, bounds.y);
+
+    // Remember the bounds the frontend wanted so `webview_account_reveal` has a
+    // rect to restore to even if the frontend's bounds cache is empty (e.g.
+    // after a page reload races the load event).
+    state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .insert(args.account_id.clone(), bounds);
+    // Defensive reset: if a prior close/purge was raced by a stale emit we
+    // could still have the account marked as "already loaded". Clear here so
+    // the fresh spawn is allowed to fire the first event again.
+    state
+        .loaded_accounts
+        .lock()
+        .unwrap()
+        .remove(&args.account_id);
+
     let webview = parent_window
-        .add_child(
-            builder,
-            LogicalPosition::new(bounds.x, bounds.y),
-            LogicalSize::new(bounds.width, bounds.height),
-        )
+        .add_child(builder, initial_position, initial_size)
         .map_err(|e| format!("add_child failed: {e}"))?;
 
     log::info!(
-        "[webview-accounts] spawned label={} bounds={:?}",
+        "[webview-accounts] spawned label={} requested_bounds={:?} initial_size={:?}",
         webview.label(),
-        bounds
+        bounds,
+        initial_size
     );
 
     state
@@ -1160,7 +1695,6 @@ pub async fn webview_account_open<R: Runtime>(
     // Spawn the per-account CDP session opener, replacing any prior
     // handle for this account (the old one would still be trying to
     // attach to a target that's been torn down).
-    #[cfg(feature = "cef")]
     {
         if skip_cdp_for_debug {
             log::info!(
@@ -1168,18 +1702,29 @@ pub async fn webview_account_open<R: Runtime>(
                 args.account_id
             );
         } else {
-            let handle = cdp::spawn_session(args.account_id.clone(), real_url_str.clone());
-            let mut sessions = state.cdp_sessions.lock().unwrap();
-            if let Some(old) = sessions.insert(args.account_id.clone(), handle) {
+            let cdp::SpawnedSession { session, watchdog } =
+                cdp::spawn_session(app.clone(), args.account_id.clone(), real_url_str.clone());
+            if let Some(old) = state
+                .cdp_sessions
+                .lock()
+                .unwrap()
+                .insert(args.account_id.clone(), session)
+            {
+                old.abort();
+            }
+            if let Some(old) = state
+                .load_watchdogs
+                .lock()
+                .unwrap()
+                .insert(args.account_id.clone(), watchdog)
+            {
                 old.abort();
             }
         }
     }
 
     // For providers we know how to scrape via CDP, kick off the IndexedDB
-    // scanner. Compile-gated to `cef` because CDP only exists when the CEF
-    // runtime is in use (wry has no remote-debugging port).
-    #[cfg(feature = "cef")]
+    // scanner. CDP requires the CEF runtime's remote-debugging port.
     {
         // Prefix is derived from the validated real URL's origin above
         // so debug `args.url` overrides (alt hosts, localhost mirrors)
@@ -1329,52 +1874,46 @@ pub async fn webview_account_close<R: Runtime>(
             log::warn!("[webview-accounts] close({label}) failed: {e}");
         }
     }
-    #[cfg(feature = "cef")]
-    {
-        if let Some(registry) =
-            app.try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
-        {
-            let registry = registry.inner().clone();
-            let acct = args.account_id.clone();
-            tokio::spawn(async move { registry.forget(&acct).await });
-        }
-        if let Some(registry) =
-            app.try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
-        {
-            let registry = registry.inner().clone();
-            let acct = args.account_id.clone();
-            tokio::spawn(async move { registry.forget(&acct).await });
-        }
-        if let Some(registry) =
-            app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
-        {
-            let registry = registry.inner().clone();
-            let acct = args.account_id.clone();
-            tokio::spawn(async move { registry.forget(&acct).await });
-        }
-        if let Some(registry) =
-            app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
-        {
-            let registry = registry.inner().clone();
-            let acct = args.account_id.clone();
-            tokio::spawn(async move { registry.forget(&acct).await });
-        }
-        if let Some(browser_id) = state.browser_ids.lock().unwrap().remove(&args.account_id) {
-            tauri_runtime_cef::notification::unregister(browser_id);
-            log::debug!(
-                "[notify-cef] unregistered handler account={} browser_id={}",
-                args.account_id,
-                browser_id
-            );
-        }
-        if let Some(task) = state.cdp_sessions.lock().unwrap().remove(&args.account_id) {
-            task.abort();
-            log::debug!(
-                "[cdp-session] aborted session task for account={}",
-                args.account_id
-            );
-        }
+    teardown_account_scanners(&app, &args.account_id);
+    if let Some(browser_id) = state.browser_ids.lock().unwrap().remove(&args.account_id) {
+        tauri_runtime_cef::notification::unregister(browser_id);
+        log::debug!(
+            "[notify-cef] unregistered handler account={} browser_id={}",
+            args.account_id,
+            browser_id
+        );
     }
+    if let Some(task) = state.cdp_sessions.lock().unwrap().remove(&args.account_id) {
+        task.abort();
+        log::debug!(
+            "[cdp-session] aborted session task for account={}",
+            args.account_id
+        );
+    }
+    if let Some(task) = state
+        .load_watchdogs
+        .lock()
+        .unwrap()
+        .remove(&args.account_id)
+    {
+        task.abort();
+        log::debug!(
+            "[webview-accounts] aborted load watchdog for account={}",
+            args.account_id
+        );
+    }
+    // Reset load-overlay bookkeeping so the next open of this account starts
+    // with a fresh "not yet loaded" state.
+    state
+        .loaded_accounts
+        .lock()
+        .unwrap()
+        .remove(&args.account_id);
+    state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .remove(&args.account_id);
     log::info!("[webview-accounts] closed label={}", label);
     Ok(())
 }
@@ -1400,52 +1939,44 @@ pub async fn webview_account_purge<R: Runtime>(
         }
     }
 
-    #[cfg(feature = "cef")]
-    {
-        if let Some(registry) =
-            app.try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
-        {
-            let registry = registry.inner().clone();
-            let acct = args.account_id.clone();
-            tokio::spawn(async move { registry.forget(&acct).await });
-        }
-        if let Some(registry) =
-            app.try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
-        {
-            let registry = registry.inner().clone();
-            let acct = args.account_id.clone();
-            tokio::spawn(async move { registry.forget(&acct).await });
-        }
-        if let Some(registry) =
-            app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
-        {
-            let registry = registry.inner().clone();
-            let acct = args.account_id.clone();
-            tokio::spawn(async move { registry.forget(&acct).await });
-        }
-        if let Some(registry) =
-            app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
-        {
-            let registry = registry.inner().clone();
-            let acct = args.account_id.clone();
-            tokio::spawn(async move { registry.forget(&acct).await });
-        }
-        if let Some(browser_id) = state.browser_ids.lock().unwrap().remove(&args.account_id) {
-            tauri_runtime_cef::notification::unregister(browser_id);
-            log::debug!(
-                "[notify-cef] purge unregistered handler account={} browser_id={}",
-                args.account_id,
-                browser_id
-            );
-        }
-        if let Some(task) = state.cdp_sessions.lock().unwrap().remove(&args.account_id) {
-            task.abort();
-            log::debug!(
-                "[cdp-session] purge aborted session task for account={}",
-                args.account_id
-            );
-        }
+    teardown_account_scanners(&app, &args.account_id);
+    if let Some(browser_id) = state.browser_ids.lock().unwrap().remove(&args.account_id) {
+        tauri_runtime_cef::notification::unregister(browser_id);
+        log::debug!(
+            "[notify-cef] purge unregistered handler account={} browser_id={}",
+            args.account_id,
+            browser_id
+        );
     }
+    if let Some(task) = state.cdp_sessions.lock().unwrap().remove(&args.account_id) {
+        task.abort();
+        log::debug!(
+            "[cdp-session] purge aborted session task for account={}",
+            args.account_id
+        );
+    }
+    if let Some(task) = state
+        .load_watchdogs
+        .lock()
+        .unwrap()
+        .remove(&args.account_id)
+    {
+        task.abort();
+        log::debug!(
+            "[webview-accounts] purge aborted load watchdog for account={}",
+            args.account_id
+        );
+    }
+    state
+        .loaded_accounts
+        .lock()
+        .unwrap()
+        .remove(&args.account_id);
+    state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .remove(&args.account_id);
 
     let data_dir = data_directory_for(&app, &args.account_id)?;
     if data_dir.exists() {
@@ -1492,6 +2023,59 @@ pub async fn webview_account_bounds<R: Runtime>(
         label,
         args.bounds
     );
+    // Keep the in-state bounds synced so `webview_account_reveal` has the
+    // latest rect even if the frontend's own cache is cleared between the
+    // `webview_account_open` call and the `webview-account:load` signal.
+    state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .insert(args.account_id.clone(), args.bounds);
+    Ok(())
+}
+
+/// Move an off-screen-spawned webview back to the frontend's desired rect and
+/// show it. Invoked by the frontend when it receives the `webview-account:load`
+/// event so the loading spinner is uncovered only after the page has painted.
+///
+/// Called as the final step of the first-open flow:
+///   1. `webview_account_open` — CEF subview spawned off-screen
+///   2. native `on_page_load` OR CDP `Page.loadEventFired` OR 15 s watchdog
+///   3. frontend listener → `webview_account_reveal`
+#[tauri::command]
+pub async fn webview_account_reveal<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, WebviewAccountsState>,
+    args: BoundsArgs,
+) -> Result<(), String> {
+    let label_opt = state.inner.lock().unwrap().get(&args.account_id).cloned();
+    let Some(label) = label_opt else {
+        // Reveal race: the webview was closed before the load event arrived.
+        // Return Ok so the frontend doesn't surface an error.
+        log::debug!(
+            "[webview-accounts] reveal: no webview for account {}",
+            args.account_id
+        );
+        return Ok(());
+    };
+    let wv = app
+        .get_webview(&label)
+        .ok_or_else(|| format!("webview {label} missing"))?;
+    wv.set_position(LogicalPosition::new(args.bounds.x, args.bounds.y))
+        .map_err(|e| format!("set_position: {e}"))?;
+    wv.set_size(LogicalSize::new(args.bounds.width, args.bounds.height))
+        .map_err(|e| format!("set_size: {e}"))?;
+    wv.show().map_err(|e| format!("show: {e}"))?;
+    state
+        .requested_bounds
+        .lock()
+        .unwrap()
+        .insert(args.account_id.clone(), args.bounds);
+    log::info!(
+        "[webview-accounts] revealed label={} -> {:?}",
+        label,
+        args.bounds
+    );
     Ok(())
 }
 
@@ -1530,17 +2114,10 @@ pub async fn webview_account_show<R: Runtime>(
 }
 
 /// Web-shape notification permission state used by frontend parity code.
-/// CEF path is effectively granted because interception is handled in-app.
+/// Effectively granted because interception is handled in-app via CEF.
 #[tauri::command]
 pub fn webview_notification_permission_state() -> String {
-    #[cfg(feature = "cef")]
-    {
-        "granted".to_string()
-    }
-    #[cfg(not(feature = "cef"))]
-    {
-        "default".to_string()
-    }
+    "granted".to_string()
 }
 
 /// Request notification permission and return web-shape state.
@@ -1732,6 +2309,16 @@ pub async fn webview_recipe_event<R: Runtime>(
         }
     }
 
+    if let Err(err) = post_provider_surfaces_event(&args).await {
+        log::warn!(
+            "[webview-accounts] provider_surfaces ingest failed account={} provider={} kind={}: {}",
+            args.account_id,
+            args.provider,
+            args.kind,
+            err
+        );
+    }
+
     let event = WebviewEvent {
         account_id: args.account_id,
         provider: args.provider,
@@ -1752,16 +2339,93 @@ mod tests {
         Url::parse(s).expect("valid url")
     }
 
+    // ── shutdown teardown ──────────────────────────────────
+
+    /// Smoke-test [`WebviewAccountsState::drain_for_shutdown`] in isolation
+    /// from the Tauri runtime. Populates the state with representative
+    /// per-account resources (CDP / watchdog `JoinHandle`s, a CEF browser
+    /// id, an `acct_*` label, plus the small bookkeeping sets) and asserts
+    /// that one call drains every collection and aborts the long-running
+    /// tasks, that the returned label list is what `shutdown_all` will
+    /// `wv.close()` against, and that a second call is a safe no-op.
+    ///
+    /// `shutdown_all` itself takes an `AppHandle` and is exercised end-to-
+    /// end at runtime; the inner `drain_for_shutdown` covers the part of
+    /// the teardown that doesn't need a Tauri runtime to verify.
+    #[tokio::test]
+    async fn drain_for_shutdown_clears_state_and_repeat_is_noop() {
+        use std::time::Duration;
+
+        let state = WebviewAccountsState::default();
+
+        let cdp_task = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
+        let watchdog_task = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
+
+        state
+            .cdp_sessions
+            .lock()
+            .unwrap()
+            .insert("acct-1".into(), cdp_task);
+        state
+            .load_watchdogs
+            .lock()
+            .unwrap()
+            .insert("acct-1".into(), watchdog_task);
+        state
+            .browser_ids
+            .lock()
+            .unwrap()
+            .insert("acct-1".into(), 42);
+        state
+            .inner
+            .lock()
+            .unwrap()
+            .insert("acct-1".into(), "acct_1".into());
+        state
+            .loaded_accounts
+            .lock()
+            .unwrap()
+            .insert("acct-1".into());
+        state.requested_bounds.lock().unwrap().insert(
+            "acct-1".into(),
+            Bounds {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 600.0,
+            },
+        );
+
+        let labels = state.drain_for_shutdown();
+
+        assert_eq!(
+            labels,
+            vec![("acct-1".to_string(), "acct_1".to_string())],
+            "shutdown_all should close the acct_* webview returned here"
+        );
+        assert!(state.cdp_sessions.lock().unwrap().is_empty());
+        assert!(state.load_watchdogs.lock().unwrap().is_empty());
+        assert!(state.browser_ids.lock().unwrap().is_empty());
+        assert!(state.inner.lock().unwrap().is_empty());
+        assert!(state.loaded_accounts.lock().unwrap().is_empty());
+        assert!(state.requested_bounds.lock().unwrap().is_empty());
+
+        // Second call must be a safe no-op: nothing left to drain.
+        let labels2 = state.drain_for_shutdown();
+        assert!(labels2.is_empty());
+        assert!(state.cdp_sessions.lock().unwrap().is_empty());
+        assert!(state.inner.lock().unwrap().is_empty());
+    }
+
     // ── provider registry match arms ──────────────────────────────────
 
     #[test]
     fn zoom_registered_in_provider_url() {
         assert_eq!(provider_url("zoom"), Some("https://zoom.us/"));
-    }
-
-    #[test]
-    fn zoom_registered_in_user_agent() {
-        assert_eq!(provider_user_agent("zoom"), Some(CHROME_UA));
     }
 
     #[test]
@@ -1771,11 +2435,6 @@ mod tests {
         // `on_new_window` (plus CDP from scanner modules, if any) — no
         // `recipe.js` should be registered.
         assert!(provider_recipe_js("zoom").is_none());
-    }
-
-    #[test]
-    fn zoom_enables_ua_spoof() {
-        assert!(provider_ua_spoof("zoom"));
     }
 
     #[test]
@@ -1991,5 +2650,81 @@ mod tests {
             "zoom",
             &url("https://example.com/wc/join/888")
         ));
+    }
+
+    // ── popup_should_navigate_parent: Gmail Google-auth popups ────────
+
+    #[test]
+    fn gmail_accounts_popup_navigates_parent() {
+        // Clicking "Sign in" on mail.google.com opens accounts.google.com
+        // in a popup; routing it to the system browser breaks the OAuth
+        // round-trip because the auth response would land in the wrong
+        // cookie jar. Allowing CEF to spawn an unmanaged popup leaves it
+        // blank/black (no host slot, no bounds). Navigate the parent
+        // instead so the auth flow lands in the existing webview.
+        assert_eq!(
+            popup_should_navigate_parent(
+                "gmail",
+                &url("https://accounts.google.com/signin/v2/identifier"),
+            )
+            .map(|u| u.to_string()),
+            Some("https://accounts.google.com/signin/v2/identifier".to_string())
+        );
+    }
+
+    #[test]
+    fn gmail_about_blank_popup_does_not_navigate_parent() {
+        // about:blank popups are non-actionable — there's no URL yet to
+        // navigate the parent to. Fall through to the popup branch.
+        assert!(popup_should_navigate_parent("gmail", &url("about:blank")).is_none());
+    }
+
+    #[test]
+    fn gmail_foreign_host_popup_does_not_navigate_parent() {
+        // External link popups still belong in the system browser.
+        assert!(
+            popup_should_navigate_parent("gmail", &url("https://example.com/share?u=…")).is_none()
+        );
+    }
+
+    #[test]
+    fn gmail_internal_non_auth_popup_does_not_navigate_parent() {
+        assert!(popup_should_navigate_parent(
+            "gmail",
+            &url("https://mail.google.com/mail/u/0/#inbox")
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn google_meet_accounts_popup_navigates_parent() {
+        assert!(popup_should_navigate_parent(
+            "google-meet",
+            &url("https://accounts.google.com/signin/v2/identifier"),
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn gmail_service_login_popup_navigates_parent() {
+        assert_eq!(
+            popup_should_navigate_parent(
+                "gmail",
+                &url("https://accounts.google.com/ServiceLogin?continue=https://mail.google.com"),
+            )
+            .map(|u| u.to_string()),
+            Some(
+                "https://accounts.google.com/ServiceLogin?continue=https://mail.google.com"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn redact_navigation_url_strips_query_and_fragment() {
+        let redacted = redact_navigation_url(&url(
+            "https://accounts.google.com/o/oauth2/v2/auth?code=secret#frag",
+        ));
+        assert_eq!(redacted, "https://accounts.google.com/o/oauth2/v2/auth");
     }
 }

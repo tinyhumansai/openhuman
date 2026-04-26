@@ -28,8 +28,8 @@ integrations can follow the same pattern and debug the same way.
            TinyHumans Neocortex memory (chunked + embedded + graph)
 ```
 
-Only ① requires the `cef` feature — the wry runtime has no remote debugging
-port. Gate scanner spawn with `#[cfg(feature = "cef")]`.
+Step ① relies on CEF's remote debugging port (CEF is the only supported
+runtime for this app).
 
 ---
 
@@ -238,7 +238,7 @@ DOM scraping via `Runtime.evaluate` needs none of the above.
 
 | Problem                                 | Cause                                                        | Fix                                                      |
 | --------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
-| Scanner never runs                      | Wrong Cargo feature                                          | Use `yarn dev:cef`, not `yarn dev`                       |
+| Scanner never runs                      | App not started via the CEF dev script                       | Use `pnpm dev:cef`                                       |
 | `helloCount: 0` despite wrapper running | CSP blocks `blob:` workers                                   | Skip the workers entirely — use DOM scrape               |
 | 10s-per-worker timeouts                 | CEF worker targets don't answer CDP Runtime calls            | Don't probe workers                                      |
 | `patched=N, appended=N` duplicates      | DOM row indexed twice, only one key removed on patch         | Track consumed rows by a stable `dataId`, not by map key |

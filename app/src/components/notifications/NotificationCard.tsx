@@ -50,17 +50,15 @@ function scoreBadgeClass(score: number): string {
 interface Props {
   notification: IntegrationNotification;
   onMarkRead: (id: string) => void;
+  onDismiss?: (id: string) => void;
 }
 
-const NotificationCard = ({ notification: n, onMarkRead }: Props) => {
+const NotificationCard = ({ notification: n, onMarkRead, onDismiss }: Props) => {
   const isUnread = n.status === 'unread';
 
   return (
-    <button
-      onClick={() => {
-        if (isUnread) onMarkRead(n.id);
-      }}
-      className={`w-full text-left p-3 border-b border-stone-100 hover:bg-stone-50 transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 ${
+    <div
+      className={`w-full p-3 border-b border-stone-100 hover:bg-stone-50 transition-colors duration-150 ${
         isUnread ? 'bg-primary-50/30' : 'bg-white'
       }`}>
       <div className="flex items-start gap-3">
@@ -71,7 +69,11 @@ const NotificationCard = ({ notification: n, onMarkRead }: Props) => {
           )}
         </div>
 
-        <div className="flex-1 min-w-0">
+        <button
+          onClick={() => {
+            if (isUnread) onMarkRead(n.id);
+          }}
+          className="flex-1 min-w-0 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 rounded-sm">
           {/* Header row: provider badge + timestamp */}
           <div className="flex items-center gap-2 mb-1">
             <span
@@ -103,9 +105,24 @@ const NotificationCard = ({ notification: n, onMarkRead }: Props) => {
 
           {/* Body preview */}
           {n.body && <p className="text-xs text-stone-500 mt-0.5 line-clamp-2">{n.body}</p>}
-        </div>
+        </button>
+        {onDismiss && (
+          <button
+            onClick={() => onDismiss(n.id)}
+            className="mt-0.5 ml-1 flex-shrink-0 p-0.5 rounded hover:bg-stone-200 text-stone-400 hover:text-stone-600 transition-colors"
+            aria-label="Dismiss notification">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        )}
       </div>
-    </button>
+    </div>
   );
 };
 

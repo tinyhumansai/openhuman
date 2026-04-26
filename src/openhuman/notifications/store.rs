@@ -118,62 +118,71 @@ pub fn insert(config: &Config, n: &IntegrationNotification) -> Result<()> {
 /// Returns `true` when inserted, `false` when skipped as duplicate.
 pub fn insert_if_not_recent(config: &Config, n: &IntegrationNotification) -> Result<bool> {
     with_connection(config, |conn| {
-        let tx = conn
-            .unchecked_transaction()
+        conn.execute_batch("BEGIN IMMEDIATE")
             .context("[notifications::store] begin insert_if_not_recent tx failed")?;
 
-        let count: i64 = match n.account_id.as_deref() {
-            Some(aid) => tx.query_row(
-                "SELECT COUNT(*) FROM integration_notifications
-                 WHERE provider = ?1 AND account_id = ?2
-                   AND title = ?3 AND body = ?4
-                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
-                params![&n.provider, aid, &n.title, &n.body],
-                |row| row.get(0),
-            ),
-            None => tx.query_row(
-                "SELECT COUNT(*) FROM integration_notifications
-                 WHERE provider = ?1 AND account_id IS NULL
-                   AND title = ?2 AND body = ?3
-                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
-                params![&n.provider, &n.title, &n.body],
-                |row| row.get(0),
-            ),
+        let result: Result<bool> = (|| {
+            let count: i64 = match n.account_id.as_deref() {
+                Some(aid) => conn.query_row(
+                    "SELECT COUNT(*) FROM integration_notifications
+                     WHERE provider = ?1 AND account_id = ?2
+                       AND title = ?3 AND body = ?4
+                       AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
+                    params![&n.provider, aid, &n.title, &n.body],
+                    |row| row.get(0),
+                ),
+                None => conn.query_row(
+                    "SELECT COUNT(*) FROM integration_notifications
+                     WHERE provider = ?1 AND account_id IS NULL
+                       AND title = ?2 AND body = ?3
+                       AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
+                    params![&n.provider, &n.title, &n.body],
+                    |row| row.get(0),
+                ),
+            }
+            .context("[notifications::store] insert_if_not_recent dedup query failed")?;
+
+            if count > 0 {
+                return Ok(false);
+            }
+
+            conn.execute(
+                "INSERT INTO integration_notifications
+                 (id, provider, account_id, title, body, raw_payload,
+                  importance_score, triage_action, triage_reason, status,
+                  received_at, scored_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    n.id,
+                    n.provider,
+                    n.account_id,
+                    n.title,
+                    n.body,
+                    n.raw_payload.to_string(),
+                    n.importance_score,
+                    n.triage_action,
+                    n.triage_reason,
+                    n.status.as_str(),
+                    n.received_at.to_rfc3339(),
+                    n.scored_at.map(|t| t.to_rfc3339()),
+                ],
+            )
+            .context("[notifications::store] insert_if_not_recent insert failed")?;
+
+            Ok(true)
+        })();
+
+        if result.is_ok() {
+            conn.execute_batch("COMMIT")
+                .context("[notifications::store] commit insert_if_not_recent tx failed")?;
+        } else if let Err(rollback_err) = conn.execute_batch("ROLLBACK") {
+            tracing::warn!(
+                error = %rollback_err,
+                "[notifications::store] rollback insert_if_not_recent tx failed"
+            );
         }
-        .context("[notifications::store] insert_if_not_recent dedup query failed")?;
 
-        if count > 0 {
-            tx.commit()
-                .context("[notifications::store] commit duplicate tx failed")?;
-            return Ok(false);
-        }
-
-        tx.execute(
-            "INSERT INTO integration_notifications
-             (id, provider, account_id, title, body, raw_payload,
-              importance_score, triage_action, triage_reason, status,
-              received_at, scored_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![
-                n.id,
-                n.provider,
-                n.account_id,
-                n.title,
-                n.body,
-                n.raw_payload.to_string(),
-                n.importance_score,
-                n.triage_action,
-                n.triage_reason,
-                n.status.as_str(),
-                n.received_at.to_rfc3339(),
-                n.scored_at.map(|t| t.to_rfc3339()),
-            ],
-        )
-        .context("[notifications::store] insert_if_not_recent insert failed")?;
-
-        tx.commit()
-            .context("[notifications::store] commit insert_if_not_recent tx failed")?;
-        Ok(true)
+        result
     })
 }
 
@@ -295,6 +304,165 @@ pub fn unread_count(config: &Config) -> Result<i64> {
             )
             .context("[notifications::store] unread_count failed")?;
         Ok(count)
+    })
+}
+
+/// Check whether a notification with identical content was received in the
+/// last 60 seconds.
+pub fn exists_recent(
+    config: &Config,
+    provider: &str,
+    account_id: Option<&str>,
+    title: &str,
+    body: &str,
+) -> Result<bool> {
+    with_connection(config, |conn| {
+        let count: i64 = match account_id {
+            Some(aid) => conn.query_row(
+                "SELECT COUNT(*) FROM integration_notifications
+                 WHERE provider = ?1 AND account_id = ?2
+                   AND title = ?3 AND body = ?4
+                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
+                params![provider, aid, title, body],
+                |row| row.get(0),
+            ),
+            None => conn.query_row(
+                "SELECT COUNT(*) FROM integration_notifications
+                 WHERE provider = ?1 AND account_id IS NULL
+                   AND title = ?2 AND body = ?3
+                   AND unixepoch(received_at) >= unixepoch('now', '-60 seconds')",
+                params![provider, title, body],
+                |row| row.get(0),
+            ),
+        }
+        .context("[notifications::store] exists_recent query failed")?;
+        Ok(count > 0)
+    })
+}
+
+/// Transition a notification status to 'dismissed'.
+///
+/// Returns `true` when at least one row matched and was updated.
+pub fn mark_dismissed(config: &Config, id: &str) -> Result<bool> {
+    with_connection(config, |conn| {
+        let updated = conn
+            .execute(
+                "UPDATE integration_notifications SET status = 'dismissed' WHERE id = ?1",
+                params![id],
+            )
+            .context("[notification_intel] mark_dismissed failed")?;
+        let matched = updated > 0;
+        if !matched {
+            tracing::warn!(id = %id, "[notification_intel] mark_dismissed matched no rows");
+        } else {
+            tracing::debug!(id = %id, "[notification_intel] mark_dismissed applied");
+        }
+        Ok(matched)
+    })
+}
+
+/// Transition a notification status to 'acted'.
+///
+/// Returns `true` when at least one row matched and was updated.
+pub fn mark_acted(config: &Config, id: &str) -> Result<bool> {
+    with_connection(config, |conn| {
+        let updated = conn
+            .execute(
+                "UPDATE integration_notifications SET status = 'acted' WHERE id = ?1",
+                params![id],
+            )
+            .context("[notification_intel] mark_acted failed")?;
+        let matched = updated > 0;
+        if !matched {
+            tracing::warn!(id = %id, "[notification_intel] mark_acted matched no rows");
+        } else {
+            tracing::debug!(id = %id, "[notification_intel] mark_acted applied");
+        }
+        Ok(matched)
+    })
+}
+
+/// Return aggregate statistics for the notification intelligence pipeline.
+pub fn stats(config: &Config) -> Result<super::types::NotificationStats> {
+    use std::collections::HashMap;
+    with_connection(config, |conn| {
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM integration_notifications", [], |r| {
+                r.get(0)
+            })
+            .context("[notification_intel] stats total query failed")?;
+
+        let unread: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM integration_notifications WHERE status = 'unread'",
+                [],
+                |r| r.get(0),
+            )
+            .context("[notification_intel] stats unread query failed")?;
+
+        let unscored: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM integration_notifications WHERE importance_score IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .context("[notification_intel] stats unscored query failed")?;
+
+        // Per-provider counts
+        let mut by_provider = HashMap::new();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT provider, COUNT(*) FROM integration_notifications GROUP BY provider",
+                )
+                .context("[notification_intel] stats by_provider prepare failed")?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .context("[notification_intel] stats by_provider query failed")?;
+            for row in rows {
+                let (provider, count) =
+                    row.context("[notification_intel] stats by_provider row failed")?;
+                by_provider.insert(provider, count);
+            }
+        }
+
+        // Per-action counts (only where triage_action is set)
+        let mut by_action = HashMap::new();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT triage_action, COUNT(*) FROM integration_notifications \
+                     WHERE triage_action IS NOT NULL GROUP BY triage_action",
+                )
+                .context("[notification_intel] stats by_action prepare failed")?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .context("[notification_intel] stats by_action query failed")?;
+            for row in rows {
+                let (action, count) =
+                    row.context("[notification_intel] stats by_action row failed")?;
+                by_action.insert(action, count);
+            }
+        }
+
+        tracing::debug!(
+            total = total,
+            unread = unread,
+            unscored = unscored,
+            "[notification_intel] stats query completed"
+        );
+
+        Ok(super::types::NotificationStats {
+            total,
+            unread,
+            unscored,
+            by_provider,
+            by_action,
+        })
     })
 }
 
@@ -422,6 +590,7 @@ fn row_to_notification(row: &rusqlite::Row<'_>) -> Result<IntegrationNotificatio
 mod tests {
     use super::*;
     use crate::openhuman::config::Config;
+    use std::sync::{Arc, Barrier};
     use tempfile::TempDir;
 
     fn test_config(dir: &TempDir) -> Config {
@@ -525,6 +694,45 @@ mod tests {
     }
 
     #[test]
+    fn insert_if_not_recent_is_atomic_under_concurrent_calls() {
+        let dir = TempDir::new().unwrap();
+        let config = Arc::new(test_config(&dir));
+        let gate = Arc::new(Barrier::new(3));
+
+        let run = |id: &'static str, gate: Arc<Barrier>, config: Arc<Config>| {
+            std::thread::spawn(move || {
+                let n = sample_notification(id, "slack");
+                gate.wait();
+                insert_if_not_recent(&config, &n)
+            })
+        };
+
+        let t1 = run("race-a", Arc::clone(&gate), Arc::clone(&config));
+        let t2 = run("race-b", Arc::clone(&gate), Arc::clone(&config));
+
+        gate.wait();
+        let inserted_1 = t1.join().unwrap().unwrap();
+        let inserted_2 = t2.join().unwrap().unwrap();
+
+        let inserted_total = usize::from(inserted_1) + usize::from(inserted_2);
+        assert_eq!(inserted_total, 1);
+
+        let items = list(&config, 10, 0, Some("slack"), None).unwrap();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn exists_recent_rejects_expired_notification() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let mut n = sample_notification("old1", "slack");
+        n.received_at = Utc::now() - chrono::Duration::seconds(120);
+        insert(&config, &n).unwrap();
+
+        assert!(!exists_recent(&config, "slack", None, "Test notification", "Test body").unwrap());
+    }
+
+    #[test]
     fn settings_roundtrip_defaults_and_upsert() {
         let dir = TempDir::new().unwrap();
         let config = test_config(&dir);
@@ -550,5 +758,77 @@ mod tests {
         assert!(!updated.enabled);
         assert_eq!(updated.importance_threshold, 0.75);
         assert!(!updated.route_to_orchestrator);
+    }
+
+    #[test]
+    fn exists_recent_detects_with_and_without_account_id() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+
+        let mut n = sample_notification("acct-1", "slack");
+        n.account_id = Some("acct-main".to_string());
+        insert(&config, &n).unwrap();
+
+        assert!(exists_recent(
+            &config,
+            "slack",
+            Some("acct-main"),
+            "Test notification",
+            "Test body"
+        )
+        .unwrap());
+        assert!(!exists_recent(
+            &config,
+            "slack",
+            Some("acct-other"),
+            "Test notification",
+            "Test body"
+        )
+        .unwrap());
+
+        let n_null = sample_notification("acct-null", "slack");
+        insert(&config, &n_null).unwrap();
+        assert!(exists_recent(&config, "slack", None, "Test notification", "Test body").unwrap());
+    }
+
+    #[test]
+    fn mark_dismissed_and_mark_acted_report_match_and_update_status() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        insert(&config, &sample_notification("m1", "gmail")).unwrap();
+        insert(&config, &sample_notification("m2", "gmail")).unwrap();
+
+        assert!(mark_dismissed(&config, "m1").unwrap());
+        assert!(mark_acted(&config, "m2").unwrap());
+        assert!(!mark_dismissed(&config, "missing").unwrap());
+        assert!(!mark_acted(&config, "missing").unwrap());
+
+        let items = list(&config, 10, 0, Some("gmail"), None).unwrap();
+        let m1 = items.iter().find(|n| n.id == "m1").unwrap();
+        let m2 = items.iter().find(|n| n.id == "m2").unwrap();
+        assert_eq!(m1.status, NotificationStatus::Dismissed);
+        assert_eq!(m2.status, NotificationStatus::Acted);
+    }
+
+    #[test]
+    fn stats_returns_correct_aggregates() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+
+        insert(&config, &sample_notification("s1", "gmail")).unwrap();
+        insert(&config, &sample_notification("s2", "gmail")).unwrap();
+        insert(&config, &sample_notification("s3", "slack")).unwrap();
+        update_triage(&config, "s2", 0.9, "escalate", "urgent").unwrap();
+        update_triage(&config, "s3", 0.2, "drop", "noise").unwrap();
+        mark_read(&config, "s2").unwrap();
+
+        let out = stats(&config).unwrap();
+        assert_eq!(out.total, 3);
+        assert_eq!(out.unread, 2);
+        assert_eq!(out.unscored, 1);
+        assert_eq!(out.by_provider.get("gmail"), Some(&2));
+        assert_eq!(out.by_provider.get("slack"), Some(&1));
+        assert_eq!(out.by_action.get("escalate"), Some(&1));
+        assert_eq!(out.by_action.get("drop"), Some(&1));
     }
 }

@@ -127,6 +127,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         toml: include_str!("summarizer/agent.toml"),
         prompt_fn: super::summarizer::prompt::build,
     },
+    BuiltinAgent {
+        id: "help",
+        toml: include_str!("help/agent.toml"),
+        prompt_fn: super::help::prompt::build,
+    },
 ];
 
 /// Parse every entry in [`BUILTINS`] into an [`AgentDefinition`].
@@ -172,7 +177,7 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 14, "expected 14 built-in agents");
+        assert_eq!(defs.len(), 15, "expected 15 built-in agents");
     }
 
     #[test]
@@ -366,12 +371,92 @@ mod tests {
     }
 
     #[test]
+    fn help_uses_gitbooks_tools_and_is_read_only() {
+        let def = find("help");
+        assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert!(
+                    tools.iter().any(|t| t == "gitbooks_search"),
+                    "help needs gitbooks_search"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "gitbooks_get_page"),
+                    "help needs gitbooks_get_page"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "memory_recall"),
+                    "help needs memory_recall for personalisation"
+                );
+                // Help is docs-only — no write/exec tools.
+                assert!(!tools.iter().any(|t| t == "shell"));
+                assert!(!tools.iter().any(|t| t == "file_write"));
+                assert!(!tools.iter().any(|t| t == "curl"));
+                assert!(!tools.iter().any(|t| t == "spawn_subagent"));
+            }
+            ToolScope::Wildcard => panic!("help must have a Named tool scope"),
+        }
+        assert!(def.omit_identity);
+        assert!(def.omit_safety_preamble);
+        assert!(!def.omit_memory_context);
+    }
+
+    #[test]
+    fn researcher_has_curl_for_artifact_downloads() {
+        let def = find("researcher");
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert!(
+                    tools.iter().any(|t| t == "curl"),
+                    "researcher needs curl for artifact downloads"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "http_request"),
+                    "researcher still needs http_request"
+                );
+            }
+            ToolScope::Wildcard => panic!("researcher must have Named tool scope"),
+        }
+    }
+
+    #[test]
+    fn code_executor_has_curl_for_artifact_downloads() {
+        let def = find("code_executor");
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert!(
+                    tools.iter().any(|t| t == "curl"),
+                    "code_executor needs curl for artifact/dataset fetches"
+                );
+            }
+            ToolScope::Wildcard => panic!("code_executor must have Named tool scope"),
+        }
+    }
+
+    #[test]
+    fn orchestrator_does_not_get_curl() {
+        // Per design: curl is a `Write` permission tool that writes
+        // to the workspace. The orchestrator delegates rather than
+        // executing — code_executor / researcher own actual downloads.
+        let def = find("orchestrator");
+        if let ToolScope::Named(tools) = &def.tools {
+            assert!(
+                !tools.iter().any(|t| t == "curl"),
+                "orchestrator must not have curl — it should delegate"
+            );
+        }
+    }
+
+    #[test]
     fn welcome_has_onboarding_and_memory_tools() {
         let def = find("welcome");
         assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
         match &def.tools {
             ToolScope::Named(tools) => {
-                assert_eq!(tools.len(), 3, "welcome should have exactly three tools");
+                assert!(
+                    tools.iter().any(|t| t == "check_onboarding_status"),
+                    "welcome needs check_onboarding_status"
+                );
                 assert!(
                     tools.iter().any(|t| t == "complete_onboarding"),
                     "welcome needs complete_onboarding"
@@ -384,6 +469,18 @@ mod tests {
                     tools.iter().any(|t| t == "composio_authorize"),
                     "welcome needs composio_authorize"
                 );
+                assert!(
+                    tools.iter().any(|t| t == "gitbooks_search"),
+                    "welcome needs gitbooks_search to answer 'how does X work' during onboarding"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "gitbooks_get_page"),
+                    "welcome needs gitbooks_get_page for full-page lookups"
+                );
+                // Welcome must not gain write/exec power; onboarding stays read-only.
+                assert!(!tools.iter().any(|t| t == "shell"));
+                assert!(!tools.iter().any(|t| t == "file_write"));
+                assert!(!tools.iter().any(|t| t == "curl"));
             }
             ToolScope::Wildcard => panic!("welcome must have a Named tool scope"),
         }

@@ -175,11 +175,31 @@ fn mock_upstream_router() -> Router {
         if let Some(model) = body.get("model").and_then(Value::as_str) {
             with_chat_completion_models(|models| models.push(model.to_string()));
         }
+        let is_triage_turn = body
+            .get("messages")
+            .and_then(Value::as_array)
+            .map(|messages| {
+                messages.iter().any(|m| {
+                    m.get("content")
+                        .and_then(Value::as_str)
+                        .is_some_and(|content| {
+                            content.contains("SOURCE: ")
+                                && content.contains("DISPLAY_LABEL: ")
+                                && content.contains("PAYLOAD:")
+                        })
+                })
+            })
+            .unwrap_or(false);
+        let content = if is_triage_turn {
+            "{\"action\":\"react\",\"reason\":\"e2e triage mock\"}"
+        } else {
+            "Hello from e2e mock agent"
+        };
         Json(json!({
             "choices": [{
                 "message": {
                     "role": "assistant",
-                    "content": "Hello from e2e mock agent"
+                    "content": content
                 }
             }]
         }))
@@ -1294,6 +1314,20 @@ async fn json_rpc_app_state_snapshot_returns_runtime_shape() {
         body.get("localState").and_then(Value::as_object).is_some(),
         "expected localState object: {body}"
     );
+    assert_eq!(
+        body.get("onboardingCompleted").and_then(Value::as_bool),
+        Some(false),
+        "expected onboardingCompleted=false default: {body}"
+    );
+    // Welcome-lockdown frontend gate (#883). `write_min_config` sets
+    // `chat_onboarding_completed = true` so the test harness bypasses the
+    // welcome agent; the snapshot must surface the same camelCase key the
+    // React app reads.
+    assert_eq!(
+        body.get("chatOnboardingCompleted").and_then(Value::as_bool),
+        Some(true),
+        "expected chatOnboardingCompleted=true from test config: {body}"
+    );
 
     let runtime = body.get("runtime").expect("expected runtime object");
     assert!(
@@ -1317,6 +1351,66 @@ async fn json_rpc_app_state_snapshot_returns_runtime_shape() {
     assert!(
         runtime.get("service").and_then(Value::as_object).is_some(),
         "expected runtime.service object: {runtime}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+/// #883 — when `chat_onboarding_completed` is unset in config.toml (fresh
+/// user), the `openhuman.app_state_snapshot` RPC must surface the flag as
+/// `false` so the React welcome-lockdown kicks in.
+#[tokio::test]
+async fn json_rpc_app_state_snapshot_chat_onboarding_defaults_false() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+
+    // Fresh-user config: no `chat_onboarding_completed` key → serde default
+    // of `false`. Cannot reuse `write_min_config` because it hard-codes the
+    // flag to `true` so the e2e mock can bypass the welcome agent.
+    let cfg = format!(
+        r#"api_url = "{mock_origin}"
+default_model = "e2e-mock-model"
+default_temperature = 0.7
+
+[secrets]
+encrypt = false
+"#
+    );
+    std::fs::create_dir_all(&openhuman_home).expect("mkdir openhuman");
+    std::fs::write(openhuman_home.join("config.toml"), &cfg).expect("write config");
+    std::fs::create_dir_all(openhuman_home.join("users").join("local")).expect("mkdir users/local");
+    std::fs::write(
+        openhuman_home
+            .join("users")
+            .join("local")
+            .join("config.toml"),
+        &cfg,
+    )
+    .expect("write user config");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let snapshot = post_json_rpc(&rpc_base, 1005, "openhuman.app_state_snapshot", json!({})).await;
+    let result = assert_no_jsonrpc_error(&snapshot, "app_state_snapshot");
+    let body = result.get("result").unwrap_or(result);
+
+    assert_eq!(
+        body.get("chatOnboardingCompleted").and_then(Value::as_bool),
+        Some(false),
+        "fresh-user config without chat_onboarding_completed must surface chatOnboardingCompleted=false: {body}"
     );
 
     mock_join.abort();
@@ -2272,6 +2366,147 @@ async fn notification_settings_roundtrip_and_disabled_ingest_skip() {
     assert_eq!(
         ingest_result.get("skipped").and_then(Value::as_bool),
         Some(true)
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn credentials_crud_roundtrip() {
+    // Tests the provider-credential lifecycle over the JSON-RPC transport:
+    //   store → list → list-filtered → remove → verify-gone
+    //
+    // Provider credentials are stored locally (auth-profiles.json) and require
+    // no upstream network calls, so no mock session/JWT is needed.
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    // A mock upstream is required so config validation passes and api_url is
+    // well-formed, even though provider-credential calls don't hit the network.
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── 1. store a provider credential ──────────────────────────────────────
+    let store = post_json_rpc(
+        &rpc_base,
+        5001,
+        "openhuman.auth_store_provider_credentials",
+        json!({
+            "provider": "openai",
+            "profile": "default",
+            "token": "sk-e2e-test-key",
+            "setActive": true
+        }),
+    )
+    .await;
+    // assert_no_jsonrpc_error returns the JSON-RPC `result` field which is the
+    // RpcOutcome envelope: {"logs": [...], "result": { <AuthProfileSummary> }}.
+    let store_outer = assert_no_jsonrpc_error(&store, "auth_store_provider_credentials");
+    let store_result = store_outer.get("result").unwrap_or(store_outer);
+    assert_eq!(
+        store_result.get("provider").and_then(Value::as_str),
+        Some("openai"),
+        "stored profile should have provider=openai: {store_result}"
+    );
+    assert_eq!(
+        store_result.get("profileName").and_then(Value::as_str),
+        Some("default"),
+        "stored profile should have profileName=default: {store_result}"
+    );
+    assert_eq!(
+        store_result.get("hasToken").and_then(Value::as_bool),
+        Some(true),
+        "stored profile should report hasToken=true: {store_result}"
+    );
+
+    // ── 2. list all provider credentials — should find openai ───────────────
+    let list_all = post_json_rpc(
+        &rpc_base,
+        5002,
+        "openhuman.auth_list_provider_credentials",
+        json!({}),
+    )
+    .await;
+    let list_outer = assert_no_jsonrpc_error(&list_all, "auth_list_provider_credentials (all)");
+    let list_result = list_outer.get("result").unwrap_or(list_outer);
+    let profiles = list_result
+        .as_array()
+        .unwrap_or_else(|| panic!("expected array from list: {list_result}"));
+    assert_eq!(profiles.len(), 1, "expected exactly one stored credential");
+    assert_eq!(
+        profiles[0].get("provider").and_then(Value::as_str),
+        Some("openai")
+    );
+
+    // ── 3. list filtered by provider name ───────────────────────────────────
+    let list_filtered = post_json_rpc(
+        &rpc_base,
+        5003,
+        "openhuman.auth_list_provider_credentials",
+        json!({ "provider": "openai" }),
+    )
+    .await;
+    let filtered_outer =
+        assert_no_jsonrpc_error(&list_filtered, "auth_list_provider_credentials (filtered)");
+    let filtered_result = filtered_outer.get("result").unwrap_or(filtered_outer);
+    let filtered_profiles = filtered_result
+        .as_array()
+        .unwrap_or_else(|| panic!("expected array from filtered list: {filtered_result}"));
+    assert_eq!(
+        filtered_profiles.len(),
+        1,
+        "filter by openai should return exactly one entry"
+    );
+
+    // ── 4. remove the stored credential ─────────────────────────────────────
+    let remove = post_json_rpc(
+        &rpc_base,
+        5004,
+        "openhuman.auth_remove_provider_credentials",
+        json!({
+            "provider": "openai",
+            "profile": "default"
+        }),
+    )
+    .await;
+    let remove_outer = assert_no_jsonrpc_error(&remove, "auth_remove_provider_credentials");
+    let remove_result = remove_outer.get("result").unwrap_or(remove_outer);
+    assert_eq!(
+        remove_result.get("removed").and_then(Value::as_bool),
+        Some(true),
+        "remove should report removed=true: {remove_result}"
+    );
+
+    // ── 5. verify the credential is gone ────────────────────────────────────
+    let list_after = post_json_rpc(
+        &rpc_base,
+        5005,
+        "openhuman.auth_list_provider_credentials",
+        json!({}),
+    )
+    .await;
+    let after_outer =
+        assert_no_jsonrpc_error(&list_after, "auth_list_provider_credentials (after remove)");
+    let after_result = after_outer.get("result").unwrap_or(after_outer);
+    let after_profiles = after_result
+        .as_array()
+        .unwrap_or_else(|| panic!("expected array after remove: {after_result}"));
+    assert!(
+        after_profiles.is_empty(),
+        "credentials list should be empty after remove, got {after_profiles:?}"
     );
 
     mock_join.abort();

@@ -390,3 +390,293 @@ pub async fn autocomplete_start_cli(
         "result": start.value,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── autocomplete_status ────────────────────────────────────────────────────
+    //
+    // TODO: These tests share the process-global autocomplete::global_engine()
+    // singleton (via autocomplete_status / autocomplete_stop / autocomplete_start).
+    // They are currently stable because start() always errors on non-macOS, keeping
+    // the engine in an idle state. Once macOS support lands -- or if concurrent tests
+    // transition the engine -- races on the global state will cause flakiness.
+    //
+    // Fix when that happens: serialize engine-touching tests with a
+    // process-wide tokio::sync::Mutex guard (or the `serial_test` crate), or
+    // refactor to accept an injected engine instance instead of going through
+    // global_engine().
+
+    /// Happy path: `autocomplete_status` always succeeds and produces exactly
+    /// two log lines with the expected key tokens.
+    #[tokio::test]
+    async fn status_returns_outcome_with_two_log_lines() {
+        let outcome = autocomplete_status()
+            .await
+            .expect("autocomplete_status must not return Err");
+
+        assert_eq!(
+            outcome.logs.len(),
+            2,
+            "expected exactly 2 log lines, got: {:?}",
+            outcome.logs
+        );
+        assert!(
+            outcome.logs[0].contains("autocomplete status fetched"),
+            "first log should confirm fetch: {:?}",
+            outcome.logs[0]
+        );
+        assert!(
+            outcome.logs[1].contains("[autocomplete] status"),
+            "second log should contain the structured prefix: {:?}",
+            outcome.logs[1]
+        );
+    }
+
+    /// The status payload has the expected boolean/string fields and a non-empty phase.
+    #[tokio::test]
+    async fn status_payload_has_expected_fields() {
+        let outcome = autocomplete_status()
+            .await
+            .expect("autocomplete_status must not return Err");
+
+        let status = &outcome.value;
+        // Phase must be a non-empty string (default is "idle").
+        assert!(
+            !status.phase.is_empty(),
+            "phase must not be empty, got: {:?}",
+            status.phase
+        );
+        // debounce_ms is always set to a positive value by the engine default (120 ms).
+        assert!(
+            status.debounce_ms > 0,
+            "debounce_ms must be positive, got {}",
+            status.debounce_ms
+        );
+    }
+
+    // ── autocomplete_stop ──────────────────────────────────────────────────────
+
+    /// Happy path: stopping a not-yet-running engine reports `stopped: true`
+    /// and produces two log lines.
+    #[tokio::test]
+    async fn stop_without_reason_returns_stopped_true_and_two_logs() {
+        let outcome = autocomplete_stop(None)
+            .await
+            .expect("autocomplete_stop must not return Err");
+
+        assert!(
+            outcome.value.stopped,
+            "stopped must be true even when engine was already idle"
+        );
+        assert_eq!(
+            outcome.logs.len(),
+            2,
+            "expected 2 log lines, got: {:?}",
+            outcome.logs
+        );
+        assert!(
+            outcome.logs[0].contains("autocomplete stopped"),
+            "first log should confirm stop: {:?}",
+            outcome.logs[0]
+        );
+    }
+
+    /// When a `reason` is supplied, the structured log line must include it.
+    #[tokio::test]
+    async fn stop_with_reason_includes_reason_in_log() {
+        let payload = Some(AutocompleteStopParams {
+            reason: Some("test-shutdown".to_string()),
+        });
+
+        let outcome = autocomplete_stop(payload)
+            .await
+            .expect("autocomplete_stop must not return Err");
+
+        let structured_log = &outcome.logs[1];
+        assert!(
+            structured_log.contains("test-shutdown"),
+            "structured log must contain the supplied reason; got: {:?}",
+            structured_log
+        );
+    }
+
+    /// When no reason is supplied, the structured log line must record "none".
+    #[tokio::test]
+    async fn stop_without_reason_logs_none_as_reason() {
+        let outcome = autocomplete_stop(None)
+            .await
+            .expect("autocomplete_stop must not return Err");
+
+        let structured_log = &outcome.logs[1];
+        assert!(
+            structured_log.contains("reason=none"),
+            "structured log must record reason=none when no reason is given; got: {:?}",
+            structured_log
+        );
+    }
+
+    // ── autocomplete_start (non-macOS) ─────────────────────────────────────────
+
+    /// On Linux/Windows `autocomplete_start` must return an `Err` because
+    /// the engine only supports macOS. This exercises the error path of the
+    /// ops wrapper without needing OS accessibility permissions.
+    #[cfg(not(target_os = "macos"))]
+    #[tokio::test]
+    async fn start_returns_err_on_non_macos() {
+        let result = autocomplete_start(AutocompleteStartParams { debounce_ms: None }).await;
+        assert!(
+            result.is_err(),
+            "autocomplete_start must fail on non-macOS; got Ok"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("macOS"),
+            "error message must mention macOS; got: {msg:?}"
+        );
+    }
+
+    // ── autocomplete_start_cli (non-spawn, non-serve path, non-macOS) ──────────
+
+    /// The plain `autocomplete_start_cli` path (neither --spawn nor --serve)
+    /// propagates the engine's start error on non-macOS platforms.
+    #[cfg(not(target_os = "macos"))]
+    #[tokio::test]
+    async fn start_cli_plain_path_returns_err_on_non_macos() {
+        let opts = AutocompleteStartCliOptions {
+            debounce_ms: None,
+            serve: false,
+            spawn: false,
+        };
+        let result = autocomplete_start_cli(opts).await;
+        assert!(
+            result.is_err(),
+            "start_cli plain path must propagate start failure on non-macOS; got Ok"
+        );
+    }
+
+    // ── AutocompleteHistoryParams struct ──────────────────────────────────────
+
+    /// `AutocompleteHistoryParams` with an explicit limit round-trips through
+    /// JSON correctly — field name and value are preserved.
+    #[test]
+    fn history_params_serialise_round_trip() {
+        let params = AutocompleteHistoryParams { limit: Some(7) };
+        let json = serde_json::to_value(&params).expect("serialise ok");
+        assert_eq!(json["limit"], 7);
+
+        let back: AutocompleteHistoryParams = serde_json::from_value(json).expect("deserialise ok");
+        assert_eq!(back.limit, Some(7));
+    }
+
+    /// `AutocompleteHistoryParams` with no limit serialises to JSON `null` for
+    /// the `limit` field.
+    #[test]
+    fn history_params_none_limit_serialises_to_null() {
+        let params = AutocompleteHistoryParams { limit: None };
+        let json = serde_json::to_value(&params).expect("serialise ok");
+        assert!(json["limit"].is_null());
+    }
+
+    // ── AutocompleteClearHistoryResult struct ─────────────────────────────────
+
+    /// `AutocompleteClearHistoryResult` round-trips through JSON and the
+    /// `cleared` field is preserved.
+    #[test]
+    fn clear_history_result_serialise_round_trip() {
+        let result = AutocompleteClearHistoryResult { cleared: 42 };
+        let json = serde_json::to_value(&result).expect("serialise ok");
+        assert_eq!(json["cleared"], 42);
+
+        let back: AutocompleteClearHistoryResult =
+            serde_json::from_value(json).expect("deserialise ok");
+        assert_eq!(back.cleared, 42);
+    }
+
+    // ── autocomplete_history (integration) ───────────────────────────────────
+    //
+    // NOTE: These tests operate against the real on-disk KV store via
+    // MemoryClient::new_local() (resolves to default_root_openhuman_dir()).
+    // They are marked #[ignore] to prevent wiping a contributor's autocomplete
+    // history on every `cargo test` run and to avoid non-deterministic results.
+    // Run explicitly with: cargo test -- --ignored
+
+    /// `autocomplete_history` against a fresh (possibly empty) local KV store
+    /// must succeed and produce exactly two log lines — one confirmation and
+    /// one structured log.  The result entries count may be 0 or more.
+    #[tokio::test]
+    #[ignore = "operates on real on-disk KV store; run with --ignored to opt in"]
+    async fn history_returns_outcome_with_two_log_lines() {
+        let payload = AutocompleteHistoryParams { limit: Some(5) };
+        let outcome = autocomplete_history(payload)
+            .await
+            .expect("autocomplete_history must not return Err");
+
+        assert_eq!(
+            outcome.logs.len(),
+            2,
+            "expected exactly 2 log lines; got: {:?}",
+            outcome.logs
+        );
+        assert!(
+            outcome.logs[0].contains("autocomplete history listed"),
+            "first log must confirm listing; got: {:?}",
+            outcome.logs[0]
+        );
+        assert!(
+            outcome.logs[1].contains("requested_limit=5"),
+            "structured log must record requested_limit; got: {:?}",
+            outcome.logs[1]
+        );
+        // entries must be a valid (possibly empty) vec
+        let _ = &outcome.value.entries;
+    }
+
+    /// When `limit` is `None`, the default of 20 is applied and appears in the log.
+    #[tokio::test]
+    #[ignore = "operates on real on-disk KV store; run with --ignored to opt in"]
+    async fn history_default_limit_appears_in_log() {
+        let payload = AutocompleteHistoryParams { limit: None };
+        let outcome = autocomplete_history(payload)
+            .await
+            .expect("autocomplete_history must not return Err");
+
+        assert!(
+            outcome.logs[1].contains("requested_limit=20"),
+            "default limit of 20 must appear in log; got: {:?}",
+            outcome.logs[1]
+        );
+    }
+
+    // ── autocomplete_clear_history (integration) ──────────────────────────────
+
+    /// `autocomplete_clear_history` on an already-empty or populated store must
+    /// succeed, return a non-negative cleared count, and emit exactly two log lines.
+    #[tokio::test]
+    #[ignore = "operates on real on-disk KV store; run with --ignored to opt in"]
+    async fn clear_history_returns_outcome_with_two_log_lines() {
+        let outcome = autocomplete_clear_history()
+            .await
+            .expect("autocomplete_clear_history must not return Err");
+
+        assert_eq!(
+            outcome.logs.len(),
+            2,
+            "expected exactly 2 log lines; got: {:?}",
+            outcome.logs
+        );
+        assert!(
+            outcome.logs[0].contains("autocomplete history cleared"),
+            "first log must confirm clear; got: {:?}",
+            outcome.logs[0]
+        );
+        assert!(
+            outcome.logs[1].contains("cleared_entries="),
+            "structured log must contain cleared_entries; got: {:?}",
+            outcome.logs[1]
+        );
+        // cleared is a usize — always non-negative by type
+        let _ = outcome.value.cleared;
+    }
+}

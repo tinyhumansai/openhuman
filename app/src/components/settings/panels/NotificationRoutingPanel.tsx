@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 
 import {
+  fetchNotificationStats,
   getNotificationSettings,
   setNotificationSettings,
 } from '../../../services/notificationService';
+import type { NotificationStats } from '../../../types/notifications';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -18,6 +20,7 @@ const PROVIDERS = ['gmail', 'slack', 'discord', 'whatsapp'];
 const NotificationRoutingPanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const providers = PROVIDERS;
+  const [stats, setStats] = useState<NotificationStats | null>(null);
   const [settings, setSettings] = useState<
     Record<
       string,
@@ -26,6 +29,12 @@ const NotificationRoutingPanel = () => {
   >({});
   const [loadedProviders, setLoadedProviders] = useState<Record<string, boolean>>({});
   const [loadErrors, setLoadErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    void fetchNotificationStats()
+      .then(s => setStats(s))
+      .catch(err => console.warn('[settings][notification-routing] stats load failed', err));
+  }, []);
 
   useEffect(() => {
     void Promise.allSettled(
@@ -101,6 +110,26 @@ const NotificationRoutingPanel = () => {
       />
 
       <div className="p-4 space-y-4">
+        {stats && (
+          <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-stone-100">
+              <p className="text-sm font-medium text-stone-900">Pipeline stats</p>
+            </div>
+            <div className="grid grid-cols-3 divide-x divide-stone-100">
+              {[
+                { label: 'Total', value: stats.total },
+                { label: 'Unread', value: stats.unread },
+                { label: 'Unscored', value: stats.unscored },
+              ].map(({ label, value }) => (
+                <div key={label} className="px-4 py-3 text-center">
+                  <p className="text-lg font-semibold text-stone-900">{value}</p>
+                  <p className="text-xs text-stone-500">{label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Info card */}
         <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
           <div className="flex items-start space-x-3">

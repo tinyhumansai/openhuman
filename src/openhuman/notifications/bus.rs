@@ -137,6 +137,33 @@ pub fn event_to_notification(event: &DomainEvent) -> Option<CoreNotificationEven
             deep_link: Some("/chat".into()),
             timestamp_ms: ts,
         }),
+        DomainEvent::NotificationTriaged {
+            id,
+            provider,
+            action,
+            importance_score,
+            latency_ms,
+            routed,
+        } if *routed && (action == "escalate" || action == "react") => {
+            Some(CoreNotificationEvent {
+                id: format!("notification-triaged:{}:{}:{}", id, action, latency_ms),
+                category: CoreNotificationCategory::Agents,
+                title: format!("High-priority {} notification", provider),
+                body: if action == "escalate" {
+                    format!(
+                        "Action: escalate (score: {:.0}%). Routed to orchestrator.",
+                        importance_score * 100.0
+                    )
+                } else {
+                    format!(
+                        "Action: react (score: {:.0}%). Routed for follow-up.",
+                        importance_score * 100.0
+                    )
+                },
+                deep_link: Some("/notifications".into()),
+                timestamp_ms: ts,
+            })
+        }
         _ => None,
     }
 }
@@ -275,6 +302,63 @@ mod tests {
             session_id: "s".into(),
             text_chars: 1,
             iterations: 1,
+        };
+        assert!(event_to_notification(&ev).is_none());
+    }
+
+    #[test]
+    fn notification_triaged_escalate_produces_agents_notification() {
+        let ev = DomainEvent::NotificationTriaged {
+            id: "n1".into(),
+            provider: "slack".into(),
+            action: "escalate".into(),
+            importance_score: 0.9,
+            latency_ms: 100,
+            routed: true,
+        };
+        let n = event_to_notification(&ev).expect("should produce notification");
+        assert_eq!(n.category, CoreNotificationCategory::Agents);
+        assert!(n.body.contains("escalate"));
+        assert!(n.deep_link.as_deref() == Some("/notifications"));
+    }
+
+    #[test]
+    fn notification_triaged_react_uses_follow_up_copy() {
+        let ev = DomainEvent::NotificationTriaged {
+            id: "n2".into(),
+            provider: "discord".into(),
+            action: "react".into(),
+            importance_score: 0.7,
+            latency_ms: 120,
+            routed: true,
+        };
+        let n = event_to_notification(&ev).expect("should produce notification");
+        assert_eq!(n.category, CoreNotificationCategory::Agents);
+        assert!(n.body.contains("Routed for follow-up"));
+    }
+
+    #[test]
+    fn notification_triaged_drop_is_silent() {
+        let ev = DomainEvent::NotificationTriaged {
+            id: "n1".into(),
+            provider: "gmail".into(),
+            action: "drop".into(),
+            importance_score: 0.1,
+            latency_ms: 50,
+            routed: false,
+        };
+        assert!(event_to_notification(&ev).is_none());
+    }
+
+    #[test]
+    fn notification_triaged_unrouted_escalate_is_silent() {
+        let ev = DomainEvent::NotificationTriaged {
+            id: "n1".into(),
+            provider: "slack".into(),
+            action: "escalate".into(),
+            importance_score: 0.9,
+            latency_ms: 100,
+            routed: false,
         };
         assert!(event_to_notification(&ev).is_none());
     }

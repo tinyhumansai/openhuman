@@ -310,7 +310,7 @@ impl AgentScoping {
 ///   so the LLM cannot accidentally send messages or write files
 ///   while guiding the user through setup. The welcome agent decides
 ///   when the user is ready and calls
-///   `complete_onboarding(action="complete")`, which flips the flag.
+///   `complete_onboarding`, which flips the flag.
 ///
 /// * **`true`** → route to the `orchestrator` agent. Orchestrator
 ///   delegates real work to specialist subagents via a `subagents`
@@ -352,16 +352,18 @@ async fn resolve_target_agent(channel: &str) -> AgentScoping {
         }
     };
 
-    let target_id = if config.chat_onboarding_completed {
-        "orchestrator"
-    } else {
-        // Increment the process-global exchange counter every time a user
-        // message is routed to the welcome agent. The `complete_onboarding`
-        // tool reads this counter to decide whether `ready_to_complete` is
-        // `true` and to enforce the minimum-engagement guard in `complete`.
-        crate::openhuman::tools::implementations::agent::complete_onboarding::increment_welcome_exchange_count();
-        "welcome"
-    };
+    // Welcome is **desktop-app only**. The web channel has its own
+    // bespoke chat path (`channels::providers::web::run_chat_task` →
+    // `pick_target_agent_id`) that routes to the welcome agent while
+    // `chat_onboarding_completed` is false. Every other channel
+    // (telegram, slack, discord, mattermost, signal, …) flows through
+    // this function, and we always send those straight to the
+    // orchestrator regardless of onboarding state — an external user
+    // pinging us from Telegram should never land on the welcome
+    // agent's narrow setup-checklist toolset, since the checklist
+    // (notifications permission, in-app account setup, etc.) is only
+    // meaningful inside the desktop app.
+    let target_id = "orchestrator";
 
     tracing::info!(
         channel = %channel,

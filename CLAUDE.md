@@ -15,7 +15,7 @@ Narrative architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Frontend
 | **`Cargo.toml`** (root) | Core crate; `cargo build --bin openhuman` produces the sidecar staged by `app`'s `core:stage` |
 | **`docs/`** | Architecture and module guides |
 
-Commands assume the **repo root**; `yarn dev` delegates to the `app` workspace.
+Commands assume the **repo root**; `pnpm dev` delegates to the `app` workspace. (Repo migrated from yarn to pnpm — `package.json` enforces pnpm via the `packageManager` field.)
 
 ---
 
@@ -34,14 +34,14 @@ Commands assume the **repo root**; `yarn dev` delegates to the `app` workspace.
 ## Commands (from repo root)
 
 ```bash
-yarn dev                  # Frontend + Tauri dev
-yarn tauri dev            # Desktop with Tauri (loads env via scripts/load-dotenv.sh)
-yarn build                # Production UI build
-yarn typecheck            # Typecheck (app workspace)
-yarn lint                 # ESLint
-yarn format               # Prettier write
-yarn format:check         # Prettier check
-cd app && yarn core:stage # Stage openhuman binary next to Tauri resources
+pnpm dev                  # Frontend + Tauri dev
+pnpm tauri dev            # Desktop with Tauri (loads env via scripts/load-dotenv.sh)
+pnpm build                # Production UI build
+pnpm typecheck            # Typecheck (app workspace)
+pnpm lint                 # ESLint
+pnpm format               # Prettier write
+pnpm format:check         # Prettier check
+cd app && pnpm core:stage # Stage openhuman binary next to Tauri resources
 
 # Rust — core library + CLI
 cargo check --manifest-path Cargo.toml
@@ -51,7 +51,7 @@ cargo build --manifest-path Cargo.toml --bin openhuman
 cargo check --manifest-path app/src-tauri/Cargo.toml
 ```
 
-**Tests**: Vitest in `app/` (`yarn test:unit`, `yarn test:coverage`); Rust via `cargo test`.
+**Tests**: Vitest in `app/` (`pnpm test:unit`, `pnpm test:coverage`); Rust via `cargo test`.
 **Quality**: ESLint + Prettier + Husky in `app`.
 
 ---
@@ -73,7 +73,7 @@ cargo check --manifest-path app/src-tauri/Cargo.toml
 
 - Co-locate as `*.test.ts` / `*.test.tsx` under `app/src/**`.
 - Config: `app/test/vitest.config.ts`; setup: `app/src/test/setup.ts`.
-- Run: `yarn test:unit`, `yarn test:coverage`.
+- Run: `pnpm test:unit`, `pnpm test:coverage`.
 - Prefer behavior over implementation. Use helpers in `app/src/test/`. No real network, no time flakes.
 
 ### Shared mock backend
@@ -81,7 +81,7 @@ cargo check --manifest-path app/src-tauri/Cargo.toml
 Used by both unit and Rust tests.
 - Core: `scripts/mock-api-core.mjs` · server: `scripts/mock-api-server.mjs` · E2E wrapper: `app/test/e2e/mock-server.ts`.
 - Admin: `GET /__admin/health`, `POST /__admin/reset`, `POST /__admin/behavior`, `GET /__admin/requests`.
-- Run manually: `yarn mock:api`.
+- Run manually: `pnpm mock:api`.
 
 ### E2E (WDIO — dual platform)
 
@@ -91,9 +91,9 @@ Full guide: [`docs/E2E-TESTING.md`](docs/E2E-TESTING.md).
 - Specs: `app/test/e2e/specs/*.spec.ts`. Helpers in `app/test/e2e/helpers/`. Config: `app/test/wdio.conf.ts`.
 
 ```bash
-yarn test:e2e:build
+pnpm test:e2e:build
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
-yarn test:e2e:all:flows
+pnpm test:e2e:all:flows
 docker compose -f e2e/docker-compose.yml run --rm e2e   # Linux E2E on macOS
 ```
 
@@ -106,7 +106,7 @@ Use `element-helpers.ts` (`clickNativeButton`, `waitForWebView`, `clickToggle`) 
 ### Rust tests with mock
 
 ```bash
-yarn test:rust
+pnpm test:rust
 bash scripts/test-rust-with-mock.sh --test json_rpc_e2e
 ```
 
@@ -145,7 +145,7 @@ New behavior for these webviews lives in:
 - **CDP from the scanner side** — `Network.*`, `Emulation.*`, `Input.*`, `Page.*` driven by the per-provider `*_scanner/` modules.
 - **Rust-side notification/IPC hooks** — never cross into the renderer.
 
-If a feature truly cannot be built this way (e.g. intercepting a click the page's JS preventDefaults), the correct answer is to **surface the limitation**, not to ship an init script. Legacy injection that already exists for non-migrated providers (`gmail`, `linkedin`, `google-meet` recipe files, `ua_spoof.js`, `runtime.js` bridge) is grandfathered but should shrink, not grow.
+If a feature truly cannot be built this way (e.g. intercepting a click the page's JS preventDefaults), the correct answer is to **surface the limitation**, not to ship an init script. Legacy injection that already exists for non-migrated providers (`gmail`, `linkedin`, `google-meet` recipe files plus the `runtime.js` bridge) is grandfathered but should shrink, not grow.
 
 Watch out for Tauri plugins that inject JS by default. `tauri-plugin-opener` ships `init-iife.js` (a global click listener that calls `plugin:opener|open_url` via HTTP-IPC) unless you build it with `.open_js_links_on_click(false)`. Any new plugin added to `app/src-tauri/src/lib.rs` must be audited for a `js_init_script` call — if found, opt out or configure around it.
 
@@ -262,7 +262,7 @@ Specify → prove in Rust → prove over RPC → surface in the UI → test.
 
 ## Platform notes
 
-- **Vendored CEF-aware `tauri-cli`**: runtime is CEF; only the vendored CLI at `app/src-tauri/vendor/tauri-cef/crates/tauri-cli` bundles Chromium into `Contents/Frameworks/`. Stock `@tauri-apps/cli` produces a broken bundle (panic in `cef::library_loader::LibraryLoader::new`). `yarn dev:app` and all `cargo tauri` scripts call `yarn tauri:ensure` which runs [`scripts/ensure-tauri-cli.sh`](scripts/ensure-tauri-cli.sh). If overwritten, reinstall with `cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli`.
+- **Vendored CEF-aware `tauri-cli`**: runtime is CEF; only the vendored CLI at `app/src-tauri/vendor/tauri-cef/crates/tauri-cli` bundles Chromium into `Contents/Frameworks/`. Stock `@tauri-apps/cli` produces a broken bundle (panic in `cef::library_loader::LibraryLoader::new`). `pnpm dev:app` and all `cargo tauri` scripts call `pnpm tauri:ensure` which runs [`scripts/ensure-tauri-cli.sh`](scripts/ensure-tauri-cli.sh). If overwritten, reinstall with `cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli`.
 - **macOS deep links**: often require a built `.app` bundle, not just `tauri dev`.
 - **Tauri environment guard**: use `isTauri()` (from `app/src/services/webviewAccountService.ts`) or wrap `invoke(...)` in `try/catch`; do not check `window.__TAURI__` directly — it is not present at module load and bypasses the established wrapper contract.
 - **Core sidecar**: must be staged so `core_rpc` can reach the `openhuman` binary (see `scripts/stage-core-sidecar.mjs`).

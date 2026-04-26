@@ -1,21 +1,4 @@
-//! Parse model output into suggestions and inline completions.
-
-use super::types::Suggestion;
-
-pub(crate) fn parse_suggestions(raw: &str, limit: usize) -> Vec<Suggestion> {
-    raw.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(|line| line.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '-'))
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .take(limit)
-        .map(|text| Suggestion {
-            text: text.to_string(),
-            confidence: 0.65,
-        })
-        .collect()
-}
+//! Parse model output into inline completions.
 
 fn normalize_inline_text(value: &str) -> String {
     value
@@ -163,16 +146,6 @@ pub(crate) fn sanitize_inline_completion(raw: &str, context: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_suggestions_strips_numbering_and_respects_limit() {
-        let raw = "1. First idea\n- Second idea\n3) Third idea\n";
-        let out = parse_suggestions(raw, 2);
-        assert_eq!(out.len(), 2);
-        assert_eq!(out[0].text, "First idea");
-        assert_eq!(out[1].text, "Second idea");
-        assert!((out[0].confidence - 0.65).abs() < f32::EPSILON);
-    }
 
     #[test]
     fn sanitize_inline_completion_handles_placeholders_and_clamps_length() {

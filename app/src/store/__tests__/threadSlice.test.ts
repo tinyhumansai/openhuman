@@ -72,7 +72,6 @@ describe('threadSlice synchronous reducers', () => {
     expect(state.messages).toEqual([]);
     expect(state.isLoadingThreads).toBe(false);
     expect(state.isLoadingMessages).toBe(false);
-    expect(state.suggestedQuestions).toEqual([]);
   });
 
   it('setSelectedThread copies cached messages into the visible list', async () => {
@@ -90,7 +89,6 @@ describe('threadSlice synchronous reducers', () => {
     expect(state.selectedThreadId).toBe('t-1');
     expect(state.messages).toEqual(cached);
     expect(state.messagesError).toBeNull();
-    expect(state.suggestedQuestions).toEqual([]);
   });
 
   it('setSelectedThread resets messages when cache is empty', () => {

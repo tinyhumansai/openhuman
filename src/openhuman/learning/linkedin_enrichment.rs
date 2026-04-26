@@ -65,15 +65,25 @@ pub struct LinkedInEnrichmentResult {
     pub log: Vec<String>,
 }
 
-/// Run the full Gmail → LinkedIn �� Apify enrichment pipeline.
+/// Run the full Gmail → LinkedIn → Apify enrichment pipeline.
+///
+/// `preset_profile_url` lets callers skip the Gmail-search stage and
+/// supply a profile URL they already discovered out-of-band — currently
+/// the frontend obtains one via the webview-driven
+/// `gmail_find_linkedin_profile_url` Tauri command, which uses the
+/// logged-in Gmail webview's CDP session instead of a Composio token.
+/// When `None`, the function falls back to the Composio-driven Gmail
+/// search at [`search_gmail_for_linkedin`] (which currently errors
+/// because Composio Gmail was removed; callers should pass `Some` until
+/// a Composio-free fallback ships).
 ///
 /// Returns `Ok` with a result struct even if individual stages fail —
 /// partial progress is still useful. Only returns `Err` if we can't
 /// even build the integration client (i.e. user isn't signed in).
-pub async fn run_linkedin_enrichment(config: &Config) -> anyhow::Result<LinkedInEnrichmentResult> {
-    let client = build_client(config)
-        .ok_or_else(|| anyhow::anyhow!("no integration client — user not signed in"))?;
-
+pub async fn run_linkedin_enrichment(
+    config: &Config,
+    preset_profile_url: Option<String>,
+) -> anyhow::Result<LinkedInEnrichmentResult> {
     let mut result = LinkedInEnrichmentResult {
         profile_url: None,
         profile_data: None,
@@ -81,44 +91,82 @@ pub async fn run_linkedin_enrichment(config: &Config) -> anyhow::Result<LinkedIn
         log: Vec::new(),
     };
 
-    // ── Stage 1: search Gmail for LinkedIn emails ───────────────────
-    tracing::info!("[linkedin_enrichment] stage 1: searching Gmail for LinkedIn emails");
-    result
-        .log
-        .push("Searching Gmail for LinkedIn emails...".into());
-
-    let profile_url = match search_gmail_for_linkedin(config).await {
-        Ok(Some(url)) => {
-            tracing::info!(url = %url, "[linkedin_enrichment] found LinkedIn profile URL");
-            result.log.push(format!("Found LinkedIn profile: {url}"));
+    // Short-circuit: if PROFILE.md is already on disk from a previous
+    // enrichment run, skip the entire pipeline. The welcome agent reads
+    // PROFILE.md straight from the workspace, so re-running stages 1-3
+    // would just churn quota for the same output.
+    let profile_path = config.workspace_dir.join("PROFILE.md");
+    if profile_path.is_file() {
+        tracing::info!(
+            path = %profile_path.display(),
+            "[linkedin_enrichment] PROFILE.md already exists — skipping pipeline"
+        );
+        result
+            .log
+            .push("PROFILE.md already exists — skipping enrichment.".into());
+        for id in ["gmail-search", "apify-scrape", "build-profile"] {
             result.stages.push(EnrichmentStage {
-                id: "gmail-search".into(),
-                status: StageStatus::Success,
-                detail: Some(url.clone()),
-            });
-            Some(url)
-        }
-        Ok(None) => {
-            tracing::info!("[linkedin_enrichment] no LinkedIn profile URL found in emails");
-            result
-                .log
-                .push("No LinkedIn profile URL found in emails.".into());
-            result.stages.push(EnrichmentStage {
-                id: "gmail-search".into(),
+                id: id.into(),
                 status: StageStatus::Skipped,
-                detail: Some("No LinkedIn profile URL found in emails".into()),
+                detail: Some("PROFILE.md already on disk".into()),
             });
-            None
         }
-        Err(e) => {
-            tracing::warn!(error = %e, "[linkedin_enrichment] Gmail search failed");
-            result.log.push(format!("Gmail search failed: {e}"));
-            result.stages.push(EnrichmentStage {
-                id: "gmail-search".into(),
-                status: StageStatus::Failed,
-                detail: Some(format!("Gmail search failed: {e}")),
-            });
-            None
+        return Ok(result);
+    }
+
+    let client = build_client(config)
+        .ok_or_else(|| anyhow::anyhow!("no integration client — user not signed in"))?;
+
+    // ── Stage 1: search Gmail for LinkedIn emails ───────────────────
+    let profile_url = if let Some(url) = preset_profile_url {
+        tracing::info!(url = %url, "[linkedin_enrichment] stage 1: using preset profile URL");
+        result
+            .log
+            .push(format!("Using preset LinkedIn profile: {url}"));
+        result.stages.push(EnrichmentStage {
+            id: "gmail-search".into(),
+            status: StageStatus::Success,
+            detail: Some(url.clone()),
+        });
+        Some(url)
+    } else {
+        tracing::info!("[linkedin_enrichment] stage 1: searching Gmail for LinkedIn emails");
+        result
+            .log
+            .push("Searching Gmail for LinkedIn emails...".into());
+        match search_gmail_for_linkedin(config).await {
+            Ok(Some(url)) => {
+                tracing::info!(url = %url, "[linkedin_enrichment] found LinkedIn profile URL");
+                result.log.push(format!("Found LinkedIn profile: {url}"));
+                result.stages.push(EnrichmentStage {
+                    id: "gmail-search".into(),
+                    status: StageStatus::Success,
+                    detail: Some(url.clone()),
+                });
+                Some(url)
+            }
+            Ok(None) => {
+                tracing::info!("[linkedin_enrichment] no LinkedIn profile URL found in emails");
+                result
+                    .log
+                    .push("No LinkedIn profile URL found in emails.".into());
+                result.stages.push(EnrichmentStage {
+                    id: "gmail-search".into(),
+                    status: StageStatus::Skipped,
+                    detail: Some("No LinkedIn profile URL found in emails".into()),
+                });
+                None
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "[linkedin_enrichment] Gmail search failed");
+                result.log.push(format!("Gmail search failed: {e}"));
+                result.stages.push(EnrichmentStage {
+                    id: "gmail-search".into(),
+                    status: StageStatus::Failed,
+                    detail: Some(format!("Gmail search failed: {e}")),
+                });
+                None
+            }
         }
     };
 
@@ -260,15 +308,27 @@ async fn write_profile_md(
 
 /// Ask the backend LLM to distil the raw LinkedIn Markdown into a
 /// concise, high-signal profile document suitable for agent context.
-async fn summarise_profile_with_llm(config: &Config, raw_md: &str) -> anyhow::Result<String> {
+pub async fn summarise_profile_with_llm(config: &Config, raw_md: &str) -> anyhow::Result<String> {
     use crate::openhuman::providers::ops::{
         create_backend_inference_provider, ProviderRuntimeOptions,
     };
 
-    let provider = create_backend_inference_provider(
-        config.api_url.as_deref(),
-        &ProviderRuntimeOptions::default(),
-    )?;
+    // Point `AuthService` at the same state dir the rest of the app uses
+    // (the openhuman_dir derived from `config.config_path`), otherwise
+    // `OpenHumanBackendProvider::resolve_bearer` looks in `~/.openhuman`
+    // and fails with "No backend session" even when the JWT is present
+    // under a custom `OPENHUMAN_WORKSPACE`.
+    let options = ProviderRuntimeOptions {
+        auth_profile_override: None,
+        openhuman_dir: config
+            .config_path
+            .parent()
+            .map(std::path::PathBuf::from)
+            .or_else(|| Some(config.workspace_dir.clone())),
+        secrets_encrypt: config.secrets.encrypt,
+        reasoning_enabled: config.runtime.reasoning_enabled,
+    };
+    let provider = create_backend_inference_provider(config.api_url.as_deref(), &options)?;
 
     let system = "\
 You are a profile analyst. You will receive a user's LinkedIn profile in Markdown format. \
@@ -325,7 +385,7 @@ fn write_profile_md_url_only(config: &Config, url: &str) -> anyhow::Result<()> {
 }
 
 /// Turn the Apify scrape JSON into clean Markdown.
-fn render_profile_markdown(url: &str, data: &serde_json::Value) -> String {
+pub fn render_profile_markdown(url: &str, data: &serde_json::Value) -> String {
     let s = |key: &str| {
         data.get(key)
             .and_then(|v| v.as_str())
@@ -548,7 +608,7 @@ async fn search_gmail_for_linkedin(config: &Config) -> anyhow::Result<Option<Str
 
 /// Call the Apify LinkedIn profile scraper synchronously and return the
 /// first profile item from the dataset.
-async fn scrape_linkedin_profile(
+pub async fn scrape_linkedin_profile(
     client: &Arc<IntegrationClient>,
     profile_url: &str,
 ) -> anyhow::Result<serde_json::Value> {
@@ -657,46 +717,5 @@ async fn persist_linkedin_url_only(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extracts_username_from_canonical_url() {
-        let text = "Check out https://www.linkedin.com/in/williamhgates for more";
-        let caps = LINKEDIN_USERNAME_RE.captures(text).unwrap();
-        assert_eq!(&caps[1], "williamhgates");
-        assert_eq!(
-            canonical_linkedin_url(&caps[1]),
-            "https://www.linkedin.com/in/williamhgates"
-        );
-    }
-
-    #[test]
-    fn extracts_username_from_comm_url() {
-        let text = "https://www.linkedin.com/comm/in/stevenenamakel?midToken=abc";
-        let caps = LINKEDIN_USERNAME_RE.captures(text).unwrap();
-        assert_eq!(&caps[1], "stevenenamakel");
-        assert_eq!(
-            canonical_linkedin_url(&caps[1]),
-            "https://www.linkedin.com/in/stevenenamakel"
-        );
-    }
-
-    #[test]
-    fn extracts_username_from_http_variant() {
-        let text = "See http://www.linkedin.com/in/jeannie-wyrick-b4760710a";
-        let caps = LINKEDIN_USERNAME_RE.captures(text).unwrap();
-        assert_eq!(&caps[1], "jeannie-wyrick-b4760710a");
-    }
-
-    #[test]
-    fn skips_non_profile_linkedin_urls() {
-        let text = "Visit https://www.linkedin.com/company/openai";
-        assert!(LINKEDIN_USERNAME_RE.captures(text).is_none());
-    }
-
-    #[test]
-    fn handles_no_match() {
-        assert!(LINKEDIN_USERNAME_RE.captures("No LinkedIn here").is_none());
-    }
-}
+#[path = "linkedin_enrichment_tests.rs"]
+mod tests;
