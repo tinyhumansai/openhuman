@@ -71,19 +71,25 @@ export function promptFromArgsBuffer(argsBuffer?: string): string | undefined {
   return parseToolArgs(argsBuffer)?.prompt?.trim() || undefined;
 }
 
+/**
+ * Recognise the small set of known integration toolkit slugs. Used to
+ * gate `inferIntegrationName` so unknown `delegate_<x>` names (e.g.
+ * `delegate_summarize`, `delegate_router`) don't get fake-humanised
+ * into bogus "integration" labels in the tool timeline.
+ */
+const KNOWN_TOOLKIT_RE =
+  /^(gmail|notion|github|slack|discord|linear|jira|google_calendar|google_drive|calendar)$/i;
+
 export function inferIntegrationName(input?: string): string | undefined {
   if (!input) return undefined;
 
   const delegateMatch = input.match(/^delegate_(.+)$/);
-  if (delegateMatch) {
+  if (delegateMatch && KNOWN_TOOLKIT_RE.test(delegateMatch[1])) {
     return normalizeIntegrationName(delegateMatch[1]);
   }
 
-  const toolkitMatch = input.match(
-    /^(gmail|notion|github|slack|discord|linear|jira|google_calendar|google_drive|calendar)$/i
-  );
-  if (toolkitMatch) {
-    return normalizeIntegrationName(toolkitMatch[1]);
+  if (KNOWN_TOOLKIT_RE.test(input)) {
+    return normalizeIntegrationName(input);
   }
 
   return undefined;

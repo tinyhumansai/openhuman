@@ -58,8 +58,17 @@ const OnboardingLayout = () => {
     // proactive messages don't pile onto whatever thread the user had
     // open before onboarding. The proactive subscriber resolves the
     // `proactive:welcome` thread_id to whichever thread is currently
-    // selected, so we just need to create + select a new one before
-    // firing the agent.
+    // selected, so we need a new selected thread *before* firing the
+    // agent — otherwise the welcome message lands in the user's
+    // pre-onboarding thread.
+    //
+    // If the thread create fails we deliberately skip the spawn, since
+    // it would publish the proactive message to whichever thread happens
+    // to be selected (or worse, fail to land anywhere). The user can
+    // trigger the welcome again by sending their first message in chat
+    // (which routes to welcome while `chat_onboarding_completed` is
+    // still false).
+    let welcomeReady = false;
     try {
       const newThread = await dispatch(createNewThread()).unwrap();
       dispatch(setSelectedThread(newThread.id));
@@ -67,15 +76,19 @@ const OnboardingLayout = () => {
       // once `chat_onboarding_completed` flips. The welcome conversation
       // is transient — we don't keep it in the user's thread list.
       dispatch(setWelcomeThreadId(newThread.id));
+      welcomeReady = true;
     } catch (e) {
-      console.warn('[onboarding] failed to create welcome thread', e);
+      console.warn(
+        '[onboarding] failed to create welcome thread; skipping spawn_welcome_agent',
+        e
+      );
     }
 
-    // Trigger the proactive welcome agent now that onboarding is done.
-    // The core no longer auto-fires it on the config-flag transition;
-    // the renderer owns the timing so we can fire after `/home` is the
-    // active surface and the chat UI is ready to receive the messages.
-    if (isTauri()) {
+    // Trigger the proactive welcome agent now that the welcome thread is
+    // ready. Core-side spawning was removed in favor of renderer-owned
+    // timing so we can fire after `/home` is the active surface and the
+    // chat UI is ready to receive the messages.
+    if (welcomeReady && isTauri()) {
       try {
         await invoke('spawn_welcome_agent');
       } catch (e) {

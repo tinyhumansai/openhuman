@@ -118,12 +118,27 @@ function AppShell() {
   const chatOnboardingCompleted = snapshot.chatOnboardingCompleted;
   useEffect(() => {
     if (!chatOnboardingCompleted || !welcomeThreadId) return;
+    let cancelled = false;
     console.debug(
       `[welcome-cleanup] chat_onboarding_completed=true — deleting welcome thread ${welcomeThreadId}`
     );
-    void dispatch(deleteThread(welcomeThreadId));
-    dispatch(clearSelectedThread());
-    dispatch(setWelcomeThreadId(null));
+    // Await the delete before dropping the local id so a backend failure
+    // leaves `welcomeThreadId` set for retry on the next render. Without
+    // the await, a 500 from `threads.delete` would leave a stale row in
+    // the user's thread list while the renderer thinks it's gone.
+    (async () => {
+      try {
+        await dispatch(deleteThread(welcomeThreadId)).unwrap();
+        if (cancelled) return;
+        dispatch(clearSelectedThread());
+        dispatch(setWelcomeThreadId(null));
+      } catch (err) {
+        console.warn('[welcome-cleanup] deleteThread failed; will retry on next render', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [chatOnboardingCompleted, welcomeThreadId, dispatch]);
 
   // Welcome lockdown (#883) — force any route other than `/chat` back to

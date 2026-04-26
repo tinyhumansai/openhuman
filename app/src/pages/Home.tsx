@@ -2,11 +2,25 @@ import { useNavigate } from 'react-router-dom';
 
 import ConnectionIndicator from '../components/ConnectionIndicator';
 import { useUser } from '../hooks/useUser';
+import { useAppSelector } from '../store/hooks';
+import { selectSocketStatus } from '../store/socketSelectors';
 
 const Home = () => {
   const { user } = useUser();
   const navigate = useNavigate();
   const userName = user?.firstName || 'User';
+  // Mirror the same socket status the `ConnectionIndicator` pill consumes
+  // so the description copy below the pill never contradicts it (the old
+  // hard-coded "Your agent is now connected" lied while the pill said
+  // "Connecting" / "Disconnected").
+  const socketStatus = useAppSelector(selectSocketStatus);
+  const statusCopy = {
+    connected:
+      'Your agent is online and ready to chat. Keep the app running to keep the connection alive.',
+    connecting: 'Connecting to your agent. Hang tight, this usually takes a second.',
+    disconnected:
+      'Your agent is offline right now. Check your network or restart the app to reconnect.',
+  }[socketStatus];
 
   // Open in-app chat.
   const handleStartCooking = async () => {
@@ -28,11 +42,10 @@ const Home = () => {
             <ConnectionIndicator />
           </div>
 
-          {/* Description */}
-          <p className="text-sm text-stone-500 text-center mb-6 leading-relaxed">
-            Your agent is now connected. Keep the app running to keep the connection alive. You can
-            start chatting with the button below.
-          </p>
+          {/* Description — mirrors the pill's socket status to avoid
+              telling the user they're connected while the pill shows
+              "Connecting" / "Disconnected". */}
+          <p className="text-sm text-stone-500 text-center mb-6 leading-relaxed">{statusCopy}</p>
 
           {/* CTA button */}
           <button
