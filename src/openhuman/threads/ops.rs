@@ -228,7 +228,7 @@ pub async fn thread_generate_title(
         .iter()
         .find(|message| message.sender == "user" && !message.content.trim().is_empty())
         .map(|message| message.content.trim().to_string())
-  else {
+    else {
         tracing::debug!(
             thread_id = %request.thread_id,
             "{THREAD_TITLE_LOG_PREFIX} no user message yet; skipping"

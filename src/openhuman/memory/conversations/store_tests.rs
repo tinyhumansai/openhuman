@@ -326,10 +326,7 @@ fn store_handles_labels_and_inference() {
         get_thread("proactive:morning_briefing").labels,
         vec!["briefing"]
     );
-    assert_eq!(
-        get_thread("proactive:system").labels,
-        vec!["notification"]
-    );
+    assert_eq!(get_thread("proactive:system").labels, vec!["notification"]);
     assert_eq!(get_thread("user-thread").labels, vec!["work"]);
 
     // 5. Update labels
@@ -337,14 +334,16 @@ fn store_handles_labels_and_inference() {
         .update_thread_labels("t1", vec!["updated".to_string()], "2026-04-10T12:05:00Z")
         .unwrap();
     let threads = store.list_threads().unwrap();
-    assert_eq!(get_thread("t1").labels, vec!["updated"]);
+    let get_thread_v2 = |id: &str| threads.iter().find(|t| t.id == id).unwrap();
+    assert_eq!(get_thread_v2("t1").labels, vec!["updated"]);
 
     // 6. Title update preserves labels
     store
         .update_thread_title("t1", "New Title", "2026-04-10T12:06:00Z")
         .unwrap();
     let threads = store.list_threads().unwrap();
-    assert_eq!(get_thread("t1").labels, vec!["updated"]);
+    let get_thread_v3 = |id: &str| threads.iter().find(|t| t.id == id).unwrap();
+    assert_eq!(get_thread_v3("t1").labels, vec!["updated"]);
     assert_eq!(get_thread("t1").title, "New Title");
 }
 

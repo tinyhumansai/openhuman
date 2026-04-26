@@ -50,7 +50,7 @@ export const threadApi = {
   appendMessage: async (threadId: string, message: ThreadMessage): Promise<ThreadMessage> => {
     const response = await callCoreRpc<Envelope<ThreadMessage>>({
       method: 'openhuman.threads_message_append',
-      params: { thread_id: thread_id, message },
+      params: { thread_id: threadId, message },
     });
     return unwrapEnvelope(response);
   },
@@ -83,7 +83,7 @@ export const threadApi = {
   ): Promise<ThreadMessage> => {
     const response = await callCoreRpc<Envelope<ThreadMessage>>({
       method: 'openhuman.threads_message_update',
-      params: { thread_id: thread_id, message_id: messageId, extra_metadata: extraMetadata },
+      params: { thread_id: threadId, message_id: messageId, extra_metadata: extraMetadata },
     });
     return unwrapEnvelope(response);
   },
