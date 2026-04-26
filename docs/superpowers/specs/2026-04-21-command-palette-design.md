@@ -354,7 +354,7 @@ Called once from `<CommandProvider>` after `useNavigate()` resolves. No dynamic 
 
 ### Shortcut platform verification (GATE 0)
 
-**⌘1–⌘4 must be verified against Tauri/CEF before PR opens.** Stub a `useEffect` keydown listener, run `yarn tauri dev`, press each. If any are swallowed by the webview, fall back to `⌘⌥1–⌘⌥4` and update the table. If `⌘K` is eaten, hard blocker — escalate.
+**⌘1–⌘4 must be verified against Tauri/CEF before PR opens.** Stub a `useEffect` keydown listener, run `pnpm tauri dev`, press each. If any are swallowed by the webview, fall back to `⌘⌥1–⌘⌥4` and update the table. If `⌘K` is eaten, hard blocker — escalate.
 
 ---
 
@@ -475,7 +475,7 @@ One-line diff from current `App.tsx`. No Redux changes, no router changes.
 
 ### Gate 0 — Platform verify (BLOCKS EVERYTHING)
 1. Stub `useEffect` in `App.tsx` logging keydown + modifiers.
-2. `yarn tauri dev`. Press `⌘1..⌘4`, `⌘,`, `?`, `⌘K`.
+2. `pnpm tauri dev`. Press `⌘1..⌘4`, `⌘,`, `?`, `⌘K`.
 3. Pass: all reach listener + `preventDefault` blocks native side effect.
 4. Fail on ⌘1–⌘4: fall back to `⌘⌥1..⌘⌥4`, update spec.
 5. Fail on ⌘K: hard blocker, escalate.
@@ -496,7 +496,7 @@ One-line `App.tsx` edit; grep existing `window.addEventListener('keydown')` for 
 `command-palette.spec.ts` including regression probe.
 
 ### Gate 6 — Pre-merge
-- `yarn typecheck && yarn lint && yarn test:unit && yarn lint:commands-tokens` green.
+- `pnpm typecheck && pnpm lint && pnpm test:unit && pnpm lint:commands-tokens` green.
 - `cargo fmt --check && cargo check --manifest-path app/src-tauri/Cargo.toml` green (no drift).
 - Manual smoke + a11y + reduced-motion.
 - Diff audit: changes only in `lib/commands/`, `components/commands/`, `tailwind.config.js`, `index.css`, `App.tsx`, `package.json`, test files.

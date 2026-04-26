@@ -108,10 +108,10 @@ Run in parallel where independent. Skip suites unrelated to the diff, but always
 
 ```bash
 # Frontend
-cd app && yarn typecheck
-cd app && yarn lint
-cd app && yarn format       # auto-fix
-cd app && yarn test:unit
+cd app && pnpm typecheck
+cd app && pnpm lint
+cd app && pnpm format       # auto-fix
+cd app && pnpm test:unit
 
 # Rust
 cargo fmt --manifest-path Cargo.toml
@@ -124,7 +124,7 @@ If a test fails on apparent flake, rerun once. If it still fails, stop and repor
 
 ### 6. Commit auto-fixes
 
-- `yarn format` / `cargo fmt` changes → `chore(pr-manager): apply formatting`.
+- `pnpm format` / `cargo fmt` changes → `chore(pr-manager): apply formatting`.
 - Non-trivial lint autofixes → `chore(pr-manager): lint autofix`.
 - Reviewer-driven fixes → `fix(<area>): ...`.
 - Never `--no-verify`. Never amend. Never force-push.

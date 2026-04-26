@@ -35,7 +35,7 @@ Reported as the Sentry `environment` tag:
 
 | Value         | When                                                            |
 | ------------- | --------------------------------------------------------------- |
-| `development` | Local `yarn tauri dev` / debug builds                            |
+| `development` | Local `pnpm tauri dev` / debug builds                            |
 | `staging`     | `VITE_OPENHUMAN_APP_ENV=staging` or `OPENHUMAN_APP_ENV=staging`  |
 | `production`  | Release builds from `workflow_dispatch` with `build_target=production` |
 
@@ -116,7 +116,7 @@ For the frontend, put `VITE_SENTRY_DSN` in `app/.env.local`.
    should read `openhuman@<version>+<short_sha>` (matching the tag that cut
    the release).
 3. **Environment tag is right**. Production CI dispatch → `production`.
-   Staging dispatch → `staging`. Local `yarn tauri dev` → `development`.
+   Staging dispatch → `staging`. Local `pnpm tauri dev` → `development`.
 4. **Stack traces are symbolicated**. Force a frontend error from the
    installed app; the event's stack trace should show original
    TypeScript file names and line numbers (not hashed `assets/index-*.js`).
@@ -132,7 +132,7 @@ For the frontend, put `VITE_SENTRY_DSN` in `app/.env.local`.
 - **Events arrive without symbolication** — open the release in Sentry →
   "Source Maps" tab. Missing artifacts mean either `SENTRY_AUTH_TOKEN` was
   empty, or the plugin ran but the `assets:` glob didn't match (inspect the
-  upload summary printed during `yarn build`).
+  upload summary printed during `pnpm build`).
 - **Frontend and core show different releases** — verify
   `needs.prepare-build.outputs.sha` is identical between the core build
   step (`OPENHUMAN_BUILD_SHA`) and the frontend build step

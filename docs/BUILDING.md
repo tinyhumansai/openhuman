@@ -306,11 +306,11 @@ Manual download links (all platforms):
 
 ## Troubleshooting
 
-### macOS: `yarn dev:app` exits with "CEF cache is held by another OpenHuman instance"
+### macOS: `pnpm dev:app` exits with "CEF cache is held by another OpenHuman instance"
 
 **Symptom**
 
-`yarn dev:app` (or any debug build of the Tauri shell) exits before the window appears with a message like:
+`pnpm dev:app` (or any debug build of the Tauri shell) exits before the window appears with a message like:
 
 ```
 [openhuman] CEF cache at /Users/<you>/Library/Caches/com.openhuman.app/cef is held by another OpenHuman instance (host <hostname>, pid 12345).
@@ -331,7 +331,7 @@ Quit the other OpenHuman instance and re-run. Fastest path:
 ```bash
 pkill -f "OpenHuman.app/Contents"
 pkill -f "openhuman-core"
-yarn dev:app
+pnpm dev:app
 ```
 
 If the lock is left behind by a crashed process (PID no longer alive), the preflight removes the stale `SingletonLock` automatically and dev startup proceeds — no manual cleanup required.
