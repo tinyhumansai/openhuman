@@ -4,6 +4,7 @@ use crate::core::event_bus::{
     publish_global, request_native_global, DomainEvent, NativeRequestError,
 };
 use crate::openhuman::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD};
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::harness::definition::{
     AgentDefinition, AgentDefinitionRegistry, ToolScope,
 };
@@ -791,8 +792,8 @@ pub(crate) async fn process_channel_message(
         .is_some_and(|ch| ch.supports_draft_updates());
 
     // Set up streaming channel if supported
-    let (delta_tx, delta_rx) = if use_streaming {
-        let (tx, rx) = tokio::sync::mpsc::channel::<String>(64);
+    let (progress_tx, progress_rx) = if use_streaming {
+        let (tx, rx) = tokio::sync::mpsc::channel::<AgentProgress>(64);
         (Some(tx), Some(rx))
     } else {
         (None, None)
@@ -820,9 +821,9 @@ pub(crate) async fn process_channel_message(
         None
     };
 
-    // Spawn a task to forward streaming deltas to draft updates
+    // Spawn a task to forward streaming progress to draft updates
     let draft_updater = if let (Some(mut rx), Some(draft_id_ref), Some(channel_ref)) = (
-        delta_rx,
+        progress_rx,
         draft_message_id.as_deref(),
         target_channel.as_ref(),
     ) {
@@ -831,13 +832,52 @@ pub(crate) async fn process_channel_message(
         let draft_id = draft_id_ref.to_string();
         Some(tokio::spawn(async move {
             let mut accumulated = String::new();
-            while let Some(delta) = rx.recv().await {
-                accumulated.push_str(&delta);
-                if let Err(e) = channel
-                    .update_draft(&reply_target, &draft_id, &accumulated)
-                    .await
-                {
-                    tracing::debug!("Draft update failed: {e}");
+            let mut last_thinking_update = None;
+            const THINKING_UPDATE_INTERVAL_MS: u128 = 2000;
+
+            while let Some(progress) = rx.recv().await {
+                match progress {
+                    AgentProgress::TextDelta { delta, .. } => {
+                        accumulated.push_str(&delta);
+                        if let Err(e) = channel
+                            .update_draft(&reply_target, &draft_id, &accumulated)
+                            .await
+                        {
+                            tracing::debug!("Draft update failed: {e}");
+                        }
+                    }
+                    AgentProgress::ThinkingDelta { .. } => {
+                        // Suppress thinking text to Telegram; only show a placeholder if we haven't
+                        // started receiving the final answer yet.
+                        if accumulated.is_empty() {
+                            let now = std::time::Instant::now();
+                            let should_update = match last_thinking_update {
+                                None => true,
+                                Some(last) => {
+                                    now.duration_since(last).as_millis()
+                                        > THINKING_UPDATE_INTERVAL_MS
+                                }
+                            };
+
+                            if should_update {
+                                if let Err(e) =
+                                    channel.update_draft(&reply_target, &draft_id, "Thinking...")
+                                        .await
+                                {
+                                    tracing::debug!("Thinking update failed: {e}");
+                                }
+                                last_thinking_update = Some(now);
+                            }
+                        }
+                    }
+                    AgentProgress::ToolCallStarted { tool_name, .. } => {
+                        if accumulated.is_empty() {
+                            let _ = channel
+                                .update_draft(&reply_target, &draft_id, &format!("Working ({})...", tool_name))
+                                .await;
+                        }
+                    }
+                    _ => {}
                 }
             }
         }))
@@ -903,11 +943,11 @@ pub(crate) async fn process_channel_message(
         channel_name: msg.channel.clone(),
         multimodal: ctx.multimodal.clone(),
         max_tool_iterations: ctx.max_tool_iterations,
-        on_delta: delta_tx,
+        on_delta: None, // on_progress handles text deltas now
         target_agent_id: scoping.target_agent_id,
         visible_tool_names: scoping.visible_tool_names,
         extra_tools: scoping.extra_tools,
-        on_progress: None,
+        on_progress: progress_tx,
     };
     tracing::debug!(
         channel = %msg.channel,
