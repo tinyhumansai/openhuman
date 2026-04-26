@@ -38,7 +38,7 @@ const ToolsPanel = () => {
       }
     }
     setEnabled(map);
-  }, [onboardingTasks?.enabledTools, toolsByCategory]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [onboardingTasks?.enabledTools, toolsByCategory]);
 
   const toggle = (toolId: string) => {
     setEnabled(prev => ({ ...prev, [toolId]: !prev[toolId] }));

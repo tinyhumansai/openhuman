@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- intentional global polyfill assignments */
+// biome-ignore lint/suspicious/noExplicitAny: intentional global polyfill assignments
 // Polyfill Node.js globals for browser dependencies
 // This must be imported FIRST before any other imports that use Node.js APIs
 

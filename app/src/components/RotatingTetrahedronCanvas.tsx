@@ -173,7 +173,6 @@ export default function RotatingTetrahedronCanvas({
       edgeMaterialRef.current = null;
       renderer.dispose();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Scene created once; inverted changes handled by separate effect.
   }, [inverted]);
 
   if (webglFailed) {

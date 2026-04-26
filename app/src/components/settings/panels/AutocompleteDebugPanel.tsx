@@ -190,7 +190,6 @@ const AutocompleteDebugPanel = () => {
   useEffect(() => {
     void load();
     void loadHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, loadHistory]);
 
   // -------------------------------------------------------------------------
@@ -229,7 +228,6 @@ const AutocompleteDebugPanel = () => {
       void refreshStatus();
     }, 1200);
     return () => window.clearInterval(intervalId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshStatus]);
 
   // -------------------------------------------------------------------------

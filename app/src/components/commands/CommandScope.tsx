@@ -17,7 +17,6 @@ export default function CommandScope({ id, kind = 'page', children }: Props) {
     return () => {
       hotkeyManager.popFrame(frame);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frame]);
 
   const value = useMemo(() => frame, [frame]);

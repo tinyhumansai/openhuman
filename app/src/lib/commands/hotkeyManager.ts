@@ -40,7 +40,7 @@ export function createHotkeyManager(): HotkeyManager {
   }
 
   function onKeyDown(e: KeyboardEvent): void {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: checking for browser-specific properties
     const composing = (e as any).isComposing === true || (e as any).keyCode === 229;
     if (composing) return;
 

@@ -239,7 +239,6 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch, handleCreateNewThread]);
 
   useEffect(() => {
@@ -267,7 +266,6 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     }
     // handleCreateNewThread is stable for the component lifetime (only
     // uses `dispatch`); the ref guards against duplicate fires.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatOnboardingCompleted, handleCreateNewThread]);
 
   const location = useLocation();
@@ -343,7 +341,6 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     armSilenceTimer(threadId);
     // armSilenceTimer is stable (refs + dispatch); depending on the
     // selector reference is enough to rearm on every progress event.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inferenceStatusByThread, armSilenceTimer]);
 
   useEffect(() => {

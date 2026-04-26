@@ -1,4 +1,5 @@
-/* eslint-disable no-undef, no-unused-vars */
+// biome-ignore lint/suspicious/noRedeclare: third-party code
+// biome-ignore lint/correctness/noUnusedVariables: third-party code
 /*
  *   Stripe WebGl Gradient Animation
  *   All Credits to Stripe.com
