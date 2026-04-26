@@ -61,34 +61,32 @@ codesign_hardened() {
     "$@"
 }
 
+# Frameworks must be signed as a single bundle with no entitlements. codesign
+# recursively seals nested binaries (Versions/A/Libraries/*.dylib, the main
+# CEF binary, etc.) via _CodeSignature/CodeResources. Walking inside the
+# framework and signing inner *.dylib / *.so files individually corrupts the
+# seal — at runtime CEF's SecCodeCheckValidity self-check fails with -67030
+# (errSecCSReqFailed), helper processes can't host the URL request context
+# or remote debugger, and embedded webviews stay on about:blank.
+codesign_framework() {
+  codesign --force --options runtime \
+    --sign "$APPLE_SIGNING_IDENTITY" \
+    --timestamp \
+    "$@"
+}
+
 # ── Nested Frameworks/ (CEF + Helper apps) ──────────────────────────────────
 # Must be signed from the inside out, before the outer .app bundle.
 if [ -d "$APP_PATH/Contents/Frameworks" ]; then
-  # 1. Sign loose dylibs / binaries inside any *.framework
+  # 1. Sign each *.framework as a single bundle.
   while IFS= read -r -d '' fw; do
-    echo "[sign]   Scanning framework: $(basename "$fw")"
-    while IFS= read -r -d '' item; do
-      # Skip symlinks; codesign will sign the real file via Versions/Current
-      [ -L "$item" ] && continue
-      case "$item" in
-        *.dylib|*.so)
-          echo "[sign]     Signing lib: \"${item#${APP_PATH}/}\""
-          codesign_hardened "$item"
-          ;;
-      esac
-    done < <(find "$fw" -type f -print0)
-    # Sign the framework bundle itself
     echo "[sign]   Signing framework bundle: $(basename "$fw")"
-    codesign_hardened "$fw"
+    codesign_framework "$fw"
   done < <(find "$APP_PATH/Contents/Frameworks" -maxdepth 1 -type d -name '*.framework' -print0)
 
-  # 2. Sign each nested Helper.app (inner binary first, then the bundle)
+  # 2. Sign each nested Helper.app as a bundle. codesign signs the inner
+  # binary as part of sealing the bundle — don't pre-sign it separately.
   while IFS= read -r -d '' helper; do
-    HELPER_EXE="$(defaults read "$helper/Contents/Info.plist" CFBundleExecutable 2>/dev/null || true)"
-    if [ -n "$HELPER_EXE" ] && [ -f "$helper/Contents/MacOS/$HELPER_EXE" ]; then
-      echo "[sign]   Signing helper binary: $(basename "$helper")/$HELPER_EXE"
-      codesign_hardened "$helper/Contents/MacOS/$HELPER_EXE"
-    fi
     echo "[sign]   Signing helper bundle: $(basename "$helper")"
     codesign_hardened "$helper"
   done < <(find "$APP_PATH/Contents/Frameworks" -maxdepth 1 -type d -name '*.app' -print0)
