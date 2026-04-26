@@ -139,8 +139,6 @@ function titleForPath(path: string): string {
       return 'Billing & credits';
     case 'settings/messaging':
       return 'Connect a chat channel';
-    case 'settings/connections':
-      return 'Integrations';
     case 'community/discord':
       return 'Join the community';
     case 'accounts/setup':
