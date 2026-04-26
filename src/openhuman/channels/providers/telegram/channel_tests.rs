@@ -92,8 +92,11 @@ async fn send_draft_returns_none_when_stream_mode_off() {
 
 #[tokio::test]
 async fn update_draft_rate_limit_short_circuits_network() {
-    let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-        .with_streaming(StreamMode::Partial, 60_000, true);
+    let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false).with_streaming(
+        StreamMode::Partial,
+        60_000,
+        true,
+    );
     ch.last_draft_edit
         .lock()
         .insert("123".to_string(), std::time::Instant::now());
@@ -104,8 +107,11 @@ async fn update_draft_rate_limit_short_circuits_network() {
 
 #[tokio::test]
 async fn update_draft_utf8_truncation_is_safe_for_multibyte_text() {
-    let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-        .with_streaming(StreamMode::Partial, 0, true);
+    let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false).with_streaming(
+        StreamMode::Partial,
+        0,
+        true,
+    );
     let long_emoji_text = "😀".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 20);
 
     // Invalid message_id returns early after building display_text.
@@ -118,8 +124,11 @@ async fn update_draft_utf8_truncation_is_safe_for_multibyte_text() {
 
 #[tokio::test]
 async fn finalize_draft_invalid_message_id_falls_back_to_chunk_send() {
-    let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-        .with_streaming(StreamMode::Partial, 0, true);
+    let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false).with_streaming(
+        StreamMode::Partial,
+        0,
+        true,
+    );
     let long_text = "a".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 64);
 
     // For oversized text + invalid draft message_id, finalize_draft should
@@ -1385,12 +1394,18 @@ fn track_update_id_large_volume_beyond_cache_does_not_panic() {
 
 #[test]
 fn silent_streaming_is_configurable() {
-    let silent = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-        .with_streaming(StreamMode::Partial, 1000, true);
+    let silent = TelegramChannel::new("fake-token".into(), vec!["*".into()], false).with_streaming(
+        StreamMode::Partial,
+        1000,
+        true,
+    );
     assert!(silent.silent_streaming);
 
-    let noisy = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-        .with_streaming(StreamMode::Partial, 1000, false);
+    let noisy = TelegramChannel::new("fake-token".into(), vec!["*".into()], false).with_streaming(
+        StreamMode::Partial,
+        1000,
+        false,
+    );
     assert!(!noisy.silent_streaming);
 }
 

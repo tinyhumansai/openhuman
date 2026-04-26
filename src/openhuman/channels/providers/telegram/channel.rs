@@ -1689,7 +1689,13 @@ impl Channel for TelegramChannel {
 
             // Fall back to chunked send
             return self
-                .send_text_chunks(text, &chat_id, thread_id.as_deref(), parent_message_id, false)
+                .send_text_chunks(
+                    text,
+                    &chat_id,
+                    thread_id.as_deref(),
+                    parent_message_id,
+                    false,
+                )
                 .await;
         }
 
@@ -1748,8 +1754,14 @@ impl Channel for TelegramChannel {
 
         // Edit failed entirely — fall back to new message
         tracing::warn!("Telegram finalize_draft edit failed; falling back to sendMessage");
-        self.send_text_chunks(text, &chat_id, thread_id.as_deref(), parent_message_id, false)
-            .await
+        self.send_text_chunks(
+            text,
+            &chat_id,
+            thread_id.as_deref(),
+            parent_message_id,
+            false,
+        )
+        .await
     }
 
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
