@@ -1363,18 +1363,27 @@ pub fn run() {
                     log::error!("[macos] failed to show main window on reopen: {err}");
                 }
             }
-            RunEvent::Exit => {
-                // Orderly teardown (issue #920): close child webviews and
-                // abort our long-lived tokio tasks BEFORE the runtime
-                // drops, so CEF browsers tear down cleanly and no task
-                // is left holding an `AppHandle` clone past the runtime
-                // shutdown — both contributed to the macOS "abnormal
-                // exit" the OS reports against the app process.
-                log::info!("[app] RunEvent::Exit — running orderly shutdown");
+            RunEvent::ExitRequested { .. } => {
+                // Run our cleanup BEFORE CEF's own Exit handler does
+                // `close_all_windows() → cef::shutdown()`. Doing this in
+                // RunEvent::Exit instead races CEF's teardown and the
+                // `browser_count == 0` CHECK in `cef::shutdown` panics on
+                // macOS Cmd+Q (issue #920). The order matters:
+                //   1. close our child webviews so CEF processes the
+                //      close requests during the Exit-phase message pump
+                //      (gives them time to settle before cef::shutdown).
+                //   2. abort our long-lived tokio tasks so they're not
+                //      driving CDP traffic against CEF as it tears down.
+                //   3. stop the webview_apis WS listener so its accept
+                //      loop releases the loopback port.
+                //   4. SIGTERM the core sidecar (non-blocking). Tauri
+                //      spawned the child so we own its lifecycle, but we
+                //      do not wait — that would block the main thread
+                //      and starve CEF's UI loop. The kernel reaps the
+                //      child after Tauri exits.
+                log::info!("[app] RunEvent::ExitRequested — early teardown");
 
-                if let Err(e) = teardown_cef_prewarm(app_handle) {
-                    log::debug!("[cef-prewarm] teardown skipped: {e}");
-                }
+                let _ = teardown_cef_prewarm(app_handle);
 
                 if let Some(state) =
                     app_handle.try_state::<webview_accounts::WebviewAccountsState>()
@@ -1387,11 +1396,14 @@ pub fn run() {
                 if let Some(core) = app_handle.try_state::<core_process::CoreProcessHandle>() {
                     let core = core.inner().clone();
                     tauri::async_runtime::block_on(async move {
-                        core.shutdown().await;
+                        core.send_terminate_signal().await;
                     });
                 }
 
-                log::info!("[app] RunEvent::Exit — shutdown complete");
+                log::info!("[app] RunEvent::ExitRequested — early teardown complete");
+            }
+            RunEvent::Exit => {
+                log::info!("[app] RunEvent::Exit");
             }
             _ => {}
         });

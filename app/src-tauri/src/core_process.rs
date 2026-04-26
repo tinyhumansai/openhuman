@@ -369,6 +369,44 @@ impl CoreProcessHandle {
         }
     }
 
+    /// Send SIGTERM (Unix) / TerminateProcess (Windows) to the spawned
+    /// child without waiting for it to exit. Returns immediately.
+    ///
+    /// Used by the Tauri `RunEvent::ExitRequested` path so app shutdown
+    /// doesn't block on the core sidecar: the child receives the signal,
+    /// runs its own graceful shutdown hooks, and is reaped by the kernel
+    /// after the parent process exits. Blocking on `child.wait()` from the
+    /// main thread starves CEF's UI message loop (RunEvent is delivered on
+    /// the same thread) and on macOS that races the `browser_count == 0`
+    /// CHECK in `cef::shutdown`, panicking the app on Cmd+Q.
+    pub async fn send_terminate_signal(&self) {
+        let mut child_guard = self.child.lock().await;
+        let Some(child) = child_guard.as_mut() else {
+            return;
+        };
+
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{self, Signal};
+            use nix::unistd::Pid;
+            let _ = child;
+            if let Some(pid) = child_guard.as_ref().and_then(|c| c.id()) {
+                match signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM) {
+                    Ok(()) => log::info!("[core] SIGTERM sent (non-blocking) pid={pid}"),
+                    Err(e) => log::warn!("[core] SIGTERM (non-blocking) failed: {e}"),
+                }
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            match child.start_kill() {
+                Ok(()) => log::info!("[core] start_kill issued (non-blocking)"),
+                Err(e) => log::warn!("[core] start_kill (non-blocking) failed: {e}"),
+            }
+        }
+    }
+
     /// Send SIGTERM to the child and wait up to 5 seconds for it to exit.
     /// Returns `true` if the process exited gracefully, `false` if it's still
     /// alive (caller should escalate to SIGKILL).
