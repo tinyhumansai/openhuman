@@ -655,6 +655,25 @@ async fn run_server_inner(
     // --- Skill runtime bootstrap -------------------------------------------
     bootstrap_skill_runtime().await;
 
+    // --- Pre-serve controller-runtime bootstrap ---------------------------
+    //
+    // Must run before `axum::serve` starts accepting connections so the very
+    // first RPC can't race per-domain OnceCell initialisation. Domain list
+    // lives in `crate::core::all::bootstrap_controller_runtimes` so this
+    // transport file stays domain-agnostic.
+    //
+    // Loading the config a second time here (the spawn block also calls
+    // `load_or_init`) is fine — it caches and is idempotent.
+    match crate::openhuman::config::Config::load_or_init().await {
+        Ok(config) => {
+            crate::core::all::bootstrap_controller_runtimes(&config.workspace_dir).await;
+        }
+        Err(_) => log::warn!(
+            "[core] config load failed during runtime bootstrap; \
+             controllers with pre-serve runtimes will return 'not initialised'"
+        ),
+    }
+
     log::info!(
         "[core] OpenHuman core is ready — listening on http://{bind_addr} (version {})",
         env!("CARGO_PKG_VERSION")
@@ -861,7 +880,6 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
     });
 }
 
-/// Initializes long-lived socket/event-bus infrastructure.
 pub async fn bootstrap_skill_runtime() {
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;

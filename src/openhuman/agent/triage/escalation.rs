@@ -172,6 +172,7 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
         // preserving the `{parent}__{child}.jsonl` hierarchy.
         session_key: agent.session_key().to_string(),
         session_parent_prefix: agent.session_parent_prefix().map(str::to_string),
+        curated_snapshot: agent.curated_snapshot(),
     };
 
     tracing::debug!(

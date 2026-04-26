@@ -77,6 +77,11 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Webview APIs bridge — proxies connector calls (Gmail, …) through
     // a WebSocket to the Tauri shell so curl reaches the live webview.
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
+    // Local personal index — search + stats over captured life data.
+    controllers.extend(crate::openhuman::life_capture::all_life_capture_registered_controllers());
+    // Curated memory (MEMORY.md + USER.md) — agent-writable scratchpad.
+    controllers
+        .extend(crate::openhuman::curated_memory::all_curated_memory_registered_controllers());
     // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
     // System and process health monitoring
@@ -164,6 +169,20 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers
 }
 
+/// Bootstrap any per-controller runtime state that MUST be ready before the
+/// HTTP server begins accepting connections. Each branch initialises a domain's
+/// singleton runtime (OnceCell, connection pool, etc.) so the very first RPC
+/// can't race against initialisation and surface spurious 'not initialised'
+/// errors.
+///
+/// Called once from the transport layer (`core_server::jsonrpc`) immediately
+/// before `axum::serve`. Transport code stays domain-agnostic — new domains
+/// with pre-serve startup requirements add themselves here, not in jsonrpc.rs.
+pub async fn bootstrap_controller_runtimes(workspace_dir: &std::path::Path) {
+    crate::openhuman::curated_memory::runtime::bootstrap(workspace_dir).await;
+    crate::openhuman::life_capture::runtime::bootstrap(workspace_dir).await;
+}
+
 /// Aggregates all controller schemas from across the codebase.
 ///
 /// Similar to [`build_registered_controllers`], but only collects the metadata
@@ -175,6 +194,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
+    schemas.extend(crate::openhuman::life_capture::all_life_capture_controller_schemas());
+    schemas.extend(crate::openhuman::curated_memory::all_curated_memory_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
@@ -298,6 +319,14 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "notification" => Some(
             "Integration notification ingest, triage scoring, listing, read-state, \
              and per-provider routing settings.",
+        ),
+        "life_capture" => Some(
+            "Personal life-capture index: ingest, embed, and search items across email, \
+             calendar, Slack, and iMessage sources.",
+        ),
+        "curated_memory" => Some(
+            "Curated memory files (MEMORY.md, USER.md): add, replace, remove, and read \
+             persistent agent-facing notes.",
         ),
         _ => None,
     }
