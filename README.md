@@ -1,5 +1,7 @@
 <h1 align="center">OpenHuman</h1>
 
+<a href="https://trendshift.io/repositories/23680" target="_blank"><img src="https://trendshift.io/api/badge/repositories/23680" alt="tinyhumansai%2Fopenhuman | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+
 <p align="center">
   <strong>The age of super intelligence is here. OpenHuman is your Personal AI super intelligence. Private, Simple and extremely powerful.</strong>
 </p>
