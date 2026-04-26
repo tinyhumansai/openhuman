@@ -82,9 +82,7 @@ export async function scheduleCefProfilePurge(userId?: string | null): Promise<s
   console.debug('[cef-profile] scheduleCefProfilePurge: invoking schedule_cef_profile_purge', {
     userId: userId ?? null,
   });
-  return invoke<string>('schedule_cef_profile_purge', {
-    userId: userId ?? null,
-  });
+  return invoke<string>('schedule_cef_profile_purge', { userId: userId ?? null });
 }
 
 /**
