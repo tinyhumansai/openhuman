@@ -22,13 +22,14 @@ pub const MODEL_CODING_V1: &str = "coding-v1";
 pub const DEFAULT_MODEL: &str = MODEL_REASONING_V1;
 
 /// Top-level configuration (config.toml root).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
     #[serde(skip)]
     pub workspace_dir: PathBuf,
     #[serde(skip)]
     pub config_path: PathBuf,
     pub api_url: Option<String>,
+    pub api_key: Option<String>,
     pub default_model: Option<String>,
     pub default_temperature: f64,
 
@@ -197,6 +198,55 @@ pub struct Config {
     pub chat_onboarding_completed: bool,
 }
 
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("Config");
+        s.field("workspace_dir", &self.workspace_dir)
+            .field("config_path", &self.config_path)
+            .field("api_url", &self.api_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("default_model", &self.default_model)
+            .field("default_temperature", &self.default_temperature)
+            .field("observability", &self.observability)
+            .field("autonomy", &self.autonomy)
+            .field("runtime", &self.runtime)
+            .field("screen_intelligence", &self.screen_intelligence)
+            .field("autocomplete", &self.autocomplete)
+            .field("reliability", &self.reliability)
+            .field("scheduler", &self.scheduler)
+            .field("agent", &self.agent)
+            .field("context", &self.context)
+            .field("model_routes", &self.model_routes)
+            .field("embedding_routes", &self.embedding_routes)
+            .field("heartbeat", &self.heartbeat)
+            .field("cron", &self.cron)
+            .field("channels_config", &self.channels_config)
+            .field("memory", &self.memory)
+            .field("memory_tree", &self.memory_tree)
+            .field("storage", &self.storage)
+            .field("composio", &self.composio)
+            .field("secrets", &self.secrets)
+            .field("browser", &self.browser)
+            .field("http_request", &self.http_request)
+            .field("multimodal", &self.multimodal)
+            .field("web_search", &self.web_search)
+            .field("proxy", &self.proxy)
+            .field("cost", &self.cost)
+            .field("computer_control", &self.computer_control)
+            .field("agents", &self.agents)
+            .field("local_ai", &self.local_ai)
+            .field("node", &self.node)
+            .field("voice_server", &self.voice_server)
+            .field("integrations", &self.integrations)
+            .field("learning", &self.learning)
+            .field("update", &self.update)
+            .field("dictation", &self.dictation)
+            .field("onboarding_completed", &self.onboarding_completed)
+            .field("chat_onboarding_completed", &self.chat_onboarding_completed);
+        s.finish()
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let openhuman_dir =
@@ -217,6 +267,7 @@ impl Default for Config {
             workspace_dir: openhuman_dir.join("workspace"),
             config_path: openhuman_dir.join("config.toml"),
             api_url: None,
+            api_key: None,
             default_model: Some(DEFAULT_MODEL.to_string()),
             default_temperature: 0.7,
             observability: ObservabilityConfig::default(),

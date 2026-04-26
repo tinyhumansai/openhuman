@@ -267,6 +267,7 @@ async fn summarise_profile_with_llm(config: &Config, raw_md: &str) -> anyhow::Re
 
     let provider = create_backend_inference_provider(
         config.api_url.as_deref(),
+        config.api_key.as_deref(),
         &ProviderRuntimeOptions::default(),
     )?;
 

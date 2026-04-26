@@ -246,6 +246,7 @@ fn build_remote_provider(config: &Config) -> anyhow::Result<ResolvedProvider> {
     };
     let provider_box = providers::create_routed_provider_with_options(
         config.api_url.as_deref(),
+        config.api_key.as_deref(),
         &config.reliability,
         &config.model_routes,
         default_model.as_str(),

@@ -88,6 +88,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     };
     let provider: Arc<dyn Provider> = Arc::from(providers::create_intelligent_routing_provider(
         config.api_url.as_deref(),
+        config.api_key.as_deref(),
         &config,
         &provider_runtime_options,
     )?);

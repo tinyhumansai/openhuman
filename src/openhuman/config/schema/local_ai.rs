@@ -9,6 +9,10 @@ pub struct LocalAiConfig {
     pub enabled: bool,
     #[serde(default = "default_provider")]
     pub provider: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
     #[serde(default = "default_model_id")]
     pub model_id: String,
     #[serde(default = "default_chat_model_id")]
@@ -162,6 +166,8 @@ impl Default for LocalAiConfig {
         Self {
             enabled: default_enabled(),
             provider: default_provider(),
+            base_url: None,
+            api_key: None,
             model_id: default_model_id(),
             chat_model_id: default_chat_model_id(),
             vision_model_id: default_vision_model_id(),
