@@ -191,10 +191,10 @@ const CAPABILITIES: &[Capability] = &[
         name: "Slack Memory Ingestion",
         domain: "intelligence",
         category: CapabilityCategory::Intelligence,
-        description: "Backfill the last 6 days of Slack history into the memory tree and keep it up to date by flushing each closed 6-hour UTC bucket. Auto-starts when a Slack bot token is configured.",
+        description: "Backfill the last 6 days of Slack history into the memory tree and keep it up to date by flushing each closed 6-hour UTC bucket. Driven by an authenticated Slack connection (OAuth via Composio).",
         how_to: "Settings > Messaging Channels > Slack",
         status: CapabilityStatus::Beta,
-        privacy: None,
+        privacy: LOCAL_RAW,
     },
     Capability {
         id: "skills.discover",

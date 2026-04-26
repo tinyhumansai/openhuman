@@ -163,10 +163,12 @@ async fn main() -> Result<()> {
         use openhuman_core::openhuman::memory::tree::canonicalize::chat::{ChatBatch, ChatMessage};
         use openhuman_core::openhuman::memory::tree::ingest::ingest_chat;
 
-        let connection_id = cli
-            .connection_id
-            .clone()
-            .unwrap_or_else(|| "ca_MSNobId31qJk".to_string());
+        let connection_id = cli.connection_id.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "--seal-probe requires --connection <connection_id> so the probe message \
+                 lands on a real Slack source tree (no implicit default)"
+            )
+        })?;
         let source_id = format!("slack:{connection_id}");
         let batch = ChatBatch {
             platform: "slack".into(),

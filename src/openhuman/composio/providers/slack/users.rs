@@ -101,9 +101,16 @@ impl SlackUsers {
     /// Pull the workspace user directory via Composio. Soft-fails to
     /// [`SlackUsers::empty`] on transport, HTTP, JSON, or
     /// provider-failure errors so the sync can continue with raw ids.
-    pub async fn fetch(client: &ComposioClient) -> Self {
+    ///
+    /// Returns `(users, total_attempts)` where `total_attempts` sums every
+    /// real Composio call this fetch made across pages and rate-limit
+    /// retries, so the caller can charge the daily quota meter
+    /// accurately. Pages walked silently are tracked too — without this,
+    /// large workspaces under-report their request usage.
+    pub async fn fetch(client: &ComposioClient) -> (Self, u32) {
         let mut map: HashMap<String, String> = HashMap::new();
         let mut cursor: Option<String> = None;
+        let mut total_attempts: u32 = 0;
 
         for page_num in 0..MAX_PAGES {
             let mut args = json!({ "limit": PAGE_SIZE });
@@ -111,24 +118,32 @@ impl SlackUsers {
                 args["cursor"] = json!(c);
             }
 
-            let resp = match client.execute_tool(ACTION_LIST_USERS, Some(args)).await {
-                Ok(r) => r,
+            // Going through `execute_with_retry` so a transient
+            // `ratelimited` page doesn't drop us into a half-built
+            // directory while the rest of the provider uses backoff.
+            // Soft-fall to whatever was collected so far on any failure.
+            let (resp, attempts) = match super::provider::execute_with_retry(
+                client,
+                ACTION_LIST_USERS,
+                args,
+                &format!("{ACTION_LIST_USERS} page {page_num}"),
+            )
+            .await
+            {
+                Ok(t) => t,
                 Err(err) => {
+                    // We don't know exactly how many attempts the helper
+                    // burned before bailing, but at least one ran — count
+                    // it so the budget meter doesn't silently undercount.
+                    total_attempts = total_attempts.saturating_add(1);
                     log::warn!(
-                        "[composio:slack:users] {ACTION_LIST_USERS} page {page_num} failed: {err:#} — \
-                         degrading to raw ids"
+                        "[composio:slack:users] {ACTION_LIST_USERS} page {page_num} failed: {err} — \
+                         degrading to raw ids for the rest of this sync"
                     );
-                    return Self { map };
+                    return (Self { map }, total_attempts);
                 }
             };
-            if !resp.successful {
-                log::warn!(
-                    "[composio:slack:users] {ACTION_LIST_USERS} page {page_num} non-success: {} — \
-                     degrading to raw ids",
-                    resp.error.as_deref().unwrap_or("provider failure")
-                );
-                return Self { map };
-            }
+            total_attempts = total_attempts.saturating_add(attempts);
 
             super::provider::dump_response("_meta", "users", page_num, &resp.data);
             absorb_page(&resp.data, &mut map);
@@ -140,10 +155,10 @@ impl SlackUsers {
         }
 
         log::info!(
-            "[composio:slack:users] resolved {} workspace users",
+            "[composio:slack:users] resolved {} workspace users in {total_attempts} call(s)",
             map.len()
         );
-        Self { map }
+        (Self { map }, total_attempts)
     }
 
     /// Construct from a pre-built map. Test-only — production callers

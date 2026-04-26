@@ -50,6 +50,18 @@ use crate::openhuman::memory::tree::types::approx_token_count;
 /// JSON wrapper.
 const MAX_SUMMARY_OUTPUT_TOKENS: u32 = 6_000;
 
+/// Context window we ask Ollama for. Must match the value below in
+/// [`OllamaOptions::num_ctx`] so the per-input clamp computed in
+/// [`LlmSummariser::summarise`] sizes inputs against the same window
+/// the model actually sees.
+const NUM_CTX_TOKENS: u32 = 16_384;
+
+/// Tokens reserved for the system prompt, JSON wrapper, and tokenizer
+/// drift between our 4-chars/token heuristic and the model's tokenizer.
+/// Trades a small loss of input capacity for a guarantee that the
+/// prompt body + output budget never exceeds `num_ctx`.
+const OVERHEAD_RESERVE_TOKENS: u32 = 512;
+
 /// Configuration for [`LlmSummariser`]. Endpoint + model defaults match
 /// [`crate::openhuman::memory::tree::score::extract::llm::LlmExtractorConfig`]
 /// so a workspace configured for one LLM path also satisfies the other
@@ -120,13 +132,16 @@ impl LlmSummariser {
             stream: false,
             options: OllamaOptions {
                 temperature: 0.0,
-                // Cap context to half of a typical 32k local-LLM
-                // window. 16k leaves room for a sealed bucket's input
-                // (source-tree buckets cap at ~10k tokens of leaves)
-                // plus a generously-sized summary output, while
-                // keeping the kv-cache small enough to fit on consumer
-                // GPUs alongside the model weights.
-                num_ctx: 16_384,
+                // 16k context window. Sized so that the per-input
+                // clamp in `summarise` (NUM_CTX - output_budget -
+                // overhead, divided by `inputs.len()`) keeps the
+                // joined prompt body inside this window even at
+                // upper-level seals where SUMMARY_FANOUT children
+                // each near MAX_SUMMARY_OUTPUT_TOKENS would otherwise
+                // overflow. Keeping `num_ctx` modest also keeps the
+                // kv-cache small enough to fit on consumer GPUs
+                // alongside the model weights.
+                num_ctx: NUM_CTX_TOKENS,
             },
         }
     }
@@ -139,10 +154,32 @@ impl Summariser for LlmSummariser {
         inputs: &[SummaryInput],
         ctx: &SummaryContext<'_>,
     ) -> Result<SummaryOutput> {
+        // Clamp the model-side output budget so the summary fits the
+        // downstream embedder. The seal-cascade hands us
+        // `ctx.token_budget = 10k` by default but `nomic-embed-text`
+        // only accepts ≤ 8k tokens of input. Producing a smaller
+        // summary upfront avoids the embed-fails-after-summary
+        // dead end.
+        let effective_budget = ctx.token_budget.min(MAX_SUMMARY_OUTPUT_TOKENS);
+
+        // Per-input clamp scaled by fanout. Without this, an upper-level
+        // seal feeding `SUMMARY_FANOUT=4` children each near
+        // `MAX_SUMMARY_OUTPUT_TOKENS` would push the prompt body alone
+        // past `num_ctx` and Ollama would silently truncate (or error).
+        // Divide the input budget evenly across contributors.
+        let per_input_cap = if inputs.is_empty() {
+            0
+        } else {
+            NUM_CTX_TOKENS
+                .saturating_sub(effective_budget)
+                .saturating_sub(OVERHEAD_RESERVE_TOKENS)
+                / inputs.len() as u32
+        };
+
         // Assemble the user-side prompt. We prefix each contribution with
         // its id so the model can weigh them and so log diffs are
         // traceable to source rows if anything looks odd.
-        let body = build_user_prompt(inputs);
+        let body = build_user_prompt(inputs, per_input_cap);
         if body.trim().is_empty() {
             log::debug!(
                 "[source_tree::summariser::llm] empty prompt body (no non-blank inputs) \
@@ -158,12 +195,6 @@ impl Summariser for LlmSummariser {
             });
         }
 
-        // Clamp the model-side budget so output fits the downstream
-        // embedder. The seal-cascade hands us `ctx.token_budget = 10k`
-        // by default but `nomic-embed-text` only accepts ≤ 8k tokens
-        // of input. Producing a smaller summary upfront avoids the
-        // embed-fails-after-summary-generated dead end.
-        let effective_budget = ctx.token_budget.min(MAX_SUMMARY_OUTPUT_TOKENS);
         let url = format!("{}/api/chat", self.cfg.endpoint.trim_end_matches('/'));
         let req = self.build_request(&body, effective_budget);
 
@@ -231,7 +262,7 @@ impl Summariser for LlmSummariser {
         let (content, token_count) = clamp_to_budget(&parsed.summary, effective_budget);
         log::debug!(
             "[source_tree::summariser::llm] sealed tree_id={} level={} inputs={} tokens={} \
-             entities={} topics={}",
+             surface_entities_dropped={} topics={}",
             ctx.tree_id,
             ctx.target_level,
             inputs.len(),
@@ -240,10 +271,20 @@ impl Summariser for LlmSummariser {
             parsed.topics.len()
         );
 
+        // Drop LLM-emitted entities. The model returns surface forms
+        // ("Alice", "she"), but `SummaryNode.entities` is indexed via
+        // `index_summary_entity_ids_tx` as canonical ids. Surface forms
+        // would silently corrupt that index — searches by canonical id
+        // would not find these summaries. Canonicalisation is the
+        // entity extractor's job, not the summariser's. Topics stay
+        // because they're free-form labels, not indexed as canonical
+        // ids. The `entities` field stays in the prompt to nudge the
+        // model toward entity-aware summarisation; we just don't
+        // persist its output.
         Ok(SummaryOutput {
             content,
             token_count,
-            entities: dedupe_sorted(parsed.entities),
+            entities: Vec::new(),
             topics: dedupe_sorted(parsed.topics),
         })
     }
@@ -252,18 +293,23 @@ impl Summariser for LlmSummariser {
 /// Build the user-message body that precedes the model call. Each
 /// contribution is prefixed with a short id header and separated by a
 /// blank line — matches the layout the model is instructed to
-/// summarise.
-fn build_user_prompt(inputs: &[SummaryInput]) -> String {
+/// summarise. Each input's content is clamped to
+/// `per_input_cap_tokens` so the joined body fits inside `num_ctx` even
+/// at upper-level seals where many large summaries fold together. A
+/// `0` cap means "don't include any content" (used when there are no
+/// inputs); pass `u32::MAX` to disable clamping.
+fn build_user_prompt(inputs: &[SummaryInput], per_input_cap_tokens: u32) -> String {
     let mut out = String::new();
     for inp in inputs {
         let trimmed = inp.content.trim();
         if trimmed.is_empty() {
             continue;
         }
+        let (clamped, _) = clamp_to_budget(trimmed, per_input_cap_tokens);
         if !out.is_empty() {
             out.push_str("\n\n");
         }
-        out.push_str(&format!("[{}]\n{}", inp.id, trimmed));
+        out.push_str(&format!("[{}]\n{clamped}", inp.id));
     }
     out
 }
@@ -400,7 +446,7 @@ mod tests {
             sample_input("a", "hello world"),
             sample_input("b", "second contribution"),
         ];
-        let out = build_user_prompt(&inputs);
+        let out = build_user_prompt(&inputs, u32::MAX);
         assert!(out.contains("[a]"));
         assert!(out.contains("hello world"));
         assert!(out.contains("[b]"));
@@ -410,10 +456,40 @@ mod tests {
     #[test]
     fn build_user_prompt_skips_blank_contributions() {
         let inputs = vec![sample_input("a", "   "), sample_input("b", "kept")];
-        let out = build_user_prompt(&inputs);
+        let out = build_user_prompt(&inputs, u32::MAX);
         assert!(!out.contains("[a]"));
         assert!(out.contains("[b]"));
         assert!(out.contains("kept"));
+    }
+
+    #[test]
+    fn build_user_prompt_clamps_each_input_to_per_input_cap() {
+        // Regression guard for upper-level context overflow: at L2 with
+        // SUMMARY_FANOUT=4 and large child summaries, the joined body
+        // would otherwise blow past NUM_CTX_TOKENS. The clamp keeps
+        // each contribution under per_input_cap_tokens regardless of
+        // how big the original content is.
+        let long = "x".repeat(2_000); // ~500 approx-tokens
+        let inputs = vec![
+            sample_input("a", &long),
+            sample_input("b", &long),
+            sample_input("c", &long),
+            sample_input("d", &long),
+        ];
+        let cap_tokens: u32 = 50; // ~200 chars per input
+        let out = build_user_prompt(&inputs, cap_tokens);
+
+        // Each input contributes at most cap_tokens*4 chars of content,
+        // plus a small id header. Total stays well under the unclamped
+        // 4 * 2_000 = 8_000 chars baseline.
+        let unclamped_baseline = 4 * 2_000;
+        assert!(
+            out.len() < unclamped_baseline / 2,
+            "expected clamp to halve the body or better, got {} chars",
+            out.len()
+        );
+        assert!(out.contains("[a]"));
+        assert!(out.contains("[d]"));
     }
 
     #[test]

@@ -186,16 +186,19 @@ pub(super) fn dump_response(scope: &str, kind: &str, idx: u32, data: &Value) {
 }
 
 /// Wrap [`ComposioClient::execute_tool`] with rate-limit-aware retry +
-/// inter-call pacing. Returns the underlying response on the first
-/// successful attempt; bails out with a useful error otherwise. The
-/// retry only fires for `ok=false, error=ratelimited` responses; other
-/// failures pass through unchanged so callers can decide how to react.
-async fn execute_with_retry(
+/// inter-call pacing.
+///
+/// Returns `(response, attempts_made)` on first success so callers can
+/// charge the daily quota meter for **every** attempt that hit Composio,
+/// not just the one that succeeded — under throttling each retry is a
+/// real billable call. The retry only fires for `ok=false,
+/// error=ratelimited` responses; other failures pass through unchanged.
+pub(super) async fn execute_with_retry(
     client: &ComposioClient,
     slug: &str,
     args: serde_json::Value,
     description: &str,
-) -> Result<ComposioExecuteResponse, String> {
+) -> Result<(ComposioExecuteResponse, u32), String> {
     let mut delay = RATELIMIT_INITIAL_BACKOFF;
     for attempt in 1..=RATELIMIT_MAX_ATTEMPTS {
         let resp = client
@@ -203,9 +206,8 @@ async fn execute_with_retry(
             .await
             .map_err(|e| format!("{description}: {e:#}"))?;
         if resp.successful {
-            // Pace the next call so we don't immediately re-trip.
             tokio::time::sleep(INTER_CALL_PACING).await;
-            return Ok(resp);
+            return Ok((resp, attempt));
         }
         let err_str = resp.error.as_deref().unwrap_or("provider failure");
         let is_ratelimit = err_str.contains("ratelimited")
@@ -363,8 +365,8 @@ impl ComposioProvider for SlackProvider {
         // ids and `<@…>` mentions in message text canonicalise to
         // human-readable names. Soft-fails to an empty cache; raw ids
         // simply pass through in that case.
-        let users = SlackUsers::fetch(&ctx.client).await;
-        state.record_requests(1);
+        let (users, user_call_count) = SlackUsers::fetch(&ctx.client).await;
+        state.record_requests(user_call_count);
         tracing::info!(
             connection_id = %connection_id,
             user_count = users.len(),
@@ -502,14 +504,14 @@ async fn list_all_channels(
             args["cursor"] = json!(c);
         }
 
-        let resp = execute_with_retry(
+        let (resp, attempts) = execute_with_retry(
             &ctx.client,
             ACTION_LIST_CONVERSATIONS,
             args,
             &format!("{ACTION_LIST_CONVERSATIONS} page {page_num}"),
         )
         .await?;
-        state.record_requests(1);
+        state.record_requests(attempts);
         dump_response("_meta", "channels", page_num, &resp.data);
 
         out.extend(sync::extract_channels(&resp.data));
@@ -561,7 +563,7 @@ async fn process_channel(
             args["cursor"] = json!(c);
         }
 
-        let resp = execute_with_retry(
+        let (resp, attempts) = execute_with_retry(
             &ctx.client,
             ACTION_FETCH_HISTORY,
             args,
@@ -571,7 +573,7 @@ async fn process_channel(
             ),
         )
         .await?;
-        state.record_requests(1);
+        state.record_requests(attempts);
         dump_response(&channel.id, "history", page_num, &resp.data);
 
         let msgs = sync::extract_messages(&resp.data, &channel.id, users);
@@ -731,8 +733,8 @@ pub async fn run_backfill_via_search(
 
     // 2. User directory — for ID → display-name resolution + mention
     //    rewrites.
-    let users = SlackUsers::fetch(&ctx.client).await;
-    state.record_requests(1);
+    let (users, user_call_count) = SlackUsers::fetch(&ctx.client).await;
+    state.record_requests(user_call_count);
     tracing::info!(
         connection_id = %connection_id,
         user_count = users.len(),
@@ -766,14 +768,14 @@ pub async fn run_backfill_via_search(
             "sort_dir": "asc",
             "page": page,
         });
-        let resp = execute_with_retry(
+        let (resp, attempts) = execute_with_retry(
             &ctx.client,
             ACTION_SEARCH_MESSAGES,
             args,
             &format!("{ACTION_SEARCH_MESSAGES} page {page}"),
         )
         .await?;
-        state.record_requests(1);
+        state.record_requests(attempts);
         dump_response("_meta", "search", page, &resp.data);
 
         let msgs = sync::extract_search_messages(&resp.data, &users);
