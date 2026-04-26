@@ -47,7 +47,6 @@ const Home = () => {
     user?.subscription?.plan === 'FREE' || !user?.subscription?.hasActiveSubscription;
   const showPromoBanner = isFreeTier && promoCredits > 0;
 
-  console.log('showPromoBanner', showPromoBanner, user, promoCredits);
   const welcomeVariants = useMemo(
     () => [`Welcome, ${userName} 👋`, `Let's cook, ${userName} 🧑‍🍳.`, `Time to Zone In 🧘🏻`],
     [userName]

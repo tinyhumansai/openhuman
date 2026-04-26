@@ -26,15 +26,13 @@ export function UsageLimitBanner({
           card: 'border-coral-200 bg-gradient-to-r from-coral-50 via-rose-50 to-orange-50',
           title: 'text-coral-700',
           body: 'text-coral-500',
-          button:
-            'border-coral-200 bg-white text-coral-700 hover:border-coral-300 hover:bg-coral-50',
+          button: 'border-coral-700 text-coral-700 hover:text-coral-800',
         }
       : {
           card: 'border-amber-200 bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50',
           title: 'text-amber-700',
           body: 'text-amber-600',
-          button:
-            'border-amber-200 bg-white text-amber-700 hover:border-amber-300 hover:bg-amber-50',
+          button: 'border-amber-700 text-amber-700 hover:text-amber-800',
         };
 
   return (
@@ -52,7 +50,7 @@ export function UsageLimitBanner({
               onClick={() => {
                 void openUrl(BILLING_DASHBOARD_URL);
               }}
-              className="cursor-pointer border-b border-amber-700 font-bold border-dashed text-amber-700 hover:text-amber-800">
+              className={`cursor-pointer border-b border-dashed font-bold ${styles.button}`}>
               {ctaLabel}
             </button>
           </p>

@@ -490,29 +490,5 @@ pub async fn update_local_state(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn sanitize_snapshot_user_drops_empty_payloads() {
-        assert_eq!(sanitize_snapshot_user(Some(json!({}))), None);
-        assert_eq!(sanitize_snapshot_user(Some(Value::Null)), None);
-        assert_eq!(
-            sanitize_snapshot_user(Some(json!({ "firstName": "steven" }))),
-            Some(json!({ "firstName": "steven" }))
-        );
-    }
-
-    #[test]
-    fn cached_current_user_entry_expires_after_ttl() {
-        let entry = CachedCurrentUser {
-            api_base: "https://staging-api.tinyhumans.ai".to_string(),
-            token: "tok".to_string(),
-            fetched_at: Instant::now() - (CURRENT_USER_REFRESH_TTL + Duration::from_millis(1)),
-            user: json!({ "firstName": "steven" }),
-        };
-
-        assert!(entry.fetched_at.elapsed() >= CURRENT_USER_REFRESH_TTL);
-    }
-}
+#[path = "ops_tests.rs"]
+mod tests;

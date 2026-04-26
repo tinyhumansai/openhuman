@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DISCORD_INVITE_URL } from '../../../utils/links';
 import { openUrl } from '../../../utils/openUrl';
@@ -8,6 +8,10 @@ import { DiscordBanner, PromotionalCreditsBanner, UsageLimitBanner } from '../Ho
 vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
 describe('HomeBanners', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('opens the billing dashboard through openUrl from the usage limit banner', () => {
     render(
       <UsageLimitBanner

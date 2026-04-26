@@ -24,4 +24,10 @@ describe('isComposerInteractionBlocked', () => {
       isComposerInteractionBlocked({ activeThreadId: null, welcomePending: false, rustChat: true })
     ).toBe(false);
   });
+
+  it('blocks composer interaction when rust chat is unavailable', () => {
+    expect(
+      isComposerInteractionBlocked({ activeThreadId: null, welcomePending: false, rustChat: false })
+    ).toBe(true);
+  });
 });

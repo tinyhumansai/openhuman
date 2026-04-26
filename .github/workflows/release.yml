@@ -410,13 +410,10 @@ jobs:
         # come from the static `app/src-tauri/tauri.conf.json`.
         uses: actions/github-script@v7
         env:
-<<<<<<< Updated upstream
-=======
           BASE_URL: ${{ needs.prepare-build.outputs.base_url }}
           UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY || vars.UPDATER_PUBLIC_KEY }}
           UPDATER_ENDPOINT: ${{ vars.UPDATER_ENDPOINT }}
           UPDATER_REPO: tinyhumansai/openhuman
->>>>>>> Stashed changes
           WITH_UPDATER: "true"
         with:
           script: |
@@ -529,10 +526,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
-<<<<<<< Updated upstream
-=======
           WITH_UPDATER: "true"
->>>>>>> Stashed changes
           VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}

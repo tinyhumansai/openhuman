@@ -476,8 +476,6 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       return;
     }
 
-    if (composerInteractionBlocked) return;
-
     const sendingThreadId = selectedThreadId;
     const userMessage: ThreadMessage = {
       id: `msg_${globalThis.crypto.randomUUID()}`,
