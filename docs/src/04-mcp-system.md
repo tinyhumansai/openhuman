@@ -36,7 +36,7 @@ Shared TypeScript types for tools and MCP messages. Keep these aligned with what
 Vitest tests live next to the code under `__tests__/`. Run from the repo root:
 
 ```bash
-pnpm workspace openhuman-app test
+pnpm --filter openhuman-app test
 ```
 
 ## See also

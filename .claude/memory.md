@@ -16,7 +16,7 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **No dynamic imports in `app/src/`** — Use static `import` at file top. Guard call sites with `try/catch` for Tauri/non-Tauri safety. See CLAUDE.md.
 - **Service RPC calls must use Tauri IPC** — Never use `callCoreRpc()` for service operations. Use `invoke('core_rpc_relay', { request: { method, params } })`.
 - **All frontend env vars go through `app/src/utils/config.ts`** — Never read `import.meta.env.VITE_*` directly in other files. Import from config.ts instead. See `.env.example` files for the full list.
-- **Always run checks before commit** — `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm build`, `pnpm tauri dev`. Husky hooks enforce some but run all manually first.
+- **Always run checks before commit** — `pnpm workspace openhuman-app compile`, `pnpm lint`, `pnpm format:check`, `pnpm build`, `pnpm tauri dev`. Husky hooks enforce some but run all manually first.
 - **Stage specific files** — Never `git add -A`. Always `git add <specific-files>`.
 
 ## Workflow

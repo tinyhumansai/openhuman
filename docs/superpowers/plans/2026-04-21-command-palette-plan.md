@@ -149,8 +149,10 @@ git commit -m "plan: remap nav shortcuts to mod+alt+N (Gate 0 CEF capture)"
 
 - [ ] **Step 1: Install cmdk and Radix Dialog**
 
+From the repository root:
+
 ```bash
-cd /Users/jwalinshah/projects/openhuman-frontend/app
+cd app
 pnpm add cmdk@^1 @radix-ui/react-dialog@^1
 ```
 

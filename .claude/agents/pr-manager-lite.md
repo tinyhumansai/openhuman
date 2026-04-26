@@ -108,7 +108,7 @@ Run in parallel where independent. Skip suites unrelated to the diff, but always
 
 ```bash
 # Frontend
-cd app && pnpm typecheck
+cd app && pnpm compile
 cd app && pnpm lint
 cd app && pnpm format       # auto-fix
 cd app && pnpm test:unit

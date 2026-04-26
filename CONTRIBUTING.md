@@ -26,7 +26,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (LTS) and [Yarn](https://pnpmpkg.com/)
+- [Node.js](https://nodejs.org/) (LTS) and [pnpm](https://pnpmpkg.com/)
 - [Rust](https://rustup.rs/) (for Tauri and the Rust backend)
 - Platform-specific tools for the desktop targets you care about
 
@@ -113,7 +113,7 @@ Maintainers will review and may request changes. Once approved, your PR will be 
 - **Imports**: Use static `import`/`import type` at the top of the file. No dynamic `import()` for app code; use try/catch around Tauri API calls in non-Tauri environments instead.
 - **Code style**: ESLint and Prettier are authoritative. Use type-only imports where appropriate and consolidate imports from the same module.
 - **Telegram IDs**: Use the `big-integer` library; do not rely on native JavaScript numbers for Telegram IDs.
-- **Tauri**: Commands are in Rust under `app/src-tauri`; frontend uses `invoke()` from `@tauri-apps/api/core`. Handle missing `window.__TAURI__` where the app can run outside Tauri. Install JS deps from the repo root (`pnpm install`) so the `app` workspace is linked; most scripts are also available as `pnpm <script>` from the root.
+- **Tauri**: Commands are in Rust under `app/src-tauri`; frontend uses `invoke()` from `@tauri-apps/api/core`. Use the `isTauri()` helper (from `@tauri-apps/api/core`) or wrap `invoke()` calls in try/catch to handle non-Tauri environments safely—avoid checking `window.__TAURI__` directly at module load time. Install JS deps from the repo root (`pnpm install`) so the `app` workspace is linked; most scripts are also available as `pnpm <script>` from the root.
 - **Socket events**: Behavior exists in both the TypeScript frontend and the Rust backend. Any new socket event or protocol change must be implemented in both places.
 - **Skills**: Follow the V8 runtime and skill manifest rules; respect platform compatibility and the documented bridge/API surface.
 
