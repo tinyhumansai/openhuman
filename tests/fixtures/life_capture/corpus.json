@@ -243,7 +243,11 @@
       "must_contain_in_top": 3,
       "must_contain": ["phoenix-postmortem-01"],
       "must_not_contain_in_top": 3,
-      "must_not_contain": ["phoenix-weather-noise-01"]
+      "must_not_contain": ["phoenix-weather-noise-01"],
+      "relevant": [
+        { "ext_id": "phoenix-postmortem-01", "grade": 3 },
+        { "ext_id": "phoenix-retro-slack-01", "grade": 2 }
+      ]
     },
     {
       "id": "q-kw-02",
@@ -251,7 +255,11 @@
       "kind": "keyword",
       "k": 5,
       "must_contain_in_top": 1,
-      "must_contain": ["tokyo-hotel-01"]
+      "must_contain": ["tokyo-hotel-01"],
+      "relevant": [
+        { "ext_id": "tokyo-hotel-01", "grade": 3 },
+        { "ext_id": "tokyo-extend-imsg-01", "grade": 1 }
+      ]
     },
     {
       "id": "q-kw-03",
@@ -259,7 +267,10 @@
       "kind": "keyword",
       "k": 5,
       "must_contain_in_top": 1,
-      "must_contain": ["health-labs-01"]
+      "must_contain": ["health-labs-01"],
+      "relevant": [
+        { "ext_id": "health-labs-01", "grade": 3 }
+      ]
     },
     {
       "id": "q-kw-04",
@@ -267,7 +278,10 @@
       "kind": "keyword",
       "k": 5,
       "must_contain_in_top": 1,
-      "must_contain": ["tech-ssl-cal-01"]
+      "must_contain": ["tech-ssl-cal-01"],
+      "relevant": [
+        { "ext_id": "tech-ssl-cal-01", "grade": 3 }
+      ]
     },
     {
       "id": "q-sem-01",
@@ -275,7 +289,14 @@
       "kind": "semantic",
       "k": 5,
       "must_contain_in_top": 5,
-      "must_contain": ["tokyo-itinerary-01"]
+      "must_contain": ["tokyo-itinerary-01"],
+      "relevant": [
+        { "ext_id": "tokyo-itinerary-01", "grade": 3 },
+        { "ext_id": "tokyo-hotel-01", "grade": 2 },
+        { "ext_id": "tokyo-flight-01", "grade": 2 },
+        { "ext_id": "tokyo-visa-cal-01", "grade": 2 },
+        { "ext_id": "tokyo-extend-imsg-01", "grade": 1 }
+      ]
     },
     {
       "id": "q-sem-02",
@@ -283,7 +304,10 @@
       "kind": "semantic",
       "k": 5,
       "must_contain_in_top": 3,
-      "must_contain": ["health-dentist-cal-01"]
+      "must_contain": ["health-dentist-cal-01"],
+      "relevant": [
+        { "ext_id": "health-dentist-cal-01", "grade": 3 }
+      ]
     },
     {
       "id": "q-sem-03",
@@ -291,7 +315,11 @@
       "kind": "semantic",
       "k": 5,
       "must_contain_in_top": 5,
-      "must_contain": ["phoenix-retro-slack-01"]
+      "must_contain": ["phoenix-retro-slack-01"],
+      "relevant": [
+        { "ext_id": "phoenix-retro-slack-01", "grade": 3 },
+        { "ext_id": "phoenix-postmortem-01", "grade": 2 }
+      ]
     },
     {
       "id": "q-mix-01",
@@ -299,7 +327,10 @@
       "kind": "mixed",
       "k": 5,
       "must_contain_in_top": 2,
-      "must_contain": ["phoenix-budget-01"]
+      "must_contain": ["phoenix-budget-01"],
+      "relevant": [
+        { "ext_id": "phoenix-budget-01", "grade": 3 }
+      ]
     },
     {
       "id": "q-mix-02",
@@ -307,7 +338,10 @@
       "kind": "mixed",
       "k": 5,
       "must_contain_in_top": 2,
-      "must_contain": ["tokyo-flight-01"]
+      "must_contain": ["tokyo-flight-01"],
+      "relevant": [
+        { "ext_id": "tokyo-flight-01", "grade": 3 }
+      ]
     },
     {
       "id": "q-mix-03",
@@ -315,7 +349,10 @@
       "kind": "mixed",
       "k": 5,
       "must_contain_in_top": 2,
-      "must_contain": ["tech-migration-01"]
+      "must_contain": ["tech-migration-01"],
+      "relevant": [
+        { "ext_id": "tech-migration-01", "grade": 3 }
+      ]
     },
     {
       "id": "q-src-01",

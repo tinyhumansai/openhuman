@@ -66,17 +66,18 @@ struct FixtureQuery {
     #[allow(dead_code)]
     #[serde(default)]
     pending_reason: Option<String>,
-    // Reserved for future recall@k / MRR / nDCG scoring. Unused today.
-    #[allow(dead_code)]
+    /// Graded relevance labels used by the recall@k / MRR aggregator.
+    /// Empty `relevant` => the query is excluded from those metrics
+    /// (e.g. pure negative-assertion queries like q-neg-01).
     #[serde(default)]
     relevant: Vec<RelevantDoc>,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct RelevantDoc {
     ext_id: String,
     #[serde(default = "default_grade")]
+    #[allow(dead_code)]
     grade: u8,
 }
 
@@ -245,6 +246,7 @@ async fn retrieval_eval_against_fixture_corpus() -> Result<()> {
     // Run every query, collect failures, report them together.
     let mut failures: Vec<String> = Vec::new();
     let mut pending: Vec<String> = Vec::new();
+    let mut metrics: Vec<QueryMetrics> = Vec::new();
     for q in &corpus.queries {
         if q.pending {
             pending.push(q.id.clone());
@@ -270,6 +272,10 @@ async fn retrieval_eval_against_fixture_corpus() -> Result<()> {
                 failures.push(e.to_string());
             }
         }
+
+        if !q.relevant.is_empty() {
+            metrics.push(score_query(q, &hits_ext));
+        }
     }
 
     if !pending.is_empty() {
@@ -280,6 +286,7 @@ async fn retrieval_eval_against_fixture_corpus() -> Result<()> {
             pending.join(", ")
         );
     }
+    print_metrics_summary(&metrics);
     if !failures.is_empty() {
         return Err(anyhow!(
             "{} of {} queries failed:\n  - {}",
@@ -289,6 +296,102 @@ async fn retrieval_eval_against_fixture_corpus() -> Result<()> {
         ));
     }
     Ok(())
+}
+
+// ─── Recall@k + MRR aggregator ──────────────────────────────────────────
+//
+// `score_query` computes per-query recall@1/3/5 and MRR against the graded
+// `relevant` labels in the fixture. Grades are not used today (binary
+// relevance), but the field is kept so we can graduate to nDCG without a
+// fixture rewrite.
+
+#[derive(Debug, Clone)]
+struct QueryMetrics {
+    id: String,
+    kind: QueryKind,
+    recall_at_1: f64,
+    recall_at_3: f64,
+    recall_at_5: f64,
+    mrr: f64,
+}
+
+fn score_query(q: &FixtureQuery, hits_ext: &[String]) -> QueryMetrics {
+    let relevant: std::collections::HashSet<&str> =
+        q.relevant.iter().map(|r| r.ext_id.as_str()).collect();
+    let total = relevant.len() as f64;
+    let found_at = |k: usize| -> f64 {
+        let n = k.min(hits_ext.len());
+        hits_ext[..n]
+            .iter()
+            .filter(|h| relevant.contains(h.as_str()))
+            .count() as f64
+            / total
+    };
+    let mrr = hits_ext
+        .iter()
+        .position(|h| relevant.contains(h.as_str()))
+        .map(|pos| 1.0 / (pos as f64 + 1.0))
+        .unwrap_or(0.0);
+    QueryMetrics {
+        id: q.id.clone(),
+        kind: q.kind,
+        recall_at_1: found_at(1),
+        recall_at_3: found_at(3),
+        recall_at_5: found_at(5),
+        mrr,
+    }
+}
+
+fn print_metrics_summary(metrics: &[QueryMetrics]) {
+    if metrics.is_empty() {
+        eprintln!("[retrieval_eval] no queries had `relevant` labels — skipping recall/MRR");
+        return;
+    }
+    eprintln!("\n[retrieval_eval] per-query metrics ({}q):", metrics.len());
+    eprintln!(
+        "  {:<12} {:<8} {:>6} {:>6} {:>6} {:>6}",
+        "id", "kind", "R@1", "R@3", "R@5", "MRR"
+    );
+    for m in metrics {
+        eprintln!(
+            "  {:<12} {:<8} {:>6.2} {:>6.2} {:>6.2} {:>6.2}",
+            m.id,
+            format!("{:?}", m.kind).to_lowercase(),
+            m.recall_at_1,
+            m.recall_at_3,
+            m.recall_at_5,
+            m.mrr,
+        );
+    }
+    let n = metrics.len() as f64;
+    let avg = |get: fn(&QueryMetrics) -> f64| metrics.iter().map(get).sum::<f64>() / n;
+    eprintln!(
+        "  {:<12} {:<8} {:>6.2} {:>6.2} {:>6.2} {:>6.2}",
+        "MEAN",
+        "",
+        avg(|m| m.recall_at_1),
+        avg(|m| m.recall_at_3),
+        avg(|m| m.recall_at_5),
+        avg(|m| m.mrr),
+    );
+    // Per-kind breakdown
+    for kind in [QueryKind::Keyword, QueryKind::Semantic, QueryKind::Mixed] {
+        let subset: Vec<&QueryMetrics> = metrics.iter().filter(|m| m.kind == kind).collect();
+        if subset.is_empty() {
+            continue;
+        }
+        let kn = subset.len() as f64;
+        let kavg = |get: fn(&QueryMetrics) -> f64| subset.iter().map(|m| get(*m)).sum::<f64>() / kn;
+        eprintln!(
+            "  {:<12} {:<8} {:>6.2} {:>6.2} {:>6.2} {:>6.2}",
+            format!("MEAN-{:?}", kind).to_lowercase(),
+            "",
+            kavg(|m| m.recall_at_1),
+            kavg(|m| m.recall_at_3),
+            kavg(|m| m.recall_at_5),
+            kavg(|m| m.mrr),
+        );
+    }
 }
 
 // ─── Sanity tests for the toy embedder ──────────────────────────────────
