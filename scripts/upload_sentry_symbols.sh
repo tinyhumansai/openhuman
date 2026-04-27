@@ -14,7 +14,12 @@
 #   SENTRY_PROJECT     - Sentry project name (required)
 #
 # Optional environment variables:
-#   SENTRY_VERSION     - Release version (defaults to: openhuman@{version})
+#   SENTRY_RELEASE     - Canonical release name (defaults to: openhuman@{version}).
+#                        Pass openhuman@<version>+<short_sha> in CI so the
+#                        release this script creates/finalizes matches the
+#                        tag baked into frontend + Rust core events.
+#   SENTRY_ENVIRONMENT - If set, a deploy marker is created for this env
+#                        (e.g. "staging", "production") after finalize.
 #   DEBUG_SYMBOLS_PATH - Path to debug symbols (defaults to: target/release/deps)
 # =============================================================================
 
@@ -169,7 +174,11 @@ upload_symbols() {
         exit 1
     fi
 
-    local release_name="openhuman@${version}"
+    # Honor SENTRY_RELEASE so this matches the canonical tag the frontend
+    # (@sentry/vite-plugin) and Rust core (sentry::init) emit on events —
+    # `openhuman@<version>+<short_sha>`. Falling back to plain
+    # `openhuman@<version>` keeps local invocations working.
+    local release_name="${SENTRY_RELEASE:-openhuman@${version}}"
 
     log_info "Uploading Rust debug symbols for release: ${release_name}"
     log_info "Symbols path: ${symbols_path}"
@@ -182,10 +191,15 @@ upload_symbols() {
 
     # Upload debug symbols
     log_info "Uploading debug symbols..."
+    # --include-sources bundles referenced Rust source files into a .src.zip
+    # that ships alongside the DIFs. Without it, Sentry can symbolicate frame
+    # addresses to function names but cannot render surrounding source lines
+    # for panics — which is what issue #405's comment is asking for.
     local upload_args=(
         "upload-dif"
         "--org" "${SENTRY_ORG}"
         "--project" "${SENTRY_PROJECT}"
+        "--include-sources"
         "--log-level=warning"
     )
 
@@ -205,6 +219,17 @@ upload_symbols() {
     # Finalize the release
     log_info "Finalizing release..."
     sentry-cli releases finalize "${release_name}"
+
+    # Record a deploy marker for this environment so the Sentry release page
+    # links commits → deploys (issue #405 acceptance criterion). Idempotent
+    # for the same (release, env) pair.
+    if [[ -n "${SENTRY_ENVIRONMENT:-}" ]]; then
+        log_info "Recording deploy marker for environment: ${SENTRY_ENVIRONMENT}"
+        sentry-cli releases deploys "${release_name}" new \
+            -e "${SENTRY_ENVIRONMENT}" || {
+            log_warn "Failed to record deploy marker (non-fatal)"
+        }
+    fi
 
     log_info "Successfully uploaded symbols for ${release_name}"
 }

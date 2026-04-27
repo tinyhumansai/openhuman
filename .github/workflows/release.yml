@@ -551,6 +551,12 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          # Match the canonical release tag the frontend build step (above)
+          # and the Rust core's sentry::init both emit, so DIF + .src.zip
+          # artifacts attach to the same Sentry release as the events.
+          SENTRY_RELEASE: openhuman@${{ needs.prepare-build.outputs.version }}+${{ needs.prepare-build.outputs.sha }}
+          # Drives the deploy marker created after release finalize.
+          SENTRY_ENVIRONMENT: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
           VERSION: ${{ needs.prepare-build.outputs.version }}
           MATRIX_TARGET: ${{ matrix.settings.target }}
         run: |
