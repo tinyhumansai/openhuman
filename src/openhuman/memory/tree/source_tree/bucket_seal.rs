@@ -26,12 +26,17 @@
 //! summariser does no real I/O; when a networked summariser lands, wrap
 //! DB calls in `tokio::task::spawn_blocking` to keep the runtime healthy.
 
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::Transaction;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
+use crate::openhuman::memory::tree::score::extract::EntityExtractor;
+use crate::openhuman::memory::tree::score::resolver::canonicalise;
 use crate::openhuman::memory::tree::source_tree::registry::new_summary_id;
 use crate::openhuman::memory::tree::source_tree::store;
 use crate::openhuman::memory::tree::source_tree::summariser::{
@@ -47,6 +52,88 @@ use crate::openhuman::memory::tree::store::with_connection;
 /// realistic source.
 const MAX_CASCADE_DEPTH: u32 = 32;
 
+/// How a sealed summary node's `entities` and `topics` fields get populated.
+///
+/// Each tree kind has different correct semantics:
+/// - **Source** trees use [`LabelStrategy::ExtractFromContent`] so the
+///   summariser's freshly-synthesised text gets its own pass through an
+///   extractor. Captures emergent themes that no individual leaf expressed.
+/// - **Global** trees use [`LabelStrategy::UnionFromChildren`] — their
+///   inputs are already-labeled source-tree summaries; union preserves
+///   labels for time-based retrieval ("days that mentioned Alice")
+///   without an LLM call.
+/// - **Topic** trees use [`LabelStrategy::Empty`] — their scope already
+///   pins the dominant theme; inheriting auxiliary entities would
+///   cross-pollinate unrelated topic trees and noise the entity index.
+#[derive(Clone)]
+pub enum LabelStrategy {
+    /// Run the extractor on the new summary's content; canonicalise the
+    /// result into `entities` (canonical_ids) and `topics` (labels).
+    ExtractFromContent(Arc<dyn EntityExtractor>),
+    /// Dedup-merge each input's `entities` and `topics` into the parent.
+    UnionFromChildren,
+    /// Leave both fields empty regardless of inputs.
+    Empty,
+}
+
+impl std::fmt::Debug for LabelStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ExtractFromContent(ex) => write!(f, "ExtractFromContent({})", ex.name()),
+            Self::UnionFromChildren => f.write_str("UnionFromChildren"),
+            Self::Empty => f.write_str("Empty"),
+        }
+    }
+}
+
+/// Resolve `entities` and `topics` for a freshly-summarised node according
+/// to the chosen strategy. Errors propagate from the extractor (when used).
+async fn resolve_labels(
+    strategy: &LabelStrategy,
+    inputs: &[SummaryInput],
+    summary_content: &str,
+) -> Result<(Vec<String>, Vec<String>)> {
+    match strategy {
+        LabelStrategy::ExtractFromContent(extractor) => {
+            let extracted = extractor
+                .extract(summary_content)
+                .await
+                .context("seal-time extractor failed")?;
+            let canonical = canonicalise(&extracted);
+            let mut entities: Vec<String> = canonical
+                .into_iter()
+                .map(|c| c.canonical_id)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            entities.sort();
+            let mut topics: Vec<String> = extracted
+                .topics
+                .into_iter()
+                .map(|t| t.label)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            topics.sort();
+            Ok((entities, topics))
+        }
+        LabelStrategy::UnionFromChildren => {
+            let mut entities: BTreeSet<String> = BTreeSet::new();
+            let mut topics: BTreeSet<String> = BTreeSet::new();
+            for inp in inputs {
+                for e in &inp.entities {
+                    entities.insert(e.clone());
+                }
+                for t in &inp.topics {
+                    topics.insert(t.clone());
+                }
+            }
+            Ok((entities.into_iter().collect(), topics.into_iter().collect()))
+        }
+        LabelStrategy::Empty => Ok((Vec::new(), Vec::new())),
+    }
+}
+
 /// A single leaf being appended to an L0 buffer.
 #[derive(Clone, Debug)]
 pub struct LeafRef {
@@ -61,17 +148,22 @@ pub struct LeafRef {
 
 /// Append a leaf to the source tree for `tree`, sealing buffers as they
 /// fill. Returns the ids of any summaries that sealed during this call.
+///
+/// `strategy` controls how each sealed summary's `entities` and `topics`
+/// are populated — see [`LabelStrategy`].
 pub async fn append_leaf(
     config: &Config,
     tree: &Tree,
     leaf: &LeafRef,
     summariser: &dyn Summariser,
+    strategy: &LabelStrategy,
 ) -> Result<Vec<String>> {
     log::debug!(
-        "[source_tree::bucket_seal] append_leaf tree_id={} leaf_id={} tokens={}",
+        "[source_tree::bucket_seal] append_leaf tree_id={} leaf_id={} tokens={} strategy={:?}",
         tree.id,
         leaf.chunk_id,
-        leaf.token_count
+        leaf.token_count,
+        strategy
     );
 
     // 1. Push leaf into L0 buffer (transactional).
@@ -85,7 +177,24 @@ pub async fn append_leaf(
     )?;
 
     // 2. Cascade seals upward until a level stays under budget.
-    cascade_seals(config, tree, summariser).await
+    cascade_seals(config, tree, summariser, strategy).await
+}
+
+/// Queue-oriented variant of [`append_leaf`].
+///
+/// This only appends the leaf to the L0 buffer and returns whether the
+/// caller should enqueue a follow-up seal job for level 0.
+pub fn append_leaf_deferred(config: &Config, tree: &Tree, leaf: &LeafRef) -> Result<bool> {
+    append_to_buffer(
+        config,
+        &tree.id,
+        0,
+        &leaf.chunk_id,
+        leaf.token_count as i64,
+        leaf.timestamp,
+    )?;
+    let buf = store::get_buffer(config, &tree.id, 0)?;
+    Ok(should_seal(&buf))
 }
 
 /// Transactionally append a single item to `(tree_id, level)`'s buffer.
@@ -127,20 +236,25 @@ async fn cascade_seals(
     config: &Config,
     tree: &Tree,
     summariser: &dyn Summariser,
+    strategy: &LabelStrategy,
 ) -> Result<Vec<String>> {
-    cascade_all_from(config, tree, 0, summariser, None).await
+    cascade_all_from(config, tree, 0, summariser, None, strategy).await
 }
 
 /// Seal buffers starting at `start_level` and cascade upward. When
 /// `force_now` is `Some`, the buffer at `start_level` is sealed regardless
 /// of token budget (used by time-based flush). Upper levels are sealed
 /// only when they cross the budget.
+///
+/// `strategy` is forwarded to every sealed level — same semantics as
+/// [`append_leaf`].
 pub async fn cascade_all_from(
     config: &Config,
     tree: &Tree,
     start_level: u32,
     summariser: &dyn Summariser,
     force_now: Option<DateTime<Utc>>,
+    strategy: &LabelStrategy,
 ) -> Result<Vec<String>> {
     let mut sealed_ids: Vec<String> = Vec::new();
     let mut level: u32 = start_level;
@@ -169,7 +283,9 @@ pub async fn cascade_all_from(
             break;
         }
 
-        let summary_id = seal_one_level(config, tree, &buf, summariser).await?;
+        // Sync cascade — drives the level walk itself; doesn't need the
+        // queue follow-ups (we'll hit `seal_one_level` again next iter).
+        let summary_id = seal_one_level(config, tree, &buf, summariser, strategy, false).await?;
         sealed_ids.push(summary_id);
         level += 1;
     }
@@ -185,7 +301,7 @@ pub async fn cascade_all_from(
 /// summarisers that emit at the full token budget (e.g. the inert
 /// fallback) collapse the cascade into a 1:1:1 chain instead of a real
 /// tree.
-fn should_seal(buf: &Buffer) -> bool {
+pub(crate) fn should_seal(buf: &Buffer) -> bool {
     if buf.is_empty() {
         return false;
     }
@@ -198,11 +314,31 @@ fn should_seal(buf: &Buffer) -> bool {
 
 /// Seal `buf` at `level` into one summary at `level + 1`. Returns the new
 /// summary id.
-async fn seal_one_level(
+///
+/// `strategy` decides how `entities` and `topics` get populated on the new
+/// summary node — see [`LabelStrategy`].
+///
+/// When `enqueue_follow_ups` is `true`, the function additionally inserts
+/// follow-up job rows **inside the same transaction** that commits the
+/// seal:
+/// - `seal { tree_id, level: parent_level }` if the parent buffer's gate
+///   is now met (parent-cascade enqueue)
+/// - `topic_route { NodeRef::Summary { summary_id } }` for source trees
+///   (so summary-level entities feed the topic-tree spawn pipeline)
+///
+/// Atomic enqueue eliminates the crash window where a seal commits but
+/// the post-commit follow-up enqueues are silently lost on a worker
+/// crash. The async-pipeline handler (`handle_seal`) passes `true`. The
+/// synchronous in-process cascade caller ([`cascade_all_from`]) passes
+/// `false` because it drives the cascade itself and topic_route isn't
+/// part of the test/flush sync path.
+pub(crate) async fn seal_one_level(
     config: &Config,
     tree: &Tree,
     buf: &Buffer,
     summariser: &dyn Summariser,
+    strategy: &LabelStrategy,
+    enqueue_follow_ups: bool,
 ) -> Result<String> {
     let level = buf.level;
     let target_level = level + 1;
@@ -245,6 +381,12 @@ async fn seal_one_level(
         .summarise(&inputs, &ctx)
         .await
         .context("summariser failed during seal")?;
+
+    // Resolve labels (entities/topics) for the new summary node according
+    // to the chosen strategy. Done before the write tx so an extractor
+    // failure aborts the seal cleanly — same shape as the embedder guard
+    // below.
+    let (node_entities, node_topics) = resolve_labels(strategy, &inputs, &output.content).await?;
 
     // Phase 4 (#710): embed the summary BEFORE opening the write tx so an
     // embedder failure aborts the seal cleanly — nothing is persisted,
@@ -297,8 +439,8 @@ async fn seal_one_level(
         child_ids: buf.item_ids.clone(),
         content: output.content,
         token_count: output.token_count,
-        entities: output.entities,
-        topics: output.topics,
+        entities: node_entities,
+        topics: node_topics,
         time_range_start,
         time_range_end,
         score,
@@ -308,12 +450,15 @@ async fn seal_one_level(
     };
 
     // Single write transaction: insert summary, clear this buffer, append
-    // summary id to parent buffer, bump tree max_level/root if needed.
+    // summary id to parent buffer, bump tree max_level/root if needed,
+    // and (when `enqueue_follow_ups`) atomically enqueue parent-seal +
+    // topic_route follow-ups so they can never desync from the commit.
     // Re-read `max_level` from inside the tx so cascading seals within
     // one call see the updated value from earlier levels.
     let summary_id_for_closure = summary_id.clone();
     let target_level_for_closure = target_level;
     let tree_id = tree.id.clone();
+    let tree_kind = tree.kind;
     with_connection(config, move |conn| {
         let tx = conn.unchecked_transaction()?;
 
@@ -374,6 +519,43 @@ async fn seal_one_level(
             None => Some(time_range_start),
         };
         store::upsert_buffer_tx(&tx, &parent)?;
+
+        // Atomic follow-up enqueues. Done INSIDE this tx — if the commit
+        // rolls back, the queue rows go with it; if it succeeds, the
+        // rows are durably visible to the worker pool. Eliminates the
+        // crash window where the seal commits but post-commit enqueues
+        // are lost.
+        if enqueue_follow_ups {
+            // Parent-cascade: if the new summary made the parent buffer
+            // cross its gate, enqueue the next level's seal. Dedupe key
+            // `seal:{tree_id}:{parent_level}` prevents duplicates if a
+            // parallel path already queued it.
+            if should_seal(&parent) {
+                use crate::openhuman::memory::tree::jobs::store::enqueue_tx as enqueue_job_tx;
+                use crate::openhuman::memory::tree::jobs::types::{NewJob, SealPayload};
+                let parent_seal = SealPayload {
+                    tree_id: tree_id.clone(),
+                    level: target_level_for_closure,
+                    force_now_ms: None,
+                };
+                enqueue_job_tx(&tx, &NewJob::seal(&parent_seal)?)?;
+            }
+            // Source-tree summary routing: feed the new summary's
+            // entities back into the topic-tree spawn pipeline. Topic
+            // and global trees are sinks — no fan-out from their seals.
+            if matches!(tree_kind, TreeKind::Source) {
+                use crate::openhuman::memory::tree::jobs::store::enqueue_tx as enqueue_job_tx;
+                use crate::openhuman::memory::tree::jobs::types::{
+                    NewJob, NodeRef, TopicRoutePayload,
+                };
+                let route = TopicRoutePayload {
+                    node: NodeRef::Summary {
+                        summary_id: summary_id_for_closure.clone(),
+                    },
+                };
+                enqueue_job_tx(&tx, &NewJob::topic_route(&route)?)?;
+            }
+        }
 
         // Update tree root / max_level if we just climbed.
         if target_level_for_closure > current_max {
@@ -447,7 +629,7 @@ fn hydrate_inputs(config: &Config, level: u32, item_ids: &[String]) -> Result<Ve
 }
 
 fn hydrate_leaf_inputs(config: &Config, chunk_ids: &[String]) -> Result<Vec<SummaryInput>> {
-    use crate::openhuman::memory::tree::score::store::get_score;
+    use crate::openhuman::memory::tree::score::store::{get_score, list_entity_ids_for_node};
     use crate::openhuman::memory::tree::store::get_chunk;
 
     let mut out: Vec<SummaryInput> = Vec::with_capacity(chunk_ids.len());
@@ -461,17 +643,19 @@ fn hydrate_leaf_inputs(config: &Config, chunk_ids: &[String]) -> Result<Vec<Summ
                 continue;
             }
         };
-        let score = get_score(config, id)?;
-        let (score_value, entities, topics) = match &score {
-            Some(row) => (row.total, Vec::new(), chunk.metadata.tags.clone()),
-            None => (0.0, Vec::new(), chunk.metadata.tags.clone()),
-        };
+        let score_value = get_score(config, id)?.map(|row| row.total).unwrap_or(0.0);
+        // Pull canonical entity ids from the inverted index — that's the
+        // authoritative source for "what entities are attached to this
+        // chunk." Topics live on the chunk's metadata tags.
+        // [`LabelStrategy::UnionFromChildren`] reads these fields off
+        // each `SummaryInput` to roll labels up the tree.
+        let entities = list_entity_ids_for_node(config, id).unwrap_or_default();
         out.push(SummaryInput {
             id: chunk.id.clone(),
             content: chunk.content.clone(),
             token_count: chunk.token_count,
             entities,
-            topics,
+            topics: chunk.metadata.tags.clone(),
             time_range_start: chunk.metadata.time_range.0,
             time_range_end: chunk.metadata.time_range.1,
             score: score_value,

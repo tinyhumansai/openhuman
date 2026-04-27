@@ -159,7 +159,9 @@ fn assemble_recap(covering: &[&SummaryNode], level: u32) -> RecapOutput {
 mod tests {
     use super::*;
     use crate::openhuman::memory::tree::global_tree::digest::{end_of_day_digest, DigestOutcome};
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf, LeafRef};
+    use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+        append_leaf, LabelStrategy, LeafRef,
+    };
     use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
     use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
@@ -247,6 +249,7 @@ mod tests {
                 score: 0.5,
             },
             &summariser,
+            &LabelStrategy::Empty,
         )
         .await
         .unwrap();
@@ -263,6 +266,7 @@ mod tests {
                 score: 0.5,
             },
             &summariser,
+            &LabelStrategy::Empty,
         )
         .await
         .unwrap();

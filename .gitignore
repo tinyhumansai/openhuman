@@ -66,6 +66,7 @@ tauri.key
 tauri.key.pub
 /target/
 src-tauri/target/
+.target-codex/
 
 workflow
 .fastembed_cache

@@ -336,6 +336,22 @@ pub async fn score_chunks(chunks: &[Chunk], cfg: &ScoringConfig) -> Result<Vec<S
     try_join_all(chunks.iter().map(|chunk| score_chunk(chunk, cfg))).await
 }
 
+/// Cheap-only batch scoring path used by the async queue ingest pipeline.
+///
+/// This preserves the same thresholds and admission gate as [`score_chunks`]
+/// but guarantees no LLM extractor is consulted on the ingest hot path.
+pub async fn score_chunks_fast(chunks: &[Chunk], cfg: &ScoringConfig) -> Result<Vec<ScoreResult>> {
+    let fast_cfg = ScoringConfig {
+        extractor: cfg.extractor.clone(),
+        weights: cfg.weights.clone(),
+        drop_threshold: cfg.drop_threshold,
+        llm_extractor: None,
+        definite_keep_threshold: cfg.definite_keep_threshold,
+        definite_drop_threshold: cfg.definite_drop_threshold,
+    };
+    score_chunks(chunks, &fast_cfg).await
+}
+
 // ── Persistence helpers used by the ingest orchestrator ─────────────────
 
 /// Persist the score row + entity-index rows for one kept chunk.

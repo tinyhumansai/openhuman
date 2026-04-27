@@ -11,6 +11,8 @@
 //! `mem_tree_summaries` on both sides (children and output), since even L0
 //! is a sealed summary node rather than a raw chunk.
 
+use std::collections::BTreeSet;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
@@ -186,6 +188,26 @@ async fn seal_one_level(
         .await
         .context("summariser failed during global seal")?;
 
+    // Global-tree summaries inherit their entity/topic labels via union
+    // from their already-labeled inputs (source-tree summaries carry
+    // labels from the source-tree seal extractor; global L1+ inputs
+    // carry labels from this same union path one level down). We
+    // deliberately do NOT run an extractor on the daily/weekly/monthly
+    // synthesis: the inputs already cover what the summary represents,
+    // and global is a sink — no second-pass labeling earns its keep.
+    let mut entities_set: BTreeSet<String> = BTreeSet::new();
+    let mut topics_set: BTreeSet<String> = BTreeSet::new();
+    for inp in &inputs {
+        for e in &inp.entities {
+            entities_set.insert(e.clone());
+        }
+        for t in &inp.topics {
+            topics_set.insert(t.clone());
+        }
+    }
+    let node_entities: Vec<String> = entities_set.into_iter().collect();
+    let node_topics: Vec<String> = topics_set.into_iter().collect();
+
     // Phase 4 (#710): embed BEFORE opening the write tx so an embedder
     // error aborts the cascade without half-committing the summary.
     let embedder =
@@ -208,8 +230,8 @@ async fn seal_one_level(
         child_ids: buf.item_ids.clone(),
         content: output.content,
         token_count: output.token_count,
-        entities: output.entities,
-        topics: output.topics,
+        entities: node_entities,
+        topics: node_topics,
         time_range_start,
         time_range_end,
         score,

@@ -186,7 +186,11 @@ mod tests {
     }
 
     fn seed_leaf_for_entity(cfg: &Config, entity_id: &str, source_tree: &str, seq: u32) {
-        let ts_ms = 1_700_000_000_000 + (seq as i64) * 1_000;
+        // Use a "now-anchored" timestamp so backfill's 30-day window
+        // (see topic_tree::backfill::BACKFILL_WINDOW_DAYS) always
+        // includes these seeded leaves. Spread by seq to keep ordering
+        // deterministic.
+        let ts_ms = Utc::now().timestamp_millis() - (seq as i64) * 1_000;
         let ts = Utc.timestamp_millis_opt(ts_ms).unwrap();
         let c = Chunk {
             id: chunk_id(SourceKind::Chat, source_tree, seq, "test-content"),

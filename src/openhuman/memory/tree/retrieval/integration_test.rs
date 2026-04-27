@@ -160,11 +160,11 @@ async fn topic_entity_surfaces_after_ingest() {
 // ── Phase 4 (#710): embedding + semantic rerank tests ───────────────────
 
 /// Ingest with an inert embedder must populate every kept chunk's
-/// `embedding` column. This guards against regressions where the embed
-/// step is silently skipped (e.g. future refactors threading embeddings
-/// through a different code path).
+/// `embedding` column. Embeddings are written by the async `extract_chunk`
+/// handler, so the test drains the queue before inspecting.
 #[tokio::test]
 async fn ingest_populates_chunk_embeddings() {
+    use crate::openhuman::memory::tree::jobs::drain_until_idle;
     use crate::openhuman::memory::tree::score::embed::EMBEDDING_DIM;
     use crate::openhuman::memory::tree::store::get_chunk_embedding;
 
@@ -172,7 +172,11 @@ async fn ingest_populates_chunk_embeddings() {
     let out = ingest_chat(&cfg, "slack:#eng", "alice", vec![], chat_about_phoenix(0))
         .await
         .unwrap();
-    assert!(out.chunks_written >= 1, "expected at least one kept chunk");
+    assert!(
+        out.chunks_written >= 1,
+        "expected at least one persisted chunk"
+    );
+    drain_until_idle(&cfg).await.unwrap();
     for id in &out.chunk_ids {
         let emb = get_chunk_embedding(&cfg, id).unwrap();
         let v = emb.unwrap_or_else(|| panic!("embedding missing for chunk_id={id}"));
@@ -189,7 +193,9 @@ async fn ingest_populates_chunk_embeddings() {
 #[tokio::test]
 async fn seal_populates_summary_embedding() {
     use crate::openhuman::memory::tree::score::embed::EMBEDDING_DIM;
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf, LeafRef};
+    use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+        append_leaf, LabelStrategy, LeafRef,
+    };
     use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
     use crate::openhuman::memory::tree::source_tree::store as src_store;
     use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
@@ -230,12 +236,24 @@ async fn seal_populates_summary_embedding() {
         topics: vec![],
         score: 0.5,
     };
-    append_leaf(&cfg, &tree, &leaf_of(&c1), &summariser)
-        .await
-        .unwrap();
-    let sealed = append_leaf(&cfg, &tree, &leaf_of(&c2), &summariser)
-        .await
-        .unwrap();
+    append_leaf(
+        &cfg,
+        &tree,
+        &leaf_of(&c1),
+        &summariser,
+        &LabelStrategy::Empty,
+    )
+    .await
+    .unwrap();
+    let sealed = append_leaf(
+        &cfg,
+        &tree,
+        &leaf_of(&c2),
+        &summariser,
+        &LabelStrategy::Empty,
+    )
+    .await
+    .unwrap();
     assert_eq!(sealed.len(), 1, "expected one seal at the budget crossing");
 
     let summary = src_store::get_summary(&cfg, &sealed[0]).unwrap().unwrap();

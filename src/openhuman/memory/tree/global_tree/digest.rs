@@ -19,6 +19,8 @@
 //! - Idempotency: if an L0 daily node already exists for the target day,
 //!   return `DigestOutcome::Skipped` rather than emitting a duplicate.
 
+use std::collections::BTreeSet;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use rusqlite::OptionalExtension;
@@ -154,6 +156,25 @@ pub async fn end_of_day_digest(
         .await
         .context("embed daily summary during end_of_day_digest")?;
 
+    // L0 daily node inherits entities/topics by union of contributing
+    // source-tree summaries. Each input was already labeled at source-tree
+    // seal time, so emergent themes don't need another extractor pass
+    // here — global is a sink; union preserves "days that mentioned X"
+    // retrieval without an extra LLM call. See LabelStrategy in
+    // source_tree::bucket_seal for the full design.
+    let mut entities_set: BTreeSet<String> = BTreeSet::new();
+    let mut topics_set: BTreeSet<String> = BTreeSet::new();
+    for inp in &inputs {
+        for e in &inp.entities {
+            entities_set.insert(e.clone());
+        }
+        for t in &inp.topics {
+            topics_set.insert(t.clone());
+        }
+    }
+    let daily_entities: Vec<String> = entities_set.into_iter().collect();
+    let daily_topics: Vec<String> = topics_set.into_iter().collect();
+
     let now = Utc::now();
     let daily_id = new_summary_id(0);
     let daily = SummaryNode {
@@ -165,8 +186,8 @@ pub async fn end_of_day_digest(
         child_ids: inputs.iter().map(|i| i.id.clone()).collect(),
         content: output.content,
         token_count: output.token_count,
-        entities: output.entities,
-        topics: output.topics,
+        entities: daily_entities,
+        topics: daily_topics,
         time_range_start: day_start,
         time_range_end: day_end,
         score,

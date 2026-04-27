@@ -13,7 +13,7 @@ use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::source_tree::bucket_seal::cascade_all_from;
+use crate::openhuman::memory::tree::source_tree::bucket_seal::{cascade_all_from, LabelStrategy};
 use crate::openhuman::memory::tree::source_tree::store;
 use crate::openhuman::memory::tree::source_tree::summariser::Summariser;
 use crate::openhuman::memory::tree::source_tree::types::DEFAULT_FLUSH_AGE_SECS;
@@ -25,6 +25,7 @@ pub async fn flush_stale_buffers(
     config: &Config,
     max_age: Duration,
     summariser: &dyn Summariser,
+    strategy: &LabelStrategy,
 ) -> Result<usize> {
     let now = Utc::now();
     let cutoff = now - max_age;
@@ -48,7 +49,8 @@ pub async fn flush_stale_buffers(
                 continue;
             }
         };
-        let sealed = cascade_all_from(config, &tree, buf.level, summariser, Some(now)).await?;
+        let sealed =
+            cascade_all_from(config, &tree, buf.level, summariser, Some(now), strategy).await?;
         seals += sealed.len();
     }
     Ok(seals)
@@ -58,11 +60,13 @@ pub async fn flush_stale_buffers(
 pub async fn flush_stale_buffers_default(
     config: &Config,
     summariser: &dyn Summariser,
+    strategy: &LabelStrategy,
 ) -> Result<usize> {
     flush_stale_buffers(
         config,
         Duration::seconds(DEFAULT_FLUSH_AGE_SECS),
         summariser,
+        strategy,
     )
     .await
 }
@@ -74,10 +78,11 @@ pub async fn force_flush_tree(
     tree_id: &str,
     summariser: &dyn Summariser,
     now: Option<DateTime<Utc>>,
+    strategy: &LabelStrategy,
 ) -> Result<Vec<String>> {
     let tree = store::get_tree(config, tree_id)?
         .ok_or_else(|| anyhow::anyhow!("no tree with id {tree_id}"))?;
-    cascade_all_from(config, &tree, 0, summariser, now).await
+    cascade_all_from(config, &tree, 0, summariser, now, strategy).await
 }
 
 #[cfg(test)]
@@ -136,12 +141,15 @@ mod tests {
             topics: vec![],
             score: 0.5,
         };
-        append_leaf(&cfg, &tree, &leaf, &summariser).await.unwrap();
-        assert_eq!(store::count_summaries(&cfg, &tree.id).unwrap(), 0);
-
-        let seals = flush_stale_buffers(&cfg, Duration::days(7), &summariser)
+        append_leaf(&cfg, &tree, &leaf, &summariser, &LabelStrategy::Empty)
             .await
             .unwrap();
+        assert_eq!(store::count_summaries(&cfg, &tree.id).unwrap(), 0);
+
+        let seals =
+            flush_stale_buffers(&cfg, Duration::days(7), &summariser, &LabelStrategy::Empty)
+                .await
+                .unwrap();
         assert_eq!(seals, 1);
         assert_eq!(store::count_summaries(&cfg, &tree.id).unwrap(), 1);
 
@@ -183,11 +191,14 @@ mod tests {
             topics: vec![],
             score: 0.5,
         };
-        append_leaf(&cfg, &tree, &leaf, &summariser).await.unwrap();
-
-        let seals = flush_stale_buffers(&cfg, Duration::days(7), &summariser)
+        append_leaf(&cfg, &tree, &leaf, &summariser, &LabelStrategy::Empty)
             .await
             .unwrap();
+
+        let seals =
+            flush_stale_buffers(&cfg, Duration::days(7), &summariser, &LabelStrategy::Empty)
+                .await
+                .unwrap();
         assert_eq!(seals, 0);
         assert_eq!(store::count_summaries(&cfg, &tree.id).unwrap(), 0);
     }

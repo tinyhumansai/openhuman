@@ -21,6 +21,12 @@ const DEFAULT_LIST_LIMIT: usize = 100;
 const MAX_LIST_LIMIT: usize = 10_000;
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
+pub const CHUNK_STATUS_PENDING_EXTRACTION: &str = "pending_extraction";
+pub const CHUNK_STATUS_ADMITTED: &str = "admitted";
+pub const CHUNK_STATUS_BUFFERED: &str = "buffered";
+pub const CHUNK_STATUS_SEALED: &str = "sealed";
+pub const CHUNK_STATUS_DROPPED: &str = "dropped";
+
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
 
@@ -174,6 +180,35 @@ CREATE TABLE IF NOT EXISTS mem_tree_entity_hotness (
 
 CREATE INDEX IF NOT EXISTS idx_mem_tree_entity_hotness_score
     ON mem_tree_entity_hotness(last_hotness);
+
+-- Async job queue for memory-tree work (extract → admit → buffer → seal →
+-- topic-route → daily digest). Producers (ingest, schedulers, handlers)
+-- enqueue rows transactionally; the worker pool claims them via the
+-- `(status, available_at_ms)` index. `dedupe_key` is enforced as unique
+-- only for ready/running rows so a completed job's key can be re-used.
+CREATE TABLE IF NOT EXISTS mem_tree_jobs (
+    id                     TEXT PRIMARY KEY,
+    kind                   TEXT NOT NULL,
+    payload_json           TEXT NOT NULL,
+    dedupe_key             TEXT,
+    status                 TEXT NOT NULL DEFAULT 'ready',
+    attempts               INTEGER NOT NULL DEFAULT 0,
+    max_attempts           INTEGER NOT NULL DEFAULT 5,
+    available_at_ms        INTEGER NOT NULL,
+    locked_until_ms        INTEGER,
+    last_error             TEXT,
+    created_at_ms          INTEGER NOT NULL,
+    started_at_ms          INTEGER,
+    completed_at_ms        INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_tree_jobs_ready
+    ON mem_tree_jobs(status, available_at_ms);
+CREATE INDEX IF NOT EXISTS idx_mem_tree_jobs_kind
+    ON mem_tree_jobs(kind);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_tree_jobs_dedupe_active
+    ON mem_tree_jobs(dedupe_key)
+    WHERE dedupe_key IS NOT NULL AND status IN ('ready', 'running');
 ";
 
 /// Upsert a batch of chunks atomically.
@@ -361,6 +396,70 @@ pub fn count_chunks(config: &Config) -> Result<u64> {
     })
 }
 
+pub fn set_chunk_lifecycle_status(config: &Config, chunk_id: &str, status: &str) -> Result<()> {
+    with_connection(config, |conn| {
+        set_chunk_lifecycle_status_conn(conn, chunk_id, status)
+    })
+}
+
+pub(crate) fn set_chunk_lifecycle_status_tx(
+    tx: &Transaction<'_>,
+    chunk_id: &str,
+    status: &str,
+) -> Result<()> {
+    set_chunk_lifecycle_status_conn(tx, chunk_id, status)
+}
+
+pub fn get_chunk_lifecycle_status(config: &Config, chunk_id: &str) -> Result<Option<String>> {
+    with_connection(config, |conn| {
+        get_chunk_lifecycle_status_conn(conn, chunk_id)
+    })
+}
+
+pub(crate) fn get_chunk_lifecycle_status_tx(
+    tx: &Transaction<'_>,
+    chunk_id: &str,
+) -> Result<Option<String>> {
+    get_chunk_lifecycle_status_conn(tx, chunk_id)
+}
+
+fn get_chunk_lifecycle_status_conn(conn: &Connection, chunk_id: &str) -> Result<Option<String>> {
+    let row = conn
+        .query_row(
+            "SELECT lifecycle_status FROM mem_tree_chunks WHERE id = ?1",
+            params![chunk_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(row)
+}
+
+pub fn count_chunks_by_lifecycle_status(config: &Config, status: &str) -> Result<u64> {
+    with_connection(config, |conn| {
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_chunks WHERE lifecycle_status = ?1",
+            params![status],
+            |r| r.get(0),
+        )?;
+        Ok(n.max(0) as u64)
+    })
+}
+
+fn set_chunk_lifecycle_status_conn(conn: &Connection, chunk_id: &str, status: &str) -> Result<()> {
+    let changed = conn.execute(
+        "UPDATE mem_tree_chunks SET lifecycle_status = ?1 WHERE id = ?2",
+        params![status, chunk_id],
+    )?;
+    if changed == 0 {
+        log::warn!(
+            "[memory_tree::store] lifecycle update affected 0 rows chunk_id={} status={}",
+            chunk_id,
+            status
+        );
+    }
+    Ok(())
+}
+
 fn row_to_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
     let id: String = row.get(0)?;
     let source_kind_s: String = row.get(1)?;
@@ -451,6 +550,21 @@ pub(crate) fn with_connection<T>(
     // legacy summaries from Phases 1-3 read back as None; retrieval
     // tolerates NULL by dropping the row to the bottom of a rerank.
     add_column_if_missing(&conn, "mem_tree_summaries", "embedding", "BLOB")?;
+    // Async-pipeline lifecycle flag. Default 'admitted' so chunks ingested
+    // before the queue migration stay queryable. New writes start at
+    // 'pending_extraction'; the extract handler advances them to 'admitted'
+    // (then 'buffered' / 'sealed') or 'dropped'.
+    add_column_if_missing(
+        &conn,
+        "mem_tree_chunks",
+        "lifecycle_status",
+        "TEXT NOT NULL DEFAULT 'admitted'",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_mem_tree_chunks_lifecycle \
+         ON mem_tree_chunks(lifecycle_status);",
+    )
+    .context("Failed to create mem_tree_chunks lifecycle index")?;
     f(&conn)
 }
 

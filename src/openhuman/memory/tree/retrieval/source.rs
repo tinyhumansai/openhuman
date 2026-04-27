@@ -293,7 +293,9 @@ fn filter_by_window(hits: Vec<RetrievalHit>, window_days: u32) -> Vec<RetrievalH
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf, LeafRef};
+    use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+        append_leaf, LabelStrategy, LeafRef,
+    };
     use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
     use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
@@ -346,6 +348,7 @@ mod tests {
                     score: 0.5,
                 },
                 &summariser,
+                &LabelStrategy::Empty,
             )
             .await
             .unwrap();

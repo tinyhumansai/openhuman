@@ -26,6 +26,7 @@ pub mod canonicalize;
 pub mod chunker;
 pub mod global_tree;
 pub mod ingest;
+pub mod jobs;
 pub mod retrieval;
 pub mod rpc;
 pub mod schemas;
