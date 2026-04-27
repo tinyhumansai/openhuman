@@ -1,7 +1,5 @@
-import { DISCORD_INVITE_URL } from '../../utils/links';
+import { BILLING_DASHBOARD_URL, DISCORD_INVITE_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
-
-const BILLING_DASHBOARD_URL = 'https://tinyhumans.ai/dashboard';
 
 function formatUsd(amount: number): string {
   return `$${amount.toFixed(amount % 1 === 0 ? 0 : 2)}`;

@@ -18,6 +18,7 @@ import { purgeWebviewAccount } from '../services/webviewAccountService';
 import { addAccount, removeAccount } from '../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { type Account, type AccountProvider, PROVIDERS } from '../types/accounts';
+import { BILLING_DASHBOARD_URL } from '../utils/links';
 import { openUrl } from '../utils/openUrl';
 import { ProviderIcon } from './accounts/providerIcons';
 import ChannelSetupModal from './channels/ChannelSetupModal';
@@ -243,7 +244,7 @@ const BillingBody = ({ close }: { close: () => void }) => {
       <button
         type="button"
         onClick={() => {
-          void openUrl('https://tinyhumans.ai/dashboard').catch(() => {});
+          void openUrl(BILLING_DASHBOARD_URL).catch(() => {});
         }}
         className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
         Open dashboard in browser
