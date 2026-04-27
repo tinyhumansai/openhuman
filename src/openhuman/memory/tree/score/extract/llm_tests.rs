@@ -9,6 +9,42 @@ fn parse_kind_normalisation() {
 }
 
 #[test]
+fn parse_kind_accepts_new_semantic_kinds_and_synonyms() {
+    // Datetime
+    for s in ["datetime", "date", "time", "timestamp", " DateTime "] {
+        assert_eq!(parse_kind(s), Some(EntityKind::Datetime), "input={s:?}");
+    }
+    // Technology
+    for s in [
+        "technology",
+        "tech",
+        "tool",
+        "framework",
+        "library",
+        "language",
+        "service",
+    ] {
+        assert_eq!(parse_kind(s), Some(EntityKind::Technology), "input={s:?}");
+    }
+    // Artifact
+    for s in [
+        "artifact",
+        "reference",
+        "ref",
+        "pr",
+        "ticket",
+        "file",
+        "commit",
+    ] {
+        assert_eq!(parse_kind(s), Some(EntityKind::Artifact), "input={s:?}");
+    }
+    // Quantity
+    for s in ["quantity", "amount", "metric", "number", "money"] {
+        assert_eq!(parse_kind(s), Some(EntityKind::Quantity), "input={s:?}");
+    }
+}
+
+#[test]
 fn find_char_span_handles_unicode() {
     let text = "中 Alice met Bob";
     let span = find_char_span(text, "Alice").unwrap();

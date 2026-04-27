@@ -73,6 +73,10 @@ impl Default for LlmExtractorConfig {
                 EntityKind::Location,
                 EntityKind::Event,
                 EntityKind::Product,
+                EntityKind::Datetime,
+                EntityKind::Technology,
+                EntityKind::Artifact,
+                EntityKind::Quantity,
             ],
             strict_kinds: false,
         }
@@ -213,12 +217,26 @@ importance as a float in [0.0, 1.0].
 Schema:
 {
   \"entities\": [
-    { \"kind\": \"person|organization|location|event|product\",
+    { \"kind\": \"person|organization|location|event|product|datetime|technology|artifact|quantity\",
       \"text\": \"<exact surface form as it appears in the text>\" }
   ],
   \"importance\": 0.0,
   \"importance_reason\": \"<one short sentence explaining the rating>\"
 }
+
+Kinds guide:
+  person       named human                            (\"Alice\", \"Steven Enamakel\")
+  organization company / team / project               (\"Anthropic\", \"TinyHumans\")
+  location     place                                  (\"SF office\", \"London\")
+  event        scheduled occurrence                   (\"Q2 launch\", \"design review\")
+  product      commercial offering                    (\"Claude Code\", \"OpenHuman\")
+  datetime     temporal expression                    (\"Friday\", \"Q2 2026\", \"EOD tomorrow\")
+  technology   tool / framework / language / service  (\"Rust\", \"OAuth\", \"Slack API\")
+  artifact     code / ticket / doc reference          (\"PR #934\", \"src/foo.rs\", \"OH-42\")
+  quantity     amount / metric / money                (\"$5K\", \"20/min\", \"10k tokens\")
+
+Skip URLs and email addresses — those are extracted separately by regex.
+If a mention doesn't clearly fit a kind above, omit it rather than guessing.
 
 Importance guide:
   0.9+  actionable decisions, key information, explicit commitments
@@ -373,6 +391,14 @@ fn parse_kind(s: &str) -> Option<EntityKind> {
         "location" | "place" | "loc" => Some(EntityKind::Location),
         "event" => Some(EntityKind::Event),
         "product" => Some(EntityKind::Product),
+        "datetime" | "date" | "time" | "timestamp" => Some(EntityKind::Datetime),
+        "technology" | "tech" | "tool" | "framework" | "library" | "language" | "service" => {
+            Some(EntityKind::Technology)
+        }
+        "artifact" | "reference" | "ref" | "pr" | "ticket" | "file" | "commit" => {
+            Some(EntityKind::Artifact)
+        }
+        "quantity" | "amount" | "metric" | "number" | "money" => Some(EntityKind::Quantity),
         "misc" | "miscellaneous" | "other" => Some(EntityKind::Misc),
         _ => None,
     }
