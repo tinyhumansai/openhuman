@@ -2,43 +2,43 @@
 
 # Run format check first (capture exit code without breaking script)
 set +e
-yarn format:check
+pnpm format:check
 FORMAT_EXIT=$?
 set -e
 
 # If format check failed, run format to auto-fix
 if [ $FORMAT_EXIT -ne 0 ]; then
   echo "Formatting issues detected. Running format to auto-fix..."
-  yarn format
+  pnpm format
 fi
 
 # Run lint check (capture exit code without breaking script)
 set +e
-yarn lint
+pnpm lint
 LINT_EXIT=$?
 set -e
 
 # If lint check failed, run lint:fix to auto-fix
 if [ $LINT_EXIT -ne 0 ]; then
   echo "Linting issues detected. Running lint:fix to auto-fix..."
-  yarn lint:fix
+  pnpm lint:fix
 fi
 
 # Run TypeScript compile check (capture exit code without breaking script)
 set +e
-yarn compile
+pnpm compile
 COMPILE_EXIT=$?
 set -e
 
 # Run Rust compile checks for both the core and Tauri codebases
 set +e
-yarn rust:check
+pnpm rust:check
 RUST_CHECK_EXIT=$?
 set -e
 
 # Enforce scoped cmd-* tokens in components/commands/
 set +e
-yarn --cwd app lint:commands-tokens
+pnpm --dir app run lint:commands-tokens
 CMD_TOKENS_EXIT=$?
 set -e
 

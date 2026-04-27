@@ -18,4 +18,18 @@ hint = "reasoning"
 # the workspace, memory, or state. Any writes the plan requires get
 # executed by downstream agents (code_executor, archivist, …) at the
 # orchestrator's direction.
-named = ["file_read", "memory_recall", "web_search_tool"]
+named = [
+    "file_read",
+    "memory_recall",
+    "web_search_tool",
+    # Grounded research + market-data lookups so plans can be anchored in
+    # real numbers (stock/crypto prices) and current web context, not just
+    # whatever the model happens to remember.
+    "parallel_search",
+    "parallel_chat",
+    "parallel_research",
+    "stock_quote",
+    "stock_exchange_rate",
+    "stock_crypto_series",
+    "stock_commodity",
+]

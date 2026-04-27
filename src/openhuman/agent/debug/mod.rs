@@ -3,8 +3,8 @@
 //!
 //! Instead of re-implementing prompt assembly, this module routes
 //! through [`Agent::from_config_for_agent`] — the same entry point the
-//! Tauri web channel, CLI, and `welcome_proactive` all use — and then
-//! calls [`Agent::build_system_prompt`] on the constructed session. The
+//! Tauri web channel and CLI use — and then calls
+//! [`Agent::build_system_prompt`] on the constructed session. The
 //! output is byte-identical to what the LLM would receive on turn 1 of
 //! that agent.
 //!

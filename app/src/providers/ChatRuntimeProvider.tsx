@@ -37,12 +37,13 @@ import {
   setActiveThread,
   setSelectedThread,
 } from '../store/threadSlice';
+import { IS_PROD } from '../utils/config';
 import { formatTimelineEntry, promptFromArgsBuffer } from '../utils/toolTimelineFormatting';
 
 const logChatRuntime = debug('openhuman:chat-runtime');
 
 function rtLog(message: string, fields?: Record<string, string | number | null | undefined>) {
-  if (import.meta.env.PROD) return;
+  if (IS_PROD) return;
   if (fields && Object.keys(fields).length > 0) {
     const parts = Object.entries(fields)
       .filter(([, v]) => v !== undefined && v !== '' && v !== null)
@@ -386,7 +387,11 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         )
           return;
         void dispatch(
-          addInferenceResponse({ content: segmentText(event), threadId: event.thread_id })
+          addInferenceResponse({
+            content: segmentText(event),
+            threadId: event.thread_id,
+            extraMetadata: event.citations?.length ? { citations: event.citations } : undefined,
+          })
         );
       },
       onTextDelta: event => {
@@ -524,7 +529,13 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           void (async () => {
             try {
               await dispatch(
-                addInferenceResponse({ content: event.full_response, threadId: event.thread_id })
+                addInferenceResponse({
+                  content: event.full_response,
+                  threadId: event.thread_id,
+                  extraMetadata: event.citations?.length
+                    ? { citations: event.citations }
+                    : undefined,
+                })
               ).unwrap();
               void dispatch(
                 generateThreadTitleIfNeeded({

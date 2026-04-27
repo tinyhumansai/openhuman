@@ -153,10 +153,10 @@ Never use `--no-verify`, never amend, and never force-push (except `--force-with
 Choose checks based on the diff, but default to these when code changed:
 
 ```bash
-yarn typecheck
-yarn lint
-yarn format
-yarn test:unit
+pnpm typecheck
+pnpm lint
+pnpm format
+pnpm test:unit
 cargo fmt --manifest-path Cargo.toml
 cargo check --manifest-path Cargo.toml
 cargo check --manifest-path app/src-tauri/Cargo.toml
@@ -165,7 +165,7 @@ cargo test --manifest-path Cargo.toml
 
 Notes:
 
-- Commands in `AGENTS.md` are from the repo root; `yarn` delegates to the `app` workspace where appropriate.
+- Commands in `AGENTS.md` are from the repo root; `pnpm` delegates to the `app` workspace where appropriate.
 - Always run formatters when code changed.
 - Run Rust checks for Rust or Tauri changes.
 - Run frontend typecheck, lint, format, and relevant Vitest coverage for app changes.

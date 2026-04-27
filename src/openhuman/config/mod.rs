@@ -26,15 +26,16 @@ pub use schema::{
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
     AgentConfig, AuditConfig, AutocompleteConfig, AutonomyConfig, BrowserComputerUseConfig,
     BrowserConfig, ChannelsConfig, ComposioConfig, Config, ContextConfig, CostConfig, CronConfig,
-    DelegateAgentConfig, DictationActivationMode, DictationConfig, DiscordConfig,
-    DockerRuntimeConfig, EmbeddingRouteConfig, HeartbeatConfig, HttpRequestConfig, IMessageConfig,
-    IntegrationToggle, IntegrationsConfig, LarkConfig, LearningConfig, LocalAiConfig, MatrixConfig,
-    MemoryConfig, ModelRouteConfig, MultimodalConfig, ObservabilityConfig, ProxyConfig, ProxyScope,
-    ReflectionSource, ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig, SandboxBackend,
-    SandboxConfig, SchedulerConfig, ScreenIntelligenceConfig, SecretsConfig, SecurityConfig,
-    SlackConfig, StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode,
-    TelegramConfig, UpdateConfig, VoiceActivationMode, VoiceServerConfig, WebSearchConfig,
-    WebhookConfig, DEFAULT_MODEL, MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_V1,
+    CurlConfig, DelegateAgentConfig, DictationActivationMode, DictationConfig, DiscordConfig,
+    DockerRuntimeConfig, EmbeddingRouteConfig, GitbooksConfig, HeartbeatConfig, HttpRequestConfig,
+    IMessageConfig, IntegrationToggle, IntegrationsConfig, LarkConfig, LearningConfig,
+    LocalAiConfig, MatrixConfig, MemoryConfig, ModelRouteConfig, MultimodalConfig,
+    ObservabilityConfig, ProxyConfig, ProxyScope, ReflectionSource, ReliabilityConfig,
+    ResourceLimitsConfig, RuntimeConfig, SandboxBackend, SandboxConfig, SchedulerConfig,
+    ScreenIntelligenceConfig, SecretsConfig, SecurityConfig, SlackConfig, StorageConfig,
+    StorageProviderConfig, StorageProviderSection, StreamMode, TelegramConfig, UpdateConfig,
+    VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig, DEFAULT_MODEL,
+    MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_V1,
 };
 pub use schema::{
     clear_active_user, default_root_openhuman_dir, pre_login_user_dir, read_active_user_id,
@@ -72,6 +73,7 @@ mod tests {
             allowed_users: vec!["alice".into()],
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
+            silent_streaming: true,
             mention_only: false,
         };
 

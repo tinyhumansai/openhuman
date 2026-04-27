@@ -41,11 +41,6 @@ export interface SendMessageResponseData {
   [key: string]: unknown;
 }
 
-/** Response from GET /chat/autocomplete — suggested starter questions for a new thread */
-export interface SuggestQuestionsData {
-  suggestions: Array<{ text: string; confidence: number }>;
-}
-
 export interface PurgeRequestBody {
   messages: boolean;
   agentThreads: boolean;

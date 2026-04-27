@@ -33,6 +33,12 @@ prompt-dumps/
 scripts/ci-secrets.json
 scripts/ci-secrets.local.json
 
+# act (local GitHub Actions runner)
+.secrets
+.vars
+.actrc
+.github/act-event.json
+
 # Editor directories and files
 .idea
 .DS_Store

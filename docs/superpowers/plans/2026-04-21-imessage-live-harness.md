@@ -69,4 +69,4 @@ Prod path wraps: `HttpDeps { base_url }` implements `TickDeps` with existing JSO
 
 ## Layer 3 (click-through A)
 
-After harness + tests green: `yarn tauri dev`, connect iMessage in Settings, verify live tick in UI path. Separate from code.
+After harness + tests green: `pnpm tauri dev`, connect iMessage in Settings, verify live tick in UI path. Separate from code.

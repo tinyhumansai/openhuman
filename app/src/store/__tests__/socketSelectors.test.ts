@@ -19,6 +19,7 @@ function makeCoreState(token: string | null): CoreState {
       sessionToken: token,
       currentUser: null,
       onboardingCompleted: false,
+      chatOnboardingCompleted: false,
       analyticsEnabled: false,
       localState: { encryptionKey: null, primaryWalletAddress: null, onboardingTasks: null },
       runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },

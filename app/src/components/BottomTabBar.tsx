@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { isWelcomeLocked } from '../lib/coreState/store';
 import { useCoreState } from '../providers/CoreStateProvider';
 import { useAppSelector } from '../store/hooks';
 import { selectUnreadCount } from '../store/notificationSlice';
@@ -135,6 +136,13 @@ const BottomTabBar = () => {
     !token ||
     hiddenPaths.some(path => location.pathname === path || location.pathname.startsWith(`${path}/`))
   ) {
+    return null;
+  }
+
+  // Welcome lockdown (#883) — hide the bottom nav entirely while the
+  // chat-based welcome-agent flow is still in progress so the user
+  // cannot navigate away from the welcome conversation.
+  if (isWelcomeLocked(snapshot)) {
     return null;
   }
 

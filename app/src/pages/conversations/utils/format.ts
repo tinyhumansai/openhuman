@@ -68,6 +68,63 @@ export function isAllowedExternalHref(rawHref: string): boolean {
   }
 }
 
+/**
+ * Custom inline tag the welcome agent (and any future agent) can drop
+ * inside a chat bubble to render an in-app navigation pill, e.g.
+ *
+ *     <openhuman-link path="settings/notifications">Allow notifications</openhuman-link>
+ *
+ * The conversation UI (`AgentMessageBubble`) parses these out of the
+ * raw text, splitting the message into ordered text/link segments.
+ * Text segments still render through Markdown; link segments render as
+ * a clickable pill that calls `react-router`'s navigate(`/${path}`) on
+ * click — no deep-link round-trip, no host browser involvement.
+ *
+ * Path is the hash route under HashRouter (e.g. `settings/notifications`
+ * → `#/settings/notifications`). Leading/trailing slashes are tolerated.
+ */
+export interface OpenhumanLinkSegment {
+  kind: 'link';
+  path: string;
+  label: string;
+}
+
+export interface TextSegment {
+  kind: 'text';
+  text: string;
+}
+
+export type BubbleSegment = TextSegment | OpenhumanLinkSegment;
+
+const OPENHUMAN_LINK_RE =
+  /<openhuman-link\s+path=(?:"([^"]+)"|'([^']+)')\s*>([\s\S]*?)<\/openhuman-link>/gi;
+
+export function parseBubbleSegments(content: string): BubbleSegment[] {
+  if (!content || !content.includes('<openhuman-link')) {
+    return [{ kind: 'text', text: content }];
+  }
+  const segments: BubbleSegment[] = [];
+  let cursor = 0;
+  // Reset regex state between calls (the global flag preserves lastIndex).
+  OPENHUMAN_LINK_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = OPENHUMAN_LINK_RE.exec(content)) !== null) {
+    if (match.index > cursor) {
+      segments.push({ kind: 'text', text: content.slice(cursor, match.index) });
+    }
+    const path = (match[1] ?? match[2] ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+    const label = (match[3] ?? '').trim();
+    if (path && label) {
+      segments.push({ kind: 'link', path, label });
+    }
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < content.length) {
+    segments.push({ kind: 'text', text: content.slice(cursor) });
+  }
+  return segments;
+}
+
 export type AgentBubblePosition = 'single' | 'first' | 'middle' | 'last';
 
 export function getAgentBubbleChrome(position: AgentBubblePosition): string {

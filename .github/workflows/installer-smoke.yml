@@ -1,14 +1,12 @@
+---
 name: Installer Smoke
-
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   smoke-unix:
     name: Smoke install.sh (${{ matrix.os }})
@@ -16,12 +14,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu-22.04 temporarily disabled — no Linux release asset published yet
-        os: [macos-latest]
+        # ubuntu-22.04 re-enabled: install.sh --dry-run now warns + exits 0 when
+        # no Linux release asset is published (see #785).
+        os: [macos-latest, ubuntu-22.04]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Run installer dry-run
         run: bash scripts/install.sh --dry-run --verbose
 

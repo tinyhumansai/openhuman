@@ -241,7 +241,11 @@ pub async fn start_channels(config: Config) -> Result<()> {
                 tg.allowed_users.clone(),
                 tg.mention_only,
             )
-            .with_streaming(tg.stream_mode, tg.draft_update_interval_ms),
+            .with_streaming(
+                tg.stream_mode,
+                tg.draft_update_interval_ms,
+                tg.silent_streaming,
+            ),
         ));
     } else {
         tracing::info!(
@@ -266,6 +270,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
             sl.channel_id.clone(),
             sl.allowed_users.clone(),
         )));
+        // Memory-tree ingestion is handled by the Composio-backed
+        // `SlackProvider`, which runs inside `composio::periodic` and
+        // fires per-connection on its own 15-minute cadence. No spawn
+        // required here.
     }
 
     if let Some(ref mm) = config.channels_config.mattermost {

@@ -27,10 +27,20 @@ function parseToolTimeoutSecs(): number {
 export const TOOL_TIMEOUT_SECS = parseToolTimeoutSecs();
 
 export const IS_DEV = import.meta.env.DEV;
+export const IS_PROD = import.meta.env.PROD;
 
 /** Dev only: skip `.skip_onboarding` workspace check and ignore onboarded state so `/onboarding` always shows. Set `VITE_DEV_FORCE_ONBOARDING=true` in `.env.local`. */
 export const DEV_FORCE_ONBOARDING =
   import.meta.env.DEV && import.meta.env.VITE_DEV_FORCE_ONBOARDING === 'true';
+
+/**
+ * Consumer-first-session UX (intent picker, home IA, trust affordances).
+ * **Default off** so `main` stays unchanged until slices ship behind this flag.
+ * Opt in locally or in staging: `VITE_CONSUMER_FIRST_SESSION=true` in `app/.env.local`.
+ * Spec: `docs/plans/consumer-first-session-spec.md`.
+ */
+export const CONSUMER_FIRST_SESSION_ENABLED =
+  import.meta.env.VITE_CONSUMER_FIRST_SESSION === 'true';
 
 export const SKILLS_GITHUB_REPO =
   import.meta.env.VITE_SKILLS_GITHUB_REPO || 'tinyhumansai/openhuman-skills';

@@ -234,6 +234,20 @@ build_squash_body() {
   : "$title"  # reserved for future subject overrides
 }
 
+# Gate the merge first — do this BEFORE any LLM summarization so we
+# don't burn tokens on PRs that can't actually be merged. --dry-run is
+# the one case where we still want to print the squash preview regardless.
+extra_flags=()
+if [ "$admin" = "1" ]; then
+  echo "[review] --admin: bypassing local gate and using branch-protection override"
+  extra_flags+=(--admin)
+elif [ "$auto" = "1" ]; then
+  echo "[review] --auto: queueing merge once checks/approvals are satisfied"
+  extra_flags+=(--auto)
+elif [ "$dry_run" != "1" ]; then
+  ensure_merge_ready
+fi
+
 if [ "$strategy" = "--squash" ]; then
   title=$(gh pr view "$pr" -R "$repo" --json title -q .title)
 
@@ -261,37 +275,17 @@ if [ "$strategy" = "--squash" ]; then
     echo "[review] --dry-run: not merging."
     exit 0
   fi
-  extra_flags=()
-  if [ "$admin" = "1" ]; then
-    echo "[review] --admin: bypassing local gate and using branch-protection override"
-    extra_flags+=(--admin)
-  elif [ "$auto" = "1" ]; then
-    echo "[review] --auto: queueing merge once checks/approvals are satisfied"
-    extra_flags+=(--auto)
-  else
-    ensure_merge_ready
-  fi
   echo "[review] merging PR #$pr with --squash..."
   gh pr merge "$pr" -R "$repo" --squash --delete-branch \
     --subject "$title (#$pr)" \
     --body "$body" \
-    "${extra_flags[@]}"
+    ${extra_flags[@]+"${extra_flags[@]}"}
 else
   if [ "$dry_run" = "1" ]; then
     echo "[review] --dry-run: $strategy does not rewrite the commit message; nothing to preview."
     exit 0
   fi
-  extra_flags=()
-  if [ "$admin" = "1" ]; then
-    echo "[review] --admin: bypassing local gate and using branch-protection override"
-    extra_flags+=(--admin)
-  elif [ "$auto" = "1" ]; then
-    echo "[review] --auto: queueing merge once checks/approvals are satisfied"
-    extra_flags+=(--auto)
-  else
-    ensure_merge_ready
-  fi
   echo "[review] merging PR #$pr with $strategy..."
-  gh pr merge "$pr" -R "$repo" "$strategy" --delete-branch "${extra_flags[@]}"
+  gh pr merge "$pr" -R "$repo" "$strategy" --delete-branch ${extra_flags[@]+"${extra_flags[@]}"}
 fi
 echo "[review] merged."

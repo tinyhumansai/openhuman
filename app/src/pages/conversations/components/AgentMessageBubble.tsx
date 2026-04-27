@@ -1,12 +1,41 @@
 import Markdown from 'react-markdown';
 
+import { OPENHUMAN_LINK_EVENT } from '../../../components/OpenhumanLinkModal';
 import { parseMarkdownTable } from '../../../utils/agentMessageBubbles';
 import { openUrl } from '../../../utils/openUrl';
 import {
   type AgentBubblePosition,
   getAgentBubbleChrome,
   isAllowedExternalHref,
+  parseBubbleSegments,
 } from '../utils/format';
+
+/**
+ * Pill rendered below an agent bubble for each
+ * `<openhuman-link path="...">label</openhuman-link>` tag the agent
+ * emits. Click dispatches an `OPENHUMAN_LINK_EVENT` window event that
+ * `OpenhumanLinkModal` listens for, so the chat stays in view.
+ */
+function OpenhumanLinkPill({ path, label }: { path: string; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        window.dispatchEvent(new CustomEvent(OPENHUMAN_LINK_EVENT, { detail: { path } }))
+      }
+      className="inline-flex items-center gap-1 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100">
+      {label}
+      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M5 12h14M13 6l6 6-6 6"
+        />
+      </svg>
+    </button>
+  );
+}
 
 export function BubbleMarkdown({
   content,
@@ -81,7 +110,17 @@ export function AgentMessageBubble({
   content: string;
   position?: AgentBubblePosition;
 }) {
-  const table = parseMarkdownTable(content);
+  const segments = parseBubbleSegments(content);
+  const textContent = segments
+    .filter(s => s.kind === 'text')
+    .map(s => s.text)
+    .join('')
+    .trim();
+  const linkSegments = segments.filter(
+    (s): s is Extract<typeof s, { kind: 'link' }> => s.kind === 'link'
+  );
+
+  const table = parseMarkdownTable(textContent);
   const bubbleChrome = getAgentBubbleChrome(position);
 
   if (table) {
@@ -123,8 +162,23 @@ export function AgentMessageBubble({
   }
 
   return (
-    <div className={`bg-stone-200/80 px-4 py-2.5 text-stone-900 ${bubbleChrome}`}>
-      <BubbleMarkdown content={content} />
-    </div>
+    <>
+      {textContent && (
+        <div className={`bg-stone-200/80 px-4 py-2.5 text-stone-900 ${bubbleChrome}`}>
+          <BubbleMarkdown content={textContent} />
+        </div>
+      )}
+      {linkSegments.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {linkSegments.map((segment, idx) => (
+            <OpenhumanLinkPill
+              key={`pill-${idx}-${segment.path}`}
+              path={segment.path}
+              label={segment.label}
+            />
+          ))}
+        </div>
+      )}
+    </>
   );
 }

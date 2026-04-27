@@ -148,7 +148,7 @@ mod tests {
     fn persist_chunk(cfg: &Config, source_id: &str, seq: u32, ts_ms: i64, tokens: u32) -> String {
         let ts = Utc.timestamp_millis_opt(ts_ms).unwrap();
         let c = Chunk {
-            id: chunk_id(SourceKind::Chat, source_id, seq),
+            id: chunk_id(SourceKind::Chat, source_id, seq, "test-content"),
             content: format!("chunk content {source_id} {seq}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,

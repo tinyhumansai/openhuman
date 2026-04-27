@@ -77,12 +77,6 @@ impl LocalAiStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Suggestion {
-    pub text: String,
-    pub confidence: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalAiAssetStatus {
     pub state: String,
     pub id: String,

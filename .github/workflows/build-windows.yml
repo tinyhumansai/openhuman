@@ -1,20 +1,17 @@
+---
 name: Build Windows
-
 on:
   workflow_dispatch:
   push:
     branches: [fix/windows]
-
 permissions:
   contents: read
-
 concurrency:
   group: build-windows-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   build-windows:
-    name: "Desktop: Windows x64"
+    name: 'Desktop: Windows x64'
     runs-on: windows-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -24,13 +21,11 @@ jobs:
         with:
           fetch-depth: 1
           submodules: recursive
-
       - name: Setup Node.js 24.x
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
           cache: yarn
-
       - name: Install Rust (1.93.0)
         uses: dtolnay/rust-toolchain@1.93.0
         with:
@@ -42,7 +37,6 @@ jobs:
         shell: bash
         run: |
           echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-
       - name: Cache Cargo registry and git sources
         uses: actions/cache@v4
         with:
@@ -62,25 +56,21 @@ jobs:
           key: cef-windows-${{ hashFiles('app/src-tauri/Cargo.toml') }}
           restore-keys: |
             cef-windows-
-
       - name: Cache vendored tauri-cli binary
         id: tauri-cli-cache
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
           key: vendored-tauri-cli-windows-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
-
       - name: Install vendored tauri-cli (cef-aware bundler)
         if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
         shell: bash
         run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
-
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
       # vite build runs via tauri.conf.json's beforeBuildCommand during the
       # "Build Tauri app" step below — no separate frontend build needed.
-
       - name: Resolve core manifest and binary names
         id: core-paths
         shell: bash
@@ -95,16 +85,13 @@ jobs:
             echo "No core Cargo manifest found"
             exit 1
           fi
-
           SIDE_CAR_BASE="$(node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('app/src-tauri/tauri.conf.json','utf8'));const b=(c.bundle&&Array.isArray(c.bundle.externalBin)&&c.bundle.externalBin[0])||'binaries/openhuman-core';process.stdout.write(String(b).split('/').pop());")"
           CORE_BIN_NAME="${SIDE_CAR_BASE}"
-
           echo "core_dir=$CORE_DIR" >> "$GITHUB_OUTPUT"
           echo "core_manifest=$CORE_DIR/Cargo.toml" >> "$GITHUB_OUTPUT"
           echo "core_target_dir=target/x86_64-pc-windows-msvc/release" >> "$GITHUB_OUTPUT"
           echo "core_bin_name=$CORE_BIN_NAME" >> "$GITHUB_OUTPUT"
           echo "sidecar_base=$SIDE_CAR_BASE" >> "$GITHUB_OUTPUT"
-
       - name: Build sidecar core binary
         shell: bash
         run: |
@@ -116,7 +103,6 @@ jobs:
         env:
           CORE_MANIFEST: ${{ steps.core-paths.outputs.core_manifest }}
           CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
-
       - name: Stage sidecar for Tauri bundler
         shell: bash
         run: |
@@ -125,13 +111,13 @@ jobs:
             "${{ steps.core-paths.outputs.core_target_dir }}" \
             "${{ steps.core-paths.outputs.core_bin_name }}" \
             "${{ steps.core-paths.outputs.sidecar_base }}"
-
       - name: Define Tauri configuration overrides
         id: config-overrides
+        # `prepareTauriConfig.js` only emits the Windows DigiCert sign
+        # command at this point (`WITH_UPDATER` defaults to off here so
+        # this PR-build matrix doesn't try to mint signed updater
+        # artifacts it has no key for).
         uses: actions/github-script@v7
-        env:
-          BASE_URL: ${{ vars.BASE_URL }}
-          WITH_UPDATER: "false"
         with:
           script: |
             const workspacePath = process.env.GITHUB_WORKSPACE.replace(/\\/g, '/');
@@ -140,7 +126,6 @@ jobs:
             const { default: prepareTauriConfig } = await import(moduleUrl);
             const config = prepareTauriConfig();
             core.setOutput('json', JSON.stringify(config));
-
       - name: Build Tauri app (CEF default, vendored CLI)
         id: tauri-build
         shell: bash
@@ -155,7 +140,6 @@ jobs:
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
         run: |
           NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --target x86_64-pc-windows-msvc
-
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
@@ -163,7 +147,6 @@ jobs:
           path: |
             app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
             target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-
       - name: Upload NSIS artifact
         uses: actions/upload-artifact@v4
         with:
@@ -171,10 +154,9 @@ jobs:
           path: |
             app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-
       - name: Upload standalone CLI binary
         uses: actions/upload-artifact@v4
         with:
           name: windows-cli
-          path: |
+          path: |-
             ${{ steps.core-paths.outputs.core_target_dir }}/${{ steps.core-paths.outputs.core_bin_name }}.exe

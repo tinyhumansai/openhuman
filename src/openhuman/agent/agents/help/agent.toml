@@ -1,0 +1,24 @@
+id = "help"
+display_name = "Help"
+delegate_name = "ask_docs"
+when_to_use = "Product help — answers questions about how OpenHuman works, what features exist, how to configure things, or where to find a guide. Reads the OpenHuman GitBook docs via the `gitbooks_*` tools. Use this for any 'how do I…' / 'what does X do' / 'where is the setting for…' question about OpenHuman itself, before guessing or making things up."
+temperature = 0.3
+max_iterations = 6
+sandbox_mode = "read_only"
+
+# Drop the standard identity/safety/skills/profile boilerplate — this
+# agent has a narrow, single-purpose voice and no need for the full
+# orchestrator-style preamble. Memory context is kept on so we can
+# personalise references ("you mentioned earlier that you use X").
+omit_identity = true
+omit_memory_context = false
+omit_safety_preamble = true
+omit_skills_catalog = true
+omit_profile = false
+omit_memory_md = false
+
+[model]
+hint = "agentic"
+
+[tools]
+named = ["gitbooks_search", "gitbooks_get_page", "memory_recall"]

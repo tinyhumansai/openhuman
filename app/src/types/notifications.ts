@@ -30,3 +30,11 @@ export interface NotificationSettings {
   importance_threshold: number;
   route_to_orchestrator: boolean;
 }
+
+export interface NotificationStats {
+  total: number;
+  unread: number;
+  unscored: number;
+  by_provider: Record<string, number>;
+  by_action: Record<string, number>;
+}

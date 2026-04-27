@@ -99,7 +99,7 @@ mod tests {
     fn sample_chunk(source: &str, seq: u32) -> Chunk {
         let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
         Chunk {
-            id: chunk_id(SourceKind::Chat, source, seq),
+            id: chunk_id(SourceKind::Chat, source, seq, "test-content"),
             content: format!("content-{source}-{seq}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,

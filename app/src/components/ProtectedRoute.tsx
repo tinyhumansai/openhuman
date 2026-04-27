@@ -11,7 +11,9 @@ interface ProtectedRouteProps {
 
 /**
  * Protected route component that handles authentication checks.
- * Onboarding is handled separately via OnboardingOverlay.
+ * Onboarding gating is handled by the AppShell effect (see App.tsx)
+ * which redirects between `/onboarding` and the rest of the app based
+ * on `onboarding_completed`.
  */
 const ProtectedRoute = ({ children, requireAuth = true, redirectTo }: ProtectedRouteProps) => {
   const { isBootstrapping, snapshot } = useCoreState();

@@ -102,10 +102,10 @@ Run in parallel where independent. Capture output; do not swallow failures.
 
 ```
 # Frontend
-cd app && yarn typecheck
-cd app && yarn lint
-cd app && yarn format       # auto-fix
-cd app && yarn test:unit
+cd app && pnpm typecheck
+cd app && pnpm lint
+cd app && pnpm format       # auto-fix
+cd app && pnpm test:unit
 
 # Rust
 cargo fmt --manifest-path Cargo.toml
@@ -118,7 +118,7 @@ Skip suites that are clearly unrelated to the diff (e.g., skip `cargo test` for 
 
 ### 6. Auto-fix and commit
 
-- If `yarn format` or `cargo fmt` produced changes: stage only those files and commit with:
+- If `pnpm format` or `cargo fmt` produced changes: stage only those files and commit with:
   ```
   chore(pr-manager): apply formatting
   ```

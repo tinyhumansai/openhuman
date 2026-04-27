@@ -8,13 +8,13 @@
 //! [`crate::openhuman::channels::proactive::ProactiveMessageSubscriber`]
 //! routes to the user's active channel.
 //!
-//! The one-shot welcome message used to be seeded here too, but it is
-//! now fired immediately by
-//! [`crate::openhuman::agent::welcome_proactive::spawn_proactive_welcome`]
-//! from `config::ops::set_onboarding_completed` — no cron round-trip
-//! needed. Users who seeded the legacy welcome job under a prior build
-//! have any stale entry pruned here (see [`prune_legacy_welcome`]) so
-//! the scheduler can't double-deliver.
+//! The one-shot welcome message used to be seeded here too. It is now
+//! delivered by the renderer firing a hidden `chat_send` trigger through
+//! the normal dispatch path immediately after onboarding completes (see
+//! `OnboardingLayout.completeAndExit`) — no cron round-trip needed.
+//! Users who seeded the legacy welcome job under a prior build have any
+//! stale entry pruned here (see [`prune_legacy_welcome`]) so the
+//! scheduler can't double-deliver.
 
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{
@@ -71,11 +71,12 @@ pub fn seed_proactive_agents(config: &Config) -> Result<()> {
 /// The one-shot welcome job `delete_after_run = true + Schedule::At`
 /// self-cleans on success, but if the scheduler never got a chance to
 /// fire it (upgrade mid-window, scheduler disabled, process killed
-/// before the 10-second fire-at) the entry can persist. Now that the
-/// welcome is delivered immediately by
-/// [`crate::openhuman::agent::welcome_proactive::spawn_proactive_welcome`],
-/// letting such an entry fire would double-deliver. Best-effort: log
-/// but don't fail seeding on a prune error, and scan all entries
+/// before the 10-second fire-at) the entry can persist. The welcome
+/// is now delivered by the renderer firing a hidden `chat_send`
+/// trigger through the normal dispatch path right after onboarding
+/// completes (see `OnboardingLayout.completeAndExit`); letting a stale
+/// cron entry fire alongside that would double-deliver. Best-effort:
+/// log but don't fail seeding on a prune error, and scan all entries
 /// because the ID is a UUID — we key on the stable `name` field.
 fn prune_legacy_welcome(config: &Config, existing: &[crate::openhuman::cron::CronJob]) {
     let stale_ids: Vec<String> = existing

@@ -60,6 +60,32 @@ export async function restartCoreProcess(): Promise<void> {
 }
 
 /**
+ * Restart the desktop shell so CEF relaunches with updated profile paths.
+ */
+export async function restartApp(): Promise<void> {
+  if (!isTauri()) {
+    console.debug('[app] restartApp: skipped — not running in Tauri');
+    return;
+  }
+  console.debug('[app] restartApp: invoking restart_app');
+  await invoke<void>('restart_app');
+}
+
+/**
+ * Queue deletion of a user-scoped CEF profile on the next app launch.
+ */
+export async function scheduleCefProfilePurge(userId?: string | null): Promise<string | null> {
+  if (!isTauri()) {
+    console.debug('[cef-profile] scheduleCefProfilePurge: skipped — not running in Tauri');
+    return null;
+  }
+  console.debug('[cef-profile] scheduleCefProfilePurge: invoking schedule_cef_profile_purge', {
+    hasUserId: userId != null,
+  });
+  return invoke<string>('schedule_cef_profile_purge', { userId: userId ?? null });
+}
+
+/**
  * Check if the running core sidecar is outdated compared to what the app expects.
  */
 export const checkCoreUpdate = async (): Promise<CoreUpdateStatus | null> => {
@@ -84,6 +110,56 @@ export const applyCoreUpdate = async (): Promise<void> => {
   console.debug('[core-update] applyCoreUpdate: invoking apply_core_update');
   await invoke<void>('apply_core_update');
   console.debug('[core-update] applyCoreUpdate: done');
+};
+
+export interface AppUpdateInfo {
+  /** Currently-running app version (matches `tauri.conf.json::version`). */
+  current_version: string;
+  /** True if the updater endpoint advertises a newer build. */
+  available: boolean;
+  /** Newer version reported by the updater endpoint, if any. */
+  available_version: string | null;
+  /** Release notes for the new version, if the manifest provided any. */
+  body: string | null;
+}
+
+/**
+ * Probe the Tauri shell updater endpoint for a newer build. Does NOT install.
+ * Pair with {@link applyAppUpdate} to actually upgrade.
+ */
+export const checkAppUpdate = async (): Promise<AppUpdateInfo | null> => {
+  if (!isTauri()) {
+    console.debug('[app-update] checkAppUpdate: skipped — not running in Tauri');
+    return null;
+  }
+  console.debug('[app-update] checkAppUpdate: invoking check_app_update');
+  const result = await invoke<AppUpdateInfo>('check_app_update');
+  console.debug('[app-update] checkAppUpdate: result', result);
+  return result;
+};
+
+/**
+ * Download + install the latest shell build, then relaunch.
+ *
+ * The Rust side shuts the core sidecar down before the install step so the
+ * macOS .app bundle replacement does not race with live file handles. After
+ * `app.restart()` the new bundled sidecar is launched fresh.
+ *
+ * Listen on Tauri events `app-update:status` ("checking", "downloading",
+ * "installing", "restarting", "up_to_date", "error") and `app-update:progress`
+ * (`{ chunk: number, total: number | null }`) to drive UI feedback.
+ */
+export const applyAppUpdate = async (): Promise<void> => {
+  if (!isTauri()) {
+    console.debug('[app-update] applyAppUpdate: skipped — not running in Tauri');
+    return;
+  }
+  console.debug('[app-update] applyAppUpdate: invoking apply_app_update');
+  // Note: when an update is installed the process restarts mid-await. The
+  // promise rejection from the abrupt termination is expected; only surface
+  // errors that come back before that.
+  await invoke<void>('apply_app_update');
+  console.debug('[app-update] applyAppUpdate: returned (no update was applied)');
 };
 
 export async function resetOpenHumanDataAndRestartCore(): Promise<void> {

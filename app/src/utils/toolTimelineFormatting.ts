@@ -13,7 +13,7 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
     const provider =
       inferIntegrationName(parsedArgs.toolkit) ?? inferIntegrationNameFromPrompt(parsedArgs.prompt);
     return {
-      title: provider ? `Checking your ${provider}` : 'Checking your connected app',
+      title: provider ? integrationActivityTitle(provider) : 'Checking your connected app',
       detail: parsedArgs.prompt?.trim() || entry.detail,
     };
   }
@@ -26,7 +26,7 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
       inferIntegrationNameFromPrompt(parsedArgs?.prompt);
 
     return {
-      title: provider ? `Checking your ${provider}` : 'Checking your connected app',
+      title: provider ? integrationActivityTitle(provider) : 'Checking your connected app',
       detail: entry.detail,
     };
   }
@@ -51,9 +51,12 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
   }
 
   if (entry.name.startsWith('delegate_')) {
-    const provider = inferIntegrationName(entry.name);
+    const provider =
+      inferIntegrationName(parsedArgs?.toolkit) ??
+      inferIntegrationNameFromPrompt(parsedArgs?.prompt) ??
+      inferIntegrationName(entry.name);
     return {
-      title: provider ? `Checking your ${provider}` : humanizeIdentifier(entry.name),
+      title: provider ? integrationActivityTitle(provider) : humanizeIdentifier(entry.name),
       detail: entry.detail ?? parsedArgs?.prompt,
     };
   }
@@ -68,22 +71,49 @@ export function promptFromArgsBuffer(argsBuffer?: string): string | undefined {
   return parseToolArgs(argsBuffer)?.prompt?.trim() || undefined;
 }
 
+/**
+ * Recognise the small set of known integration toolkit slugs. Used to
+ * gate `inferIntegrationName` so unknown `delegate_<x>` names (e.g.
+ * `delegate_summarize`, `delegate_router`) don't get fake-humanised
+ * into bogus "integration" labels in the tool timeline.
+ */
+const KNOWN_TOOLKIT_RE =
+  /^(gmail|notion|github|slack|discord|linear|jira|google_calendar|google_drive|calendar)$/i;
+
 export function inferIntegrationName(input?: string): string | undefined {
   if (!input) return undefined;
 
   const delegateMatch = input.match(/^delegate_(.+)$/);
-  if (delegateMatch) {
-    return humanizeIdentifier(delegateMatch[1]);
+  if (delegateMatch && KNOWN_TOOLKIT_RE.test(delegateMatch[1])) {
+    return normalizeIntegrationName(delegateMatch[1]);
   }
 
-  const toolkitMatch = input.match(
-    /^(gmail|notion|github|slack|discord|linear|jira|google_calendar|google_drive|calendar)$/i
-  );
-  if (toolkitMatch) {
-    return humanizeIdentifier(toolkitMatch[1]);
+  if (KNOWN_TOOLKIT_RE.test(input)) {
+    return normalizeIntegrationName(input);
   }
 
   return undefined;
+}
+
+function integrationActivityTitle(provider: string): string {
+  switch (provider) {
+    case 'GitHub':
+    case 'Gmail':
+    case 'Linear':
+    case 'Jira':
+      return `Making requests to your ${provider} account`;
+    case 'Notion':
+      return 'Working in your Notion workspace';
+    case 'Slack':
+    case 'Discord':
+      return `Working in your ${provider} workspace`;
+    case 'Google Calendar':
+      return 'Updating your Google Calendar';
+    case 'Google Drive':
+      return 'Working in your Google Drive';
+    default:
+      return `Checking your ${provider}`;
+  }
 }
 
 function inferIntegrationNameFromPrompt(prompt?: string): string | undefined {
@@ -111,6 +141,22 @@ function parseToolArgs(argsBuffer?: string): ParsedToolArgs | null {
     return parsed && typeof parsed === 'object' ? parsed : null;
   } catch {
     return null;
+  }
+}
+
+function normalizeIntegrationName(value: string): string {
+  switch (value.toLowerCase()) {
+    case 'github':
+      return 'GitHub';
+    case 'gmail':
+      return 'Gmail';
+    case 'google_calendar':
+    case 'calendar':
+      return 'Google Calendar';
+    case 'google_drive':
+      return 'Google Drive';
+    default:
+      return humanizeIdentifier(value);
   }
 }
 

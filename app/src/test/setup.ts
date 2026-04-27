@@ -73,11 +73,14 @@ vi.mock('../utils/tauriCommands', () => ({
 vi.mock('../utils/config', () => ({
   CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
   IS_DEV: true,
+  IS_PROD: false,
   DEV_FORCE_ONBOARDING: false,
   SKILLS_GITHUB_REPO: 'test/skills',
   SENTRY_DSN: undefined,
   BACKEND_URL: 'http://localhost:5005',
   TELEGRAM_BOT_USERNAME: 'openhuman_bot',
+  LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
+  APP_VERSION: '0.0.0-test',
   DEV_JWT_TOKEN: undefined,
 }));
 

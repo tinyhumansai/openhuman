@@ -13,7 +13,6 @@ import {
   type LocalAiEmbeddingResult,
   type LocalAiSpeechResult,
   type LocalAiStatus,
-  type LocalAiSuggestion,
   type LocalAiTtsResult,
   openhumanLocalAiAssetsStatus,
   openhumanLocalAiDiagnostics,
@@ -25,7 +24,6 @@ import {
   openhumanLocalAiPrompt,
   openhumanLocalAiSetOllamaPath,
   openhumanLocalAiStatus,
-  openhumanLocalAiSuggestQuestions,
   openhumanLocalAiSummarize,
   openhumanLocalAiTranscribe,
   openhumanLocalAiTts,
@@ -67,10 +65,6 @@ const LocalModelDebugPanel = () => {
   const [summaryInput, setSummaryInput] = useState('');
   const [summaryOutput, setSummaryOutput] = useState('');
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
-
-  const [suggestInput, setSuggestInput] = useState('');
-  const [suggestions, setSuggestions] = useState<LocalAiSuggestion[]>([]);
-  const [isSuggestLoading, setIsSuggestLoading] = useState(false);
 
   const [promptInput, setPromptInput] = useState('');
   const [promptOutput, setPromptOutput] = useState('');
@@ -191,22 +185,6 @@ const LocalModelDebugPanel = () => {
       setStatusError(err instanceof Error ? err.message : 'Summarization test failed');
     } finally {
       setIsSummaryLoading(false);
-    }
-  };
-
-  const runSuggestTest = async () => {
-    if (!suggestInput.trim()) return;
-    setIsSuggestLoading(true);
-    setSuggestions([]);
-    setStatusError('');
-    try {
-      const result = await openhumanLocalAiSuggestQuestions(suggestInput.trim());
-      setSuggestions(result.result);
-      await loadStatus();
-    } catch (err) {
-      setStatusError(err instanceof Error ? err.message : 'Suggestion test failed');
-    } finally {
-      setIsSuggestLoading(false);
     }
   };
 
@@ -405,11 +383,6 @@ const LocalModelDebugPanel = () => {
           isSummaryLoading={isSummaryLoading}
           onSetSummaryInput={setSummaryInput}
           onRunSummaryTest={() => void runSummaryTest()}
-          suggestInput={suggestInput}
-          suggestions={suggestions}
-          isSuggestLoading={isSuggestLoading}
-          onSetSuggestInput={setSuggestInput}
-          onRunSuggestTest={() => void runSuggestTest()}
           promptInput={promptInput}
           promptOutput={promptOutput}
           promptError={promptError}

@@ -1,7 +1,7 @@
 //! WhatsApp Web scanner driven over the Chrome DevTools Protocol (CDP).
 //!
 //! We talk to the embedded CEF instance through its remote-debugging port
-//! (set via `--remote-debugging-port=9222` in `lib.rs`). Per tracked
+//! (set via `--remote-debugging-port=19222` in `lib.rs`). Per tracked
 //! WhatsApp-account webview, two interleaved loops run:
 //!
 //!   * **Fast tick** (`FAST_SCAN_INTERVAL`, 2s) — `dom_scan.js` scrapes
@@ -34,7 +34,9 @@ mod dom_snapshot;
 mod idb;
 
 const CDP_HOST: &str = "127.0.0.1";
-const CDP_PORT: u16 = 9222;
+// Must match `--remote-debugging-port=19222` in lib.rs and
+// `cdp::CDP_PORT`. Was 9222, moved to dodge ollama's listener.
+const CDP_PORT: u16 = 19222;
 /// Cadence for the expensive full scan — pages the whole IDB via CDP and
 /// captures a fresh DOM snapshot. Each pass serialises thousands of
 /// message records, so we pay this cost infrequently.
@@ -82,13 +84,7 @@ pub struct ScanSnapshot {
 /// consumers don't need to care which one produced the event.
 pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix: String) {
     tokio::spawn(async move {
-        // `cdp` module is cef-only; under wry the fragment is unused (no
-        // port 9222 means scan_once will fail on every tick anyway). Keep
-        // a fallback so this file still compiles on non-cef builds.
-        #[cfg(feature = "cef")]
         let fragment = crate::cdp::target_url_fragment(&account_id);
-        #[cfg(not(feature = "cef"))]
-        let fragment = String::new();
         log::info!(
             "[wa] scanner up account={} url_prefix={} fragment={} fast={:?} full={:?}",
             account_id,

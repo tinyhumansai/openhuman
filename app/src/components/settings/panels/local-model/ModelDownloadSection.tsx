@@ -3,7 +3,6 @@ import type {
   LocalAiAssetsStatus,
   LocalAiEmbeddingResult,
   LocalAiSpeechResult,
-  LocalAiSuggestion,
   LocalAiTtsResult,
 } from '../../../../utils/tauriCommands';
 
@@ -18,12 +17,6 @@ interface ModelDownloadSectionProps {
   isSummaryLoading: boolean;
   onSetSummaryInput: (value: string) => void;
   onRunSummaryTest: () => void;
-
-  suggestInput: string;
-  suggestions: LocalAiSuggestion[];
-  isSuggestLoading: boolean;
-  onSetSuggestInput: (value: string) => void;
-  onRunSuggestTest: () => void;
 
   promptInput: string;
   promptOutput: string;
@@ -73,11 +66,6 @@ const ModelDownloadSection = ({
   isSummaryLoading,
   onSetSummaryInput,
   onRunSummaryTest,
-  suggestInput,
-  suggestions,
-  isSuggestLoading,
-  onSetSuggestInput,
-  onRunSuggestTest,
   promptInput,
   promptOutput,
   promptError,
@@ -172,43 +160,6 @@ const ModelDownloadSection = ({
             <pre className="whitespace-pre-wrap rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700">
               {summaryOutput}
             </pre>
-          )}
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">Test Suggested Prompts</h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-          <textarea
-            value={suggestInput}
-            onChange={e => onSetSuggestInput(e.target.value)}
-            placeholder="Paste conversation context to generate suggestions..."
-            className="w-full min-h-28 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-500"
-          />
-          <div className="flex items-center justify-between">
-            <div className="text-xs text-stone-500">
-              Calls `openhuman.local_ai_suggest_questions` via Rust core
-            </div>
-            <button
-              onClick={onRunSuggestTest}
-              disabled={isSuggestLoading || !suggestInput.trim()}
-              className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
-              {isSuggestLoading ? 'Running...' : 'Run Suggestion Test'}
-            </button>
-          </div>
-          {suggestions.length > 0 && (
-            <div className="space-y-2">
-              {suggestions.map(suggestion => (
-                <div
-                  key={`${suggestion.text}-${suggestion.confidence}`}
-                  className="rounded-md border border-stone-200 bg-stone-50 p-3">
-                  <div className="text-sm text-stone-800">{suggestion.text}</div>
-                  <div className="text-xs text-stone-400 mt-1">
-                    Confidence: {(suggestion.confidence * 100).toFixed(0)}%
-                  </div>
-                </div>
-              ))}
-            </div>
           )}
         </div>
       </section>

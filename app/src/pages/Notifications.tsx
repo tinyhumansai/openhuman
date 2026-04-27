@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import NotificationCenter from '../components/notifications/NotificationCenter';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
   clearAll,
@@ -41,11 +42,17 @@ const Notifications = () => {
   };
 
   return (
-    <div className="p-4 pt-6">
+    <div className="p-4 pt-6 space-y-4">
+      {/* Integration notifications — from connected accounts, scored by local AI */}
+      <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden min-h-[200px]">
+        <NotificationCenter />
+      </div>
+
+      {/* Core-bridge notifications — system events */}
       <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
         <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
           <div>
-            <h1 className="text-lg font-semibold text-stone-900">Notifications</h1>
+            <h1 className="text-lg font-semibold text-stone-900">System Events</h1>
             <p className="text-xs text-stone-500">
               {unread > 0 ? `${unread} unread` : 'All caught up'}
             </p>
