@@ -824,9 +824,15 @@ pub fn run() {
             // silently disappears and huddle/call buttons no-op.
             ("--enable-features", Some("SharedArrayBuffer")),
         ];
-        if cfg!(debug_assertions) {
-            args.push(("--remote-debugging-port", Some("19222")));
-        }
+        // Always expose the CDP port, not just in debug. The webview-accounts
+        // CDP session opener navigates each embedded provider webview from its
+        // `about:blank#openhuman-acct-...` placeholder to the real provider URL
+        // via `Page.navigate`. Without this port available in release builds,
+        // the CDP client can't attach (`browser_ws_url()` 404s on /json/version),
+        // the navigation never fires, and the embedded webview stays on
+        // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
+        // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
+        args.push(("--remote-debugging-port", Some("19222")));
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
 
