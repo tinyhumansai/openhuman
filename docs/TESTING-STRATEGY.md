@@ -6,19 +6,19 @@ How OpenHuman tests its product. Source of truth for "where does my test go?". C
 
 ## Layers
 
-| Layer | Where it lives | What it tests | Driver |
-|---|---|---|---|
-| **Rust unit** | `#[cfg(test)] mod tests` inside the same `*.rs` file, or sibling `tests.rs`, or `tests/` subdir under a domain (e.g. `src/openhuman/channels/tests/`) | Pure domain logic, schemas, RPC handler shape, in-memory state machines | `cargo test` |
-| **Rust integration** | `tests/*.rs` at repo root | Full domain wiring with real Tokio runtime, mock external services, JSON-RPC end-to-end (`tests/json_rpc_e2e.rs`), domain × domain interactions | `pnpm test:rust` (which calls `bash scripts/test-rust-with-mock.sh`) |
-| **Vitest unit** | Co-located as `*.test.ts(x)` next to source under `app/src/**`, or under `app/src/**/__tests__/` | React components, hooks, store slices, pure utilities, service-layer adapters | `pnpm test:unit` |
-| **WDIO E2E** | `app/test/e2e/specs/*.spec.ts` | Full desktop flow: UI → Tauri → core sidecar → JSON-RPC; user-visible behaviour | Linux CI: `tauri-driver` (port 4444). macOS local: Appium Mac2 (port 4723). See [`docs/E2E-TESTING.md`](./E2E-TESTING.md). |
-| **Manual smoke** | `docs/RELEASE-MANUAL-SMOKE.md` (see #971) | OS-level surfaces drivers cannot assert: TCC permission prompts, Gatekeeper, code signing, DMG install, OS-native toasts | Human at release-cut, signed off in release PR |
+| Layer                | Where it lives                                                                                                                                        | What it tests                                                                                                                                   | Driver                                                                                                                     |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **Rust unit**        | `#[cfg(test)] mod tests` inside the same `*.rs` file, or sibling `tests.rs`, or `tests/` subdir under a domain (e.g. `src/openhuman/channels/tests/`) | Pure domain logic, schemas, RPC handler shape, in-memory state machines                                                                         | `cargo test`                                                                                                               |
+| **Rust integration** | `tests/*.rs` at repo root                                                                                                                             | Full domain wiring with real Tokio runtime, mock external services, JSON-RPC end-to-end (`tests/json_rpc_e2e.rs`), domain × domain interactions | `pnpm test:rust` (which calls `bash scripts/test-rust-with-mock.sh`)                                                       |
+| **Vitest unit**      | Co-located as `*.test.ts(x)` next to source under `app/src/**`, or under `app/src/**/__tests__/`                                                      | React components, hooks, store slices, pure utilities, service-layer adapters                                                                   | `pnpm test:unit`                                                                                                           |
+| **WDIO E2E**         | `app/test/e2e/specs/*.spec.ts`                                                                                                                        | Full desktop flow: UI → Tauri → core sidecar → JSON-RPC; user-visible behaviour                                                                 | Linux CI: `tauri-driver` (port 4444). macOS local: Appium Mac2 (port 4723). See [`docs/E2E-TESTING.md`](./E2E-TESTING.md). |
+| **Manual smoke**     | `docs/RELEASE-MANUAL-SMOKE.md` (see #971)                                                                                                             | OS-level surfaces drivers cannot assert: TCC permission prompts, Gatekeeper, code signing, DMG install, OS-native toasts                        | Human at release-cut, signed off in release PR                                                                             |
 
 ---
 
 ## Decision tree — where does my test go?
 
-```
+```text
 Is the change behind the JSON-RPC boundary (in `src/`)?
 ├─ YES — does it cross domains or talk to external services?
 │   ├─ YES → Rust integration (tests/*.rs)
