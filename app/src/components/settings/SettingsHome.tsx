@@ -2,6 +2,8 @@ import { useState } from 'react';
 
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { persistor } from '../../store';
+import { BILLING_DASHBOARD_URL } from '../../utils/links';
+import { openUrl } from '../../utils/openUrl';
 import {
   resetOpenHumanDataAndRestartCore,
   restartApp,
@@ -114,7 +116,7 @@ const SettingsHome = () => {
     {
       id: 'billing',
       title: 'Billing & Usage',
-      description: 'Subscription plan, pay-as-you-go credits, and payment methods',
+      description: 'Subscription plan, credits, and payment methods',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -125,7 +127,9 @@ const SettingsHome = () => {
           />
         </svg>
       ),
-      onClick: () => navigateToSettings('billing'),
+      onClick: () => {
+        void openUrl(BILLING_DASHBOARD_URL);
+      },
       dangerous: false,
     },
     {

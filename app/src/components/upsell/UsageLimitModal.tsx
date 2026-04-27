@@ -1,6 +1,6 @@
-import { useNavigate } from 'react-router-dom';
-
 import type { PlanTier } from '../../types/api';
+import { BILLING_DASHBOARD_URL } from '../../utils/links';
+import { openUrl } from '../../utils/openUrl';
 import { PLANS } from '../settings/panels/billingHelpers';
 
 interface UsageLimitModalProps {
@@ -37,7 +37,6 @@ export default function UsageLimitModal({
   resetTime,
   currentTier,
 }: UsageLimitModalProps) {
-  const navigate = useNavigate();
   const nextPlan = getNextPlan(currentTier);
 
   if (!open) return null;
@@ -92,7 +91,7 @@ export default function UsageLimitModal({
             type="button"
             onClick={() => {
               onClose();
-              navigate('/settings/billing');
+              void openUrl(BILLING_DASHBOARD_URL);
             }}
             className="w-full py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium transition-colors">
             Upgrade Plan

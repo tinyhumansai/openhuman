@@ -125,6 +125,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::memory::all_memory_tree_registered_controllers());
     // Memory tree retrieval layer (#710 — LLM-callable read tools over the tree)
     controllers.extend(crate::openhuman::memory::all_retrieval_registered_controllers());
+    // Slack → memory-tree ingestion engine (backfill + poll + 6hr bucket flush)
+    controllers.extend(crate::openhuman::memory::all_slack_ingestion_registered_controllers());
     // Link shortener for long tracking URLs — saves LLM tokens
     controllers
         .extend(crate::openhuman::redirect_links::all_redirect_links_registered_controllers());
@@ -200,6 +202,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_memory_tree_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_retrieval_controller_schemas());
+    schemas.extend(crate::openhuman::memory::all_slack_ingestion_controller_schemas());
     schemas.extend(crate::openhuman::redirect_links::all_redirect_links_controller_schemas());
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());

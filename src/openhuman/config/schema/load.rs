@@ -926,6 +926,60 @@ impl Config {
             }
         }
 
+        // LLM entity extractor overrides — set endpoint + model to route
+        // ingest scoring through Ollama NER (Phase 2 follow-up). Empty
+        // string explicitly clears (opts out).
+        if let Ok(endpoint) = std::env::var("OPENHUMAN_MEMORY_EXTRACT_ENDPOINT") {
+            let trimmed = endpoint.trim();
+            self.memory_tree.llm_extractor_endpoint = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(model) = std::env::var("OPENHUMAN_MEMORY_EXTRACT_MODEL") {
+            let trimmed = model.trim();
+            self.memory_tree.llm_extractor_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(val) = std::env::var("OPENHUMAN_MEMORY_EXTRACT_TIMEOUT_MS") {
+            if let Ok(ms) = val.trim().parse::<u64>() {
+                if ms > 0 {
+                    self.memory_tree.llm_extractor_timeout_ms = Some(ms);
+                }
+            }
+        }
+
+        // LLM summariser overrides — set endpoint + model to route
+        // bucket-seal summaries through Ollama instead of InertSummariser
+        // (Phase 3a real-summariser hook).
+        if let Ok(endpoint) = std::env::var("OPENHUMAN_MEMORY_SUMMARISE_ENDPOINT") {
+            let trimmed = endpoint.trim();
+            self.memory_tree.llm_summariser_endpoint = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(model) = std::env::var("OPENHUMAN_MEMORY_SUMMARISE_MODEL") {
+            let trimmed = model.trim();
+            self.memory_tree.llm_summariser_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(val) = std::env::var("OPENHUMAN_MEMORY_SUMMARISE_TIMEOUT_MS") {
+            if let Ok(ms) = val.trim().parse::<u64>() {
+                if ms > 0 {
+                    self.memory_tree.llm_summariser_timeout_ms = Some(ms);
+                }
+            }
+        }
+
         // Auto-update overrides
         if let Some(flag) = env.get("OPENHUMAN_AUTO_UPDATE_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();

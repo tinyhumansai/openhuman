@@ -1475,3 +1475,135 @@ fn parse_update_message_forum_topic_encodes_thread_in_reply_target_and_thread_ts
         "thread_ts is the inbound message_id (not the quoted parent)"
     );
 }
+
+#[tokio::test]
+async fn test_thinking_placeholder_logic() {
+    use crate::openhuman::agent::progress::AgentProgress;
+    use crate::openhuman::channels::traits::Channel;
+    use crate::openhuman::channels::SendMessage;
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+
+    // Mock channel that records updates
+    struct MockTelegramChannel {
+        updates: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Channel for MockTelegramChannel {
+        fn name(&self) -> &str {
+            "telegram"
+        }
+        fn supports_draft_updates(&self) -> bool {
+            true
+        }
+        async fn send(&self, _: &SendMessage) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn listen(
+            &self,
+            _: tokio::sync::mpsc::Sender<crate::openhuman::channels::traits::ChannelMessage>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn send_draft(&self, _: &SendMessage) -> anyhow::Result<Option<String>> {
+            Ok(Some("123".to_string()))
+        }
+        async fn update_draft(&self, _: &str, _: &str, text: &str) -> anyhow::Result<()> {
+            self.updates.lock().push(text.to_string());
+            Ok(())
+        }
+        async fn finalize_draft(
+            &self,
+            _: &str,
+            _: &str,
+            text: &str,
+            _: Option<&str>,
+        ) -> anyhow::Result<()> {
+            self.updates.lock().push(format!("FINAL: {}", text));
+            Ok(())
+        }
+    }
+
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    let channel = Arc::new(MockTelegramChannel {
+        updates: Arc::clone(&updates),
+    });
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentProgress>(10);
+
+    let channel_clone = Arc::clone(&channel);
+    let handle = tokio::spawn(async move {
+        let mut accumulated = String::new();
+        let reply_target = "test_chat";
+        let draft_id = "123";
+        while let Some(progress) = rx.recv().await {
+            match progress {
+                AgentProgress::TextDelta { delta, .. } => {
+                    accumulated.push_str(&delta);
+                    let _ = channel_clone
+                        .update_draft(reply_target, draft_id, &accumulated)
+                        .await;
+                }
+                AgentProgress::ThinkingDelta { .. } => {
+                    if accumulated.is_empty() {
+                        let _ = channel_clone
+                            .update_draft(reply_target, draft_id, "Thinking...")
+                            .await;
+                    }
+                }
+                AgentProgress::ToolCallStarted { tool_name, .. } => {
+                    if accumulated.is_empty() {
+                        let _ = channel_clone
+                            .update_draft(
+                                reply_target,
+                                draft_id,
+                                &format!("Working ({})...", tool_name),
+                            )
+                            .await;
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+
+    // Simulate thinking then text
+    tx.send(AgentProgress::ThinkingDelta {
+        delta: "thought 1".to_string(),
+        iteration: 1,
+    })
+    .await
+    .unwrap();
+    tx.send(AgentProgress::ThinkingDelta {
+        delta: "thought 2".to_string(),
+        iteration: 1,
+    })
+    .await
+    .unwrap();
+    tx.send(AgentProgress::ToolCallStarted {
+        call_id: "c1".into(),
+        tool_name: "shell".into(),
+        arguments: serde_json::json!({}),
+        iteration: 1,
+    })
+    .await
+    .unwrap();
+    tx.send(AgentProgress::TextDelta {
+        delta: "Hello".to_string(),
+        iteration: 2,
+    })
+    .await
+    .unwrap();
+    drop(tx);
+    handle.await.unwrap();
+
+    let history = updates.lock();
+    assert!(history.contains(&"Thinking...".to_string()));
+    assert!(history.contains(&"Working (shell)...".to_string()));
+    assert!(history.contains(&"Hello".to_string()));
+    // Ensure actual thought text was NOT sent
+    for update in history.iter() {
+        assert!(!update.contains("thought 1"));
+        assert!(!update.contains("thought 2"));
+    }
+}

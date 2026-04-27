@@ -1,11 +1,20 @@
 //! Append + cascade-seal for summary trees (#709).
 //!
-//! `append_leaf` pushes a persisted chunk into the L0 buffer of a tree. If
-//! the buffer's running `token_sum` crosses `TOKEN_BUDGET`, the buffer
-//! seals into a level-1 summary, its items move into the summary's
+//! `append_leaf` pushes a persisted chunk into the L0 buffer of a tree.
+//! Seal gates differ by level:
+//!
+//! - **L0 (leaves → L1)**: seal when `token_sum >= TOKEN_BUDGET`. Bounds
+//!   the summariser's raw input.
+//! - **L≥1 (summaries → next level)**: seal when `item_ids.len() >=
+//!   SUMMARY_FANOUT`. Per-summary token size depends on summariser
+//!   quality, so a token-based gate collapses to a 1:1:1 chain when the
+//!   summariser is weak. Counting siblings keeps the tree's fan-in
+//!   stable regardless.
+//!
+//! When a buffer seals, its items move into the new summary's
 //! `child_ids`, the buffer clears, and the new summary id is queued at
-//! level 2. The cascade continues upward until a buffer stays under the
-//! token budget.
+//! the next level. The cascade continues upward until a buffer fails its
+//! gate.
 //!
 //! Concurrency: Phase 3a assumes a single-process SQLite workspace. All
 //! writes in one seal step run in a single transaction; the async
@@ -29,7 +38,7 @@ use crate::openhuman::memory::tree::source_tree::summariser::{
     Summariser, SummaryContext, SummaryInput,
 };
 use crate::openhuman::memory::tree::source_tree::types::{
-    Buffer, SummaryNode, Tree, TreeKind, TOKEN_BUDGET,
+    Buffer, SummaryNode, Tree, TreeKind, SUMMARY_FANOUT, TOKEN_BUDGET,
 };
 use crate::openhuman::memory::tree::store::with_connection;
 
@@ -168,8 +177,23 @@ pub async fn cascade_all_from(
     Ok(sealed_ids)
 }
 
+/// Level-aware seal gate.
+///
+/// L0 buffers (raw leaves) gate on `token_sum` so the summariser's input
+/// stays bounded. L≥1 buffers gate on sibling count so the tree's
+/// fan-in is independent of per-summary token size — without this,
+/// summarisers that emit at the full token budget (e.g. the inert
+/// fallback) collapse the cascade into a 1:1:1 chain instead of a real
+/// tree.
 fn should_seal(buf: &Buffer) -> bool {
-    !buf.is_empty() && buf.token_sum >= TOKEN_BUDGET as i64
+    if buf.is_empty() {
+        return false;
+    }
+    if buf.level == 0 {
+        buf.token_sum >= TOKEN_BUDGET as i64
+    } else {
+        (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
+    }
 }
 
 /// Seal `buf` at `level` into one summary at `level + 1`. Returns the new
@@ -227,8 +251,26 @@ async fn seal_one_level(
     // the buffer stays intact, and a retry re-embeds from scratch. The
     // tx below would otherwise commit a summary with no embedding,
     // polluting retrieval's semantic rerank.
+    //
+    // Embedder context-window guard: `nomic-embed-text-v1.5` accepts
+    // up to 8192 tokens of input. Summary content is bounded by
+    // `ctx.token_budget = TOKEN_BUDGET = 10_000` so a worst-case
+    // summary overshoots the embedder. We truncate the input passed
+    // to `embed()` to fit (the persisted summary content stays full;
+    // only the embedding's "view" of it is clamped). 6000 tokens
+    // leaves headroom for tokenizer differences across embedders.
     let embedder = build_embedder_from_config(config).context("build embedder during seal")?;
-    let embedding = embedder.embed(&output.content).await.with_context(|| {
+    // Conservative cap. Slack-style chat content (URLs, mentions,
+    // emoji) tokenizes 2-4× higher than the 4-chars/token heuristic.
+    // 1000 approx-tokens (~4000 chars) is comfortably under 8192
+    // even at 4× tokenizer ratio.
+    let embed_input = truncate_for_embed(&output.content, 1_000);
+    log::info!(
+        "[source_tree::bucket_seal] embed input: original_chars={} truncated_chars={}",
+        output.content.len(),
+        embed_input.len()
+    );
+    let embedding = embedder.embed(&embed_input).await.with_context(|| {
         format!(
             "embed summary during seal tree_id={} level={}",
             tree.id, level
@@ -363,6 +405,21 @@ async fn seal_one_level(
     );
 
     Ok(summary_id)
+}
+
+/// Clamp `text` to roughly `max_tokens` tokens before passing to the
+/// embedder. Uses the same ~4 chars/token heuristic as
+/// `approx_token_count`. Embedders have hard input-size limits (e.g.
+/// `nomic-embed-text-v1.5` = 8192 tokens) and an overshoot returns
+/// HTTP 500 from Ollama rather than auto-truncating, which would
+/// abort the seal transaction.
+fn truncate_for_embed(text: &str, max_tokens: u32) -> String {
+    let approx = crate::openhuman::memory::tree::types::approx_token_count(text);
+    if approx <= max_tokens {
+        return text.to_string();
+    }
+    let char_ceiling = (max_tokens as usize).saturating_mul(4);
+    text.chars().take(char_ceiling).collect()
 }
 
 fn refresh_last_sealed_tx(

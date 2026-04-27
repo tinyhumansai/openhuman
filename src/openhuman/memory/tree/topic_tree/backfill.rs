@@ -144,7 +144,7 @@ mod tests {
     fn mk_chunk(source_id: &str, seq: u32, ts_ms: i64, tokens: u32) -> Chunk {
         let ts = Utc.timestamp_millis_opt(ts_ms).unwrap();
         Chunk {
-            id: chunk_id(SourceKind::Chat, source_id, seq),
+            id: chunk_id(SourceKind::Chat, source_id, seq, "test-content"),
             content: format!("substantive chunk mentioning alice {source_id}#{seq}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,

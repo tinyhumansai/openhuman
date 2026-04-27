@@ -202,7 +202,7 @@ async fn seal_populates_summary_embedding() {
     let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
 
     let mk_chunk = |seq: u32, tokens: u32| Chunk {
-        id: chunk_id(SourceKind::Chat, "slack:#seal-test", seq),
+        id: chunk_id(SourceKind::Chat, "slack:#seal-test", seq, "test-content"),
         content: format!("substantive chunk content {seq}"),
         metadata: Metadata {
             source_kind: SourceKind::Chat,

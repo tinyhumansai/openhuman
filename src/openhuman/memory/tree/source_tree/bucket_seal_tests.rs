@@ -58,7 +58,7 @@ async fn crossing_budget_triggers_seal() {
     // Persist two chunks that the hydrator can load during seal.
     let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
     let mk_chunk = |seq: u32, tokens: u32| Chunk {
-        id: chunk_id(SourceKind::Chat, "slack:#eng", seq),
+        id: chunk_id(SourceKind::Chat, "slack:#eng", seq, "test-content"),
         content: format!("substantive chunk content {seq}"),
         metadata: Metadata {
             source_kind: SourceKind::Chat,
@@ -135,4 +135,149 @@ async fn crossing_budget_triggers_seal() {
     })
     .unwrap();
     assert_eq!(parent.as_deref(), Some(summary_id.as_str()));
+}
+
+#[tokio::test]
+async fn fanout_at_l1_triggers_l2_seal() {
+    use crate::openhuman::memory::tree::source_tree::types::SUMMARY_FANOUT;
+    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
+    use chrono::TimeZone;
+
+    let (_tmp, cfg) = test_config();
+    let tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+    let summariser = InertSummariser::new();
+
+    let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+    let mk_chunk = |seq: u32| {
+        let content = format!("substantive chunk content {seq}");
+        Chunk {
+            id: chunk_id(SourceKind::Chat, "slack:#eng", seq, &content),
+            content,
+            metadata: Metadata {
+                source_kind: SourceKind::Chat,
+                source_id: "slack:#eng".into(),
+                owner: "alice".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec![],
+                source_ref: Some(SourceRef::new("slack://x")),
+            },
+            // Each leaf alone busts TOKEN_BUDGET so the L0→L1 seal
+            // fires on every append. After SUMMARY_FANOUT seals, the
+            // L1 buffer's count-based gate trips and cascades to L2.
+            token_count: 10_000,
+            seq_in_source: seq,
+            created_at: ts,
+        }
+    };
+
+    let fanout = SUMMARY_FANOUT;
+    let mut all_sealed: Vec<String> = Vec::new();
+    for seq in 0..fanout {
+        let chunk = mk_chunk(seq);
+        upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
+        let leaf = LeafRef {
+            chunk_id: chunk.id.clone(),
+            token_count: chunk.token_count,
+            timestamp: ts,
+            content: chunk.content.clone(),
+            entities: vec![],
+            topics: vec![],
+            score: 0.5,
+        };
+        let sealed = append_leaf(&cfg, &tree, &leaf, &summariser).await.unwrap();
+        all_sealed.extend(sealed);
+    }
+
+    // First (fanout-1) appends each emit one L1 seal. The final
+    // append emits an L1 seal AND cascades into one L2 seal.
+    assert_eq!(
+        all_sealed.len() as u32,
+        fanout + 1,
+        "expected {} L1 seals + 1 L2 seal, got {}",
+        fanout,
+        all_sealed.len()
+    );
+
+    let t = store::get_tree(&cfg, &tree.id).unwrap().unwrap();
+    assert_eq!(t.max_level, 2, "tree should have climbed to L2");
+
+    let l1 = store::get_buffer(&cfg, &tree.id, 1).unwrap();
+    assert!(
+        l1.is_empty(),
+        "L1 buffer should clear when the fanout seal fires"
+    );
+
+    let l2 = store::get_buffer(&cfg, &tree.id, 2).unwrap();
+    assert_eq!(l2.item_ids.len(), 1, "exactly one L2 summary queued");
+
+    let l2_summary = store::get_summary(&cfg, &l2.item_ids[0]).unwrap().unwrap();
+    assert_eq!(l2_summary.level, 2);
+    assert_eq!(
+        l2_summary.child_ids.len() as u32,
+        fanout,
+        "L2 summary should fold all {fanout} L1 children"
+    );
+}
+
+#[tokio::test]
+async fn upper_level_does_not_seal_below_fanout() {
+    use crate::openhuman::memory::tree::source_tree::types::SUMMARY_FANOUT;
+    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
+    use chrono::TimeZone;
+
+    let (_tmp, cfg) = test_config();
+    let tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+    let summariser = InertSummariser::new();
+
+    let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+    // Emit (fanout - 1) L1 summaries — should leave the L1 buffer
+    // populated but BELOW the count gate, so no L2 seal.
+    let stop_before = SUMMARY_FANOUT.saturating_sub(1);
+    for seq in 0..stop_before {
+        let content = format!("c{seq}");
+        let chunk = Chunk {
+            id: chunk_id(SourceKind::Chat, "slack:#eng", seq, &content),
+            content,
+            metadata: Metadata {
+                source_kind: SourceKind::Chat,
+                source_id: "slack:#eng".into(),
+                owner: "alice".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec![],
+                source_ref: Some(SourceRef::new("slack://x")),
+            },
+            token_count: 10_000,
+            seq_in_source: seq,
+            created_at: ts,
+        };
+        upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
+        let leaf = LeafRef {
+            chunk_id: chunk.id,
+            token_count: chunk.token_count,
+            timestamp: ts,
+            content: chunk.content,
+            entities: vec![],
+            topics: vec![],
+            score: 0.5,
+        };
+        let _ = append_leaf(&cfg, &tree, &leaf, &summariser).await.unwrap();
+    }
+
+    let t = store::get_tree(&cfg, &tree.id).unwrap().unwrap();
+    assert_eq!(t.max_level, 1, "should plateau at L1 below fanout");
+
+    let l1 = store::get_buffer(&cfg, &tree.id, 1).unwrap();
+    assert_eq!(
+        l1.item_ids.len() as u32,
+        stop_before,
+        "L1 buffer should hold the unsealed siblings"
+    );
+    assert_eq!(
+        store::count_summaries(&cfg, &tree.id).unwrap(),
+        stop_before as u64
+    );
 }
