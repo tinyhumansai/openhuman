@@ -274,35 +274,39 @@ fn core_process_handle_new_token_is_valid() {
     );
 }
 
-/// The global accessor `current_rpc_token()` must return the same token that
-/// the handle exposes via `rpc_token()` after construction.
+/// `CoreProcessHandle::new()` must NOT publish the token to the global
+/// `CURRENT_RPC_TOKEN`.  The global is set only after `ensure_running()`
+/// successfully spawns the child that received `OPENHUMAN_CORE_TOKEN`.
+/// Advertising the token before spawn would cause 401s when the port is
+/// already held by a stale process that never received this token.
 #[test]
-fn current_rpc_token_matches_handle_after_new() {
+fn new_does_not_publish_global_token() {
+    // Capture current global state before constructing the handle.
+    let before = current_rpc_token();
     let handle = CoreProcessHandle::new(19002, None, CoreRunMode::ChildProcess);
-    let global =
-        current_rpc_token().expect("global token must be set after CoreProcessHandle::new");
-    assert_eq!(
-        global,
-        handle.rpc_token(),
-        "global current_rpc_token() must equal handle.rpc_token()"
+    let after = current_rpc_token();
+
+    // The global must not have changed to this handle's token.
+    assert_ne!(
+        after.as_deref(),
+        Some(handle.rpc_token()),
+        "new() must not publish its token to CURRENT_RPC_TOKEN before ensure_running() spawns"
     );
+    // Whatever was in the global before must still be there (or still None).
+    assert_eq!(before, after, "new() must leave CURRENT_RPC_TOKEN unchanged");
 }
 
-/// Two handles constructed sequentially produce different tokens, and the
-/// global accessor always reflects the most-recently-constructed handle.
+/// Two handles constructed sequentially must each have a unique token,
+/// but neither should update the global until ensure_running() spawns.
 #[test]
-fn second_handle_overwrites_global_token() {
+fn each_handle_has_unique_token() {
     let h1 = CoreProcessHandle::new(19003, None, CoreRunMode::ChildProcess);
-    let token1 = h1.rpc_token().to_string();
-
     let h2 = CoreProcessHandle::new(19004, None, CoreRunMode::ChildProcess);
-    let token2 = h2.rpc_token().to_string();
 
-    assert_ne!(token1, token2, "each handle must have a unique token");
-    assert_eq!(
-        current_rpc_token().as_deref(),
-        Some(token2.as_str()),
-        "global must reflect the latest handle's token"
+    assert_ne!(
+        h1.rpc_token(),
+        h2.rpc_token(),
+        "each handle must have a unique token"
     );
 }
 

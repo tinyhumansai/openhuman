@@ -84,7 +84,12 @@ pub struct CoreProcessHandle {
 impl CoreProcessHandle {
     pub fn new(port: u16, core_bin: Option<PathBuf>, run_mode: CoreRunMode) -> Self {
         let rpc_token = generate_rpc_token();
-        *CURRENT_RPC_TOKEN.write() = Some(rpc_token.clone());
+        // CURRENT_RPC_TOKEN is intentionally NOT set here.  It is published by
+        // ensure_running() only after the child process that received
+        // OPENHUMAN_CORE_TOKEN has been successfully spawned.  Setting it here
+        // would advertise a token that the running core (which may be a stale
+        // process the handle did not spawn) has never seen, causing 401s on
+        // every subsequent authenticated call.
         Self {
             child: Arc::new(Mutex::new(None)),
             task: Arc::new(Mutex::new(None)),
@@ -194,6 +199,10 @@ impl CoreProcessHandle {
                         .spawn()
                         .map_err(|e| format!("failed to spawn core process: {e}"))?;
                     *guard = Some(child);
+                    // Publish only after the child that holds OPENHUMAN_CORE_TOKEN
+                    // has been spawned successfully.
+                    *CURRENT_RPC_TOKEN.write() = Some(self.rpc_token.to_string());
+                    log::debug!("[auth] CURRENT_RPC_TOKEN set after in-process spawn");
                 }
             }
             CoreRunMode::ChildProcess => {
@@ -235,6 +244,10 @@ impl CoreProcessHandle {
                         .map_err(|e| format!("failed to spawn core process: {e}"))?;
 
                     *guard = Some(child);
+                    // Publish only after the child that holds OPENHUMAN_CORE_TOKEN
+                    // has been spawned successfully.
+                    *CURRENT_RPC_TOKEN.write() = Some(self.rpc_token.to_string());
+                    log::debug!("[auth] CURRENT_RPC_TOKEN set after child process spawn");
                 }
             }
         }

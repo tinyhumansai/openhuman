@@ -70,6 +70,15 @@ pub const CORE_TOKEN_ENV_VAR: &str = "OPENHUMAN_CORE_TOKEN";
 /// Returns an error only in the fallback path, if the token file cannot be
 /// written.
 pub fn init_rpc_token(workspace_dir: &Path) -> anyhow::Result<()> {
+    // Idempotency guard: if the token is already set, do nothing.  A second
+    // call must never write a new token to disk while the process still
+    // validates the original in-memory value — that would cause clients
+    // reading core.token to start getting 401s immediately.
+    if RPC_TOKEN.get().is_some() {
+        log::debug!("[auth] init_rpc_token: already initialized, skipping");
+        return Ok(());
+    }
+
     // Fast path: token pre-seeded by the Tauri shell via env var.
     if let Ok(env_token) = std::env::var(CORE_TOKEN_ENV_VAR) {
         let env_token = env_token.trim().to_string();
