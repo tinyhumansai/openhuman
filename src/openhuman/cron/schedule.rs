@@ -6,24 +6,44 @@ use std::str::FromStr;
 
 pub fn next_run_for_schedule(schedule: &Schedule, from: DateTime<Utc>) -> Result<DateTime<Utc>> {
     match schedule {
-        Schedule::Cron { expr, tz } => {
+        Schedule::Cron {
+            expr,
+            tz,
+            active_hours,
+        } => {
             let normalized = normalize_expression(expr)?;
             let cron = CronExprSchedule::from_str(&normalized)
                 .with_context(|| format!("Invalid cron expression: {expr}"))?;
 
-            if let Some(tz_name) = tz {
-                let timezone = chrono_tz::Tz::from_str(tz_name)
-                    .with_context(|| format!("Invalid IANA timezone: {tz_name}"))?;
-                let localized_from = from.with_timezone(&timezone);
-                let next_local = cron.after(&localized_from).next().ok_or_else(|| {
-                    anyhow::anyhow!("No future occurrence for expression: {expr}")
-                })?;
-                Ok(next_local.with_timezone(&Utc))
-            } else {
-                cron.after(&from)
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("No future occurrence for expression: {expr}"))
+            let mut current_from = from;
+            for _ in 0..100_000 {
+                let next_utc = if let Some(tz_name) = tz {
+                    let timezone = chrono_tz::Tz::from_str(tz_name)
+                        .with_context(|| format!("Invalid IANA timezone: {tz_name}"))?;
+                    let localized_from = current_from.with_timezone(&timezone);
+                    let next_local = cron.after(&localized_from).next().ok_or_else(|| {
+                        anyhow::anyhow!("No future occurrence for expression: {expr}")
+                    })?;
+                    next_local.with_timezone(&Utc)
+                } else {
+                    // Standardize on device-local timezone when tz is None.
+                    let localized_from = current_from.with_timezone(&chrono::Local);
+                    let next_local = cron.after(&localized_from).next().ok_or_else(|| {
+                        anyhow::anyhow!("No future occurrence for expression: {expr}")
+                    })?;
+                    next_local.with_timezone(&Utc)
+                };
+
+                if let Some(active) = active_hours {
+                    if is_in_active_hours(next_utc, active, tz.as_deref())? {
+                        return Ok(next_utc);
+                    }
+                    current_from = next_utc;
+                } else {
+                    return Ok(next_utc);
+                }
             }
+            anyhow::bail!("No future occurrence found within active hours after 100,000 attempts")
         }
         Schedule::At { at } => Ok(*at),
         Schedule::Every { every_ms } => {
@@ -40,8 +60,16 @@ pub fn next_run_for_schedule(schedule: &Schedule, from: DateTime<Utc>) -> Result
 
 pub fn validate_schedule(schedule: &Schedule, now: DateTime<Utc>) -> Result<()> {
     match schedule {
-        Schedule::Cron { expr, .. } => {
+        Schedule::Cron {
+            expr, active_hours, ..
+        } => {
             let _ = normalize_expression(expr)?;
+            if let Some(active) = active_hours {
+                let _ = chrono::NaiveTime::parse_from_str(&active.start, "%H:%M")
+                    .with_context(|| format!("Invalid active_hours.start: {}", active.start))?;
+                let _ = chrono::NaiveTime::parse_from_str(&active.end, "%H:%M")
+                    .with_context(|| format!("Invalid active_hours.end: {}", active.end))?;
+            }
             let _ = next_run_for_schedule(schedule, now)?;
             Ok(())
         }
@@ -64,6 +92,36 @@ pub fn schedule_cron_expression(schedule: &Schedule) -> Option<String> {
     match schedule {
         Schedule::Cron { expr, .. } => Some(expr.clone()),
         _ => None,
+    }
+}
+
+fn is_in_active_hours(
+    time: DateTime<Utc>,
+    active: &crate::openhuman::cron::ActiveHours,
+    tz: Option<&str>,
+) -> Result<bool> {
+    use chrono::Timelike;
+
+    let hm = if let Some(tz_name) = tz {
+        let timezone = chrono_tz::Tz::from_str(tz_name)
+            .with_context(|| format!("Invalid IANA timezone: {tz_name}"))?;
+        let localized = time.with_timezone(&timezone);
+        chrono::NaiveTime::from_hms_opt(localized.hour(), localized.minute(), 0).unwrap()
+    } else {
+        let localized = time.with_timezone(&chrono::Local);
+        chrono::NaiveTime::from_hms_opt(localized.hour(), localized.minute(), 0).unwrap()
+    };
+
+    let start = chrono::NaiveTime::parse_from_str(&active.start, "%H:%M")
+        .with_context(|| format!("Invalid active_hours.start: {}", active.start))?;
+    let end = chrono::NaiveTime::parse_from_str(&active.end, "%H:%M")
+        .with_context(|| format!("Invalid active_hours.end: {}", active.end))?;
+
+    if start <= end {
+        Ok(hm >= start && hm <= end)
+    } else {
+        // Window spans midnight (e.g., 22:00 to 06:00)
+        Ok(hm >= start || hm <= end)
     }
 }
 
@@ -106,6 +164,7 @@ mod tests {
         let schedule = Schedule::Cron {
             expr: "0 9 * * *".into(),
             tz: Some("America/Los_Angeles".into()),
+            active_hours: None,
         };
 
         let next = next_run_for_schedule(&schedule, from).unwrap();
@@ -155,15 +214,21 @@ mod tests {
     // ── next_run_for_schedule ───────────────────────────────────────
 
     #[test]
-    fn next_run_cron_without_tz_uses_utc_by_default() {
-        // 0 9 * * * at 2026-02-16 00:00Z → next UTC 9am same day.
+    fn next_run_cron_without_tz_uses_local_by_default() {
+        // Since we changed default to local, we need to be careful in tests.
+        // We'll use a fixed Local time and see if it works.
         let from = Utc.with_ymd_and_hms(2026, 2, 16, 0, 0, 0).unwrap();
         let schedule = Schedule::Cron {
             expr: "0 9 * * *".into(),
             tz: None,
+            active_hours: None,
         };
         let next = next_run_for_schedule(&schedule, from).unwrap();
-        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 16, 9, 0, 0).unwrap());
+
+        let expected_local = chrono::Local
+            .with_ymd_and_hms(2026, 2, 16, 9, 0, 0)
+            .unwrap();
+        assert_eq!(next, expected_local.with_timezone(&Utc));
     }
 
     #[test]
@@ -171,6 +236,7 @@ mod tests {
         let schedule = Schedule::Cron {
             expr: "not a cron".into(),
             tz: None,
+            active_hours: None,
         };
         let err = next_run_for_schedule(&schedule, Utc::now()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("invalid"));
@@ -181,6 +247,7 @@ mod tests {
         let schedule = Schedule::Cron {
             expr: "0 9 * * *".into(),
             tz: Some("Not/A_Real_Tz".into()),
+            active_hours: None,
         };
         let err = next_run_for_schedule(&schedule, Utc::now()).unwrap_err();
         assert!(err
@@ -235,6 +302,7 @@ mod tests {
         let schedule = Schedule::Cron {
             expr: "*/5 * * * *".into(),
             tz: None,
+            active_hours: None,
         };
         assert!(validate_schedule(&schedule, now).is_ok());
     }
@@ -244,6 +312,7 @@ mod tests {
         let schedule = Schedule::Cron {
             expr: "not a cron".into(),
             tz: None,
+            active_hours: None,
         };
         assert!(validate_schedule(&schedule, Utc::now()).is_err());
     }
@@ -255,6 +324,7 @@ mod tests {
         let s = Schedule::Cron {
             expr: "0 9 * * *".into(),
             tz: Some("UTC".into()),
+            active_hours: None,
         };
         assert_eq!(schedule_cron_expression(&s).as_deref(), Some("0 9 * * *"));
     }
@@ -263,5 +333,81 @@ mod tests {
     fn schedule_cron_expression_returns_none_for_non_cron_variants() {
         assert!(schedule_cron_expression(&Schedule::Every { every_ms: 1000 }).is_none());
         assert!(schedule_cron_expression(&Schedule::At { at: Utc::now() }).is_none());
+    }
+
+    #[test]
+    fn next_run_respects_active_hours() {
+        // Schedule: every minute
+        // Active hours: 09:00 - 09:05
+        let schedule = Schedule::Cron {
+            expr: "* * * * *".into(),
+            tz: Some("UTC".into()),
+            active_hours: Some(crate::openhuman::cron::ActiveHours {
+                start: "09:00".into(),
+                end: "09:05".into(),
+            }),
+        };
+
+        // If it's 08:00, next run should be 09:00
+        let from = Utc.with_ymd_and_hms(2026, 2, 16, 8, 0, 0).unwrap();
+        let next = next_run_for_schedule(&schedule, from).unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 16, 9, 0, 0).unwrap());
+
+        // If it's 09:02, next run should be 09:03
+        let from = Utc.with_ymd_and_hms(2026, 2, 16, 9, 2, 0).unwrap();
+        let next = next_run_for_schedule(&schedule, from).unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 16, 9, 3, 0).unwrap());
+
+        // If it's 09:05, next run should be 09:00 NEXT DAY
+        let from = Utc.with_ymd_and_hms(2026, 2, 16, 9, 5, 0).unwrap();
+        let next = next_run_for_schedule(&schedule, from).unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 17, 9, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn next_run_respects_active_hours_spanning_midnight() {
+        // Active hours: 22:00 - 02:00
+        let schedule = Schedule::Cron {
+            expr: "0 * * * *".into(), // every hour
+            tz: Some("UTC".into()),
+            active_hours: Some(crate::openhuman::cron::ActiveHours {
+                start: "22:00".into(),
+                end: "02:00".into(),
+            }),
+        };
+
+        // 20:00 -> 22:00
+        let from = Utc.with_ymd_and_hms(2026, 2, 16, 20, 0, 0).unwrap();
+        let next = next_run_for_schedule(&schedule, from).unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 16, 22, 0, 0).unwrap());
+
+        // 23:00 -> 00:00
+        let from = Utc.with_ymd_and_hms(2026, 2, 16, 23, 0, 0).unwrap();
+        let next = next_run_for_schedule(&schedule, from).unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 17, 0, 0, 0).unwrap());
+
+        // 01:00 -> 02:00
+        let from = Utc.with_ymd_and_hms(2026, 2, 17, 1, 0, 0).unwrap();
+        let next = next_run_for_schedule(&schedule, from).unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 17, 2, 0, 0).unwrap());
+
+        // 03:00 -> 22:00 SAME DAY (since it's early morning)
+        let from = Utc.with_ymd_and_hms(2026, 2, 17, 3, 0, 0).unwrap();
+        let next = next_run_for_schedule(&schedule, from).unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 17, 22, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn validate_schedule_rejects_invalid_active_hours() {
+        let now = Utc::now();
+        let schedule = Schedule::Cron {
+            expr: "* * * * *".into(),
+            tz: None,
+            active_hours: Some(crate::openhuman::cron::ActiveHours {
+                start: "invalid".into(),
+                end: "09:00".into(),
+            }),
+        };
+        assert!(validate_schedule(&schedule, now).is_err());
     }
 }

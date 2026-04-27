@@ -52,12 +52,20 @@ impl SessionTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActiveHours {
+    pub start: String,
+    pub end: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Schedule {
     Cron {
         expr: String,
         #[serde(default)]
         tz: Option<String>,
+        #[serde(default)]
+        active_hours: Option<ActiveHours>,
     },
     At {
         at: DateTime<Utc>,
@@ -214,6 +222,7 @@ mod tests {
         let s = Schedule::Cron {
             expr: "0 9 * * *".into(),
             tz: Some("America/Los_Angeles".into()),
+            active_hours: None,
         };
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["kind"], "cron");
@@ -232,6 +241,7 @@ mod tests {
             Schedule::Cron {
                 expr: "*/5 * * * *".into(),
                 tz: None,
+                active_hours: None,
             }
         );
     }

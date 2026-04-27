@@ -112,6 +112,7 @@ fn seed_morning_briefing(config: &Config) -> Result<()> {
     let schedule = Schedule::Cron {
         expr: "0 7 * * *".to_string(),
         tz: None,
+        active_hours: None,
     };
 
     let prompt = concat!(

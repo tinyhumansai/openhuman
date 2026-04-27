@@ -24,6 +24,7 @@ fn test_job(command: &str) -> CronJob {
         schedule: crate::openhuman::cron::Schedule::Cron {
             expr: "* * * * *".into(),
             tz: None,
+            active_hours: None,
         },
         command: command.into(),
         prompt: None,
@@ -353,6 +354,7 @@ fn is_one_shot_auto_delete_false_for_cron_schedule() {
     job.schedule = Schedule::Cron {
         expr: "0 * * * *".into(),
         tz: None,
+        active_hours: None,
     };
     assert!(!is_one_shot_auto_delete(&job));
 }

@@ -61,16 +61,18 @@ pub fn update_cron_job(
     // tz alone updates the timezone and expression alone preserves the timezone.
     let schedule = if expression.is_some() || tz.is_some() {
         let existing = get_job(config, id)?;
-        let (existing_expr, existing_tz) = match existing.schedule {
+        let (existing_expr, existing_tz, existing_active) = match existing.schedule {
             Schedule::Cron {
                 expr,
                 tz: existing_tz,
-            } => (expr, existing_tz),
+                active_hours: existing_active,
+            } => (expr, existing_tz, existing_active),
             _ => anyhow::bail!("Cannot update expression/tz on a non-cron schedule"),
         };
         Some(Schedule::Cron {
             expr: expression.unwrap_or(existing_expr),
             tz: tz.or(existing_tz),
+            active_hours: existing_active,
         })
     } else {
         None

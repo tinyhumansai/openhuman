@@ -18,6 +18,7 @@ fn make_job(config: &Config, expr: &str, tz: Option<&str>, cmd: &str) -> CronJob
         Schedule::Cron {
             expr: expr.into(),
             tz: tz.map(Into::into),
+            active_hours: None,
         },
         cmd,
     )
@@ -102,6 +103,7 @@ fn update_tz_alone_sets_timezone() {
         Schedule::Cron {
             expr: "*/5 * * * *".into(),
             tz: Some("America/Los_Angeles".into()),
+            active_hours: None,
         }
     );
 }
@@ -120,6 +122,7 @@ fn update_expr_alone_preserves_timezone() {
         Schedule::Cron {
             expr: "0 10 * * *".into(),
             tz: Some("UTC".into()),
+            active_hours: None,
         }
     );
 }

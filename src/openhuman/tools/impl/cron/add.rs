@@ -24,7 +24,7 @@ impl Tool for CronAddTool {
     }
 
     fn description(&self) -> &str {
-        "Create a scheduled cron job (shell or agent) with cron/at/every schedules"
+        "Create a scheduled cron job (shell or agent) with cron/at/every schedules. Standardizes on device-local timezone unless 'tz' is set. Note: the scheduler polls on an interval (default 15s, minimum 5s) and does not 'catch up' missed runs."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -34,7 +34,24 @@ impl Tool for CronAddTool {
                 "name": { "type": "string", "description": "Short human-readable name for the job (e.g. 'drink_water_reminder'). Always provide a name." },
                 "schedule": {
                     "type": "object",
-                    "description": "Schedule object: {kind:'cron',expr,tz?} | {kind:'at',at} | {kind:'every',every_ms}"
+                    "description": "Schedule object: {kind:'cron',expr,tz?,active_hours?} | {kind:'at',at} | {kind:'every',every_ms}. 'tz' is an IANA name (e.g. 'America/Los_Angeles') and defaults to the device's local timezone.",
+                    "properties": {
+                        "kind": { "type": "string", "enum": ["cron", "at", "every"] },
+                        "expr": { "type": "string", "description": "Cron expression (5, 6, or 7 fields)" },
+                        "tz": { "type": "string", "description": "Optional IANA timezone name" },
+                        "active_hours": {
+                            "type": "object",
+                            "description": "Optional: only run during these hours (local time/tz)",
+                            "properties": {
+                                "start": { "type": "string", "description": "Start time HH:MM (e.g. '09:00')" },
+                                "end": { "type": "string", "description": "End time HH:MM (e.g. '17:00')" }
+                            },
+                            "required": ["start", "end"]
+                        },
+                        "at": { "type": "string", "description": "ISO-8601 UTC timestamp for kind:'at'" },
+                        "every_ms": { "type": "integer", "description": "Interval in milliseconds for kind:'every'" }
+                    },
+                    "required": ["kind"]
                 },
                 "job_type": { "type": "string", "enum": ["shell", "agent"] },
                 "command": { "type": "string" },
