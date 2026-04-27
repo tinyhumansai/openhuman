@@ -1,6 +1,7 @@
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
+  clickButton,
   textExists,
   waitForText,
   waitForWebView,
@@ -9,6 +10,27 @@ import {
 import { supportsExecuteScript } from '../helpers/platform';
 import { completeOnboardingIfVisible, navigateViaHash } from '../helpers/shared-flows';
 import { startMockServer, stopMockServer } from '../mock-server';
+
+async function openAddAccountModal(): Promise<void> {
+  // The "Add app" affordance is a button whose only labelled descendants are an
+  // SVG plus a tooltip span with `pointer-events: none`. None of the shared
+  // helpers (clickButton / clickText) can target it cleanly because the
+  // accessible name lives only on `aria-label`, so we reach for the explicit
+  // selector here. Tracking a follow-up to add a `clickByAriaLabel` helper.
+  const opened = await browser.execute(() => {
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
+    const addBtn = buttons.find(b => b.getAttribute('aria-label') === 'Add app');
+    if (addBtn) {
+      addBtn.click();
+      return true;
+    }
+    return false;
+  });
+  if (!opened) {
+    throw new Error('Could not locate Add app button on /accounts');
+  }
+  await waitForText('Add account', 5_000);
+}
 
 /**
  * Smoke spec for the WhatsApp Web account integration (feature 10.1.2).
@@ -65,21 +87,10 @@ describe('WhatsApp account integration smoke', () => {
   it('shows WhatsApp Web as an addable provider in the Add Account modal', async () => {
     stepLog('navigating to /accounts');
     await navigateViaHash('/accounts');
-
-    // Page chrome — the Add app affordance lives on the rail.
     await waitForText('Add app', 15_000);
 
     stepLog('opening Add Account modal');
-    const opened = await browser.execute(() => {
-      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
-      const addBtn = buttons.find(b => b.getAttribute('aria-label') === 'Add app');
-      if (addBtn) {
-        addBtn.click();
-        return true;
-      }
-      return false;
-    });
-    expect(opened).toBe(true);
+    await openAddAccountModal();
 
     // Modal renders the WhatsApp Web tile (label sourced from PROVIDERS).
     await waitForText('WhatsApp Web', 10_000);
@@ -89,25 +100,43 @@ describe('WhatsApp account integration smoke', () => {
     );
   });
 
-  it('selecting WhatsApp Web triggers the webview host pane (no real OAuth)', async () => {
-    // Picker should already be open from the previous test in the same suite.
-    stepLog('clicking WhatsApp Web tile');
-    const picked = await browser.execute(() => {
-      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
-      const tile = buttons.find(b => b.textContent?.includes('WhatsApp Web'));
-      if (tile) {
-        tile.click();
-        return true;
-      }
-      return false;
-    });
-    expect(picked).toBe(true);
+  it('selecting WhatsApp Web closes the modal and registers an account on the rail', async () => {
+    // Set up route + modal independently so this case is runnable in isolation.
+    stepLog('navigating to /accounts (independent setup)');
+    await navigateViaHash('/accounts');
+    await waitForText('Add app', 15_000);
+    await openAddAccountModal();
+    await waitForText('WhatsApp Web', 10_000);
 
-    // After picking, the modal closes and the new account is set as active.
-    // The web host pane mounts; we can't drive web.whatsapp.com from a mock
-    // backend (real network), so we settle for asserting the modal dismissed
-    // and the rail now lists the WhatsApp account tooltip.
-    await browser.pause(750);
-    expect(await textExists('Add account')).toBe(false);
+    stepLog('clicking WhatsApp Web tile via shared helper');
+    await clickButton('WhatsApp Web');
+
+    // 1) Modal must close — primary UI outcome.
+    await browser.waitUntil(async () => !(await textExists('Add account')), {
+      timeout: 5_000,
+      timeoutMsg: 'Add account modal did not close after picking WhatsApp Web',
+    });
+
+    // 2) Redux must record a new account with provider === "whatsapp" — the
+    // backing state mock-effect that proves registration happened, not just
+    // that the modal vanished. This pulls Redux directly because the Accounts
+    // rail tooltip and the modal both render the literal string "WhatsApp Web",
+    // so a DOM text assertion alone cannot distinguish them.
+    const registered = await browser.execute(() => {
+      const winAny = window as unknown as { __OPENHUMAN_STORE__?: { getState: () => unknown } };
+      const state = winAny.__OPENHUMAN_STORE__?.getState() as
+        | { accounts?: { accounts?: Record<string, { provider?: string }> } }
+        | undefined;
+      const accounts = state?.accounts?.accounts ?? {};
+      return Object.values(accounts).some(a => a.provider === 'whatsapp');
+    });
+    if (registered === undefined) {
+      // Store not exposed in this build — fall back to a strict DOM check that
+      // requires the rail-only "WhatsApp Web" tooltip to remain after the modal
+      // closes (the only place the label persists post-pick).
+      expect(await textExists('WhatsApp Web')).toBe(true);
+    } else {
+      expect(registered).toBe(true);
+    }
   });
 });
