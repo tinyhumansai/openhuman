@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "OpenHuman"
-version = "0.53.1"
+version = "0.53.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4925,6 +4925,7 @@ dependencies = [
  "html5ever 0.29.1",
  "http",
  "kuchikiki",
+ "log",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
