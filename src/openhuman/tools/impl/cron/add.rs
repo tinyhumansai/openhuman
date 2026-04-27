@@ -231,6 +231,7 @@ impl Tool for CronAddTool {
 mod tests {
     use super::*;
     use crate::openhuman::config::Config;
+    use crate::openhuman::cron::ActiveHours;
     use crate::openhuman::security::AutonomyLevel;
     use tempfile::TempDir;
 
@@ -269,6 +270,46 @@ mod tests {
 
         assert!(!result.is_error, "{:?}", result.output());
         assert!(result.output().contains("next_run"));
+    }
+
+    #[tokio::test]
+    async fn adds_active_hours_shell_job_from_tool_payload() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = test_config(&tmp).await;
+        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let result = tool
+            .execute(json!({
+                "name": "work_hours_ping",
+                "schedule": {
+                    "kind": "cron",
+                    "expr": "* * * * *",
+                    "tz": "UTC",
+                    "active_hours": {
+                        "start": "09:00",
+                        "end": "17:00"
+                    }
+                },
+                "job_type": "shell",
+                "command": "echo ok"
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error, "{:?}", result.output());
+        let jobs = cron::list_jobs(&cfg).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].name.as_deref(), Some("work_hours_ping"));
+        assert_eq!(
+            jobs[0].schedule,
+            Schedule::Cron {
+                expr: "* * * * *".into(),
+                tz: Some("UTC".into()),
+                active_hours: Some(ActiveHours {
+                    start: "09:00".into(),
+                    end: "17:00".into(),
+                }),
+            }
+        );
     }
 
     #[tokio::test]
