@@ -2,9 +2,9 @@
 //!
 //! Authenticates via Composio (JWT from `<workspace>/auth-profiles.json`),
 //! fetches Gmail pages via `GMAIL_FETCH_EMAILS`, converts each thread into an
-//! [`EmailThread`], ingests it through `ingest_email` (which writes `.md`
-//! files via `content_store` and populates SQLite), then drains the async
-//! worker pool until idle.
+//! [`EmailThread`], ingests it through `ingest_page_into_memory_tree` (which
+//! writes `.md` files via `content_store` and populates SQLite), then drains
+//! the async worker pool until idle.
 //!
 //! After draining, the binary performs an integrity check: for every chunk
 //! that has a `content_path` in SQLite, it verifies the on-disk SHA-256
@@ -24,25 +24,22 @@
 //! cargo run --bin gmail-backfill-3d -- --days 14 --page-size 100
 //! cargo run --bin gmail-backfill-3d -- --skip-drain
 //! cargo run --bin gmail-backfill-3d -- --skip-verify
+//! cargo run --bin gmail-backfill-3d -- --wipe
 //! ```
 //!
 //! Set `RUST_LOG=info` (or `debug`) for detailed output.
 
-use std::collections::BTreeMap;
-
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 use clap::Parser;
 use serde_json::{json, Value};
 
 use openhuman_core::openhuman::composio::client::build_composio_client;
+use openhuman_core::openhuman::composio::providers::gmail::ingest::ingest_page_into_memory_tree;
 use openhuman_core::openhuman::composio::providers::registry::{
     get_provider, init_default_providers,
 };
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::memory::tree::canonicalize::email::{EmailMessage, EmailThread};
 use openhuman_core::openhuman::memory::tree::content_store::read::verify_chunk_file;
-use openhuman_core::openhuman::memory::tree::ingest::{ingest_email, IngestResult};
 use openhuman_core::openhuman::memory::tree::jobs::drain_until_idle;
 use openhuman_core::openhuman::memory::tree::store::{
     get_chunk_content_pointers, list_chunks, ListChunksQuery,
@@ -88,10 +85,8 @@ struct Cli {
     #[arg(long)]
     owner: Option<String>,
 
-    /// Wipe `chunks.db` (+ wal/shm) AND `<content_root>/chunks/` before
-    /// running. Useful after the message-aware chunker landed and old
-    /// chunk IDs no longer match — without this the bin will UPSERT new
-    /// chunks alongside stale rows from the previous chunker.
+    /// Wipe `chunks.db` (+ wal/shm) AND `<content_root>/` before running.
+    /// Useful after a chunker change that invalidates existing chunk IDs.
     #[arg(long, default_value_t = false)]
     wipe: bool,
 }
@@ -136,7 +131,6 @@ async fn main() -> Result<()> {
         anyhow::anyhow!("GmailProvider not registered after init_default_providers")
     })?;
 
-    let source_id = "gmail:backfill";
     let owner = cli
         .owner
         .clone()
@@ -222,7 +216,7 @@ async fn main() -> Result<()> {
             break;
         }
 
-        let chunks_this_page = ingest_page(&config, source_id, &owner, &messages).await?;
+        let chunks_this_page = ingest_page_into_memory_tree(&config, &owner, &messages).await?;
         total_chunks += chunks_this_page;
         total_pages += 1;
 
@@ -287,187 +281,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Group a page of raw Gmail messages by (sender, thread_id), convert each
-/// thread to an [`EmailThread`], and drive `ingest_email` per thread.
-///
-/// Returns the total number of chunks written.
-async fn ingest_page(
-    config: &Config,
-    source_id: &str,
-    owner: &str,
-    page_messages: &[Value],
-) -> Result<usize> {
-    if page_messages.is_empty() {
-        return Ok(0);
-    }
-
-    let buckets = bucket_by_thread(page_messages);
-    let tags: Vec<String> = vec!["gmail".into(), "ingested".into()];
-    let mut total = 0usize;
-
-    for (thread_id, raw_msgs) in &buckets {
-        let messages: Vec<EmailMessage> = raw_msgs
-            .iter()
-            .filter_map(|m| raw_to_email_message(m))
-            .collect();
-        if messages.is_empty() {
-            continue;
-        }
-
-        let thread_subject = messages
-            .first()
-            .map(|m| strip_re_fwd(&m.subject))
-            .unwrap_or_else(|| "(no subject)".to_string());
-
-        log::debug!(
-            "[gmail_backfill_3d] ingesting thread_id={} messages={}",
-            thread_id,
-            messages.len(),
-        );
-
-        let thread = EmailThread {
-            provider: "gmail".to_string(),
-            thread_subject,
-            messages,
-        };
-
-        match ingest_email(config, source_id, owner, tags.clone(), thread).await {
-            Ok(IngestResult { chunks_written, .. }) => {
-                total += chunks_written;
-            }
-            Err(e) => {
-                log::warn!(
-                    "[gmail_backfill_3d] ingest_email failed thread_id={} err={:#}",
-                    thread_id,
-                    e,
-                );
-            }
-        }
-    }
-
-    Ok(total)
-}
-
-/// Group raw page messages by thread_id. Within a thread, messages are sorted
-/// ascending by date so each thread reads chronologically.
-type ThreadBucket<'a> = BTreeMap<String, Vec<&'a Value>>;
-
-fn bucket_by_thread(msgs: &[Value]) -> ThreadBucket<'_> {
-    let mut out: ThreadBucket<'_> = BTreeMap::new();
-    for m in msgs {
-        let thread = m
-            .get("threadId")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .or_else(|| {
-                m.get("id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| format!("solo:{s}"))
-            })
-            .unwrap_or_else(|| "unknown".to_string());
-        out.entry(thread).or_default().push(m);
-    }
-    for msgs in out.values_mut() {
-        msgs.sort_by_key(|m| parse_date(m).map(|d| d.timestamp()).unwrap_or(0));
-    }
-    out
-}
-
-/// Build an [`EmailMessage`] from a raw slim-envelope JSON message.
-fn raw_to_email_message(raw: &Value) -> Option<EmailMessage> {
-    let id = raw
-        .get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let from = raw
-        .get("from")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let to = parse_addr_list(raw.get("to"));
-    let cc = parse_addr_list(raw.get("cc"));
-    let subject = raw
-        .get("subject")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let sent_at = parse_date(raw)?;
-    let body = raw
-        .get("markdown")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let source_ref = if id.is_empty() {
-        None
-    } else {
-        Some(format!("gmail://msg/{id}"))
-    };
-
-    Some(EmailMessage {
-        from,
-        to,
-        cc,
-        subject,
-        sent_at,
-        body,
-        source_ref,
-    })
-}
-
-/// Parse the `date` field from a raw Gmail message envelope.
-fn parse_date(m: &Value) -> Option<DateTime<Utc>> {
-    let s = m.get("date").and_then(|v| v.as_str())?;
-    s.parse::<DateTime<Utc>>().ok().or_else(|| {
-        // Fallback: try RFC 2822 style via humantime or just skip.
-        None
-    })
-}
-
-/// Parse `to` / `cc` fields that may be a JSON array or comma-separated string.
-fn parse_addr_list(v: Option<&Value>) -> Vec<String> {
-    match v {
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|s| s.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-        Some(Value::String(s)) => s
-            .split(',')
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty())
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// Strip common reply / forward prefixes from a subject line.
-fn strip_re_fwd(subject: &str) -> String {
-    let mut s = subject.trim();
-    loop {
-        let lowered = s.to_lowercase();
-        if let Some(rest) = lowered
-            .strip_prefix("re:")
-            .or_else(|| lowered.strip_prefix("fwd:"))
-            .or_else(|| lowered.strip_prefix("fw:"))
-        {
-            s = &s[s.len() - rest.len()..];
-            s = s.trim();
-        } else {
-            break;
-        }
-    }
-    if s.is_empty() {
-        "(no subject)".to_string()
-    } else {
-        s.to_string()
-    }
-}
-
 /// Wipe `<workspace>/memory_tree/chunks.db` (+ wal/shm) and
-/// `<content_root>/chunks/` so the bin can re-run cleanly after a chunker
+/// `<content_root>/` so the bin can re-run cleanly after a chunker
 /// change that invalidates existing chunk IDs.
 ///
 /// Logs each removed artifact at info; missing files are not an error.
@@ -481,11 +296,11 @@ fn wipe_memory_tree_state(config: &Config) -> Result<()> {
             Err(e) => return Err(e).with_context(|| format!("wipe {}", path.display())),
         }
     }
-    let chunks_dir = config.memory_tree_content_root().join("chunks");
-    if chunks_dir.exists() {
-        std::fs::remove_dir_all(&chunks_dir)
-            .with_context(|| format!("wipe {}", chunks_dir.display()))?;
-        log::info!("[gmail_backfill_3d] wiped {}", chunks_dir.display());
+    let content_root = config.memory_tree_content_root();
+    if content_root.exists() {
+        std::fs::remove_dir_all(&content_root)
+            .with_context(|| format!("wipe {}", content_root.display()))?;
+        log::info!("[gmail_backfill_3d] wiped {}", content_root.display());
     }
     Ok(())
 }

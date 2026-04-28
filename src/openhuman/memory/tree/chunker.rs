@@ -56,14 +56,21 @@ pub struct ChunkerInput {
 /// Returns chunks in source order with stable sequence numbers starting at 0.
 /// Chunk IDs are deterministic (`types::chunk_id`), so re-chunking yields the
 /// same ids for identical input.
+///
+/// ## Dispatch by source kind
+///
+/// - **Chat / Email**: split at message/email boundaries, then greedy-pack
+///   consecutive units into a single chunk until adding the next unit would
+///   exceed `max_tokens`. Oversize units (a single message > `max_tokens`)
+///   fall back to the paragraph/line/char splitter and emit each piece with
+///   `partial_message = true`.
+/// - **Document**: original paragraph-based greedy packing (unchanged).
 pub fn chunk_markdown(input: &ChunkerInput, opts: &ChunkerOptions) -> Vec<Chunk> {
     let now = chrono::Utc::now();
     let max_tokens = opts.max_tokens.max(1);
     let max_chars = (max_tokens as usize).saturating_mul(4);
 
-    // Dispatch: pick splitting units based on source kind, then greedy-pack
-    // each unit within max_tokens. Oversize units fall back to the
-    // paragraph/line/char splitter and emit partial_message=true pieces.
+    // Dispatch: pick splitting units based on source kind.
     let units: Vec<String> = match input.source_kind {
         SourceKind::Chat => split_chat_messages(&input.markdown),
         SourceKind::Email => split_email_messages(&input.markdown),
@@ -109,17 +116,44 @@ pub fn chunk_markdown(input: &ChunkerInput, opts: &ChunkerOptions) -> Vec<Chunk>
         units.len()
     );
 
-    // For Chat and Email: emit ONE chunk per logical unit (message / email).
-    // Never pack units together — the unit boundary IS the semantic boundary.
-    // If a single unit exceeds max_tokens, sub-split it and mark every piece
-    // as partial_message=true.
+    // For Chat and Email: greedy-pack consecutive units into chunks.
+    // Units are accumulated until adding the next would exceed max_chars;
+    // oversize single units fall back to sub-splitting with partial_message=true.
+    let unit_separator = "\n\n";
+    let sep_chars = unit_separator.chars().count();
+
     let mut out: Vec<Chunk> = Vec::new();
+    let mut acc: Vec<String> = Vec::new();
+    let mut acc_chars = 0usize;
+
+    // Flush accumulated units as one packed chunk.
+    let flush = |acc: &mut Vec<String>, acc_chars: &mut usize, out: &mut Vec<Chunk>| {
+        if acc.is_empty() {
+            return;
+        }
+        let content = acc.join(unit_separator);
+        let seq = out.len() as u32;
+        let tc = approx_token_count(&content);
+        let id = super::types::chunk_id(input.source_kind, &input.source_id, seq, &content);
+        out.push(Chunk {
+            id,
+            content,
+            metadata: input.metadata.clone(),
+            token_count: tc,
+            seq_in_source: seq,
+            created_at: now,
+            partial_message: false,
+        });
+        acc.clear();
+        *acc_chars = 0;
+    };
 
     for unit in units {
         let unit_chars = unit.chars().count();
 
         if unit_chars > max_chars {
-            // Oversize unit: sub-split and emit each piece with partial_message.
+            // Oversize: flush any pending accumulator first, then sub-split.
+            flush(&mut acc, &mut acc_chars, &mut out);
             let sub_pieces = split_by_token_budget(&unit, max_tokens);
             for piece in sub_pieces {
                 let seq = out.len() as u32;
@@ -135,22 +169,30 @@ pub fn chunk_markdown(input: &ChunkerInput, opts: &ChunkerOptions) -> Vec<Chunk>
                     partial_message: true,
                 });
             }
-        } else {
-            // Fits within budget: emit as a single chunk.
-            let seq = out.len() as u32;
-            let tc = approx_token_count(&unit);
-            let id = super::types::chunk_id(input.source_kind, &input.source_id, seq, &unit);
-            out.push(Chunk {
-                id,
-                content: unit,
-                metadata: input.metadata.clone(),
-                token_count: tc,
-                seq_in_source: seq,
-                created_at: now,
-                partial_message: false,
-            });
+            continue;
         }
+
+        // Compute projected size if we add this unit to the accumulator.
+        let projected = if acc.is_empty() {
+            unit_chars
+        } else {
+            acc_chars + sep_chars + unit_chars
+        };
+
+        if projected > max_chars {
+            // Adding this unit would overflow — flush the accumulator first.
+            flush(&mut acc, &mut acc_chars, &mut out);
+        }
+
+        if !acc.is_empty() {
+            acc_chars += sep_chars;
+        }
+        acc_chars += unit_chars;
+        acc.push(unit);
     }
+
+    // Flush any remaining accumulated units.
+    flush(&mut acc, &mut acc_chars, &mut out);
 
     if out.is_empty() {
         // Degenerate: empty input → one empty chunk, matching original behaviour.
@@ -413,9 +455,9 @@ mod tests {
     }
 
     #[test]
-    fn chat_messages_stay_whole() {
-        // Two chat messages; second has multi-paragraph body. With generous
-        // max_tokens both fit in separate chunks without internal splitting.
+    fn chat_messages_pack_into_one_chunk_when_small() {
+        // Two small chat messages both fit under default max_tokens → greedy
+        // packing emits ONE chunk containing both, joined by \n\n.
         let md = "## 2026-01-01T00:00:00Z — alice\nHello world\n\n## 2026-01-01T00:01:00Z — bob\nParagraph one.\n\nParagraph two.".to_string();
         let input = ChunkerInput {
             source_kind: SourceKind::Chat,
@@ -424,29 +466,58 @@ mod tests {
             metadata: meta(),
         };
         let chunks = chunk_markdown(&input, &ChunkerOptions::default());
-        // Both messages fit under default max_tokens → 2 chunks.
+        // Both small messages fit under 10k tokens → one packed chunk.
         assert_eq!(
             chunks.len(),
-            2,
-            "expected one chunk per message; got {chunks:?}"
+            1,
+            "small messages should be packed into one chunk; got {chunks:?}"
         );
         assert!(
             chunks[0].content.contains("alice"),
-            "first chunk must be alice's message"
+            "chunk must contain alice's message"
         );
         assert!(
-            chunks[1].content.contains("bob"),
-            "second chunk must be bob's message"
+            chunks[0].content.contains("bob"),
+            "chunk must contain bob's message"
         );
-        assert!(chunks[1].content.contains("Paragraph one."));
-        assert!(chunks[1].content.contains("Paragraph two."));
+        assert!(chunks[0].content.contains("Paragraph one."));
+        assert!(chunks[0].content.contains("Paragraph two."));
         assert!(!chunks[0].partial_message);
-        assert!(!chunks[1].partial_message);
     }
 
     #[test]
-    fn email_threads_stay_whole() {
-        // Three emails separated by `---\nFrom:` boundaries.
+    fn chat_messages_split_at_boundary_when_large() {
+        // Messages that together exceed max_tokens split at message boundaries
+        // into multiple chunks. Each chunk contains whole messages only.
+        // Each message is ~3k tokens at 4 chars/token = 12k chars;
+        // two messages = ~6k tokens > 5k budget → must split.
+        let msg_body = "x".repeat(12_000);
+        let md = format!(
+            "## 2026-01-01T00:00:00Z — alice\n{msg_body}\n\n## 2026-01-01T00:01:00Z — bob\n{msg_body}"
+        );
+        let input = ChunkerInput {
+            source_kind: SourceKind::Chat,
+            source_id: "slack:#eng".into(),
+            markdown: md,
+            metadata: meta(),
+        };
+        // Use a 5k token budget so two ~3k-token messages don't fit together.
+        let chunks = chunk_markdown(&input, &ChunkerOptions { max_tokens: 5_000 });
+        assert_eq!(
+            chunks.len(),
+            2,
+            "two large messages should land in separate chunks; got {chunks:?}"
+        );
+        assert!(chunks[0].content.contains("alice"));
+        assert!(chunks[1].content.contains("bob"));
+        for c in &chunks {
+            assert!(!c.partial_message, "whole messages must not be partial");
+        }
+    }
+
+    #[test]
+    fn email_threads_pack_into_one_chunk_when_small() {
+        // Three short emails all fit under default max_tokens → one packed chunk.
         let md = "---\nFrom: alice@example.com\nSubject: Hello\nDate: 2026-01-01T00:00:00Z\n\nFirst body.\n---\nFrom: bob@example.com\nSubject: Re: Hello\nDate: 2026-01-01T00:01:00Z\n\nSecond body.\n---\nFrom: carol@example.com\nSubject: Re: Hello\nDate: 2026-01-01T00:02:00Z\n\nThird body.".to_string();
         let input = ChunkerInput {
             source_kind: SourceKind::Email,
@@ -457,15 +528,83 @@ mod tests {
         let chunks = chunk_markdown(&input, &ChunkerOptions::default());
         assert_eq!(
             chunks.len(),
-            3,
-            "expected one chunk per email; got {chunks:?}"
+            1,
+            "three small emails should pack into one chunk; got {chunks:?}"
         );
         assert!(chunks[0].content.contains("First body."));
-        assert!(chunks[1].content.contains("Second body."));
-        assert!(chunks[2].content.contains("Third body."));
+        assert!(chunks[0].content.contains("Second body."));
+        assert!(chunks[0].content.contains("Third body."));
+        assert!(!chunks[0].partial_message);
+    }
+
+    #[test]
+    fn email_thread_large_splits_at_email_boundaries() {
+        // Messages totaling >12k tokens split into 2 chunks at email boundaries.
+        // Each email is ~4k tokens (16k chars); 3 emails × 4k = 12k tokens.
+        // With a 5k budget, 2 emails fit per chunk → 2 chunks for 3 emails.
+        let email_body = "y".repeat(16_000); // ~4k tokens
+        let md = format!(
+            "---\nFrom: a@x.com\nDate: 2026-01-01T00:00:00Z\n\n{email_body}\n\
+             ---\nFrom: b@x.com\nDate: 2026-01-01T00:01:00Z\n\n{email_body}\n\
+             ---\nFrom: c@x.com\nDate: 2026-01-01T00:02:00Z\n\n{email_body}"
+        );
+        let input = ChunkerInput {
+            source_kind: SourceKind::Email,
+            source_id: "gmail:t1".into(),
+            markdown: md,
+            metadata: meta_email(),
+        };
+        let chunks = chunk_markdown(&input, &ChunkerOptions { max_tokens: 5_000 });
+        assert!(
+            chunks.len() >= 2,
+            "large thread must split into multiple chunks; got {}",
+            chunks.len()
+        );
         for c in &chunks {
-            assert!(!c.partial_message);
+            assert!(!c.partial_message, "whole-email chunks must not be partial");
         }
+    }
+
+    #[test]
+    fn oversize_single_email_splits_with_partial_flag() {
+        // A single email body > max_tokens must produce partial_message=true pieces.
+        let big_body = "z".repeat(50_000); // ~12.5k tokens at 4 chars/token
+        let md = format!("---\nFrom: a@x.com\nDate: 2026-01-01T00:00:00Z\n\n{big_body}");
+        let input = ChunkerInput {
+            source_kind: SourceKind::Email,
+            source_id: "gmail:t1".into(),
+            markdown: md,
+            metadata: meta_email(),
+        };
+        let chunks = chunk_markdown(&input, &ChunkerOptions { max_tokens: 1_000 });
+        assert!(chunks.len() > 1, "oversize email must split");
+        for c in &chunks {
+            assert!(
+                c.partial_message,
+                "all sub-pieces of an oversize email must have partial_message=true"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_units_joined_by_double_newline() {
+        // Two chat messages packed together must be separated by \n\n.
+        let md = "## 2026-01-01T00:00:00Z — alice\nfoo\n\n## 2026-01-01T00:01:00Z — bob\nbar"
+            .to_string();
+        let input = ChunkerInput {
+            source_kind: SourceKind::Chat,
+            source_id: "x".into(),
+            markdown: md,
+            metadata: meta(),
+        };
+        let chunks = chunk_markdown(&input, &ChunkerOptions::default());
+        assert_eq!(chunks.len(), 1);
+        // The two messages must be separated by \n\n in the packed content.
+        assert!(
+            chunks[0].content.contains("\n\n"),
+            "packed units must be joined by \\n\\n; content={:?}",
+            chunks[0].content
+        );
     }
 
     #[test]

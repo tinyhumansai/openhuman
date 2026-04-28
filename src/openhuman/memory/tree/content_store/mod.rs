@@ -50,10 +50,9 @@ pub fn stage_chunks(content_root: &Path, chunks: &[Chunk]) -> anyhow::Result<Vec
     for chunk in chunks {
         let source_kind = chunk.metadata.source_kind.as_str();
         let source_id = &chunk.metadata.source_id;
-        let seq = chunk.seq_in_source;
 
-        let rel_path = paths::chunk_rel_path(source_kind, source_id, seq);
-        let abs_path = paths::chunk_abs_path(content_root, source_kind, source_id, seq);
+        let rel_path = paths::chunk_rel_path(source_kind, source_id, &chunk.id);
+        let abs_path = paths::chunk_abs_path(content_root, source_kind, source_id, &chunk.id);
 
         let (full_bytes, body_bytes) = compose::compose_chunk_file(chunk);
         let sha256 = atomic::sha256_hex(&body_bytes);
@@ -132,7 +131,7 @@ mod tests {
                 dir.path(),
                 s.chunk.metadata.source_kind.as_str(),
                 &s.chunk.metadata.source_id,
-                s.chunk.seq_in_source,
+                &s.chunk.id,
             );
             assert!(abs.exists(), "file must exist: {}", abs.display());
             assert!(!s.content_path.is_empty());

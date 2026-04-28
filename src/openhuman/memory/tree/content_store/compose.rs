@@ -19,11 +19,22 @@
 //! Message body here.
 //! ```
 //!
+//! For email source_kind, additional fields are emitted:
+//! ```text
+//! aliases:
+//!   - "alice@example.com: thread t1abc"
+//! sender: alice@example.com
+//! thread_id: t1abc
+//! ```
+//! These are parsed from the `source_id` field (format `gmail:{sender}:{thread_id}`)
+//! at compose time. `thread_subject` is not included here — it would require
+//! carrying it through `Metadata`; that is left as a TODO for a later phase.
+//!
 //! **SHA-256 is computed over the body bytes only** (everything after `---\n`
 //! on the second delimiter line). This allows tags to be rewritten atomically
 //! without invalidating the content hash.
 
-use crate::openhuman::memory::tree::types::Chunk;
+use crate::openhuman::memory::tree::types::{Chunk, SourceKind};
 
 /// Compose the full file content (front-matter + body) for `chunk`.
 ///
@@ -71,8 +82,36 @@ fn build_front_matter(chunk: &Chunk) -> Vec<u8> {
         }
     }
 
+    // Email-specific fields: aliases (Obsidian clickable title), sender, thread_id.
+    // Parsed from source_id which is always `gmail:{sender}:{thread_id}` for
+    // Gmail-ingested chunks. If the format doesn't match, these fields are omitted.
+    // TODO: add thread_subject once it is carried through Metadata.
+    if meta.source_kind == SourceKind::Email {
+        if let Some((sender, thread_id)) = parse_gmail_source_id(&meta.source_id) {
+            let alias = format!("{}: thread {}", sender, thread_id);
+            fm.push_str("aliases:\n");
+            fm.push_str(&format!("  - {}\n", yaml_scalar(&alias)));
+            fm.push_str(&format!("sender: {}\n", yaml_scalar(&sender)));
+            fm.push_str(&format!("thread_id: {}\n", yaml_scalar(&thread_id)));
+        }
+    }
+
     fm.push_str("---\n");
     fm.into_bytes()
+}
+
+/// Parse a `gmail:{sender}:{thread_id}` source_id into its components.
+///
+/// Returns `Some((sender, thread_id))` when the source_id has exactly three
+/// colon-separated segments and the sender is non-empty. Returns `None` for
+/// legacy or malformed source_ids.
+fn parse_gmail_source_id(source_id: &str) -> Option<(String, String)> {
+    let parts: Vec<&str> = source_id.splitn(3, ':').collect();
+    if parts.len() == 3 && parts[0] == "gmail" && !parts[1].is_empty() {
+        Some((parts[1].to_string(), parts[2].to_string()))
+    } else {
+        None
+    }
 }
 
 /// Rewrite the `tags:` block in an existing file's front-matter, replacing it
@@ -286,5 +325,121 @@ mod tests {
         assert_eq!(yaml_scalar("slack:#eng"), "\"slack:#eng\"");
         assert_eq!(yaml_scalar("hello world"), "hello world");
         assert_eq!(yaml_scalar(""), "\"\"");
+    }
+
+    fn sample_email_chunk() -> Chunk {
+        let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        Chunk {
+            id: "emailchunk1".into(),
+            content: "---\nFrom: alice@example.com\nSubject: Hello\n\nHello there.".into(),
+            metadata: Metadata {
+                source_kind: SourceKind::Email,
+                source_id: "gmail:alice@example.com:threadabc".into(),
+                owner: "owner@example.com".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec!["gmail".into()],
+                source_ref: None,
+            },
+            token_count: 15,
+            seq_in_source: 0,
+            created_at: ts,
+            partial_message: false,
+        }
+    }
+
+    #[test]
+    fn email_chunk_has_aliases_sender_thread_id() {
+        let chunk = sample_email_chunk();
+        let (full, _body) = compose_chunk_file(&chunk);
+        let full_str = std::str::from_utf8(&full).unwrap();
+        // aliases block must be present
+        assert!(
+            full_str.contains("aliases:"),
+            "email chunk must have aliases field"
+        );
+        assert!(
+            full_str.contains("alice@example.com: thread threadabc"),
+            "alias must encode sender and thread_id; got:\n{full_str}"
+        );
+        // sender and thread_id fields
+        assert!(
+            full_str.contains("sender:"),
+            "email chunk must have sender field"
+        );
+        assert!(
+            full_str.contains("thread_id:"),
+            "email chunk must have thread_id field"
+        );
+        assert!(
+            full_str.contains("alice@example.com"),
+            "sender value must be present"
+        );
+        assert!(
+            full_str.contains("threadabc"),
+            "thread_id value must be present"
+        );
+    }
+
+    #[test]
+    fn email_chunk_body_bytes_unchanged_by_extra_fields() {
+        // Adding aliases/sender/thread_id to front-matter must not affect body_bytes
+        // (SHA-256 invariant: the hash is over body only, not front-matter).
+        let chunk = sample_email_chunk();
+        let (full, body) = compose_chunk_file(&chunk);
+        let full_str = std::str::from_utf8(&full).unwrap();
+        // Body must still appear at the end unmodified.
+        assert!(
+            full_str.ends_with(std::str::from_utf8(&body).unwrap()),
+            "body bytes must appear unmodified after front-matter"
+        );
+        // body must equal chunk.content bytes
+        assert_eq!(body, chunk.content.as_bytes());
+    }
+
+    #[test]
+    fn chat_chunk_has_no_email_specific_fields() {
+        let chunk = sample_chunk(); // source_kind = Chat
+        let (full, _) = compose_chunk_file(&chunk);
+        let full_str = std::str::from_utf8(&full).unwrap();
+        assert!(
+            !full_str.contains("aliases:"),
+            "chat chunk must not have aliases field"
+        );
+        assert!(
+            !full_str.contains("sender:"),
+            "chat chunk must not have sender field"
+        );
+        assert!(
+            !full_str.contains("thread_id:"),
+            "chat chunk must not have thread_id field"
+        );
+    }
+
+    #[test]
+    fn email_chunk_with_malformed_source_id_omits_extra_fields() {
+        let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        let chunk = Chunk {
+            id: "xyz".into(),
+            content: "body".into(),
+            metadata: Metadata {
+                source_kind: SourceKind::Email,
+                source_id: "legacysourceid".into(), // no colons → parse fails
+                owner: "owner".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec![],
+                source_ref: None,
+            },
+            token_count: 1,
+            seq_in_source: 0,
+            created_at: ts,
+            partial_message: false,
+        };
+        let (full, _) = compose_chunk_file(&chunk);
+        let full_str = std::str::from_utf8(&full).unwrap();
+        // Malformed source_id → no email extras, no panic.
+        assert!(!full_str.contains("aliases:"));
+        assert!(!full_str.contains("sender:"));
     }
 }

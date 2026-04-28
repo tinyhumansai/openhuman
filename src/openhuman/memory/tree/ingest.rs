@@ -268,17 +268,18 @@ mod tests {
         let out = ingest_chat(&cfg, "slack:#eng", "alice", vec![], substantive_batch())
             .await
             .unwrap();
-        // Phase B chunker: each chat message becomes its own chunk (2 messages → 2 chunks).
-        assert_eq!(out.chunks_written, 2);
-        assert_eq!(count_chunks(&cfg).unwrap(), 2);
+        // Greedy packing: both small messages fit under 10k token budget
+        // and are packed into a single chunk.
+        assert_eq!(out.chunks_written, 1);
+        assert_eq!(count_chunks(&cfg).unwrap(), 1);
 
         drain_until_idle(&cfg).await.unwrap();
 
         // Final lifecycle is `buffered`: extract → admitted → append_buffer → buffered.
-        // Neither small chunk crosses TOKEN_BUDGET so no seal fires.
+        // The single packed chunk does not cross TOKEN_BUDGET so no seal fires.
         assert_eq!(
             count_chunks_by_lifecycle_status(&cfg, CHUNK_STATUS_BUFFERED).unwrap(),
-            2
+            1
         );
         assert!(count_scores(&cfg).unwrap() >= 1);
         assert_eq!(

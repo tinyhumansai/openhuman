@@ -3,13 +3,12 @@
 //! Owns the conversion from a page of `GMAIL_FETCH_EMAILS` slim-envelope
 //! messages (post-processed by [`super::post_process`]) into
 //! [`EmailThread`] batches grouped by `(sender, threadId)`, then drives
-//! [`memory::tree::ingest::ingest_email`] per thread with
-//! [`GmailMarkdownStyle::Standard`].
+//! [`memory::tree::ingest::ingest_email`] per thread.
 //!
 //! Mirrors the bin's `bucket_by_sender_and_thread` grouping and the
 //! per-thread rendering tested in `gmail-fetch-emails.rs`. Source-id is
-//! per-inbox (`gmail:{connection_id}`), so every thread from one
-//! connection lands in the same source tree.
+//! per-thread (`gmail:{sender}:{thread_id}`), so every thread from one
+//! connection lands in its own path subtree (eliminates path collisions).
 //!
 //! Idempotency: chunk IDs are content-hashed inside the memory tree, so
 //! re-ingesting a previously-seen Gmail message is an UPSERT — buffer
@@ -22,9 +21,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::canonicalize::email::{
-    EmailMessage, EmailThread, GmailMarkdownStyle,
-};
+use crate::openhuman::memory::tree::canonicalize::email::{EmailMessage, EmailThread};
 use crate::openhuman::memory::tree::canonicalize::email_clean::{
     extract_email, parse_message_date,
 };
@@ -53,7 +50,7 @@ pub(crate) fn bucket_by_sender_and_thread(
     for m in msgs {
         let from = m.get("from").and_then(|v| v.as_str()).unwrap_or("");
         let sender = extract_email(from)
-            .map(|s| s.to_lowercase())
+            .map(|s: String| s.to_lowercase())
             .unwrap_or_else(|| {
                 if from.trim().is_empty() {
                     "unknown".to_string()
@@ -66,12 +63,7 @@ pub(crate) fn bucket_by_sender_and_thread(
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(str::to_string)
-            .or_else(|| {
-                m.get("id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| format!("solo:{s}"))
-            })
-            .unwrap_or_else(|| "unknown".to_string());
+            .unwrap_or_else(|| "_solo_".to_string());
         out.entry(sender)
             .or_default()
             .entry(thread)
@@ -81,7 +73,9 @@ pub(crate) fn bucket_by_sender_and_thread(
     for threads in out.values_mut() {
         for msgs in threads.values_mut() {
             msgs.sort_by_key(|m| {
-                parse_message_date(m).map(|d| d.timestamp()).unwrap_or(0)
+                parse_message_date(m)
+                    .map(|d: chrono::DateTime<chrono::Utc>| d.timestamp())
+                    .unwrap_or(0)
             });
         }
     }
@@ -151,11 +145,17 @@ fn parse_address_list(v: Option<&Value>) -> Vec<String> {
     }
 }
 
-/// Ingest a page of raw Gmail messages into the memory tree under one
-/// inbox. Each `(sender, thread)` group becomes one [`EmailThread`] with
+/// Ingest a page of raw Gmail messages into the memory tree.
+///
+/// Each `(sender, thread)` group becomes one [`EmailThread`] with
 /// [`GmailMarkdownStyle::Standard`], handed to
 /// [`ingest_email`] which fans out to the chunker + scorer + source
 /// tree downstream.
+///
+/// The `source_id` is derived per `(sender, thread)` as
+/// `"gmail:{sender}:{thread_id}"` so every thread lands in its own path
+/// subtree, eliminating the path-collision bug that arose when all threads
+/// shared a single hardcoded source_id.
 ///
 /// Returns the total number of chunks written across all threads so
 /// callers can surface counts in logs / outcomes. Per-thread errors are
@@ -163,7 +163,6 @@ fn parse_address_list(v: Option<&Value>) -> Vec<String> {
 /// page (the next sync re-fetches it via the date-cursor).
 pub async fn ingest_page_into_memory_tree(
     config: &Config,
-    source_id: &str,
     owner: &str,
     page_messages: &[Value],
 ) -> Result<usize> {
@@ -183,6 +182,9 @@ pub async fn ingest_page_into_memory_tree(
                 );
                 continue;
             }
+            // Per-thread source_id eliminates path collisions: each
+            // (sender, thread) combination writes to its own subdirectory.
+            let source_id = format!("gmail:{}:{}", sender, thread_id);
             let thread_subject = pick_thread_subject(&messages);
             log::info!(
                 "[composio:gmail][ingest] thread sender={} thread_id={} messages={} source_id={}",
@@ -195,19 +197,19 @@ pub async fn ingest_page_into_memory_tree(
                 provider: GMAIL_PROVIDER.to_string(),
                 thread_subject,
                 messages,
-                gmail_style: Some(GmailMarkdownStyle::Standard),
             };
             let tags = DEFAULT_TAGS.iter().map(|s| (*s).to_string()).collect();
-            match ingest_email(config, source_id, owner, tags, thread).await {
+            match ingest_email(config, &source_id, owner, tags, thread).await {
                 Ok(IngestResult { chunks_written, .. }) => {
                     total_chunks += chunks_written;
                     total_threads += 1;
                 }
                 Err(e) => {
                     log::warn!(
-                        "[composio:gmail][ingest] ingest_email failed sender={} thread={} err={:#}",
+                        "[composio:gmail][ingest] ingest_email failed sender={} thread={} source_id={} err={:#}",
                         sender,
                         thread_id,
+                        source_id,
                         e
                     );
                 }
@@ -215,7 +217,7 @@ pub async fn ingest_page_into_memory_tree(
         }
     }
     log::info!(
-        "[composio:gmail][ingest] page_done source_id={source_id} threads={total_threads} chunks={total_chunks}"
+        "[composio:gmail][ingest] page_done owner={owner} threads={total_threads} chunks={total_chunks}"
     );
     Ok(total_chunks)
 }
@@ -307,6 +309,7 @@ mod tests {
 
     #[test]
     fn solo_thread_id_when_threadid_missing() {
+        // Messages without threadId share the `_solo_` bucket per sender.
         let msgs = vec![json!({
             "id": "abc",
             "from": "noreply@github.com",
@@ -315,7 +318,36 @@ mod tests {
             "markdown": "body",
         })];
         let buckets = bucket_by_sender_and_thread(&msgs);
-        assert!(buckets["noreply@github.com"].contains_key("solo:abc"));
+        assert!(
+            buckets["noreply@github.com"].contains_key("_solo_"),
+            "solo messages must land in the _solo_ bucket, not a per-message bucket"
+        );
+    }
+
+    #[test]
+    fn two_solo_messages_same_sender_share_one_bucket() {
+        // Two messages from the same sender both lacking threadId must be
+        // placed in the same `_solo_` bucket so they get the same source_id
+        // and therefore the same path subtree.
+        let msgs = vec![
+            json!({
+                "id": "m1",
+                "from": "noreply@github.com",
+                "subject": "PR opened",
+                "date": "2026-04-21T10:00:00Z",
+                "markdown": "body1",
+            }),
+            json!({
+                "id": "m2",
+                "from": "noreply@github.com",
+                "subject": "PR merged",
+                "date": "2026-04-21T11:00:00Z",
+                "markdown": "body2",
+            }),
+        ];
+        let buckets = bucket_by_sender_and_thread(&msgs);
+        let solo = &buckets["noreply@github.com"]["_solo_"];
+        assert_eq!(solo.len(), 2, "both solo messages must share the _solo_ bucket");
     }
 
     #[test]
