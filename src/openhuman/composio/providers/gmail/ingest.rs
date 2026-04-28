@@ -2,13 +2,13 @@
 //!
 //! Owns the conversion from a page of `GMAIL_FETCH_EMAILS` slim-envelope
 //! messages (post-processed by [`super::post_process`]) into
-//! [`EmailThread`] batches grouped by `(sender, threadId)`, then drives
-//! [`memory::tree::ingest::ingest_email`] per thread.
+//! [`EmailThread`] batches grouped by the sorted set of distinct
+//! participants (`from` ∪ `to`-list, CC ignored), then drives
+//! [`memory::tree::ingest::ingest_email`] per participant group.
 //!
-//! Mirrors the bin's `bucket_by_sender_and_thread` grouping and the
-//! per-thread rendering tested in `gmail-fetch-emails.rs`. Source-id is
-//! per-thread (`gmail:{sender}:{thread_id}`), so every thread from one
-//! connection lands in its own path subtree (eliminates path collisions).
+//! Source-id is `gmail:{participants}` where participants is
+//! `addr1|addr2|...` (sorted, deduped, lowercased bare emails). All
+//! correspondence between the same set of people lands in one source tree.
 //!
 //! Idempotency: chunk IDs are content-hashed inside the memory tree, so
 //! re-ingesting a previously-seen Gmail message is an UPSERT — buffer
@@ -35,51 +35,77 @@ pub const GMAIL_PROVIDER: &str = "gmail";
 /// callers filter on these.
 pub const DEFAULT_TAGS: &[&str] = &["gmail", "ingested"];
 
-/// Inner map: `threadId → ordered messages`.
-type ThreadBucket<'a> = BTreeMap<String, Vec<&'a Value>>;
-
-/// Group raw page messages by `(sender_email, thread_id)`. Within a
-/// thread, messages sort ascending by date so each rendered thread reads
-/// chronologically. Mirrors the same-named function in
-/// `bin/gmail_fetch_emails.rs` — kept aligned so bin output and
-/// production canonicalisation see the same bucketing.
-pub(crate) fn bucket_by_sender_and_thread(
-    msgs: &[Value],
-) -> BTreeMap<String, ThreadBucket<'_>> {
-    let mut out: BTreeMap<String, ThreadBucket<'_>> = BTreeMap::new();
+/// Group raw page messages by the sorted set of distinct participants
+/// (`from` ∪ `to`-list). CC is deliberately excluded from the bucket key
+/// so CC-only recipients don't fragment conversations. All messages
+/// between the same set of people land in the same bucket regardless of
+/// direction or thread ID.
+///
+/// The bucket key is the participants joined with `|` in sorted order,
+/// e.g. `"alice@x.com|bob@y.com"`. Messages within a bucket are sorted
+/// ascending by date so the rendered conversation reads chronologically.
+pub(crate) fn bucket_by_participants(msgs: &[Value]) -> BTreeMap<String, Vec<&Value>> {
+    let mut out: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
     for m in msgs {
-        let from = m.get("from").and_then(|v| v.as_str()).unwrap_or("");
-        let sender = extract_email(from)
-            .map(|s: String| s.to_lowercase())
-            .unwrap_or_else(|| {
-                if from.trim().is_empty() {
-                    "unknown".to_string()
-                } else {
-                    from.trim().to_lowercase()
-                }
-            });
-        let thread = m
-            .get("threadId")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| "_solo_".to_string());
-        out.entry(sender)
-            .or_default()
-            .entry(thread)
-            .or_default()
-            .push(m);
+        let bucket_key = participants_bucket_key(m);
+        out.entry(bucket_key).or_default().push(m);
     }
-    for threads in out.values_mut() {
-        for msgs in threads.values_mut() {
-            msgs.sort_by_key(|m| {
-                parse_message_date(m)
-                    .map(|d: chrono::DateTime<chrono::Utc>| d.timestamp())
-                    .unwrap_or(0)
-            });
-        }
+    for bucket in out.values_mut() {
+        bucket.sort_by_key(|m| {
+            parse_message_date(m)
+                .map(|d: chrono::DateTime<chrono::Utc>| d.timestamp())
+                .unwrap_or(0)
+        });
     }
     out
+}
+
+/// Compute the participants bucket key for a single raw message.
+///
+/// Collects `from` ∪ `to` (as bare lowercased email addresses), sorts
+/// and dedupes them, then joins with `|`. Falls back to `"unknown"` when
+/// all addresses fail to parse.
+fn participants_bucket_key(raw: &Value) -> String {
+    let from = extract_email(raw.get("from").and_then(|v| v.as_str()).unwrap_or(""))
+        .map(|s| s.to_lowercase())
+        .filter(|s| !s.is_empty());
+
+    let to_emails: Vec<String> = parse_address_list_for_bucket(raw.get("to"))
+        .into_iter()
+        .filter_map(|addr| extract_email(&addr).map(|s| s.to_lowercase()))
+        .collect();
+
+    let mut all: Vec<String> = from.into_iter().chain(to_emails).collect();
+    all.sort();
+    all.dedup();
+    all.retain(|s| !s.is_empty());
+
+    if all.is_empty() {
+        "unknown".to_string()
+    } else {
+        all.join("|")
+    }
+}
+
+/// Parse the `to` / `cc` field for bucket-key construction. Handles both
+/// JSON array and comma-separated string forms. Returns raw address
+/// strings (may include display names); callers must extract the bare
+/// email with [`extract_email`].
+fn parse_address_list_for_bucket(v: Option<&Value>) -> Vec<String> {
+    match v {
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|s| s.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        Some(Value::String(s)) => s
+            .split(',')
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Build an [`EmailMessage`] from a raw slim-envelope JSON message.
@@ -147,20 +173,18 @@ fn parse_address_list(v: Option<&Value>) -> Vec<String> {
 
 /// Ingest a page of raw Gmail messages into the memory tree.
 ///
-/// Each `(sender, thread)` group becomes one [`EmailThread`] with
-/// [`GmailMarkdownStyle::Standard`], handed to
-/// [`ingest_email`] which fans out to the chunker + scorer + source
-/// tree downstream.
+/// Each participant-bucket (sorted set of `from` ∪ `to` email addresses)
+/// becomes one [`EmailThread`] handed to [`ingest_email`] which fans out
+/// to the chunker + scorer + source tree downstream.
 ///
-/// The `source_id` is derived per `(sender, thread)` as
-/// `"gmail:{sender}:{thread_id}"` so every thread lands in its own path
-/// subtree, eliminating the path-collision bug that arose when all threads
-/// shared a single hardcoded source_id.
+/// `source_id` = `"gmail:{participants}"` where participants is
+/// `addr1|addr2|...` (sorted, deduped, lowercased). This groups all
+/// correspondence between the same people into one path subtree.
 ///
-/// Returns the total number of chunks written across all threads so
-/// callers can surface counts in logs / outcomes. Per-thread errors are
-/// logged and swallowed — one bad thread should not abort the whole
-/// page (the next sync re-fetches it via the date-cursor).
+/// Returns the total number of chunks written across all buckets so
+/// callers can surface counts in logs / outcomes. Per-bucket errors are
+/// logged and swallowed — one bad bucket should not abort the whole
+/// page (the next sync re-fetches via the date-cursor).
 pub async fn ingest_page_into_memory_tree(
     config: &Config,
     owner: &str,
@@ -169,55 +193,53 @@ pub async fn ingest_page_into_memory_tree(
     if page_messages.is_empty() {
         return Ok(0);
     }
-    let buckets = bucket_by_sender_and_thread(page_messages);
+    let buckets = bucket_by_participants(page_messages);
     let mut total_chunks = 0usize;
-    let mut total_threads = 0usize;
-    for (sender, threads) in &buckets {
-        for (thread_id, raw_msgs) in threads {
-            let messages: Vec<EmailMessage> =
-                raw_msgs.iter().filter_map(|raw| raw_to_email_message(raw)).collect();
-            if messages.is_empty() {
-                log::debug!(
-                    "[composio:gmail][ingest] skipping empty thread sender={sender} thread={thread_id}"
-                );
-                continue;
-            }
-            // Per-thread source_id eliminates path collisions: each
-            // (sender, thread) combination writes to its own subdirectory.
-            let source_id = format!("gmail:{}:{}", sender, thread_id);
-            let thread_subject = pick_thread_subject(&messages);
-            log::info!(
-                "[composio:gmail][ingest] thread sender={} thread_id={} messages={} source_id={}",
-                sender,
-                thread_id,
-                messages.len(),
-                source_id
+    let mut total_buckets = 0usize;
+    for (participants, raw_msgs) in &buckets {
+        let messages: Vec<EmailMessage> = raw_msgs
+            .iter()
+            .filter_map(|raw| raw_to_email_message(raw))
+            .collect();
+        if messages.is_empty() {
+            log::debug!(
+                "[composio:gmail][ingest] skipping empty bucket participants={participants}"
             );
-            let thread = EmailThread {
-                provider: GMAIL_PROVIDER.to_string(),
-                thread_subject,
-                messages,
-            };
-            let tags = DEFAULT_TAGS.iter().map(|s| (*s).to_string()).collect();
-            match ingest_email(config, &source_id, owner, tags, thread).await {
-                Ok(IngestResult { chunks_written, .. }) => {
-                    total_chunks += chunks_written;
-                    total_threads += 1;
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[composio:gmail][ingest] ingest_email failed sender={} thread={} source_id={} err={:#}",
-                        sender,
-                        thread_id,
-                        source_id,
-                        e
-                    );
-                }
+            continue;
+        }
+        // source_id encodes participants so every unique conversation set
+        // lands in its own path subtree.
+        let source_id = format!("gmail:{}", participants);
+        let thread_subject = pick_thread_subject(&messages);
+        log::info!(
+            "[composio:gmail][ingest] bucket participants={} messages={} source_id={}",
+            participants,
+            messages.len(),
+            source_id
+        );
+        let thread = EmailThread {
+            provider: GMAIL_PROVIDER.to_string(),
+            thread_subject,
+            messages,
+        };
+        let tags = DEFAULT_TAGS.iter().map(|s| (*s).to_string()).collect();
+        match ingest_email(config, &source_id, owner, tags, thread).await {
+            Ok(IngestResult { chunks_written, .. }) => {
+                total_chunks += chunks_written;
+                total_buckets += 1;
+            }
+            Err(e) => {
+                log::warn!(
+                    "[composio:gmail][ingest] ingest_email failed participants={} source_id={} err={:#}",
+                    participants,
+                    source_id,
+                    e
+                );
             }
         }
     }
     log::info!(
-        "[composio:gmail][ingest] page_done owner={owner} threads={total_threads} chunks={total_chunks}"
+        "[composio:gmail][ingest] page_done owner={owner} buckets={total_buckets} chunks={total_chunks}"
     );
     Ok(total_chunks)
 }
@@ -272,67 +294,131 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // ─── bucket_by_participants tests ─────────────────────────────────────────
+
     #[test]
-    fn bucket_groups_by_sender_and_thread() {
+    fn bidirectional_messages_bucket_together() {
+        // alice→bob and bob→alice land in the same key "alice@x.com|bob@y.com".
         let msgs = vec![
             json!({
-                "id": "m1", "threadId": "t1",
-                "from": "Alice <alice@example.com>",
+                "id": "m1",
+                "from": "alice@x.com",
+                "to": "bob@y.com",
                 "subject": "Hi",
                 "date": "2026-04-21T10:00:00Z",
-                "markdown": "first",
+                "markdown": "hi",
             }),
             json!({
-                "id": "m2", "threadId": "t1",
-                "from": "Alice <alice@example.com>",
+                "id": "m2",
+                "from": "bob@y.com",
+                "to": "alice@x.com",
                 "subject": "Re: Hi",
                 "date": "2026-04-21T11:00:00Z",
-                "markdown": "second",
-            }),
-            json!({
-                "id": "m3", "threadId": "t2",
-                "from": "bob@example.com",
-                "subject": "Other",
-                "date": "2026-04-22T09:00:00Z",
-                "markdown": "third",
+                "markdown": "hey",
             }),
         ];
-        let buckets = bucket_by_sender_and_thread(&msgs);
-        assert_eq!(buckets.len(), 2);
-        assert_eq!(buckets["alice@example.com"]["t1"].len(), 2);
-        assert_eq!(buckets["bob@example.com"]["t2"].len(), 1);
-        // Within a thread, messages sort ascending by date.
-        let t1 = &buckets["alice@example.com"]["t1"];
-        assert_eq!(t1[0].get("id").unwrap().as_str().unwrap(), "m1");
-        assert_eq!(t1[1].get("id").unwrap().as_str().unwrap(), "m2");
+        let buckets = bucket_by_participants(&msgs);
+        assert_eq!(buckets.len(), 1, "both messages must share one bucket");
+        let key = buckets.keys().next().unwrap();
+        assert_eq!(key, "alice@x.com|bob@y.com");
+        assert_eq!(buckets[key].len(), 2);
+        // Sorted ascending by date inside the bucket.
+        assert_eq!(buckets[key][0].get("id").unwrap().as_str().unwrap(), "m1");
+        assert_eq!(buckets[key][1].get("id").unwrap().as_str().unwrap(), "m2");
     }
 
     #[test]
-    fn solo_thread_id_when_threadid_missing() {
-        // Messages without threadId share the `_solo_` bucket per sender.
+    fn multi_recipient_bucket_key_sorted() {
+        // from=alice, to=[bob, carol] → "alice@x.com|bob@y.com|carol@z.com"
         let msgs = vec![json!({
-            "id": "abc",
-            "from": "noreply@github.com",
-            "subject": "x",
+            "id": "m1",
+            "from": "Alice <alice@x.com>",
+            "to": ["bob@y.com", "carol@z.com"],
+            "subject": "Group",
+            "date": "2026-04-21T10:00:00Z",
+            "markdown": "hey all",
+        })];
+        let buckets = bucket_by_participants(&msgs);
+        let key = buckets.keys().next().unwrap();
+        assert_eq!(key, "alice@x.com|bob@y.com|carol@z.com");
+    }
+
+    #[test]
+    fn cc_field_ignored_in_bucket_key() {
+        // from=alice, to=[bob], cc=[dave] → "alice@x.com|bob@y.com" (no dave).
+        let msgs = vec![json!({
+            "id": "m1",
+            "from": "alice@x.com",
+            "to": "bob@y.com",
+            "cc": "dave@z.com",
+            "subject": "CC test",
             "date": "2026-04-21T10:00:00Z",
             "markdown": "body",
         })];
-        let buckets = bucket_by_sender_and_thread(&msgs);
-        assert!(
-            buckets["noreply@github.com"].contains_key("_solo_"),
-            "solo messages must land in the _solo_ bucket, not a per-message bucket"
+        let buckets = bucket_by_participants(&msgs);
+        let key = buckets.keys().next().unwrap();
+        assert_eq!(
+            key, "alice@x.com|bob@y.com",
+            "CC must not appear in bucket key"
         );
     }
 
     #[test]
-    fn two_solo_messages_same_sender_share_one_bucket() {
-        // Two messages from the same sender both lacking threadId must be
-        // placed in the same `_solo_` bucket so they get the same source_id
-        // and therefore the same path subtree.
+    fn solo_message_no_to_buckets_to_sender_only() {
+        // from=alice, to=[] → "alice@x.com" (single participant).
+        let msgs = vec![json!({
+            "id": "m1",
+            "from": "alice@x.com",
+            "subject": "Draft",
+            "date": "2026-04-21T10:00:00Z",
+            "markdown": "draft body",
+        })];
+        let buckets = bucket_by_participants(&msgs);
+        let key = buckets.keys().next().unwrap();
+        assert_eq!(key, "alice@x.com");
+    }
+
+    #[test]
+    fn empty_from_and_to_falls_back_to_unknown() {
+        let msgs = vec![json!({
+            "id": "m1",
+            "from": "",
+            "subject": "x",
+            "date": "2026-04-21T10:00:00Z",
+            "markdown": "body",
+        })];
+        let buckets = bucket_by_participants(&msgs);
+        assert!(
+            buckets.contains_key("unknown"),
+            "must fall back to 'unknown'"
+        );
+    }
+
+    #[test]
+    fn display_name_from_stripped_to_bare_email_in_key() {
+        // "Alice <alice@x.com>" should yield bare "alice@x.com" in the key.
+        let msgs = vec![json!({
+            "id": "m1",
+            "from": "Alice <alice@x.com>",
+            "to": "Bob <bob@y.com>",
+            "subject": "Hi",
+            "date": "2026-04-21T10:00:00Z",
+            "markdown": "hi",
+        })];
+        let buckets = bucket_by_participants(&msgs);
+        let key = buckets.keys().next().unwrap();
+        assert_eq!(key, "alice@x.com|bob@y.com");
+    }
+
+    #[test]
+    fn no_threadid_field_does_not_affect_bucketing() {
+        // threadId is completely ignored; two messages from the same participants
+        // share one bucket even without threadId.
         let msgs = vec![
             json!({
                 "id": "m1",
                 "from": "noreply@github.com",
+                "to": "sanil@x.com",
                 "subject": "PR opened",
                 "date": "2026-04-21T10:00:00Z",
                 "markdown": "body1",
@@ -340,27 +426,16 @@ mod tests {
             json!({
                 "id": "m2",
                 "from": "noreply@github.com",
+                "to": "sanil@x.com",
                 "subject": "PR merged",
                 "date": "2026-04-21T11:00:00Z",
                 "markdown": "body2",
             }),
         ];
-        let buckets = bucket_by_sender_and_thread(&msgs);
-        let solo = &buckets["noreply@github.com"]["_solo_"];
-        assert_eq!(solo.len(), 2, "both solo messages must share the _solo_ bucket");
-    }
-
-    #[test]
-    fn unknown_sender_fallback_when_from_blank() {
-        let msgs = vec![json!({
-            "id": "abc", "threadId": "t1",
-            "from": "",
-            "subject": "x",
-            "date": "2026-04-21T10:00:00Z",
-            "markdown": "body",
-        })];
-        let buckets = bucket_by_sender_and_thread(&msgs);
-        assert!(buckets.contains_key("unknown"));
+        let buckets = bucket_by_participants(&msgs);
+        assert_eq!(buckets.len(), 1, "both messages must share one bucket");
+        let bucket = buckets.values().next().unwrap();
+        assert_eq!(bucket.len(), 2);
     }
 
     #[test]

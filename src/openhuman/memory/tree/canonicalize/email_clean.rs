@@ -290,7 +290,8 @@ mod tests {
 
     #[test]
     fn drop_footer_noise_strips_unsubscribe_block() {
-        let body = "Big news: GPT-5.5 is here.\n\nRead more at example.com\n\nUnsubscribe | © 2026 OpenAI";
+        let body =
+            "Big news: GPT-5.5 is here.\n\nRead more at example.com\n\nUnsubscribe | © 2026 OpenAI";
         let cleaned = drop_footer_noise(body);
         assert!(cleaned.contains("GPT-5.5"));
         assert!(!cleaned.to_ascii_lowercase().contains("unsubscribe"));
@@ -306,7 +307,8 @@ mod tests {
 
     #[test]
     fn clean_body_combines_passes() {
-        let body = "Real content here.\n\nOn Mon, Apr 22, 2026, Alice wrote:\n> old stuff\n\nUnsubscribe";
+        let body =
+            "Real content here.\n\nOn Mon, Apr 22, 2026, Alice wrote:\n> old stuff\n\nUnsubscribe";
         let cleaned = clean_body(body);
         assert_eq!(cleaned, "Real content here.");
     }

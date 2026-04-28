@@ -1,13 +1,16 @@
 //! Email threads → canonical Markdown.
 //!
-//! Email sources are scoped by **thread**. One thread becomes one
-//! [`CanonicalisedSource`]. Headers (From, To, Subject, Date) surface in a
-//! small frontmatter-style block per message; the body follows as markdown.
+//! Email sources are scoped by **participant set**. One participant bucket
+//! becomes one [`CanonicalisedSource`]. Headers (From, To, Cc, Subject, Date)
+//! surface in a small frontmatter-style block per message; the cleaned body
+//! follows as markdown. Bodies pass through [`email_clean::clean_body`] before
+//! rendering to strip reply chains, marketing footers, legal disclaimers, and
+//! other boilerplate.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::{normalize_source_ref, CanonicalisedSource};
+use super::{email_clean, normalize_source_ref, CanonicalisedSource};
 use crate::openhuman::memory::tree::types::{Metadata, SourceKind};
 
 /// One email in a thread.
@@ -70,7 +73,12 @@ pub fn canonicalise(
         }
         md.push_str(&format!("Subject: {}\n", msg.subject));
         md.push_str(&format!("Date: {}\n\n", msg.sent_at.to_rfc3339()));
-        md.push_str(msg.body.trim());
+        let cleaned = email_clean::clean_body(msg.body.trim());
+        if cleaned.is_empty() {
+            md.push('\n');
+        } else {
+            md.push_str(&cleaned);
+        }
         md.push_str("\n\n");
     }
 
@@ -127,9 +135,14 @@ mod tests {
                 email(2000, "alice@example.com", "Re: Launch", "agreed"),
             ],
         };
-        let out = canonicalise("gmail:t1", "alice@example.com", &[], t)
-            .unwrap()
-            .unwrap();
+        let out = canonicalise(
+            "gmail:alice@example.com|bob@example.com",
+            "alice@example.com",
+            &[],
+            t,
+        )
+        .unwrap()
+        .unwrap();
         // No leading `# Email thread` header — that info belongs in front-matter.
         assert!(
             !out.markdown.contains("# Email thread — gmail — Launch"),
@@ -140,6 +153,50 @@ mod tests {
         assert!(out.markdown.contains("let's ship"));
         assert!(out.markdown.contains("Re: Launch"));
         assert!(out.markdown.contains("agreed"));
+    }
+
+    #[test]
+    fn clean_body_strips_footer_before_canonicalise() {
+        // Body where "Unsubscribe" line triggers footer removal. Everything from
+        // that line onward is dropped by clean_body; real content above survives.
+        let body_with_footer =
+            "Please review the attached document.\n\nUnsubscribe https://mail.example.com/unsub\n© 2026 Example Corp";
+        let t = EmailThread {
+            provider: "gmail".into(),
+            thread_subject: "Review".into(),
+            messages: vec![EmailMessage {
+                from: "sender@example.com".into(),
+                to: vec!["recipient@example.com".into()],
+                cc: vec![],
+                subject: "Review".into(),
+                sent_at: Utc.timestamp_millis_opt(5000).unwrap(),
+                body: body_with_footer.into(),
+                source_ref: None,
+            }],
+        };
+        let out = canonicalise(
+            "gmail:recipient@example.com|sender@example.com",
+            "recipient@example.com",
+            &[],
+            t,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            out.markdown.contains("Please review the attached document"),
+            "real content must survive; got:\n{}",
+            out.markdown
+        );
+        assert!(
+            !out.markdown.to_ascii_lowercase().contains("unsubscribe"),
+            "unsubscribe footer must be stripped; got:\n{}",
+            out.markdown
+        );
+        assert!(
+            !out.markdown.contains("© 2026"),
+            "copyright footer must be stripped; got:\n{}",
+            out.markdown
+        );
     }
 
     #[test]

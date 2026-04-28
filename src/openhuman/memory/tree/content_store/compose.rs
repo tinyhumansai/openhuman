@@ -21,14 +21,16 @@
 //!
 //! For email source_kind, additional fields are emitted:
 //! ```text
+//! participants:
+//!   - alice@example.com
+//!   - bob@example.com
 //! aliases:
-//!   - "alice@example.com: thread t1abc"
-//! sender: alice@example.com
-//! thread_id: t1abc
+//!   - "alice@example.com <-> bob@example.com: chunk 0"
 //! ```
-//! These are parsed from the `source_id` field (format `gmail:{sender}:{thread_id}`)
-//! at compose time. `thread_subject` is not included here — it would require
-//! carrying it through `Metadata`; that is left as a TODO for a later phase.
+//! These are parsed from the `source_id` field (format `gmail:{participants}`
+//! where `participants` is `addr1|addr2|...` pipe-separated) at compose time.
+//! `sender` and `thread_id` are no longer emitted — they are not meaningful
+//! with participant-based bucketing.
 //!
 //! **SHA-256 is computed over the body bytes only** (everything after `---\n`
 //! on the second delimiter line). This allows tags to be rewritten atomically
@@ -82,17 +84,21 @@ fn build_front_matter(chunk: &Chunk) -> Vec<u8> {
         }
     }
 
-    // Email-specific fields: aliases (Obsidian clickable title), sender, thread_id.
-    // Parsed from source_id which is always `gmail:{sender}:{thread_id}` for
-    // Gmail-ingested chunks. If the format doesn't match, these fields are omitted.
-    // TODO: add thread_subject once it is carried through Metadata.
+    // Email-specific fields: participants list + Obsidian alias.
+    // Parsed from source_id which is `gmail:{participants}` for Gmail-ingested
+    // chunks, where participants is `addr1|addr2|...` (sorted, deduped).
+    // If the format doesn't match, these fields are omitted.
     if meta.source_kind == SourceKind::Email {
-        if let Some((sender, thread_id)) = parse_gmail_source_id(&meta.source_id) {
-            let alias = format!("{}: thread {}", sender, thread_id);
+        if let Some(addrs) = parse_gmail_participants_source_id(&meta.source_id) {
+            // participants: YAML list
+            fm.push_str("participants:\n");
+            for addr in &addrs {
+                fm.push_str(&format!("  - {}\n", yaml_scalar(addr)));
+            }
+            // aliases: human-readable conversation label for Obsidian
+            let alias = build_participants_alias(&addrs, chunk.seq_in_source);
             fm.push_str("aliases:\n");
             fm.push_str(&format!("  - {}\n", yaml_scalar(&alias)));
-            fm.push_str(&format!("sender: {}\n", yaml_scalar(&sender)));
-            fm.push_str(&format!("thread_id: {}\n", yaml_scalar(&thread_id)));
         }
     }
 
@@ -100,18 +106,45 @@ fn build_front_matter(chunk: &Chunk) -> Vec<u8> {
     fm.into_bytes()
 }
 
-/// Parse a `gmail:{sender}:{thread_id}` source_id into its components.
+/// Parse a `gmail:{participants}` source_id into the list of participant addresses.
 ///
-/// Returns `Some((sender, thread_id))` when the source_id has exactly three
-/// colon-separated segments and the sender is non-empty. Returns `None` for
-/// legacy or malformed source_ids.
-fn parse_gmail_source_id(source_id: &str) -> Option<(String, String)> {
-    let parts: Vec<&str> = source_id.splitn(3, ':').collect();
-    if parts.len() == 3 && parts[0] == "gmail" && !parts[1].is_empty() {
-        Some((parts[1].to_string(), parts[2].to_string()))
-    } else {
-        None
+/// `participants` is `addr1|addr2|...` (sorted, deduped, pipe-separated).
+/// Returns `Some(Vec<String>)` when the source_id has exactly two
+/// colon-separated segments (`gmail` prefix + non-empty participants). Returns
+/// `None` for legacy or malformed source_ids.
+fn parse_gmail_participants_source_id(source_id: &str) -> Option<Vec<String>> {
+    let (prefix, participants) = source_id.split_once(':')?;
+    if prefix != "gmail" || participants.is_empty() {
+        return None;
     }
+    let addrs: Vec<String> = participants
+        .split('|')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if addrs.is_empty() {
+        None
+    } else {
+        Some(addrs)
+    }
+}
+
+/// Build a human-readable alias for an email chunk suitable for Obsidian's
+/// `aliases:` field.
+///
+/// For two participants: `"alice@x.com <-> bob@y.com: chunk 0"`
+/// For more than two:   `"alice@x.com <-> 2 others: chunk 0"`
+///   (where `alice@x.com` is the first in sorted order)
+///
+/// The alias is kept under ~80 characters to avoid YAML rendering issues.
+fn build_participants_alias(addrs: &[String], seq: u32) -> String {
+    let label = match addrs {
+        [] => "unknown".to_string(),
+        [only] => only.clone(),
+        [first, second] => format!("{} <-> {}", first, second),
+        [first, rest @ ..] => format!("{} <-> {} others", first, rest.len()),
+    };
+    format!("{}: chunk {}", label, seq)
 }
 
 /// Rewrite the `tags:` block in an existing file's front-matter, replacing it
@@ -334,7 +367,7 @@ mod tests {
             content: "---\nFrom: alice@example.com\nSubject: Hello\n\nHello there.".into(),
             metadata: Metadata {
                 source_kind: SourceKind::Email,
-                source_id: "gmail:alice@example.com:threadabc".into(),
+                source_id: "gmail:alice@example.com|bob@example.com".into(),
                 owner: "owner@example.com".into(),
                 timestamp: ts,
                 time_range: (ts, ts),
@@ -349,41 +382,79 @@ mod tests {
     }
 
     #[test]
-    fn email_chunk_has_aliases_sender_thread_id() {
+    fn email_chunk_has_participants_list_and_alias() {
         let chunk = sample_email_chunk();
         let (full, _body) = compose_chunk_file(&chunk);
         let full_str = std::str::from_utf8(&full).unwrap();
+        // participants block must be a YAML list
+        assert!(
+            full_str.contains("participants:"),
+            "email chunk must have participants field; got:\n{full_str}"
+        );
+        assert!(
+            full_str.contains("  - alice@example.com"),
+            "alice must appear as list item; got:\n{full_str}"
+        );
+        assert!(
+            full_str.contains("  - bob@example.com"),
+            "bob must appear as list item; got:\n{full_str}"
+        );
         // aliases block must be present
         assert!(
             full_str.contains("aliases:"),
-            "email chunk must have aliases field"
+            "email chunk must have aliases field; got:\n{full_str}"
         );
         assert!(
-            full_str.contains("alice@example.com: thread threadabc"),
-            "alias must encode sender and thread_id; got:\n{full_str}"
+            full_str.contains("alice@example.com <-> bob@example.com: chunk 0"),
+            "alias must encode participants; got:\n{full_str}"
         );
-        // sender and thread_id fields
+        // sender and thread_id must NOT appear
         assert!(
-            full_str.contains("sender:"),
-            "email chunk must have sender field"
-        );
-        assert!(
-            full_str.contains("thread_id:"),
-            "email chunk must have thread_id field"
+            !full_str.contains("sender:"),
+            "email chunk must NOT have sender field; got:\n{full_str}"
         );
         assert!(
-            full_str.contains("alice@example.com"),
-            "sender value must be present"
+            !full_str.contains("thread_id:"),
+            "email chunk must NOT have thread_id field; got:\n{full_str}"
         );
+    }
+
+    #[test]
+    fn email_chunk_many_participants_alias_summarises() {
+        let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        let chunk = Chunk {
+            id: "em2".into(),
+            content: "body".into(),
+            metadata: Metadata {
+                source_kind: SourceKind::Email,
+                source_id: "gmail:alice@x.com|bob@y.com|carol@z.com".into(),
+                owner: "owner".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec![],
+                source_ref: None,
+            },
+            token_count: 1,
+            seq_in_source: 3,
+            created_at: ts,
+            partial_message: false,
+        };
+        let (full, _) = compose_chunk_file(&chunk);
+        let full_str = std::str::from_utf8(&full).unwrap();
         assert!(
-            full_str.contains("threadabc"),
-            "thread_id value must be present"
+            full_str.contains("participants:"),
+            "three-party chunk needs participants list; got:\n{full_str}"
+        );
+        // With 3 participants: first + "2 others"
+        assert!(
+            full_str.contains("alice@x.com <-> 2 others: chunk 3"),
+            "alias with 3 participants must summarise; got:\n{full_str}"
         );
     }
 
     #[test]
     fn email_chunk_body_bytes_unchanged_by_extra_fields() {
-        // Adding aliases/sender/thread_id to front-matter must not affect body_bytes
+        // Adding participants/aliases to front-matter must not affect body_bytes
         // (SHA-256 invariant: the hash is over body only, not front-matter).
         let chunk = sample_email_chunk();
         let (full, body) = compose_chunk_file(&chunk);
@@ -407,6 +478,10 @@ mod tests {
             "chat chunk must not have aliases field"
         );
         assert!(
+            !full_str.contains("participants:"),
+            "chat chunk must not have participants field"
+        );
+        assert!(
             !full_str.contains("sender:"),
             "chat chunk must not have sender field"
         );
@@ -424,7 +499,7 @@ mod tests {
             content: "body".into(),
             metadata: Metadata {
                 source_kind: SourceKind::Email,
-                source_id: "legacysourceid".into(), // no colons → parse fails
+                source_id: "legacysourceid".into(), // no `gmail:` prefix → parse fails
                 owner: "owner".into(),
                 timestamp: ts,
                 time_range: (ts, ts),
@@ -440,6 +515,7 @@ mod tests {
         let full_str = std::str::from_utf8(&full).unwrap();
         // Malformed source_id → no email extras, no panic.
         assert!(!full_str.contains("aliases:"));
+        assert!(!full_str.contains("participants:"));
         assert!(!full_str.contains("sender:"));
     }
 }

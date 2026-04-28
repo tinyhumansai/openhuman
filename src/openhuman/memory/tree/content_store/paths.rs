@@ -4,14 +4,16 @@
 //! structure depends on the source kind:
 //!
 //! ```text
-//! Email:    <content_root>/email/<sender_slug>/<thread_slug>/<chunk_id>.md
+//! Email:    <content_root>/email/<participants_slug>/<chunk_id>.md
 //! Chat:     <content_root>/chat/<source_slug>/<chunk_id>.md
 //! Document: <content_root>/document/<source_slug>/<chunk_id>.md
 //! ```
 //!
-//! Email paths parse the `source_id` as `gmail:{sender}:{thread_id}` and
-//! slugify each segment independently, giving each thread its own directory
-//! and eliminating cross-thread path collisions.
+//! Email paths parse `source_id` as `gmail:{participants}` where `participants`
+//! is `addr1|addr2|...` (sorted, deduped, lowercased bare emails). The
+//! participants string is slugified as a whole (pipe and `@` both become `-`)
+//! to produce a single directory level, giving one folder per unique
+//! conversation set.
 //!
 //! Paths are stored in SQLite as **relative** strings with forward slashes so
 //! they remain valid regardless of where the workspace is mounted.
@@ -21,26 +23,39 @@ use std::path::{Path, PathBuf};
 /// Build the relative content path for a chunk, using forward slashes.
 ///
 /// Path layout depends on source_kind:
-/// - Email:    `"email/<sender_slug>/<thread_slug>/<chunk_id>.md"`
-///   Parses `source_id` as `gmail:{sender}:{thread_id}` (three colon-separated
-///   parts) and slugifies sender and thread independently.
-///   If the parse fails (legacy or malformed source_id), falls through to the
-///   chat/document layout using `slugify_source_id(source_id)` as the single
-///   group key.
+/// - Email:    `"email/<participants_slug>/<chunk_id>.md"`
+///   Parses `source_id` as `gmail:{participants}` (two colon-separated parts)
+///   where `participants` is `addr1|addr2|...` (sorted, deduped, lowercased).
+///   The entire participants string is slugified as a single unit to produce
+///   one folder level per conversation set (no nested thread subfolder).
+///   If the source_id lacks a `gmail:` prefix or has no participants segment,
+///   falls through to the chat/document layout using `slugify_source_id(source_id)`.
 /// - Chat:     `"chat/<source_slug>/<chunk_id>.md"`
 /// - Document: `"document/<source_slug>/<chunk_id>.md"`
 ///
 /// `chunk_id` — the deterministic content hash produced by `types::chunk_id`.
+///
+/// # Examples
+///
+/// ```text
+/// chunk_rel_path("email", "gmail:alice@x.com|bob@y.com", "abc")
+///     → "email/alice-x-com-bob-y-com/abc.md"
+///
+/// chunk_rel_path("email", "gmail:notifications@github.com|sanil@x.com", "def")
+///     → "email/notifications-github-com-sanil-x-com/def.md"
+///
+/// chunk_rel_path("email", "legacyid", "xyz")
+///     → "email/legacyid/xyz.md"   (malformed — flat fallback)
+/// ```
 pub fn chunk_rel_path(source_kind: &str, source_id: &str, chunk_id: &str) -> String {
     match source_kind {
         "email" => {
-            // Expected format: "gmail:{sender}:{thread_id}"
-            // Split on ':' — exactly 3 parts required.
-            let parts: Vec<&str> = source_id.splitn(3, ':').collect();
-            if parts.len() == 3 && !parts[1].is_empty() {
-                let sender_slug = slugify_source_id(parts[1]);
-                let thread_slug = slugify_source_id(parts[2]);
-                format!("email/{}/{}/{}.md", sender_slug, thread_slug, chunk_id)
+            // Expected format: "gmail:{participants}"
+            // Split on ':' — exactly 2 parts required; part[0] == "gmail".
+            let parts: Vec<&str> = source_id.splitn(2, ':').collect();
+            if parts.len() == 2 && parts[0] == "gmail" && !parts[1].is_empty() {
+                let participants_slug = slugify_source_id(parts[1]);
+                format!("email/{}/{}.md", participants_slug, chunk_id)
             } else {
                 // Malformed / legacy source_id — fall back to flat layout.
                 log::debug!(
@@ -203,26 +218,41 @@ mod tests {
     // ─── chunk_rel_path tests ─────────────────────────────────────────────────
 
     #[test]
-    fn email_path_round_trips() {
-        let p = chunk_rel_path("email", "gmail:alice@example.com:t1", "abc123");
-        assert_eq!(p, "email/alice-example-com/t1/abc123.md");
+    fn email_one_to_one_conversation_path() {
+        // 1:1 conversation between alice and bob.
+        let p = chunk_rel_path("email", "gmail:alice@x.com|bob@y.com", "abc");
+        assert_eq!(p, "email/alice-x-com-bob-y-com/abc.md");
     }
 
     #[test]
-    fn email_solo_path() {
-        // `_solo_` slugifies to `solo` (outer underscores stripped).
-        let p = chunk_rel_path("email", "gmail:noreply@github.com:_solo_", "def456");
-        assert_eq!(p, "email/noreply-github-com/solo/def456.md");
+    fn email_group_conversation_path() {
+        // Group conversation with three participants.
+        let p = chunk_rel_path("email", "gmail:notifications@github.com|sanil@x.com", "def");
+        assert_eq!(p, "email/notifications-github-com-sanil-x-com/def.md");
+    }
+
+    #[test]
+    fn email_solo_no_to_path() {
+        // Solo sender (no To), participants = single address.
+        let p = chunk_rel_path("email", "gmail:alice@x.com", "solo123");
+        assert_eq!(p, "email/alice-x-com/solo123.md");
     }
 
     #[test]
     fn email_malformed_source_id_falls_back_to_flat_layout() {
-        // Malformed: only 2 colon-separated parts (no thread segment).
+        // Malformed: no `gmail:` prefix → flat fallback.
         let p = chunk_rel_path("email", "legacyid", "xyz");
         // Falls back to email/<slug>/<chunk_id>.md
         assert!(p.starts_with("email/"), "must remain under email/");
         assert!(p.ends_with("/xyz.md"), "chunk_id must be the filename");
         // Must not panic.
+    }
+
+    #[test]
+    fn email_three_participant_path() {
+        // Three participants: alice, bob, carol (pipe-separated, sorted).
+        let p = chunk_rel_path("email", "gmail:alice@x.com|bob@y.com|carol@z.com", "g42");
+        assert_eq!(p, "email/alice-x-com-bob-y-com-carol-z-com/g42.md");
     }
 
     #[test]
@@ -241,7 +271,7 @@ mod tests {
     fn chunk_abs_path_uses_os_separator() {
         use std::path::Path;
         let root = Path::new("/workspace/content");
-        let abs = chunk_abs_path(root, "email", "gmail:alice@x.com:t1", "abc");
+        let abs = chunk_abs_path(root, "email", "gmail:alice@x.com|bob@y.com", "abc");
         assert!(abs.starts_with(root));
         assert!(abs.ends_with("abc.md"));
     }
