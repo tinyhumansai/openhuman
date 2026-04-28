@@ -6,7 +6,7 @@ In-process pub/sub plus typed request/response. Owns the global `EventBus` singl
 
 - `pub struct EventBus` — `bus.rs` — broadcast singleton over `tokio::sync::broadcast`.
 - `pub const DEFAULT_CAPACITY: usize = 256` — `bus.rs` — default channel capacity.
-- `pub fn init_global(capacity: usize) -> &'static EventBus` — `bus.rs` — initialize once at startup; panics if called more than once (uses `OnceLock::set`).
+- `pub fn init_global(capacity: usize) -> &'static EventBus` — `bus.rs` — initialize once at startup via `OnceLock::get_or_init`; subsequent calls return the already-initialized bus (capacity argument ignored).
 - `pub fn global() -> Option<&'static EventBus>` — `bus.rs` — accessor; returns `None` before `init_global`.
 - `pub fn publish_global(event: DomainEvent)` — `bus.rs` — fire-and-forget broadcast.
 - `pub fn subscribe_global(handler: Arc<dyn EventHandler>) -> Option<SubscriptionHandle>` — `bus.rs` — register a subscriber.
