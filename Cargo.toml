@@ -13,6 +13,10 @@ path = "src/main.rs"
 name = "slack-backfill"
 path = "src/bin/slack_backfill.rs"
 
+[[bin]]
+name = "gmail-backfill-3d"
+path = "src/bin/gmail_backfill_3d.rs"
+
 [lib]
 name = "openhuman_core"
 crate-type = ["rlib"]

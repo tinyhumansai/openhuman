@@ -640,6 +640,29 @@ pub(crate) fn with_connection<T>(
     f(&conn)
 }
 
+/// Return both `content_path` and `content_sha256` stored in SQLite for `chunk_id`.
+///
+/// Returns `Ok(None)` if the chunk does not exist or has no content_path recorded yet.
+pub fn get_chunk_content_pointers(
+    config: &Config,
+    chunk_id: &str,
+) -> Result<Option<(String, String)>> {
+    with_connection(config, |conn| {
+        let row = conn
+            .query_row(
+                "SELECT content_path, content_sha256 FROM mem_tree_chunks WHERE id = ?1",
+                params![chunk_id],
+                |r| {
+                    let path: Option<String> = r.get(0)?;
+                    let sha: Option<String> = r.get(1)?;
+                    Ok((path, sha))
+                },
+            )
+            .optional()?;
+        Ok(row.and_then(|(p, s)| p.zip(s)))
+    })
+}
+
 /// Return the `content_path` stored in SQLite for `chunk_id`, if any.
 pub fn get_chunk_content_path(config: &Config, chunk_id: &str) -> Result<Option<String>> {
     with_connection(config, |conn| {
