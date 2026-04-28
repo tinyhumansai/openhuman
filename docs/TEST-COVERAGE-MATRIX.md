@@ -387,21 +387,27 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 ## 12. Rewards & Progression
 
+> Frontend-only domain — no Rust core counterpart. Confirmed during #970
+> investigation: there is no `src/openhuman/rewards/` module and no Redux
+> `rewardsSlice`; snapshot is fetched per-mount via
+> `app/src/services/api/rewardsApi.ts` and held in `Rewards.tsx` component
+> state. Backend ownership lives in `tinyhumansai/backend` (`/rewards/me`).
+
 ### 12.1 Role Unlocking
 
-| ID     | Feature                  | Layer | Test path(s)             | Status | Notes |
-| ------ | ------------------------ | ----- | ------------------------ | ------ | ----- |
-| 12.1.1 | Activity-Based Unlock    | WD    | _missing_ — tracked #970 | ❌     |       |
-| 12.1.2 | Integration-Based Unlock | WD    | _missing_ — tracked #970 | ❌     |       |
-| 12.1.3 | Plan-Based Unlock        | WD    | _missing_ — tracked #970 | ❌     |       |
+| ID     | Feature                  | Layer | Test path(s)                                                                                                          | Status | Notes                                                                |
+| ------ | ------------------------ | ----- | --------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------- |
+| 12.1.1 | Activity-Based Unlock    | VU+WD | `app/src/store/__tests__/rewardsSlice.test.ts` (this PR), `app/test/e2e/specs/rewards-unlock-flow.spec.ts` (this PR)  | ✅     | Was ❌ — streak/feature-driven unlock branch                         |
+| 12.1.2 | Integration-Based Unlock | VU+WD | same                                                                                                                   | ✅     | Was ❌ — Discord membership → role assignment branch                 |
+| 12.1.3 | Plan-Based Unlock        | VU+WD | same                                                                                                                   | ✅     | Was ❌ — plan tier + active subscription branch                      |
 
 ### 12.2 Progress Tracking
 
-| ID     | Feature                | Layer | Test path(s)             | Status | Notes              |
-| ------ | ---------------------- | ----- | ------------------------ | ------ | ------------------ |
-| 12.2.1 | Message Count Tracking | WD    | _missing_ — tracked #970 | ❌     |                    |
-| 12.2.2 | Usage Metrics          | WD    | _missing_ — tracked #970 | ❌     |                    |
-| 12.2.3 | State Persistence      | WD    | _missing_ — tracked #970 | ❌     | Restart-and-verify |
+| ID     | Feature                | Layer | Test path(s)                                                                                                                  | Status | Notes                                                                                                |
+| ------ | ---------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
+| 12.2.1 | Message Count Tracking | VU+WD | `rewardsSlice.test.ts` (this PR), `rewards-progression-persistence.spec.ts` (this PR)                                          | ✅     | Was ❌ — message-driven progress proxied by `metrics.featuresUsedCount` (no literal field)           |
+| 12.2.2 | Usage Metrics          | VU+WD | same                                                                                                                           | ✅     | Was ❌ — current streak + cumulative tokens                                                          |
+| 12.2.3 | State Persistence      | VU+WD | same                                                                                                                           | ✅     | Was ❌ — restart-equivalent (page unmount + remount + re-fetch); admin request log asserts re-fetch  |
 
 ---
 
