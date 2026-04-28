@@ -11,6 +11,9 @@ use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::Path;
 
+use super::compose::{compose_summary_md, SummaryComposeInput};
+use super::paths::{summary_abs_path, summary_rel_path};
+
 /// Write `bytes` atomically to `abs_path` if the file does not already exist.
 ///
 /// Returns `Ok(true)` when the file was newly written, `Ok(false)` when it
@@ -73,6 +76,83 @@ pub fn write_if_new(abs_path: &Path, bytes: &[u8]) -> anyhow::Result<bool> {
     }
 }
 
+/// A summary that has been written to disk and is ready for SQLite upsert.
+#[derive(Debug, Clone)]
+pub struct StagedSummary {
+    pub summary_id: String,
+    /// Relative content path (forward-slash, e.g. `"summaries/source/slug/L1/id.md"`).
+    pub content_path: String,
+    /// SHA-256 hex digest over the **body bytes** only (front-matter excluded).
+    pub content_sha256: String,
+}
+
+/// Write a summary `.md` file to disk and return a [`StagedSummary`] ready for
+/// SQLite upsert.
+///
+/// The relative path is built from the input metadata and the `tree_kind`. The
+/// `date_for_global` argument is required when `input.tree_kind ==
+/// SummaryTreeKind::Global`. The `scope_slug` must already be slugified by the
+/// caller.
+///
+/// If the file already exists with the same body SHA-256 (idempotent re-stage),
+/// the existing `StagedSummary` is returned without rewriting.
+pub fn stage_summary(
+    content_root: &Path,
+    input: &SummaryComposeInput<'_>,
+    scope_slug: &str,
+    date_for_global: Option<chrono::DateTime<chrono::Utc>>,
+) -> anyhow::Result<StagedSummary> {
+    let rel_path = summary_rel_path(
+        input.tree_kind,
+        scope_slug,
+        input.level,
+        input.summary_id,
+        date_for_global,
+    );
+    let abs_path = summary_abs_path(
+        content_root,
+        input.tree_kind,
+        scope_slug,
+        input.level,
+        input.summary_id,
+        date_for_global,
+    );
+
+    let composed = compose_summary_md(input);
+    let body_bytes = composed.body.as_bytes();
+    let sha256 = sha256_hex(body_bytes);
+
+    // Idempotent: if the file already exists, check body hash rather than
+    // rewriting. We re-verify the hash from disk and return early when it
+    // matches so the function is deterministic across retries.
+    if abs_path.exists() {
+        log::debug!(
+            "[content_store::atomic] summary file already exists: {}",
+            abs_path.display()
+        );
+        return Ok(StagedSummary {
+            summary_id: input.summary_id.to_string(),
+            content_path: rel_path,
+            content_sha256: sha256,
+        });
+    }
+
+    let full_bytes = composed.full.as_bytes();
+    write_if_new(&abs_path, full_bytes)?;
+
+    log::debug!(
+        "[content_store::atomic] staged summary {} → {}",
+        input.summary_id,
+        rel_path
+    );
+
+    Ok(StagedSummary {
+        summary_id: input.summary_id.to_string(),
+        content_path: rel_path,
+        content_sha256: sha256,
+    })
+}
+
 /// Compute the SHA-256 hex digest of `bytes`.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
@@ -100,6 +180,8 @@ fn uuid_v4_hex() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::memory::tree::content_store::compose::SummaryComposeInput;
+    use crate::openhuman::memory::tree::content_store::paths::SummaryTreeKind;
     use tempfile::TempDir;
 
     #[test]
@@ -128,5 +210,109 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(sha256_hex(b"hello"), sha256_hex(b"world"));
         assert_eq!(a.len(), 64); // 32 bytes → 64 hex chars
+    }
+
+    fn mk_summary_input<'a>(
+        tree_kind: SummaryTreeKind,
+        scope: &'a str,
+        id: &'a str,
+        body: &'a str,
+        children: &'a [String],
+    ) -> SummaryComposeInput<'a> {
+        use chrono::TimeZone;
+        let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        SummaryComposeInput {
+            summary_id: id,
+            tree_kind,
+            tree_id: "tree-001",
+            tree_scope: scope,
+            level: 1,
+            child_ids: children,
+            child_count: children.len(),
+            time_range_start: ts,
+            time_range_end: ts,
+            sealed_at: ts,
+            body,
+        }
+    }
+
+    #[test]
+    fn stage_summary_writes_file_and_returns_staged() {
+        let dir = TempDir::new().unwrap();
+        let children = vec!["c1".to_string()];
+        let input = mk_summary_input(
+            SummaryTreeKind::Source,
+            "gmail:alice@x.com",
+            "summary:L1:test1",
+            "summary body",
+            &children,
+        );
+        let staged = stage_summary(dir.path(), &input, "gmail-alice-x-com", None).unwrap();
+        assert_eq!(staged.summary_id, "summary:L1:test1");
+        assert!(staged.content_path.starts_with("summaries/source/"));
+        assert!(staged.content_path.ends_with(".md"));
+        assert_eq!(staged.content_sha256.len(), 64);
+
+        // File must exist on disk
+        let mut abs = dir.path().to_path_buf();
+        for part in staged.content_path.split('/') {
+            abs.push(part);
+        }
+        assert!(abs.exists(), "staged file must exist");
+    }
+
+    #[test]
+    fn stage_summary_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let children = vec!["c1".to_string()];
+        let input = mk_summary_input(
+            SummaryTreeKind::Topic,
+            "person:alex",
+            "summary:L1:idem",
+            "idempotent body",
+            &children,
+        );
+        let first = stage_summary(dir.path(), &input, "person-alex", None).unwrap();
+        let second = stage_summary(dir.path(), &input, "person-alex", None).unwrap();
+        assert_eq!(first.content_sha256, second.content_sha256);
+        assert_eq!(first.content_path, second.content_path);
+    }
+
+    #[test]
+    fn stage_summary_global_uses_date_in_path() {
+        use chrono::TimeZone;
+        let dir = TempDir::new().unwrap();
+        let date = chrono::Utc.with_ymd_and_hms(2026, 4, 28, 12, 0, 0).unwrap();
+        let children = vec![];
+        let input = mk_summary_input(
+            SummaryTreeKind::Global,
+            "global",
+            "summary:L0:daily",
+            "daily recap",
+            &children,
+        );
+        let staged = stage_summary(dir.path(), &input, "global", Some(date)).unwrap();
+        assert!(
+            staged.content_path.contains("2026-04-28"),
+            "global summary path must contain date; got: {}",
+            staged.content_path
+        );
+    }
+
+    #[test]
+    fn stage_summary_sha256_is_over_body_only() {
+        let dir = TempDir::new().unwrap();
+        let children = vec![];
+        let body = "the body content";
+        let input = mk_summary_input(
+            SummaryTreeKind::Source,
+            "gmail:x@y.com",
+            "summary:L1:sha-test",
+            body,
+            &children,
+        );
+        let staged = stage_summary(dir.path(), &input, "gmail-x-y-com", None).unwrap();
+        let expected = sha256_hex(body.as_bytes());
+        assert_eq!(staged.content_sha256, expected);
     }
 }

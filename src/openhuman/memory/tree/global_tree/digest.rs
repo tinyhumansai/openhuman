@@ -26,6 +26,9 @@ use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use rusqlite::OptionalExtension;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::{
+    atomic::stage_summary, paths::slugify_source_id, SummaryComposeInput, SummaryTreeKind,
+};
 use crate::openhuman::memory::tree::global_tree::registry::get_or_create_global_tree;
 use crate::openhuman::memory::tree::global_tree::seal::append_daily_and_cascade;
 use crate::openhuman::memory::tree::global_tree::GLOBAL_TOKEN_BUDGET;
@@ -196,6 +199,46 @@ pub async fn end_of_day_digest(
         embedding: Some(embedding),
     };
 
+    // Phase MD-content: stage the L0 daily .md file before the write tx.
+    // `date_for_global` = day_start (the calendar day this digest covers).
+    let daily_compose_input = SummaryComposeInput {
+        summary_id: &daily.id,
+        tree_kind: SummaryTreeKind::Global,
+        tree_id: &daily.tree_id,
+        tree_scope: &global.scope,
+        level: daily.level,
+        child_ids: &daily.child_ids,
+        child_count: daily.child_ids.len(),
+        time_range_start: daily.time_range_start,
+        time_range_end: daily.time_range_end,
+        sealed_at: daily.sealed_at,
+        body: &daily.content,
+    };
+    let content_root_daily = config.memory_tree_content_root();
+    let global_scope_slug = slugify_source_id(&global.scope);
+    let staged_daily = match stage_summary(
+        &content_root_daily,
+        &daily_compose_input,
+        &global_scope_slug,
+        Some(day_start),
+    ) {
+        Ok(s) => {
+            log::debug!(
+                "[global_tree::digest] staged daily summary {} → {}",
+                daily.id,
+                s.content_path
+            );
+            Some(s)
+        }
+        Err(e) => {
+            log::warn!(
+                "[global_tree::digest] stage_summary failed for daily {} — proceeding without .md: {e:#}",
+                daily.id
+            );
+            None
+        }
+    };
+
     // Persist the daily node. Note: we do NOT backlink parent_id on the
     // child summaries here — their parents are their own source trees, not
     // the global tree. The global-tree child_ids are cross-source
@@ -204,7 +247,7 @@ pub async fn end_of_day_digest(
     let tree_id_clone = global.id.clone();
     with_connection(config, move |conn| {
         let tx = conn.unchecked_transaction()?;
-        store::insert_summary_tx(&tx, &daily_clone)?;
+        store::insert_summary_tx(&tx, &daily_clone, staged_daily.as_ref())?;
         // Index any entities the summariser emitted (no-op under inert).
         crate::openhuman::memory::tree::score::store::index_summary_entity_ids_tx(
             &tx,

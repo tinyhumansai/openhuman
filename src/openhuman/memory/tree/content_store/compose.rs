@@ -36,6 +36,9 @@
 //! on the second delimiter line). This allows tags to be rewritten atomically
 //! without invalidating the content hash.
 
+use chrono::{DateTime, Utc};
+
+use crate::openhuman::memory::tree::content_store::paths::SummaryTreeKind;
 use crate::openhuman::memory::tree::types::{Chunk, SourceKind};
 
 /// Compose the full file content (front-matter + body) for `chunk`.
@@ -231,6 +234,171 @@ fn replace_tags_in_front_matter(fm: &str, new_tags: &[String]) -> Result<String,
     Ok(result)
 }
 
+// ── Summary composition ──────────────────────────────────────────────────────
+
+/// Input data required to compose a summary `.md` file.
+pub struct SummaryComposeInput<'a> {
+    pub summary_id: &'a str,
+    pub tree_kind: SummaryTreeKind,
+    pub tree_id: &'a str,
+    /// Raw tree scope string, e.g. `"gmail:alice@x.com|bob@y.com"` or `"global"`.
+    pub tree_scope: &'a str,
+    pub level: u32,
+    /// Child ids (chunk_ids at L0 → L1, summary_ids for cascades).
+    pub child_ids: &'a [String],
+    /// Total child count (== child_ids.len() unless truncated).
+    pub child_count: usize,
+    pub time_range_start: DateTime<Utc>,
+    pub time_range_end: DateTime<Utc>,
+    pub sealed_at: DateTime<Utc>,
+    /// Raw summariser output text — the body written to disk.
+    pub body: &'a str,
+}
+
+/// The composed front-matter, body, and full file content for a summary.
+pub struct ComposedSummary {
+    /// The YAML front-matter block (including `---` delimiters), UTF-8 string.
+    pub front_matter: String,
+    /// The body (summariser output), UTF-8 string.
+    pub body: String,
+    /// `front_matter + body` — what gets written to disk.
+    pub full: String,
+}
+
+/// Compose the full `.md` content for a summary node.
+///
+/// Returns a [`ComposedSummary`] whose `full` field is written to disk.
+/// SHA-256 is computed over `body` bytes only, not `full`.
+pub fn compose_summary_md(record: &SummaryComposeInput<'_>) -> ComposedSummary {
+    let fm = build_summary_front_matter(record);
+    let body = record.body.to_string();
+    let full = format!("{}{}", fm, body);
+    ComposedSummary {
+        front_matter: fm,
+        body,
+        full,
+    }
+}
+
+/// Build the YAML front-matter block for a summary node.
+fn build_summary_front_matter(r: &SummaryComposeInput<'_>) -> String {
+    let tree_kind_str = match r.tree_kind {
+        SummaryTreeKind::Source => "source",
+        SummaryTreeKind::Global => "global",
+        SummaryTreeKind::Topic => "topic",
+    };
+
+    let trs = r.time_range_start.to_rfc3339();
+    let tre = r.time_range_end.to_rfc3339();
+    let sealed = r.sealed_at.to_rfc3339();
+
+    let mut fm = String::new();
+    fm.push_str("---\n");
+    fm.push_str(&format!("id: {}\n", yaml_scalar(r.summary_id)));
+    fm.push_str("kind: summary\n");
+    fm.push_str(&format!("tree_kind: {tree_kind_str}\n"));
+    fm.push_str(&format!("tree_id: {}\n", yaml_scalar(r.tree_id)));
+    fm.push_str(&format!("tree_scope: {}\n", yaml_scalar(r.tree_scope)));
+    fm.push_str(&format!("level: {}\n", r.level));
+
+    // children: YAML list
+    if r.child_ids.is_empty() {
+        fm.push_str("children: []\n");
+    } else {
+        fm.push_str("children:\n");
+        for id in r.child_ids {
+            fm.push_str(&format!("  - {}\n", yaml_scalar(id)));
+        }
+    }
+    fm.push_str(&format!("child_count: {}\n", r.child_count));
+    fm.push_str(&format!("time_range_start: {trs}\n"));
+    fm.push_str(&format!("time_range_end: {tre}\n"));
+    fm.push_str(&format!("sealed_at: {sealed}\n"));
+
+    // aliases: human-readable title
+    let alias = build_summary_alias(r);
+    fm.push_str("aliases:\n");
+    fm.push_str(&format!("  - {}\n", yaml_scalar(&alias)));
+
+    fm.push_str("tags: []\n");
+    fm.push_str("---\n");
+    fm
+}
+
+/// Build a human-readable alias for the summary's `aliases:` front-matter field.
+fn build_summary_alias(r: &SummaryComposeInput<'_>) -> String {
+    let date_range = format_date_range(r.time_range_start, r.time_range_end);
+    match r.tree_kind {
+        SummaryTreeKind::Source => {
+            let scope_short = scope_short_label(r.tree_scope);
+            format!(
+                "L{} \u{00b7} {} \u{00b7} {} children \u{00b7} {}",
+                r.level, scope_short, r.child_count, date_range
+            )
+        }
+        SummaryTreeKind::Global => {
+            format!(
+                "L{} \u{00b7} global digest \u{00b7} {}",
+                r.level, date_range
+            )
+        }
+        SummaryTreeKind::Topic => {
+            // Strip protocol prefix like "topic:" from scope for readability.
+            let entity = r
+                .tree_scope
+                .split_once(':')
+                .map(|(_, v)| v)
+                .unwrap_or(r.tree_scope);
+            format!(
+                "L{} \u{00b7} topic {} \u{00b7} {} children",
+                r.level, entity, r.child_count
+            )
+        }
+    }
+}
+
+/// Format the date range as `"yyyy-mm-dd"` (if start == end date) or
+/// `"yyyy-mm-dd–yyyy-mm-dd"`.
+fn format_date_range(start: DateTime<Utc>, end: DateTime<Utc>) -> String {
+    let s = start.format("%Y-%m-%d").to_string();
+    let e = end.format("%Y-%m-%d").to_string();
+    if s == e {
+        s
+    } else {
+        format!("{s}\u{2013}{e}") // en dash
+    }
+}
+
+/// Build a short human-readable label for the tree scope used in aliases.
+///
+/// For Gmail source scopes like `"gmail:alice@x.com|bob@y.com"`:
+/// - 2 participants → `"alice@x.com ↔ bob@y.com"`
+/// - N > 2 → `"alice@x.com + N-1 others"`
+/// - Otherwise → the raw scope (e.g. `"slack:#eng"`)
+fn scope_short_label(scope: &str) -> String {
+    if let Some((prefix, participants)) = scope.split_once(':') {
+        if prefix == "gmail" && !participants.is_empty() {
+            let addrs: Vec<&str> = participants.split('|').collect();
+            return match addrs.as_slice() {
+                [] => scope.to_string(),
+                [only] => only.to_string(),
+                [first, second] => format!("{} \u{2194} {}", first, second), // ↔
+                [first, rest @ ..] => format!("{} + {} others", first, rest.len()),
+            };
+        }
+    }
+    scope.to_string()
+}
+
+/// Rewrite the `tags:` block in a summary file's front-matter, replacing it
+/// with the new tag list while leaving the body unchanged.
+///
+/// Reuses the generic [`rewrite_tags`] function — the front-matter structure
+/// is identical for both chunk and summary `.md` files.
+pub fn rewrite_summary_tags(file_bytes: &[u8], new_tags: &[String]) -> Result<Vec<u8>, String> {
+    rewrite_tags(file_bytes, new_tags)
+}
+
 /// Split a file into `(front_matter, body)` at the second `---` delimiter.
 ///
 /// Returns `None` if the file does not have the expected `---\n...\n---\n` form.
@@ -264,7 +432,7 @@ fn yaml_scalar(s: &str) -> String {
                 '&' | '*' | '?' | '|' | '-' | '<' | '>' | '=' | '!' | '%' | '@' | '`'
             )
         })
-        || s.contains(|c: char| matches!(c, ':' | '#' | '[' | ']' | '{' | '}' | '"' | '\''));
+        || s.contains([':', '#', '[', ']', '{', '}', '"', '\'']);
 
     if needs_quoting {
         let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
@@ -277,6 +445,7 @@ fn yaml_scalar(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::memory::tree::content_store::paths::SummaryTreeKind;
     use crate::openhuman::memory::tree::types::{Metadata, SourceKind, SourceRef};
     use chrono::TimeZone;
 
@@ -517,5 +686,193 @@ mod tests {
         assert!(!full_str.contains("aliases:"));
         assert!(!full_str.contains("participants:"));
         assert!(!full_str.contains("sender:"));
+    }
+
+    // ─── summary compose tests ────────────────────────────────────────────────
+
+    fn sample_summary_input(
+        tree_kind: SummaryTreeKind,
+        scope: &str,
+        level: u32,
+    ) -> SummaryComposeInput<'static> {
+        let ts_start = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        let ts_end = chrono::Utc.timestamp_millis_opt(1_700_086_400_000).unwrap();
+        let sealed = chrono::Utc.timestamp_millis_opt(1_700_090_000_000).unwrap();
+        // Leak the strings so they have 'static lifetime for this test helper.
+        // Only used in tests, not production code.
+        let scope: &'static str = Box::leak(scope.to_string().into_boxed_str());
+        SummaryComposeInput {
+            summary_id: "summary:L1:abc",
+            tree_kind,
+            tree_id: "tree-id-001",
+            tree_scope: scope,
+            level,
+            child_ids: Box::leak(
+                vec!["child-1".to_string(), "child-2".to_string()].into_boxed_slice(),
+            ),
+            child_count: 2,
+            time_range_start: ts_start,
+            time_range_end: ts_end,
+            sealed_at: sealed,
+            body: "This is the summariser output.\n",
+        }
+    }
+
+    #[test]
+    fn compose_source_summary_has_required_front_matter() {
+        let input = sample_summary_input(SummaryTreeKind::Source, "gmail:alice@x.com|bob@y.com", 1);
+        let composed = compose_summary_md(&input);
+        let fm = &composed.front_matter;
+        assert!(fm.starts_with("---\n"), "front-matter must start with ---");
+        assert!(fm.ends_with("---\n"), "front-matter must end with ---\\n");
+        assert!(fm.contains("kind: summary"), "must have kind: summary");
+        assert!(
+            fm.contains("tree_kind: source"),
+            "must have tree_kind: source"
+        );
+        assert!(fm.contains("level: 1"), "must have level");
+        assert!(fm.contains("child_count: 2"), "must have child_count");
+        assert!(fm.contains("  - child-1"), "must list child ids");
+        assert!(fm.contains("  - child-2"), "must list child ids");
+        assert!(fm.contains("tags: []"), "must start with empty tags");
+        // aliases must mention the scope
+        assert!(fm.contains("aliases:"), "must have aliases");
+        assert!(
+            composed.body == "This is the summariser output.\n",
+            "body must be the summariser text"
+        );
+        assert!(composed.full.ends_with("This is the summariser output.\n"));
+    }
+
+    #[test]
+    fn compose_global_summary_alias_format() {
+        let input = sample_summary_input(SummaryTreeKind::Global, "global", 0);
+        let composed = compose_summary_md(&input);
+        assert!(
+            composed.front_matter.contains("tree_kind: global"),
+            "must have tree_kind: global"
+        );
+        assert!(
+            composed.front_matter.contains("global digest"),
+            "alias must mention 'global digest'"
+        );
+    }
+
+    #[test]
+    fn compose_topic_summary_alias_format() {
+        let input = sample_summary_input(SummaryTreeKind::Topic, "person:alex-johnson", 1);
+        let composed = compose_summary_md(&input);
+        assert!(
+            composed.front_matter.contains("tree_kind: topic"),
+            "must have tree_kind: topic"
+        );
+        assert!(
+            composed.front_matter.contains("topic"),
+            "alias must mention topic entity"
+        );
+    }
+
+    #[test]
+    fn compose_summary_with_zero_children() {
+        let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        let input = SummaryComposeInput {
+            summary_id: "summary:L0:empty",
+            tree_kind: SummaryTreeKind::Source,
+            tree_id: "t1",
+            tree_scope: "gmail:alice@x.com",
+            level: 0,
+            child_ids: &[],
+            child_count: 0,
+            time_range_start: ts,
+            time_range_end: ts,
+            sealed_at: ts,
+            body: "empty",
+        };
+        let composed = compose_summary_md(&input);
+        assert!(composed.front_matter.contains("children: []"));
+        assert!(composed.front_matter.contains("child_count: 0"));
+    }
+
+    #[test]
+    fn compose_summary_same_start_end_date_single_date_alias() {
+        let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        let input = SummaryComposeInput {
+            summary_id: "summary:L1:sameday",
+            tree_kind: SummaryTreeKind::Global,
+            tree_id: "t1",
+            tree_scope: "global",
+            level: 1,
+            child_ids: &["child-a".to_string()],
+            child_count: 1,
+            time_range_start: ts,
+            time_range_end: ts, // same as start
+            sealed_at: ts,
+            body: "day recap",
+        };
+        let composed = compose_summary_md(&input);
+        // Alias must contain just one date, not "date–date"
+        let alias_line = composed
+            .front_matter
+            .lines()
+            .find(|l| l.contains("L1") && l.contains("global digest"))
+            .expect("alias line must be present");
+        // The date should appear exactly once (no en-dash range)
+        let date_str = ts.format("%Y-%m-%d").to_string();
+        assert!(
+            alias_line.contains(&date_str),
+            "alias must contain the date; got: {alias_line}"
+        );
+        // Must not contain an en-dash (range indicator)
+        assert!(
+            !alias_line.contains('\u{2013}'),
+            "same-day alias must not have en-dash range; got: {alias_line}"
+        );
+    }
+
+    #[test]
+    fn scope_short_label_two_participants() {
+        let label = scope_short_label("gmail:alice@x.com|bob@y.com");
+        assert_eq!(label, "alice@x.com \u{2194} bob@y.com");
+    }
+
+    #[test]
+    fn scope_short_label_many_participants() {
+        let label = scope_short_label("gmail:alice@x.com|bob@y.com|carol@z.com");
+        assert_eq!(label, "alice@x.com + 2 others");
+    }
+
+    #[test]
+    fn scope_short_label_non_gmail_returns_raw() {
+        let label = scope_short_label("slack:#general");
+        assert_eq!(label, "slack:#general");
+    }
+
+    #[test]
+    fn rewrite_summary_tags_delegates_to_rewrite_tags() {
+        // compose a summary, then rewrite its tags — body must stay unchanged.
+        let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        let input = SummaryComposeInput {
+            summary_id: "sum:L1:rwttest",
+            tree_kind: SummaryTreeKind::Source,
+            tree_id: "t1",
+            tree_scope: "gmail:alice@x.com",
+            level: 1,
+            child_ids: &["c1".to_string()],
+            child_count: 1,
+            time_range_start: ts,
+            time_range_end: ts,
+            sealed_at: ts,
+            body: "summary body text",
+        };
+        let composed = compose_summary_md(&input);
+        let file_bytes = composed.full.as_bytes();
+        let new_tags = vec!["person/Alice-Smith".to_string(), "topic/Memory".to_string()];
+        let rewritten = rewrite_summary_tags(file_bytes, &new_tags).unwrap();
+        let rewritten_str = std::str::from_utf8(&rewritten).unwrap();
+        assert!(rewritten_str.contains("  - person/Alice-Smith"));
+        assert!(rewritten_str.contains("  - topic/Memory"));
+        assert!(!rewritten_str.contains("tags: []"));
+        // Body must be unchanged
+        assert!(rewritten_str.ends_with("summary body text"));
     }
 }

@@ -1,4 +1,4 @@
-//! Read and verify chunk `.md` files from the content store.
+//! Read and verify chunk and summary `.md` files from the content store.
 
 use std::path::Path;
 
@@ -50,6 +50,56 @@ pub fn verify_chunk_file(abs_path: &Path, expected_sha256: &str) -> anyhow::Resu
         );
     }
     Ok(ok)
+}
+
+// ── Summary reads ────────────────────────────────────────────────────────────
+
+/// The result of verifying a summary file on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyResult {
+    /// The on-disk body SHA-256 matches the stored value.
+    Ok,
+    /// The file exists but the body SHA-256 does not match.
+    Mismatch { actual: String },
+    /// The file does not exist at the given path.
+    Missing,
+}
+
+/// Read a summary file and return its body + SHA-256.
+///
+/// Returns an error if:
+/// - the file does not exist
+/// - the file is not valid UTF-8
+/// - the front-matter delimiters cannot be found
+pub fn read_summary_file(abs_path: &Path) -> anyhow::Result<ChunkFileContents> {
+    // Reuse the same reader as chunks — the file format is identical.
+    read_chunk_file(abs_path)
+}
+
+/// Verify a summary file's body SHA-256 without returning the body itself.
+///
+/// Returns:
+/// - `VerifyResult::Ok` on match
+/// - `VerifyResult::Mismatch { actual }` on hash mismatch
+/// - `VerifyResult::Missing` when the file does not exist
+pub fn verify_summary_file(abs_path: &Path, expected_sha256: &str) -> anyhow::Result<VerifyResult> {
+    if !abs_path.exists() {
+        return Ok(VerifyResult::Missing);
+    }
+    let contents = read_summary_file(abs_path)?;
+    if contents.sha256 == expected_sha256 {
+        Ok(VerifyResult::Ok)
+    } else {
+        log::warn!(
+            "[content_store::read] sha256 mismatch for summary {}: expected={} actual={}",
+            abs_path.display(),
+            expected_sha256,
+            contents.sha256,
+        );
+        Ok(VerifyResult::Mismatch {
+            actual: contents.sha256,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -123,5 +173,70 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("nonexistent.md");
         assert!(read_chunk_file(&path).is_err());
+    }
+
+    // ─── summary read / verify tests ─────────────────────────────────────────
+
+    fn write_summary_file(dir: &TempDir, body: &str) -> (std::path::PathBuf, String) {
+        use crate::openhuman::memory::tree::content_store::atomic::{sha256_hex, write_if_new};
+        use crate::openhuman::memory::tree::content_store::compose::{
+            compose_summary_md, SummaryComposeInput,
+        };
+        use crate::openhuman::memory::tree::content_store::paths::SummaryTreeKind;
+        use chrono::TimeZone;
+        let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        let input = SummaryComposeInput {
+            summary_id: "sum:L1:readtest",
+            tree_kind: SummaryTreeKind::Source,
+            tree_id: "t1",
+            tree_scope: "gmail:alice@x.com",
+            level: 1,
+            child_ids: &["c1".to_string()],
+            child_count: 1,
+            time_range_start: ts,
+            time_range_end: ts,
+            sealed_at: ts,
+            body,
+        };
+        let composed = compose_summary_md(&input);
+        let path = dir.path().join("sum.md");
+        let sha = sha256_hex(composed.body.as_bytes());
+        write_if_new(&path, composed.full.as_bytes()).unwrap();
+        (path, sha)
+    }
+
+    #[test]
+    fn read_summary_file_returns_body_and_sha() {
+        let dir = TempDir::new().unwrap();
+        let body = "summary body content\n";
+        let (path, expected_sha) = write_summary_file(&dir, body);
+        let result = read_summary_file(&path).unwrap();
+        assert_eq!(result.body, body);
+        assert_eq!(result.sha256, expected_sha);
+    }
+
+    #[test]
+    fn verify_summary_file_ok_for_correct_hash() {
+        let dir = TempDir::new().unwrap();
+        let (path, sha) = write_summary_file(&dir, "body text\n");
+        assert_eq!(verify_summary_file(&path, &sha).unwrap(), VerifyResult::Ok);
+    }
+
+    #[test]
+    fn verify_summary_file_mismatch_for_wrong_hash() {
+        let dir = TempDir::new().unwrap();
+        let (path, _) = write_summary_file(&dir, "body text\n");
+        let r = verify_summary_file(&path, "deadbeef").unwrap();
+        assert!(matches!(r, VerifyResult::Mismatch { .. }));
+    }
+
+    #[test]
+    fn verify_summary_file_missing_for_absent_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("does_not_exist.md");
+        assert_eq!(
+            verify_summary_file(&path, "abc").unwrap(),
+            VerifyResult::Missing
+        );
     }
 }

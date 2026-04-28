@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
-use chrono::TimeZone;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::content_store::tags as content_tags;
+use crate::openhuman::memory::tree::content_store::{self as content_store, tags as content_tags};
 use crate::openhuman::memory::tree::global_tree::digest::{self, DigestOutcome};
 use crate::openhuman::memory::tree::jobs::store;
 use crate::openhuman::memory::tree::jobs::types::{
@@ -346,8 +345,19 @@ async fn handle_seal(config: &Config, job: &Job) -> Result<()> {
     // same SQLite transaction that commits the seal. This eliminates the
     // crash window where the seal succeeds but the follow-up enqueues
     // are silently lost.
-    let _summary_id =
+    let summary_id =
         seal_one_level(config, &tree, &buf, summariser.as_ref(), &strategy, true).await?;
+
+    // Phase MD-content: rewrite the `tags:` block in the sealed summary's
+    // on-disk .md file. Entity index rows were committed inside
+    // `seal_one_level` (via `index_summary_entity_ids_tx`), so they are
+    // visible here. Best-effort: failure does not abort the seal.
+    if let Err(e) = content_store::update_summary_tags(config, &summary_id) {
+        log::warn!(
+            "[memory_tree::jobs] update_summary_tags failed for summary_id={summary_id}: {e:#}"
+        );
+    }
+
     super::worker::wake_workers();
     Ok(())
 }
@@ -456,7 +466,6 @@ mod tests {
     use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf_deferred, LeafRef};
     use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
     use crate::openhuman::memory::tree::source_tree::store as src_store;
-    use crate::openhuman::memory::tree::source_tree::types::TreeKind;
     use crate::openhuman::memory::tree::store::with_connection;
     use chrono::TimeZone;
     use rusqlite::params;

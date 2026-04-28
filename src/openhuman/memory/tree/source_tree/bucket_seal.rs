@@ -34,6 +34,9 @@ use chrono::{DateTime, Utc};
 use rusqlite::Transaction;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::{
+    atomic::stage_summary, paths::slugify_source_id, SummaryComposeInput, SummaryTreeKind,
+};
 use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
 use crate::openhuman::memory::tree::score::extract::EntityExtractor;
 use crate::openhuman::memory::tree::score::resolver::canonicalise;
@@ -453,6 +456,79 @@ pub(crate) async fn seal_one_level(
         embedding: Some(embedding),
     };
 
+    // Phase MD-content: stage the summary .md file BEFORE opening the write
+    // tx. A staging failure aborts the seal cleanly — nothing is persisted
+    // and the buffer stays intact for retry.
+    //
+    // `bucket_seal.rs` handles both Source and Topic tree seals (Topic trees
+    // use the same cascade machinery via `handle_seal` in the job handler).
+    // Map TreeKind to SummaryTreeKind accordingly.
+    let summary_tree_kind = match tree.kind {
+        TreeKind::Topic => SummaryTreeKind::Topic,
+        _ => SummaryTreeKind::Source,
+    };
+    let scope_slug = {
+        // For source trees, scope is the raw source_id (e.g.
+        // "gmail:alice@x.com|bob@y.com"). Slugify the participants portion
+        // (after ':') to match chunk path layout. For topic trees, scope is
+        // the canonical entity_id — slugify the whole thing.
+        let s = &tree.scope;
+        match tree.kind {
+            TreeKind::Topic => slugify_source_id(s),
+            _ => {
+                if let Some((_, participants)) = s.split_once(':') {
+                    slugify_source_id(participants)
+                } else {
+                    slugify_source_id(s)
+                }
+            }
+        }
+    };
+    let compose_input = SummaryComposeInput {
+        summary_id: &node.id,
+        tree_kind: summary_tree_kind,
+        tree_id: &node.tree_id,
+        tree_scope: &tree.scope,
+        level: node.level,
+        child_ids: &node.child_ids,
+        child_count: node.child_ids.len(),
+        time_range_start: node.time_range_start,
+        time_range_end: node.time_range_end,
+        sealed_at: node.sealed_at,
+        body: &node.content,
+    };
+    let content_root = config.memory_tree_content_root();
+    let staged = match stage_summary(&content_root, &compose_input, &scope_slug, None) {
+        Ok(s) => {
+            log::debug!(
+                "[source_tree::bucket_seal] staged summary {} → {}",
+                node.id,
+                s.content_path
+            );
+            s
+        }
+        Err(e) => {
+            log::warn!(
+                "[source_tree::bucket_seal] stage_summary failed for {} — \
+                 proceeding without .md file: {e:#}",
+                node.id
+            );
+            // Fall back: use an empty StagedSummary so the tx proceeds without
+            // a file pointer. The next retry will re-stage.
+            crate::openhuman::memory::tree::content_store::StagedSummary {
+                summary_id: node.id.clone(),
+                content_path: String::new(),
+                content_sha256: String::new(),
+            }
+        }
+    };
+    // Only pass Some(staged) when we actually have a valid path.
+    let staged_opt = if staged.content_path.is_empty() {
+        None
+    } else {
+        Some(staged)
+    };
+
     // Single write transaction: insert summary, clear this buffer, append
     // summary id to parent buffer, bump tree max_level/root if needed,
     // and (when `enqueue_follow_ups`) atomically enqueue parent-seal +
@@ -475,7 +551,7 @@ pub(crate) async fn seal_one_level(
             .map(|n| n.max(0) as u32)
             .context("Failed to read current max_level for tree")?;
 
-        store::insert_summary_tx(&tx, &node)?;
+        store::insert_summary_tx(&tx, &node, staged_opt.as_ref())?;
         // Forward-compat: index any entities the summariser emitted into
         // `mem_tree_entity_index` so Phase 4 retrieval can resolve
         // "summaries mentioning Alice" via the same inverted index as

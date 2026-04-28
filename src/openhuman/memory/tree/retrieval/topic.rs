@@ -545,7 +545,7 @@ mod tests {
         with_connection(&cfg, |conn| {
             let tx = conn.unchecked_transaction()?;
             tree_store::insert_tree_conn(&tx, &tree)?;
-            tree_store::insert_summary_tx(&tx, &summary)?;
+            tree_store::insert_summary_tx(&tx, &summary, None)?;
             score_store::index_entities_tx(
                 &tx,
                 &[entity],

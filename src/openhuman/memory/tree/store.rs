@@ -637,6 +637,14 @@ pub(crate) fn with_connection<T>(
     // stores a 500-char plain-text preview instead of the full body.
     add_column_if_missing(&conn, "mem_tree_chunks", "content_path", "TEXT")?;
     add_column_if_missing(&conn, "mem_tree_chunks", "content_sha256", "TEXT")?;
+    // Phase MD-content (summaries): same pointer pattern for summary nodes.
+    // `content_path` is the relative path to the .md file under
+    // `<content_root>/summaries/...`. `content_sha256` is the SHA-256 hex
+    // of the body bytes only (front-matter excluded). Both nullable so
+    // legacy rows (from before this migration) read back with NULL — callers
+    // fall back to the `content` column for those rows.
+    add_column_if_missing(&conn, "mem_tree_summaries", "content_path", "TEXT")?;
+    add_column_if_missing(&conn, "mem_tree_summaries", "content_sha256", "TEXT")?;
     f(&conn)
 }
 
@@ -675,6 +683,53 @@ pub fn get_chunk_content_path(config: &Config, chunk_id: &str) -> Result<Option<
             .optional()?
             .flatten();
         Ok(row)
+    })
+}
+
+/// Return both `content_path` and `content_sha256` stored in SQLite for `summary_id`.
+///
+/// Returns `Ok(None)` if the summary does not exist or has no content_path recorded yet
+/// (legacy rows pre-MD-content migration).
+pub fn get_summary_content_pointers(
+    config: &Config,
+    summary_id: &str,
+) -> Result<Option<(String, String)>> {
+    with_connection(config, |conn| {
+        let row = conn
+            .query_row(
+                "SELECT content_path, content_sha256 FROM mem_tree_summaries WHERE id = ?1",
+                params![summary_id],
+                |r| {
+                    let path: Option<String> = r.get(0)?;
+                    let sha: Option<String> = r.get(1)?;
+                    Ok((path, sha))
+                },
+            )
+            .optional()?;
+        Ok(row.and_then(|(p, s)| p.zip(s)))
+    })
+}
+
+/// List all summary rows that have a non-NULL `content_path`. Used by the
+/// bin integrity checker.
+pub fn list_summaries_with_content_path(config: &Config) -> Result<Vec<(String, String, String)>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, content_path, content_sha256
+               FROM mem_tree_summaries
+              WHERE content_path IS NOT NULL AND content_sha256 IS NOT NULL
+                AND deleted = 0",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                let id: String = r.get(0)?;
+                let path: String = r.get(1)?;
+                let sha: String = r.get(2)?;
+                Ok((id, path, sha))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to list summaries with content_path")?;
+        Ok(rows)
     })
 }
 

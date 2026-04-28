@@ -17,6 +17,9 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::{
+    atomic::stage_summary, SummaryComposeInput, SummaryTreeKind,
+};
 use crate::openhuman::memory::tree::global_tree::{
     GLOBAL_TOKEN_BUDGET, MONTHLY_SEAL_THRESHOLD, WEEKLY_SEAL_THRESHOLD, YEARLY_SEAL_THRESHOLD,
 };
@@ -240,6 +243,51 @@ async fn seal_one_level(
         embedding: Some(embedding),
     };
 
+    // Phase MD-content: stage the global summary .md file before opening the
+    // write tx. date_for_global = time_range_start date (daily for L0, or
+    // the start of the range for higher levels).
+    let global_date = Some(time_range_start);
+    let compose_input_global = SummaryComposeInput {
+        summary_id: &node.id,
+        tree_kind: SummaryTreeKind::Global,
+        tree_id: &node.tree_id,
+        tree_scope: &tree.scope,
+        level: node.level,
+        child_ids: &node.child_ids,
+        child_count: node.child_ids.len(),
+        time_range_start: node.time_range_start,
+        time_range_end: node.time_range_end,
+        sealed_at: node.sealed_at,
+        body: &node.content,
+    };
+    let content_root_global = config.memory_tree_content_root();
+    // Global tree scope is typically the literal "global" string.
+    // Use it as-is for the path (slugify passes through short ascii strings unchanged).
+    let global_scope_slug =
+        crate::openhuman::memory::tree::content_store::paths::slugify_source_id(&tree.scope);
+    let staged_global = match stage_summary(
+        &content_root_global,
+        &compose_input_global,
+        &global_scope_slug,
+        global_date,
+    ) {
+        Ok(s) => {
+            log::debug!(
+                "[global_tree::seal] staged summary {} → {}",
+                node.id,
+                s.content_path
+            );
+            Some(s)
+        }
+        Err(e) => {
+            log::warn!(
+                "[global_tree::seal] stage_summary failed for {} — proceeding without .md file: {e:#}",
+                node.id
+            );
+            None
+        }
+    };
+
     // Single write transaction: insert the new summary, clear this level's
     // buffer, append the new id to the parent buffer, and bump the tree's
     // max_level/root_id if we just climbed. Re-read `max_level` inside the
@@ -260,7 +308,7 @@ async fn seal_one_level(
             .map(|n| n.max(0) as u32)
             .context("Failed to read current max_level for global tree")?;
 
-        store::insert_summary_tx(&tx, &node)?;
+        store::insert_summary_tx(&tx, &node, staged_global.as_ref())?;
         // Index any entities the summariser emitted. No-op under
         // InertSummariser (entities stays empty by design — see
         // summariser/inert.rs). Becomes active when the Ollama summariser
@@ -405,7 +453,7 @@ mod tests {
     fn insert_daily(cfg: &Config, node: &SummaryNode) {
         with_connection(cfg, |conn| {
             let tx = conn.unchecked_transaction()?;
-            store::insert_summary_tx(&tx, node)?;
+            store::insert_summary_tx(&tx, node, None)?;
             tx.commit()?;
             Ok(())
         })

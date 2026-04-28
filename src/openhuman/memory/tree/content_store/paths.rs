@@ -20,6 +20,92 @@
 
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Utc};
+
+/// Which kind of summary tree a summary belongs to. Determines the top-level
+/// directory under `<content_root>/summaries/`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SummaryTreeKind {
+    /// Per-source-tree summary. Layout: `summaries/source/<scope_slug>/L<level>/<id>.md`
+    Source,
+    /// Global digest tree. Layout: `summaries/global/<yyyy-mm-dd>/L<level>/<id>.md`
+    Global,
+    /// Per-topic (entity) tree. Layout: `summaries/topic/<scope_slug>/L<level>/<id>.md`
+    Topic,
+}
+
+/// Build the relative content path for a summary, using forward slashes.
+///
+/// Path layout depends on tree_kind:
+/// - Source: `"summaries/source/<scope_slug>/L<level>/<summary_filename>.md"`
+/// - Global: `"summaries/global/<yyyy-mm-dd>/L<level>/<summary_filename>.md"`
+///   Panics (via `expect`) if `date_for_global` is `None` for `SummaryTreeKind::Global`.
+/// - Topic:  `"summaries/topic/<scope_slug>/L<level>/<summary_filename>.md"`
+///
+/// `scope_slug` must already be slugified by the caller (use [`slugify_source_id`] or
+/// a per-kind variant). A trailing `.md` on `summary_id` is stripped if present.
+///
+/// The `summary_id` is sanitized into a filesystem-safe filename by replacing
+/// characters illegal on Windows (`:`, `\`, `*`, `?`, `"`, `<`, `>`, `|`) with `-`.
+pub fn summary_rel_path(
+    tree_kind: SummaryTreeKind,
+    scope_slug: &str,
+    level: u32,
+    summary_id: &str,
+    date_for_global: Option<DateTime<Utc>>,
+) -> String {
+    // Strip a trailing `.md` from summary_id if accidentally included.
+    let id = summary_id.strip_suffix(".md").unwrap_or(summary_id);
+    // Sanitize to a cross-platform filename (colons are illegal on Windows NTFS).
+    let filename = sanitize_filename(id);
+
+    match tree_kind {
+        SummaryTreeKind::Source => {
+            format!("summaries/source/{}/L{}/{}.md", scope_slug, level, filename)
+        }
+        SummaryTreeKind::Global => {
+            let date = date_for_global
+                .expect("date_for_global is required for SummaryTreeKind::Global")
+                .format("%Y-%m-%d");
+            format!("summaries/global/{}/L{}/{}.md", date, level, filename)
+        }
+        SummaryTreeKind::Topic => {
+            format!("summaries/topic/{}/L{}/{}.md", scope_slug, level, filename)
+        }
+    }
+}
+
+/// Replace characters that are illegal in filenames on Windows NTFS with `-`.
+///
+/// Illegal characters: `\`, `/`, `:`, `*`, `?`, `"`, `<`, `>`, `|`.
+/// (Forward slash is not replaced since `summary_id` should not contain path
+/// separators, but we sanitize it anyway for safety.)
+fn sanitize_filename(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            c => c,
+        })
+        .collect()
+}
+
+/// Build the absolute on-disk path for a summary given the content root.
+pub fn summary_abs_path(
+    content_root: &Path,
+    tree_kind: SummaryTreeKind,
+    scope_slug: &str,
+    level: u32,
+    summary_id: &str,
+    date_for_global: Option<DateTime<Utc>>,
+) -> PathBuf {
+    let rel = summary_rel_path(tree_kind, scope_slug, level, summary_id, date_for_global);
+    let mut abs = content_root.to_path_buf();
+    for component in rel.split('/') {
+        abs.push(component);
+    }
+    abs
+}
+
 /// Build the relative content path for a chunk, using forward slashes.
 ///
 /// Path layout depends on source_kind:
@@ -274,5 +360,89 @@ mod tests {
         let abs = chunk_abs_path(root, "email", "gmail:alice@x.com|bob@y.com", "abc");
         assert!(abs.starts_with(root));
         assert!(abs.ends_with("abc.md"));
+    }
+
+    // ─── summary_rel_path tests ───────────────────────────────────────────────
+
+    #[test]
+    fn summary_rel_path_source() {
+        let p = summary_rel_path(
+            SummaryTreeKind::Source,
+            "gmail-alice-x-com-bob-y-com",
+            1,
+            "summary:L1:abc",
+            None,
+        );
+        // Colons in summary_id are replaced with '-' for cross-platform filenames.
+        assert_eq!(
+            p,
+            "summaries/source/gmail-alice-x-com-bob-y-com/L1/summary-L1-abc.md"
+        );
+    }
+
+    #[test]
+    fn summary_rel_path_global() {
+        use chrono::TimeZone;
+        let date = chrono::Utc.with_ymd_and_hms(2026, 4, 28, 12, 0, 0).unwrap();
+        let p = summary_rel_path(
+            SummaryTreeKind::Global,
+            "global",
+            0,
+            "summary:L0:daily",
+            Some(date),
+        );
+        assert_eq!(p, "summaries/global/2026-04-28/L0/summary-L0-daily.md");
+    }
+
+    #[test]
+    fn summary_rel_path_topic() {
+        let p = summary_rel_path(
+            SummaryTreeKind::Topic,
+            "person-alex-johnson",
+            1,
+            "summary:L1:xyz",
+            None,
+        );
+        assert_eq!(
+            p,
+            "summaries/topic/person-alex-johnson/L1/summary-L1-xyz.md"
+        );
+    }
+
+    #[test]
+    fn summary_rel_path_strips_trailing_md_extension() {
+        // If the caller accidentally appends .md to the summary_id, strip it.
+        let p = summary_rel_path(
+            SummaryTreeKind::Topic,
+            "entity-slug",
+            2,
+            "summary:L2:foo.md",
+            None,
+        );
+        assert_eq!(p, "summaries/topic/entity-slug/L2/summary-L2-foo.md");
+    }
+
+    #[test]
+    #[should_panic(expected = "date_for_global is required")]
+    fn summary_rel_path_global_panics_without_date() {
+        summary_rel_path(SummaryTreeKind::Global, "global", 0, "summary:L0:x", None);
+    }
+
+    #[test]
+    fn summary_abs_path_rooted_under_content_root() {
+        use chrono::TimeZone;
+        use std::path::Path;
+        let root = Path::new("/workspace/content");
+        let date = chrono::Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
+        let abs = summary_abs_path(
+            root,
+            SummaryTreeKind::Global,
+            "global",
+            0,
+            "daily-123",
+            Some(date),
+        );
+        assert!(abs.starts_with(root));
+        assert!(abs.ends_with("daily-123.md"));
     }
 }

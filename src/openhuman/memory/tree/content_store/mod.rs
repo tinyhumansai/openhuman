@@ -1,16 +1,16 @@
-//! Content store for memory-tree chunk `.md` files (Phase MD-content).
+//! Content store for memory-tree chunk and summary `.md` files (Phase MD-content).
 //!
-//! Chunk bodies are stored on disk as `.md` files with YAML front-matter.
+//! Bodies are stored on disk as `.md` files with YAML front-matter.
 //! SQLite holds `content_path` (relative, forward-slash) and `content_sha256`
 //! (over body bytes only) as pointers + integrity tokens.
 //!
 //! ## Module layout
 //!
-//! - [`paths`]   — path generation + `slugify_source_id`
+//! - [`paths`]   — path generation + `slugify_source_id` + summary path builders
 //! - [`compose`] — YAML front-matter + body composition; tag rewriting
-//! - [`atomic`]  — tempfile+fsync+rename writes; SHA-256
-//! - [`read`]    — read + SHA-256 verification + `split_front_matter`
-//! - [`tags`]    — `update_chunk_tags` + `slugify_tag_kind`/`slugify_tag_value`
+//! - [`atomic`]  — tempfile+fsync+rename writes; SHA-256; `stage_summary`
+//! - [`read`]    — read + SHA-256 verification + `split_front_matter`; summary variants
+//! - [`tags`]    — `update_chunk_tags` + `update_summary_tags` + slugifiers
 
 pub mod atomic;
 pub mod compose;
@@ -21,6 +21,10 @@ pub mod tags;
 use std::path::Path;
 
 use crate::openhuman::memory::tree::types::Chunk;
+
+pub use atomic::StagedSummary;
+pub use compose::SummaryComposeInput;
+pub use paths::SummaryTreeKind;
 
 /// A chunk that has been written to disk and is ready for SQLite upsert.
 ///
@@ -34,6 +38,17 @@ pub struct StagedChunk {
     pub content_path: String,
     /// SHA-256 hex digest over the body bytes only.
     pub content_sha256: String,
+}
+
+/// Update the `tags:` block in a summary's on-disk `.md` file after an
+/// extraction job runs.
+///
+/// Delegates to [`tags::update_summary_tags`].
+pub fn update_summary_tags(
+    config: &crate::openhuman::config::Config,
+    summary_id: &str,
+) -> anyhow::Result<()> {
+    tags::update_summary_tags(config, summary_id)
 }
 
 /// Write all chunks in `chunks` to disk and return `StagedChunk` records

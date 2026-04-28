@@ -476,9 +476,9 @@ mod tests {
         with_connection(cfg, |conn| {
             let tx = conn.unchecked_transaction()?;
             tree_store::insert_tree_conn(&tx, &tree)?;
-            tree_store::insert_summary_tx(&tx, &l1_a)?;
-            tree_store::insert_summary_tx(&tx, &l1_b)?;
-            tree_store::insert_summary_tx(&tx, &root)?;
+            tree_store::insert_summary_tx(&tx, &l1_a, None)?;
+            tree_store::insert_summary_tx(&tx, &l1_b, None)?;
+            tree_store::insert_summary_tx(&tx, &root, None)?;
             tx.commit()?;
             Ok(())
         })

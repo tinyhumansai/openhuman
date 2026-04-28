@@ -39,10 +39,12 @@ use openhuman_core::openhuman::composio::providers::registry::{
     get_provider, init_default_providers,
 };
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::memory::tree::content_store::read::verify_chunk_file;
+use openhuman_core::openhuman::memory::tree::content_store::read::{
+    verify_chunk_file, verify_summary_file, VerifyResult,
+};
 use openhuman_core::openhuman::memory::tree::jobs::drain_until_idle;
 use openhuman_core::openhuman::memory::tree::store::{
-    get_chunk_content_pointers, list_chunks, ListChunksQuery,
+    get_chunk_content_pointers, list_chunks, list_summaries_with_content_path, ListChunksQuery,
 };
 
 #[derive(Parser, Debug)]
@@ -256,20 +258,37 @@ async fn main() -> Result<()> {
         log::info!("[gmail_backfill_3d] skipping integrity check (--skip-verify)");
     } else {
         log::info!("[gmail_backfill_3d] running integrity check…");
+
+        // Chunk integrity.
         let (verified, mismatched, no_pointer, missing_file) = verify_all_chunk_files(&config)?;
         log::info!(
-            "[gmail_backfill_3d] integrity done \
-             verified={} mismatched={} no_pointer={} missing_file={}",
+            "[gmail_backfill_3d] chunks: verified={} mismatched={} no_pointer={} missing_file={}",
             verified,
             mismatched,
             no_pointer,
             missing_file,
         );
-        if mismatched > 0 || missing_file > 0 {
+
+        // Summary integrity.
+        let (sum_verified, sum_mismatched, sum_no_pointer, sum_missing_file) =
+            verify_all_summary_files(&config)?;
+        log::info!(
+            "[gmail_backfill_3d] summaries: verified={} mismatched={} no_pointer={} missing_file={}",
+            sum_verified,
+            sum_mismatched,
+            sum_no_pointer,
+            sum_missing_file,
+        );
+
+        if mismatched > 0 || missing_file > 0 || sum_mismatched > 0 || sum_missing_file > 0 {
             anyhow::bail!(
-                "Integrity check failed: {} SHA-256 mismatches, {} missing files",
+                "Integrity check failed: \
+                 chunks: {} mismatches, {} missing files; \
+                 summaries: {} mismatches, {} missing files",
                 mismatched,
                 missing_file,
+                sum_mismatched,
+                sum_missing_file,
             );
         }
     }
@@ -370,6 +389,70 @@ fn verify_all_chunk_files(config: &Config) -> Result<(usize, usize, usize, usize
             }
         }
     }
+
+    Ok((verified, mismatched, no_pointer, missing_file))
+}
+
+/// Read all summary rows with a non-NULL `content_path` from SQLite and verify
+/// the on-disk SHA-256 matches `content_sha256`.
+///
+/// Returns `(verified, mismatched, no_pointer, missing_file)`.
+fn verify_all_summary_files(config: &Config) -> Result<(usize, usize, usize, usize)> {
+    let rows_with_pointer = list_summaries_with_content_path(config)?;
+    let content_root = config.memory_tree_content_root();
+
+    let mut verified = 0usize;
+    let mut mismatched = 0usize;
+    let mut missing_file = 0usize;
+
+    for (summary_id, rel_path, expected_sha) in &rows_with_pointer {
+        let abs_path = {
+            let mut p = content_root.clone();
+            for component in rel_path.split('/') {
+                p.push(component);
+            }
+            p
+        };
+
+        match verify_summary_file(&abs_path, expected_sha) {
+            Ok(VerifyResult::Ok) => {
+                verified += 1;
+            }
+            Ok(VerifyResult::Mismatch { actual }) => {
+                mismatched += 1;
+                log::warn!(
+                    "[gmail_backfill_3d] verify: SHA-256 mismatch summary_id={} path={} expected={} actual={}",
+                    summary_id,
+                    abs_path.display(),
+                    expected_sha,
+                    actual,
+                );
+            }
+            Ok(VerifyResult::Missing) => {
+                missing_file += 1;
+                log::warn!(
+                    "[gmail_backfill_3d] verify: file missing summary_id={} path={}",
+                    summary_id,
+                    abs_path.display(),
+                );
+            }
+            Err(e) => {
+                log::error!(
+                    "[gmail_backfill_3d] verify: error summary_id={}: {e}",
+                    summary_id,
+                );
+                mismatched += 1;
+            }
+        }
+    }
+
+    // Count rows that have no content_path at all (legacy rows).
+    // We report this as no_pointer for symmetry with the chunk verifier.
+    // We can't easily count them here without a separate query, so we
+    // approximate: rows_with_pointer gives us the ones we checked.
+    // For now no_pointer = 0 (the bin wipes before re-ingesting so all
+    // new rows should have pointers; legacy rows are pre-migration).
+    let no_pointer = 0usize;
 
     Ok((verified, mismatched, no_pointer, missing_file))
 }
