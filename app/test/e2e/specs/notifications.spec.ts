@@ -36,14 +36,13 @@ async function waitForNotificationsSections(timeout = 10_000): Promise<void> {
   await browser.waitUntil(
     async () =>
       (await browser.execute(() => {
-        const integration = document.querySelector('[data-testid="integration-notifications-section"]');
+        const integration = document.querySelector(
+          '[data-testid="integration-notifications-section"]'
+        );
         const system = document.querySelector('[data-testid="system-events-section"]');
         return integration !== null && system !== null;
       })) === true,
-    {
-      timeout,
-      timeoutMsg: 'Notifications sections did not render in time',
-    }
+    { timeout, timeoutMsg: 'Notifications sections did not render in time' }
   );
 }
 
