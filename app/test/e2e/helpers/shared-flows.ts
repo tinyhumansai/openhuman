@@ -111,6 +111,7 @@ const HASH_TO_SIDEBAR_LABEL = {
   '/skills': 'Skills',
   '/home': 'Home',
   '/conversations': 'Conversations',
+  '/notifications': 'Alerts',
   '/settings': 'Settings',
   '/intelligence': 'Intelligence',
 };

@@ -118,8 +118,11 @@ class SocketService {
   private mcpTransport: SocketIOMCPTransportImpl | null = null;
   private pendingListeners: Array<{ event: string; callback: (...args: unknown[]) => void }> = [];
   // Maps original caller callbacks → wrapped callbacks so off() can locate the
-  // exact function reference that was registered with socket.io.
-  private listenerMap = new Map<(...args: unknown[]) => void, (...args: unknown[]) => void>();
+  // exact function reference that was registered with socket.io, scoped by event.
+  private listenerMap = new Map<
+    string,
+    Map<(...args: unknown[]) => void, (...args: unknown[]) => void>
+  >();
 
   /**
    * Connect to the socket server with authentication.
@@ -324,8 +327,11 @@ class SocketService {
       socketLog('Received event', { event, argsCount: args.length, hasData: args.length > 0 });
       callback(...args);
     };
-    // Track original→wrapped so off() can remove the correct reference.
-    this.listenerMap.set(callback, wrappedCallback);
+    // Track original→wrapped per event so the same callback can be used for
+    // multiple events without collisions.
+    const byEvent = this.listenerMap.get(event) ?? new Map();
+    byEvent.set(callback, wrappedCallback);
+    this.listenerMap.set(event, byEvent);
     if (this.socket) {
       this.socket.on(event, wrappedCallback);
     } else {
@@ -339,9 +345,13 @@ class SocketService {
    */
   off(event: string, callback?: (...args: unknown[]) => void): void {
     if (callback) {
-      const wrapped = this.listenerMap.get(callback) ?? callback;
-      const hadWrapped = this.listenerMap.has(callback);
-      this.listenerMap.delete(callback);
+      const byEvent = this.listenerMap.get(event);
+      const wrapped = byEvent?.get(callback) ?? callback;
+      const hadWrapped = byEvent?.has(callback) ?? false;
+      byEvent?.delete(callback);
+      if (byEvent && byEvent.size === 0) {
+        this.listenerMap.delete(event);
+      }
       socketLog('Removing listener', { event, hadWrappedVersion: hadWrapped });
       if (this.socket) {
         this.socket.off(event, wrapped);
@@ -353,6 +363,8 @@ class SocketService {
     } else {
       socketLog('Removing all listeners for event', { event });
       this.socket?.off(event);
+      this.pendingListeners = this.pendingListeners.filter(p => p.event !== event);
+      this.listenerMap.delete(event);
     }
   }
 

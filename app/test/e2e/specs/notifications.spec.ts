@@ -23,6 +23,30 @@ function stepLog(message: string, context?: unknown): void {
   console.log(`[NotificationsE2E][${stamp}] ${message}`, JSON.stringify(context, null, 2));
 }
 
+function getUnreadCount(stats: Record<string, unknown>): number {
+  const candidates = ['unread_count', 'unread', 'total_unread'];
+  for (const key of candidates) {
+    const value = stats[key];
+    if (typeof value === 'number') return value;
+  }
+  return 0;
+}
+
+async function waitForNotificationsSections(timeout = 10_000): Promise<void> {
+  await browser.waitUntil(
+    async () =>
+      (await browser.execute(() => {
+        const integration = document.querySelector('[data-testid="integration-notifications-section"]');
+        const system = document.querySelector('[data-testid="system-events-section"]');
+        return integration !== null && system !== null;
+      })) === true,
+    {
+      timeout,
+      timeoutMsg: 'Notifications sections did not render in time',
+    }
+  );
+}
+
 /**
  * Poll the core ping/about RPC until it responds or the deadline expires.
  * Fails fast if the sidecar is not reachable within the timeout.
@@ -71,6 +95,9 @@ describe('Notifications', () => {
     });
     stepLog('notification_ingest result', { ok: result.ok, result: result.result });
     expect(result.ok).toBe(true);
+    const payload = result.result?.result ?? {};
+    expect(payload.skipped).not.toBe(true);
+    expect(payload.id).toBe('e2e-notif-001');
   });
 
   it('notification_list returns the ingested notification', async () => {
@@ -90,11 +117,26 @@ describe('Notifications', () => {
   });
 
   it('notification_mark_read transitions notification status', async () => {
+    const before = await callOpenhumanRpc('openhuman.notification_stats', {});
+    expect(before.ok).toBe(true);
+    const beforeStats = before.result?.result ?? {};
+    const initialUnread = getUnreadCount(beforeStats);
+
     const result = await callOpenhumanRpc('openhuman.notification_mark_read', {
       id: 'e2e-notif-001',
     });
     stepLog('notification_mark_read result', { ok: result.ok, result: result.result });
     expect(result.ok).toBe(true);
+
+    const after = await callOpenhumanRpc('openhuman.notification_stats', {});
+    expect(after.ok).toBe(true);
+    const afterStats = after.result?.result ?? {};
+    const finalUnread = getUnreadCount(afterStats);
+    if (initialUnread > 0) {
+      expect(finalUnread).toBeLessThan(initialUnread);
+    } else {
+      expect(finalUnread).toBeGreaterThanOrEqual(0);
+    }
   });
 
   it('notification_stats returns aggregate statistics', async () => {
@@ -114,7 +156,7 @@ describe('Notifications', () => {
     }
 
     await navigateViaHash('/notifications');
-    await browser.pause(2_000);
+    await waitForNotificationsSections(10_000);
 
     const currentHash = await browser.execute(() => window.location.hash);
     stepLog('Notifications route hash', { currentHash });
@@ -131,6 +173,8 @@ describe('Notifications', () => {
       stepLog('integration-notifications-section not found', { tree: tree.slice(0, 4000) });
     }
     expect(sectionVisible).toBe(true);
+    await waitForText('E2E Test Notification', 8_000);
+    await waitForText('Created by the notifications E2E spec', 8_000);
   });
 
   it('Notifications page shows System Events section', async () => {
@@ -140,7 +184,7 @@ describe('Notifications', () => {
     }
 
     await navigateViaHash('/notifications');
-    await browser.pause(2_000);
+    await waitForNotificationsSections(10_000);
 
     const sectionVisible = await browser.execute(() => {
       const el = document.querySelector('[data-testid="system-events-section"]');
@@ -155,6 +199,7 @@ describe('Notifications', () => {
 
     // The heading text should also be present.
     await waitForText('System Events', 8_000);
+    await waitForText('All caught up', 8_000);
   });
 
   it('native notification permission command returns a valid state', async () => {
