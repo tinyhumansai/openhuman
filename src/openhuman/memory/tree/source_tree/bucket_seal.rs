@@ -468,17 +468,30 @@ pub(crate) async fn seal_one_level(
         _ => SummaryTreeKind::Source,
     };
     let scope_slug = {
-        // For source trees, scope is the raw source_id (e.g.
-        // "gmail:alice@x.com|bob@y.com"). Slugify the participants portion
-        // (after ':') to match chunk path layout. For topic trees, scope is
-        // the canonical entity_id — slugify the whole thing.
+        // Path slug semantics per source kind:
+        //
+        // - Gmail source trees: scope is `"gmail:<participants>"` where
+        //   participants is `addr1|addr2|...`. Strip the `gmail:` prefix so the
+        //   path is `summaries/source/<participants_slug>/...` and mirrors the
+        //   chunk layout under `email/<participants_slug>/`.
+        //
+        // - Topic trees: scope is the canonical entity_id (e.g.
+        //   `"email:alice@example.com"`). Slugify the FULL string so topic-tree
+        //   summaries and source-tree summaries don't share a path prefix.
+        //
+        // - All other source kinds (slack:, discord:, document:, …): slugify the
+        //   FULL scope string. Stripping the prefix for non-Gmail sources was a
+        //   bug — `"slack:#eng"` and `"discord:#eng"` would both produce slug
+        //   `"eng"` and collide in `summaries/source/eng/`.
         let s = &tree.scope;
         match tree.kind {
             TreeKind::Topic => slugify_source_id(s),
             _ => {
-                if let Some((_, participants)) = s.split_once(':') {
-                    slugify_source_id(participants)
+                if s.starts_with("gmail:") {
+                    // Strip "gmail:" prefix; slugify the participants portion.
+                    slugify_source_id(&s["gmail:".len()..])
                 } else {
+                    // All other source kinds: slugify the full scope string.
                     slugify_source_id(s)
                 }
             }
@@ -497,37 +510,23 @@ pub(crate) async fn seal_one_level(
         sealed_at: node.sealed_at,
         body: &node.content,
     };
+    // Stage the summary .md file and propagate any error — a staging failure
+    // aborts the seal entirely so the database never commits a row with
+    // content_path = NULL. The buffer stays unsealed and the job-retry path
+    // will re-attempt the file write on next execution.
     let content_root = config.memory_tree_content_root();
-    let staged = match stage_summary(&content_root, &compose_input, &scope_slug, None) {
-        Ok(s) => {
-            log::debug!(
-                "[source_tree::bucket_seal] staged summary {} → {}",
-                node.id,
-                s.content_path
-            );
-            s
-        }
-        Err(e) => {
-            log::warn!(
-                "[source_tree::bucket_seal] stage_summary failed for {} — \
-                 proceeding without .md file: {e:#}",
+    let staged =
+        stage_summary(&content_root, &compose_input, &scope_slug, None).with_context(|| {
+            format!(
+                "stage_summary failed for {}; seal aborted, buffer stays unsealed for retry",
                 node.id
-            );
-            // Fall back: use an empty StagedSummary so the tx proceeds without
-            // a file pointer. The next retry will re-stage.
-            crate::openhuman::memory::tree::content_store::StagedSummary {
-                summary_id: node.id.clone(),
-                content_path: String::new(),
-                content_sha256: String::new(),
-            }
-        }
-    };
-    // Only pass Some(staged) when we actually have a valid path.
-    let staged_opt = if staged.content_path.is_empty() {
-        None
-    } else {
-        Some(staged)
-    };
+            )
+        })?;
+    log::debug!(
+        "[source_tree::bucket_seal] staged summary {} → {}",
+        node.id,
+        staged.content_path
+    );
 
     // Single write transaction: insert summary, clear this buffer, append
     // summary id to parent buffer, bump tree max_level/root if needed,
@@ -551,7 +550,7 @@ pub(crate) async fn seal_one_level(
             .map(|n| n.max(0) as u32)
             .context("Failed to read current max_level for tree")?;
 
-        store::insert_summary_tx(&tx, &node, staged_opt.as_ref())?;
+        store::insert_summary_tx(&tx, &node, Some(&staged))?;
         // Forward-compat: index any entities the summariser emitted into
         // `mem_tree_entity_index` so Phase 4 retrieval can resolve
         // "summaries mentioning Alice" via the same inverted index as

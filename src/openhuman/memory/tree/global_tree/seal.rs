@@ -260,33 +260,31 @@ async fn seal_one_level(
         sealed_at: node.sealed_at,
         body: &node.content,
     };
+    // Stage the summary .md file — abort the seal on failure so the database
+    // never commits a row with content_path = NULL. The job-retry path will
+    // re-attempt the file write on next execution.
     let content_root_global = config.memory_tree_content_root();
     // Global tree scope is typically the literal "global" string.
     // Use it as-is for the path (slugify passes through short ascii strings unchanged).
     let global_scope_slug =
         crate::openhuman::memory::tree::content_store::paths::slugify_source_id(&tree.scope);
-    let staged_global = match stage_summary(
+    let staged_global = stage_summary(
         &content_root_global,
         &compose_input_global,
         &global_scope_slug,
         global_date,
-    ) {
-        Ok(s) => {
-            log::debug!(
-                "[global_tree::seal] staged summary {} → {}",
-                node.id,
-                s.content_path
-            );
-            Some(s)
-        }
-        Err(e) => {
-            log::warn!(
-                "[global_tree::seal] stage_summary failed for {} — proceeding without .md file: {e:#}",
-                node.id
-            );
-            None
-        }
-    };
+    )
+    .with_context(|| {
+        format!(
+            "stage_summary failed for {}; global-tree seal aborted for retry",
+            node.id
+        )
+    })?;
+    log::debug!(
+        "[global_tree::seal] staged summary {} → {}",
+        node.id,
+        staged_global.content_path
+    );
 
     // Single write transaction: insert the new summary, clear this level's
     // buffer, append the new id to the parent buffer, and bump the tree's
@@ -308,7 +306,7 @@ async fn seal_one_level(
             .map(|n| n.max(0) as u32)
             .context("Failed to read current max_level for global tree")?;
 
-        store::insert_summary_tx(&tx, &node, staged_global.as_ref())?;
+        store::insert_summary_tx(&tx, &node, Some(&staged_global))?;
         // Index any entities the summariser emitted. No-op under
         // InertSummariser (entities stays empty by design — see
         // summariser/inert.rs). Becomes active when the Ollama summariser

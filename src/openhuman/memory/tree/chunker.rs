@@ -16,6 +16,7 @@
 //! - **Document**: original paragraph-based greedy packing (unchanged).
 
 use crate::openhuman::memory::tree::types::{approx_token_count, Chunk, Metadata, SourceKind};
+use crate::openhuman::memory::tree::util::redact::redact;
 
 /// Default upper bound on per-chunk tokens.
 ///
@@ -80,8 +81,8 @@ pub fn chunk_markdown(input: &ChunkerInput, opts: &ChunkerOptions) -> Vec<Chunk>
             // Document: run the existing paragraph splitter directly on the
             // whole blob. No message-unit concept.
             log::debug!(
-                "[memory_tree::chunker] document source_id={} len={} — paragraph split",
-                input.source_id,
+                "[memory_tree::chunker] document source_id_hash={} len={} — paragraph split",
+                redact(&input.source_id),
                 input.markdown.len()
             );
             split_by_token_budget(&input.markdown, max_tokens)
@@ -111,9 +112,9 @@ pub fn chunk_markdown(input: &ChunkerInput, opts: &ChunkerOptions) -> Vec<Chunk>
     }
 
     log::debug!(
-        "[memory_tree::chunker] source_kind={} source_id={} len={} units={}",
+        "[memory_tree::chunker] source_kind={} source_id_hash={} len={} units={}",
         input.source_kind.as_str(),
-        input.source_id,
+        redact(&input.source_id),
         input.markdown.len(),
         units.len()
     );

@@ -13,6 +13,7 @@ pub mod types;
 use std::sync::Arc;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::util::redact::redact_endpoint;
 
 pub use extractor::{CompositeExtractor, EntityExtractor, RegexEntityExtractor};
 pub use llm::{LlmEntityExtractor, LlmExtractorConfig};
@@ -66,10 +67,12 @@ pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
 
     match LlmEntityExtractor::new(cfg) {
         Ok(llm) => {
-            log::info!(
+            // Drop to debug (diagnostic, not always-on) and redact the endpoint
+            // so embedded credentials (e.g. api keys in URL) don't leak.
+            log::debug!(
                 "[memory_tree::extract] summary extractor: regex + LLM endpoint={} model={} \
                  timeout_ms={} emit_topics=true",
-                endpoint,
+                redact_endpoint(endpoint),
                 model,
                 timeout_ms
             );

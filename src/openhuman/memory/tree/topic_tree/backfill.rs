@@ -34,6 +34,7 @@ use crate::openhuman::memory::tree::source_tree::bucket_seal::{
 use crate::openhuman::memory::tree::source_tree::summariser::Summariser;
 use crate::openhuman::memory::tree::source_tree::types::Tree;
 use crate::openhuman::memory::tree::store::get_chunk;
+use crate::openhuman::memory::tree::util::redact::redact;
 
 /// Max leaves to pull from the entity index during backfill. A hard cap
 /// keeps initial spawn latency bounded even for very active entities.
@@ -78,20 +79,20 @@ pub async fn backfill_topic_tree_at(
 ) -> Result<usize> {
     let cutoff_ms = now_ms.saturating_sub(BACKFILL_WINDOW_DAYS.saturating_mul(DAY_MS));
     log::info!(
-        "[topic_tree::backfill] start entity_id={} tree_id={} window_days={} cutoff_ms={}",
-        entity_id,
+        "[topic_tree::backfill] start entity_id_hash={} tree_id={} window_days={} cutoff_ms={}",
+        redact(entity_id),
         tree.id,
         BACKFILL_WINDOW_DAYS,
         cutoff_ms
     );
 
     let hits = lookup_entity(config, entity_id, Some(BACKFILL_LIMIT))
-        .with_context(|| format!("failed to lookup entity {entity_id}"))?;
+        .with_context(|| format!("failed to lookup entity {}", redact(entity_id)))?;
 
     if hits.is_empty() {
         log::debug!(
-            "[topic_tree::backfill] no entity-index hits for entity_id={} — empty backfill",
-            entity_id
+            "[topic_tree::backfill] no entity-index hits for entity_id_hash={} — empty backfill",
+            redact(entity_id)
         );
         return Ok(0);
     }
@@ -106,13 +107,15 @@ pub async fn backfill_topic_tree_at(
     if dropped > 0 {
         log::debug!(
             "[topic_tree::backfill] dropped {dropped} hits older than {BACKFILL_WINDOW_DAYS}d \
-             for entity_id={entity_id}"
+             for entity_id_hash={}",
+            redact(entity_id)
         );
     }
     if hits.is_empty() {
         log::debug!(
             "[topic_tree::backfill] all entity-index hits fell outside the {BACKFILL_WINDOW_DAYS}d \
-             window for entity_id={entity_id} — empty backfill"
+             window for entity_id_hash={} — empty backfill",
+            redact(entity_id)
         );
         return Ok(0);
     }
@@ -141,9 +144,9 @@ pub async fn backfill_topic_tree_at(
             Some(c) => c,
             None => {
                 log::warn!(
-                    "[topic_tree::backfill] missing chunk {} for entity {} — skipping",
+                    "[topic_tree::backfill] missing chunk {} for entity_id_hash={} — skipping",
                     hit.node_id,
-                    entity_id
+                    redact(entity_id)
                 );
                 continue;
             }
@@ -166,16 +169,18 @@ pub async fn backfill_topic_tree_at(
             .await
             .with_context(|| {
                 format!(
-                    "backfill append_leaf failed tree_id={} chunk_id={}",
-                    tree.id, chunk.id
+                    "backfill append_leaf failed entity_id_hash={} tree_id={} chunk_id={}",
+                    redact(entity_id),
+                    tree.id,
+                    chunk.id
                 )
             })?;
         appended += 1;
     }
 
     log::info!(
-        "[topic_tree::backfill] done entity_id={} tree_id={} appended={}",
-        entity_id,
+        "[topic_tree::backfill] done entity_id_hash={} tree_id={} appended={}",
+        redact(entity_id),
         tree.id,
         appended
     );

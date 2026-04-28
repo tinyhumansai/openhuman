@@ -36,6 +36,7 @@ pub mod source_tree;
 pub mod store;
 pub mod topic_tree;
 pub mod types;
+pub mod util;
 
 pub use retrieval::{all_retrieval_controller_schemas, all_retrieval_registered_controllers};
 pub use schemas::{

@@ -214,30 +214,28 @@ pub async fn end_of_day_digest(
         sealed_at: daily.sealed_at,
         body: &daily.content,
     };
+    // Stage the summary .md file — abort the digest on failure so the database
+    // never commits a row with content_path = NULL. The digest job is retried
+    // via the normal job-retry path.
     let content_root_daily = config.memory_tree_content_root();
     let global_scope_slug = slugify_source_id(&global.scope);
-    let staged_daily = match stage_summary(
+    let staged_daily = stage_summary(
         &content_root_daily,
         &daily_compose_input,
         &global_scope_slug,
         Some(day_start),
-    ) {
-        Ok(s) => {
-            log::debug!(
-                "[global_tree::digest] staged daily summary {} → {}",
-                daily.id,
-                s.content_path
-            );
-            Some(s)
-        }
-        Err(e) => {
-            log::warn!(
-                "[global_tree::digest] stage_summary failed for daily {} — proceeding without .md: {e:#}",
-                daily.id
-            );
-            None
-        }
-    };
+    )
+    .with_context(|| {
+        format!(
+            "stage_summary failed for daily {}; digest aborted for retry",
+            daily.id
+        )
+    })?;
+    log::debug!(
+        "[global_tree::digest] staged daily summary {} → {}",
+        daily.id,
+        staged_daily.content_path
+    );
 
     // Persist the daily node. Note: we do NOT backlink parent_id on the
     // child summaries here — their parents are their own source trees, not
@@ -247,7 +245,7 @@ pub async fn end_of_day_digest(
     let tree_id_clone = global.id.clone();
     with_connection(config, move |conn| {
         let tx = conn.unchecked_transaction()?;
-        store::insert_summary_tx(&tx, &daily_clone, staged_daily.as_ref())?;
+        store::insert_summary_tx(&tx, &daily_clone, Some(&staged_daily))?;
         // Index any entities the summariser emitted (no-op under inert).
         crate::openhuman::memory::tree::score::store::index_summary_entity_ids_tx(
             &tx,

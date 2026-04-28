@@ -4,6 +4,7 @@ use std::path::Path;
 
 use super::atomic::sha256_hex;
 use super::compose::split_front_matter;
+use crate::openhuman::memory::tree::util::redact::redact;
 
 /// The result of reading a chunk file from disk.
 pub struct ChunkFileContents {
@@ -42,9 +43,12 @@ pub fn verify_chunk_file(abs_path: &Path, expected_sha256: &str) -> anyhow::Resu
     let contents = read_chunk_file(abs_path)?;
     let ok = contents.sha256 == expected_sha256;
     if !ok {
+        // Log the path as a redacted hash — the path may embed email addresses
+        // (participant slugs) after the participant-bucketing change.
+        let path_str = abs_path.to_string_lossy();
         log::warn!(
-            "[content_store::read] sha256 mismatch for {}: expected={} actual={}",
-            abs_path.display(),
+            "[content_store::read] sha256 mismatch for path_hash={}: expected={} actual={}",
+            redact(&path_str),
             expected_sha256,
             contents.sha256,
         );
@@ -90,9 +94,11 @@ pub fn verify_summary_file(abs_path: &Path, expected_sha256: &str) -> anyhow::Re
     if contents.sha256 == expected_sha256 {
         Ok(VerifyResult::Ok)
     } else {
+        // Redact the path — it can embed participant slugs (email addresses).
+        let path_str = abs_path.to_string_lossy();
         log::warn!(
-            "[content_store::read] sha256 mismatch for summary {}: expected={} actual={}",
-            abs_path.display(),
+            "[content_store::read] sha256 mismatch for summary path_hash={}: expected={} actual={}",
+            redact(&path_str),
             expected_sha256,
             contents.sha256,
         );

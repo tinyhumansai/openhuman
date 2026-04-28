@@ -57,7 +57,34 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<()> {
         None
     };
 
-    chunk_store::with_connection(config, |conn| {
+    // Build follow-up job payloads before opening the tx — construction is
+    // cheap and doesn't require a database connection. The two jobs are
+    // enqueued inside the SAME transaction that commits the lifecycle update,
+    // so a crash anywhere rolls everything back together and prevents the
+    // "lifecycle committed but job lost" crash window.
+    let source_job = if result.kept {
+        Some(NewJob::append_buffer(&AppendBufferPayload {
+            node: NodeRef::Leaf {
+                chunk_id: chunk.id.clone(),
+            },
+            target: AppendTarget::Source {
+                source_id: chunk.metadata.source_id.clone(),
+            },
+        })?)
+    } else {
+        None
+    };
+    let route_job = if result.kept {
+        Some(NewJob::topic_route(&TopicRoutePayload {
+            node: NodeRef::Leaf {
+                chunk_id: chunk.id.clone(),
+            },
+        })?)
+    } else {
+        None
+    };
+
+    let (did_enqueue_source, did_enqueue_route) = chunk_store::with_connection(config, |conn| {
         let tx = conn.unchecked_transaction()?;
         score::persist_score_tx(
             &tx,
@@ -69,9 +96,9 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<()> {
         if result.kept {
             tx.execute(
                 "UPDATE mem_tree_chunks
-                    SET embedding = ?1,
-                        lifecycle_status = ?2
-                  WHERE id = ?3",
+                        SET embedding = ?1,
+                            lifecycle_status = ?2
+                      WHERE id = ?3",
                 rusqlite::params![
                     packed_embedding,
                     chunk_store::CHUNK_STATUS_ADMITTED,
@@ -81,19 +108,31 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<()> {
         } else {
             tx.execute(
                 "UPDATE mem_tree_chunks
-                    SET lifecycle_status = ?1
-                  WHERE id = ?2",
+                        SET lifecycle_status = ?1
+                      WHERE id = ?2",
                 rusqlite::params![chunk_store::CHUNK_STATUS_DROPPED, chunk.id],
             )?;
         }
 
+        // Enqueue follow-up jobs inside the SAME transaction so they are
+        // atomically visible with the lifecycle update.
+        let mut eq_src = false;
+        let mut eq_route = false;
+        if let Some(ref j) = source_job {
+            eq_src = store::enqueue_tx(&tx, j)?.is_some();
+        }
+        if let Some(ref j) = route_job {
+            eq_route = store::enqueue_tx(&tx, j)?.is_some();
+        }
+
         tx.commit()?;
-        Ok(())
+        Ok((eq_src, eq_route))
     })?;
 
     // Phase MD-content: rewrite the `tags:` block in the on-disk chunk file
     // with Obsidian-style hierarchical tags derived from the extracted entities.
     // This runs after the tx commits so the entity index is visible to readers.
+    // It is a filesystem op and therefore lives outside the SQL tx — best-effort.
     if result.kept {
         if let Some(content_path) = chunk_store::get_chunk_content_path(config, &chunk.id)? {
             let content_root = config.memory_tree_content_root();
@@ -118,9 +157,9 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<()> {
 
             if let Err(e) = content_tags::update_chunk_tags(&abs_path, &obsidian_tags) {
                 log::warn!(
-                    "[memory_tree::jobs] failed to update tags in chunk file chunk_id={} path={}: {e}",
+                    "[memory_tree::jobs] failed to update tags in chunk file chunk_id={} path_hash={}: {e}",
                     chunk.id,
-                    content_path,
+                    crate::openhuman::memory::tree::util::redact::redact(&content_path),
                 );
                 // Non-fatal: tag rewrite failure does not block the pipeline.
             } else {
@@ -133,28 +172,11 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<()> {
         }
     }
 
-    if !result.kept {
-        return Ok(());
-    }
-
-    let source_job = NewJob::append_buffer(&AppendBufferPayload {
-        node: NodeRef::Leaf {
-            chunk_id: chunk.id.clone(),
-        },
-        target: AppendTarget::Source {
-            source_id: chunk.metadata.source_id.clone(),
-        },
-    })?;
-    if store::enqueue(config, &source_job)?.is_some() {
+    // Signal workers after the tx commits (no atomicity requirement on signaling).
+    if did_enqueue_source {
         super::worker::wake_workers();
     }
-
-    let route_job = NewJob::topic_route(&TopicRoutePayload {
-        node: NodeRef::Leaf {
-            chunk_id: chunk.id.clone(),
-        },
-    })?;
-    if store::enqueue(config, &route_job)?.is_some() {
+    if did_enqueue_route {
         super::worker::wake_workers();
     }
 

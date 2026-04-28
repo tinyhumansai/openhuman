@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::Path;
 
-use super::compose::{compose_summary_md, SummaryComposeInput};
+use super::compose::{compose_summary_md, split_front_matter, SummaryComposeInput};
 use super::paths::{summary_abs_path, summary_rel_path};
 
 /// Write `bytes` atomically to `abs_path` if the file does not already exist.
@@ -52,6 +52,27 @@ pub fn write_if_new(abs_path: &Path, bytes: &[u8]) -> anyhow::Result<bool> {
     // us), we lost the race — remove our temp and return false.
     match std::fs::rename(&tmp_path, abs_path) {
         Ok(()) => {
+            // fsync the parent directory so the rename (directory entry
+            // update) is durable across a crash or power loss. Without this,
+            // sync_all() on the file alone only durabilises the file data;
+            // the new directory entry can remain in pagecache and be lost if
+            // the system crashes before the OS flushes it. On POSIX (Linux /
+            // macOS) this is required for rename durability. On Windows, NTFS
+            // handles this differently and File::sync_all on a directory
+            // handle is not meaningful, so we restrict the call to Unix.
+            #[cfg(unix)]
+            if let Some(parent) = abs_path.parent() {
+                if let Ok(dir) = std::fs::File::open(parent) {
+                    if let Err(e) = dir.sync_all() {
+                        // Best-effort: the rename already committed the file;
+                        // a dirent fsync failure is logged but not fatal.
+                        log::warn!(
+                            "[content_store::atomic] parent dir fsync failed for {:?}: {e}",
+                            parent
+                        );
+                    }
+                }
+            }
             log::debug!("[content_store::atomic] wrote {}", abs_path.display());
             Ok(true)
         }
@@ -122,19 +143,34 @@ pub fn stage_summary(
     let body_bytes = composed.body.as_bytes();
     let sha256 = sha256_hex(body_bytes);
 
-    // Idempotent: if the file already exists, check body hash rather than
-    // rewriting. We re-verify the hash from disk and return early when it
-    // matches so the function is deterministic across retries.
+    // Idempotent re-stage: if the file already exists, read and hash its
+    // body bytes. If the on-disk hash matches the new body's hash, return
+    // the StagedSummary unchanged (true idempotency). If the hashes differ
+    // the on-disk file is stale/corrupted — re-write it atomically with the
+    // new content so the db row and disk file are always consistent.
+    //
+    // Not re-writing would leave SQLite storing a content_sha256 that
+    // doesn't match the actual on-disk bytes, breaking integrity checks.
     if abs_path.exists() {
+        let disk_sha = read_body_sha256(&abs_path).unwrap_or_default();
+        if disk_sha == sha256 {
+            log::debug!(
+                "[content_store::atomic] summary already on disk with matching sha: {}",
+                input.summary_id
+            );
+            return Ok(StagedSummary {
+                summary_id: input.summary_id.to_string(),
+                content_path: rel_path,
+                content_sha256: sha256,
+            });
+        }
+        // Hash mismatch — overwrite atomically.
         log::debug!(
-            "[content_store::atomic] summary file already exists: {}",
-            abs_path.display()
+            "[content_store::atomic] summary on-disk sha mismatch for {} — re-staging",
+            input.summary_id
         );
-        return Ok(StagedSummary {
-            summary_id: input.summary_id.to_string(),
-            content_path: rel_path,
-            content_sha256: sha256,
-        });
+        // Remove the stale file first; write_if_new's fast-path would skip it.
+        let _ = std::fs::remove_file(&abs_path);
     }
 
     let full_bytes = composed.full.as_bytes();
@@ -151,6 +187,18 @@ pub fn stage_summary(
         content_path: rel_path,
         content_sha256: sha256,
     })
+}
+
+/// Read a summary/chunk `.md` file from disk, split off the YAML front-matter,
+/// and return the SHA-256 hex digest of the **body bytes only**. Returns an
+/// empty string (not an error) if the file cannot be read or parsed, so
+/// callers can use the result as a cache key without propagating IO errors.
+fn read_body_sha256(path: &Path) -> anyhow::Result<String> {
+    let raw = std::fs::read(path)?;
+    let content = std::str::from_utf8(&raw)?;
+    let (_fm, body) = split_front_matter(content)
+        .ok_or_else(|| anyhow::anyhow!("no front-matter in {:?}", path))?;
+    Ok(sha256_hex(body.as_bytes()))
 }
 
 /// Compute the SHA-256 hex digest of `bytes`.
@@ -314,5 +362,55 @@ mod tests {
         let staged = stage_summary(dir.path(), &input, "gmail-x-y-com", None).unwrap();
         let expected = sha256_hex(body.as_bytes());
         assert_eq!(staged.content_sha256, expected);
+    }
+
+    #[test]
+    fn stage_summary_rewrites_stale_on_disk_body() {
+        // Create a tempdir and write a "stale" file at the expected path with
+        // a body that differs from what the new stage_summary call would write.
+        // After stage_summary, the file on disk must match the new body.
+        let dir = TempDir::new().unwrap();
+        let children = vec!["c1".to_string()];
+        let new_body = "fresh body for re-stage test";
+        let input = mk_summary_input(
+            SummaryTreeKind::Source,
+            "gmail:stale@test.com",
+            "summary:L1:stale-test",
+            new_body,
+            &children,
+        );
+
+        // First stage with the real body to get the path.
+        let first = stage_summary(dir.path(), &input, "gmail-stale-test-com", None).unwrap();
+
+        // Corrupt the on-disk file by writing a different body to the path.
+        let mut abs = dir.path().to_path_buf();
+        for part in first.content_path.split('/') {
+            abs.push(part);
+        }
+        // Overwrite with stale content.
+        std::fs::write(&abs, b"---\nstale_key: true\n---\nSTALE BODY CONTENT").unwrap();
+
+        // Now re-stage: must detect sha mismatch and re-write.
+        let second = stage_summary(dir.path(), &input, "gmail-stale-test-com", None).unwrap();
+
+        // The returned sha must match the new body.
+        let expected_sha = sha256_hex(new_body.as_bytes());
+        assert_eq!(
+            second.content_sha256, expected_sha,
+            "re-staged sha must match new body"
+        );
+
+        // The on-disk file must now contain the new body (not the stale one).
+        let disk_bytes = std::fs::read(&abs).unwrap();
+        let disk_str = std::str::from_utf8(&disk_bytes).unwrap();
+        assert!(
+            disk_str.contains(new_body),
+            "on-disk file must contain new body after re-stage"
+        );
+        assert!(
+            !disk_str.contains("STALE BODY CONTENT"),
+            "stale body must be gone after re-stage"
+        );
     }
 }

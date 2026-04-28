@@ -26,6 +26,7 @@ use crate::openhuman::memory::tree::canonicalize::email_clean::{
     extract_email, parse_message_date,
 };
 use crate::openhuman::memory::tree::ingest::{ingest_email, IngestResult};
+use crate::openhuman::memory::tree::util::redact::redact;
 
 /// Provider name embedded in the canonical email-thread header. Matches
 /// the value `memory::tree::retrieval::source::PLATFORM_KINDS` expects.
@@ -48,6 +49,15 @@ pub(crate) fn bucket_by_participants(msgs: &[Value]) -> BTreeMap<String, Vec<&Va
     let mut out: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
     for m in msgs {
         let bucket_key = participants_bucket_key(m);
+        if bucket_key == "__skip__" {
+            // Message has no parseable addresses AND no id — drop it and warn.
+            // Nothing useful can be done with it: no participants means no
+            // source tree, and no id means no unique bucket either.
+            log::warn!(
+                "[composio:gmail][bucket] dropping message with no parseable addresses and no id"
+            );
+            continue;
+        }
         out.entry(bucket_key).or_default().push(m);
     }
     for bucket in out.values_mut() {
@@ -63,8 +73,16 @@ pub(crate) fn bucket_by_participants(msgs: &[Value]) -> BTreeMap<String, Vec<&Va
 /// Compute the participants bucket key for a single raw message.
 ///
 /// Collects `from` ∪ `to` (as bare lowercased email addresses), sorts
-/// and dedupes them, then joins with `|`. Falls back to `"unknown"` when
-/// all addresses fail to parse.
+/// and dedupes them, then joins with `|`.
+///
+/// **Fallback policy when all addresses fail to parse**:
+/// - If the message has a non-empty `id`, use `"orphan:{id}"` so each
+///   malformed message gets its own bucket and its own source tree. Two
+///   messages with different ids that both fail address parsing will NOT
+///   collapse into a single `"unknown"` bucket.
+/// - If even `id` is missing or empty, the caller (`bucket_by_participants`)
+///   should skip the message (log a warn and drop it). This function signals
+///   that case by returning the sentinel `"__skip__"`.
 fn participants_bucket_key(raw: &Value) -> String {
     let from = extract_email(raw.get("from").and_then(|v| v.as_str()).unwrap_or(""))
         .map(|s| s.to_lowercase())
@@ -81,7 +99,21 @@ fn participants_bucket_key(raw: &Value) -> String {
     all.retain(|s| !s.is_empty());
 
     if all.is_empty() {
-        "unknown".to_string()
+        // No parseable addresses — fall back to per-message uniqueness to
+        // avoid collapsing all malformed messages into one "unknown" source
+        // tree. Each orphan message gets its own bucket so nothing is silently
+        // lost in a mixed pile.
+        let id = raw
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        match id {
+            Some(msg_id) => format!("orphan:{}", msg_id),
+            None => {
+                // id is missing: signal caller to skip this message entirely.
+                "__skip__".to_string()
+            }
+        }
     } else {
         all.join("|")
     }
@@ -203,7 +235,8 @@ pub async fn ingest_page_into_memory_tree(
             .collect();
         if messages.is_empty() {
             log::debug!(
-                "[composio:gmail][ingest] skipping empty bucket participants={participants}"
+                "[composio:gmail][ingest] skipping empty bucket participants_hash={}",
+                redact(participants)
             );
             continue;
         }
@@ -212,10 +245,10 @@ pub async fn ingest_page_into_memory_tree(
         let source_id = format!("gmail:{}", participants);
         let thread_subject = pick_thread_subject(&messages);
         log::info!(
-            "[composio:gmail][ingest] bucket participants={} messages={} source_id={}",
-            participants,
+            "[composio:gmail][ingest] bucket participants_hash={} messages={} source_id_hash={}",
+            redact(participants),
             messages.len(),
-            source_id
+            redact(&source_id)
         );
         let thread = EmailThread {
             provider: GMAIL_PROVIDER.to_string(),
@@ -230,16 +263,17 @@ pub async fn ingest_page_into_memory_tree(
             }
             Err(e) => {
                 log::warn!(
-                    "[composio:gmail][ingest] ingest_email failed participants={} source_id={} err={:#}",
-                    participants,
-                    source_id,
+                    "[composio:gmail][ingest] ingest_email failed participants_hash={} source_id_hash={} err={:#}",
+                    redact(participants),
+                    redact(&source_id),
                     e
                 );
             }
         }
     }
     log::info!(
-        "[composio:gmail][ingest] page_done owner={owner} buckets={total_buckets} chunks={total_chunks}"
+        "[composio:gmail][ingest] page_done owner_hash={} buckets={total_buckets} chunks={total_chunks}",
+        redact(owner)
     );
     Ok(total_chunks)
 }
@@ -379,7 +413,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_from_and_to_falls_back_to_unknown() {
+    fn empty_from_and_to_falls_back_to_orphan_bucket() {
+        // A message with no parseable addresses gets its own orphan bucket
+        // keyed by its id rather than collapsing everything into "unknown".
         let msgs = vec![json!({
             "id": "m1",
             "from": "",
@@ -388,10 +424,66 @@ mod tests {
             "markdown": "body",
         })];
         let buckets = bucket_by_participants(&msgs);
+        assert_eq!(buckets.len(), 1, "must produce exactly one bucket");
         assert!(
-            buckets.contains_key("unknown"),
-            "must fall back to 'unknown'"
+            buckets.contains_key("orphan:m1"),
+            "must fall back to orphan:<id>; got keys: {:?}",
+            buckets.keys().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn two_malformed_messages_with_different_ids_land_in_different_buckets() {
+        // Two messages with unparseable from/to but different ids must not
+        // collapse into the same "unknown" bucket — each gets its own orphan.
+        let msgs = vec![
+            json!({
+                "id": "orphan_a",
+                "from": "",
+                "subject": "x",
+                "date": "2026-04-21T10:00:00Z",
+                "markdown": "body a",
+            }),
+            json!({
+                "id": "orphan_b",
+                "from": "",
+                "subject": "y",
+                "date": "2026-04-21T11:00:00Z",
+                "markdown": "body b",
+            }),
+        ];
+        let buckets = bucket_by_participants(&msgs);
+        assert_eq!(
+            buckets.len(),
+            2,
+            "each malformed message must have its own bucket; got: {:?}",
+            buckets.keys().collect::<Vec<_>>()
+        );
+        assert!(buckets.contains_key("orphan:orphan_a"));
+        assert!(buckets.contains_key("orphan:orphan_b"));
+    }
+
+    #[test]
+    fn message_with_no_id_and_no_addresses_is_dropped() {
+        // A message with no id AND no parseable addresses is silently dropped.
+        let valid = json!({
+            "id": "m_ok",
+            "from": "alice@x.com",
+            "subject": "ok",
+            "date": "2026-04-21T10:00:00Z",
+            "markdown": "ok",
+        });
+        let bad = json!({
+            // no "id" field, no from/to
+            "subject": "bad",
+            "date": "2026-04-21T10:00:00Z",
+            "markdown": "bad",
+        });
+        let msgs = vec![valid, bad];
+        let buckets = bucket_by_participants(&msgs);
+        // Only the valid message should produce a bucket.
+        assert_eq!(buckets.len(), 1, "dropped message must not create a bucket");
+        assert!(buckets.contains_key("alice@x.com"));
     }
 
     #[test]

@@ -22,6 +22,8 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 
+use crate::openhuman::memory::tree::util::redact::redact;
+
 /// Which kind of summary tree a summary belongs to. Determines the top-level
 /// directory under `<content_root>/summaries/`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -144,9 +146,11 @@ pub fn chunk_rel_path(source_kind: &str, source_id: &str, chunk_id: &str) -> Str
                 format!("email/{}/{}.md", participants_slug, chunk_id)
             } else {
                 // Malformed / legacy source_id — fall back to flat layout.
+                // Redact the source_id before logging since it may embed email
+                // addresses.
                 log::debug!(
-                    "[content_store::paths] email source_id has unexpected format, falling back to flat layout: {:?}",
-                    source_id
+                    "[content_store::paths] email source_id has unexpected format, falling back to flat layout: source_id_hash={}",
+                    redact(source_id)
                 );
                 let slug = slugify_source_id(source_id);
                 format!("email/{}/{}.md", slug, chunk_id)

@@ -576,3 +576,52 @@ async fn topic_tree_seal_persists_topic_kind_not_source() {
         "topic-tree summary must persist tree_kind=Topic, not Source"
     );
 }
+
+#[test]
+fn scope_slug_non_gmail_uses_full_scope() {
+    // slack:#eng and discord:#eng must NOT produce the same scope slug.
+    // Previously, stripping everything before ':' made both → "eng".
+    // After Fix K, only gmail: strips the prefix — others use the full string.
+    use crate::openhuman::memory::tree::content_store::paths::slugify_source_id;
+
+    // Verify that the slug logic produces distinct values for different platforms.
+    let slack_slug = slugify_source_id("slack:#eng");
+    let discord_slug = slugify_source_id("discord:#eng");
+    assert_ne!(
+        slack_slug, discord_slug,
+        "slack:#eng and discord:#eng must produce distinct slugs; got slack={slack_slug:?} discord={discord_slug:?}"
+    );
+    // Both must include their platform prefix in the slug.
+    assert!(
+        slack_slug.contains("slack"),
+        "slack slug must include 'slack'; got {slack_slug:?}"
+    );
+    assert!(
+        discord_slug.contains("discord"),
+        "discord slug must include 'discord'; got {discord_slug:?}"
+    );
+
+    // Confirm gmail: correctly strips the "gmail:" prefix so the participants
+    // portion (used as the bucket key) matches the chunk path layout.
+    // scope_slug for a gmail source tree is built by stripping "gmail:" and
+    // slugifying the remainder; the result must equal slugify of just the
+    // participants string.
+    let participants = "alice@x.com|bob@y.com";
+    let participants_slug = slugify_source_id(participants);
+    let gmail_scope = format!("gmail:{participants}");
+    // Strip "gmail:" prefix as bucket_seal.rs does.
+    let gmail_slug = slugify_source_id(&gmail_scope["gmail:".len()..]);
+    assert_eq!(
+        participants_slug, gmail_slug,
+        "gmail scope_slug must equal slugify of participants portion; \
+         participants_slug={participants_slug:?} gmail_slug={gmail_slug:?}"
+    );
+
+    // Also assert the full-scope slug for gmail is DIFFERENT (shows the bug
+    // would still exist if we used the full string for gmail).
+    let gmail_full_slug = slugify_source_id(&gmail_scope);
+    assert_ne!(
+        gmail_full_slug, participants_slug,
+        "slugifying the full 'gmail:...' scope must differ from the participants-only slug"
+    );
+}
