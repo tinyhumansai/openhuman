@@ -12,6 +12,7 @@ export interface ConfigSnapshot {
 
 export interface ModelSettingsUpdate {
   api_url?: string | null;
+  api_key?: string | null;
   default_model?: string | null;
   default_temperature?: number | null;
 }
