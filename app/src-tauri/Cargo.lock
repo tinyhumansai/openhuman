@@ -4,11 +4,12 @@ version = 4
 
 [[package]]
 name = "OpenHuman"
-version = "0.53.1"
+version = "0.53.4"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "block2",
  "cef",
  "chrono",
  "directories",
@@ -21,6 +22,8 @@ dependencies = [
  "notify-rust",
  "objc2",
  "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-user-notifications",
  "parking_lot",
  "reqwest 0.12.28",
  "rusqlite",
@@ -2826,6 +2829,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-core-location"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca347214e24bc973fc025fd0d36ebb179ff30536ed1f80252706db19ee452009"
+dependencies = [
+ "objc2",
+ "objc2-foundation",
+]
+
+[[package]]
 name = "objc2-core-text"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2943,6 +2956,19 @@ dependencies = [
  "bitflags 2.11.0",
  "objc2",
  "objc2-core-foundation",
+ "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-user-notifications"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
+dependencies = [
+ "bitflags 2.11.0",
+ "block2",
+ "objc2",
+ "objc2-core-location",
  "objc2-foundation",
 ]
 

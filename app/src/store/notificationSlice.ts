@@ -50,6 +50,13 @@ const notificationSlice = createSlice({
     notificationReceived(state, action: PayloadAction<NotificationItem>) {
       const item = action.payload;
       if (!state.preferences[item.category]) return;
+      const existingIndex = state.items.findIndex(i => i.id === item.id);
+      if (existingIndex >= 0) {
+        // Replace existing entry in place to avoid duplicate rows when
+        // socket reconnects or upstream replays the same event id.
+        state.items[existingIndex] = item;
+        return;
+      }
       state.items.unshift(item);
       if (state.items.length > MAX_ITEMS) {
         state.items.length = MAX_ITEMS;

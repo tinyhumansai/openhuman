@@ -156,4 +156,56 @@ describe('Notifications', () => {
     // The heading text should also be present.
     await waitForText('System Events', 8_000);
   });
+
+  it('native notification permission command returns a valid state', async () => {
+    if (!supportsExecuteScript()) {
+      stepLog('skipping tauri command test — supportsExecuteScript() is false (Appium Mac2)');
+      return;
+    }
+
+    const state = await browser.execute(async () => {
+      const invoker = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: Function } })
+        .__TAURI_INTERNALS__?.invoke;
+      if (typeof invoker !== 'function') {
+        throw new Error('window.__TAURI_INTERNALS__.invoke is not available');
+      }
+      return await invoker('notification_permission_state');
+    });
+
+    stepLog('notification_permission_state result', { state });
+    const allowedStates = [
+      'granted',
+      'denied',
+      'not_determined',
+      'provisional',
+      'ephemeral',
+      'unknown',
+    ];
+    expect(allowedStates.includes(String(state))).toBe(true);
+  });
+
+  it('native notification plugin command is callable from webview', async () => {
+    if (!supportsExecuteScript()) {
+      stepLog('skipping tauri command test — supportsExecuteScript() is false (Appium Mac2)');
+      return;
+    }
+
+    const result = await browser.execute(async () => {
+      const invoker = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: Function } })
+        .__TAURI_INTERNALS__?.invoke;
+      if (typeof invoker !== 'function') {
+        throw new Error('window.__TAURI_INTERNALS__.invoke is not available');
+      }
+      await invoker('plugin:notification|notify', {
+        options: {
+          title: 'OpenHuman E2E notification',
+          body: 'Verifies the plugin command is wired and callable.',
+        },
+      });
+      return 'ok';
+    });
+
+    stepLog('plugin:notification|notify execute result', { result });
+    expect(result).toBe('ok');
+  });
 });
