@@ -14,7 +14,7 @@ use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, p
 use crate::openhuman::memory::tree::score::extract::build_summary_extractor;
 use crate::openhuman::memory::tree::score::store as score_store;
 use crate::openhuman::memory::tree::source_tree::{
-    append_leaf_deferred, build_summariser, get_or_create_source_tree, LabelStrategy, LeafRef,
+    build_summariser, get_or_create_source_tree, LabelStrategy, LeafRef,
 };
 use crate::openhuman::memory::tree::store as chunk_store;
 use crate::openhuman::memory::tree::topic_tree::curator;

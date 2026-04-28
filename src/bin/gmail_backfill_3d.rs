@@ -87,6 +87,13 @@ struct Cli {
     /// `"gmail-backfill"`.
     #[arg(long)]
     owner: Option<String>,
+
+    /// Wipe `chunks.db` (+ wal/shm) AND `<content_root>/chunks/` before
+    /// running. Useful after the message-aware chunker landed and old
+    /// chunk IDs no longer match — without this the bin will UPSERT new
+    /// chunks alongside stale rows from the previous chunker.
+    #[arg(long, default_value_t = false)]
+    wipe: bool,
 }
 
 #[tokio::main]
@@ -112,6 +119,10 @@ async fn main() -> Result<()> {
     let config = Config::load_or_init()
         .await
         .context("[gmail_backfill_3d] Config::load_or_init failed")?;
+
+    if cli.wipe {
+        wipe_memory_tree_state(&config)?;
+    }
 
     let client = build_composio_client(&config).ok_or_else(|| {
         anyhow::anyhow!(
@@ -453,6 +464,30 @@ fn strip_re_fwd(subject: &str) -> String {
     } else {
         s.to_string()
     }
+}
+
+/// Wipe `<workspace>/memory_tree/chunks.db` (+ wal/shm) and
+/// `<content_root>/chunks/` so the bin can re-run cleanly after a chunker
+/// change that invalidates existing chunk IDs.
+///
+/// Logs each removed artifact at info; missing files are not an error.
+fn wipe_memory_tree_state(config: &Config) -> Result<()> {
+    let mt_dir = config.workspace_dir.join("memory_tree");
+    for name in &["chunks.db", "chunks.db-wal", "chunks.db-shm"] {
+        let path = mt_dir.join(name);
+        match std::fs::remove_file(&path) {
+            Ok(()) => log::info!("[gmail_backfill_3d] wiped {}", path.display()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("wipe {}", path.display())),
+        }
+    }
+    let chunks_dir = config.memory_tree_content_root().join("chunks");
+    if chunks_dir.exists() {
+        std::fs::remove_dir_all(&chunks_dir)
+            .with_context(|| format!("wipe {}", chunks_dir.display()))?;
+        log::info!("[gmail_backfill_3d] wiped {}", chunks_dir.display());
+    }
+    Ok(())
 }
 
 /// Read all chunks from SQLite and verify on-disk SHA-256 matches `content_sha256`.

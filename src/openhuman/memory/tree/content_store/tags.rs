@@ -9,7 +9,6 @@
 
 use std::path::Path;
 
-use super::atomic::write_if_new;
 use super::compose::rewrite_tags;
 
 /// Rewrite the `tags:` block in a chunk's on-disk `.md` file.

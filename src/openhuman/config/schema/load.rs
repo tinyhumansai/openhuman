@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use tokio::fs::{self, File, OpenOptions};
+use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
 /// Read-only environment lookup used by [`Config::apply_env_overrides`]. The
