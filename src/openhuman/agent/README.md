@@ -1,6 +1,6 @@
 # Agent
 
-Multi-agent orchestration domain. Owns the LLM tool-calling loop, sub-agent dispatch, conversation transcripts, and the trigger-triage pipeline that classifies incoming external events. Does NOT own provider HTTP transport (`providers/`), tool implementations (`tools/`), prompt section data (lives in `context/`), or memory storage (`memory/`).
+Multi-agent orchestration domain. Owns the LLM tool-calling loop, sub-agent dispatch, conversation transcripts, the trigger-triage pipeline that classifies incoming external events, and the bundled prompt assets in `agent/prompts/`. Does NOT own provider HTTP transport (`providers/`), tool implementations (`tools/`), prompt section assembly (lives in `context/` — which re-exports from `agent::prompts` via `context::prompt`), or memory storage (`memory/`).
 
 ## Public surface
 

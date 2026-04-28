@@ -1,6 +1,6 @@
 # Skills
 
-Discovery, parsing, and per-turn injection of agentskills.io-style skills (a directory containing `SKILL.md` with YAML frontmatter and Markdown instructions). Owns scope resolution (User vs Project vs Legacy), trust-marker enforcement, resource reading, install / uninstall, and the matching heuristic that decides which `SKILL.md` body to splice into a chat turn. Does NOT own the QuickJS-based runtime (removed) or general tool execution (`tools/`).
+Discovery, parsing, and per-turn injection of agentskills.io-style skills (a directory containing `SKILL.md` with YAML frontmatter and Markdown instructions). Owns scope resolution (User vs Project vs Legacy), trust-marker enforcement, resource reading, install / uninstall, and the matching heuristic that decides which `SKILL.md` body to splice into a chat turn. Does NOT own runtime execution internals (the `rquickjs` engine that runs skill JS lives elsewhere) or general tool execution (`tools/`).
 
 ## Public surface
 

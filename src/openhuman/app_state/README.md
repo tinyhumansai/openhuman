@@ -1,6 +1,6 @@
 # App State
 
-Aggregator the React shell polls every few seconds to render the OS-level chrome (auth user, autocomplete status, accessibility status, local-AI status, service health, onboarding tasks). Owns the on-disk `app-state.json`, an in-memory current-user cache, and the merge/patch surface for shell-managed local fields. Does NOT own any of the underlying domain state — it only assembles snapshots from peer domains and persists shell-side onboarding metadata.
+Aggregator that the React shell polls every few seconds to render the OS-level chrome (auth user, autocomplete status, accessibility status, local-AI status, service health, onboarding tasks). Owns the on-disk `app-state.json`, an in-memory current-user cache, and the merge/patch surface for shell-managed local fields. Does NOT own any of the underlying domain state — it only assembles snapshots from peer domains and persists shell-side onboarding metadata.
 
 ## Public surface
 
