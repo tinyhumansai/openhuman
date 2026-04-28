@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use chrono::TimeZone;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::tags as content_tags;
 use crate::openhuman::memory::tree::global_tree::digest::{self, DigestOutcome};
 use crate::openhuman::memory::tree::jobs::store;
 use crate::openhuman::memory::tree::jobs::types::{
@@ -90,6 +91,48 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<()> {
         tx.commit()?;
         Ok(())
     })?;
+
+    // Phase MD-content: rewrite the `tags:` block in the on-disk chunk file
+    // with Obsidian-style hierarchical tags derived from the extracted entities.
+    // This runs after the tx commits so the entity index is visible to readers.
+    if result.kept {
+        if let Some(content_path) = chunk_store::get_chunk_content_path(config, &chunk.id)? {
+            let content_root = config.memory_tree_content_root();
+            let entity_ids = score_store::list_entity_ids_for_node(config, &chunk.id)?;
+            let obsidian_tags: Vec<String> = entity_ids
+                .iter()
+                .filter_map(|eid| {
+                    // entity_id format: "kind:surface"
+                    let (kind, surface) = eid.split_once(':')?;
+                    Some(content_tags::entity_tag(kind, surface))
+                })
+                .collect();
+
+            // Build the absolute path from the stored relative path.
+            let abs_path = {
+                let mut p = content_root.clone();
+                for component in content_path.split('/') {
+                    p.push(component);
+                }
+                p
+            };
+
+            if let Err(e) = content_tags::update_chunk_tags(&abs_path, &obsidian_tags) {
+                log::warn!(
+                    "[memory_tree::jobs] failed to update tags in chunk file chunk_id={} path={}: {e}",
+                    chunk.id,
+                    content_path,
+                );
+                // Non-fatal: tag rewrite failure does not block the pipeline.
+            } else {
+                log::debug!(
+                    "[memory_tree::jobs] updated {} obsidian tags in chunk file chunk_id={}",
+                    obsidian_tags.len(),
+                    chunk.id,
+                );
+            }
+        }
+    }
 
     if !result.kept {
         return Ok(());

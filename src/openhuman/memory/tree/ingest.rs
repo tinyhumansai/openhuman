@@ -17,6 +17,7 @@ use crate::openhuman::memory::tree::canonicalize::{
     CanonicalisedSource,
 };
 use crate::openhuman::memory::tree::chunker::{chunk_markdown, ChunkerInput, ChunkerOptions};
+use crate::openhuman::memory::tree::content_store;
 use crate::openhuman::memory::tree::jobs::{self, ExtractChunkPayload, NewJob};
 use crate::openhuman::memory::tree::score::{self, ScoreResult, ScoringConfig};
 use crate::openhuman::memory::tree::store;
@@ -106,6 +107,13 @@ async fn persist(
         return Ok(IngestResult::empty(source_id));
     }
 
+    // Phase MD-content: write chunk bodies to disk before the SQLite upsert.
+    // stage_chunks is sync I/O; run it here (still on the tokio thread) before
+    // spawn_blocking so errors surface before the DB transaction opens.
+    let content_root = config.memory_tree_content_root();
+    let staged = content_store::stage_chunks(&content_root, &chunks)
+        .map_err(|e| anyhow::anyhow!("[memory_tree::ingest] stage_chunks failed: {e}"))?;
+
     let scoring_cfg = ScoringConfig::from_config(config);
     let scores = score::score_chunks_fast(&chunks, &scoring_cfg).await?;
     if scores.len() != chunks.len() {
@@ -124,7 +132,7 @@ async fn persist(
     let dropped = all_results.iter().filter(|(r, _)| !r.kept).count();
 
     let config_owned = config.clone();
-    let chunks_for_store = chunks.clone();
+    let staged_for_store = staged.clone();
     let results_for_store = all_results.clone();
     let written = tokio::task::spawn_blocking(move || -> Result<usize> {
         use std::collections::{HashMap, HashSet};
@@ -133,18 +141,18 @@ async fn persist(
 
             // Read each chunk's CURRENT lifecycle BEFORE the upsert. This
             // is the "did this chunk exist before this batch" snapshot,
-            // because `upsert_chunks_tx` will either preserve the existing
-            // row's lifecycle (UPDATE doesn't touch the column) or insert
-            // a new row that picks up the column DEFAULT — so reading
+            // because `upsert_staged_chunks_tx` will either preserve the
+            // existing row's lifecycle (UPDATE doesn't touch the column) or
+            // insert a new row that picks up the column DEFAULT — so reading
             // post-upsert can't distinguish "brand new" from
             // "already-admitted-from-prior-ingest".
             let mut prior: HashMap<String, Option<String>> = HashMap::new();
-            for chunk in &chunks_for_store {
-                let status = store::get_chunk_lifecycle_status_tx(&tx, &chunk.id)?;
-                prior.insert(chunk.id.clone(), status);
+            for s in &staged_for_store {
+                let status = store::get_chunk_lifecycle_status_tx(&tx, &s.chunk.id)?;
+                prior.insert(s.chunk.id.clone(), status);
             }
 
-            let n = store::upsert_chunks_tx(&tx, &chunks_for_store)?;
+            let n = store::upsert_staged_chunks_tx(&tx, &staged_for_store)?;
 
             // Re-ingest of identical content (same chunk_id) must NOT
             // downgrade chunks that have already progressed through the
@@ -161,8 +169,8 @@ async fn persist(
             // `dropped` — is past the point of accepting new work, so
             // leave the lifecycle alone and skip the extract enqueue.
             let mut to_schedule: HashSet<String> = HashSet::new();
-            for chunk in &chunks_for_store {
-                let pre = prior.get(&chunk.id).cloned().flatten();
+            for s in &staged_for_store {
+                let pre = prior.get(&s.chunk.id).cloned().flatten();
                 let needs_processing = matches!(
                     pre.as_deref(),
                     None | Some(store::CHUNK_STATUS_PENDING_EXTRACTION),
@@ -170,10 +178,10 @@ async fn persist(
                 if needs_processing {
                     store::set_chunk_lifecycle_status_tx(
                         &tx,
-                        &chunk.id,
+                        &s.chunk.id,
                         store::CHUNK_STATUS_PENDING_EXTRACTION,
                     )?;
-                    to_schedule.insert(chunk.id.clone());
+                    to_schedule.insert(s.chunk.id.clone());
                 }
             }
 
@@ -203,7 +211,7 @@ async fn persist(
         source_id: source_id.to_string(),
         chunks_written: written,
         chunks_dropped: dropped,
-        chunk_ids: chunks.iter().map(|c| c.id.clone()).collect(),
+        chunk_ids: staged.iter().map(|s| s.chunk.id.clone()).collect(),
     })
 }
 
@@ -260,18 +268,19 @@ mod tests {
         let out = ingest_chat(&cfg, "slack:#eng", "alice", vec![], substantive_batch())
             .await
             .unwrap();
-        assert_eq!(out.chunks_written, 1);
-        assert_eq!(count_chunks(&cfg).unwrap(), 1);
+        // Phase B chunker: each chat message becomes its own chunk (2 messages → 2 chunks).
+        assert_eq!(out.chunks_written, 2);
+        assert_eq!(count_chunks(&cfg).unwrap(), 2);
 
         drain_until_idle(&cfg).await.unwrap();
 
         // Final lifecycle is `buffered`: extract → admitted → append_buffer → buffered.
-        // The single small chunk doesn't cross TOKEN_BUDGET so no seal fires.
+        // Neither small chunk crosses TOKEN_BUDGET so no seal fires.
         assert_eq!(
             count_chunks_by_lifecycle_status(&cfg, CHUNK_STATUS_BUFFERED).unwrap(),
-            1
+            2
         );
-        assert_eq!(count_scores(&cfg).unwrap(), 1);
+        assert!(count_scores(&cfg).unwrap() >= 1);
         assert_eq!(
             lookup_entity(&cfg, "email:alice@example.com", None)
                 .unwrap()

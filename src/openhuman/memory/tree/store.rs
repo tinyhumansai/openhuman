@@ -13,6 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::time::Duration;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::StagedChunk;
 use crate::openhuman::memory::tree::types::{Chunk, Metadata, SourceKind, SourceRef};
 
 const DB_DIR: &str = "memory_tree";
@@ -282,6 +283,66 @@ pub(crate) fn upsert_chunks_tx(tx: &Transaction<'_>, chunks: &[Chunk]) -> Result
     )?;
     upsert_chunks_with_statement(&mut stmt, chunks)?;
     Ok(chunks.len())
+}
+
+/// Upsert staged chunks (with content_path + content_sha256) using an existing transaction.
+///
+/// Identical to `upsert_chunks_tx` but also writes the Phase MD-content pointer columns.
+/// `content` column receives a ≤500-char plain-text preview of the body (the full body
+/// lives on disk at `content_path`).
+pub(crate) fn upsert_staged_chunks_tx(
+    tx: &Transaction<'_>,
+    staged: &[StagedChunk],
+) -> Result<usize> {
+    if staged.is_empty() {
+        return Ok(0);
+    }
+    let mut stmt = tx.prepare(
+        "INSERT INTO mem_tree_chunks (
+            id, source_kind, source_id, source_ref, owner,
+            timestamp_ms, time_range_start_ms, time_range_end_ms,
+            tags_json, content, token_count, seq_in_source, created_at_ms,
+            content_path, content_sha256
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        ON CONFLICT(id) DO UPDATE SET
+            source_kind = excluded.source_kind,
+            source_id = excluded.source_id,
+            source_ref = excluded.source_ref,
+            owner = excluded.owner,
+            timestamp_ms = excluded.timestamp_ms,
+            time_range_start_ms = excluded.time_range_start_ms,
+            time_range_end_ms = excluded.time_range_end_ms,
+            tags_json = excluded.tags_json,
+            content = excluded.content,
+            token_count = excluded.token_count,
+            seq_in_source = excluded.seq_in_source,
+            created_at_ms = excluded.created_at_ms,
+            content_path = excluded.content_path,
+            content_sha256 = excluded.content_sha256",
+    )?;
+    for s in staged {
+        let chunk = &s.chunk;
+        // Store a ≤500-char preview in the `content` column; full body is on disk.
+        let preview: String = chunk.content.chars().take(500).collect();
+        stmt.execute(params![
+            chunk.id,
+            chunk.metadata.source_kind.as_str(),
+            chunk.metadata.source_id,
+            chunk.metadata.source_ref.as_ref().map(|r| r.value.as_str()),
+            chunk.metadata.owner,
+            chunk.metadata.timestamp.timestamp_millis(),
+            chunk.metadata.time_range.0.timestamp_millis(),
+            chunk.metadata.time_range.1.timestamp_millis(),
+            serde_json::to_string(&chunk.metadata.tags)?,
+            preview,
+            chunk.token_count,
+            chunk.seq_in_source,
+            chunk.created_at.timestamp_millis(),
+            s.content_path,
+            s.content_sha256,
+        ])?;
+    }
+    Ok(staged.len())
 }
 
 fn upsert_chunks_with_statement(
@@ -577,6 +638,21 @@ pub(crate) fn with_connection<T>(
     add_column_if_missing(&conn, "mem_tree_chunks", "content_path", "TEXT")?;
     add_column_if_missing(&conn, "mem_tree_chunks", "content_sha256", "TEXT")?;
     f(&conn)
+}
+
+/// Return the `content_path` stored in SQLite for `chunk_id`, if any.
+pub fn get_chunk_content_path(config: &Config, chunk_id: &str) -> Result<Option<String>> {
+    with_connection(config, |conn| {
+        let row = conn
+            .query_row(
+                "SELECT content_path FROM mem_tree_chunks WHERE id = ?1",
+                params![chunk_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(row)
+    })
 }
 
 fn normalized_limit(requested: Option<usize>) -> i64 {
