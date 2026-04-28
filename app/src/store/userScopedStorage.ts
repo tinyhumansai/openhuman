@@ -31,6 +31,45 @@ function safeGetActiveUserIdSync(): string | null {
 
 let activeUserId: string | null = safeGetActiveUserIdSync();
 
+// Gate redux-persist's rehydrate on the boot prime from main.tsx
+// (which reads the authoritative id from `~/.openhuman/active_user.toml`
+// via the Rust core). The localStorage value used at module load is
+// bound to the per-user CEF profile dir and goes stale across
+// restart-driven user flips, so storage reads must wait for the
+// asynchronous prime before resolving the namespace. (#900)
+let activeUserIdResolve!: () => void;
+const activeUserIdReady = new Promise<void>(resolve => {
+  activeUserIdResolve = resolve;
+});
+let primed = false;
+
+/**
+ * Mark `userScopedStorage` as primed with the boot-time active user id.
+ *
+ * Called once by `main.tsx` after `getActiveUserIdFromCore()` returns.
+ * Pass `null` for "no user logged in yet" — storage reads/writes then
+ * fall through as no-ops until a real id is supplied later via
+ * `setActiveUserId`.
+ *
+ * Safe to call before `setActiveUserId` for an initial seed; subsequent
+ * `primeActiveUserId(...)` calls have no effect (the gate is one-shot).
+ */
+export function primeActiveUserId(id: string | null): void {
+  if (primed) return;
+  primed = true;
+  activeUserId = id;
+  try {
+    if (id) {
+      localStorage.setItem(ACTIVE_USER_KEY, id);
+    } else {
+      localStorage.removeItem(ACTIVE_USER_KEY);
+    }
+  } catch {
+    // localStorage may be unavailable; in-memory ref still drives reads
+  }
+  activeUserIdResolve();
+}
+
 /**
  * Returns the userId currently in scope for persisted reads/writes, or `null`
  * if no user is active yet. Reads through to the latest set value.
@@ -108,33 +147,34 @@ function namespacedKey(key: string): string | null {
  * Methods return promises because redux-persist treats storage as async.
  */
 export const userScopedStorage = {
-  getItem(key: string): Promise<string | null> {
+  async getItem(key: string): Promise<string | null> {
+    await activeUserIdReady;
     const ns = namespacedKey(key);
-    if (!ns) return Promise.resolve(null);
+    if (!ns) return null;
     try {
-      return Promise.resolve(localStorage.getItem(ns));
+      return localStorage.getItem(ns);
     } catch {
-      return Promise.resolve(null);
+      return null;
     }
   },
-  setItem(key: string, value: string): Promise<void> {
+  async setItem(key: string, value: string): Promise<void> {
+    await activeUserIdReady;
     const ns = namespacedKey(key);
-    if (!ns) return Promise.resolve();
+    if (!ns) return;
     try {
       localStorage.setItem(ns, value);
     } catch {
       // ignore quota / unavailable
     }
-    return Promise.resolve();
   },
-  removeItem(key: string): Promise<void> {
+  async removeItem(key: string): Promise<void> {
+    await activeUserIdReady;
     const ns = namespacedKey(key);
-    if (!ns) return Promise.resolve();
+    if (!ns) return;
     try {
       localStorage.removeItem(ns);
     } catch {
       // ignore
     }
-    return Promise.resolve();
   },
 };
