@@ -558,6 +558,12 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
               reason: 'chat_done',
             });
             requestUsageRefresh();
+            rtLog('snapshot_refetch_queued', {
+              thread: event.thread_id,
+              request: event.request_id,
+              reason: 'chat_done',
+              path: 'proactive',
+            });
             refetchSnapshot();
             dispatch(endInferenceTurn({ threadId: event.thread_id }));
             dispatch(setActiveThread(null));
@@ -577,6 +583,12 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           reason: 'chat_done',
         });
         requestUsageRefresh();
+        rtLog('snapshot_refetch_queued', {
+          thread: event.thread_id,
+          request: event.request_id,
+          reason: 'chat_done',
+          path: 'ordinary',
+        });
         refetchSnapshot();
         dispatch(endInferenceTurn({ threadId: event.thread_id }));
         dispatch(setActiveThread(null));
