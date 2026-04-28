@@ -339,6 +339,7 @@ async fn handle_topic_route(config: &Config, job: &Job) -> Result<()> {
 
     let entity_ids = score_store::list_entity_ids_for_node(config, &node_id)?;
     if entity_ids.is_empty() {
+        log::debug!("[memory_tree::jobs] topic_route no entities for node_id={node_id} — skipping");
         return Ok(());
     }
 

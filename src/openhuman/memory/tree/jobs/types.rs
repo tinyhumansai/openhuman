@@ -1,4 +1,4 @@
-//! Job types for the async memory-tree pipeline (#TBD).
+//! Job types for the async memory-tree pipeline.
 //!
 //! Each `Job` row in `mem_tree_jobs` stores its discriminator as a string
 //! `kind` plus a JSON-encoded `payload`. The strongly-typed payload structs

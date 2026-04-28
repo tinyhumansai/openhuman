@@ -116,6 +116,9 @@ fn next_sleep_duration() -> Duration {
     let tomorrow = now.date_naive() + ChronoDuration::days(1);
     let next = Utc
         .with_ymd_and_hms(tomorrow.year(), tomorrow.month(), tomorrow.day(), 0, 5, 0)
+        // UTC has no DST gaps/overlaps, so `single()` always returns
+        // `Some` for any valid (Y, M, D, h, m, s). Fallback retained
+        // only as a defensive belt-and-braces against future API churn.
         .single()
         .unwrap_or_else(|| now + ChronoDuration::hours(24));
     (next - now)

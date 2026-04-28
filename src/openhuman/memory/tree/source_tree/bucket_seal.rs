@@ -373,7 +373,7 @@ pub(crate) async fn seal_one_level(
     // Run summariser — async, OUTSIDE any DB transaction.
     let ctx = SummaryContext {
         tree_id: &tree.id,
-        tree_kind: TreeKind::Source,
+        tree_kind: tree.kind,
         target_level,
         token_budget: TOKEN_BUDGET,
     };
@@ -433,7 +433,11 @@ pub(crate) async fn seal_one_level(
     let node = SummaryNode {
         id: summary_id.clone(),
         tree_id: tree.id.clone(),
-        tree_kind: TreeKind::Source,
+        // `seal_one_level` runs for source AND topic trees (handle_seal,
+        // cascade_all_from, flush). Hardcoding Source here would write
+        // topic-tree summaries with tree_kind='source' in
+        // mem_tree_summaries, breaking any query filtering on tree_kind.
+        tree_kind: tree.kind,
         level: target_level,
         parent_id: None,
         child_ids: buf.item_ids.clone(),

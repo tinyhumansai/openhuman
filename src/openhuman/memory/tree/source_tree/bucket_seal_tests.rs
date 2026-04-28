@@ -531,3 +531,39 @@ async fn seal_with_empty_strategy_leaves_labels_empty() {
         summary.topics
     );
 }
+
+#[tokio::test]
+async fn topic_tree_seal_persists_topic_kind_not_source() {
+    use crate::openhuman::memory::tree::source_tree::types::TreeStatus;
+
+    let (_tmp, cfg) = test_config();
+    // Build a topic tree directly — `seal_one_level` runs for both
+    // source and topic trees, and previously hardcoded Source on the
+    // resulting summary regardless of the parent tree's kind.
+    let tree = Tree {
+        id: "topic-tree-test-id".to_string(),
+        kind: TreeKind::Topic,
+        scope: "topic:launch".to_string(),
+        root_id: None,
+        max_level: 0,
+        status: TreeStatus::Active,
+        created_at: Utc::now(),
+        last_sealed_at: None,
+    };
+    store::insert_tree(&cfg, &tree).unwrap();
+
+    let summariser = InertSummariser::new();
+    let leaf = seed_leaf(&cfg, 0, "topic content", vec![], vec![]);
+
+    let sealed = append_leaf(&cfg, &tree, &leaf, &summariser, &LabelStrategy::Empty)
+        .await
+        .unwrap();
+    assert_eq!(sealed.len(), 1);
+
+    let summary = store::get_summary(&cfg, &sealed[0]).unwrap().unwrap();
+    assert_eq!(
+        summary.tree_kind,
+        TreeKind::Topic,
+        "topic-tree summary must persist tree_kind=Topic, not Source"
+    );
+}
