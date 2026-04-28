@@ -1,6 +1,7 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
 import type { IntegrationNotification } from '../types/notifications';
+import { resetUserScopedState } from './resetActions';
 
 export type NotificationCategory = 'messages' | 'agents' | 'skills' | 'system';
 
@@ -113,6 +114,9 @@ const notificationSlice = createSlice({
         }
       }
     },
+  },
+  extraReducers: builder => {
+    builder.addCase(resetUserScopedState, () => initialState);
   },
 });
 
