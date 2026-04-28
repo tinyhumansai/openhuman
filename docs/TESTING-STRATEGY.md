@@ -12,7 +12,7 @@ How OpenHuman tests its product. Source of truth for "where does my test go?". C
 | **Rust integration** | `tests/*.rs` at repo root                                                                                                                             | Full domain wiring with real Tokio runtime, mock external services, JSON-RPC end-to-end (`tests/json_rpc_e2e.rs`), domain × domain interactions | `pnpm test:rust` (which calls `bash scripts/test-rust-with-mock.sh`)                                                       |
 | **Vitest unit**      | Co-located as `*.test.ts(x)` next to source under `app/src/**`, or under `app/src/**/__tests__/`                                                      | React components, hooks, store slices, pure utilities, service-layer adapters                                                                   | `pnpm test:unit`                                                                                                           |
 | **WDIO E2E**         | `app/test/e2e/specs/*.spec.ts`                                                                                                                        | Full desktop flow: UI → Tauri → core sidecar → JSON-RPC; user-visible behaviour                                                                 | Linux CI: `tauri-driver` (port 4444). macOS local: Appium Mac2 (port 4723). See [`docs/E2E-TESTING.md`](./E2E-TESTING.md). |
-| **Manual smoke**     | `docs/RELEASE-MANUAL-SMOKE.md` (not yet created — tracked in [#971](https://github.com/tinyhumansai/openhuman/issues/971))                            | OS-level surfaces drivers cannot assert: TCC permission prompts, Gatekeeper, code signing, DMG install, OS-native toasts                        | Human at release-cut, signed off in release PR                                                                             |
+| **Manual smoke**     | [`docs/RELEASE-MANUAL-SMOKE.md`](./RELEASE-MANUAL-SMOKE.md)                                                                                           | OS-level surfaces drivers cannot assert: TCC permission prompts, Gatekeeper, code signing, DMG install, OS-native toasts                        | Human at release-cut, signed off in release PR                                                                             |
 
 ---
 
@@ -120,7 +120,7 @@ bash app/scripts/e2e-run-spec.sh test/e2e/specs/<your-spec>.spec.ts <id>
 
 ## Not driver-automatable — manual smoke required
 
-Some surfaces cannot be driven by WDIO / Appium because they cross OS-level trust boundaries or hardware paths. These ship with a documented manual smoke checklist (the `docs/RELEASE-MANUAL-SMOKE.md` artifact will land alongside [#971](https://github.com/tinyhumansai/openhuman/issues/971)) and a sign-off on the release PR:
+Some surfaces cannot be driven by WDIO / Appium because they cross OS-level trust boundaries or hardware paths. These ship with a documented manual smoke checklist ([`docs/RELEASE-MANUAL-SMOKE.md`](./RELEASE-MANUAL-SMOKE.md)) and a sign-off on the release PR:
 
 - macOS TCC permission prompts (Accessibility, Input Monitoring, Screen Recording, Microphone)
 - Gatekeeper signature validation on first launch
