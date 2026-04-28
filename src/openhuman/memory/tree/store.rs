@@ -565,6 +565,13 @@ pub(crate) fn with_connection<T>(
          ON mem_tree_chunks(lifecycle_status);",
     )
     .context("Failed to create mem_tree_chunks lifecycle index")?;
+    // Phase MD-content (#TBD): pointer + integrity hash. Body lives at
+    // <content_root>/<content_path> as a .md file. Both nullable so chunks
+    // ingested before this migration read back with NULL (body still in
+    // `content`). New writes populate both columns. The `content` column
+    // stores a 500-char plain-text preview instead of the full body.
+    add_column_if_missing(&conn, "mem_tree_chunks", "content_path", "TEXT")?;
+    add_column_if_missing(&conn, "mem_tree_chunks", "content_sha256", "TEXT")?;
     f(&conn)
 }
 

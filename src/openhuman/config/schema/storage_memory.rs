@@ -2,6 +2,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct StorageConfig {
@@ -96,6 +97,7 @@ impl Default for MemoryConfig {
 /// - `OPENHUMAN_MEMORY_SUMMARISE_ENDPOINT`
 /// - `OPENHUMAN_MEMORY_SUMMARISE_MODEL`
 /// - `OPENHUMAN_MEMORY_SUMMARISE_TIMEOUT_MS`
+/// - `OPENHUMAN_MEMORY_TREE_CONTENT_DIR` (Phase MD-content)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MemoryTreeConfig {
     /// Ollama endpoint for the embedder (e.g. `http://localhost:11434`).
@@ -154,6 +156,17 @@ pub struct MemoryTreeConfig {
     /// tokens and therefore takes longer to generate.
     #[serde(default = "default_memory_tree_llm_summariser_timeout_ms")]
     pub llm_summariser_timeout_ms: Option<u64>,
+
+    /// Phase MD-content: root directory where chunk `.md` files are stored.
+    ///
+    /// Resolved at runtime via [`super::types::Config::memory_tree_content_root`]:
+    /// - `Some(path)` → use that path verbatim.
+    /// - `None` → default `<workspace_dir>/memory_tree/content/`.
+    ///
+    /// Env override: `OPENHUMAN_MEMORY_TREE_CONTENT_DIR` (empty string = fall
+    /// back to default, consistent with other memory_tree env vars).
+    #[serde(default = "default_memory_tree_content_dir")]
+    pub content_dir: Option<PathBuf>,
 }
 
 /// Returns `None` so that existing installs that never opted into Phase 4
@@ -199,6 +212,12 @@ fn default_memory_tree_llm_summariser_timeout_ms() -> Option<u64> {
     Some(120_000)
 }
 
+/// Returns `None` so the default `<workspace>/memory_tree/content/` path is
+/// used unless explicitly overridden via TOML or env var.
+fn default_memory_tree_content_dir() -> Option<PathBuf> {
+    None
+}
+
 impl Default for MemoryTreeConfig {
     fn default() -> Self {
         Self {
@@ -212,6 +231,43 @@ impl Default for MemoryTreeConfig {
             llm_summariser_endpoint: default_memory_tree_llm_endpoint(),
             llm_summariser_model: default_memory_tree_llm_endpoint(),
             llm_summariser_timeout_ms: default_memory_tree_llm_summariser_timeout_ms(),
+            content_dir: default_memory_tree_content_dir(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_tree_config_default_content_dir_is_none() {
+        let cfg = MemoryTreeConfig::default();
+        assert!(
+            cfg.content_dir.is_none(),
+            "default content_dir must be None so workspace default path is used"
+        );
+    }
+
+    /// Verify that the env-var override logic correctly maps non-empty strings
+    /// to `Some(PathBuf)` and empty/blank strings to `None`. We test the
+    /// logic inline (not via `apply_env_overrides`) to avoid mutating the
+    /// process environment in a way that could race with parallel tests.
+    #[test]
+    fn content_dir_env_override_logic() {
+        // Simulate the load.rs overlay logic.
+        let apply = |raw: &str| -> Option<PathBuf> {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        };
+
+        assert_eq!(apply("/tmp/foo"), Some(PathBuf::from("/tmp/foo")));
+        assert_eq!(apply("  /tmp/foo  "), Some(PathBuf::from("/tmp/foo")));
+        assert_eq!(apply(""), None);
+        assert_eq!(apply("   "), None);
     }
 }

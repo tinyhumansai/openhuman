@@ -980,6 +980,17 @@ impl Config {
             }
         }
 
+        // Phase MD-content: chunk body directory override. Empty string means
+        // "fall back to default", consistent with other memory_tree env vars.
+        if let Ok(dir) = std::env::var("OPENHUMAN_MEMORY_TREE_CONTENT_DIR") {
+            let trimmed = dir.trim();
+            self.memory_tree.content_dir = if trimmed.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(trimmed))
+            };
+        }
+
         // Auto-update overrides
         if let Some(flag) = env.get("OPENHUMAN_AUTO_UPDATE_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
