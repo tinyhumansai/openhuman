@@ -10,7 +10,6 @@ import {
   REGISTER,
   REHYDRATE,
 } from 'redux-persist';
-import storage from 'redux-persist/lib/storage';
 
 import { IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
@@ -20,6 +19,12 @@ import notificationReducer from './notificationSlice';
 import providerSurfacesReducer from './providerSurfaceSlice';
 import socketReducer from './socketSlice';
 import threadReducer from './threadSlice';
+import { userScopedStorage } from './userScopedStorage';
+
+// Persisted slices write through `userScopedStorage` so each user's blob
+// lives at `${userId}:persist:<key>` instead of a single per-device blob
+// that leaks across users on logout/login (#900).
+const storage = userScopedStorage;
 
 const channelConnectionsPersistConfig = {
   key: 'channelConnections',
