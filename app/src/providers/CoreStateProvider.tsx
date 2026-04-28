@@ -26,8 +26,9 @@ import {
   updateCoreLocalState,
 } from '../services/coreStateApi';
 import { socketService } from '../services/socketService';
-import { persistor, store } from '../store';
+import { store } from '../store';
 import { resetUserScopedState } from '../store/resetActions';
+import { setActiveUserId } from '../store/userScopedStorage';
 import {
   openhumanUpdateAnalyticsSettings,
   restartApp,
@@ -81,28 +82,39 @@ function snapshotIdentity(snapshot: CoreAppSnapshot): string | null {
 /**
  * Universal cleanup for identity changes (flip A→B, or sign-out).
  *
- * Resets every user-scoped Redux slice via `resetUserScopedState`, drops the
- * `persist:*` localStorage blobs (otherwise rehydration on the next render or
- * launch leaks user A's slices into user B's session), and disconnects the
- * live Socket.IO connection so the next reconnect carries the new auth token.
+ * 1. Re-points `userScopedStorage` to the new user's namespace (or `null` for
+ *    sign-out). On the next cold launch — or right now for in-memory writes —
+ *    redux-persist reads/writes blobs under `${nextUserId}:persist:*`.
+ * 2. Resets every user-scoped Redux slice via `resetUserScopedState` so the
+ *    live store is empty before any rehydrate from the new namespace.
+ * 3. Disconnects the live Socket.IO connection so the reconnect carries the
+ *    new user's auth token (fresh `client_id` server-side).
+ * 4. On a real flip (A→B), restarts the app so singleton services and
+ *    Rust-side webview accounts pick up the new user dir. On sign-out, the
+ *    signed-out UI is already empty — a relaunch would be jarring.
  *
- * Pass `restart: true` for a real flip (A→B): a process restart is needed
- * because singleton services and Rust-side webview accounts pin the prior
- * user's state for the lifetime of the process. Pass `restart: false` for
- * sign-out — the signed-out UI is empty, so a relaunch would be jarring.
- *
- * See [#900].
+ * Note: we deliberately do NOT call `persistor.purge()`. Each user's
+ * persisted blob lives at its own namespaced key, so user A's data must
+ * survive B's session intact and rehydrate when A returns. See [#900].
  */
-async function handleIdentityFlip(opts: { restart: boolean; reason: string }): Promise<void> {
-  const { restart, reason } = opts;
-  log('identity flip cleanup reason=%s restart=%s', reason, restart);
+async function handleIdentityFlip(opts: {
+  restart: boolean;
+  reason: string;
+  nextUserId: string | null;
+}): Promise<void> {
+  const { restart, reason, nextUserId } = opts;
+  log(
+    'identity flip cleanup reason=%s restart=%s nextUserId=%s',
+    reason,
+    restart,
+    nextUserId ? `****${nextUserId.slice(-4)}` : 'none'
+  );
+  // Re-point storage BEFORE the in-memory reset so any stray persist write
+  // triggered between the reset dispatch and the restart goes to the new
+  // user's namespace (or is dropped when nextUserId is null).
+  setActiveUserId(nextUserId);
   store.dispatch(resetUserScopedState());
   socketService.disconnect();
-  try {
-    await persistor.purge();
-  } catch (error) {
-    console.warn('[core-state] persistor.purge failed during identity flip:', error);
-  }
   if (restart) {
     await restartApp();
   }
@@ -209,13 +221,31 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     });
 
     if (isFlip) {
-      await handleIdentityFlip({ restart: true, reason: 'refreshCore-flip' }).catch(err => {
+      await handleIdentityFlip({
+        restart: true,
+        reason: 'refreshCore-flip',
+        nextUserId: nextIdentity,
+      }).catch(err => {
         log('handleIdentityFlip(flip) failed: %O', sanitizeError(err));
       });
     } else if (isLogout) {
-      await handleIdentityFlip({ restart: false, reason: 'refreshCore-logout' }).catch(err => {
+      await handleIdentityFlip({
+        restart: false,
+        reason: 'refreshCore-logout',
+        nextUserId: null,
+      }).catch(err => {
         log('handleIdentityFlip(logout) failed: %O', sanitizeError(err));
       });
+    } else if (
+      // First-paint bootstrap (signed-out → signed-in on cold launch): seed
+      // the active user id so subsequent persist writes route to this user's
+      // namespace. No restart, no Redux reset — bootstrap state is already
+      // correct.
+      !previousAuthed &&
+      nextAuthed &&
+      nextIdentity
+    ) {
+      setActiveUserId(nextIdentity);
     }
     syncAnalyticsConsent(snapshot.analyticsEnabled);
 
@@ -465,11 +495,14 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       snapshot: toSignedOutSnapshot(previous.snapshot),
     }));
     memoryTokenRef.current = null;
-    // Reset every user-scoped slice + purge persist + drop the live socket
+    // Reset every user-scoped slice + drop the live socket + un-scope storage
     // before the tauriLogout RPC so user A's data is gone the moment the UI
     // re-renders signed-out (#900). No restart — signed-out UI is empty;
-    // the next storeSessionToken (login as B) will restart via refreshCore.
-    await handleIdentityFlip({ restart: false, reason: 'clearSession' });
+    // the next storeSessionToken (login) will restart via refreshCore.
+    // We do NOT purge persist storage — A's blob stays at its namespaced key
+    // so when A returns to this device, their accounts/threads/notifications
+    // rehydrate.
+    await handleIdentityFlip({ restart: false, reason: 'clearSession', nextUserId: null });
     await tauriLogout();
     await refresh().catch(err => {
       log('refresh failed after clearSession: %O', sanitizeError(err));

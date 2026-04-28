@@ -3,10 +3,11 @@ import { useEffect } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as coreStateApi from '../../services/coreStateApi';
+import * as userScopedStorage from '../../store/userScopedStorage';
 import * as tauriCommands from '../../utils/tauriCommands';
 import { setCoreStateSnapshot } from '../../lib/coreState/store';
 import { socketService } from '../../services/socketService';
-import { persistor, store } from '../../store';
+import { store } from '../../store';
 import { addAccount } from '../../store/accountsSlice';
 import { resetUserScopedState } from '../../store/resetActions';
 import CoreStateProvider, { useCoreState } from '../CoreStateProvider';
@@ -106,12 +107,12 @@ describe('CoreStateProvider — identity flip cleanup (#900)', () => {
     resetCoreStateStore();
     // Reset Redux back to clean baseline before each test.
     store.dispatch(resetUserScopedState());
+    userScopedStorage.setActiveUserId(null);
   });
 
-  it('flip A→B: dispatches reset, purges persistor, disconnects socket, restarts app', async () => {
+  it('flip A→B: dispatches reset, re-points storage to B, disconnects socket, restarts app', async () => {
     fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'A', sessionToken: 'tokA' }));
-    const dispatchSpy = vi.spyOn(store, 'dispatch');
-    const purgeSpy = vi.spyOn(persistor, 'purge').mockResolvedValue(undefined);
+    const setActiveSpy = vi.spyOn(userScopedStorage, 'setActiveUserId');
     const disconnectSpy = vi.spyOn(socketService, 'disconnect').mockImplementation(() => {});
 
     let ctx: CoreStateContextValue | undefined;
@@ -126,28 +127,26 @@ describe('CoreStateProvider — identity flip cleanup (#900)', () => {
     seedAccountsWithUserAData();
     expect(store.getState().accounts.order).toContain('acct-A');
 
+    setActiveSpy.mockClear();
     fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'B', sessionToken: 'tokB' }));
     await act(async () => {
       await ctx!.refresh();
-      // Allow the void-fired handleIdentityFlip to settle.
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(dispatchSpy).toHaveBeenCalledWith(resetUserScopedState());
-    expect(purgeSpy).toHaveBeenCalledTimes(1);
+    expect(setActiveSpy).toHaveBeenCalledWith('B');
     expect(disconnectSpy).toHaveBeenCalledTimes(1);
     expect(restartApp).toHaveBeenCalledTimes(1);
     expect(store.getState().accounts.order).not.toContain('acct-A');
 
-    dispatchSpy.mockRestore();
-    purgeSpy.mockRestore();
+    setActiveSpy.mockRestore();
     disconnectSpy.mockRestore();
   });
 
-  it('clearSession: resets + purges + disconnects, but does NOT restart', async () => {
+  it('clearSession: resets + drops socket + un-scopes storage, no restart, NO purge', async () => {
     fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'A', sessionToken: 'tokA' }));
-    const purgeSpy = vi.spyOn(persistor, 'purge').mockResolvedValue(undefined);
+    const setActiveSpy = vi.spyOn(userScopedStorage, 'setActiveUserId');
     const disconnectSpy = vi.spyOn(socketService, 'disconnect').mockImplementation(() => {});
 
     let ctx: CoreStateContextValue | undefined;
@@ -161,6 +160,7 @@ describe('CoreStateProvider — identity flip cleanup (#900)', () => {
     });
     seedAccountsWithUserAData();
 
+    setActiveSpy.mockClear();
     fetchSnapshot.mockResolvedValue(
       makeSnapshot({ userId: null, sessionToken: null, isAuthenticated: false })
     );
@@ -168,18 +168,18 @@ describe('CoreStateProvider — identity flip cleanup (#900)', () => {
       await ctx!.clearSession();
     });
 
-    expect(purgeSpy).toHaveBeenCalled();
+    expect(setActiveSpy).toHaveBeenCalledWith(null);
     expect(disconnectSpy).toHaveBeenCalled();
     expect(restartApp).not.toHaveBeenCalled();
     expect(store.getState().accounts.order).not.toContain('acct-A');
 
-    purgeSpy.mockRestore();
+    setActiveSpy.mockRestore();
     disconnectSpy.mockRestore();
   });
 
-  it('bootstrap (signed-out → signed-in): does NOT restart on first auth', async () => {
+  it('bootstrap (signed-out → signed-in): does NOT restart, seeds active user id', async () => {
     fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'A', sessionToken: 'tokA' }));
-    const purgeSpy = vi.spyOn(persistor, 'purge').mockResolvedValue(undefined);
+    const setActiveSpy = vi.spyOn(userScopedStorage, 'setActiveUserId');
     const disconnectSpy = vi.spyOn(socketService, 'disconnect').mockImplementation(() => {});
 
     let ctx: CoreStateContextValue | undefined;
@@ -195,8 +195,46 @@ describe('CoreStateProvider — identity flip cleanup (#900)', () => {
     });
 
     expect(restartApp).not.toHaveBeenCalled();
+    expect(setActiveSpy).toHaveBeenCalledWith('A');
+    expect(disconnectSpy).not.toHaveBeenCalled();
 
-    purgeSpy.mockRestore();
+    setActiveSpy.mockRestore();
+    disconnectSpy.mockRestore();
+  });
+
+  it('returning to user A: storage re-points to A, A blob namespace becomes active again', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'A', sessionToken: 'tokA' }));
+    const setActiveSpy = vi.spyOn(userScopedStorage, 'setActiveUserId');
+    const disconnectSpy = vi.spyOn(socketService, 'disconnect').mockImplementation(() => {});
+
+    let ctx: CoreStateContextValue | undefined;
+    render(
+      <CoreStateProvider>
+        <Consumer captureCtx={c => (ctx = c)} />
+      </CoreStateProvider>
+    );
+    await act(async () => {
+      await ctx!.refresh();
+    });
+
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'B', sessionToken: 'tokB' }));
+    await act(async () => {
+      await ctx!.refresh();
+      await Promise.resolve();
+    });
+
+    setActiveSpy.mockClear();
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'A', sessionToken: 'tokA2' }));
+    await act(async () => {
+      await ctx!.refresh();
+      await Promise.resolve();
+    });
+
+    // Each B→A flip re-points storage to A so A's persisted blob hydrates back.
+    expect(setActiveSpy).toHaveBeenCalledWith('A');
+    expect(restartApp).toHaveBeenCalledTimes(2);
+
+    setActiveSpy.mockRestore();
     disconnectSpy.mockRestore();
   });
 });
