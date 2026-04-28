@@ -138,7 +138,16 @@ pub fn claim_next(config: &Config, lock_duration_ms: i64) -> Result<Option<Job>>
 }
 
 /// Mark a claimed job as `done`. Clears the lock and stamps `completed_at_ms`.
-pub fn mark_done(config: &Config, job_id: &str) -> Result<()> {
+///
+/// The UPDATE is gated on `attempts` and `started_at_ms` matching the values
+/// in `job` (the snapshot returned by [`claim_next`]). If the lease expired
+/// and another worker re-claimed the row, `rows_affected` will be 0 — the
+/// stale worker's settlement is a silent no-op rather than clobbering the new
+/// lessee's state.
+pub fn mark_done(config: &Config, job: &Job) -> Result<()> {
+    let job_id = &job.id;
+    let claim_attempts = job.attempts as i64;
+    let claim_started_at = job.started_at_ms;
     with_connection(config, |conn| {
         let now_ms = Utc::now().timestamp_millis();
         let n = conn.execute(
@@ -147,11 +156,19 @@ pub fn mark_done(config: &Config, job_id: &str) -> Result<()> {
                     completed_at_ms = ?1,
                     locked_until_ms = NULL,
                     last_error = NULL
-              WHERE id = ?2",
-            params![now_ms, job_id],
+              WHERE id = ?2
+                AND attempts = ?3
+                AND started_at_ms IS ?4",
+            params![now_ms, job_id, claim_attempts, claim_started_at],
         )?;
         if n == 0 {
-            log::warn!("[memory_tree::jobs] mark_done id={job_id} affected 0 rows");
+            // Either the job row was deleted (shouldn't happen) or the lease
+            // expired and a second worker re-claimed the row. Log and move on —
+            // this is a known race outcome, not a bug in the current worker.
+            log::warn!(
+                "[memory_tree::jobs] mark_done id={job_id} was a no-op \
+                 (stale lease: attempts={claim_attempts} started_at_ms={claim_started_at:?})"
+            );
         }
         Ok(())
     })
@@ -160,36 +177,41 @@ pub fn mark_done(config: &Config, job_id: &str) -> Result<()> {
 /// Settle a failed job. If `attempts < max_attempts`, the row goes back
 /// to `ready` with an exponential-backoff `available_at_ms`. Otherwise
 /// it terminates as `failed`. Either way `last_error` is recorded.
-pub fn mark_failed(config: &Config, job_id: &str, error: &str) -> Result<()> {
+///
+/// Like [`mark_done`], the UPDATE is gated on the claim-token
+/// (`attempts` + `started_at_ms`) so a stale worker's failure settlement
+/// cannot clobber an active lessee's row — rows_affected == 0 is a silent
+/// no-op.
+pub fn mark_failed(config: &Config, job: &Job, error: &str) -> Result<()> {
+    let job_id = &job.id;
+    let attempts = job.attempts as i64;
+    let max_attempts = job.max_attempts as i64;
+    let claim_started_at = job.started_at_ms;
     with_connection(config, |conn| {
         let now_ms = Utc::now().timestamp_millis();
-        let row: Option<(i64, i64)> = conn
-            .query_row(
-                "SELECT attempts, max_attempts FROM mem_tree_jobs WHERE id = ?1",
-                params![job_id],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
-            )
-            .optional()
-            .context("Failed to read job for mark_failed")?;
-
-        let Some((attempts, max_attempts)) = row else {
-            log::warn!("[memory_tree::jobs] mark_failed id={job_id} not found");
-            return Ok(());
-        };
 
         if attempts >= max_attempts {
             log::warn!(
-                "[memory_tree::jobs] terminal failure id={job_id} attempts={attempts}/{max_attempts} err={error}"
+                "[memory_tree::jobs] terminal failure id={job_id} \
+                 attempts={attempts}/{max_attempts} err={error}"
             );
-            conn.execute(
+            let n = conn.execute(
                 "UPDATE mem_tree_jobs
                     SET status = 'failed',
                         completed_at_ms = ?1,
                         locked_until_ms = NULL,
                         last_error = ?2
-                  WHERE id = ?3",
-                params![now_ms, error, job_id],
+                  WHERE id = ?3
+                    AND attempts = ?4
+                    AND started_at_ms IS ?5",
+                params![now_ms, error, job_id, attempts, claim_started_at],
             )?;
+            if n == 0 {
+                log::warn!(
+                    "[memory_tree::jobs] mark_failed(terminal) id={job_id} was a no-op \
+                     (stale lease: attempts={attempts} started_at_ms={claim_started_at:?})"
+                );
+            }
         } else {
             let backoff = backoff_ms(attempts as u32);
             let next_at = now_ms.saturating_add(backoff);
@@ -197,15 +219,23 @@ pub fn mark_failed(config: &Config, job_id: &str, error: &str) -> Result<()> {
                 "[memory_tree::jobs] retry id={job_id} attempt={attempts}/{max_attempts} \
                  next_at_ms={next_at} err={error}"
             );
-            conn.execute(
+            let n = conn.execute(
                 "UPDATE mem_tree_jobs
                     SET status = 'ready',
                         available_at_ms = ?1,
                         locked_until_ms = NULL,
                         last_error = ?2
-                  WHERE id = ?3",
-                params![next_at, error, job_id],
+                  WHERE id = ?3
+                    AND attempts = ?4
+                    AND started_at_ms IS ?5",
+                params![next_at, error, job_id, attempts, claim_started_at],
             )?;
+            if n == 0 {
+                log::warn!(
+                    "[memory_tree::jobs] mark_failed(retry) id={job_id} was a no-op \
+                     (stale lease: attempts={attempts} started_at_ms={claim_started_at:?})"
+                );
+            }
         }
         Ok(())
     })
@@ -356,7 +386,7 @@ mod tests {
         let again = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap();
         assert!(again.is_none());
 
-        mark_done(&cfg, &id).unwrap();
+        mark_done(&cfg, &claimed).unwrap();
         let row = get_job(&cfg, &id).unwrap().unwrap();
         assert_eq!(row.status, JobStatus::Done);
         assert!(row.completed_at_ms.is_some());
@@ -387,7 +417,7 @@ mod tests {
         let id1 = enqueue(&cfg, &nj).unwrap().unwrap();
         let claimed = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
         assert_eq!(claimed.id, id1);
-        mark_done(&cfg, &id1).unwrap();
+        mark_done(&cfg, &claimed).unwrap();
 
         // Now the dedupe key is free (partial index excludes 'done').
         let id2 = enqueue(&cfg, &nj).unwrap();
@@ -412,8 +442,8 @@ mod tests {
         let id = enqueue(&cfg, &nj).unwrap().unwrap();
 
         // Fail #1 — should bounce back to 'ready' with future available_at.
-        let _ = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
-        mark_failed(&cfg, &id, "boom").unwrap();
+        let attempt1 = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        mark_failed(&cfg, &attempt1, "boom").unwrap();
         let row = get_job(&cfg, &id).unwrap().unwrap();
         assert_eq!(row.status, JobStatus::Ready);
         assert!(row.available_at_ms > Utc::now().timestamp_millis());
@@ -430,8 +460,8 @@ mod tests {
         .unwrap();
 
         // Fail #2 — exceeds max_attempts → terminal 'failed'.
-        let _ = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
-        mark_failed(&cfg, &id, "fatal").unwrap();
+        let attempt2 = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        mark_failed(&cfg, &attempt2, "fatal").unwrap();
         let row = get_job(&cfg, &id).unwrap().unwrap();
         assert_eq!(row.status, JobStatus::Failed);
         assert_eq!(row.last_error.as_deref(), Some("fatal"));
@@ -457,6 +487,108 @@ mod tests {
         assert_eq!(row.status, JobStatus::Ready);
     }
 
+    /// Happy path: a non-stale settlement still succeeds after the claim-token
+    /// check is applied. Regression guard so the common case isn't broken.
+    #[test]
+    fn mark_done_succeeds_for_current_lessee() {
+        let (_tmp, cfg) = test_config();
+        let payload = ExtractChunkPayload {
+            chunk_id: "c-happy".into(),
+        };
+        let nj = NewJob::extract_chunk(&payload).unwrap();
+        let id = enqueue(&cfg, &nj).unwrap().expect("inserted");
+
+        let claimed = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        assert_eq!(claimed.id, id);
+
+        // Current lessee should settle successfully.
+        mark_done(&cfg, &claimed).unwrap();
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(row.status, JobStatus::Done);
+        assert!(row.completed_at_ms.is_some());
+        assert!(row.locked_until_ms.is_none());
+    }
+
+    /// Stale-worker settlement is a no-op: after a lock expires and a second
+    /// worker re-claims the job, the first worker's `mark_done` must not
+    /// clobber the new lessee's row.
+    #[test]
+    fn stale_worker_settlement_is_noop() {
+        let (_tmp, cfg) = test_config();
+        let payload = ExtractChunkPayload {
+            chunk_id: "c-stale".into(),
+        };
+        let nj = NewJob::extract_chunk(&payload).unwrap();
+        let id = enqueue(&cfg, &nj).unwrap().expect("inserted");
+
+        // Worker A claims with a lock that's already expired (negative window).
+        let worker_a_job = claim_next(&cfg, -1).unwrap().unwrap();
+        assert_eq!(worker_a_job.id, id);
+        assert_eq!(worker_a_job.attempts, 1);
+
+        // Simulate lease expiry: recover_stale_locks resets the row to 'ready'.
+        let recovered = recover_stale_locks(&cfg).unwrap();
+        assert_eq!(recovered, 1);
+
+        // Worker B claims the reset row — different lease token (attempts=2).
+        let worker_b_job = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        assert_eq!(worker_b_job.id, id);
+        assert_eq!(worker_b_job.attempts, 2);
+
+        // Worker A (stale) tries to mark done using its old claim snapshot.
+        mark_done(&cfg, &worker_a_job).unwrap(); // must NOT return Err
+
+        // Worker B's row must be untouched — still 'running' with attempts=2.
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(
+            row.status,
+            JobStatus::Running,
+            "stale settlement must not clobber Worker B's running row"
+        );
+        assert_eq!(
+            row.attempts, 2,
+            "attempts must still reflect Worker B's claim"
+        );
+    }
+
+    /// Same contract as stale_worker_settlement_is_noop but for mark_failed.
+    #[test]
+    fn stale_worker_mark_failed_is_noop() {
+        let (_tmp, cfg) = test_config();
+        let payload = ExtractChunkPayload {
+            chunk_id: "c-stale-fail".into(),
+        };
+        let nj = NewJob::extract_chunk(&payload).unwrap();
+        let id = enqueue(&cfg, &nj).unwrap().expect("inserted");
+
+        // Worker A claims with an already-expired lock.
+        let worker_a_job = claim_next(&cfg, -1).unwrap().unwrap();
+        assert_eq!(worker_a_job.attempts, 1);
+
+        // Lease expires, recovered, Worker B re-claims.
+        let recovered = recover_stale_locks(&cfg).unwrap();
+        assert_eq!(recovered, 1);
+        let worker_b_job = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        assert_eq!(worker_b_job.attempts, 2);
+
+        // Worker A (stale) tries to record a failure — must be a no-op.
+        mark_failed(&cfg, &worker_a_job, "stale error").unwrap();
+
+        // Worker B's row must be untouched.
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(
+            row.status,
+            JobStatus::Running,
+            "stale mark_failed must not clobber Worker B's running row"
+        );
+        assert_ne!(
+            row.last_error.as_deref(),
+            Some("stale error"),
+            "stale error must not be written to the row"
+        );
+        assert_eq!(row.attempts, 2);
+    }
+
     #[test]
     fn backoff_grows_then_caps() {
         assert_eq!(backoff_ms(1), 60_000);
@@ -479,7 +611,7 @@ mod tests {
         }
         assert_eq!(count_by_status(&cfg, JobStatus::Ready).unwrap(), 3);
         let claimed = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
-        mark_done(&cfg, &claimed.id).unwrap();
+        mark_done(&cfg, &claimed).unwrap();
         assert_eq!(count_by_status(&cfg, JobStatus::Done).unwrap(), 1);
         assert_eq!(count_by_status(&cfg, JobStatus::Ready).unwrap(), 2);
     }

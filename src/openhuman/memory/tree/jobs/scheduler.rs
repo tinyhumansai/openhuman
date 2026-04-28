@@ -129,7 +129,9 @@ fn next_sleep_duration() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::tree::jobs::store::{count_by_status, count_total, mark_done};
+    use crate::openhuman::memory::tree::jobs::store::{
+        claim_next, count_by_status, count_total, mark_done, DEFAULT_LOCK_DURATION_MS,
+    };
     use crate::openhuman::memory::tree::jobs::types::JobStatus;
     use tempfile::TempDir;
 
@@ -171,8 +173,11 @@ mod tests {
         let (_tmp, cfg) = test_config();
         let date = NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
         let id1 = trigger_digest(&cfg, date).unwrap().unwrap();
-        // Simulate a worker finishing the job — releases the dedupe slot.
-        mark_done(&cfg, &id1).unwrap();
+        // Simulate a worker finishing the job — claim it first so we have a
+        // Job snapshot for the claim-token-gated mark_done.
+        let claimed = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        assert_eq!(claimed.id, id1);
+        mark_done(&cfg, &claimed).unwrap();
 
         let id2 = trigger_digest(&cfg, date).unwrap();
         assert!(

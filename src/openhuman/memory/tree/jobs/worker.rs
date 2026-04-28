@@ -87,7 +87,7 @@ async fn run_once_with_semaphore(config: &Config, llm_slots: Arc<Semaphore>) -> 
 
     match result {
         Ok(()) => {
-            mark_done(config, &job.id)?;
+            mark_done(config, &job)?;
         }
         Err(err) => {
             // Preserve the full anyhow cause chain in the persisted
@@ -101,7 +101,7 @@ async fn run_once_with_semaphore(config: &Config, llm_slots: Arc<Semaphore>) -> 
                 job.kind.as_str(),
                 err
             );
-            mark_failed(config, &job.id, &message)?;
+            mark_failed(config, &job, &message)?;
         }
     }
 
