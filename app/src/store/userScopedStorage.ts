@@ -48,16 +48,53 @@ export function getActiveUserId(): string | null {
  * rehydrates.
  */
 export function setActiveUserId(id: string | null): void {
+  const previous = activeUserId;
   activeUserId = id;
   try {
     if (id) {
       localStorage.setItem(ACTIVE_USER_KEY, id);
+      if (!previous) {
+        migrateLegacyPersistKeys(id);
+      }
     } else {
       localStorage.removeItem(ACTIVE_USER_KEY);
     }
   } catch {
     // localStorage may be unavailable (private mode quota); swallowing is
     // fine — the in-memory ref still drives the current session.
+  }
+}
+
+/**
+ * One-shot migration for users upgrading from the pre-#900 build, where
+ * persist blobs lived at unscoped keys (`persist:accounts`, etc.). On the
+ * first identity assignment after launch, if any legacy key exists and the
+ * corresponding user-scoped key is empty, copy legacy → `${id}:<key>` and
+ * drop the legacy entry. This lets the FIRST user to log in on the upgraded
+ * build keep their UI shimmer; later users see initial state and rehydrate
+ * from backend as usual.
+ */
+function migrateLegacyPersistKeys(id: string): void {
+  const LEGACY_PREFIXES = ['persist:'];
+  try {
+    const legacyKeys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (LEGACY_PREFIXES.some(p => key.startsWith(p))) {
+        legacyKeys.push(key);
+      }
+    }
+    for (const key of legacyKeys) {
+      const scoped = `${id}:${key}`;
+      if (localStorage.getItem(scoped) !== null) continue; // already migrated
+      const value = localStorage.getItem(key);
+      if (value === null) continue;
+      localStorage.setItem(scoped, value);
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // best-effort; ignore quota / unavailable
   }
 }
 
