@@ -31,6 +31,11 @@ vi.mock('../../services/api/threadApi', () => ({
 
 vi.mock('../../hooks/usageRefresh', () => ({ requestUsageRefresh: vi.fn() }));
 
+const mockRefetchSnapshot = vi.fn();
+vi.mock('../../hooks/useRefetchSnapshotOnTurnEnd', () => ({
+  useRefetchSnapshotOnTurnEnd: () => ({ refetch: mockRefetchSnapshot }),
+}));
+
 function renderProvider(): chatService.ChatEventListeners {
   let captured: chatService.ChatEventListeners = {};
   vi.mocked(chatService.subscribeChatEvents).mockImplementation(listeners => {
@@ -97,7 +102,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(timeline[0]?.status).toBe('running');
     });
 
-    it('drops duplicate chat_done events with the same thread/request', () => {
+    it('drops duplicate chat_done events with the same thread/request', async () => {
       const listeners = renderProvider();
 
       const doneEvent: chatService.ChatDoneEvent = {
@@ -107,6 +112,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         rounds_used: 1,
         total_input_tokens: 5,
         total_output_tokens: 7,
+        segment_total: 1,
       };
 
       act(() => {
@@ -119,6 +125,9 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(usage.inputTokens).toBe(5);
       expect(usage.outputTokens).toBe(7);
       expect(usage.turns).toBe(1);
+
+      // Snapshot refetch fired exactly once on the first chat_done — issue #924.
+      expect(mockRefetchSnapshot).toHaveBeenCalledTimes(1);
     });
 
     it('processes tool_call for different rounds as distinct events', () => {
