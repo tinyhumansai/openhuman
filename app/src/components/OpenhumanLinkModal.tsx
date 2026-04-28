@@ -10,8 +10,8 @@
  *
  * Mounted once at AppShell root.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isTauri as coreIsTauri } from '@tauri-apps/api/core';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
 import {
