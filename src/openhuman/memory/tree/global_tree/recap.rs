@@ -218,6 +218,7 @@ mod tests {
             token_count: 6_000,
             seq_in_source: 0,
             created_at: ts,
+            partial_message: false,
         };
         let c2 = Chunk {
             id: chunk_id(SourceKind::Chat, scope, 1, "test-content"),
@@ -234,6 +235,7 @@ mod tests {
             token_count: 6_000,
             seq_in_source: 1,
             created_at: ts,
+            partial_message: false,
         };
         upsert_chunks(cfg, &[c1.clone(), c2.clone()]).unwrap();
         append_leaf(

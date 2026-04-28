@@ -207,6 +207,7 @@ mod tests {
             token_count: 50,
             seq_in_source: seq,
             created_at: ts,
+            partial_message: false,
         };
         upsert_chunks(cfg, &[c.clone()]).unwrap();
         let e = CanonicalEntity {

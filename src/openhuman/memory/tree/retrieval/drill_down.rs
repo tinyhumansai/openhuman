@@ -259,6 +259,7 @@ mod tests {
                 token_count: 6_000,
                 seq_in_source: seq,
                 created_at: ts,
+                partial_message: false,
             };
             upsert_chunks(cfg, &[c.clone()]).unwrap();
             leaf_ids.push(c.id.clone());
@@ -404,6 +405,7 @@ mod tests {
             token_count: 10,
             seq_in_source: 0,
             created_at: ts,
+            partial_message: false,
         };
         let leaf_a_2 = Chunk {
             id: "chat:slack:#eng:1".into(),

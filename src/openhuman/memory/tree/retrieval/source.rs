@@ -333,6 +333,7 @@ mod tests {
                 token_count: 6_000,
                 seq_in_source: seq,
                 created_at: ts,
+                partial_message: false,
             };
             upsert_chunks(cfg, &[c.clone()]).unwrap();
             append_leaf(

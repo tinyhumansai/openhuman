@@ -225,6 +225,7 @@ mod tests {
             token_count: tokens,
             seq_in_source: seq,
             created_at: ts,
+            partial_message: false,
         }
     }
 

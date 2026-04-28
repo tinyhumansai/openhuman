@@ -500,6 +500,10 @@ fn row_to_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
         token_count: token_count.max(0) as u32,
         seq_in_source: seq.max(0) as u32,
         created_at,
+        // partial_message is not stored in SQLite — it's a transient chunker
+        // signal. Chunks read back from DB always get false (the column doesn't
+        // exist; callers that need this flag hold the Chunk in memory).
+        partial_message: false,
     })
 }
 

@@ -74,6 +74,7 @@ async fn crossing_budget_triggers_seal() {
         token_count: tokens,
         seq_in_source: seq,
         created_at: ts,
+        partial_message: false,
     };
     let c1 = mk_chunk(0, 6_000);
     let c2 = mk_chunk(1, 6_000);
@@ -175,6 +176,7 @@ async fn fanout_at_l1_triggers_l2_seal() {
             token_count: 10_000,
             seq_in_source: seq,
             created_at: ts,
+            partial_message: false,
         }
     };
 
@@ -261,6 +263,7 @@ async fn upper_level_does_not_seal_below_fanout() {
             token_count: 10_000,
             seq_in_source: seq,
             created_at: ts,
+            partial_message: false,
         };
         upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
         let leaf = LeafRef {
@@ -336,6 +339,7 @@ fn seed_leaf(
         token_count: 10_000,
         seq_in_source: seq,
         created_at: ts,
+        partial_message: false,
     };
     upsert_chunks(cfg, &[chunk.clone()]).unwrap();
     // Mirror production indexing: entities go into mem_tree_entity_index

@@ -222,6 +222,7 @@ async fn seal_populates_summary_embedding() {
         token_count: tokens,
         seq_in_source: seq,
         created_at: ts,
+        partial_message: false,
     };
     let c1 = mk_chunk(0, 6_000);
     let c2 = mk_chunk(1, 6_000);

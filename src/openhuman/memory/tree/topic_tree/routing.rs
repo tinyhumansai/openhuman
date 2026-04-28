@@ -173,6 +173,7 @@ mod tests {
             token_count: tokens,
             seq_in_source: seq,
             created_at: ts,
+            partial_message: false,
         };
         let id = c.id.clone();
         upsert_chunks(cfg, &[c]).unwrap();

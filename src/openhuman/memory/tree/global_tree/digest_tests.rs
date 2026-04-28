@@ -41,6 +41,7 @@ async fn seed_source_tree_with_sealed_l1(cfg: &Config, scope: &str, ts: DateTime
         token_count: 6_000,
         seq_in_source: 0,
         created_at: ts,
+        partial_message: false,
     };
     let c2 = Chunk {
         id: chunk_id(SourceKind::Chat, scope, 1, "test-content"),
@@ -57,6 +58,7 @@ async fn seed_source_tree_with_sealed_l1(cfg: &Config, scope: &str, ts: DateTime
         token_count: 6_000,
         seq_in_source: 1,
         created_at: ts,
+        partial_message: false,
     };
     upsert_chunks(cfg, &[c1.clone(), c2.clone()]).unwrap();
 
@@ -258,6 +260,7 @@ async fn seed_source_tree_with_labeled_l1(
             token_count: 6_000,
             seq_in_source: seq,
             created_at: ts,
+            partial_message: false,
         });
     }
     upsert_chunks(cfg, &chunks).unwrap();

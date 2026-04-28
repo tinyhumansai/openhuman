@@ -55,10 +55,9 @@ pub fn canonicalise(
     let last_ts = messages.last().map(|m| m.sent_at).unwrap();
 
     let mut md = String::new();
-    md.push_str(&format!(
-        "# Email thread — {} — {}\n\n",
-        thread.provider, thread.thread_subject
-    ));
+    // No leading `# Email thread — ...` header. Provider / subject info
+    // belongs in the MD front-matter (Phase MD-content). The chunker splits
+    // this output at `---\nFrom:` boundaries so each message becomes one chunk.
 
     for msg in &messages {
         md.push_str("---\n");
@@ -131,7 +130,11 @@ mod tests {
         let out = canonicalise("gmail:t1", "alice@example.com", &[], t)
             .unwrap()
             .unwrap();
-        assert!(out.markdown.contains("# Email thread — gmail — Launch"));
+        // No leading `# Email thread` header — that info belongs in front-matter.
+        assert!(
+            !out.markdown.contains("# Email thread — gmail — Launch"),
+            "canonical email MD must NOT contain a `# ` header"
+        );
         assert!(out.markdown.contains("From: bob@example.com"));
         assert!(out.markdown.contains("Subject: Launch"));
         assert!(out.markdown.contains("let's ship"));

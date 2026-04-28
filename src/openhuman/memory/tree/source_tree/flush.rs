@@ -129,6 +129,7 @@ mod tests {
             token_count: 100,
             seq_in_source: 0,
             created_at: old_ts,
+            partial_message: false,
         };
         upsert_chunks(&cfg, &[c.clone()]).unwrap();
 
@@ -180,6 +181,7 @@ mod tests {
             token_count: 50,
             seq_in_source: 0,
             created_at: now,
+            partial_message: false,
         };
         upsert_chunks(&cfg, &[c.clone()]).unwrap();
         let leaf = LeafRef {

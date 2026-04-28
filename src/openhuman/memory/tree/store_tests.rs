@@ -28,6 +28,7 @@ fn sample_chunk(source_id: &str, seq: u32, ts_ms: i64) -> Chunk {
         token_count: 12,
         seq_in_source: seq,
         created_at: ts,
+        partial_message: false,
     }
 }
 
