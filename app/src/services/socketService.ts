@@ -118,10 +118,10 @@ class SocketService {
   private mcpTransport: SocketIOMCPTransportImpl | null = null;
   private pendingListeners: Array<{ event: string; callback: (...args: unknown[]) => void }> = [];
   // Maps original caller callbacks → wrapped callbacks so off() can locate the
-  // exact function reference that was registered with socket.io, scoped by event.
+  // exact function references that were registered with socket.io, scoped by event.
   private listenerMap = new Map<
     string,
-    Map<(...args: unknown[]) => void, (...args: unknown[]) => void>
+    Map<(...args: unknown[]) => void, Set<(...args: unknown[]) => void>>
   >();
 
   /**
@@ -274,16 +274,17 @@ class SocketService {
    * Disconnect from the socket server
    */
   disconnect(): void {
+    const uid = getSocketUserId();
     if (this.socket) {
-      const uid = getSocketUserId();
       socketLog('Disconnecting', { userId: uid });
       this.socket.disconnect();
       this.socket = null;
-      this.token = null;
-      this.mcpTransport = null;
-      this.listenerMap.clear();
-      store.dispatch(resetForUser({ userId: uid }));
     }
+    this.token = null;
+    this.mcpTransport = null;
+    this.listenerMap.clear();
+    this.pendingListeners = [];
+    store.dispatch(resetForUser({ userId: uid }));
   }
 
   /**
@@ -330,7 +331,9 @@ class SocketService {
     // Track original→wrapped per event so the same callback can be used for
     // multiple events without collisions.
     const byEvent = this.listenerMap.get(event) ?? new Map();
-    byEvent.set(callback, wrappedCallback);
+    const wrappedSet = byEvent.get(callback) ?? new Set();
+    wrappedSet.add(wrappedCallback);
+    byEvent.set(callback, wrappedSet);
     this.listenerMap.set(event, byEvent);
     if (this.socket) {
       this.socket.on(event, wrappedCallback);
@@ -346,20 +349,24 @@ class SocketService {
   off(event: string, callback?: (...args: unknown[]) => void): void {
     if (callback) {
       const byEvent = this.listenerMap.get(event);
-      const wrapped = byEvent?.get(callback) ?? callback;
-      const hadWrapped = byEvent?.has(callback) ?? false;
+      const wrappedSet = byEvent?.get(callback);
+      const wrappedCallbacks =
+        wrappedSet && wrappedSet.size > 0 ? Array.from(wrappedSet) : [callback];
+      const hadWrapped = !!wrappedSet && wrappedSet.size > 0;
       byEvent?.delete(callback);
       if (byEvent && byEvent.size === 0) {
         this.listenerMap.delete(event);
       }
       socketLog('Removing listener', { event, hadWrappedVersion: hadWrapped });
-      if (this.socket) {
-        this.socket.off(event, wrapped);
+      for (const wrapped of wrappedCallbacks) {
+        if (this.socket) {
+          this.socket.off(event, wrapped);
+        }
+        // Also remove from the pending queue in case the socket isn't up yet.
+        this.pendingListeners = this.pendingListeners.filter(
+          p => !(p.event === event && p.callback === wrapped)
+        );
       }
-      // Also remove from the pending queue in case the socket isn't up yet.
-      this.pendingListeners = this.pendingListeners.filter(
-        p => !(p.event === event && p.callback === wrapped)
-      );
     } else {
       socketLog('Removing all listeners for event', { event });
       this.socket?.off(event);
@@ -378,8 +385,25 @@ class SocketService {
         argsCount: args.length,
         hasData: args.length > 0,
       });
-      callback(...args);
+      try {
+        callback(...args);
+      } finally {
+        const byEvent = this.listenerMap.get(event);
+        const wrappedSet = byEvent?.get(callback);
+        wrappedSet?.delete(wrappedCallback);
+        if (wrappedSet && wrappedSet.size === 0) {
+          byEvent?.delete(callback);
+        }
+        if (byEvent && byEvent.size === 0) {
+          this.listenerMap.delete(event);
+        }
+      }
     };
+    const byEvent = this.listenerMap.get(event) ?? new Map();
+    const wrappedSet = byEvent.get(callback) ?? new Set();
+    wrappedSet.add(wrappedCallback);
+    byEvent.set(callback, wrappedSet);
+    this.listenerMap.set(event, byEvent);
     if (this.socket) {
       this.socket.once(event, wrappedCallback);
     } else {

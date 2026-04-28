@@ -10,7 +10,7 @@
  *
  * Mounted once at AppShell root.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
 import {
@@ -187,6 +187,18 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
   const [status, setStatus] = useState<'idle' | 'sending' | 'queued' | 'sent' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const TEST_NOTIFICATION_DELAY_MS = 3500;
+  const notificationTimeoutRef = useRef<number | null>(null);
+  const cancelledRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      cancelledRef.current = true;
+      if (notificationTimeoutRef.current !== null) {
+        window.clearTimeout(notificationTimeoutRef.current);
+        notificationTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const handleAllow = async () => {
     setStatus('sending');
@@ -203,12 +215,23 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
       // Delay the test ping so users can move focus away from OpenHuman.
       // macOS commonly suppresses banner popouts while the app is foreground.
       setStatus('queued');
-      await new Promise(resolve => setTimeout(resolve, TEST_NOTIFICATION_DELAY_MS));
+      await new Promise<void>(resolve => {
+        notificationTimeoutRef.current = window.setTimeout(() => {
+          notificationTimeoutRef.current = null;
+          resolve();
+        }, TEST_NOTIFICATION_DELAY_MS);
+      });
+      if (cancelledRef.current) {
+        return;
+      }
       await showNativeNotification({
         title: 'OpenHuman is good to go',
         body: 'You will get pings here when something needs your attention.',
         tag: 'welcome-notification-test',
       });
+      if (cancelledRef.current) {
+        return;
+      }
       setStatus('sent');
     } catch (e) {
       setStatus('error');
