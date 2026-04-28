@@ -19,9 +19,11 @@ use crate::openhuman::memory::tree::types::{approx_token_count, Chunk, Metadata,
 
 /// Default upper bound on per-chunk tokens.
 ///
-/// Aligned with the LLD's summariser 10k budget so a single chunk never blows
-/// a seal on its own.
-pub const DEFAULT_CHUNK_MAX_TOKENS: u32 = 10_000;
+/// Sized below the L0 seal budget (`source_tree::types::TOKEN_BUDGET = 4_500`)
+/// so each seal accumulates roughly 1–3 chunks before firing — natural pacing
+/// for the local 1B summariser, which produces noticeably better summaries
+/// with smaller (≤4–5k) inputs than at the previous 10k cap.
+pub const DEFAULT_CHUNK_MAX_TOKENS: u32 = 3_000;
 
 /// Tunable settings for the chunker.
 #[derive(Clone, Debug)]

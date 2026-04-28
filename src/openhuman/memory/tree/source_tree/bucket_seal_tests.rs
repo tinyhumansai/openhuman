@@ -76,14 +76,17 @@ async fn crossing_budget_triggers_seal() {
         created_at: ts,
         partial_message: false,
     };
-    let c1 = mk_chunk(0, 6_000);
-    let c2 = mk_chunk(1, 6_000);
+    // Budget-relative sizes so the test stays correct as TOKEN_BUDGET shifts:
+    // each leaf is 60% of budget, so the second append crosses the threshold.
+    let per_leaf = TOKEN_BUDGET * 6 / 10;
+    let c1 = mk_chunk(0, per_leaf);
+    let c2 = mk_chunk(1, per_leaf);
     upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
 
     // Two leaves whose combined token_sum (12k) exceeds the 10k budget.
     let leaf1 = LeafRef {
         chunk_id: c1.id.clone(),
-        token_count: 6_000,
+        token_count: per_leaf,
         timestamp: ts,
         content: c1.content.clone(),
         entities: vec![],
@@ -92,7 +95,7 @@ async fn crossing_budget_triggers_seal() {
     };
     let leaf2 = LeafRef {
         chunk_id: c2.id.clone(),
-        token_count: 6_000,
+        token_count: per_leaf,
         timestamp: ts,
         content: c2.content.clone(),
         entities: vec![],
@@ -452,12 +455,14 @@ async fn seal_with_union_strategy_inherits_labels_from_children() {
     // Adjust by using smaller token counts so both fit in L0 first, then
     // a third append triggers a seal containing both. Reuse the helper
     // and override the leaf's token_count for this test.
+    // Each leaf at half the budget so two together hit threshold exactly.
+    let per_leaf = TOKEN_BUDGET / 2;
     let leaf1 = LeafRef {
-        token_count: 5_000,
+        token_count: per_leaf,
         ..leaf1
     };
     let leaf2 = LeafRef {
-        token_count: 5_000,
+        token_count: per_leaf,
         ..leaf2
     };
 
