@@ -33,16 +33,21 @@ pub fn redact(s: &str) -> String {
 pub fn redact_endpoint(url: &str) -> String {
     // Strip scheme (everything before "://").
     let after_scheme = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    // Strip credentials (everything before the last "@" before the first "/").
-    let after_creds = after_scheme
-        .split_once('@')
-        .map(|(_, r)| r)
-        .unwrap_or(after_scheme);
-    // Take only the host:port part (up to the first '/', '?', or '#').
-    let host_port = after_creds
+    // Take only the authority (everything up to the first '/', '?', or '#') so
+    // any '@' in the path / query (e.g. `?email=foo@bar`) doesn't get treated
+    // as a userinfo separator.
+    let authority = after_scheme
         .split(['/', '?', '#'])
         .next()
-        .unwrap_or(after_creds);
+        .unwrap_or(after_scheme);
+    // Within the authority, the LAST '@' separates userinfo from host:port.
+    // (RFC 3986: userinfo may itself contain '@' — split-on-first would
+    // truncate the host. Use rsplit so `user:p@ss@example.com` extracts
+    // `example.com` correctly.)
+    let host_port = authority
+        .rsplit_once('@')
+        .map(|(_, r)| r)
+        .unwrap_or(authority);
     host_port.to_string()
 }
 

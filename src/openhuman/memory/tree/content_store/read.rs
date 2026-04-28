@@ -151,7 +151,7 @@ pub fn read_chunk_body(
             chunk_id
         )
     })?;
-    let (rel_path, _sha256) = pointers;
+    let (rel_path, expected_sha256) = pointers;
 
     let content_root = config.memory_tree_content_root();
     // Reconstruct the absolute path from the stored relative forward-slash path.
@@ -176,6 +176,23 @@ pub fn read_chunk_body(
             redact(&rel_path),
         )
     })?;
+
+    // Verify the on-disk body matches the SHA stored at write time. A mismatch
+    // means the file was tampered with, the tx that committed the pointer
+    // raced with a separate writer, or the disk corrupted — all unsafe to
+    // hand back to a consumer. Fail loudly rather than serve stale/corrupt
+    // bytes into the LLM extractor / summariser pipeline.
+    if result.sha256 != expected_sha256 {
+        return Err(anyhow::anyhow!(
+            "[content_store::read] sha256 mismatch for chunk_id={} \
+             expected={} actual={} path_hash={}",
+            chunk_id,
+            expected_sha256,
+            result.sha256,
+            redact(&rel_path),
+        ));
+    }
+
     Ok(result.body)
 }
 
@@ -207,7 +224,7 @@ pub fn read_summary_body(
             summary_id
         )
     })?;
-    let (rel_path, _sha256) = pointers;
+    let (rel_path, expected_sha256) = pointers;
 
     let content_root = config.memory_tree_content_root();
     let abs_path = {
@@ -231,6 +248,20 @@ pub fn read_summary_body(
             redact(&rel_path),
         )
     })?;
+
+    // Verify the on-disk body matches the SHA stored at seal time. See the
+    // matching guard in `read_chunk_body` for rationale.
+    if result.sha256 != expected_sha256 {
+        return Err(anyhow::anyhow!(
+            "[content_store::read] sha256 mismatch for summary_id={} \
+             expected={} actual={} path_hash={}",
+            summary_id,
+            expected_sha256,
+            result.sha256,
+            redact(&rel_path),
+        ));
+    }
+
     Ok(result.body)
 }
 

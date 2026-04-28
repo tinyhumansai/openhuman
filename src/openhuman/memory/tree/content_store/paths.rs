@@ -41,7 +41,8 @@ pub enum SummaryTreeKind {
 /// Path layout depends on tree_kind:
 /// - Source: `"summaries/source/<scope_slug>/L<level>/<summary_filename>.md"`
 /// - Global: `"summaries/global/<yyyy-mm-dd>/L<level>/<summary_filename>.md"`
-///   Panics (via `expect`) if `date_for_global` is `None` for `SummaryTreeKind::Global`.
+///   Falls back to `unknown-date` (with a warn log) if `date_for_global` is
+///   `None` — preferable to panicking inside a path utility.
 /// - Topic:  `"summaries/topic/<scope_slug>/L<level>/<summary_filename>.md"`
 ///
 /// `scope_slug` must already be slugified by the caller (use [`slugify_source_id`] or
@@ -66,10 +67,23 @@ pub fn summary_rel_path(
             format!("summaries/source/{}/L{}/{}.md", scope_slug, level, filename)
         }
         SummaryTreeKind::Global => {
-            let date = date_for_global
-                .expect("date_for_global is required for SummaryTreeKind::Global")
-                .format("%Y-%m-%d");
-            format!("summaries/global/{}/L{}/{}.md", date, level, filename)
+            // Fall back to a sentinel date rather than panic — a path-utility
+            // panic would propagate up through seal/digest/janitor codepaths
+            // and abort otherwise-recoverable work. Callers should always
+            // pass a date for Global; the warn log surfaces the contract
+            // violation without taking the process down.
+            let date_str = match date_for_global {
+                Some(d) => d.format("%Y-%m-%d").to_string(),
+                None => {
+                    log::warn!(
+                        "[content_store::paths] summary_rel_path called for Global \
+                         without date_for_global; using sentinel 'unknown-date'. \
+                         Caller bug — please pass a date."
+                    );
+                    "unknown-date".to_string()
+                }
+            };
+            format!("summaries/global/{}/L{}/{}.md", date_str, level, filename)
         }
         SummaryTreeKind::Topic => {
             format!("summaries/topic/{}/L{}/{}.md", scope_slug, level, filename)
@@ -431,9 +445,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "date_for_global is required")]
-    fn summary_rel_path_global_panics_without_date() {
-        summary_rel_path(SummaryTreeKind::Global, "global", 0, "summary:L0:x", None);
+    fn summary_rel_path_global_falls_back_to_sentinel_without_date() {
+        // Caller bug to omit date for Global, but a path utility shouldn't
+        // panic — fall back to a sentinel `unknown-date` segment so the
+        // file lands somewhere predictable rather than aborting the seal.
+        let p = summary_rel_path(SummaryTreeKind::Global, "global", 0, "summary:L0:x", None);
+        assert_eq!(p, "summaries/global/unknown-date/L0/summary-L0-x.md");
     }
 
     #[test]
