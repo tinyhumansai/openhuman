@@ -47,8 +47,8 @@
     "rust:clippy": "cargo clippy -p openhuman -- -D warnings",
     "format": "prettier --write . && pnpm rust:format",
     "format:check": "prettier --check . && pnpm rust:format:check",
-    "lint": "eslint . --ext .ts,.tsx",
-    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "lint": "eslint . --ext .ts,.tsx --cache",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix --cache",
     "lint:commands-tokens": "bash -c '! rg -nU \"(bg|text|border|ring|shadow)-(neutral|primary|sage|amber|canvas|stone|slate)\" src/components/commands/'",
     "knip": "knip --config knip.json",
     "knip:production": "knip --config knip.json --production"
