@@ -40,23 +40,26 @@ impl Tool for MemoryTreeFetchLeavesTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        log::debug!("[tool][memory_tree] fetch_leaves invoked");
         let req: FetchLeavesRequest = serde_json::from_value(args)
             .map_err(|e| anyhow::anyhow!("invalid arguments for memory_tree_fetch_leaves: {e}"))?;
+        log::debug!(
+            "[rpc][memory_tree] fetch_leaves invoked requested_ids={}",
+            req.chunk_ids.len()
+        );
         let cfg = config_rpc::load_config_with_timeout()
             .await
             .map_err(|e| anyhow::anyhow!("memory_tree_fetch_leaves: load config failed: {e}"))?;
         let take = req.chunk_ids.len().min(MAX_CHUNK_IDS_PER_CALL);
         if req.chunk_ids.len() > MAX_CHUNK_IDS_PER_CALL {
             log::debug!(
-                "[tool][memory_tree] fetch_leaves: truncating chunk_ids from {} to {}",
+                "[rpc][memory_tree] fetch_leaves truncating requested_ids={} truncated_to={}",
                 req.chunk_ids.len(),
                 MAX_CHUNK_IDS_PER_CALL
             );
         }
         let hits = retrieval::fetch_leaves(&cfg, &req.chunk_ids[..take]).await?;
         log::debug!(
-            "[tool][memory_tree] fetch_leaves returning hits={}",
+            "[rpc][memory_tree] fetch_leaves completed hits={}",
             hits.len()
         );
         let json = serde_json::to_string(&hits)?;
