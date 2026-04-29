@@ -870,6 +870,56 @@ fn teardown_cef_prewarm<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), Str
 }
 
 pub fn run() {
+    // Initialize Sentry for the Tauri shell (desktop host) process before any
+    // other startup work. Reads `OPENHUMAN_TAURI_SENTRY_DSN` at runtime first,
+    // then falls back to the value baked in at compile time via the release
+    // workflow. Missing/empty DSN ⇒ `sentry::init` returns a no-op guard.
+    //
+    // The guard is held for the entire lifetime of `run()` so events queued
+    // during shutdown still flush. Only invoked here (and not in `main.rs`)
+    // so renderer/GPU CEF helper subprocesses (re-exec'd via
+    // `tauri::cef_entry_point`) and the `OpenHuman core …` in-process core
+    // path do NOT spin up a second client — those have their own reporting
+    // surfaces.
+    let _sentry_guard = sentry::init(sentry::ClientOptions {
+        dsn: std::env::var("OPENHUMAN_TAURI_SENTRY_DSN")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| option_env!("OPENHUMAN_TAURI_SENTRY_DSN").map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
+            .and_then(|s| s.parse().ok()),
+        release: Some(std::borrow::Cow::Owned(build_sentry_release_tag())),
+        environment: Some(std::borrow::Cow::Owned(resolve_sentry_environment())),
+        send_default_pii: false,
+        before_send: Some(std::sync::Arc::new(|mut event| {
+            // Strip server_name (hostname) to avoid leaking machine identity.
+            event.server_name = None;
+            event.user = None;
+            Some(event)
+        })),
+        sample_rate: 1.0,
+        ..sentry::ClientOptions::default()
+    });
+
+    // Optional smoke trigger for verifying the Sentry pipeline end-to-end.
+    // Run with `OPENHUMAN_TAURI_SENTRY_TEST=panic` to fire a panic, or
+    // `=message` to send a captured-message event. No-op when unset.
+    if let Ok(mode) = std::env::var("OPENHUMAN_TAURI_SENTRY_TEST") {
+        match mode.as_str() {
+            "panic" => panic!("OPENHUMAN_TAURI_SENTRY_TEST=panic — local Sentry smoke test"),
+            "message" => {
+                sentry::capture_message(
+                    "OPENHUMAN_TAURI_SENTRY_TEST=message — local Sentry smoke test",
+                    sentry::Level::Error,
+                );
+                let _ = sentry::Hub::current().client().map(|c| c.flush(None));
+            }
+            other => log::warn!(
+                "OPENHUMAN_TAURI_SENTRY_TEST={other:?} — unknown mode (use 'panic' or 'message')"
+            ),
+        }
+    }
+
     let daemon_mode = is_daemon_mode();
 
     let default_filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
@@ -1573,6 +1623,48 @@ pub fn run_core_from_args(args: &[String]) -> Result<(), String> {
         return Err(format!("core binary exited with status {status}"));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Sentry release / environment resolution (Tauri shell)
+// ---------------------------------------------------------------------------
+
+/// Canonical release tag: `openhuman@<version>[+<short_sha>]`.
+///
+/// Mirrors `build_release_tag` in the core sidecar's `src/main.rs` and the
+/// `SENTRY_RELEASE` value computed in `app/vite.config.ts` so events from
+/// every surface (React frontend, core sidecar, Tauri shell) group under the
+/// same release in Sentry and benefit from the same source-map / debug-info
+/// upload.
+fn build_sentry_release_tag() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let sha = option_env!("OPENHUMAN_BUILD_SHA").unwrap_or("").trim();
+    let sha_short: String = sha.chars().take(12).collect();
+    if sha_short.is_empty() {
+        format!("openhuman@{version}")
+    } else {
+        format!("openhuman@{version}+{sha_short}")
+    }
+}
+
+/// Resolve the Sentry environment tag from `OPENHUMAN_APP_ENV` (runtime) or
+/// `VITE_OPENHUMAN_APP_ENV` (compile-time fallback). Defaults to
+/// `production` so unmarked release builds don't pollute the dev/staging
+/// streams.
+fn resolve_sentry_environment() -> String {
+    if let Ok(value) = std::env::var("OPENHUMAN_APP_ENV") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    if let Some(value) = option_env!("VITE_OPENHUMAN_APP_ENV") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    "production".to_string()
 }
 
 #[cfg(test)]
