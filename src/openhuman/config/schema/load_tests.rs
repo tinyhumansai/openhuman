@@ -832,7 +832,23 @@ async fn resolve_runtime_config_dirs_with_empty_env_falls_back_to_default() {
 
 #[test]
 fn apply_env_overrides_commits_side_effects_to_runtime_proxy() {
-    use crate::openhuman::config::schema::proxy::runtime_proxy_config;
+    use crate::openhuman::config::schema::proxy::{runtime_proxy_config, set_runtime_proxy_config};
+
+    // Hold the env lock so no other test races on proxy-related env vars.
+    let _g = ENV_LOCK.lock().unwrap();
+    clear_env(&[
+        "OPENHUMAN_PROXY_ENABLED",
+        "OPENHUMAN_HTTP_PROXY",
+        "HTTP_PROXY",
+        "OPENHUMAN_HTTPS_PROXY",
+        "HTTPS_PROXY",
+        "OPENHUMAN_ALL_PROXY",
+        "ALL_PROXY",
+    ]);
+
+    // Snapshot the global runtime proxy config so we can restore it afterwards
+    // and avoid leaking state into other tests.
+    let previous_runtime = runtime_proxy_config();
 
     // Build a config with proxy fields set directly on the struct.
     // We cannot pre-configure via apply_env_overlay_with + a HashMapEnv and
@@ -861,4 +877,8 @@ fn apply_env_overrides_commits_side_effects_to_runtime_proxy() {
         Some("http://proxy.test:8080"),
         "runtime proxy URL must match the value set on cfg.proxy"
     );
+
+    // Restore the global runtime proxy state so this test doesn't bleed into
+    // other tests that inspect runtime_proxy_config().
+    set_runtime_proxy_config(previous_runtime);
 }
