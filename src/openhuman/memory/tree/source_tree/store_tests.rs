@@ -71,7 +71,7 @@ fn summary_insert_and_fetch() {
     let node = sample_summary("sum-1", "tree-1", 1);
     with_connection(&cfg, |conn| {
         let tx = conn.unchecked_transaction()?;
-        insert_summary_tx(&tx, &node)?;
+        insert_summary_tx(&tx, &node, None)?;
         tx.commit()?;
         Ok(())
     })
@@ -90,8 +90,8 @@ fn summary_insert_is_idempotent_on_id() {
     let node = sample_summary("sum-1", "tree-1", 1);
     with_connection(&cfg, |conn| {
         let tx = conn.unchecked_transaction()?;
-        insert_summary_tx(&tx, &node)?;
-        insert_summary_tx(&tx, &node)?;
+        insert_summary_tx(&tx, &node, None)?;
+        insert_summary_tx(&tx, &node, None)?;
         tx.commit()?;
         Ok(())
     })

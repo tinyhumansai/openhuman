@@ -805,7 +805,10 @@ async fn run_server_inner(
 ///
 /// Guarded by `std::sync::Once` so repeated calls to `bootstrap_skill_runtime`
 /// are safe and idempotent.
-fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
+fn register_domain_subscribers(
+    workspace_dir: std::path::PathBuf,
+    config: crate::openhuman::config::Config,
+) {
     use std::sync::{Arc, Once};
 
     static REGISTERED: Once = Once::new();
@@ -840,6 +843,7 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
         }
         crate::openhuman::composio::register_composio_trigger_subscriber();
         crate::openhuman::composio::start_periodic_sync();
+        crate::openhuman::memory::tree::jobs::start(config.clone());
 
         // Restart requests go through a subscriber so every trigger path shares
         // the same respawn logic.
@@ -880,7 +884,7 @@ pub async fn bootstrap_skill_runtime() {
     // Register domain subscribers for cross-module event handling.
     // Uses a Once guard so repeated calls to bootstrap_skill_runtime()
     // cannot double-subscribe.
-    register_domain_subscribers(workspace_dir.clone());
+    register_domain_subscribers(workspace_dir.clone(), cfg.clone());
 
     // --- Sub-agent definition registry bootstrap ---
     // Loads built-in archetype definitions plus any custom TOML files

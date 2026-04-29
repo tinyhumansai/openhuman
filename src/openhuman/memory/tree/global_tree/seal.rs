@@ -11,10 +11,15 @@
 //! `mem_tree_summaries` on both sides (children and output), since even L0
 //! is a sealed summary node rather than a raw chunk.
 
+use std::collections::BTreeSet;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::{
+    atomic::stage_summary, SummaryComposeInput, SummaryTreeKind,
+};
 use crate::openhuman::memory::tree::global_tree::{
     GLOBAL_TOKEN_BUDGET, MONTHLY_SEAL_THRESHOLD, WEEKLY_SEAL_THRESHOLD, YEARLY_SEAL_THRESHOLD,
 };
@@ -186,6 +191,26 @@ async fn seal_one_level(
         .await
         .context("summariser failed during global seal")?;
 
+    // Global-tree summaries inherit their entity/topic labels via union
+    // from their already-labeled inputs (source-tree summaries carry
+    // labels from the source-tree seal extractor; global L1+ inputs
+    // carry labels from this same union path one level down). We
+    // deliberately do NOT run an extractor on the daily/weekly/monthly
+    // synthesis: the inputs already cover what the summary represents,
+    // and global is a sink — no second-pass labeling earns its keep.
+    let mut entities_set: BTreeSet<String> = BTreeSet::new();
+    let mut topics_set: BTreeSet<String> = BTreeSet::new();
+    for inp in &inputs {
+        for e in &inp.entities {
+            entities_set.insert(e.clone());
+        }
+        for t in &inp.topics {
+            topics_set.insert(t.clone());
+        }
+    }
+    let node_entities: Vec<String> = entities_set.into_iter().collect();
+    let node_topics: Vec<String> = topics_set.into_iter().collect();
+
     // Phase 4 (#710): embed BEFORE opening the write tx so an embedder
     // error aborts the cascade without half-committing the summary.
     let embedder =
@@ -208,8 +233,8 @@ async fn seal_one_level(
         child_ids: buf.item_ids.clone(),
         content: output.content,
         token_count: output.token_count,
-        entities: output.entities,
-        topics: output.topics,
+        entities: node_entities,
+        topics: node_topics,
         time_range_start,
         time_range_end,
         score,
@@ -217,6 +242,49 @@ async fn seal_one_level(
         deleted: false,
         embedding: Some(embedding),
     };
+
+    // Phase MD-content: stage the global summary .md file before opening the
+    // write tx. date_for_global = time_range_start date (daily for L0, or
+    // the start of the range for higher levels).
+    let global_date = Some(time_range_start);
+    let compose_input_global = SummaryComposeInput {
+        summary_id: &node.id,
+        tree_kind: SummaryTreeKind::Global,
+        tree_id: &node.tree_id,
+        tree_scope: &tree.scope,
+        level: node.level,
+        child_ids: &node.child_ids,
+        child_count: node.child_ids.len(),
+        time_range_start: node.time_range_start,
+        time_range_end: node.time_range_end,
+        sealed_at: node.sealed_at,
+        body: &node.content,
+    };
+    // Stage the summary .md file — abort the seal on failure so the database
+    // never commits a row with content_path = NULL. The job-retry path will
+    // re-attempt the file write on next execution.
+    let content_root_global = config.memory_tree_content_root();
+    // Global tree scope is typically the literal "global" string.
+    // Use it as-is for the path (slugify passes through short ascii strings unchanged).
+    let global_scope_slug =
+        crate::openhuman::memory::tree::content_store::paths::slugify_source_id(&tree.scope);
+    let staged_global = stage_summary(
+        &content_root_global,
+        &compose_input_global,
+        &global_scope_slug,
+        global_date,
+    )
+    .with_context(|| {
+        format!(
+            "stage_summary failed for {}; global-tree seal aborted for retry",
+            node.id
+        )
+    })?;
+    log::debug!(
+        "[global_tree::seal] staged summary {} → {}",
+        node.id,
+        staged_global.content_path
+    );
 
     // Single write transaction: insert the new summary, clear this level's
     // buffer, append the new id to the parent buffer, and bump the tree's
@@ -238,7 +306,7 @@ async fn seal_one_level(
             .map(|n| n.max(0) as u32)
             .context("Failed to read current max_level for global tree")?;
 
-        store::insert_summary_tx(&tx, &node)?;
+        store::insert_summary_tx(&tx, &node, Some(&staged_global))?;
         // Index any entities the summariser emitted. No-op under
         // InertSummariser (entities stays empty by design — see
         // summariser/inert.rs). Becomes active when the Ollama summariser
@@ -383,7 +451,7 @@ mod tests {
     fn insert_daily(cfg: &Config, node: &SummaryNode) {
         with_connection(cfg, |conn| {
             let tx = conn.unchecked_transaction()?;
-            store::insert_summary_tx(&tx, node)?;
+            store::insert_summary_tx(&tx, node, None)?;
             tx.commit()?;
             Ok(())
         })

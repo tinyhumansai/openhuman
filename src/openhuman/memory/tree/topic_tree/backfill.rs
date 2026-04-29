@@ -1,29 +1,51 @@
 //! Topic-tree backfill — hydrate a freshly-materialised topic tree with
-//! every historical leaf mentioning the entity (#709 Phase 3c).
+//! recent leaves mentioning the entity (#709 Phase 3c).
 //!
 //! When the curator decides an entity has crossed the hotness threshold
 //! for the first time, we create a fresh topic tree AND walk the
-//! `mem_tree_entity_index` inverted index to append every prior leaf into
+//! `mem_tree_entity_index` inverted index to append matching leaves into
 //! its L0 buffer. Reusing `bucket_seal::append_leaf` means the cascade
-//! fires automatically — a well-established entity may seal several
-//! levels as soon as the tree is spawned.
+//! fires automatically.
+//!
+//! ## Why bounded by hotness window
+//!
+//! Hotness uses a 30-day recency decay (see `topic_tree::hotness`). Leaves
+//! older than 30 days contribute zero to current hotness, so by definition
+//! they cannot be the reason a tree is spawning *now*. Including them
+//! bloats the spawn latency, wastes summariser LLM calls, and amplifies
+//! ancient signal that has already decayed away. We cap the backfill
+//! window at [`BACKFILL_WINDOW_DAYS`] to align with the hotness math.
+//!
+//! Older content is still queryable through source-tree retrieval and the
+//! entity index — it just doesn't get its own slot in the topic tree.
 //!
 //! Backfill is intentionally best-effort: missing chunks are skipped with
 //! a warn log rather than failing the whole spawn, because Phase 3c is
 //! additive — a partial topic tree is still useful.
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::score::store::lookup_entity;
-use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf, LeafRef};
+use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+    append_leaf, LabelStrategy, LeafRef,
+};
 use crate::openhuman::memory::tree::source_tree::summariser::Summariser;
 use crate::openhuman::memory::tree::source_tree::types::Tree;
 use crate::openhuman::memory::tree::store::get_chunk;
+use crate::openhuman::memory::tree::util::redact::redact;
 
 /// Max leaves to pull from the entity index during backfill. A hard cap
 /// keeps initial spawn latency bounded even for very active entities.
 const BACKFILL_LIMIT: usize = 500;
+
+/// Backfill window in days — matches `topic_tree::hotness::recency_decay`'s
+/// hard cliff. Leaves older than this contribute zero to current hotness
+/// so they cannot have driven the spawn decision.
+pub const BACKFILL_WINDOW_DAYS: i64 = 30;
+
+const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
 
 /// Walk the entity index for `entity_id` and append every discovered leaf
 /// to `tree`. Returns the number of leaves appended (NOT the number of
@@ -35,19 +57,65 @@ pub async fn backfill_topic_tree(
     entity_id: &str,
     summariser: &dyn Summariser,
 ) -> Result<usize> {
-    log::info!(
-        "[topic_tree::backfill] start entity_id={} tree_id={}",
+    backfill_topic_tree_at(
+        config,
+        tree,
         entity_id,
-        tree.id
+        summariser,
+        Utc::now().timestamp_millis(),
+    )
+    .await
+}
+
+/// Deterministic variant — backfill against a caller-supplied `now_ms`
+/// for the recency window. Used by tests so the 30-day cutoff doesn't
+/// depend on the wall clock.
+pub async fn backfill_topic_tree_at(
+    config: &Config,
+    tree: &Tree,
+    entity_id: &str,
+    summariser: &dyn Summariser,
+    now_ms: i64,
+) -> Result<usize> {
+    let cutoff_ms = now_ms.saturating_sub(BACKFILL_WINDOW_DAYS.saturating_mul(DAY_MS));
+    log::info!(
+        "[topic_tree::backfill] start entity_id_hash={} tree_id={} window_days={} cutoff_ms={}",
+        redact(entity_id),
+        tree.id,
+        BACKFILL_WINDOW_DAYS,
+        cutoff_ms
     );
 
     let hits = lookup_entity(config, entity_id, Some(BACKFILL_LIMIT))
-        .with_context(|| format!("failed to lookup entity {entity_id}"))?;
+        .with_context(|| format!("failed to lookup entity {}", redact(entity_id)))?;
 
     if hits.is_empty() {
         log::debug!(
-            "[topic_tree::backfill] no entity-index hits for entity_id={} — empty backfill",
-            entity_id
+            "[topic_tree::backfill] no entity-index hits for entity_id_hash={} — empty backfill",
+            redact(entity_id)
+        );
+        return Ok(0);
+    }
+
+    // Drop hits older than the hotness recency window — see module docs.
+    let total_hits = hits.len();
+    let mut hits: Vec<_> = hits
+        .into_iter()
+        .filter(|h| h.timestamp_ms >= cutoff_ms)
+        .collect();
+    let dropped = total_hits - hits.len();
+    if dropped > 0 {
+        log::debug!(
+            "[topic_tree::backfill] dropped {dropped} hits older than {BACKFILL_WINDOW_DAYS}d \
+             for entity_id_hash={}",
+            redact(entity_id)
+        );
+    }
+    if hits.is_empty() {
+        log::debug!(
+            "[topic_tree::backfill] all entity-index hits fell outside the {BACKFILL_WINDOW_DAYS}d \
+             window for entity_id_hash={} — empty backfill",
+            redact(entity_id)
         );
         return Ok(0);
     }
@@ -55,7 +123,6 @@ pub async fn backfill_topic_tree(
     // Sort by timestamp ASC so the buffer's `oldest_at` and the sealed
     // summary's `time_range_start` reflect the true historical order, not
     // the DESC ordering `lookup_entity` returns.
-    let mut hits = hits;
     hits.sort_by_key(|h| h.timestamp_ms);
 
     let mut appended = 0usize;
@@ -77,9 +144,9 @@ pub async fn backfill_topic_tree(
             Some(c) => c,
             None => {
                 log::warn!(
-                    "[topic_tree::backfill] missing chunk {} for entity {} — skipping",
+                    "[topic_tree::backfill] missing chunk {} for entity_id_hash={} — skipping",
                     hit.node_id,
-                    entity_id
+                    redact(entity_id)
                 );
                 continue;
             }
@@ -95,20 +162,25 @@ pub async fn backfill_topic_tree(
             score: hit.score,
         };
 
-        append_leaf(config, tree, &leaf, summariser)
+        // Topic-tree backfill: empty labels for sealed summaries — the
+        // tree's scope already pins the canonical id, so cross-pollinating
+        // descendants' entities would noise the index. See LabelStrategy.
+        append_leaf(config, tree, &leaf, summariser, &LabelStrategy::Empty)
             .await
             .with_context(|| {
                 format!(
-                    "backfill append_leaf failed tree_id={} chunk_id={}",
-                    tree.id, chunk.id
+                    "backfill append_leaf failed entity_id_hash={} tree_id={} chunk_id={}",
+                    redact(entity_id),
+                    tree.id,
+                    chunk.id
                 )
             })?;
         appended += 1;
     }
 
     log::info!(
-        "[topic_tree::backfill] done entity_id={} tree_id={} appended={}",
-        entity_id,
+        "[topic_tree::backfill] done entity_id_hash={} tree_id={} appended={}",
+        redact(entity_id),
         tree.id,
         appended
     );
@@ -144,7 +216,7 @@ mod tests {
     fn mk_chunk(source_id: &str, seq: u32, ts_ms: i64, tokens: u32) -> Chunk {
         let ts = Utc.timestamp_millis_opt(ts_ms).unwrap();
         Chunk {
-            id: chunk_id(SourceKind::Chat, source_id, seq),
+            id: chunk_id(SourceKind::Chat, source_id, seq, "test-content"),
             content: format!("substantive chunk mentioning alice {source_id}#{seq}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
@@ -158,6 +230,7 @@ mod tests {
             token_count: tokens,
             seq_in_source: seq,
             created_at: ts,
+            partial_message: false,
         }
     }
 
@@ -171,6 +244,11 @@ mod tests {
             score: 1.0,
         }
     }
+
+    /// Deterministic "now" used by the windowed-backfill tests: 1 hour
+    /// after the latest seeded leaf so all three sit inside the 30-day
+    /// cutoff. Lets us keep the legacy 2023-era timestamps unchanged.
+    const TEST_NOW_MS: i64 = 1_700_000_020_000 + 3_600_000;
 
     #[tokio::test]
     async fn backfill_appends_all_entity_leaves() {
@@ -212,9 +290,15 @@ mod tests {
 
         let tree = get_or_create_topic_tree(&cfg, "email:alice@example.com").unwrap();
         let summariser = InertSummariser::new();
-        let n = backfill_topic_tree(&cfg, &tree, "email:alice@example.com", &summariser)
-            .await
-            .unwrap();
+        let n = backfill_topic_tree_at(
+            &cfg,
+            &tree,
+            "email:alice@example.com",
+            &summariser,
+            TEST_NOW_MS,
+        )
+        .await
+        .unwrap();
         assert_eq!(n, 3);
 
         // L0 buffer should hold all three leaves (combined tokens well
@@ -224,6 +308,38 @@ mod tests {
         assert_eq!(buf.token_sum, 300);
         // Oldest item is c1.
         assert_eq!(buf.oldest_at.unwrap().timestamp_millis(), 1_700_000_000_000);
+    }
+
+    #[tokio::test]
+    async fn backfill_drops_leaves_older_than_window() {
+        let (_tmp, cfg) = test_config();
+        // c_old is 60d before TEST_NOW_MS — outside the 30d cutoff.
+        // c_new is 5d before TEST_NOW_MS — inside the window.
+        let old_ts = TEST_NOW_MS - 60 * DAY_MS;
+        let new_ts = TEST_NOW_MS - 5 * DAY_MS;
+        let c_old = mk_chunk("slack:#eng", 0, old_ts, 100);
+        let c_new = mk_chunk("slack:#eng", 1, new_ts, 100);
+        upsert_chunks(&cfg, &[c_old.clone(), c_new.clone()]).unwrap();
+
+        let e = sample_entity("email:alice@example.com", "alice@example.com");
+        index_entity(&cfg, &e, &c_old.id, "leaf", old_ts, Some("source:slack")).unwrap();
+        index_entity(&cfg, &e, &c_new.id, "leaf", new_ts, Some("source:slack")).unwrap();
+
+        let tree = get_or_create_topic_tree(&cfg, "email:alice@example.com").unwrap();
+        let summariser = InertSummariser::new();
+        let n = backfill_topic_tree_at(
+            &cfg,
+            &tree,
+            "email:alice@example.com",
+            &summariser,
+            TEST_NOW_MS,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 1, "only the in-window leaf should be appended");
+        let buf = src_store::get_buffer(&cfg, &tree.id, 0).unwrap();
+        assert_eq!(buf.item_ids.len(), 1);
+        assert_eq!(buf.item_ids[0], c_new.id);
     }
 
     #[tokio::test]
@@ -247,9 +363,15 @@ mod tests {
 
         let tree = get_or_create_topic_tree(&cfg, "email:alice@example.com").unwrap();
         let summariser = InertSummariser::new();
-        let n = backfill_topic_tree(&cfg, &tree, "email:alice@example.com", &summariser)
-            .await
-            .unwrap();
+        let n = backfill_topic_tree_at(
+            &cfg,
+            &tree,
+            "email:alice@example.com",
+            &summariser,
+            TEST_NOW_MS,
+        )
+        .await
+        .unwrap();
         assert_eq!(n, 1, "only the existing chunk should be appended");
         let buf = src_store::get_buffer(&cfg, &tree.id, 0).unwrap();
         assert_eq!(buf.item_ids.len(), 1);
@@ -273,12 +395,24 @@ mod tests {
 
         let tree = get_or_create_topic_tree(&cfg, "email:alice@example.com").unwrap();
         let summariser = InertSummariser::new();
-        backfill_topic_tree(&cfg, &tree, "email:alice@example.com", &summariser)
-            .await
-            .unwrap();
-        backfill_topic_tree(&cfg, &tree, "email:alice@example.com", &summariser)
-            .await
-            .unwrap();
+        backfill_topic_tree_at(
+            &cfg,
+            &tree,
+            "email:alice@example.com",
+            &summariser,
+            TEST_NOW_MS,
+        )
+        .await
+        .unwrap();
+        backfill_topic_tree_at(
+            &cfg,
+            &tree,
+            "email:alice@example.com",
+            &summariser,
+            TEST_NOW_MS,
+        )
+        .await
+        .unwrap();
         // append_leaf is idempotent so the buffer still has exactly one row.
         let buf = src_store::get_buffer(&cfg, &tree.id, 0).unwrap();
         assert_eq!(buf.item_ids.len(), 1);
@@ -300,9 +434,15 @@ mod tests {
         .unwrap();
         let tree = get_or_create_topic_tree(&cfg, "email:alice@example.com").unwrap();
         let summariser = InertSummariser::new();
-        let n = backfill_topic_tree(&cfg, &tree, "email:alice@example.com", &summariser)
-            .await
-            .unwrap();
+        let n = backfill_topic_tree_at(
+            &cfg,
+            &tree,
+            "email:alice@example.com",
+            &summariser,
+            TEST_NOW_MS,
+        )
+        .await
+        .unwrap();
         assert_eq!(n, 0);
     }
 }

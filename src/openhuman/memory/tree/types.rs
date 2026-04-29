@@ -232,20 +232,40 @@ pub struct Chunk {
     /// When this chunk was persisted to the local store.
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub created_at: DateTime<Utc>,
+    /// True when this chunk is a sub-split of a single logical unit (e.g. a
+    /// chat message or email body that exceeded `max_tokens`). The full logical
+    /// unit was split into multiple pieces; each piece carries this flag so
+    /// downstream scorers can lower its weight relative to whole-unit chunks.
+    #[serde(default)]
+    pub partial_message: bool,
 }
 
 /// Deterministic chunk id.
 ///
-/// `sha256(source_kind | "\0" | source_id | "\0" | seq)` hex-encoded, first
-/// 32 chars (128 bits of collision resistance). Short enough for human
-/// inspection, long enough for global uniqueness in a single-user workspace.
-pub fn chunk_id(source_kind: SourceKind, source_id: &str, seq_in_source: u32) -> String {
+/// `sha256(source_kind | "\0" | source_id | "\0" | seq | "\0" | content)`
+/// hex-encoded, first 32 chars (128 bits of collision resistance). Short
+/// enough for human inspection, long enough for global uniqueness in a
+/// single-user workspace.
+///
+/// Content is included so multiple ingest calls that share a `source_id`
+/// (e.g. successive Slack 6-hour buckets all flowing into one
+/// per-connection source tree) don't collide on `seq=0,1,2,…`. Re-ingesting
+/// the same canonical content under the same `(source_id, seq)` still
+/// produces the same id, so upserts stay idempotent.
+pub fn chunk_id(
+    source_kind: SourceKind,
+    source_id: &str,
+    seq_in_source: u32,
+    content: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(source_kind.as_str().as_bytes());
     hasher.update([0u8]);
     hasher.update(source_id.as_bytes());
     hasher.update([0u8]);
     hasher.update(seq_in_source.to_be_bytes());
+    hasher.update([0u8]);
+    hasher.update(content.as_bytes());
     let digest = hasher.finalize();
     let hex = digest.iter().fold(String::with_capacity(64), |mut acc, b| {
         use std::fmt::Write;
@@ -308,30 +328,40 @@ mod tests {
 
     #[test]
     fn chunk_id_is_deterministic() {
-        let a = chunk_id(SourceKind::Chat, "slack:#eng", 0);
-        let b = chunk_id(SourceKind::Chat, "slack:#eng", 0);
+        let a = chunk_id(SourceKind::Chat, "slack:#eng", 0, "hello");
+        let b = chunk_id(SourceKind::Chat, "slack:#eng", 0, "hello");
         assert_eq!(a, b);
         assert_eq!(a.len(), 32);
     }
 
     #[test]
     fn chunk_id_varies_with_seq() {
-        let a = chunk_id(SourceKind::Chat, "slack:#eng", 0);
-        let b = chunk_id(SourceKind::Chat, "slack:#eng", 1);
+        let a = chunk_id(SourceKind::Chat, "slack:#eng", 0, "hello");
+        let b = chunk_id(SourceKind::Chat, "slack:#eng", 1, "hello");
         assert_ne!(a, b);
     }
 
     #[test]
     fn chunk_id_varies_with_source_kind() {
-        let a = chunk_id(SourceKind::Chat, "foo", 0);
-        let b = chunk_id(SourceKind::Email, "foo", 0);
+        let a = chunk_id(SourceKind::Chat, "foo", 0, "hello");
+        let b = chunk_id(SourceKind::Email, "foo", 0, "hello");
         assert_ne!(a, b);
     }
 
     #[test]
     fn chunk_id_varies_with_source_id() {
-        let a = chunk_id(SourceKind::Chat, "x", 0);
-        let b = chunk_id(SourceKind::Chat, "y", 0);
+        let a = chunk_id(SourceKind::Chat, "x", 0, "hello");
+        let b = chunk_id(SourceKind::Chat, "y", 0, "hello");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn chunk_id_varies_with_content() {
+        // Critical for the per-connection source_id design: two ingests
+        // sharing source_id but different content (e.g. different 6-hour
+        // Slack buckets) must produce distinct ids at seq=0,1,2,…
+        let a = chunk_id(SourceKind::Chat, "slack:c1", 0, "bucket A content");
+        let b = chunk_id(SourceKind::Chat, "slack:c1", 0, "bucket B content");
         assert_ne!(a, b);
     }
 

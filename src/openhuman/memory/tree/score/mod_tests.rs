@@ -5,12 +5,13 @@ use chrono::Utc;
 fn test_chunk(content: &str) -> Chunk {
     let meta = Metadata::point_in_time(SourceKind::Email, "t1", "alice", Utc::now());
     Chunk {
-        id: chunk_id(SourceKind::Email, "t1", 0),
+        id: chunk_id(SourceKind::Email, "t1", 0, "test-content"),
         content: content.to_string(),
         token_count: crate::openhuman::memory::tree::types::approx_token_count(content),
         metadata: meta,
         seq_in_source: 0,
         created_at: Utc::now(),
+        partial_message: false,
     }
 }
 

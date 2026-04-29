@@ -21,7 +21,9 @@
 use anyhow::Result;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf, LeafRef};
+use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+    append_leaf, LabelStrategy, LeafRef,
+};
 use crate::openhuman::memory::tree::source_tree::store as src_store;
 use crate::openhuman::memory::tree::source_tree::summariser::Summariser;
 use crate::openhuman::memory::tree::source_tree::types::{TreeKind, TreeStatus};
@@ -90,7 +92,16 @@ async fn route_one_entity(
                 entities: vec![entity_id.to_string()],
                 ..leaf.clone()
             };
-            append_leaf(config, &tree, &topic_leaf, summariser).await?;
+            // Topic-tree seals leave entities/topics empty: the tree's
+            // scope already pins the canonical id this tree represents.
+            append_leaf(
+                config,
+                &tree,
+                &topic_leaf,
+                summariser,
+                &LabelStrategy::Empty,
+            )
+            .await?;
         } else {
             log::debug!(
                 "[topic_tree::routing] skip archived topic tree id={} entity={}",
@@ -148,7 +159,7 @@ mod tests {
     fn persist_chunk(cfg: &Config, source_id: &str, seq: u32, ts_ms: i64, tokens: u32) -> String {
         let ts = Utc.timestamp_millis_opt(ts_ms).unwrap();
         let c = Chunk {
-            id: chunk_id(SourceKind::Chat, source_id, seq),
+            id: chunk_id(SourceKind::Chat, source_id, seq, "test-content"),
             content: format!("chunk content {source_id} {seq}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
@@ -162,6 +173,7 @@ mod tests {
             token_count: tokens,
             seq_in_source: seq,
             created_at: ts,
+            partial_message: false,
         };
         let id = c.id.clone();
         upsert_chunks(cfg, &[c]).unwrap();
@@ -295,9 +307,15 @@ mod tests {
             crate::openhuman::memory::tree::topic_tree::types::TOPIC_RECHECK_EVERY - 1;
         crate::openhuman::memory::tree::topic_tree::store::upsert(&cfg, &counters).unwrap();
 
-        // Seed a leaf in slack and gmail referencing Alice.
-        let c1 = persist_chunk(&cfg, "slack:#eng", 0, 1_700_000_000_000, 100);
-        let c2 = persist_chunk(&cfg, "gmail:alice", 0, 1_700_000_010_000, 100);
+        // Seed leaves in slack and gmail referencing Alice. Anchor the
+        // timestamps to "now" so the 30-day backfill window
+        // (topic_tree::backfill::BACKFILL_WINDOW_DAYS) covers them.
+        let now_ms = Utc::now().timestamp_millis();
+        let ts_c1 = now_ms - 20_000;
+        let ts_c2 = now_ms - 10_000;
+        let ts_c3 = now_ms;
+        let c1 = persist_chunk(&cfg, "slack:#eng", 0, ts_c1, 100);
+        let c2 = persist_chunk(&cfg, "gmail:alice", 0, ts_c2, 100);
         let e = CanonicalEntity {
             canonical_id: entity_id.into(),
             kind: EntityKind::Email,
@@ -306,24 +324,16 @@ mod tests {
             span_end: entity_id.len() as u32,
             score: 1.0,
         };
-        index_entity(&cfg, &e, &c1, "leaf", 1_700_000_000_000, Some("slack:#eng")).unwrap();
-        index_entity(
-            &cfg,
-            &e,
-            &c2,
-            "leaf",
-            1_700_000_010_000,
-            Some("gmail:alice"),
-        )
-        .unwrap();
+        index_entity(&cfg, &e, &c1, "leaf", ts_c1, Some("slack:#eng")).unwrap();
+        index_entity(&cfg, &e, &c2, "leaf", ts_c2, Some("gmail:alice")).unwrap();
 
         // A third leaf arrives — should both fan out to (future) topic tree
         // and push the curator over the recheck cadence, materialising it.
-        let c3 = persist_chunk(&cfg, "slack:#eng", 1, 1_700_000_020_000, 100);
+        let c3 = persist_chunk(&cfg, "slack:#eng", 1, ts_c3, 100);
         let leaf = LeafRef {
             chunk_id: c3.clone(),
             token_count: 100,
-            timestamp: Utc.timestamp_millis_opt(1_700_000_020_000).unwrap(),
+            timestamp: Utc.timestamp_millis_opt(ts_c3).unwrap(),
             content: "new mention".into(),
             entities: vec![entity_id.into()],
             topics: vec![],

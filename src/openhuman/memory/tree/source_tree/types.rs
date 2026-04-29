@@ -172,9 +172,27 @@ impl Buffer {
     }
 }
 
-/// Token ceiling for one summariser invocation — aligned with the Phase 1
-/// chunker ceiling so a single leaf never busts a seal on its own.
-pub const TOKEN_BUDGET: u32 = 10_000;
+/// Token ceiling for one summariser invocation.
+///
+/// Sized for the local 1B summariser (`gemma3:1b-it-qat`), which produces
+/// noticeably better summaries with ≤4-5k input than at higher caps. The
+/// chunker's `DEFAULT_CHUNK_MAX_TOKENS` (3_000) sits below this so each
+/// L0 buffer accumulates roughly 1-3 chunks before sealing.
+///
+/// Gates only the L0 → L1 seal: leaves are fan-in by raw token volume so
+/// the summariser input stays bounded. Summaries above L0 use
+/// [`SUMMARY_FANOUT`] instead — see `bucket_seal::should_seal`.
+pub const TOKEN_BUDGET: u32 = 4_500;
+
+/// Sibling count that triggers a seal at level ≥ 1 (summaries → next level).
+///
+/// Decouples upper-level seals from per-summary token size so the tree's
+/// fan-in stays stable regardless of summariser quality. With a real
+/// summariser each L1 might be ~500 tokens; with the inert fallback each
+/// L1 fills the full [`TOKEN_BUDGET`]. Token-based gating collapses the
+/// inert case into a 1:1:1 chain — count-based gating gives a real tree
+/// shape (`SUMMARY_FANOUT` children per parent) in both cases.
+pub const SUMMARY_FANOUT: u32 = 4;
 
 /// Default age at which a non-empty buffer is force-sealed even under the
 /// token budget. Keeps recent activity from stalling waiting for more

@@ -1,5 +1,7 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
+import { resetUserScopedState } from './resetActions';
+
 export type SocketConnectionStatus = 'connected' | 'disconnected' | 'connecting';
 
 export interface SocketUserState {
@@ -50,6 +52,9 @@ const socketSlice = createSlice({
       const { userId } = action.payload;
       state.byUser[userId] = { ...initialUserState };
     },
+  },
+  extraReducers: builder => {
+    builder.addCase(resetUserScopedState, () => initialState);
   },
 });
 

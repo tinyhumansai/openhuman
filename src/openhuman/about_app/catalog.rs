@@ -187,6 +187,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "intelligence.slack_memory_ingest",
+        name: "Slack Memory Ingestion",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Backfill the last 6 days of Slack history into the memory tree and keep it up to date by flushing each closed 6-hour UTC bucket. Driven by an authenticated Slack connection (OAuth via Composio).",
+        how_to: "Settings > Messaging Channels > Slack",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "intelligence.notifications_dismiss",
         name: "Dismiss Notifications",
         domain: "intelligence",

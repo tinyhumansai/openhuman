@@ -1,6 +1,7 @@
 use super::*;
 use crate::openhuman::memory::tree::types::chunk_id;
 use chrono::TimeZone;
+use rusqlite::params;
 use tempfile::TempDir;
 
 fn test_config() -> (TempDir, Config) {
@@ -13,7 +14,7 @@ fn test_config() -> (TempDir, Config) {
 fn sample_chunk(source_id: &str, seq: u32, ts_ms: i64) -> Chunk {
     let ts = Utc.timestamp_millis_opt(ts_ms).unwrap();
     Chunk {
-        id: chunk_id(SourceKind::Chat, source_id, seq),
+        id: chunk_id(SourceKind::Chat, source_id, seq, "test-content"),
         content: format!("content {source_id} {seq}"),
         metadata: Metadata {
             source_kind: SourceKind::Chat,
@@ -27,6 +28,7 @@ fn sample_chunk(source_id: &str, seq: u32, ts_ms: i64) -> Chunk {
         token_count: 12,
         seq_in_source: seq,
         created_at: ts,
+        partial_message: false,
     }
 }
 
@@ -163,4 +165,38 @@ fn empty_batch_is_noop() {
     let (_tmp, cfg) = test_config();
     assert_eq!(upsert_chunks(&cfg, &[]).unwrap(), 0);
     assert_eq!(count_chunks(&cfg).unwrap(), 0);
+}
+
+#[test]
+fn schema_has_content_path_and_content_sha256_columns() {
+    // Phase MD-content: verify that with_connection applies the additive
+    // migrations for the new pointer + hash columns on a fresh DB.
+    let (_tmp, cfg) = test_config();
+    with_connection(&cfg, |conn| {
+        let mut has_content_path = false;
+        let mut has_content_sha256 = false;
+        let mut stmt = conn.prepare("PRAGMA table_info(mem_tree_chunks)")?;
+        let names: Vec<String> = stmt
+            .query_map(params![], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .collect();
+        for name in &names {
+            if name == "content_path" {
+                has_content_path = true;
+            }
+            if name == "content_sha256" {
+                has_content_sha256 = true;
+            }
+        }
+        assert!(
+            has_content_path,
+            "mem_tree_chunks must have content_path column after migration; found: {names:?}"
+        );
+        assert!(
+            has_content_sha256,
+            "mem_tree_chunks must have content_sha256 column after migration; found: {names:?}"
+        );
+        Ok(())
+    })
+    .unwrap();
 }

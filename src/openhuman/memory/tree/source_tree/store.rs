@@ -21,6 +21,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::StagedSummary;
 use crate::openhuman::memory::tree::score::embed::{decode_optional_blob, pack_checked};
 use crate::openhuman::memory::tree::source_tree::types::{
     Buffer, SummaryNode, Tree, TreeKind, TreeStatus,
@@ -180,7 +181,16 @@ fn row_to_tree(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tree> {
 /// Phase 4 (#710): if `node.embedding` is `Some`, the packed vector is
 /// written to the `embedding` blob column; `None` writes NULL so legacy
 /// rows from Phases 1-3 (no embed) read back identically.
-pub(crate) fn insert_summary_tx(tx: &Transaction<'_>, node: &SummaryNode) -> Result<()> {
+///
+/// Phase MD-content: if `staged` is `Some`, writes `content_path` and
+/// `content_sha256` and truncates `content` to a ≤500-char preview. Callers
+/// that have not yet staged the file pass `None`, in which case the full
+/// `node.content` is stored (legacy behaviour).
+pub(crate) fn insert_summary_tx(
+    tx: &Transaction<'_>,
+    node: &SummaryNode,
+    staged: Option<&StagedSummary>,
+) -> Result<()> {
     let embedding_blob: Option<Vec<u8>> = match node.embedding.as_deref() {
         Some(v) => Some(
             pack_checked(v)
@@ -188,14 +198,30 @@ pub(crate) fn insert_summary_tx(tx: &Transaction<'_>, node: &SummaryNode) -> Res
         ),
         None => None,
     };
+
+    // Phase MD-content: when a staged file exists, truncate `content` to a
+    // ≤500-char plain-text preview (char boundary safe via chars().take(500)).
+    let (content_preview, content_path, content_sha256) = match staged {
+        Some(s) => {
+            let preview: String = node.content.chars().take(500).collect();
+            (
+                preview,
+                Some(s.content_path.clone()),
+                Some(s.content_sha256.clone()),
+            )
+        }
+        None => (node.content.clone(), None, None),
+    };
+
     tx.execute(
         "INSERT OR IGNORE INTO mem_tree_summaries (
             id, tree_id, tree_kind, level, parent_id,
             child_ids_json, content, token_count,
             entities_json, topics_json,
             time_range_start_ms, time_range_end_ms,
-            score, sealed_at_ms, deleted, embedding
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            score, sealed_at_ms, deleted, embedding,
+            content_path, content_sha256
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             node.id,
             node.tree_id,
@@ -203,7 +229,7 @@ pub(crate) fn insert_summary_tx(tx: &Transaction<'_>, node: &SummaryNode) -> Res
             node.level,
             node.parent_id,
             serde_json::to_string(&node.child_ids)?,
-            node.content,
+            content_preview,
             node.token_count,
             serde_json::to_string(&node.entities)?,
             serde_json::to_string(&node.topics)?,
@@ -213,6 +239,8 @@ pub(crate) fn insert_summary_tx(tx: &Transaction<'_>, node: &SummaryNode) -> Res
             node.sealed_at.timestamp_millis(),
             node.deleted as i64,
             embedding_blob,
+            content_path,
+            content_sha256,
         ],
     )
     .with_context(|| format!("Failed to insert summary id={}", node.id))?;

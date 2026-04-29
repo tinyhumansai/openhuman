@@ -371,6 +371,21 @@ pub fn lookup_entity(
     })
 }
 
+pub fn list_entity_ids_for_node(config: &Config, node_id: &str) -> Result<Vec<String>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT entity_id
+               FROM mem_tree_entity_index
+              WHERE node_id = ?1
+              ORDER BY score DESC, timestamp_ms DESC, entity_id ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![node_id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    })
+}
+
 /// Count rows in the entity index (for tests / diagnostics).
 pub fn count_entity_index(config: &Config) -> Result<u64> {
     with_connection(config, |conn| {

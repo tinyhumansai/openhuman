@@ -464,7 +464,7 @@ jobs:
           CORE_MANIFEST: ${{ steps.core-paths.outputs.core_manifest }}
           CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
           OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
-          OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_SENTRY_DSN }}
+          OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_CORE_SENTRY_DSN }}
           # Sentry release tracking (#405): `option_env!("OPENHUMAN_BUILD_SHA")`
           # in src/main.rs bakes the short SHA into the release tag
           # (`openhuman@<version>+<sha>`) so core events match the frontend.
@@ -511,7 +511,7 @@ jobs:
           # (`vite build`) bakes Sentry + debug flags into the final bundle.
           # Vite is invoked via tauri.conf.json's beforeBuildCommand during
           # `cargo tauri build`, so these env vars must be present here.
-          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+          VITE_SENTRY_DSN: ${{ vars.OPENHUMAN_REACT_SENTRY_DSN }}
           VITE_DEBUG: ${{ vars.VITE_DEBUG }}
           # Sentry release tracking (#405) — must match the Vite build triggered
           # by Tauri so source maps uploaded there resolve correctly against the
@@ -803,24 +803,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      # TODO: Uncomment this when we have a staging tag
-      # - name: Build and push staging tag
-      #   uses: docker/build-push-action@v6
-      #   with:
-      #     context: .
-      #     file: Dockerfile
-      #     push: true
-      #     tags: |
-      #       ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging-${{ needs.prepare-release.outputs.tag }}
-      #     cache-from: type=gha
-      #     cache-to: type=gha,mode=max
-      #     labels: |
-      #       org.opencontainers.image.title=openhuman-core
-      #       org.opencontainers.image.description=OpenHuman core JSON-RPC server
-      #       org.opencontainers.image.version=${{ needs.prepare-release.outputs.version }}
-      #       org.opencontainers.image.source=https://github.com/tinyhumansai/openhuman
-      #       org.opencontainers.image.revision=${{ needs.prepare-release.outputs.sha }}
 
   # =========================================================================
   # Phase 3c: Generate and upload latest.json for the Tauri auto-updater.

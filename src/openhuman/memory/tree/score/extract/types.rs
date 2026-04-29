@@ -26,12 +26,22 @@ pub enum EntityKind {
     Url,
     Handle,
     Hashtag,
-    // Semantic (reserved — not emitted in Phase 2)
+    // Semantic — emitted by the LLM extractor.
     Person,
     Organization,
     Location,
     Event,
     Product,
+    /// Temporal expressions: "Friday", "Q2 2026", "EOD tomorrow", "next sprint".
+    Datetime,
+    /// Tools / frameworks / programming languages / services:
+    /// "Rust", "OAuth", "Slack API", "nomic-embed".
+    Technology,
+    /// Code / ticket / doc references that point at something addressable:
+    /// "PR #934", "src/openhuman/...", "OH-42", "ab7da2e2".
+    Artifact,
+    /// Amounts / metrics / money: "$5K", "20/min", "10k tokens", "52 chunks".
+    Quantity,
     Misc,
     // Thematic — scorer-surfaced topics (hashtag-like short phrases or
     // LLM-extracted themes). Promoted into the canonical entity stream
@@ -54,6 +64,10 @@ impl EntityKind {
             Self::Location => "location",
             Self::Event => "event",
             Self::Product => "product",
+            Self::Datetime => "datetime",
+            Self::Technology => "technology",
+            Self::Artifact => "artifact",
+            Self::Quantity => "quantity",
             Self::Misc => "misc",
             Self::Topic => "topic",
         }
@@ -70,6 +84,10 @@ impl EntityKind {
             "location" => Ok(Self::Location),
             "event" => Ok(Self::Event),
             "product" => Ok(Self::Product),
+            "datetime" => Ok(Self::Datetime),
+            "technology" => Ok(Self::Technology),
+            "artifact" => Ok(Self::Artifact),
+            "quantity" => Ok(Self::Quantity),
             "misc" => Ok(Self::Misc),
             "topic" => Ok(Self::Topic),
             other => Err(format!("unknown entity kind: {other}")),
@@ -207,7 +225,12 @@ mod tests {
             EntityKind::Location,
             EntityKind::Event,
             EntityKind::Product,
+            EntityKind::Datetime,
+            EntityKind::Technology,
+            EntityKind::Artifact,
+            EntityKind::Quantity,
             EntityKind::Misc,
+            EntityKind::Topic,
         ] {
             assert_eq!(EntityKind::parse(k.as_str()).unwrap(), k);
         }

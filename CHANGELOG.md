@@ -27,7 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- None
+- **Webview Accounts**: Verified loading overlay implementation (Issue #867)
+  - Webviews now display a loading spinner while CEF initializes provider pages
+  - Three independent signals trigger reveal: native `on_page_load`, CDP `Page.loadEventFired`, and 15s watchdog
+  - Webview spawns at 1x1 size (off-screen) to prevent blank coverage during load
+  - Rust backend resizes/repositions webview and emits `webview-account:load` event
+  - Frontend dispatches status='open' to hide spinner once page is painted
 
 ---
 

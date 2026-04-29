@@ -78,8 +78,23 @@ codesign_framework() {
 # ── Nested Frameworks/ (CEF + Helper apps) ──────────────────────────────────
 # Must be signed from the inside out, before the outer .app bundle.
 if [ -d "$APP_PATH/Contents/Frameworks" ]; then
-  # 1. Sign each *.framework as a single bundle.
+  # 1. For each *.framework: pre-sign loose dylibs/.so files inside it
+  # (CEF puts libEGL, libGLESv2, libvk_swiftshader, libcef_sandbox in
+  # `Libraries/` next to the main binary, NOT under Versions/A/, so the
+  # bundle signature doesn't reach them and notarization rejects them as
+  # ad-hoc signed without a secure timestamp). Then seal the framework
+  # bundle so its CodeResources covers the freshly-signed dylibs.
   while IFS= read -r -d '' fw; do
+    FW_NAME="$(basename "$fw" .framework)"
+    echo "[sign]   Pre-signing inner Mach-O files in: $(basename "$fw")"
+    while IFS= read -r -d '' inner; do
+      # Skip the framework's main binary (sealed by the bundle pass below).
+      case "$inner" in
+        "$fw/$FW_NAME"|"$fw/Versions/"*"/$FW_NAME") continue ;;
+      esac
+      echo "[sign]     $(basename "$inner")"
+      codesign_framework "$inner"
+    done < <(find "$fw" \( -name '*.dylib' -o -name '*.so' \) -type f -print0)
     echo "[sign]   Signing framework bundle: $(basename "$fw")"
     codesign_framework "$fw"
   done < <(find "$APP_PATH/Contents/Frameworks" -maxdepth 1 -type d -name '*.framework' -print0)
@@ -121,16 +136,44 @@ echo "[sign] Notarizing..."
 NOTARIZE_ZIP="$(mktemp /tmp/OpenHuman-notarize-XXXXXX.zip)"
 ditto -c -k --keepParent "$APP_PATH" "$NOTARIZE_ZIP"
 
+SUBMIT_OUT="$(mktemp /tmp/notarize-submit-XXXXXX.json)"
+set +e
 xcrun notarytool submit "$NOTARIZE_ZIP" \
   --apple-id "$APPLE_ID" \
   --password "$APPLE_PASSWORD" \
   --team-id "$APPLE_TEAM_ID" \
-  --wait
+  --output-format json \
+  --wait > "$SUBMIT_OUT"
+SUBMIT_RC=$?
+set -e
 
+cat "$SUBMIT_OUT"
 rm -f "$NOTARIZE_ZIP"
+
+SUBMISSION_ID="$(/usr/bin/plutil -convert json -o - "$SUBMIT_OUT" 2>/dev/null \
+  | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+SUBMISSION_STATUS="$(/usr/bin/plutil -convert json -o - "$SUBMIT_OUT" 2>/dev/null \
+  | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
+rm -f "$SUBMIT_OUT"
+
+echo "[sign] notarytool exit=$SUBMIT_RC id=$SUBMISSION_ID status=$SUBMISSION_STATUS"
+
+if [ -n "$SUBMISSION_ID" ]; then
+  echo "[sign] Fetching notarytool developer log for $SUBMISSION_ID:"
+  xcrun notarytool log "$SUBMISSION_ID" \
+    --apple-id "$APPLE_ID" \
+    --password "$APPLE_PASSWORD" \
+    --team-id "$APPLE_TEAM_ID" || true
+fi
+
+if [ "$SUBMISSION_STATUS" != "Accepted" ] || [ "$SUBMIT_RC" -ne 0 ]; then
+  echo "[sign] ERROR: notarization did not succeed (status=$SUBMISSION_STATUS, rc=$SUBMIT_RC)" >&2
+  exit 1
+fi
 
 # ── Staple ───────────────────────────────────────────────────────────────────
 echo "[sign] Stapling..."
 xcrun stapler staple "$APP_PATH"
 
 echo "[sign] Notarization complete"
+

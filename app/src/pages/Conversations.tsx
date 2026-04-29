@@ -34,6 +34,8 @@ import {
 import type { ConfirmationModal as ConfirmationModalType } from '../types/intelligence';
 import type { ThreadMessage } from '../types/thread';
 import { splitAgentMessageIntoBubbles } from '../utils/agentMessageBubbles';
+import { BILLING_DASHBOARD_URL } from '../utils/links';
+import { openUrl } from '../utils/openUrl';
 import {
   isTauri,
   notifyOverlaySttState,
@@ -1026,7 +1028,8 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                     )}
                   <div
                     className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className="relative w-full md:max-w-[75%]">
+                    <div
+                      className={`relative ${msg.sender === 'user' ? 'w-fit max-w-[75%]' : 'w-full md:max-w-[75%]'}`}>
                       {msg.sender === 'agent' ? (
                         <div className="space-y-1">
                           {splitAgentMessageIntoBubbles(msg.content).map(
@@ -1071,7 +1074,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                           )}
                         </div>
                       ) : (
-                        <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md">
+                        <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md break-words overflow-hidden">
                           <BubbleMarkdown content={msg.content} tone="user" />
                           {latestVisibleMessage?.id === msg.id && (
                             <p className="mt-1 text-[10px] text-white/60">
@@ -1320,7 +1323,9 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                       title="Approaching usage limit"
                       message={`You've used ${Math.round(Math.max(usagePct10h, usagePct7d) * 100)}% of your inference budget. Upgrade for higher limits.`}
                       ctaLabel="Upgrade"
-                      onCtaClick={() => navigate('/settings/billing')}
+                      onCtaClick={() => {
+                        void openUrl(BILLING_DASHBOARD_URL);
+                      }}
                       dismissible
                       onDismiss={() => dismissBanner('conversations-warning')}
                     />
@@ -1351,7 +1356,9 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                   </div>
                   {shouldShowBudgetCompletedMessage && (
                     <button
-                      onClick={() => navigate('/settings/billing')}
+                      onClick={() => {
+                        void openUrl(BILLING_DASHBOARD_URL);
+                      }}
                       className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
                       Top Up
                     </button>

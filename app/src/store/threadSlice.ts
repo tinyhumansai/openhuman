@@ -3,6 +3,7 @@ import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { threadApi } from '../services/api/threadApi';
 import type { Thread, ThreadMessage } from '../types/thread';
 import { IS_DEV } from '../utils/config';
+import { resetUserScopedState } from './resetActions';
 
 interface ThreadState {
   threads: Thread[];
@@ -336,7 +337,8 @@ const threadSlice = createSlice({
       })
       .addCase(deleteThread.fulfilled, (state, action) => {
         delete state.messagesByThreadId[action.payload.threadId];
-      });
+      })
+      .addCase(resetUserScopedState, () => initialState);
   },
 });
 

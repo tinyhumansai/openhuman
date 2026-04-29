@@ -6,6 +6,20 @@ description = "Core RPC URL, sidecar restart, dictation hotkey, webview-account,
 allow = [
     "core_rpc_url",
     "restart_core_process",
+    # `restart_app` triggers `app.restart()` so CEF re-initializes against
+    # the active user's `users/<id>/cef` profile after an identity flip
+    # (#900). Without this allow entry, the invoke is silently denied by
+    # Tauri capabilities and webviews keep the prior user's third-party
+    # cookies.
+    "restart_app",
+    "schedule_cef_profile_purge",
+    # `get_active_user_id` reads `~/.openhuman/active_user.toml` so the
+    # frontend can prime `userScopedStorage` from the Rust source of truth
+    # BEFORE redux-persist hydrates — the prior `localStorage`-only seed
+    # was bound to the per-user CEF profile dir and went stale across
+    # restart-driven flips, causing a false re-flip and restart loop on
+    # every login. (#900)
+    "get_active_user_id",
     "service_install_direct",
     "service_start_direct",
     "service_stop_direct",

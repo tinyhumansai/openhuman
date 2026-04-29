@@ -19,11 +19,17 @@
 //! - Idempotency: if an L0 daily node already exists for the target day,
 //!   return `DigestOutcome::Skipped` rather than emitting a duplicate.
 
+use std::collections::BTreeSet;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use rusqlite::OptionalExtension;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::{
+    atomic::stage_summary, paths::slugify_source_id, read as content_read, SummaryComposeInput,
+    SummaryTreeKind,
+};
 use crate::openhuman::memory::tree::global_tree::registry::get_or_create_global_tree;
 use crate::openhuman::memory::tree::global_tree::seal::append_daily_and_cascade;
 use crate::openhuman::memory::tree::global_tree::GLOBAL_TOKEN_BUDGET;
@@ -154,6 +160,25 @@ pub async fn end_of_day_digest(
         .await
         .context("embed daily summary during end_of_day_digest")?;
 
+    // L0 daily node inherits entities/topics by union of contributing
+    // source-tree summaries. Each input was already labeled at source-tree
+    // seal time, so emergent themes don't need another extractor pass
+    // here — global is a sink; union preserves "days that mentioned X"
+    // retrieval without an extra LLM call. See LabelStrategy in
+    // source_tree::bucket_seal for the full design.
+    let mut entities_set: BTreeSet<String> = BTreeSet::new();
+    let mut topics_set: BTreeSet<String> = BTreeSet::new();
+    for inp in &inputs {
+        for e in &inp.entities {
+            entities_set.insert(e.clone());
+        }
+        for t in &inp.topics {
+            topics_set.insert(t.clone());
+        }
+    }
+    let daily_entities: Vec<String> = entities_set.into_iter().collect();
+    let daily_topics: Vec<String> = topics_set.into_iter().collect();
+
     let now = Utc::now();
     let daily_id = new_summary_id(0);
     let daily = SummaryNode {
@@ -165,8 +190,8 @@ pub async fn end_of_day_digest(
         child_ids: inputs.iter().map(|i| i.id.clone()).collect(),
         content: output.content,
         token_count: output.token_count,
-        entities: output.entities,
-        topics: output.topics,
+        entities: daily_entities,
+        topics: daily_topics,
         time_range_start: day_start,
         time_range_end: day_end,
         score,
@@ -174,6 +199,44 @@ pub async fn end_of_day_digest(
         deleted: false,
         embedding: Some(embedding),
     };
+
+    // Phase MD-content: stage the L0 daily .md file before the write tx.
+    // `date_for_global` = day_start (the calendar day this digest covers).
+    let daily_compose_input = SummaryComposeInput {
+        summary_id: &daily.id,
+        tree_kind: SummaryTreeKind::Global,
+        tree_id: &daily.tree_id,
+        tree_scope: &global.scope,
+        level: daily.level,
+        child_ids: &daily.child_ids,
+        child_count: daily.child_ids.len(),
+        time_range_start: daily.time_range_start,
+        time_range_end: daily.time_range_end,
+        sealed_at: daily.sealed_at,
+        body: &daily.content,
+    };
+    // Stage the summary .md file — abort the digest on failure so the database
+    // never commits a row with content_path = NULL. The digest job is retried
+    // via the normal job-retry path.
+    let content_root_daily = config.memory_tree_content_root();
+    let global_scope_slug = slugify_source_id(&global.scope);
+    let staged_daily = stage_summary(
+        &content_root_daily,
+        &daily_compose_input,
+        &global_scope_slug,
+        Some(day_start),
+    )
+    .with_context(|| {
+        format!(
+            "stage_summary failed for daily {}; digest aborted for retry",
+            daily.id
+        )
+    })?;
+    log::debug!(
+        "[global_tree::digest] staged daily summary {} → {}",
+        daily.id,
+        staged_daily.content_path
+    );
 
     // Persist the daily node. Note: we do NOT backlink parent_id on the
     // child summaries here — their parents are their own source trees, not
@@ -183,7 +246,7 @@ pub async fn end_of_day_digest(
     let tree_id_clone = global.id.clone();
     with_connection(config, move |conn| {
         let tx = conn.unchecked_transaction()?;
-        store::insert_summary_tx(&tx, &daily_clone)?;
+        store::insert_summary_tx(&tx, &daily_clone, Some(&staged_daily))?;
         // Index any entities the summariser emitted (no-op under inert).
         crate::openhuman::memory::tree::score::store::index_summary_entity_ids_tx(
             &tx,
@@ -315,9 +378,23 @@ fn pick_source_contribution(
         }
     };
 
+    // Read the full body from disk — `node.content` is a ≤500-char preview
+    // after the MD-on-disk migration. The digest summariser must receive the
+    // complete summary text so the daily recap is not assembled from previews.
+    let body = match content_read::read_summary_body(config, &node.id) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!(
+                "[global_tree::digest] read_summary_body failed for {} — using preview: {e:#}",
+                node.id
+            );
+            // Non-fatal: fall back to preview for pre-MD-migration rows.
+            node.content.clone()
+        }
+    };
     Ok(Some(SummaryInput {
         id: node.id,
-        content: format!("[{}]\n{}", source_tree.scope, node.content),
+        content: format!("[{}]\n{}", source_tree.scope, body),
         token_count: node.token_count,
         entities: node.entities,
         topics: node.topics,

@@ -73,6 +73,7 @@ mod tests {
             allowed_users: vec!["alice".into()],
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
+            silent_streaming: true,
             mention_only: false,
         };
 

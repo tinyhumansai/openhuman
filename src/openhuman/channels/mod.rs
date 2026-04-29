@@ -33,8 +33,6 @@ pub use providers::telegram;
 pub use providers::web;
 pub use providers::whatsapp;
 #[cfg(feature = "whatsapp-web")]
-pub use providers::whatsapp_storage;
-#[cfg(feature = "whatsapp-web")]
 pub use providers::whatsapp_web;
 
 pub use cli::CliChannel;

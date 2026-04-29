@@ -1,5 +1,7 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
+import { resetUserScopedState } from './resetActions';
+
 export type ToolTimelineEntryStatus = 'running' | 'success' | 'error';
 
 export interface InferenceStatus {
@@ -132,6 +134,9 @@ const chatRuntimeSlice = createSlice({
     resetSessionTokenUsage: state => {
       state.sessionTokenUsage = { inputTokens: 0, outputTokens: 0, turns: 0, lastUpdated: 0 };
     },
+  },
+  extraReducers: builder => {
+    builder.addCase(resetUserScopedState, () => initialState);
   },
 });
 

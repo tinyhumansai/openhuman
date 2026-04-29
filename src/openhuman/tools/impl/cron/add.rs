@@ -24,7 +24,7 @@ impl Tool for CronAddTool {
     }
 
     fn description(&self) -> &str {
-        "Create a scheduled cron job (shell or agent) with cron/at/every schedules"
+        "Create a scheduled cron job (shell or agent) with cron/at/every schedules. Standardizes on device-local timezone unless 'tz' is set. Note: the scheduler polls on an interval (default 15s, minimum 5s) and does not 'catch up' missed runs."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -33,8 +33,50 @@ impl Tool for CronAddTool {
             "properties": {
                 "name": { "type": "string", "description": "Short human-readable name for the job (e.g. 'drink_water_reminder'). Always provide a name." },
                 "schedule": {
-                    "type": "object",
-                    "description": "Schedule object: {kind:'cron',expr,tz?} | {kind:'at',at} | {kind:'every',every_ms}"
+                    "description": "Schedule: cron expression, one-shot at time, or fixed interval.",
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "description": "Repeating cron schedule. 'tz' is an IANA timezone (e.g. 'America/Los_Angeles'); defaults to device-local timezone.",
+                            "properties": {
+                                "kind": { "type": "string", "const": "cron" },
+                                "expr": { "type": "string", "description": "Cron expression (5, 6, or 7 fields)" },
+                                "tz": { "type": "string", "description": "Optional IANA timezone name" },
+                                "active_hours": {
+                                    "type": "object",
+                                    "description": "Optional: only run during these local hours",
+                                    "properties": {
+                                        "start": { "type": "string", "description": "Start time HH:MM (e.g. '09:00')" },
+                                        "end": { "type": "string", "description": "End time HH:MM (e.g. '17:00')" }
+                                    },
+                                    "required": ["start", "end"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            "required": ["kind", "expr"],
+                            "additionalProperties": false
+                        },
+                        {
+                            "type": "object",
+                            "description": "One-shot job that runs once at a specific UTC instant.",
+                            "properties": {
+                                "kind": { "type": "string", "const": "at" },
+                                "at": { "type": "string", "description": "ISO-8601 UTC timestamp" }
+                            },
+                            "required": ["kind", "at"],
+                            "additionalProperties": false
+                        },
+                        {
+                            "type": "object",
+                            "description": "Repeating job that fires every N milliseconds.",
+                            "properties": {
+                                "kind": { "type": "string", "const": "every" },
+                                "every_ms": { "type": "integer", "description": "Interval in milliseconds (must be > 0)" }
+                            },
+                            "required": ["kind", "every_ms"],
+                            "additionalProperties": false
+                        }
+                    ]
                 },
                 "job_type": { "type": "string", "enum": ["shell", "agent"] },
                 "command": { "type": "string" },
@@ -214,6 +256,7 @@ impl Tool for CronAddTool {
 mod tests {
     use super::*;
     use crate::openhuman::config::Config;
+    use crate::openhuman::cron::ActiveHours;
     use crate::openhuman::security::AutonomyLevel;
     use tempfile::TempDir;
 
@@ -252,6 +295,46 @@ mod tests {
 
         assert!(!result.is_error, "{:?}", result.output());
         assert!(result.output().contains("next_run"));
+    }
+
+    #[tokio::test]
+    async fn adds_active_hours_shell_job_from_tool_payload() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = test_config(&tmp).await;
+        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let result = tool
+            .execute(json!({
+                "name": "work_hours_ping",
+                "schedule": {
+                    "kind": "cron",
+                    "expr": "* * * * *",
+                    "tz": "UTC",
+                    "active_hours": {
+                        "start": "09:00",
+                        "end": "17:00"
+                    }
+                },
+                "job_type": "shell",
+                "command": "echo ok"
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error, "{:?}", result.output());
+        let jobs = cron::list_jobs(&cfg).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].name.as_deref(), Some("work_hours_ping"));
+        assert_eq!(
+            jobs[0].schedule,
+            Schedule::Cron {
+                expr: "* * * * *".into(),
+                tz: Some("UTC".into()),
+                active_hours: Some(ActiveHours {
+                    start: "09:00".into(),
+                    end: "17:00".into(),
+                }),
+            }
+        );
     }
 
     #[tokio::test]
