@@ -1,0 +1,128 @@
+name: Weekly Code Review
+
+# Scheduled aggregation of slow-moving code-health signals that per-PR CI
+# does not catch: unused code (knip), Rust advisories (cargo-audit), and
+# TODO/FIXME backlog. The run opens (or updates) a tracking issue with the
+# report and uploads the raw outputs as an artifact.
+#
+# Runbook: docs/WEEKLY-CODE-REVIEW.md
+
+on:
+  schedule:
+    # Mondays, 06:00 UTC. Early enough to land before US / EU maintainers
+    # start the week. Override via workflow_dispatch if needed.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: weekly-code-review
+  cancel-in-progress: false
+
+jobs:
+  weekly-review:
+    name: Aggregate weekly signals
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Enable Corepack (for pnpm)
+        run: corepack enable
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: "pnpm"
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.93.0
+
+      - name: Cache cargo-audit binary
+        id: cache-cargo-audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-v1
+
+      - name: Install cargo-audit
+        if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked
+
+      - name: Run weekly code-review aggregator
+        run: bash scripts/weekly-code-review.sh weekly-code-review-out
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-code-review-${{ github.run_id }}
+          path: weekly-code-review-out
+          retention-days: 90
+
+      - name: Open or update tracking issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('weekly-code-review-out/report.md', 'utf8');
+            const today = new Date().toISOString().slice(0, 10);
+            const title = `[Automated] Weekly code-review report — ${today}`;
+            const label = 'weekly-code-review';
+
+            // Ensure the tracking label exists (idempotent).
+            try {
+              await github.rest.issues.getLabel({ ...context.repo, name: label });
+            } catch (err) {
+              if (err.status === 404) {
+                await github.rest.issues.createLabel({
+                  ...context.repo,
+                  name: label,
+                  color: 'c5def5',
+                  description: 'Automated weekly code-review report',
+                });
+              } else {
+                throw err;
+              }
+            }
+
+            // Close previous open report(s) so only the latest stays active.
+            const previous = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo,
+              state: 'open',
+              labels: label,
+              per_page: 50,
+            });
+            for (const prev of previous) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: prev.number,
+                body: `Superseded by the ${today} report.`,
+              });
+              await github.rest.issues.update({
+                ...context.repo,
+                issue_number: prev.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+            }
+
+            // Open a fresh issue for this week so maintainers triage on a
+            // predictable cadence instead of watching a growing thread.
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const footer = `\n---\n_Run log: ${runUrl}_`;
+            await github.rest.issues.create({
+              ...context.repo,
+              title,
+              body: body + footer,
+              labels: [label],
+            });
