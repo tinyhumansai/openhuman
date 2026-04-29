@@ -25,6 +25,10 @@ import {
   listTeams,
   updateCoreLocalState,
 } from '../services/coreStateApi';
+import { socketService } from '../services/socketService';
+import { store } from '../store';
+import { resetUserScopedState } from '../store/resetActions';
+import { getActiveUserId, setActiveUserId } from '../store/userScopedStorage';
 import {
   openhumanUpdateAnalyticsSettings,
   restartApp,
@@ -88,6 +92,41 @@ function snapshotIdentity(snapshot: CoreAppSnapshot): string | null {
   return snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
 }
 
+/**
+ * Restart-class cleanup for identity changes that require a process relaunch
+ * to re-hydrate redux-persist from the new user's namespace.
+ *
+ * redux-persist hydrates ONCE at module init, reading from whatever namespace
+ * `userScopedStorage` was pointing at. After that, `setActiveUserId` only
+ * routes new writes/reads — it doesn't re-hydrate in-memory state. So when
+ * the active userId changes from the namespace that was hydrated to a
+ * different one, we have to restart the app to get a fresh hydrate.
+ *
+ * Steps:
+ * 1. Re-point `userScopedStorage` to the new user's namespace so the
+ *    `OPENHUMAN_ACTIVE_USER_ID` localStorage seed is correct on relaunch.
+ * 2. Dispatch `resetUserScopedState` to wipe the live store immediately —
+ *    cosmetic during the brief frame between this call and `restartApp()`,
+ *    so the prior user's slices don't render against the new auth.
+ * 3. Disconnect the Socket.IO connection so the reconnect after relaunch
+ *    carries the new user's auth token.
+ * 4. `restartApp()` — the new process module-init reads
+ *    `OPENHUMAN_ACTIVE_USER_ID=nextUserId`, hydrates from that namespace,
+ *    and singleton services / Rust webview accounts come up clean.
+ *
+ * We deliberately do NOT call `persistor.purge()`. Each user's persisted
+ * blob lives at its own namespaced key, so user A's data must survive B's
+ * session intact and rehydrate when A returns. See [#900].
+ */
+async function handleIdentityFlip(opts: { reason: string; nextUserId: string }): Promise<void> {
+  const { reason, nextUserId } = opts;
+  log('identity flip restart reason=%s nextUserId=%s', reason, `****${nextUserId.slice(-4)}`);
+  setActiveUserId(nextUserId);
+  store.dispatch(resetUserScopedState());
+  socketService.disconnect();
+  await restartApp();
+}
+
 function normalizeSnapshot(
   result: Awaited<ReturnType<typeof fetchCoreAppSnapshot>>
 ): CoreAppSnapshot {
@@ -135,7 +174,6 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const logoutGuardUntilRef = useRef(0);
   const bootstrapFailCountRef = useRef(0);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
-
   const commitState = useCallback((updater: (previous: CoreState) => CoreState) => {
     setState(previous => {
       const next = updater(previous);
@@ -150,23 +188,47 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     if (!snapshot.sessionToken) {
       logoutGuardUntilRef.current = 0;
     }
+    // Capture pre-commit identity outside the setState updater so flip
+    // detection runs synchronously regardless of React's batching policy.
+    const beforeCommit = getCoreStateSnapshot().snapshot;
+    const shouldIgnoreTokenDuringLogout =
+      Date.now() < logoutGuardUntilRef.current &&
+      !beforeCommit.sessionToken &&
+      Boolean(snapshot.sessionToken);
+    const nextSnapshot = shouldIgnoreTokenDuringLogout ? toSignedOutSnapshot(snapshot) : snapshot;
+    const previousIdentity = snapshotIdentity(beforeCommit);
+    const nextIdentity = snapshotIdentity(nextSnapshot);
+    const previousAuthed = beforeCommit.auth.isAuthenticated;
+    const nextAuthed = nextSnapshot.auth.isAuthenticated;
+    // Source of truth for "what userId's data is currently in memory" is the
+    // `OPENHUMAN_ACTIVE_USER_ID` localStorage seed read by `userScopedStorage`
+    // at module init — that's whose namespace redux-persist hydrated, and
+    // it's also what the Rust `prepare_process_cache_path` reads from
+    // `active_user.toml` on each cold launch to pick a CEF cache dir. If the
+    // userId that just authenticated is different (or different from null on
+    // a fresh device), we MUST restart so:
+    //   1. redux-persist re-hydrates from the new user's namespace, and
+    //   2. CEF re-initializes with the new user's `users/<id>/cef` profile,
+    //      so embedded webviews (Slack, WhatsApp, …) don't see the prior
+    //      user's third-party cookies.
+    // This single rule covers every login path uniformly:
+    //   - cold bootstrap on a fresh install (seed is null, nextId is real)
+    //   - direct `storeSessionToken` (Tauri OAuth)
+    //   - deep-link `core-state:session-token-updated`
+    //   - poll-detected flip (core-side user swap)
+    //   - re-login as a different user after sign-out
+    const seedUserId = getActiveUserId();
+    const isFlip = Boolean(nextIdentity) && seedUserId !== nextIdentity;
+    const isLogout = Boolean(previousAuthed) && !nextAuthed;
+    // Clear team caches whenever the visible identity changes (in-memory user
+    // shift) so the post-commit UI doesn't show user A's team list during the
+    // brief signed-out window or user B's session.
+    const shouldClearScopedCaches = isFlip || isLogout || previousIdentity !== nextIdentity;
+
     commitState(previous => {
       if (requestId !== snapshotRequestIdRef.current) {
         return previous;
       }
-
-      const shouldIgnoreTokenDuringLogout =
-        Date.now() < logoutGuardUntilRef.current &&
-        !previous.snapshot.sessionToken &&
-        Boolean(snapshot.sessionToken);
-      const nextSnapshot = shouldIgnoreTokenDuringLogout ? toSignedOutSnapshot(snapshot) : snapshot;
-
-      const previousIdentity = snapshotIdentity(previous.snapshot);
-      const nextIdentity = snapshotIdentity(nextSnapshot);
-      const shouldClearScopedCaches =
-        previousIdentity !== nextIdentity ||
-        (previous.snapshot.auth.isAuthenticated && !nextSnapshot.auth.isAuthenticated);
-
       return {
         ...previous,
         isBootstrapping: false,
@@ -177,6 +239,23 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         teamInvitesById: shouldClearScopedCaches ? {} : previous.teamInvitesById,
       };
     });
+
+    if (isFlip && nextIdentity) {
+      await handleIdentityFlip({ reason: 'identity-flip', nextUserId: nextIdentity }).catch(err => {
+        log('handleIdentityFlip failed: %O', sanitizeError(err));
+      });
+    } else if (isLogout) {
+      // Sign-out: keep `OPENHUMAN_ACTIVE_USER_ID` pointing at the last user
+      // so the next login can detect via seed comparison whether it's a
+      // same-user re-login (no restart) or a different-user re-login
+      // (restart). Slice data also stays in memory since signed-out UI
+      // doesn't render user-scoped slices. Just drop the live socket since
+      // the token it was authed with has been invalidated by the core.
+      socketService.disconnect();
+    }
+    // Same-user re-login (seedUserId === nextIdentity) and cold bootstrap
+    // with matching seed are no-ops — redux-persist already loaded the
+    // right namespace and the active user id is already correct.
     syncAnalyticsConsent(snapshot.analyticsEnabled);
 
     if (!snapshot.sessionToken) {
@@ -392,7 +471,6 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
 
   const storeSessionToken = useCallback(
     async (token: string, user?: object) => {
-      const previousIdentity = snapshotIdentity(getCoreStateSnapshot().snapshot);
       logoutGuardUntilRef.current = 0;
       await storeSession(token, user ?? {});
       try {
@@ -401,21 +479,16 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       } catch (error) {
         console.warn('[core-state] memory client sync failed after session store:', error);
       }
+      // refresh() drives refreshCore, which now owns identity-flip detection
+      // and dispatches handleIdentityFlip when both prev and next are
+      // authenticated and identities differ. The previous standalone
+      // restartApp call here was redundant and skipped the persist purge,
+      // letting redux-persist rehydrate the prior user's slices on launch
+      // (#900). Restart now happens inside handleIdentityFlip after purge.
       await refresh();
       await refreshTeams().catch(err => {
         log('refreshTeams failed after session store: %O', sanitizeError(err));
       });
-
-      const nextIdentity = snapshotIdentity(getCoreStateSnapshot().snapshot);
-      if (nextIdentity && previousIdentity !== nextIdentity) {
-        const mask = (s: string | null) =>
-          s == null ? 'none' : s.length > 4 ? `****${s.slice(-4)}` : '****';
-        console.debug('[core-state] user changed; restarting app to switch CEF profile', {
-          previousIdentity: mask(previousIdentity),
-          nextIdentity: mask(nextIdentity),
-        });
-        await restartApp();
-      }
     },
     [refresh, refreshTeams]
   );
@@ -431,6 +504,13 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       snapshot: toSignedOutSnapshot(previous.snapshot),
     }));
     memoryTokenRef.current = null;
+    // Keep `OPENHUMAN_ACTIVE_USER_ID` pointing at the last user. The next
+    // refresh's `getActiveUserId()` seed comparison decides whether the
+    // upcoming login is a same-user re-login (no restart) or a different-
+    // user re-login (restart). We do NOT dispatch `resetUserScopedState`
+    // here either — the signed-out UI doesn't render user-scoped slices,
+    // and a same-user re-login should not pay a "rehydrate from disk"
+    // cost (slices are still in memory). See [#900].
     await tauriLogout();
     await refresh().catch(err => {
       log('refresh failed after clearSession: %O', sanitizeError(err));

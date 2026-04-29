@@ -16,10 +16,10 @@
         "title": "OpenHuman",
         "width": 1000,
         "height": 800,
-        "visible": true,
+        "visible": false,
         "decorations": true,
         "resizable": true,
-        "center": true
+        "center": false
       }
     ],
     "security": {

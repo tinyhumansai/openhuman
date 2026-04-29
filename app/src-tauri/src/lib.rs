@@ -18,6 +18,7 @@ mod telegram_scanner;
 mod webview_accounts;
 mod webview_apis;
 mod whatsapp_scanner;
+mod window_state;
 
 use std::sync::Mutex;
 
@@ -318,7 +319,36 @@ async fn restart_core_process(
 #[tauri::command]
 async fn restart_app(app: tauri::AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[app] restart_app invoked from frontend");
+    // Persist main-window geometry and hide the window before exit so
+    // the macOS WindowServer doesn't briefly black-out the desktop layer
+    // on the (now defunct) display when the focused app dies, and so
+    // the new process can land its window on the same display+position
+    // the user had it on. (#900 secondary fixes)
+    if let Some(window) = app.get_webview_window("main") {
+        window_state::save_main(&window);
+        if let Err(err) = window.hide() {
+            log::warn!("[app] hide main window before restart failed: {err}");
+        }
+    }
     app.restart();
+}
+
+/// Read the authoritative active user id from `active_user.toml` so the
+/// frontend can seed `userScopedStorage` BEFORE redux-persist hydrates.
+///
+/// The previous frontend-only seed (a `localStorage` key) was bound to the
+/// per-user CEF profile dir, so on every restart-driven user flip the new
+/// process read whatever value the new profile's `localStorage` happened to
+/// hold from a prior session — usually stale, triggering a false re-flip and
+/// a restart loop. The Rust core writes `active_user.toml` atomically as part
+/// of `auth_store_session`, so it's the only profile-independent source of
+/// truth available to the UI at boot. Reuses
+/// `cef_profile::default_root_openhuman_dir()` so the lookup honors
+/// `OPENHUMAN_WORKSPACE` overrides used in test harnesses. (#900)
+#[tauri::command]
+fn get_active_user_id() -> Result<Option<String>, String> {
+    let dir = cef_profile::default_root_openhuman_dir()?;
+    Ok(cef_profile::read_active_user_id(&dir))
 }
 
 #[tauri::command]
@@ -962,6 +992,24 @@ pub fn run() {
                 }
             });
 
+            // Restore last-known window position+size before showing the
+            // window so the user's first paint after a restart-driven flow
+            // (#900 identity flip) lands on the same display they used,
+            // not back at the default centered initial size on the
+            // primary monitor. `tauri.conf.json` ships `visible: false`
+            // / `center: false` for the main window so the placement
+            // happens before the first paint and there's no jump.
+            if let Some(window) = app.get_webview_window("main") {
+                if !window_state::restore_main(&window) {
+                    window_state::center_main(&window);
+                }
+                if !daemon_mode {
+                    if let Err(err) = window.show() {
+                        log::warn!("[window-state] show main window failed: {err}");
+                    }
+                }
+            }
+
             if daemon_mode {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
@@ -1299,6 +1347,7 @@ pub fn run() {
             apply_app_update,
             restart_core_process,
             restart_app,
+            get_active_user_id,
             schedule_cef_profile_purge,
             service_install_direct,
             service_start_direct,
