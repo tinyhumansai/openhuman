@@ -1856,32 +1856,34 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
         .get("presets")
         .and_then(Value::as_array)
         .expect("presets should be an array");
-    assert_eq!(presets_arr.len(), 5, "expected 5 presets: {presets_result}");
+    assert_eq!(
+        presets_arr.len(),
+        1,
+        "MVP exposes only the 1B preset: {presets_result}"
+    );
+    assert_eq!(
+        presets_arr[0].get("tier").and_then(Value::as_str),
+        Some("ram_2_4gb"),
+        "only the ram_2_4gb (1B) preset should be exposed: {presets_result}"
+    );
 
     let recommended = presets_result
         .get("recommended_tier")
         .and_then(Value::as_str)
         .expect("should have recommended_tier");
-    assert!(
-        [
-            "ram_1gb",
-            "ram_2_4gb",
-            "ram_4_8gb",
-            "ram_8_16gb",
-            "ram_16_plus_gb",
-        ]
-        .contains(&recommended),
-        "unexpected recommended_tier: {recommended}"
+    assert_eq!(
+        recommended, "ram_2_4gb",
+        "MVP recommends the only allowed tier: {recommended}"
     );
 
     let current = presets_result
         .get("current_tier")
         .and_then(Value::as_str)
         .expect("should have current_tier");
-    // Default config uses gemma3:4b-it-qat which now maps to the 8-16 GB tier.
+    // Default config now uses gemma3:1b-it-qat which maps to the only allowed (2-4 GB) tier.
     assert_eq!(
-        current, "ram_8_16gb",
-        "default config should be the 8-16 GB tier"
+        current, "ram_2_4gb",
+        "default config should be the 1B / 2-4 GB tier"
     );
 
     // --- apply_preset (switch to 2-4 GB) ---
