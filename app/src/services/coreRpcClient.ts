@@ -2,7 +2,7 @@ import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
 
 import { dispatchLocalAiMethod } from '../lib/ai/localCoreAiMemory';
-import { CORE_RPC_URL } from '../utils/config';
+import { CORE_RPC_TIMEOUT_MS, CORE_RPC_URL } from '../utils/config';
 import { getStoredRpcUrl } from '../utils/configPersistence';
 import { sanitizeError } from '../utils/sanitize';
 
@@ -132,12 +132,27 @@ export async function getCoreRpcUrl(): Promise<string> {
 
       const url = await invoke<string>('core_rpc_url');
       const trimmed = String(url || '').trim();
+      if (!trimmed) {
+        // The Tauri command succeeded but returned an empty string. That's
+        // almost certainly a shell misconfiguration — prefer the build-time
+        // default but make the fallback visible rather than silent.
+        coreRpcError('core_rpc_url returned empty; using build-time default', {
+          fallback: CORE_RPC_URL,
+        });
+      }
       resolvedCoreRpcUrl = trimmed || CORE_RPC_URL;
       return resolvedCoreRpcUrl || CORE_RPC_URL;
-    } catch {
-      // Fallback to stored or default on error
+    } catch (err) {
+      // Fallback to a stored override first, then the build-time default.
+      // Keep the underlying invoke failure visible so port mismatches and
+      // shell misconfiguration are diagnosable in dev logs.
       const storedUrl = getStoredRpcUrl();
       resolvedCoreRpcUrl = storedUrl || CORE_RPC_URL;
+      coreRpcError('core_rpc_url invoke failed; using fallback RPC URL', {
+        fallback: resolvedCoreRpcUrl,
+        usedStoredUrl: Boolean(storedUrl),
+        error: sanitizeError(err),
+      });
       return resolvedCoreRpcUrl;
     } finally {
       resolvingCoreRpcUrl = null;
@@ -212,7 +227,6 @@ export async function callCoreRpc<T>({
   try {
     const [rpcUrl, token] = await Promise.all([getCoreRpcUrl(), getCoreRpcToken()]);
     coreRpcLog('HTTP request', { id: payload.id, method: payload.method });
-
     if (coreIsTauri() && !token) {
       throw new Error('Core RPC token unavailable in Tauri; local RPC auth cannot be satisfied');
     }
@@ -221,12 +235,28 @@ export async function callCoreRpc<T>({
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-    });
+    // Bound the fetch to CORE_RPC_TIMEOUT_MS. Without this a hung core
+    // sidecar will block every caller (and the UI) forever. We use a
+    // manual AbortController + setTimeout rather than AbortSignal.timeout()
+    // so test fake timers can drive the abort deterministically.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CORE_RPC_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } catch (fetchErr) {
+      if (controller.signal.aborted) {
+        throw new Error(`Core RPC ${payload.method} timed out after ${CORE_RPC_TIMEOUT_MS}ms`);
+      }
+      throw fetchErr;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
       const text = await response.text();

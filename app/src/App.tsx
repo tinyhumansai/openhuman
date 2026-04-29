@@ -13,7 +13,7 @@ import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import MeshGradient from './components/MeshGradient';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
-import RouteLoadingScreen from './components/RouteLoadingScreen';
+import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
 import { isWelcomeLocked } from './lib/coreState/store';
 import { startNativeNotificationsService } from './lib/nativeNotifications';
@@ -47,7 +47,7 @@ function App() {
         tagErrorSource(eventId, 'react', componentStack);
       }}>
       <Provider store={store}>
-        <PersistGate loading={<RouteLoadingScreen />} persistor={persistor}>
+        <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
           <CoreStateProvider>
             <SocketProvider>
               <ChatRuntimeProvider>
