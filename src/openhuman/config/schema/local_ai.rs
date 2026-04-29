@@ -71,19 +71,19 @@ fn default_provider() -> String {
 }
 
 fn default_model_id() -> String {
-    "gemma3:4b-it-qat".to_string()
+    "gemma3:1b-it-qat".to_string()
 }
 
 fn default_chat_model_id() -> String {
-    "gemma3:4b-it-qat".to_string()
+    "gemma3:1b-it-qat".to_string()
 }
 
 fn default_vision_model_id() -> String {
-    "gemma3:4b-it-qat".to_string()
+    String::new()
 }
 
 fn default_embedding_model_id() -> String {
-    "nomic-embed-text:latest".to_string()
+    "all-minilm:latest".to_string()
 }
 
 fn default_stt_model_id() -> String {

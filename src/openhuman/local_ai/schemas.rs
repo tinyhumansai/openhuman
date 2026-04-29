@@ -420,7 +420,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Apply a model tier preset to local AI config and persist.",
             inputs: vec![required_string(
                 "tier",
-                "Tier to apply: ram_1gb, ram_2_4gb, ram_4_8gb, ram_8_16gb, ram_16_plus_gb.",
+                "Tier to apply: ram_2_4gb, or disabled to use cloud fallback.",
             )],
             outputs: vec![json_output("result", "Applied tier status.")],
         },
@@ -712,7 +712,7 @@ fn handle_local_ai_presets(_params: Map<String, Value>) -> ControllerFuture {
                 .map(|tier| tier.as_str().to_string())
                 .or_else(|| (!normalized.is_empty()).then_some(normalized))
         });
-        let presets = crate::openhuman::local_ai::presets::all_presets();
+        let presets = crate::openhuman::local_ai::presets::mvp_presets();
         tracing::debug!(
             ?recommended,
             ?current,
@@ -763,13 +763,19 @@ fn handle_local_ai_apply_preset(params: Map<String, Value>) -> ControllerFuture 
         let tier = crate::openhuman::local_ai::presets::ModelTier::from_str_opt(&tier_str)
             .ok_or_else(|| {
                 format!(
-                    "invalid tier '{}': expected one of disabled, ram_1gb, ram_2_4gb, ram_4_8gb, ram_8_16gb, ram_16_plus_gb",
+                    "invalid tier '{}': expected one of disabled or ram_2_4gb",
                     tier_str
                 )
             })?;
 
         if tier == crate::openhuman::local_ai::presets::ModelTier::Custom {
             return Err("cannot apply 'custom' tier; set model IDs directly".to_string());
+        }
+        if !tier.is_mvp_allowed() {
+            return Err(format!(
+                "tier '{}' is not available in this build; only the 1B local model preset is supported",
+                tier_str
+            ));
         }
 
         let mut config = config_rpc::load_config_with_timeout().await?;
