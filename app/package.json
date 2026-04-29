@@ -49,7 +49,7 @@
     "format:check": "prettier --check . && pnpm rust:format:check",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
-    "lint:commands-tokens": "bash -c '! rg -nU \"(bg|text|border|ring|shadow)-(neutral|primary|sage|amber|canvas|stone|slate)\" src/components/commands/'",
+    "lint:commands-tokens": "bash -c \"! rg -nU '(bg|text|border|ring|shadow)-(neutral|primary|sage|amber|canvas|stone|slate)' src/components/commands/\"",
     "knip": "knip --config knip.json",
     "knip:production": "knip --config knip.json --production"
   },
