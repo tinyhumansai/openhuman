@@ -902,6 +902,105 @@ async fn json_rpc_thread_labels_create_and_update() {
 }
 
 #[tokio::test]
+async fn json_rpc_memory_sync_and_learn() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _embed_strict_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "false");
+    let _embed_endpoint_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", "");
+    let _embed_model_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", "");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── memory_sync_all: returns requested:true ──────────────────────────────
+    let sync_all = post_json_rpc(&rpc_base, 7001, "openhuman.memory_sync_all", json!({})).await;
+    let sync_all_result = assert_no_jsonrpc_error(&sync_all, "memory_sync_all");
+    assert_eq!(
+        sync_all_result.get("requested"),
+        Some(&json!(true)),
+        "memory_sync_all must return requested:true"
+    );
+
+    // ── memory_sync_channel: echoes channel_id and returns requested:true ─────
+    let sync_ch = post_json_rpc(
+        &rpc_base,
+        7002,
+        "openhuman.memory_sync_channel",
+        json!({ "channel_id": "test-channel-abc" }),
+    )
+    .await;
+    let sync_ch_result = assert_no_jsonrpc_error(&sync_ch, "memory_sync_channel");
+    assert_eq!(
+        sync_ch_result.get("requested"),
+        Some(&json!(true)),
+        "memory_sync_channel must return requested:true"
+    );
+    assert_eq!(
+        sync_ch_result.get("channel_id").and_then(Value::as_str),
+        Some("test-channel-abc"),
+        "memory_sync_channel must echo channel_id"
+    );
+
+    // ── memory_sync_channel: missing channel_id returns a JSON-RPC error ────
+    let sync_bad = post_json_rpc(&rpc_base, 7003, "openhuman.memory_sync_channel", json!({})).await;
+    assert!(
+        sync_bad.get("error").is_some(),
+        "missing channel_id must return an error, got: {sync_bad}"
+    );
+
+    // ── memory_learn_all: no namespaces → zero processed (empty store) ──────
+    let learn_all = post_json_rpc(&rpc_base, 7004, "openhuman.memory_learn_all", json!({})).await;
+    let learn_result = assert_no_jsonrpc_error(&learn_all, "memory_learn_all");
+    let processed = learn_result
+        .get("namespaces_processed")
+        .and_then(Value::as_u64)
+        .expect("namespaces_processed must be present");
+    assert_eq!(processed, 0, "no namespaces in a fresh store");
+    let results_arr = learn_result
+        .get("results")
+        .and_then(Value::as_array)
+        .expect("results array must be present");
+    assert!(
+        results_arr.is_empty(),
+        "results must be empty when no namespaces"
+    );
+
+    // ── memory_learn_all: constrained to non-existent namespace → also zero ──
+    let learn_constrained = post_json_rpc(
+        &rpc_base,
+        7005,
+        "openhuman.memory_learn_all",
+        json!({ "namespaces": ["does-not-exist"] }),
+    )
+    .await;
+    let learn_c_result =
+        assert_no_jsonrpc_error(&learn_constrained, "memory_learn_all constrained");
+    assert_eq!(
+        learn_c_result
+            .get("namespaces_processed")
+            .and_then(Value::as_u64),
+        Some(0),
+        "non-existent namespace must be filtered out"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_memory_tree_end_to_end() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");

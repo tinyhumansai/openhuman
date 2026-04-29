@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useIntelligenceStats } from '../../hooks/useIntelligenceStats';
+import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
+import type { ChannelStatusEntry } from '../../types/channels';
 import type { ToastNotification } from '../../types/intelligence';
 import {
   aiListMemoryFiles,
@@ -10,11 +12,15 @@ import {
   isTauri,
   memoryDeleteDocument,
   memoryGraphQuery,
+  memoryLearnAll,
+  type MemoryLearnAllResult,
   memoryListDocuments,
   memoryListNamespaces,
   memoryQueryNamespace,
   type MemoryQueryResult,
   memoryRecallNamespace,
+  memorySyncAll,
+  memorySyncChannel,
 } from '../../utils/tauriCommands';
 import { MemoryGraphMap } from './MemoryGraphMap';
 import { MemoryHeatmap } from './MemoryHeatmap';
@@ -132,6 +138,18 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   const [graphRelations, setGraphRelations] = useState<GraphRelation[]>([]);
   const [graphRelationsLoading, setGraphRelationsLoading] = useState(false);
 
+  // Sync section
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [connectedChannels, setConnectedChannels] = useState<ChannelStatusEntry[]>([]);
+  const [syncingAll, setSyncingAll] = useState(false);
+  const [syncingChannelId, setSyncingChannelId] = useState<string | null>(null);
+
+  // Learn section
+  const [learnOpen, setLearnOpen] = useState(false);
+  const [learning, setLearning] = useState(false);
+  const [learnResult, setLearnResult] = useState<MemoryLearnAllResult | null>(null);
+  const [learnErrorOpen, setLearnErrorOpen] = useState(false);
+
   // Manage memory section (collapsible)
   const [manageOpen, setManageOpen] = useState(false);
   const [selectedNamespace, setSelectedNamespace] = useState('');
@@ -179,6 +197,15 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
 
       const docs = normalizeMemoryDocuments(documentsPayload);
       const combinedFiles = ['memory.md', ...memoryDirFiles.map(file => `memory/${file}`)];
+
+      // Load connected channels for the Sync section.
+      try {
+        const statuses = await channelConnectionsApi.listStatus();
+        setConnectedChannels(statuses.filter(s => s.connected));
+      } catch (err) {
+        console.debug('[MemoryWorkspace] listStatus failed (non-fatal):', err);
+        setConnectedChannels([]);
+      }
 
       setMemoryDocs(docs);
       setMemoryNamespaces(namespacesPayload);
@@ -308,6 +335,80 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       setMemoryNoteSaving(false);
     }
   }, [loadSelectedFile, loadWorkspace, memoryNote, onToast, refetchStats]);
+
+  // ---------------------------------------------------------------------------
+  // Sync handlers
+  // ---------------------------------------------------------------------------
+
+  const handleSyncAll = useCallback(async () => {
+    setSyncingAll(true);
+    try {
+      await memorySyncAll();
+      onToast({
+        type: 'success',
+        title: 'Sync Requested',
+        message: 'Sync requested for all channels.',
+      });
+    } catch (err) {
+      onToast({
+        type: 'error',
+        title: 'Sync Failed',
+        message: err instanceof Error ? err.message : 'Sync all failed.',
+      });
+    } finally {
+      setSyncingAll(false);
+    }
+  }, [onToast]);
+
+  const handleSyncChannel = useCallback(
+    async (channelId: string) => {
+      setSyncingChannelId(channelId);
+      try {
+        await memorySyncChannel(channelId);
+        onToast({
+          type: 'success',
+          title: 'Sync Requested',
+          message: `Sync requested for channel ${channelId}.`,
+        });
+      } catch (err) {
+        onToast({
+          type: 'error',
+          title: 'Sync Failed',
+          message: err instanceof Error ? err.message : 'Sync failed.',
+        });
+      } finally {
+        setSyncingChannelId(null);
+      }
+    },
+    [onToast]
+  );
+
+  // ---------------------------------------------------------------------------
+  // Learn handler
+  // ---------------------------------------------------------------------------
+
+  const handleLearnAll = useCallback(async () => {
+    setLearning(true);
+    setLearnResult(null);
+    setLearnErrorOpen(false);
+    try {
+      const result = await memoryLearnAll();
+      setLearnResult(result);
+      onToast({
+        type: 'success',
+        title: 'Learn Complete',
+        message: `${result.namespaces_processed} namespace(s) processed.`,
+      });
+    } catch (err) {
+      onToast({
+        type: 'error',
+        title: 'Learn Failed',
+        message: err instanceof Error ? err.message : 'Learn failed.',
+      });
+    } finally {
+      setLearning(false);
+    }
+  }, [onToast]);
 
   // ---------------------------------------------------------------------------
   // Derived data
@@ -561,6 +662,163 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Collapsible: Sync */}
+      <div className="rounded-xl border border-stone-200 bg-stone-50">
+        <button
+          onClick={() => setSyncOpen(!syncOpen)}
+          className="w-full flex items-center justify-between p-4 text-left hover:bg-stone-100 transition-colors rounded-xl">
+          <div className="flex items-center gap-2">
+            <svg
+              className={`w-4 h-4 text-stone-500 transition-transform ${syncOpen ? 'rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            <h3 className="text-sm font-semibold text-stone-900">Sync</h3>
+            <span className="text-xs text-stone-500">
+              {connectedChannels.length} connected channel(s)
+            </span>
+          </div>
+        </button>
+
+        {syncOpen && (
+          <div className="px-4 pb-4 space-y-3 animate-fade-up">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-stone-500">
+                Request ingestion from all connected channels.
+              </p>
+              <button
+                onClick={() => void handleSyncAll()}
+                disabled={syncingAll}
+                className="px-3 py-1.5 text-xs rounded-lg border border-primary-500/40 bg-primary-500/20 hover:bg-primary-500/30 text-primary-700 disabled:opacity-40">
+                {syncingAll ? 'Requesting...' : 'Sync all'}
+              </button>
+            </div>
+
+            {connectedChannels.length === 0 ? (
+              <p className="text-xs text-stone-400">No connected channels found.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {connectedChannels.map(ch => (
+                  <div
+                    key={ch.channel_id}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 bg-white px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-stone-800 truncate">
+                        {ch.channel_id}
+                      </div>
+                      <div className="text-[11px] text-stone-400">{ch.auth_mode}</div>
+                    </div>
+                    <button
+                      onClick={() => void handleSyncChannel(ch.channel_id)}
+                      disabled={syncingChannelId === ch.channel_id}
+                      className="text-[11px] px-2 py-1 rounded border border-primary-500/30 text-primary-600 hover:bg-primary-500/10 disabled:opacity-40 shrink-0">
+                      {syncingChannelId === ch.channel_id ? 'Requesting...' : 'Sync'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Collapsible: Learn */}
+      <div className="rounded-xl border border-stone-200 bg-stone-50">
+        <button
+          onClick={() => setLearnOpen(!learnOpen)}
+          className="w-full flex items-center justify-between p-4 text-left hover:bg-stone-100 transition-colors rounded-xl">
+          <div className="flex items-center gap-2">
+            <svg
+              className={`w-4 h-4 text-stone-500 transition-transform ${learnOpen ? 'rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            <h3 className="text-sm font-semibold text-stone-900">Learn</h3>
+            {learnResult && (
+              <span className="text-xs text-stone-500">
+                Last run: {learnResult.namespaces_processed} namespace(s)
+              </span>
+            )}
+          </div>
+        </button>
+
+        {learnOpen && (
+          <div className="px-4 pb-4 space-y-3 animate-fade-up">
+            <p className="text-xs text-stone-500">
+              Runs the summarizer tree over raw memory namespaces, condensing buffered content into
+              hour-level summaries and propagating them upward. Requires local AI to be enabled.
+            </p>
+
+            <button
+              onClick={() => void handleLearnAll()}
+              disabled={learning}
+              className="px-3 py-1.5 text-xs rounded-lg border border-primary-500/40 bg-primary-500/20 hover:bg-primary-500/30 text-primary-700 disabled:opacity-40">
+              {learning ? (
+                <span className="flex items-center gap-1.5">
+                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  Learning...
+                </span>
+              ) : (
+                'Learn all'
+              )}
+            </button>
+
+            {learnResult && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-medium text-stone-700">
+                    {learnResult.namespaces_processed} processed
+                  </span>
+                  <span className="text-stone-400">·</span>
+                  <span className="text-sage-600">
+                    {learnResult.results.filter(r => r.status === 'ok').length} ok
+                  </span>
+                  {learnResult.results.some(r => r.status === 'error') && (
+                    <>
+                      <span className="text-stone-400">·</span>
+                      <button
+                        onClick={() => setLearnErrorOpen(!learnErrorOpen)}
+                        className="text-coral-500 underline decoration-dotted">
+                        {learnResult.results.filter(r => r.status === 'error').length} error(s)
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {learnErrorOpen && (
+                  <div className="space-y-1">
+                    {learnResult.results
+                      .filter(r => r.status === 'error')
+                      .map(r => (
+                        <div
+                          key={r.namespace}
+                          className="text-[11px] rounded border border-coral-500/30 bg-coral-500/10 px-2 py-1 text-coral-700">
+                          <span className="font-medium">{r.namespace}</span>:{' '}
+                          {r.error ?? 'unknown error'}
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

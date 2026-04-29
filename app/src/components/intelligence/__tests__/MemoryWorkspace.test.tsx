@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../test/test-utils';
@@ -13,6 +13,16 @@ vi.mock('../../../hooks/useIntelligenceStats', () => ({
     isLoading: false,
     refetch: vi.fn(),
   }),
+}));
+
+// Mock channelConnectionsApi so listStatus doesn't hit the network
+vi.mock('../../../services/api/channelConnectionsApi', () => ({
+  channelConnectionsApi: {
+    listStatus: vi.fn().mockResolvedValue([
+      { channel_id: 'telegram-main', status: 'connected', connected: true },
+      { channel_id: 'discord-bot', status: 'connected', connected: true },
+    ]),
+  },
 }));
 
 // Override the global tauriCommands mock from setup.ts with memory-specific stubs
@@ -31,6 +41,15 @@ vi.mock('../../../utils/tauriCommands', () => ({
   memoryDeleteDocument: vi.fn().mockResolvedValue(undefined),
   memoryQueryNamespace: vi.fn().mockResolvedValue({ text: 'query result', entities: [] }),
   memoryRecallNamespace: vi.fn().mockResolvedValue({ text: 'recall result', entities: [] }),
+  memorySyncAll: vi.fn().mockResolvedValue({ requested: true }),
+  memorySyncChannel: vi.fn().mockResolvedValue({ requested: true, channel_id: 'telegram-main' }),
+  memoryLearnAll: vi.fn().mockResolvedValue({
+    namespaces_processed: 2,
+    results: [
+      { namespace: 'research', status: 'ok' },
+      { namespace: 'conversations', status: 'ok' },
+    ],
+  }),
   memoryGraphQuery: vi.fn().mockResolvedValue([
     {
       namespace: 'research',
@@ -144,5 +163,90 @@ describe('MemoryWorkspace – non-Tauri environment', () => {
 
     // Restore for other tests
     vi.mocked(tauriMod.isTauri).mockReturnValue(true);
+  });
+});
+
+describe('MemoryWorkspace – Sync section', () => {
+  const onToast = vi.fn();
+
+  it('renders the Sync collapsible button', async () => {
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    await waitFor(() => {
+      expect(screen.getByText('Sync')).toBeInTheDocument();
+    });
+  });
+
+  it('expands and shows Sync all button when toggled', async () => {
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    await waitFor(() => {
+      expect(screen.getByText('Sync')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText('Sync').closest('button')!);
+    await waitFor(() => {
+      expect(screen.getByText('Sync all')).toBeInTheDocument();
+    });
+  });
+
+  it('calls memorySyncAll when Sync all button clicked', async () => {
+    const tauriMod = await import('../../../utils/tauriCommands');
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    await waitFor(() => screen.getByText('Sync'));
+    fireEvent.click(screen.getByText('Sync').closest('button')!);
+    await waitFor(() => screen.getByText('Sync all'));
+    fireEvent.click(screen.getByText('Sync all'));
+    await waitFor(() => {
+      expect(vi.mocked(tauriMod.memorySyncAll)).toHaveBeenCalled();
+    });
+  });
+
+  it('calls memorySyncChannel when per-channel Sync button clicked', async () => {
+    const tauriMod = await import('../../../utils/tauriCommands');
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    await waitFor(() => screen.getByText('Sync'));
+    fireEvent.click(screen.getByText('Sync').closest('button')!);
+    await waitFor(() => screen.getAllByText('Sync').length > 1);
+    // The per-channel sync buttons appear after channels load
+    await waitFor(() => screen.getByText('telegram-main'));
+    const syncBtns = screen.getAllByText('Sync');
+    // Last Sync buttons are per-channel (first is the header)
+    fireEvent.click(syncBtns[syncBtns.length - 1]);
+    await waitFor(() => {
+      expect(vi.mocked(tauriMod.memorySyncChannel)).toHaveBeenCalled();
+    });
+  });
+});
+
+describe('MemoryWorkspace – Learn section', () => {
+  const onToast = vi.fn();
+
+  it('renders the Learn collapsible button', async () => {
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    await waitFor(() => {
+      expect(screen.getByText('Learn')).toBeInTheDocument();
+    });
+  });
+
+  it('expands and shows Learn all button when toggled', async () => {
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    await waitFor(() => screen.getByText('Learn'));
+    fireEvent.click(screen.getByText('Learn').closest('button')!);
+    await waitFor(() => {
+      expect(screen.getByText('Learn all')).toBeInTheDocument();
+    });
+  });
+
+  it('calls memoryLearnAll and shows result summary', async () => {
+    const tauriMod = await import('../../../utils/tauriCommands');
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    await waitFor(() => screen.getByText('Learn'));
+    fireEvent.click(screen.getByText('Learn').closest('button')!);
+    await waitFor(() => screen.getByText('Learn all'));
+    fireEvent.click(screen.getByText('Learn all'));
+    await waitFor(() => {
+      expect(vi.mocked(tauriMod.memoryLearnAll)).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/2 processed/)).toBeInTheDocument();
+    });
   });
 });

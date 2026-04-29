@@ -11,8 +11,8 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::memory::rpc::{
     self, ClearNamespaceParams, DeleteDocParams, GraphQueryParams, GraphUpsertParams,
-    IngestDocParams, KvGetDeleteParams, KvSetParams, NamespaceOnlyParams, PutDocParams,
-    QueryNamespaceParams, RecallNamespaceParams,
+    IngestDocParams, KvGetDeleteParams, KvSetParams, LearnAllParams, NamespaceOnlyParams,
+    PutDocParams, QueryNamespaceParams, RecallNamespaceParams, SyncChannelParams,
 };
 use crate::openhuman::memory::{
     DeleteDocumentRequest, EmptyRequest, ListDocumentsRequest, ListMemoryFilesRequest,
@@ -52,6 +52,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("graph_upsert"),
         schemas("graph_query"),
         schemas("clear_namespace"),
+        schemas("sync_channel"),
+        schemas("sync_all"),
+        schemas("learn_all"),
     ]
 }
 
@@ -153,6 +156,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("clear_namespace"),
             handler: handle_clear_namespace,
+        },
+        RegisteredController {
+            schema: schemas("sync_channel"),
+            handler: handle_sync_channel,
+        },
+        RegisteredController {
+            schema: schemas("sync_all"),
+            handler: handle_sync_all,
+        },
+        RegisteredController {
+            schema: schemas("learn_all"),
+            handler: handle_learn_all,
         },
     ]
 }
@@ -914,6 +929,70 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
         },
 
+        // ----- sync / learn -----
+        "sync_channel" => ControllerSchema {
+            namespace: "memory",
+            function: "sync_channel",
+            description: "Request a memory sync for a specific channel. Publishes MemorySyncRequested on the event bus. No ingestion consumers exist yet; this is a hook for future pull-based subscribers.",
+            inputs: vec![FieldSchema {
+                name: "channel_id",
+                ty: TypeSchema::String,
+                comment: "ID of the channel to sync.",
+                required: true,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "requested",
+                    ty: TypeSchema::Bool,
+                    comment: "Always true when the event was published.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "channel_id",
+                    ty: TypeSchema::String,
+                    comment: "Echo of the channel_id that was requested.",
+                    required: true,
+                },
+            ],
+        },
+        "sync_all" => ControllerSchema {
+            namespace: "memory",
+            function: "sync_all",
+            description: "Request a memory sync for all channels. Publishes MemorySyncRequested { channel_id: None } on the event bus.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "requested",
+                ty: TypeSchema::Bool,
+                comment: "Always true when the event was published.",
+                required: true,
+            }],
+        },
+        "learn_all" => ControllerSchema {
+            namespace: "memory",
+            function: "learn_all",
+            description: "Run the tree summarizer over all memory namespaces (or a constrained subset). Processes namespaces sequentially; a failing namespace is recorded but does not abort the rest.",
+            inputs: vec![FieldSchema {
+                name: "namespaces",
+                ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                comment: "Optional list of namespaces to constrain. Defaults to all namespaces.",
+                required: false,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "namespaces_processed",
+                    ty: TypeSchema::U64,
+                    comment: "Total number of namespaces processed.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "results",
+                    ty: TypeSchema::Json,
+                    comment: "Per-namespace outcomes: [{ namespace, status: 'ok'|'skipped'|'error', error? }].",
+                    required: true,
+                },
+            ],
+        },
+
         // ----- fallback -----
         _other => ControllerSchema {
             namespace: "memory",
@@ -1109,6 +1188,24 @@ fn handle_clear_namespace(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = parse_params::<ClearNamespaceParams>(params)?;
         to_json(rpc::clear_namespace(payload).await?)
+    })
+}
+
+fn handle_sync_channel(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = parse_params::<SyncChannelParams>(params)?;
+        to_json(rpc::memory_sync_channel(payload).await?)
+    })
+}
+
+fn handle_sync_all(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(rpc::memory_sync_all().await?) })
+}
+
+fn handle_learn_all(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = parse_params::<LearnAllParams>(params)?;
+        to_json(rpc::memory_learn_all(payload).await?)
     })
 }
 

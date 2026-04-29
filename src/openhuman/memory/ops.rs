@@ -883,6 +883,183 @@ pub async fn graph_query(
     Ok(RpcOutcome::single_log(rows, "memory graph queried"))
 }
 
+/// Parameters for `memory_sync_channel`.
+#[derive(Debug, serde::Deserialize)]
+pub struct SyncChannelParams {
+    pub channel_id: String,
+}
+
+/// Result returned by `memory_sync_channel`.
+#[derive(Debug, serde::Serialize)]
+pub struct SyncChannelResult {
+    pub requested: bool,
+    pub channel_id: String,
+}
+
+/// Result returned by `memory_sync_all`.
+#[derive(Debug, serde::Serialize)]
+pub struct SyncAllResult {
+    pub requested: bool,
+}
+
+/// Per-namespace outcome for `memory_learn_all`.
+#[derive(Debug, serde::Serialize)]
+pub struct NamespaceLearnResult {
+    pub namespace: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Result returned by `memory_learn_all`.
+#[derive(Debug, serde::Serialize)]
+pub struct LearnAllResult {
+    pub namespaces_processed: usize,
+    pub results: Vec<NamespaceLearnResult>,
+}
+
+/// Parameters for `memory_learn_all`.
+#[derive(Debug, serde::Deserialize)]
+pub struct LearnAllParams {
+    /// Optional list of namespaces to constrain. Defaults to all namespaces.
+    #[serde(default)]
+    pub namespaces: Option<Vec<String>>,
+}
+
+/// Request a memory sync for a specific channel.
+///
+/// Ingestion in OpenHuman is listener/webhook-driven — there is no per-provider
+/// pull mechanism yet. This RPC publishes `DomainEvent::MemorySyncRequested` so
+/// that future ingestion subscribers can react to an explicit pull request.
+/// The event is fire-and-forget; the caller receives confirmation that the
+/// request was published, not that ingestion ran.
+pub async fn memory_sync_channel(
+    params: SyncChannelParams,
+) -> Result<RpcOutcome<SyncChannelResult>, String> {
+    tracing::info!(
+        "[memory.sync] memory_sync_channel: entry channel_id={}",
+        params.channel_id
+    );
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::MemorySyncRequested {
+            channel_id: Some(params.channel_id.clone()),
+        },
+    );
+    tracing::debug!(
+        "[memory.sync] memory_sync_channel: MemorySyncRequested published channel_id={}",
+        params.channel_id
+    );
+    Ok(RpcOutcome::single_log(
+        SyncChannelResult {
+            requested: true,
+            channel_id: params.channel_id,
+        },
+        "memory sync requested for channel",
+    ))
+}
+
+/// Request a memory sync for all channels.
+///
+/// Publishes `DomainEvent::MemorySyncRequested { channel_id: None }` on the
+/// global event bus. No consumers exist yet — this is a hook for future
+/// ingestion subscribers.
+pub async fn memory_sync_all() -> Result<RpcOutcome<SyncAllResult>, String> {
+    tracing::info!("[memory.sync] memory_sync_all: entry");
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::MemorySyncRequested { channel_id: None },
+    );
+    tracing::debug!("[memory.sync] memory_sync_all: MemorySyncRequested(all) published");
+    Ok(RpcOutcome::single_log(
+        SyncAllResult { requested: true },
+        "memory sync requested for all channels",
+    ))
+}
+
+/// Run the tree summarizer over all (or a constrained set of) namespaces.
+///
+/// Enumerates namespaces via `namespace_list`, then for each runs
+/// `tree_summarizer_run`. Results are collected per-namespace; a failing
+/// namespace does not abort the rest. Runs sequentially to avoid saturating
+/// the local AI provider.
+pub async fn memory_learn_all(
+    params: LearnAllParams,
+) -> Result<RpcOutcome<LearnAllResult>, String> {
+    tracing::info!(
+        "[memory.learn] memory_learn_all: entry namespaces={:?}",
+        params.namespaces
+    );
+
+    // Resolve the target namespace list.
+    let client = active_memory_client().await?;
+    let all_ns = client.list_namespaces().await?;
+    tracing::debug!("[memory.learn] available namespaces: {:?}", all_ns);
+
+    let target_ns: Vec<String> = match &params.namespaces {
+        Some(requested) if !requested.is_empty() => {
+            let filtered: Vec<_> = requested
+                .iter()
+                .filter(|ns| all_ns.contains(ns))
+                .cloned()
+                .collect();
+            tracing::debug!("[memory.learn] constrained to namespaces: {:?}", filtered);
+            filtered
+        }
+        _ => {
+            tracing::debug!("[memory.learn] using all {} namespaces", all_ns.len());
+            all_ns
+        }
+    };
+
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|e| format!("load config: {e}"))?;
+
+    let mut results = Vec::with_capacity(target_ns.len());
+    for namespace in &target_ns {
+        tracing::info!(
+            "[memory.learn] running summarization for namespace='{}'",
+            namespace
+        );
+        let outcome =
+            crate::openhuman::tree_summarizer::ops::tree_summarizer_run(&config, namespace).await;
+        match outcome {
+            Ok(_) => {
+                tracing::info!("[memory.learn] namespace='{}' ok", namespace);
+                results.push(NamespaceLearnResult {
+                    namespace: namespace.clone(),
+                    status: "ok".to_string(),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                tracing::warn!("[memory.learn] namespace='{}' error: {}", namespace, e);
+                results.push(NamespaceLearnResult {
+                    namespace: namespace.clone(),
+                    status: "error".to_string(),
+                    error: Some(e),
+                });
+            }
+        }
+    }
+
+    let namespaces_processed = results.len();
+    tracing::info!(
+        "[memory.learn] memory_learn_all: done processed={} results={:?}",
+        namespaces_processed,
+        results
+            .iter()
+            .map(|r| (&r.namespace, &r.status))
+            .collect::<Vec<_>>()
+    );
+    Ok(RpcOutcome::single_log(
+        LearnAllResult {
+            namespaces_processed,
+            results,
+        },
+        "memory learn all completed",
+    ))
+}
+
 /// Initialise the local-only (SQLite) memory subsystem for the current workspace.
 ///
 /// `request.jwt_token` is accepted for backward compatibility but ignored — all

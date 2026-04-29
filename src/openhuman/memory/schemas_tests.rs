@@ -26,6 +26,9 @@ const ALL_FUNCTIONS: &[&str] = &[
     "graph_upsert",
     "graph_query",
     "clear_namespace",
+    "sync_channel",
+    "sync_all",
+    "learn_all",
 ];
 
 #[test]
@@ -107,4 +110,40 @@ fn parse_params_surfaces_deserialization_errors_with_context() {
     m.insert("count".into(), json!("not-a-number"));
     let err = parse_params::<Strict>(m).unwrap_err();
     assert!(err.contains("invalid params"));
+}
+
+// ── sync / learn schema shape tests ─────────────────────────────────────
+
+#[test]
+fn sync_channel_schema_requires_channel_id() {
+    let s = schemas("sync_channel");
+    assert_eq!(s.namespace, "memory");
+    assert_eq!(s.function, "sync_channel");
+    let required: Vec<_> = s
+        .inputs
+        .iter()
+        .filter(|f| f.required)
+        .map(|f| f.name)
+        .collect();
+    assert!(
+        required.contains(&"channel_id"),
+        "channel_id must be required"
+    );
+}
+
+#[test]
+fn sync_all_schema_has_no_inputs() {
+    let s = schemas("sync_all");
+    assert_eq!(s.function, "sync_all");
+    assert!(s.inputs.is_empty(), "sync_all takes no inputs");
+}
+
+#[test]
+fn learn_all_schema_namespaces_is_optional() {
+    let s = schemas("learn_all");
+    assert_eq!(s.function, "learn_all");
+    assert_eq!(s.inputs.len(), 1);
+    let ns_field = &s.inputs[0];
+    assert_eq!(ns_field.name, "namespaces");
+    assert!(!ns_field.required, "namespaces must be optional");
 }
