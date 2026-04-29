@@ -29,12 +29,6 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str("\n\n");
     }
 
-    let datetime = render_datetime(ctx)?;
-    if !datetime.trim().is_empty() {
-        out.push_str(datetime.trim_end());
-        out.push_str("\n\n");
-    }
-
     let workspace = render_workspace(ctx)?;
     if !workspace.trim().is_empty() {
         out.push_str(workspace.trim_end());
