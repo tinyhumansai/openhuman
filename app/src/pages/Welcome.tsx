@@ -32,13 +32,13 @@ const Welcome = () => {
   const [rpcUrl, setRpcUrl] = useState(getStoredRpcUrl());
   const [rpcUrlError, setRpcUrlError] = useState<string | null>(null);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
-  const [connectionTested, setConnectionTested] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Persist RPC URL changes to localStorage
   const handleRpcUrlChange = (value: string) => {
     setRpcUrl(value);
     setRpcUrlError(null);
-    setConnectionTested(false);
+    setSaveSuccess(false);
   };
 
   // Save RPC URL preference
@@ -53,10 +53,10 @@ const Welcome = () => {
     storeRpcUrl(normalized);
     clearCoreRpcUrlCache();
     setRpcUrlError(null);
-    setConnectionTested(true);
+    setSaveSuccess(true);
 
     // Show brief success feedback
-    setTimeout(() => setConnectionTested(false), 2000);
+    setTimeout(() => setSaveSuccess(false), 2000);
   };
 
   // Reset RPC URL to default
@@ -65,7 +65,7 @@ const Welcome = () => {
     clearCoreRpcUrlCache();
     setRpcUrl(getDefaultRpcUrl());
     setRpcUrlError(null);
-    setConnectionTested(false);
+    setSaveSuccess(false);
   };
 
   // Test RPC connection
@@ -88,9 +88,9 @@ const Welcome = () => {
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'openhuman.ping', params: {} }),
       });
 
-      if (response.ok || response.status === 400 || response.status === 405) {
-        // 400/405 means the endpoint exists but method not found - still valid
-        setConnectionTested(true);
+      if (response.ok || response.status === 405) {
+        // 405 means the endpoint exists but method-not-allowed - still a valid JSON-RPC server
+        setSaveSuccess(true);
         storeRpcUrl(normalized);
         clearCoreRpcUrlCache();
       } else {
@@ -98,7 +98,7 @@ const Welcome = () => {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to reach the RPC endpoint';
-      setRpcUrlError(message);
+      setRpcUrlError(`Connection failed: ${message}`);
     } finally {
       setIsTestingConnection(false);
     }
@@ -188,8 +188,8 @@ const Welcome = () => {
               </div>
               {rpcUrlError ? (
                 <p className="mt-2 text-xs text-red-600">{rpcUrlError}</p>
-              ) : connectionTested ? (
-                <p className="mt-2 text-xs text-green-600">Connection successful! URL saved.</p>
+              ) : saveSuccess ? (
+                <p className="mt-2 text-xs text-green-600">URL saved successfully.</p>
               ) : null}
               <div className="mt-3 flex gap-2">
                 <button

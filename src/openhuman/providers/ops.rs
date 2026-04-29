@@ -163,6 +163,11 @@ pub fn create_backend_inference_provider(
             ),
         ))
     } else {
+        if api_key.is_some() && api_url.is_none() {
+            log::warn!(
+                "[providers] api_key provided without api_url — key will be ignored, using default backend provider"
+            );
+        }
         Ok(Box::new(openhuman_backend::OpenHumanBackendProvider::new(
             api_url, options,
         )))

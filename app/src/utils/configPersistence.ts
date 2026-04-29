@@ -4,13 +4,14 @@
  * Handles storing/retrieving user preferences like RPC URL using
  * localStorage (web) or Tauri store (desktop).
  */
+import { CORE_RPC_URL } from './config';
 import { isTauri } from './tauriCommands';
 
 // Storage key for RPC URL preference
 const RPC_URL_STORAGE_KEY = 'openhuman_core_rpc_url';
 
-// Default RPC URL (matches backend default)
-const DEFAULT_RPC_URL = 'http://127.0.0.1:7788/rpc';
+// Default RPC URL — canonical value from config.ts so they can never drift
+const DEFAULT_RPC_URL = CORE_RPC_URL;
 
 /**
  * Check if we're running in a Tauri environment.
@@ -102,7 +103,7 @@ export function normalizeRpcUrl(url: string): string {
  * @returns The default RPC URL
  */
 export function getDefaultRpcUrl(): string {
-  return DEFAULT_RPC_URL;
+  return CORE_RPC_URL;
 }
 
 /**
