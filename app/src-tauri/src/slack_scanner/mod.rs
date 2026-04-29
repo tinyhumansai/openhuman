@@ -111,10 +111,23 @@ async fn scan_once(
 
     let targets_v = cdp.call("Target.getTargets", json!({}), None).await?;
     let targets = parse_targets(&targets_v);
+    // Slack's client-side router does pushState to `/client/<workspace>/<channel>`
+    // shortly after first load, which strips the `#openhuman-account-<id>` fragment.
+    // The fragment is only reliable on the FIRST scan tick (immediately after
+    // navigation) — by tick 2 it's gone. Fall back to any same-origin page target.
+    // The per-account `data_directory` isolation guarantees each Slack account
+    // owns its own page target, so the broader match is safe even with multiple
+    // Slack accounts open: at most one page-target per origin per account in the
+    // CEF helper's target list.
     let page_target = targets
         .iter()
         .find(|t| {
             t.kind == "page" && t.url.starts_with(url_prefix) && t.url.ends_with(url_fragment)
+        })
+        .or_else(|| {
+            targets
+                .iter()
+                .find(|t| t.kind == "page" && t.url.starts_with(url_prefix))
         })
         .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
 
@@ -724,10 +737,14 @@ async fn dom_scan_once(
     url_prefix: &str,
     url_fragment: &str,
 ) -> Result<dom_snapshot::DomScan, String> {
+    // First-tick matcher tries the strict fragment; subsequent ticks fall back
+    // to any same-origin Slack page target — see comment in scan_once for why.
     let prefix = url_prefix.to_string();
     let fragment = url_fragment.to_string();
     let (mut cdp, session) = crate::cdp::connect_and_attach_matching(move |t| {
-        t.url.starts_with(&prefix) && t.url.ends_with(&fragment)
+        t.kind == "page"
+            && t.url.starts_with(&prefix)
+            && (t.url.ends_with(&fragment) || t.url.contains("/client"))
     })
     .await?;
     let scan = dom_snapshot::scan(&mut cdp, &session).await;
