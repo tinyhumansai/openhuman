@@ -6,8 +6,17 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 APP_DIR="$REPO_ROOT/app"
 cd "$APP_DIR"
 
+if ! command -v cygpath >/dev/null 2>&1; then
+  echo "[run-dev-win] cygpath not found. Run this script from Git Bash or MSYS2."
+  exit 1
+fi
+
 export LIBCLANG_PATH="/c/Program Files/LLVM/bin"
-export CEF_PATH="$HOME/Library/Caches/tauri-cef"
+
+# CEF runtime lives under LOCALAPPDATA on Windows, not the macOS Library cache.
+# ensure-tauri-cli.sh stages it here; fall back to a default if unset.
+CEF_PATH="${CEF_PATH:-$(cygpath -u "${LOCALAPPDATA:-$APPDATA}")/tauri-cef}"
+export CEF_PATH
 
 to_unix_path() {
   if [[ -z "${1:-}" ]]; then
@@ -16,20 +25,31 @@ to_unix_path() {
   cygpath -u "$1"
 }
 
+# Resolve a WinGet-installed executable.
+# Usage: find_winget_exe <package-glob> <exe-name>
+# Prints the full path to the exe and returns 0, or returns 1 if not found.
+find_winget_exe() {
+  local pkg_glob="$1"
+  local exe_name="$2"
+  local local_appdata_unix
+  local_appdata_unix="$(to_unix_path "${LOCALAPPDATA:-}")" || return 1
+  local candidate
+  # Sort by version (lexicographic on directory name) and pick the newest.
+  candidate="$(ls -d "$local_appdata_unix"/Microsoft/WinGet/Packages/${pkg_glob}_* 2>/dev/null \
+    | sort -V | tail -n1 || true)"
+  if [[ -n "$candidate" && -x "$candidate/$exe_name" ]]; then
+    printf '%s\n' "$candidate/$exe_name"
+    return 0
+  fi
+  return 1
+}
+
 find_pnpm() {
   if command -v pnpm >/dev/null 2>&1; then
     command -v pnpm
     return 0
   fi
-  local local_appdata_unix
-  local_appdata_unix="$(to_unix_path "${LOCALAPPDATA:-}")" || return 1
-  local candidate
-  candidate="$(ls -d "$local_appdata_unix"/Microsoft/WinGet/Packages/pnpm.pnpm_* 2>/dev/null | head -n1 || true)"
-  if [[ -n "$candidate" && -x "$candidate/pnpm.exe" ]]; then
-    printf '%s\n' "$candidate/pnpm.exe"
-    return 0
-  fi
-  return 1
+  find_winget_exe "pnpm.pnpm" "pnpm.exe"
 }
 
 find_ninja() {
@@ -37,15 +57,7 @@ find_ninja() {
     command -v ninja
     return 0
   fi
-  local local_appdata_unix
-  local_appdata_unix="$(to_unix_path "${LOCALAPPDATA:-}")" || return 1
-  local candidate
-  candidate="$(ls -d "$local_appdata_unix"/Microsoft/WinGet/Packages/Ninja-build.Ninja_* 2>/dev/null | head -n1 || true)"
-  if [[ -n "$candidate" && -x "$candidate/ninja.exe" ]]; then
-    printf '%s\n' "$candidate/ninja.exe"
-    return 0
-  fi
-  return 1
+  find_winget_exe "Ninja-build.Ninja" "ninja.exe"
 }
 
 PNPM_EXE="$(find_pnpm || true)"
@@ -75,4 +87,7 @@ export PATH="$PATH_PREFIX:$PATH"
 "$PNPM_EXE" tauri:ensure
 "$PNPM_EXE" core:stage
 source ../scripts/load-dotenv.sh
-APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev
+# Use the vendored tauri-cef CLI (via the pnpm tauri script) so the
+# CEF runtime is correctly bundled. APPLE_SIGNING_IDENTITY is macOS-only
+# and is intentionally omitted here.
+"$PNPM_EXE" tauri dev

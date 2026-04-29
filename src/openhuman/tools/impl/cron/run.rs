@@ -115,18 +115,26 @@ mod tests {
 
         let result = tool.execute(json!({ "job_id": job.id })).await.unwrap();
         if cfg!(windows) {
+            // `echo` may not be available as a standalone executable on Windows;
+            // verify the expected failure mode without short-circuiting the test.
             assert!(result.is_error);
             assert!(
                 result.output().contains("spawn error"),
                 "{:?}",
                 result.output()
             );
-            return;
+        } else {
+            assert!(!result.is_error, "{:?}", result.output());
         }
-        assert!(!result.is_error, "{:?}", result.output());
 
+        // History persistence should be verified on all platforms.
         let runs = cron::list_runs(&cfg, &job.id, 10).unwrap();
-        assert_eq!(runs.len(), 1);
+        if cfg!(windows) {
+            // On Windows the job fails to spawn, so no run record is expected.
+            assert_eq!(runs.len(), 0);
+        } else {
+            assert_eq!(runs.len(), 1);
+        }
     }
 
     #[tokio::test]

@@ -344,24 +344,20 @@ mod tests {
     async fn shell_preserves_path_and_home() {
         let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime());
 
-        let home_cmd = if cfg!(windows) {
-            "echo $env:USERPROFILE"
-        } else {
-            "echo $HOME"
-        };
-        let result = tool.execute(json!({"command": home_cmd})).await.unwrap();
+        let result = tool
+            .execute(json!({"command": "echo $HOME"}))
+            .await
+            .unwrap();
         assert!(!result.is_error, "{}", result.output());
         assert!(
             !result.output().trim().is_empty(),
             "HOME should be available in shell"
         );
 
-        let path_cmd = if cfg!(windows) {
-            "echo $env:PATH"
-        } else {
-            "echo $PATH"
-        };
-        let result = tool.execute(json!({"command": path_cmd})).await.unwrap();
+        let result = tool
+            .execute(json!({"command": "echo $PATH"}))
+            .await
+            .unwrap();
         assert!(!result.is_error, "{}", result.output());
         assert!(
             !result.output().trim().is_empty(),

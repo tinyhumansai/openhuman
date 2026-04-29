@@ -6,7 +6,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::Utc;
 use fs2::FileExt;
@@ -14,6 +14,12 @@ use fs2::FileExt;
 use super::types::{ComposioTriggerHistoryEntry, ComposioTriggerHistoryResult};
 
 static GLOBAL_TRIGGER_HISTORY: OnceLock<Arc<ComposioTriggerHistoryStore>> = OnceLock::new();
+
+/// Process-local write serializer for Windows, where `fs2::FileExt::lock_exclusive`
+/// is unavailable. This ensures concurrent `record_trigger` calls do not race and
+/// produce malformed JSONL lines.
+#[cfg(windows)]
+static WINDOWS_TRIGGER_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 const TRIGGER_ARCHIVE_DIR: &str = "triggers";
 
@@ -113,6 +119,17 @@ impl ComposioTriggerHistoryStore {
                 )
             })?;
 
+        #[cfg(windows)]
+        let _windows_guard = WINDOWS_TRIGGER_WRITE_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|_| {
+                format!(
+                    "[composio][history] windows write mutex poisoned for archive file {}",
+                    path.display()
+                )
+            })?;
+
         #[cfg(not(windows))]
         file.lock_exclusive().map_err(|error| {
             format!(
@@ -120,6 +137,7 @@ impl ComposioTriggerHistoryStore {
                 path.display()
             )
         })?;
+
         let write_result = writeln!(file, "{line}")
             .and_then(|_| file.flush())
             .map_err(|error| {
@@ -128,6 +146,7 @@ impl ComposioTriggerHistoryStore {
                     path.display()
                 )
             });
+
         #[cfg(not(windows))]
         let unlock_result = file.unlock().map_err(|error| {
             format!(

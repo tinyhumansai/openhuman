@@ -280,7 +280,7 @@ mod tests {
         // Note: this uses the same `load_config_with_timeout()` call path
         // that real startup uses. If some other test has written a session
         // profile to disk, this test accepts either outcome (Ok) gracefully.
-        let result = tokio::time::timeout(Duration::from_secs(15), run_one_tick()).await;
+        let result = tokio::time::timeout(Duration::from_secs(5), run_one_tick()).await;
         assert!(
             result.is_ok(),
             "run_one_tick should not hang indefinitely during tests"

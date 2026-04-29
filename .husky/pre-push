@@ -6,6 +6,10 @@ has_node() {
   command -v node >/dev/null 2>&1 || command -v node.exe >/dev/null 2>&1
 }
 
+has_pnpm() {
+  command -v pnpm >/dev/null 2>&1 || command -v pnpm.exe >/dev/null 2>&1
+}
+
 prepend_windows_exe_dir() {
   EXE_NAME="$1"
   WIN_EXE="$(where.exe "$EXE_NAME" 2>/dev/null | tr -d '\r' | head -n 1)"
@@ -38,6 +42,12 @@ fi
 if ! has_node; then
   echo "Pre-push checks require Node.js, but 'node' is not available on PATH."
   echo "Install Node.js or expose node.exe in PATH, then retry git push."
+  exit 1
+fi
+
+if ! has_pnpm; then
+  echo "Pre-push checks require pnpm, but 'pnpm' is not available on PATH."
+  echo "Install pnpm (https://pnpm.io/installation) or expose pnpm.exe in PATH, then retry git push."
   exit 1
 fi
 
