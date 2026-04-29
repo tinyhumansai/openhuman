@@ -219,7 +219,7 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
 
       const granted = await ensureNotificationPermission();
       if (!granted) {
-        const nextState = await getNotificationPermissionState();
+        const nextState = await getNotificationPermissionState({ requestIfNeeded: false });
         setPermissionState(nextState);
         setStatus('error');
         setError(
