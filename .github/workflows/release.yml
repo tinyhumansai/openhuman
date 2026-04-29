@@ -54,6 +54,12 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
       sha: ${{ steps.resolve.outputs.sha }}
+      # First 12 chars of `sha` — matches the truncation done at runtime by
+      # app/src/utils/config.ts, app/vite.config.ts, and src/main.rs when they
+      # compute the canonical `openhuman@<version>+<short_sha>` release tag.
+      # Use this (not the full `sha`) anywhere CI constructs SENTRY_RELEASE,
+      # so uploaded artifacts attach to the same release events report.
+      short_sha: ${{ steps.resolve.outputs.short_sha }}
       build_ref: ${{ steps.resolve.outputs.build_ref }}
       release_enabled: ${{ steps.resolve.outputs.release_enabled }}
       base_url: ${{ steps.resolve.outputs.base_url }}
@@ -150,9 +156,15 @@ jobs:
             RELEASE_ENABLED="false"
             BASE_URL="https://staging-api.tinyhumans.ai/"
           fi
+          # Match the 12-char truncation runtime code applies to
+          # VITE_BUILD_SHA / OPENHUMAN_BUILD_SHA when constructing the release
+          # tag at startup, so SENTRY_RELEASE assembled in CI agrees with
+          # the tag events emit.
+          SHORT_SHA="${SHA:0:12}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "build_ref=$BUILD_REF" >> "$GITHUB_OUTPUT"
           echo "release_enabled=$RELEASE_ENABLED" >> "$GITHUB_OUTPUT"
           echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
@@ -517,9 +529,14 @@ jobs:
           # by Tauri so source maps uploaded there resolve correctly against the
           # final bundle produced by the tauri-driven build.
           VITE_BUILD_SHA: ${{ needs.prepare-build.outputs.sha }}
+          # Use short_sha (12 chars) — matches what config.ts / vite.config.ts /
+          # main.rs all slice VITE_BUILD_SHA / OPENHUMAN_BUILD_SHA down to at
+          # runtime when emitting events. The vite plugin reads SENTRY_RELEASE
+          # raw, so a long-SHA value here would tag uploads against a different
+          # release than events report.
           SENTRY_RELEASE:
             openhuman@${{ needs.prepare-build.outputs.version }}+${{
-            needs.prepare-build.outputs.sha }}
+            needs.prepare-build.outputs.short_sha }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_FRONTEND }}
@@ -551,6 +568,13 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          # Match the canonical release tag the frontend build step (above)
+          # and the Rust core's sentry::init both emit, so DIF + .src.zip
+          # artifacts attach to the same Sentry release as the events.
+          # Uses short_sha (12 chars) — see the prepare-build outputs comment.
+          SENTRY_RELEASE: openhuman@${{ needs.prepare-build.outputs.version }}+${{ needs.prepare-build.outputs.short_sha }}
+          # Drives the deploy marker created after release finalize.
+          SENTRY_ENVIRONMENT: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
           VERSION: ${{ needs.prepare-build.outputs.version }}
           MATRIX_TARGET: ${{ matrix.settings.target }}
         run: |
