@@ -29,6 +29,7 @@ use super::tool_prep::{
 };
 use super::types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
 use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
+use crate::openhuman::agent::harness::with_current_sandbox_mode;
 use crate::openhuman::context::prompt::{
     render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
 };
@@ -65,12 +66,20 @@ pub async fn run_subagent(
         "[subagent_runner] dispatching"
     );
 
-    let outcome = if definition.uses_fork_context {
-        let fork = current_fork().ok_or(SubagentRunError::NoForkContext)?;
-        run_fork_mode(definition, task_prompt, &options, &parent, &fork, &task_id).await?
-    } else {
-        run_typed_mode(definition, task_prompt, &options, &parent, &task_id).await?
-    };
+    // Install the sub-agent's declared `sandbox_mode` as the active
+    // task-local for every tool invocation inside this run. Tools that
+    // want to gate on it (e.g. `composio_execute` rejecting
+    // Write/Admin slugs under `ReadOnly`) read it via
+    // `current_sandbox_mode()`; tools that don't care just ignore it.
+    let outcome = with_current_sandbox_mode(definition.sandbox_mode, async {
+        if definition.uses_fork_context {
+            let fork = current_fork().ok_or(SubagentRunError::NoForkContext)?;
+            run_fork_mode(definition, task_prompt, &options, &parent, &fork, &task_id).await
+        } else {
+            run_typed_mode(definition, task_prompt, &options, &parent, &task_id).await
+        }
+    })
+    .await?;
 
     tracing::info!(
         agent_id = %definition.id,

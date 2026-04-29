@@ -32,6 +32,7 @@ pub mod interrupt;
 pub(crate) mod memory_context;
 mod parse;
 pub(crate) mod payload_summarizer;
+pub mod sandbox_context;
 pub(crate) mod self_healing;
 pub mod session;
 pub(crate) mod session_queue;
@@ -48,6 +49,7 @@ pub use fork_context::{
     ParentExecutionContext,
 };
 pub use interrupt::{check_interrupt, InterruptFence, InterruptedError};
+pub use sandbox_context::{current_sandbox_mode, with_current_sandbox_mode};
 pub use subagent_runner::{run_subagent, SubagentRunError, SubagentRunOptions};
 
 pub(crate) use instructions::build_tool_instructions_filtered;

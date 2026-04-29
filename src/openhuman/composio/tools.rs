@@ -24,6 +24,8 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use crate::openhuman::agent::harness::current_sandbox_mode;
+use crate::openhuman::agent::harness::definition::SandboxMode;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 use super::client::ComposioClient;
@@ -45,6 +47,29 @@ enum ToolDecision {
     /// Toolkit has no curated catalog — pass through, but still gate by
     /// the user scope using the [`classify_unknown`] heuristic.
     PassthroughCheckScope { scope: ToolScope },
+}
+
+/// Resolve a Composio action slug to its [`ToolScope`] classification.
+///
+/// Prefers the toolkit's curated catalog when available (most accurate
+/// — curated entries are hand-classified) and falls back to the
+/// [`classify_unknown`] heuristic for un-curated toolkits. Unparseable
+/// slugs default to `Write` so the sandbox gate errs on the side of
+/// blocking rather than letting a potentially-mutating action slip
+/// through uncategorised.
+pub(super) async fn resolve_action_scope(slug: &str) -> ToolScope {
+    let Some(toolkit) = toolkit_from_slug(slug) else {
+        return ToolScope::Write;
+    };
+    let catalog = get_provider(&toolkit)
+        .and_then(|p| p.curated_tools())
+        .or_else(|| catalog_for_toolkit(&toolkit));
+    if let Some(cat) = catalog {
+        if let Some(entry) = find_curated(cat, slug) {
+            return entry.scope;
+        }
+    }
+    classify_unknown(slug)
 }
 
 /// Decide whether a Composio action slug should be visible / executable
@@ -433,6 +458,34 @@ impl Tool for ComposioExecuteTool {
         }
         let arguments = args.get("arguments").cloned();
         tracing::debug!(tool = %tool, "[composio] tool execute.execute");
+
+        // Agent-level sandbox gate (issue #685) — applies on top of the
+        // user's scope preference below. When the currently-executing
+        // agent declares `sandbox_mode = "read_only"` in its
+        // `agent.toml`, we refuse to dispatch any Write- or Admin-scoped
+        // composio action regardless of what the user's scope pref
+        // allows, so a strictly-read-only agent (planner, critic,
+        // morning_briefing, …) can never mutate user state via the
+        // composio surface. `SandboxMode::None` / `Sandboxed` (and the
+        // `None` task-local value used by direct CLI / JSON-RPC / unit
+        // tests) pass through unchanged.
+        if matches!(current_sandbox_mode(), Some(SandboxMode::ReadOnly)) {
+            let scope = resolve_action_scope(&tool).await;
+            if matches!(scope, ToolScope::Write | ToolScope::Admin) {
+                tracing::info!(
+                    tool = %tool,
+                    scope = scope.as_str(),
+                    "[composio][sandbox] execute blocked: agent is read-only, action is {}",
+                    scope.as_str()
+                );
+                return Ok(ToolResult::error(format!(
+                    "composio_execute: action `{tool}` is classified `{}` and is refused \
+                     because the calling agent is in strict read-only mode. Only `read`-scoped \
+                     actions are available to this agent.",
+                    scope.as_str()
+                )));
+            }
+        }
 
         // Enforce per-user scope preferences before delegating to backend.
         match evaluate_tool_visibility(&tool).await {

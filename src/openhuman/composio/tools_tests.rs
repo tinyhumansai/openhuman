@@ -188,3 +188,116 @@ fn all_composio_agent_tools_registers_five_when_session_available() {
     let tools = all_composio_agent_tools(&config);
     assert_eq!(tools.len(), 5);
 }
+
+// ── Sandbox-mode gate (issue #685) ───────────────────────────────
+//
+// These tests stand alone from the backend client — they only exercise
+// the gate added to `ComposioExecuteTool::execute` that keys on the
+// `CURRENT_AGENT_SANDBOX_MODE` task-local. The backend is never reached
+// when the gate rejects, so `fake_composio_client()` is fine.
+
+fn error_text(result: &ToolResult) -> String {
+    result
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            crate::openhuman::tools::traits::ToolContent::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[tokio::test]
+async fn sandbox_read_only_blocks_write_scope_action() {
+    let t = ComposioExecuteTool::new(fake_composio_client());
+    let result =
+        crate::openhuman::agent::harness::with_current_sandbox_mode(SandboxMode::ReadOnly, async {
+            t.execute(serde_json::json!({ "tool": "GMAIL_SEND_EMAIL" }))
+                .await
+                .unwrap()
+        })
+        .await;
+    assert!(
+        result.is_error,
+        "send-email under read-only must be an error"
+    );
+    let msg = error_text(&result);
+    assert!(msg.contains("strict read-only"), "got: {msg}");
+    assert!(msg.contains("`write`"), "got: {msg}");
+}
+
+#[tokio::test]
+async fn sandbox_read_only_blocks_admin_scope_action() {
+    let t = ComposioExecuteTool::new(fake_composio_client());
+    let result =
+        crate::openhuman::agent::harness::with_current_sandbox_mode(SandboxMode::ReadOnly, async {
+            t.execute(serde_json::json!({ "tool": "GMAIL_DELETE_EMAIL" }))
+                .await
+                .unwrap()
+        })
+        .await;
+    assert!(result.is_error);
+    let msg = error_text(&result);
+    assert!(msg.contains("`admin`"), "got: {msg}");
+}
+
+#[tokio::test]
+async fn sandbox_read_only_passes_through_read_scope_actions_to_downstream_gates() {
+    // Read-scoped slugs should survive the sandbox gate; they may
+    // still be rejected by the user's scope-pref check or the
+    // curated-catalog check downstream, but the sandbox layer itself
+    // must not block them.
+    let t = ComposioExecuteTool::new(fake_composio_client());
+    let result =
+        crate::openhuman::agent::harness::with_current_sandbox_mode(SandboxMode::ReadOnly, async {
+            t.execute(serde_json::json!({ "tool": "GMAIL_FETCH_EMAILS" }))
+                .await
+                .unwrap()
+        })
+        .await;
+    let msg = error_text(&result);
+    assert!(
+        !msg.contains("strict read-only"),
+        "read-scoped slug must not hit the sandbox gate, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn sandbox_unset_leaves_all_scopes_to_downstream_gates() {
+    // Outside any `with_current_sandbox_mode` scope the task-local
+    // returns `None` and the gate becomes a no-op (backward
+    // compatible — this is the CLI / JSON-RPC / unit-test path).
+    let t = ComposioExecuteTool::new(fake_composio_client());
+    let result = t
+        .execute(serde_json::json!({ "tool": "GMAIL_SEND_EMAIL" }))
+        .await
+        .unwrap();
+    let msg = error_text(&result);
+    assert!(
+        !msg.contains("strict read-only"),
+        "no sandbox scope must never trigger the gate, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn sandbox_sandboxed_mode_does_not_trigger_readonly_gate() {
+    // `SandboxMode::Sandboxed` is a privilege-drop / filesystem
+    // restriction — orthogonal to write permissions on external
+    // APIs. The gate only fires for `ReadOnly`, by design.
+    let t = ComposioExecuteTool::new(fake_composio_client());
+    let result = crate::openhuman::agent::harness::with_current_sandbox_mode(
+        SandboxMode::Sandboxed,
+        async {
+            t.execute(serde_json::json!({ "tool": "GMAIL_SEND_EMAIL" }))
+                .await
+                .unwrap()
+        },
+    )
+    .await;
+    let msg = error_text(&result);
+    assert!(
+        !msg.contains("strict read-only"),
+        "Sandboxed mode must not trigger the read-only gate, got: {msg}"
+    );
+}

@@ -18,6 +18,14 @@ hint = "reasoning"
 # the workspace, memory, or state. Any writes the plan requires get
 # executed by downstream agents (code_executor, archivist, …) at the
 # orchestrator's direction.
+#
+# Composio meta-tools are included so the planner can inspect connected
+# integrations, list available actions, and pull data needed to ground
+# a plan. `sandbox_mode = "read_only"` above triggers the agent-level
+# gate in `composio_execute` that rejects Write/Admin-scoped action
+# slugs (#685), so the planner cannot send email / create pages / etc.
+# even though `composio_execute` is on this list. Only `Read`-scoped
+# actions slip past the gate.
 named = [
     "file_read",
     "memory_recall",
@@ -32,4 +40,8 @@ named = [
     "stock_exchange_rate",
     "stock_crypto_series",
     "stock_commodity",
+    "composio_list_toolkits",
+    "composio_list_connections",
+    "composio_list_tools",
+    "composio_execute",
 ]
