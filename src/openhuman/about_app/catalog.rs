@@ -803,7 +803,7 @@ const CAPABILITIES: &[Capability] = &[
         name: "Welcome Message",
         domain: "automation",
         category: CapabilityCategory::Automation,
-        description: "One-shot agent that delivers a personalized, witty welcome message after onboarding completes.",
+        description: "Conversational onboarding agent that learns about the user's intent and daily tools before guiding them through personalized setup.",
         how_to: "Automatic — triggered once after onboarding.",
         status: CapabilityStatus::Beta,
         privacy: None,

@@ -7,9 +7,9 @@
 //! Flips `chat_onboarding_completed` to `true` and seeds recurring
 //! proactive cron jobs. Rejects (returns a
 //! [`ToolResult::error`]) if the user has not yet met the minimum
-//! engagement threshold — either at least
-//! [`onboarding_status::MIN_EXCHANGES_TO_COMPLETE`] welcome-agent exchanges,
-//! or at least one connected Composio integration.
+//! engagement threshold — at least
+//! [`onboarding_status::MIN_EXCHANGES_TO_COMPLETE`] welcome-agent exchanges
+//! **and** at least one connected Composio integration.
 
 use crate::openhuman::config::Config;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult, ToolScope};
@@ -108,6 +108,7 @@ async fn complete() -> anyhow::Result<ToolResult> {
     if !state.ready_to_complete {
         return Ok(ToolResult::error(build_not_ready_to_complete_error(
             state.exchange_count,
+            state.composio_connected_toolkits.len() as u32,
         )));
     }
 
