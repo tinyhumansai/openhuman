@@ -43,7 +43,7 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("env lock poisoned")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -54,6 +54,7 @@ async fn accepted_completions_stored_and_retrievable() {
     let _lock = env_lock();
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let _ = history::clear_history().await;
 
     // Write three completions with different contexts.
     history::save_accepted_completion("fn main() { let x =", "42;", Some("VSCode")).await;
@@ -103,6 +104,7 @@ async fn completions_improve_future_suggestions_via_merge() {
     let _lock = env_lock();
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let _ = history::clear_history().await;
 
     // Populate with several completions.
     for i in 0..5 {
@@ -153,6 +155,7 @@ async fn clear_history_removes_kv_and_docs() {
     let _lock = env_lock();
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let _ = history::clear_history().await;
 
     // Insert completions into both layers.
     for i in 0..3 {
@@ -194,6 +197,7 @@ async fn kv_history_trims_beyond_max() {
     let _lock = env_lock();
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let _ = history::clear_history().await;
 
     // Insert 55 completions (MAX_HISTORY_ENTRIES = 50).
     for i in 0..55 {

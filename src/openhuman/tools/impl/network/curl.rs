@@ -361,6 +361,9 @@ mod tests {
     use super::*;
     use crate::openhuman::security::SecurityPolicy;
     use tempfile::TempDir;
+    fn slash_norm(s: String) -> String {
+        s.replace('\\', "/")
+    }
 
     fn tool(tmp: &TempDir, allow: Vec<&str>) -> CurlTool {
         CurlTool::new(
@@ -375,14 +378,14 @@ mod tests {
 
     #[test]
     fn sanitize_dest_subdir_strips_absolute_paths() {
-        assert_eq!(sanitize_dest_subdir("/etc/passwd"), "etc/passwd");
+        assert_eq!(slash_norm(sanitize_dest_subdir("/etc/passwd")), "etc/passwd");
         assert_eq!(sanitize_dest_subdir("//foo"), "foo");
     }
 
     #[test]
     fn sanitize_dest_subdir_strips_parent_segments() {
         assert_eq!(sanitize_dest_subdir("../../etc"), "etc");
-        assert_eq!(sanitize_dest_subdir("a/../b"), "a/b");
+        assert_eq!(slash_norm(sanitize_dest_subdir("a/../b")), "a/b");
     }
 
     #[test]
@@ -396,7 +399,10 @@ mod tests {
     #[test]
     fn sanitize_dest_subdir_keeps_normal_paths() {
         assert_eq!(sanitize_dest_subdir("downloads"), "downloads");
-        assert_eq!(sanitize_dest_subdir("artifacts/build"), "artifacts/build");
+        assert_eq!(
+            slash_norm(sanitize_dest_subdir("artifacts/build")),
+            "artifacts/build"
+        );
     }
 
     #[test]

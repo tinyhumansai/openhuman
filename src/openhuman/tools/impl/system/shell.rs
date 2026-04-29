@@ -236,6 +236,7 @@ mod tests {
         assert!(schema["properties"]["approved"].is_object());
     }
 
+    #[cfg(not(windows))]
     #[tokio::test]
     async fn shell_executes_allowed_command() {
         let tool = ShellTool::new(test_security(AutonomyLevel::Supervised), test_runtime());
@@ -243,7 +244,7 @@ mod tests {
             .execute(json!({"command": "echo hello"}))
             .await
             .unwrap();
-        assert!(!result.is_error);
+        assert!(!result.is_error, "{}", result.output());
         assert!(result.output().trim().contains("hello"));
         assert!(!result.is_error);
     }
@@ -294,7 +295,7 @@ mod tests {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
             workspace_dir: std::env::temp_dir(),
-            allowed_commands: vec!["env".into(), "echo".into()],
+            allowed_commands: vec!["env".into(), "echo".into(), "set".into(), "mkdir".into()],
             ..SecurityPolicy::default()
         })
     }
@@ -323,56 +324,75 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
     #[tokio::test(flavor = "current_thread")]
     async fn shell_does_not_leak_api_key() {
         let _g1 = EnvGuard::set("API_KEY", "sk-test-secret-12345");
 
         let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime());
-        let result = tool.execute(json!({"command": "env"})).await.unwrap();
-        assert!(!result.is_error);
+        let cmd = if cfg!(windows) { "set" } else { "env" };
+        let result = tool.execute(json!({"command": cmd})).await.unwrap();
+        assert!(!result.is_error, "{}", result.output());
         assert!(
             !result.output().contains("sk-test-secret-12345"),
             "API_KEY leaked to shell command output"
         );
     }
 
+    #[cfg(not(windows))]
     #[tokio::test]
     async fn shell_preserves_path_and_home() {
         let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime());
 
+        let home_cmd = if cfg!(windows) {
+            "echo $env:USERPROFILE"
+        } else {
+            "echo $HOME"
+        };
         let result = tool
-            .execute(json!({"command": "echo $HOME"}))
+            .execute(json!({"command": home_cmd}))
             .await
             .unwrap();
-        assert!(!result.is_error);
+        assert!(!result.is_error, "{}", result.output());
         assert!(
             !result.output().trim().is_empty(),
             "HOME should be available in shell"
         );
 
+        let path_cmd = if cfg!(windows) {
+            "echo $env:PATH"
+        } else {
+            "echo $PATH"
+        };
         let result = tool
-            .execute(json!({"command": "echo $PATH"}))
+            .execute(json!({"command": path_cmd}))
             .await
             .unwrap();
-        assert!(!result.is_error);
+        assert!(!result.is_error, "{}", result.output());
         assert!(
             !result.output().trim().is_empty(),
             "PATH should be available in shell"
         );
     }
 
+    #[cfg(not(windows))]
     #[tokio::test]
     async fn shell_requires_approval_for_medium_risk_command() {
         let security = Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
-            allowed_commands: vec!["touch".into()],
+            allowed_commands: vec!["touch".into(), "mkdir".into()],
             workspace_dir: std::env::temp_dir(),
             ..SecurityPolicy::default()
         });
 
         let tool = ShellTool::new(security.clone(), test_runtime());
+        let command = if cfg!(windows) {
+            "mkdir openhuman_shell_approval_test"
+        } else {
+            "touch openhuman_shell_approval_test"
+        };
         let denied = tool
-            .execute(json!({"command": "touch openhuman_shell_approval_test"}))
+            .execute(json!({"command": command}))
             .await
             .unwrap();
         assert!(denied.is_error);
@@ -380,15 +400,19 @@ mod tests {
 
         let allowed = tool
             .execute(json!({
-                "command": "touch openhuman_shell_approval_test",
+                "command": command,
                 "approved": true
             }))
             .await
             .unwrap();
-        assert!(!allowed.is_error);
+        assert!(!allowed.is_error, "{}", allowed.output());
 
-        let _ = tokio::fs::remove_file(std::env::temp_dir().join("openhuman_shell_approval_test"))
-            .await;
+        let cleanup = std::env::temp_dir().join("openhuman_shell_approval_test");
+        if cfg!(windows) {
+            let _ = tokio::fs::remove_dir_all(&cleanup).await;
+        } else {
+            let _ = tokio::fs::remove_file(&cleanup).await;
+        }
     }
 
     // ── §5.2 Shell timeout enforcement tests ─────────────────

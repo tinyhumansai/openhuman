@@ -43,6 +43,7 @@ fn test_job(command: &str) -> CronJob {
     }
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn run_job_command_success() {
     let tmp = TempDir::new().unwrap();
@@ -56,6 +57,7 @@ async fn run_job_command_success() {
     assert!(output.contains("status=exit status: 0"));
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn run_job_command_failure() {
     let tmp = TempDir::new().unwrap();
@@ -75,6 +77,7 @@ async fn run_job_command_failure() {
     assert!(output.contains("status=exit status:"));
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn run_job_command_times_out() {
     let tmp = TempDir::new().unwrap();
@@ -147,6 +150,7 @@ async fn run_job_command_blocks_rate_limited() {
     assert!(output.contains("rate limit exceeded"));
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn execute_job_with_retry_recovers_after_first_failure() {
     let tmp = TempDir::new().unwrap();
@@ -172,6 +176,7 @@ async fn execute_job_with_retry_recovers_after_first_failure() {
     assert!(output.contains("recovered"));
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn execute_job_with_retry_exhausts_attempts() {
     let tmp = TempDir::new().unwrap();

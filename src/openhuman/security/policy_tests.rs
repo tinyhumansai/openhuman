@@ -731,8 +731,13 @@ fn from_config_creates_fresh_tracker() {
 #[test]
 fn checklist_root_path_blocked() {
     let p = default_policy();
-    assert!(!p.is_path_allowed("/"));
-    assert!(!p.is_path_allowed("/anything"));
+    if cfg!(windows) {
+        assert!(!p.is_path_allowed("C:\\"));
+        assert!(!p.is_path_allowed("C:\\anything"));
+    } else {
+        assert!(!p.is_path_allowed("/"));
+        assert!(!p.is_path_allowed("/anything"));
+    }
 }
 
 #[test]
@@ -789,7 +794,11 @@ fn checklist_workspace_only_blocks_all_absolute() {
         workspace_only: true,
         ..SecurityPolicy::default()
     };
-    assert!(!p.is_path_allowed("/any/absolute/path"));
+    if cfg!(windows) {
+        assert!(!p.is_path_allowed("C:\\any\\absolute\\path"));
+    } else {
+        assert!(!p.is_path_allowed("/any/absolute/path"));
+    }
     assert!(p.is_path_allowed("relative/path.txt"));
 }
 

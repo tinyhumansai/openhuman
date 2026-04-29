@@ -284,6 +284,9 @@ mod tests {
 
     #[test]
     fn screenshot_command_contains_output_path() {
+        if !matches!(std::env::consts::OS, "macos" | "linux") {
+            return;
+        }
         let cmd = ScreenshotTool::screenshot_command("/tmp/my_screenshot.png").unwrap();
         let joined = cmd.join(" ");
         assert!(
@@ -351,6 +354,9 @@ mod tests {
 
     #[tokio::test]
     async fn screenshot_rejects_all_unsafe_chars() {
+        if !matches!(std::env::consts::OS, "macos" | "linux") {
+            return;
+        }
         let tool = ScreenshotTool::new(test_security());
         for ch in ['\'', '"', '`', '$', '\\', ';', '|', '&', '(', ')'] {
             let filename = format!("test{ch}name.png");

@@ -113,6 +113,7 @@ impl ComposioTriggerHistoryStore {
                 )
             })?;
 
+        #[cfg(not(windows))]
         file.lock_exclusive().map_err(|error| {
             format!(
                 "[composio][history] failed to lock archive file {}: {error}",
@@ -127,6 +128,7 @@ impl ComposioTriggerHistoryStore {
                     path.display()
                 )
             });
+        #[cfg(not(windows))]
         let unlock_result = file.unlock().map_err(|error| {
             format!(
                 "[composio][history] failed to unlock archive file {}: {error}",
@@ -135,6 +137,7 @@ impl ComposioTriggerHistoryStore {
         });
 
         write_result?;
+        #[cfg(not(windows))]
         unlock_result?;
 
         tracing::debug!(

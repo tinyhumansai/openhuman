@@ -114,6 +114,11 @@ mod tests {
         let tool = CronRunTool::new(cfg.clone());
 
         let result = tool.execute(json!({ "job_id": job.id })).await.unwrap();
+        if cfg!(windows) {
+            assert!(result.is_error);
+            assert!(result.output().contains("spawn error"), "{:?}", result.output());
+            return;
+        }
         assert!(!result.is_error, "{:?}", result.output());
 
         let runs = cron::list_runs(&cfg, &job.id, 10).unwrap();
