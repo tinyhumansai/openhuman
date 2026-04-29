@@ -5,15 +5,22 @@
 //! level — no JavaScript executes in the page's JS world. The returned
 //! flat-array snapshot is walked in Rust to:
 //!
-//!   1. locate `[data-id]` elements whose id parses as
-//!      `"<fromMe>_<chatId>_<msgId>"` (message rows),
+//!   1. locate `[data-id]` elements that parse as a message row (see
+//!      `split_data_id` for the two accepted shapes — legacy compound
+//!      `"<fromMe>_<chatId>_<msgId>"` plus the current bare-msgId hex);
 //!   2. pull `data-pre-plain-text` off a descendant to recover author +
-//!      timestamp,
-//!   3. collect rendered body text from descendant
-//!      `span.selectable-text` / `span[dir="ltr|rtl"]` nodes.
+//!      timestamp;
+//!   3. collect rendered body text — historically `span.selectable-text`,
+//!      now also any `span[dir="ltr|rtl"]` since current WhatsApp Web
+//!      drops the `selectable-text` class on message bodies. The longest
+//!      span text wins so the timestamp sibling (e.g. `00:19`) loses to
+//!      the actual message body.
 //!
 //! Output matches the shape `dom_scan.js` used to return so the rest of
-//! the scanner (merge, emit, hash-dedup) doesn't need to change.
+//! the scanner (merge, emit, hash-dedup) doesn't need to change. When the
+//! bare-msgId format hits, `chat_id` and `from_me` come back empty/false
+//! and the merge in `mod.rs::scan_once` (`by_msg_id` lookup) backfills
+//! both from the IDB-side message keyed by `msgId`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -50,12 +57,17 @@ impl DomMessage {
 }
 
 /// Run `DOMSnapshot.captureSnapshot` against an attached page session and
-/// return parsed message rows + a FNV-1a hash over (dataId, body) so callers
-/// can skip emission when nothing changed.
+/// return parsed message rows, a FNV-1a hash over (dataId, body), and the
+/// active conversation's display name (from
+/// `header[data-testid="conversation-header"]`) when one is open. The chat
+/// name is the only DOM signal that carries the active chat's identity —
+/// modern WhatsApp Web omits the chat JID from the URL, from `data-id`, and
+/// from any DOM attribute, so the merge step in `mod.rs` reverse-looks-up
+/// `chats[*].name → chats[*].jid` to stamp `chatId` onto DOM rows.
 pub async fn capture_messages(
     cdp: &mut CdpConn,
     session: &str,
-) -> Result<(Vec<DomMessage>, u64), String> {
+) -> Result<(Vec<DomMessage>, u64, Option<String>), String> {
     // `computedStyles` is a required array — empty is fine, we don't need
     // any CSS. The other flags default sensibly; explicitly disable the
     // heavy paint/rect output to keep payloads small.
@@ -74,7 +86,8 @@ pub async fn capture_messages(
         serde_json::from_value(raw).map_err(|e| format!("decode DOMSnapshot: {e}"))?;
     let rows = parse_rows(&snap);
     let hash = fnv_hash(&rows);
-    Ok((rows, hash))
+    let active_chat_name = parse_active_chat_name(&snap);
+    Ok((rows, hash, active_chat_name))
 }
 
 // ─── CDP response shape ─────────────────────────────────────────────
@@ -183,6 +196,99 @@ fn parse_rows(snap: &CaptureSnapshot) -> Vec<DomMessage> {
     out
 }
 
+/// Find the `header[data-testid="conversation-header"]` element and return
+/// its first non-empty text — the active chat's display name as rendered in
+/// WhatsApp Web's top bar (e.g. `"Anushka"` for a 1:1, `"Family Group"` for
+/// a group chat). Returns `None` when no chat is open or the header isn't
+/// in the snapshot (e.g. user is on the chat list / settings panel).
+///
+/// This is the linkage point for stamping `chatId` onto DOM rows: callers
+/// reverse-look-up the returned name in their IDB-side `chats` map (where
+/// `chats[jid].name` holds the same string) to recover the chat JID.
+fn parse_active_chat_name(snap: &CaptureSnapshot) -> Option<String> {
+    let doc = snap.documents.first()?;
+    let nodes = &doc.nodes;
+    let strings = &snap.strings;
+    let count = nodes.node_type.len();
+    if count == 0 {
+        return None;
+    }
+
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); count];
+    for (i, &p) in nodes.parent_index.iter().enumerate() {
+        if p >= 0 && (p as usize) < count {
+            children[p as usize].push(i);
+        }
+    }
+
+    // Locate the header by attribute, not by class name (classes are
+    // obfuscated and drift; `data-testid` is stable across recent versions).
+    for i in 0..count {
+        if nodes.node_type.get(i).copied().unwrap_or(0) != NODE_TYPE_ELEMENT {
+            continue;
+        }
+        let attrs = attrs_map(nodes, i, strings);
+        if attrs.get("data-testid").map(String::as_str) != Some("conversation-header") {
+            continue;
+        }
+        // The header's `collect_text` concatenates avatar alt-text, the chat
+        // title, the participant subtitle (for groups, this is the entire
+        // member list with no separators), online status, and action-button
+        // labels — `Some("Kirat karoAmenreet, Arshdeep, ...")`-style noise.
+        // The chat title is reliably the first `<span>` descendant of the
+        // header that ISN'T an icon ligature. Modern WhatsApp Web wraps
+        // Material-style icons in `<span class="wds-icon"><span>wds-ic-…</span></span>`,
+        // and the first such span is the avatar's `data-icon`/material-glyph
+        // marker (e.g. `wds-ic-disappearing-messages`, `wds-ic-search`).
+        // Skip spans whose trimmed text matches an icon-name pattern.
+        let mut stack: Vec<usize> = vec![i];
+        while let Some(idx) = stack.pop() {
+            if nodes.node_type.get(idx).copied().unwrap_or(0) == NODE_TYPE_ELEMENT {
+                let name = str_at(strings, *nodes.node_name.get(idx).unwrap_or(&-1));
+                if name.eq_ignore_ascii_case("SPAN") {
+                    let span_text = collect_text(nodes, strings, &children, idx);
+                    let trimmed = span_text.trim();
+                    if !trimmed.is_empty() && !looks_like_icon_ligature(trimmed) {
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+            if let Some(kids) = children.get(idx) {
+                for &k in kids.iter().rev() {
+                    stack.push(k);
+                }
+            }
+        }
+        // Fallback (defensive): no SPAN under the header — fall back to
+        // the first text-line inside the header itself.
+        let text = collect_text(nodes, strings, &children, i);
+        let trimmed = text.trim();
+        let first_line = trimmed.lines().next().unwrap_or("").trim();
+        if !first_line.is_empty() {
+            return Some(first_line.to_string());
+        }
+    }
+    None
+}
+
+/// Returns true when `s` looks like a Material/WhatsApp icon ligature name
+/// (e.g. `wds-ic-search`, `wds-ic-disappearing-messages`, `material-icons`,
+/// `arrow_forward`). These appear as the first SPAN inside icon wrappers
+/// and would otherwise win the chat-title race in `parse_active_chat_name`.
+///
+/// Heuristic: starts with `wds-ic-` / `wds-icon` (WhatsApp Design System
+/// icon prefix), or is a single token with no whitespace whose chars are
+/// all `[a-z0-9_-]` (Material Icon ligature shape).
+fn looks_like_icon_ligature(s: &str) -> bool {
+    if s.starts_with("wds-ic-") || s.starts_with("wds-icon") {
+        return true;
+    }
+    !s.is_empty()
+        && !s.contains(char::is_whitespace)
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
 /// Build a `name → value` map for a single element's attributes. Missing or
 /// malformed entries are silently skipped.
 fn attrs_map(nodes: &NodeTreeSnap, idx: usize, strings: &[String]) -> HashMap<String, String> {
@@ -208,22 +314,53 @@ fn str_at(strings: &[String], idx: i32) -> &str {
     strings.get(idx as usize).map(String::as_str).unwrap_or("")
 }
 
-/// Parse `"true_12345@c.us_3EB0A..."` → `(true, "12345@c.us", "3EB0A...")`.
+/// Parse a WhatsApp Web row's `data-id`. Two shapes are accepted:
+///
+/// 1. **Legacy compound** — `"true_12345@c.us_3EB0A..."` → `(true, "12345@c.us", "3EB0A...")`.
+///    Used by older WhatsApp Web builds.
+///
+/// 2. **Bare msgId** — `"2A327AC82CD56D95E087"` (hex or alphanumeric) →
+///    `(false, "", "2A327AC82CD56D95E087")`. Used by current WhatsApp Web
+///    (observed via live CDP probe 2026-04-30): rows now expose only the
+///    message identifier on `data-id`; `fromMe` is no longer derivable from
+///    this attribute. The merge step in `mod.rs::scan_once` keys DOM rows by
+///    `msgId` and pulls `chatId` / `fromMe` from the IDB-side message, so a
+///    blank `chat_id` here is harmless — see the `by_msg_id` lookup at
+///    `mod.rs:498-528`.
+///
+/// Reject anything that's neither — chat-list framework rows, lazy-load
+/// sentinels, and other non-message hooks all carry `data-id` values that
+/// shouldn't slip into the message stream.
 fn split_data_id(s: &str) -> Option<(bool, String, String)> {
-    // `splitn(3, '_')` keeps the msgId intact even when it contains `_`.
-    let mut it = s.splitn(3, '_');
-    let from_me_tok = it.next()?;
-    let chat_id = it.next()?;
-    let msg_id = it.next()?;
-    let from_me = match from_me_tok {
-        "true" => true,
-        "false" => false,
-        _ => return None,
-    };
-    if chat_id.is_empty() || msg_id.is_empty() {
-        return None;
+    // Legacy form first — `splitn(3, '_')` keeps the msgId intact even when
+    // it contains `_`.
+    let parts: Vec<&str> = s.splitn(3, '_').collect();
+    if parts.len() == 3 {
+        let from_me_tok = parts[0];
+        let chat_id = parts[1];
+        let msg_id = parts[2];
+        let from_me = match from_me_tok {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        };
+        if let Some(fm) = from_me {
+            if !chat_id.is_empty() && !msg_id.is_empty() {
+                return Some((fm, chat_id.to_string(), msg_id.to_string()));
+            }
+        }
     }
-    Some((from_me, chat_id.to_string(), msg_id.to_string()))
+
+    // Bare-msgId fallback. Accept only ASCII alnum (current WhatsApp ids are
+    // hex but allow alphanumeric for forward compatibility) and require a
+    // minimum length so single-char framework hooks like `data-id="x"` don't
+    // get picked up. 16 chars covers the shortest msgId observed in the
+    // wild.
+    if s.len() >= 16 && s.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return Some((false, String::new(), s.to_string()));
+    }
+
+    None
 }
 
 /// Find the first descendant carrying `data-pre-plain-text` and parse
@@ -417,7 +554,31 @@ mod tests {
     #[test]
     fn split_data_id_rejects_non_message_rows() {
         assert!(split_data_id("chat-list-item_abc").is_none());
+        // "maybe_abc_def" matches len>=16 alnum check after `_` strip? It
+        // has underscores and is 13 chars — both rejections fire.
         assert!(split_data_id("maybe_abc_def").is_none());
+        // Single-char hooks (e.g. `<div data-id="x">`) must not pass.
+        assert!(split_data_id("x").is_none());
+        // Anything with a hyphen / non-alnum is rejected by the bare-id fallback.
+        assert!(split_data_id("chat-list-row").is_none());
+    }
+
+    #[test]
+    fn split_data_id_accepts_bare_msg_id() {
+        // Current WhatsApp Web format (observed 2026-04-30 via CDP probe).
+        let (fm, chat, msg) = split_data_id("2A327AC82CD56D95E087").unwrap();
+        assert!(
+            !fm,
+            "bare format defaults fromMe=false; merge fills from IDB"
+        );
+        assert_eq!(chat, "", "no chatId in bare format; merge fills from IDB");
+        assert_eq!(msg, "2A327AC82CD56D95E087");
+    }
+
+    #[test]
+    fn split_data_id_accepts_long_alnum_msg_id() {
+        let (_, _, msg) = split_data_id("AC36940161A53812E1A666B0F6BB71B7").unwrap();
+        assert_eq!(msg, "AC36940161A53812E1A666B0F6BB71B7");
     }
 
     #[test]

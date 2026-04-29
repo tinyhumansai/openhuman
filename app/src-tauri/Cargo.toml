@@ -90,6 +90,14 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 log = "0.4"
 env_logger = "0.11"
 
+# Sentry for the Tauri shell (desktop host) process — separate Sentry project
+# from the React frontend and the Rust core sidecar. DSN is baked at compile
+# time via `option_env!("OPENHUMAN_TAURI_SENTRY_DSN")` in `lib.rs::run()` and
+# can be overridden at runtime via the same env var. Feature set mirrors the
+# core sidecar (`Cargo.toml` at repo root) minus `tracing` since the shell
+# uses `log` + `env_logger`.
+sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
+
 # Used by the imessage_scanner module.
 anyhow = "1.0"
 parking_lot = "0.12"

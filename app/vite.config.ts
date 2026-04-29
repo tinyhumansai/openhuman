@@ -39,12 +39,22 @@ function maybeSentryPlugin(): PluginOption | null {
     project: process.env.SENTRY_PROJECT,
     release: { name: computeSentryRelease() },
     sourcemaps: {
-      // Vite emits hashed asset files under dist/assets/ — upload every
+      // Vite emits hashed asset files into `app/dist/assets/`. Upload every
       // .js / .map the build produces.
-      assets: ["../dist/**/*.js", "../dist/**/*.map"],
+      //
+      // `assets` is resolved by sentry-vite-plugin against `process.cwd()`,
+      // not the Vite `root` — so a relative path like `../dist/**` would
+      // miss when `pnpm tauri build` runs with cwd=`app/` and silently emit
+      // `Didn't find any matching sources for debug ID upload`. Use absolute
+      // paths anchored at this config file's directory (`app/`) to be
+      // immune to whatever cwd the parent process sets.
+      assets: [
+        resolve(__dirname, "dist/**/*.js"),
+        resolve(__dirname, "dist/**/*.map"),
+      ],
       // Never ship raw .map files to end users; the upload keeps a copy
       // server-side for symbolication while the bundled app strips them.
-      filesToDeleteAfterUpload: ["../dist/**/*.map"],
+      filesToDeleteAfterUpload: [resolve(__dirname, "dist/**/*.map")],
     },
     // Release tagging + commits are handled by sentry-cli / the plugin
     // itself when AUTH_TOKEN and CI env (GITHUB_SHA etc.) are present.

@@ -169,7 +169,14 @@ upload_symbols() {
         exit 1
     fi
 
-    local release_name="openhuman@${version}"
+    # Honor SENTRY_RELEASE if set so DIFs attach to the same release name
+    # the running binaries report (`openhuman@<version>+<sha>`). Without this,
+    # CI uploads to `openhuman@<version>` while events are tagged
+    # `openhuman@<version>+<sha>` — a different release, so Sentry never
+    # joins frames to symbols and stack traces stay un-symbolicated.
+    # Falls back to the bare-version tag for local invocations that don't
+    # set SENTRY_RELEASE.
+    local release_name="${SENTRY_RELEASE:-openhuman@${version}}"
 
     log_info "Uploading Rust debug symbols for release: ${release_name}"
     log_info "Symbols path: ${symbols_path}"
@@ -180,12 +187,18 @@ upload_symbols() {
     # Use --ignore-missing for shallow clones or CI environments
     sentry-cli releases set-commits --auto --ignore-missing "${release_name}" || true
 
-    # Upload debug symbols
+    # Upload debug symbols + source bundles. `--include-sources` makes
+    # `sentry-cli` package the referenced source files into a `.src.zip`
+    # alongside the DIF, so Sentry renders surrounding source lines in
+    # Rust stack traces instead of bare `function + 0xNNN`. CI runs from a
+    # full workspace checkout, so the source paths embedded in the DWARF
+    # resolve and the bundle is built correctly.
     log_info "Uploading debug symbols..."
     local upload_args=(
         "upload-dif"
         "--org" "${SENTRY_ORG}"
         "--project" "${SENTRY_PROJECT}"
+        "--include-sources"
         "--log-level=warning"
     )
 
