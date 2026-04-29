@@ -31,7 +31,7 @@ impl Tool for MemoryTreeDrillDownTool {
                 },
                 "max_depth": {
                     "type": "integer",
-                    "minimum": 0,
+                    "minimum": 1,
                     "description": "How many levels down to walk (default 1)."
                 },
                 "query": {
@@ -52,6 +52,11 @@ impl Tool for MemoryTreeDrillDownTool {
         log::debug!("[tool][memory_tree] drill_down invoked");
         let req: DrillDownRequest = serde_json::from_value(args)
             .map_err(|e| anyhow::anyhow!("invalid arguments for memory_tree_drill_down: {e}"))?;
+        if matches!(req.max_depth, Some(0)) {
+            return Err(anyhow::anyhow!(
+                "memory_tree_drill_down: max_depth must be >= 1"
+            ));
+        }
         let cfg = config_rpc::load_config_with_timeout()
             .await
             .map_err(|e| anyhow::anyhow!("memory_tree_drill_down: load config failed: {e}"))?;

@@ -69,8 +69,8 @@ impl Tool for MemoryTreeSearchEntitiesTool {
                 })?)
             }
         };
-        let matches =
-            retrieval::search_entities(&cfg, &req.query, kinds, req.limit.unwrap_or(0)).await?;
+        let limit = req.limit.unwrap_or(5).min(100);
+        let matches = retrieval::search_entities(&cfg, &req.query, kinds, limit).await?;
         log::debug!(
             "[tool][memory_tree] search_entities returning matches={}",
             matches.len()

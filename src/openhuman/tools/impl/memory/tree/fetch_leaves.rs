@@ -5,6 +5,12 @@ use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 
+/// Hard cap on `chunk_ids` enforced at the tool boundary so the tool's
+/// behaviour matches the schema description. The retrieval RPC also
+/// truncates internally; we mirror that here so excess ids are dropped
+/// rather than silently passed through.
+const MAX_CHUNK_IDS_PER_CALL: usize = 20;
+
 pub struct MemoryTreeFetchLeavesTool;
 
 #[async_trait]
@@ -40,7 +46,15 @@ impl Tool for MemoryTreeFetchLeavesTool {
         let cfg = config_rpc::load_config_with_timeout()
             .await
             .map_err(|e| anyhow::anyhow!("memory_tree_fetch_leaves: load config failed: {e}"))?;
-        let hits = retrieval::fetch_leaves(&cfg, &req.chunk_ids).await?;
+        let take = req.chunk_ids.len().min(MAX_CHUNK_IDS_PER_CALL);
+        if req.chunk_ids.len() > MAX_CHUNK_IDS_PER_CALL {
+            log::debug!(
+                "[tool][memory_tree] fetch_leaves: truncating chunk_ids from {} to {}",
+                req.chunk_ids.len(),
+                MAX_CHUNK_IDS_PER_CALL
+            );
+        }
+        let hits = retrieval::fetch_leaves(&cfg, &req.chunk_ids[..take]).await?;
         log::debug!(
             "[tool][memory_tree] fetch_leaves returning hits={}",
             hits.len()
