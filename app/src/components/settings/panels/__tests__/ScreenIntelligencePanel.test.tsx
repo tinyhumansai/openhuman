@@ -178,7 +178,9 @@ describe('ScreenIntelligencePanel', () => {
     });
     expect(screen.queryByText('Permissions')).not.toBeInTheDocument();
     expect(screen.queryByText(/After granting in System Settings, click/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Restart & Refresh Permissions' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Restart & Refresh Permissions' })
+    ).not.toBeInTheDocument();
   });
 
   it('shows the last successful restart summary', async () => {

@@ -414,8 +414,8 @@ fn read_skill_resource_rejects_absolute_paths() {
     } else {
         Path::new("/etc/passwd")
     };
-    let err = read_skill_resource(ws, "demo", absolute)
-        .expect_err("absolute path must be rejected");
+    let err =
+        read_skill_resource(ws, "demo", absolute).expect_err("absolute path must be rejected");
     assert!(
         err.to_lowercase().contains("absolute"),
         "unexpected error: {err}"

@@ -378,7 +378,10 @@ mod tests {
 
     #[test]
     fn sanitize_dest_subdir_strips_absolute_paths() {
-        assert_eq!(slash_norm(sanitize_dest_subdir("/etc/passwd")), "etc/passwd");
+        assert_eq!(
+            slash_norm(sanitize_dest_subdir("/etc/passwd")),
+            "etc/passwd"
+        );
         assert_eq!(sanitize_dest_subdir("//foo"), "foo");
     }
 

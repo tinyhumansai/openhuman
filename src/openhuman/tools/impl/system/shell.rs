@@ -349,10 +349,7 @@ mod tests {
         } else {
             "echo $HOME"
         };
-        let result = tool
-            .execute(json!({"command": home_cmd}))
-            .await
-            .unwrap();
+        let result = tool.execute(json!({"command": home_cmd})).await.unwrap();
         assert!(!result.is_error, "{}", result.output());
         assert!(
             !result.output().trim().is_empty(),
@@ -364,10 +361,7 @@ mod tests {
         } else {
             "echo $PATH"
         };
-        let result = tool
-            .execute(json!({"command": path_cmd}))
-            .await
-            .unwrap();
+        let result = tool.execute(json!({"command": path_cmd})).await.unwrap();
         assert!(!result.is_error, "{}", result.output());
         assert!(
             !result.output().trim().is_empty(),
@@ -391,10 +385,7 @@ mod tests {
         } else {
             "touch openhuman_shell_approval_test"
         };
-        let denied = tool
-            .execute(json!({"command": command}))
-            .await
-            .unwrap();
+        let denied = tool.execute(json!({"command": command})).await.unwrap();
         assert!(denied.is_error);
         assert!(denied.output().contains("explicit approval"));
 
