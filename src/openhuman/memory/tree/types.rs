@@ -232,6 +232,12 @@ pub struct Chunk {
     /// When this chunk was persisted to the local store.
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub created_at: DateTime<Utc>,
+    /// True when this chunk is a sub-split of a single logical unit (e.g. a
+    /// chat message or email body that exceeded `max_tokens`). The full logical
+    /// unit was split into multiple pieces; each piece carries this flag so
+    /// downstream scorers can lower its weight relative to whole-unit chunks.
+    #[serde(default)]
+    pub partial_message: bool,
 }
 
 /// Deterministic chunk id.

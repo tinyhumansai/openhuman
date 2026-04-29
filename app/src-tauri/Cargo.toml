@@ -113,6 +113,9 @@ objc2-app-kit = "0.3.2"
 mac-notification-sys = "0.6"
 # iMessage scanner reads ~/Library/Messages/chat.db read-only on macOS.
 rusqlite = { version = "0.37", features = ["bundled"] }
+objc2-user-notifications = "0.3.2"
+block2 = "0.6.2"
+objc2-foundation = "0.3.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = { version = "4", default-features = false, features = ["dbus"] }

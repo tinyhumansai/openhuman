@@ -11,7 +11,8 @@ mod types;
 pub use bus::register_conversation_persistence_subscriber;
 pub use store::{
     append_message, delete_thread, ensure_thread, get_messages, list_threads, purge_threads,
-    update_message, update_thread_title, ConversationPurgeStats, ConversationStore,
+    update_message, update_thread_labels, update_thread_title, ConversationPurgeStats,
+    ConversationStore,
 };
 pub use types::{
     ConversationMessage, ConversationMessagePatch, ConversationThread, CreateConversationThread,

@@ -10,10 +10,14 @@
  *
  * Mounted once at AppShell root.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { isTauri as coreIsTauri } from '@tauri-apps/api/core';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
-import { showNativeNotification } from '../lib/nativeNotifications/tauriBridge';
+import {
+  ensureNotificationPermission,
+  showNativeNotification,
+} from '../lib/nativeNotifications/tauriBridge';
 import { purgeWebviewAccount } from '../services/webviewAccountService';
 import { addAccount, removeAccount } from '../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -181,21 +185,53 @@ function renderBody(path: string, close: () => void) {
 // ── Notifications ────────────────────────────────────────────────────────
 
 const NotificationsBody = ({ close }: { close: () => void }) => {
-  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'sending' | 'queued' | 'sent' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const TEST_NOTIFICATION_DELAY_MS = 3500;
+  const notificationTimeoutRef = useRef<number | null>(null);
+  const cancelledRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      cancelledRef.current = true;
+      if (notificationTimeoutRef.current !== null) {
+        window.clearTimeout(notificationTimeoutRef.current);
+        notificationTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const handleAllow = async () => {
     setStatus('sending');
     setError(null);
     try {
-      // First send triggers the OS permission prompt on macOS / Windows.
-      // Once granted the notification appears and subsequent calls
-      // succeed silently.
+      const granted = await ensureNotificationPermission();
+      if (coreIsTauri() && !granted) {
+        setStatus('error');
+        setError(
+          'Notification permission was denied. Please enable notifications for OpenHuman in System Settings → Notifications.'
+        );
+        return;
+      }
+      // Delay the test ping so users can move focus away from OpenHuman.
+      // macOS commonly suppresses banner popouts while the app is foreground.
+      setStatus('queued');
+      await new Promise<void>(resolve => {
+        notificationTimeoutRef.current = window.setTimeout(() => {
+          notificationTimeoutRef.current = null;
+          resolve();
+        }, TEST_NOTIFICATION_DELAY_MS);
+      });
+      if (cancelledRef.current) {
+        return;
+      }
       await showNativeNotification({
         title: 'OpenHuman is good to go',
         body: 'You will get pings here when something needs your attention.',
-        tag: 'welcome-notification-test',
       });
+      if (cancelledRef.current) {
+        return;
+      }
       setStatus('sent');
     } catch (e) {
       setStatus('error');
@@ -213,10 +249,19 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
       <button
         type="button"
         onClick={() => void handleAllow()}
-        disabled={status === 'sending'}
+        disabled={status === 'sending' || status === 'queued'}
         className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60">
-        {status === 'sending' ? 'Asking your OS…' : 'Send test notification'}
+        {status === 'sending'
+          ? 'Asking your OS…'
+          : status === 'queued'
+            ? 'Sending test in 3.5s… switch apps now'
+            : 'Send test notification'}
       </button>
+      {status === 'queued' && (
+        <p className="text-xs text-stone-600">
+          Timer started. Switch to another app for a moment so the banner can pop out.
+        </p>
+      )}
       {status === 'sent' && (
         <p className="text-xs text-sage-700">
           Sent. If you saw a pop-up in the corner, you're all set. If your OS asked for permission,

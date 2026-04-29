@@ -111,6 +111,7 @@ const HASH_TO_SIDEBAR_LABEL = {
   '/skills': 'Skills',
   '/home': 'Home',
   '/conversations': 'Conversations',
+  '/notifications': 'Alerts',
   '/settings': 'Settings',
   '/intelligence': 'Intelligence',
 };
@@ -275,6 +276,10 @@ export async function navigateToIntelligence() {
 
 export async function navigateToConversations() {
   await navigateViaHash('/conversations');
+}
+
+export async function navigateToNotifications() {
+  await navigateViaHash('/notifications');
 }
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { threadApi } from '../services/api/threadApi';
 import type { Thread, ThreadMessage } from '../types/thread';
 import { IS_DEV } from '../utils/config';
+import { resetUserScopedState } from './resetActions';
 
 interface ThreadState {
   threads: Thread[];
@@ -68,9 +69,9 @@ export const loadThreads = createAsyncThunk(
 
 export const createNewThread = createAsyncThunk(
   'thread/createNewThread',
-  async (_, { dispatch, rejectWithValue }) => {
+  async (labels: string[] | undefined, { dispatch, rejectWithValue }) => {
     try {
-      const thread = await threadApi.createNewThread();
+      const thread = await threadApi.createNewThread(labels);
       await dispatch(loadThreads()).unwrap();
       return thread;
     } catch (error) {
@@ -220,6 +221,21 @@ export const persistReaction = createAsyncThunk(
   }
 );
 
+export const updateThreadLabels = createAsyncThunk(
+  'thread/updateThreadLabels',
+  async (payload: { threadId: string; labels: string[] }, { dispatch, rejectWithValue }) => {
+    try {
+      const thread = await threadApi.updateLabels(payload.threadId, payload.labels);
+      await dispatch(loadThreads()).unwrap();
+      return thread;
+    } catch (error) {
+      return rejectWithValue(
+        error instanceof Error ? error.message : 'Failed to update thread labels'
+      );
+    }
+  }
+);
+
 export const purgeThreads = createAsyncThunk(
   'thread/purgeThreads',
   async (_, { dispatch, rejectWithValue }) => {
@@ -318,7 +334,8 @@ const threadSlice = createSlice({
       })
       .addCase(deleteThread.fulfilled, (state, action) => {
         delete state.messagesByThreadId[action.payload.threadId];
-      });
+      })
+      .addCase(resetUserScopedState, () => initialState);
   },
 });
 

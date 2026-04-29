@@ -12,6 +12,8 @@ pub struct ConversationThread {
     pub message_count: usize,
     pub last_message_at: String,
     pub created_at: String,
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -33,6 +35,8 @@ pub struct CreateConversationThread {
     pub id: String,
     pub title: String,
     pub created_at: String,
+    #[serde(default)]
+    pub labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

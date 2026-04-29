@@ -282,10 +282,25 @@ mod tests {
     //! initialises the schema idempotently on first access, so read-only
     //! calls return empty responses rather than erroring.
     use super::*;
+    use crate::openhuman::memory::tree::content_store;
     use crate::openhuman::memory::tree::store::upsert_chunks;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceRef};
     use chrono::{TimeZone, Utc};
     use tempfile::TempDir;
+
+    fn stage_test_chunks(cfg: &Config, chunks: &[Chunk]) {
+        let content_root = cfg.memory_tree_content_root();
+        std::fs::create_dir_all(&content_root).expect("create content_root for test");
+        let staged = content_store::stage_chunks(&content_root, chunks)
+            .expect("stage_chunks for test chunks");
+        crate::openhuman::memory::tree::store::with_connection(cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            crate::openhuman::memory::tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .expect("persist staged chunk pointers");
+    }
 
     fn test_config() -> (TempDir, Config) {
         let tmp = TempDir::new().unwrap();
@@ -316,6 +331,7 @@ mod tests {
             token_count: 20,
             seq_in_source: seq,
             created_at: ts,
+            partial_message: false,
         }
     }
 
@@ -539,6 +555,7 @@ mod tests {
         let c1 = sample_chunk("slack:#eng", 0);
         let c2 = sample_chunk("slack:#eng", 1);
         upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
+        stage_test_chunks(&cfg, &[c1.clone(), c2.clone()]);
         let req = FetchLeavesRequest {
             chunk_ids: vec![c1.id.clone(), c2.id.clone()],
         };
@@ -552,6 +569,7 @@ mod tests {
         let (_tmp, cfg) = test_config();
         let c1 = sample_chunk("slack:#eng", 0);
         upsert_chunks(&cfg, &[c1.clone()]).unwrap();
+        stage_test_chunks(&cfg, &[c1.clone()]);
         let req = FetchLeavesRequest {
             chunk_ids: vec![c1.id.clone(), "ghost:nonexistent".into()],
         };

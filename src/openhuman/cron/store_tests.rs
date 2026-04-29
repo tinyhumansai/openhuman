@@ -1,5 +1,6 @@
 use super::*;
 use crate::openhuman::config::Config;
+use crate::openhuman::cron::ActiveHours;
 use chrono::Duration as ChronoDuration;
 use tempfile::TempDir;
 
@@ -22,6 +23,39 @@ fn add_job_accepts_five_field_expression() {
     assert_eq!(job.expression, "*/5 * * * *");
     assert_eq!(job.command, "echo ok");
     assert!(matches!(job.schedule, Schedule::Cron { .. }));
+}
+
+#[test]
+fn add_shell_job_persists_active_hours_schedule() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let active_hours = ActiveHours {
+        start: "09:00".into(),
+        end: "17:00".into(),
+    };
+
+    let job = add_shell_job(
+        &config,
+        Some("business-hours".into()),
+        Schedule::Cron {
+            expr: "0 9 * * *".into(),
+            tz: Some("UTC".into()),
+            active_hours: Some(active_hours.clone()),
+        },
+        "echo ok",
+    )
+    .unwrap();
+
+    let stored = get_job(&config, &job.id).unwrap();
+    assert_eq!(stored.expression, "0 9 * * *");
+    assert_eq!(
+        stored.schedule,
+        Schedule::Cron {
+            expr: "0 9 * * *".into(),
+            tz: Some("UTC".into()),
+            active_hours: Some(active_hours),
+        }
+    );
 }
 
 #[test]

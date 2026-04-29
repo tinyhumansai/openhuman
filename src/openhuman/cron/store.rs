@@ -15,6 +15,7 @@ pub fn add_job(config: &Config, expression: &str, command: &str) -> Result<CronJ
     let schedule = Schedule::Cron {
         expr: expression.to_string(),
         tz: None,
+        active_hours: None,
     };
     add_shell_job(config, None, schedule, command)
 }
@@ -495,6 +496,7 @@ fn decode_schedule(schedule_raw: Option<&str>, expression: &str) -> Result<Sched
     Ok(Schedule::Cron {
         expr: expression.to_string(),
         tz: None,
+        active_hours: None,
     })
 }
 

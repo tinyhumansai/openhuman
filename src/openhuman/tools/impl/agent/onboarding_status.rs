@@ -7,7 +7,7 @@
 //! * An auth detector (`detect_auth`) that bools out whether a session
 //!   JWT is present.
 //! * The engagement-criteria gate that decides whether `complete` may
-//!   run (≥ [`MIN_EXCHANGES_TO_COMPLETE`] exchanges **or** ≥ 1 Composio
+//!   run (≥ [`MIN_EXCHANGES_TO_COMPLETE`] exchanges **and** ≥ 1 Composio
 //!   connection).
 //! * The JSON snapshot builder the agent consumes — now also exposing
 //!   the list of connected Composio toolkits and the per-provider
@@ -57,20 +57,27 @@ pub fn get_welcome_exchange_count() -> u32 {
 /// Composio integrations, returns whether the engagement criteria for
 /// `complete_onboarding` are satisfied.
 pub(crate) fn engagement_criteria_met(exchange_count: u32, composio_connections: u32) -> bool {
-    exchange_count >= MIN_EXCHANGES_TO_COMPLETE || composio_connections > 0
+    exchange_count >= MIN_EXCHANGES_TO_COMPLETE && composio_connections > 0
 }
 
 /// Build the user-facing error string for premature `complete_onboarding`
 /// calls.
-pub(crate) fn build_not_ready_to_complete_error(exchange_count: u32) -> String {
+pub(crate) fn build_not_ready_to_complete_error(
+    exchange_count: u32,
+    composio_connections: u32,
+) -> String {
     let remaining = MIN_EXCHANGES_TO_COMPLETE.saturating_sub(exchange_count);
-    format!(
-        "Cannot complete onboarding yet: User hasn't connected any skills and \
-         minimum exchanges not reached. Need at least \
-         {MIN_EXCHANGES_TO_COMPLETE} back-and-forth exchanges (currently \
-         {exchange_count}; {remaining} more needed) or at least one connected \
-         Composio integration."
-    )
+    let mut reasons = Vec::new();
+    if composio_connections == 0 {
+        reasons.push("at least one connected integration is required".to_string());
+    }
+    if exchange_count < MIN_EXCHANGES_TO_COMPLETE {
+        reasons.push(format!(
+            "{remaining} more exchange(s) needed (minimum {MIN_EXCHANGES_TO_COMPLETE}, \
+             currently {exchange_count})"
+        ));
+    }
+    format!("Cannot complete onboarding yet: {}.", reasons.join("; "))
 }
 
 /// Reset the welcome exchange counter to zero. Test-only.
@@ -432,24 +439,31 @@ mod tests {
     }
 
     #[test]
-    fn criteria_met_at_exchange_threshold() {
-        assert!(engagement_criteria_met(MIN_EXCHANGES_TO_COMPLETE, 0));
+    fn criteria_not_met_exchanges_only() {
+        // Exchanges alone are no longer sufficient — need at least 1 Composio connection.
+        assert!(!engagement_criteria_met(MIN_EXCHANGES_TO_COMPLETE, 0));
     }
 
     #[test]
-    fn criteria_met_via_composio_zero_exchanges() {
-        assert!(engagement_criteria_met(0, 1));
+    fn criteria_not_met_composio_only() {
+        // Composio alone is not sufficient — need minimum exchanges too.
+        assert!(!engagement_criteria_met(0, 1));
     }
 
     #[test]
-    fn premature_complete_error_mentions_skills_and_exchanges() {
-        let msg = build_not_ready_to_complete_error(1);
+    fn criteria_met_both_present() {
+        assert!(engagement_criteria_met(MIN_EXCHANGES_TO_COMPLETE, 1));
+    }
+
+    #[test]
+    fn premature_complete_error_mentions_integration_and_exchanges() {
+        let msg = build_not_ready_to_complete_error(1, 0);
         assert!(
-            msg.contains("User hasn't connected any skills and minimum exchanges not reached"),
-            "unexpected wording: {msg}"
+            msg.contains("at least one connected integration is required"),
+            "missing integration requirement: {msg}"
         );
         assert!(
-            msg.contains("currently 1; 2 more needed"),
+            msg.contains("2 more exchange(s) needed"),
             "dynamic counters: {msg}"
         );
     }

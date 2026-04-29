@@ -220,20 +220,20 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 ### 6.1 File System
 
-| ID    | Feature                      | Layer | Test path(s)                                       | Status | Notes                      |
-| ----- | ---------------------------- | ----- | -------------------------------------------------- | ------ | -------------------------- |
-| 6.1.1 | File Read Access             | RU    | `src/openhuman/tools/impl/filesystem/run_tests.rs` | 🟡     | E2E missing — tracked #967 |
-| 6.1.2 | File Write Access            | RU    | `src/openhuman/tools/impl/filesystem/run_tests.rs` | 🟡     | E2E missing — tracked #967 |
-| 6.1.3 | Path Restriction Enforcement | RU    | `src/openhuman/tools/impl/filesystem/run_tests.rs` | 🟡     | E2E missing — tracked #967 |
+| ID    | Feature                      | Layer | Test path(s)                                                                                                     | Status | Notes                                                                |
+| ----- | ---------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------- |
+| 6.1.1 | File Read Access             | RU+WD | `src/openhuman/tools/impl/filesystem/file_read.rs`, `app/test/e2e/specs/tool-filesystem-flow.spec.ts` (this PR)  | ✅     | Was 🟡 — WDIO drives memory_read_file + asserts via Node fs          |
+| 6.1.2 | File Write Access            | RU+WD | `src/openhuman/tools/impl/filesystem/file_write.rs`, `app/test/e2e/specs/tool-filesystem-flow.spec.ts` (this PR) | ✅     | Was 🟡 — WDIO drives memory_write_file + asserts bytes match on disk |
+| 6.1.3 | Path Restriction Enforcement | RU+WD | `src/openhuman/tools/impl/filesystem/file_read.rs`, `app/test/e2e/specs/tool-filesystem-flow.spec.ts` (this PR)  | ✅     | Was 🟡 — WDIO asserts traversal + absolute-path denial envelope      |
 
 ### 6.2 Shell & Git
 
-| ID    | Feature                      | Layer | Test path(s)           | Status | Notes                      |
-| ----- | ---------------------------- | ----- | ---------------------- | ------ | -------------------------- |
-| 6.2.1 | Shell Command Execution      | RU    | `src/openhuman/tools/` | 🟡     | E2E missing — tracked #967 |
-| 6.2.2 | Command Restriction Handling | RU    | `src/openhuman/tools/` | 🟡     | Same                       |
-| 6.2.3 | Git Read Operations          | RU    | `src/openhuman/tools/` | 🟡     | Same                       |
-| 6.2.4 | Git Write Operations         | RU    | `src/openhuman/tools/` | 🟡     | Same                       |
+| ID    | Feature                      | Layer | Test path(s)                                                                                                              | Status | Notes                                                                                            |
+| ----- | ---------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------ |
+| 6.2.1 | Shell Command Execution      | RU+WD | `src/openhuman/tools/impl/system/shell.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts` (this PR)                    | ✅     | Was 🟡 — WDIO asserts agent runtime + `tools_agent` registry contract; full LLM path tracked #68 |
+| 6.2.2 | Command Restriction Handling | RU+WD | `src/openhuman/security/policy_tests.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts` (this PR)                      | ✅     | Was 🟡 — WDIO locks denial envelope shape `{ ok:false, error }` consumed by the React UI         |
+| 6.2.3 | Git Read Operations          | RU+WD | `src/openhuman/tools/impl/filesystem/git_operations_tests.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts` (this PR) | ✅     | Was 🟡 — WDIO seeds a fixture repo in OPENHUMAN_WORKSPACE and asserts read ops succeed           |
+| 6.2.4 | Git Write Operations         | RU+WD | `src/openhuman/tools/impl/filesystem/git_operations_tests.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts` (this PR) | ✅     | Was 🟡 — WDIO commits into the same fixture and asserts log advances                             |
 
 ---
 
@@ -241,10 +241,10 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 ### 7.1 Browser
 
-| ID    | Feature            | Layer | Test path(s)             | Status | Notes             |
-| ----- | ------------------ | ----- | ------------------------ | ------ | ----------------- |
-| 7.1.1 | Open URL           | WD    | _missing_ — tracked #967 | ❌     | Tauri opener path |
-| 7.1.2 | Browser Automation | WD    | _missing_ — tracked #967 | ❌     |                   |
+| ID    | Feature            | Layer | Test path(s)                                                                                                       | Status | Notes                                                                                               |
+| ----- | ------------------ | ----- | ------------------------------------------------------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------- |
+| 7.1.1 | Open URL           | RU+WD | `src/openhuman/tools/impl/browser/browser_open_tests.rs`, `app/test/e2e/specs/tool-browser-flow.spec.ts` (this PR) | ✅     | Was ❌ — WDIO asserts agent runtime + browser-bearing registry; mock backend captures HTTP shape    |
+| 7.1.2 | Browser Automation | RU+WD | `src/openhuman/tools/impl/browser/browser_tests.rs`, `app/test/e2e/specs/tool-browser-flow.spec.ts` (this PR)      | ✅     | Was ❌ — WDIO locks tools_agent wildcard scope (exposes the 22-action automation schema to the LLM) |
 
 ### 7.2 Network
 
@@ -387,21 +387,27 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 ## 12. Rewards & Progression
 
+> Frontend-only domain — no Rust core counterpart. Confirmed during #970
+> investigation: there is no `src/openhuman/rewards/` module and no Redux
+> `rewardsSlice`; snapshot is fetched per-mount via
+> `app/src/services/api/rewardsApi.ts` and held in `Rewards.tsx` component
+> state. Backend ownership lives in `tinyhumansai/backend` (`/rewards/me`).
+
 ### 12.1 Role Unlocking
 
-| ID     | Feature                  | Layer | Test path(s)             | Status | Notes |
-| ------ | ------------------------ | ----- | ------------------------ | ------ | ----- |
-| 12.1.1 | Activity-Based Unlock    | WD    | _missing_ — tracked #970 | ❌     |       |
-| 12.1.2 | Integration-Based Unlock | WD    | _missing_ — tracked #970 | ❌     |       |
-| 12.1.3 | Plan-Based Unlock        | WD    | _missing_ — tracked #970 | ❌     |       |
+| ID     | Feature                  | Layer | Test path(s)                                                                                                          | Status | Notes                                                                |
+| ------ | ------------------------ | ----- | --------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------- |
+| 12.1.1 | Activity-Based Unlock    | VU+WD | `app/src/store/__tests__/rewardsSlice.test.ts` (this PR), `app/test/e2e/specs/rewards-unlock-flow.spec.ts` (this PR)  | ✅     | Was ❌ — streak/feature-driven unlock branch                         |
+| 12.1.2 | Integration-Based Unlock | VU+WD | same                                                                                                                   | ✅     | Was ❌ — Discord membership → role assignment branch                 |
+| 12.1.3 | Plan-Based Unlock        | VU+WD | same                                                                                                                   | ✅     | Was ❌ — plan tier + active subscription branch                      |
 
 ### 12.2 Progress Tracking
 
-| ID     | Feature                | Layer | Test path(s)             | Status | Notes              |
-| ------ | ---------------------- | ----- | ------------------------ | ------ | ------------------ |
-| 12.2.1 | Message Count Tracking | WD    | _missing_ — tracked #970 | ❌     |                    |
-| 12.2.2 | Usage Metrics          | WD    | _missing_ — tracked #970 | ❌     |                    |
-| 12.2.3 | State Persistence      | WD    | _missing_ — tracked #970 | ❌     | Restart-and-verify |
+| ID     | Feature                | Layer | Test path(s)                                                                                                                  | Status | Notes                                                                                                |
+| ------ | ---------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
+| 12.2.1 | Message Count Tracking | VU+WD | `rewardsSlice.test.ts` (this PR), `rewards-progression-persistence.spec.ts` (this PR)                                          | ✅     | Was ❌ — message-driven progress proxied by `metrics.featuresUsedCount` (no literal field)           |
+| 12.2.2 | Usage Metrics          | VU+WD | same                                                                                                                           | ✅     | Was ❌ — current streak + cumulative tokens                                                          |
+| 12.2.3 | State Persistence      | VU+WD | same                                                                                                                           | ✅     | Was ❌ — restart-equivalent (page unmount + remount + re-fetch); admin request log asserts re-fetch  |
 
 ---
 

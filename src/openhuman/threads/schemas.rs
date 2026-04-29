@@ -6,8 +6,9 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::memory::{
-    AppendConversationMessageRequest, ConversationMessagesRequest, DeleteConversationThreadRequest,
-    EmptyRequest, GenerateConversationThreadTitleRequest, UpdateConversationMessageRequest,
+    AppendConversationMessageRequest, ConversationMessagesRequest, CreateConversationThreadRequest,
+    DeleteConversationThreadRequest, EmptyRequest, GenerateConversationThreadTitleRequest,
+    UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
     UpsertConversationThreadRequest,
 };
 
@@ -21,6 +22,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("messages_list"),
         schemas("message_append"),
         schemas("generate_title"),
+        schemas("update_labels"),
         schemas("message_update"),
         schemas("delete"),
         schemas("purge"),
@@ -52,6 +54,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("generate_title"),
             handler: handle_generate_title,
+        },
+        RegisteredController {
+            schema: schemas("update_labels"),
+            handler: handle_update_labels,
         },
         RegisteredController {
             schema: schemas("message_update"),
@@ -105,6 +111,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "RFC3339 timestamp for first thread creation.",
                     required: true,
                 },
+                FieldSchema {
+                    name: "labels",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Optional list of labels to assign.",
+                    required: false,
+                },
             ],
             outputs: vec![FieldSchema {
                 name: "result",
@@ -117,7 +129,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "threads",
             function: "create_new",
             description: "Create a new conversation thread with auto-generated ID and title.",
-            inputs: vec![],
+            inputs: vec![FieldSchema {
+                name: "labels",
+                ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                comment: "Optional labels to assign to the new thread.",
+                required: false,
+            }],
             outputs: vec![FieldSchema {
                 name: "result",
                 ty: TypeSchema::Json,
@@ -225,6 +242,31 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "update_labels" => ControllerSchema {
+            namespace: "threads",
+            function: "update_labels",
+            description: "Update labels for a conversation thread.",
+            inputs: vec![
+                FieldSchema {
+                    name: "thread_id",
+                    ty: TypeSchema::String,
+                    comment: "Thread identifier.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "labels",
+                    ty: TypeSchema::Json,
+                    comment: "List of labels to assign.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Envelope with the resulting thread summary.",
+                required: true,
+            }],
+        },
         "delete" => ControllerSchema {
             namespace: "threads",
             function: "delete",
@@ -290,8 +332,11 @@ fn handle_upsert(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_create_new(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move { to_json(ops::thread_create_new(EmptyRequest {}).await?) })
+fn handle_create_new(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<CreateConversationThreadRequest>(params)?;
+        to_json(ops::thread_create_new(p).await?)
+    })
 }
 
 fn handle_messages_list(params: Map<String, Value>) -> ControllerFuture {
@@ -312,6 +357,13 @@ fn handle_generate_title(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<GenerateConversationThreadTitleRequest>(params)?;
         to_json(ops::thread_generate_title(p).await?)
+    })
+}
+
+fn handle_update_labels(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<UpdateConversationThreadLabelsRequest>(params)?;
+        to_json(ops::thread_update_labels(p).await?)
     })
 }
 

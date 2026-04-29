@@ -41,6 +41,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     messageCount: 0,
     lastMessageAt: '2026-01-01T00:00:00.000Z',
     createdAt: '2026-01-01T00:00:00.000Z',
+    labels: [],
     ...overrides,
   };
 }

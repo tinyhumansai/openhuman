@@ -289,6 +289,36 @@ fn noop_memory() -> Arc<dyn crate::openhuman::memory::Memory> {
 }
 
 #[tokio::test]
+async fn typed_mode_injects_current_date_and_time_into_user_message() {
+    let provider = ScriptedProvider::new(vec![text_response("ok")]);
+    let parent = make_parent(provider.clone(), vec![stub("file_read")]);
+    let def = make_def_named_tools(&[]);
+
+    let _ = with_parent_context(parent, async {
+        run_subagent(
+            &def,
+            "the actual task prompt",
+            SubagentRunOptions::default(),
+        )
+        .await
+    })
+    .await
+    .unwrap();
+
+    let captured = provider.captured.lock();
+    let user_msg = captured[0]
+        .messages
+        .iter()
+        .find(|m| m.role == "user")
+        .expect("user message should be present");
+    assert!(
+        user_msg.content.contains("Current Date & Time:"),
+        "subagent user message must include current date/time context, got: {}",
+        user_msg.content
+    );
+}
+
+#[tokio::test]
 async fn typed_mode_returns_text_through_runner() {
     let provider = ScriptedProvider::new(vec![text_response("X is Y")]);
     let parent = make_parent(provider.clone(), vec![stub("file_read")]);
