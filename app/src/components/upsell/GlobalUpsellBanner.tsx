@@ -1,10 +1,9 @@
-import { useNavigate } from 'react-router-dom';
-
 import { useUsageState } from '../../hooks/useUsageState';
+import { BILLING_DASHBOARD_URL } from '../../utils/links';
+import { openUrl } from '../../utils/openUrl';
 import UpsellBanner from './UpsellBanner';
 
 export default function GlobalUpsellBanner() {
-  const navigate = useNavigate();
   const { teamUsage, isLoading, isAtLimit, isNearLimit, isFreeTier, usagePct10h, usagePct7d } =
     useUsageState();
 
@@ -19,7 +18,9 @@ export default function GlobalUpsellBanner() {
           message="Upgrade your plan or top up credits to continue"
           ctaLabel="Upgrade"
           rounded={false}
-          onCtaClick={() => navigate('/settings/billing')}
+          onCtaClick={() => {
+            void openUrl(BILLING_DASHBOARD_URL);
+          }}
         />
       </div>
     );
@@ -35,7 +36,9 @@ export default function GlobalUpsellBanner() {
           message={`You've used ${pct}% of your usage limit. Upgrade for higher limits.`}
           ctaLabel="Upgrade"
           rounded={false}
-          onCtaClick={() => navigate('/settings/billing')}
+          onCtaClick={() => {
+            void openUrl(BILLING_DASHBOARD_URL);
+          }}
         />
       </div>
     );

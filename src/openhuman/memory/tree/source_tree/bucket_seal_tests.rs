@@ -1,7 +1,28 @@
 use super::*;
+use crate::openhuman::memory::tree::content_store;
 use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
 use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
 use tempfile::TempDir;
+
+/// Stage a batch of chunks to the content store so that `read_chunk_body`
+/// can find the on-disk file during seals. Tests that call `upsert_chunks`
+/// and then trigger a seal MUST also call this helper; otherwise
+/// `hydrate_leaf_inputs` will fail with "no content_path for chunk_id".
+fn stage_test_chunks(cfg: &Config, chunks: &[crate::openhuman::memory::tree::types::Chunk]) {
+    let content_root = cfg.memory_tree_content_root();
+    std::fs::create_dir_all(&content_root).expect("create content_root for test");
+    let staged =
+        content_store::stage_chunks(&content_root, chunks).expect("stage_chunks for test chunks");
+    // Record the content_path + content_sha256 pointers in SQLite so the
+    // store's `get_chunk_content_pointers` can resolve them later.
+    crate::openhuman::memory::tree::store::with_connection(cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        crate::openhuman::memory::tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .expect("persist staged chunk pointers");
+}
 
 fn test_config() -> (TempDir, Config) {
     let tmp = TempDir::new().unwrap();
@@ -36,7 +57,9 @@ async fn append_below_budget_does_not_seal() {
     // Chunks don't exist in DB — we're only exercising the buffer
     // accounting, which doesn't require leaf rows until a seal fires.
     let leaf = mk_leaf("leaf-1", 100, 1_700_000_000_000);
-    let sealed = append_leaf(&cfg, &tree, &leaf, &summariser).await.unwrap();
+    let sealed = append_leaf(&cfg, &tree, &leaf, &summariser, &LabelStrategy::Empty)
+        .await
+        .unwrap();
     assert!(sealed.is_empty());
 
     let buf = store::get_buffer(&cfg, &tree.id, 0).unwrap();
@@ -58,7 +81,7 @@ async fn crossing_budget_triggers_seal() {
     // Persist two chunks that the hydrator can load during seal.
     let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
     let mk_chunk = |seq: u32, tokens: u32| Chunk {
-        id: chunk_id(SourceKind::Chat, "slack:#eng", seq),
+        id: chunk_id(SourceKind::Chat, "slack:#eng", seq, "test-content"),
         content: format!("substantive chunk content {seq}"),
         metadata: Metadata {
             source_kind: SourceKind::Chat,
@@ -72,15 +95,21 @@ async fn crossing_budget_triggers_seal() {
         token_count: tokens,
         seq_in_source: seq,
         created_at: ts,
+        partial_message: false,
     };
-    let c1 = mk_chunk(0, 6_000);
-    let c2 = mk_chunk(1, 6_000);
+    // Budget-relative sizes so the test stays correct as TOKEN_BUDGET shifts:
+    // each leaf is 60% of budget, so the second append crosses the threshold.
+    let per_leaf = TOKEN_BUDGET * 6 / 10;
+    let c1 = mk_chunk(0, per_leaf);
+    let c2 = mk_chunk(1, per_leaf);
     upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
+    // Stage both chunks to disk so the seal's hydrator can read full bodies.
+    stage_test_chunks(&cfg, &[c1.clone(), c2.clone()]);
 
     // Two leaves whose combined token_sum (12k) exceeds the 10k budget.
     let leaf1 = LeafRef {
         chunk_id: c1.id.clone(),
-        token_count: 6_000,
+        token_count: per_leaf,
         timestamp: ts,
         content: c1.content.clone(),
         entities: vec![],
@@ -89,7 +118,7 @@ async fn crossing_budget_triggers_seal() {
     };
     let leaf2 = LeafRef {
         chunk_id: c2.id.clone(),
-        token_count: 6_000,
+        token_count: per_leaf,
         timestamp: ts,
         content: c2.content.clone(),
         entities: vec![],
@@ -97,10 +126,14 @@ async fn crossing_budget_triggers_seal() {
         score: 0.5,
     };
 
-    let first = append_leaf(&cfg, &tree, &leaf1, &summariser).await.unwrap();
+    let first = append_leaf(&cfg, &tree, &leaf1, &summariser, &LabelStrategy::Empty)
+        .await
+        .unwrap();
     assert!(first.is_empty(), "first append below budget — no seal");
 
-    let second = append_leaf(&cfg, &tree, &leaf2, &summariser).await.unwrap();
+    let second = append_leaf(&cfg, &tree, &leaf2, &summariser, &LabelStrategy::Empty)
+        .await
+        .unwrap();
     assert_eq!(second.len(), 1, "second append crosses budget — one seal");
 
     let summary_id = &second[0];
@@ -135,4 +168,490 @@ async fn crossing_budget_triggers_seal() {
     })
     .unwrap();
     assert_eq!(parent.as_deref(), Some(summary_id.as_str()));
+}
+
+#[tokio::test]
+async fn fanout_at_l1_triggers_l2_seal() {
+    use crate::openhuman::memory::tree::source_tree::types::SUMMARY_FANOUT;
+    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
+    use chrono::TimeZone;
+
+    let (_tmp, cfg) = test_config();
+    let tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+    let summariser = InertSummariser::new();
+
+    let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+    let mk_chunk = |seq: u32| {
+        let content = format!("substantive chunk content {seq}");
+        Chunk {
+            id: chunk_id(SourceKind::Chat, "slack:#eng", seq, &content),
+            content,
+            metadata: Metadata {
+                source_kind: SourceKind::Chat,
+                source_id: "slack:#eng".into(),
+                owner: "alice".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec![],
+                source_ref: Some(SourceRef::new("slack://x")),
+            },
+            // Each leaf alone busts TOKEN_BUDGET so the L0→L1 seal
+            // fires on every append. After SUMMARY_FANOUT seals, the
+            // L1 buffer's count-based gate trips and cascades to L2.
+            token_count: 10_000,
+            seq_in_source: seq,
+            created_at: ts,
+            partial_message: false,
+        }
+    };
+
+    let fanout = SUMMARY_FANOUT;
+    let mut all_sealed: Vec<String> = Vec::new();
+    for seq in 0..fanout {
+        let chunk = mk_chunk(seq);
+        upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
+        // Stage to disk so the seal hydrator can read the full body.
+        stage_test_chunks(&cfg, &[chunk.clone()]);
+        let leaf = LeafRef {
+            chunk_id: chunk.id.clone(),
+            token_count: chunk.token_count,
+            timestamp: ts,
+            content: chunk.content.clone(),
+            entities: vec![],
+            topics: vec![],
+            score: 0.5,
+        };
+        let sealed = append_leaf(&cfg, &tree, &leaf, &summariser, &LabelStrategy::Empty)
+            .await
+            .unwrap();
+        all_sealed.extend(sealed);
+    }
+
+    // First (fanout-1) appends each emit one L1 seal. The final
+    // append emits an L1 seal AND cascades into one L2 seal.
+    assert_eq!(
+        all_sealed.len() as u32,
+        fanout + 1,
+        "expected {} L1 seals + 1 L2 seal, got {}",
+        fanout,
+        all_sealed.len()
+    );
+
+    let t = store::get_tree(&cfg, &tree.id).unwrap().unwrap();
+    assert_eq!(t.max_level, 2, "tree should have climbed to L2");
+
+    let l1 = store::get_buffer(&cfg, &tree.id, 1).unwrap();
+    assert!(
+        l1.is_empty(),
+        "L1 buffer should clear when the fanout seal fires"
+    );
+
+    let l2 = store::get_buffer(&cfg, &tree.id, 2).unwrap();
+    assert_eq!(l2.item_ids.len(), 1, "exactly one L2 summary queued");
+
+    let l2_summary = store::get_summary(&cfg, &l2.item_ids[0]).unwrap().unwrap();
+    assert_eq!(l2_summary.level, 2);
+    assert_eq!(
+        l2_summary.child_ids.len() as u32,
+        fanout,
+        "L2 summary should fold all {fanout} L1 children"
+    );
+}
+
+#[tokio::test]
+async fn upper_level_does_not_seal_below_fanout() {
+    use crate::openhuman::memory::tree::source_tree::types::SUMMARY_FANOUT;
+    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
+    use chrono::TimeZone;
+
+    let (_tmp, cfg) = test_config();
+    let tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+    let summariser = InertSummariser::new();
+
+    let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+    // Emit (fanout - 1) L1 summaries — should leave the L1 buffer
+    // populated but BELOW the count gate, so no L2 seal.
+    let stop_before = SUMMARY_FANOUT.saturating_sub(1);
+    for seq in 0..stop_before {
+        let content = format!("c{seq}");
+        let chunk = Chunk {
+            id: chunk_id(SourceKind::Chat, "slack:#eng", seq, &content),
+            content,
+            metadata: Metadata {
+                source_kind: SourceKind::Chat,
+                source_id: "slack:#eng".into(),
+                owner: "alice".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec![],
+                source_ref: Some(SourceRef::new("slack://x")),
+            },
+            token_count: 10_000,
+            seq_in_source: seq,
+            created_at: ts,
+            partial_message: false,
+        };
+        upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
+        // Stage to disk so the seal hydrator can read the full body.
+        stage_test_chunks(&cfg, &[chunk.clone()]);
+        let leaf = LeafRef {
+            chunk_id: chunk.id,
+            token_count: chunk.token_count,
+            timestamp: ts,
+            content: chunk.content,
+            entities: vec![],
+            topics: vec![],
+            score: 0.5,
+        };
+        let _ = append_leaf(&cfg, &tree, &leaf, &summariser, &LabelStrategy::Empty)
+            .await
+            .unwrap();
+    }
+
+    let t = store::get_tree(&cfg, &tree.id).unwrap().unwrap();
+    assert_eq!(t.max_level, 1, "should plateau at L1 below fanout");
+
+    let l1 = store::get_buffer(&cfg, &tree.id, 1).unwrap();
+    assert_eq!(
+        l1.item_ids.len() as u32,
+        stop_before,
+        "L1 buffer should hold the unsealed siblings"
+    );
+    assert_eq!(
+        store::count_summaries(&cfg, &tree.id).unwrap(),
+        stop_before as u64
+    );
+}
+
+// ── LabelStrategy tests (#TBD) ────────────────────────────────────────────
+//
+// These exercise the three labeling modes seal_one_level supports. We use
+// a short token budget so the seal fires on a single leaf — keeps the
+// arithmetic of "what entities/topics end up on the parent" obvious.
+
+/// Helper: persist a substantive chunk and return a `LeafRef` referencing
+/// it, with caller-supplied entity/topic labels (used by Union/Empty tests).
+///
+/// To match production, entity labels are written into `mem_tree_entity_index`
+/// (where seal-time hydration reads them from) and topic labels are stored
+/// on `chunk.metadata.tags` (the production source of leaf-level topics).
+fn seed_leaf(
+    cfg: &Config,
+    seq: u32,
+    content: &str,
+    entities: Vec<String>,
+    topics: Vec<String>,
+) -> LeafRef {
+    use crate::openhuman::memory::tree::score::extract::EntityKind;
+    use crate::openhuman::memory::tree::score::resolver::CanonicalEntity;
+    use crate::openhuman::memory::tree::score::store::index_entity;
+    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
+    use chrono::TimeZone;
+    let ts = Utc
+        .timestamp_millis_opt(1_700_000_000_000 + seq as i64)
+        .unwrap();
+    let chunk = Chunk {
+        id: chunk_id(SourceKind::Chat, "slack:#eng", seq, content),
+        content: content.to_string(),
+        metadata: Metadata {
+            source_kind: SourceKind::Chat,
+            source_id: "slack:#eng".into(),
+            owner: "alice".into(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: topics.clone(),
+            source_ref: Some(SourceRef::new(format!("slack://x{seq}"))),
+        },
+        // Bust TOKEN_BUDGET in one leaf so the seal fires immediately.
+        token_count: 10_000,
+        seq_in_source: seq,
+        created_at: ts,
+        partial_message: false,
+    };
+    upsert_chunks(cfg, &[chunk.clone()]).unwrap();
+    // Stage the chunk to disk so `hydrate_leaf_inputs` can read the full body
+    // via `read_chunk_body` during a seal triggered by `append_leaf`.
+    stage_test_chunks(cfg, &[chunk.clone()]);
+    // Mirror production indexing: entities go into mem_tree_entity_index
+    // so the seal hydrator can pull them via list_entity_ids_for_node.
+    for entity_id in &entities {
+        let kind = entity_id
+            .split_once(':')
+            .map_or(EntityKind::Misc, |(k, _)| {
+                EntityKind::parse(k).unwrap_or(EntityKind::Misc)
+            });
+        let surface = entity_id
+            .split_once(':')
+            .map_or(entity_id.as_str(), |(_, v)| v);
+        let e = CanonicalEntity {
+            canonical_id: entity_id.clone(),
+            kind,
+            surface: surface.to_string(),
+            span_start: 0,
+            span_end: surface.len() as u32,
+            score: 1.0,
+        };
+        index_entity(cfg, &e, &chunk.id, "leaf", ts.timestamp_millis(), None).unwrap();
+    }
+    LeafRef {
+        chunk_id: chunk.id.clone(),
+        token_count: chunk.token_count,
+        timestamp: ts,
+        content: chunk.content.clone(),
+        entities,
+        topics,
+        score: 0.5,
+    }
+}
+
+#[tokio::test]
+async fn seal_with_extract_strategy_populates_entities_and_topics() {
+    use crate::openhuman::memory::tree::score::extract::{CompositeExtractor, EntityExtractor};
+    use std::sync::Arc;
+
+    let (_tmp, cfg) = test_config();
+    let tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+    let summariser = InertSummariser::new();
+
+    // Content the regex extractor can find: an email and a hashtag. The
+    // inert summariser concatenates leaf content into the L1 summary, so
+    // these tokens survive into the summary text and the extractor finds
+    // them when run on the summary content.
+    let leaf = seed_leaf(
+        &cfg,
+        0,
+        "alice@example.com is leading the #launch sprint this week.",
+        vec![],
+        vec![],
+    );
+
+    let extractor: Arc<dyn EntityExtractor> = Arc::new(CompositeExtractor::regex_only());
+    let strategy = LabelStrategy::ExtractFromContent(extractor);
+
+    let sealed = append_leaf(&cfg, &tree, &leaf, &summariser, &strategy)
+        .await
+        .unwrap();
+    assert_eq!(sealed.len(), 1, "single 10k-token leaf should seal L0→L1");
+
+    let summary = store::get_summary(&cfg, &sealed[0]).unwrap().unwrap();
+    assert!(
+        summary
+            .entities
+            .iter()
+            .any(|e| e == "email:alice@example.com"),
+        "ExtractFromContent should surface the email entity from summary text; got entities={:?}",
+        summary.entities
+    );
+    assert!(
+        summary.topics.iter().any(|t| t == "launch"),
+        "ExtractFromContent should surface the hashtag-derived topic; got topics={:?}",
+        summary.topics
+    );
+}
+
+#[tokio::test]
+async fn seal_with_union_strategy_inherits_labels_from_children() {
+    let (_tmp, cfg) = test_config();
+    let tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+    let summariser = InertSummariser::new();
+
+    // Two leaves with overlapping + distinct labels. Union should
+    // dedup-merge them into the parent.
+    let leaf1 = seed_leaf(
+        &cfg,
+        0,
+        "first leaf body",
+        vec!["email:alice@example.com".into(), "topic:phoenix".into()],
+        vec!["phoenix".into(), "launch".into()],
+    );
+    let leaf2 = seed_leaf(
+        &cfg,
+        1,
+        "second leaf body",
+        vec!["email:alice@example.com".into(), "person:bob".into()],
+        vec!["launch".into(), "qa".into()],
+    );
+
+    // L0 seals when the budget is crossed. With each leaf at 10k tokens,
+    // the first append triggers a seal containing only leaf1; we want a
+    // seal containing both, so use UnionFromChildren and a single seal of
+    // both leaves at once. The simplest way is to lower budget by sealing
+    // two leaves into one buffer — the second append crosses budget, so
+    // the seal contains [leaf1, leaf2].
+    //
+    // Adjust by using smaller token counts so both fit in L0 first, then
+    // a third append triggers a seal containing both. Reuse the helper
+    // and override the leaf's token_count for this test.
+    // Each leaf at half the budget so two together hit threshold exactly.
+    let per_leaf = TOKEN_BUDGET / 2;
+    let leaf1 = LeafRef {
+        token_count: per_leaf,
+        ..leaf1
+    };
+    let leaf2 = LeafRef {
+        token_count: per_leaf,
+        ..leaf2
+    };
+
+    // First leaf: under budget, no seal.
+    let sealed_1 = append_leaf(
+        &cfg,
+        &tree,
+        &leaf1,
+        &summariser,
+        &LabelStrategy::UnionFromChildren,
+    )
+    .await
+    .unwrap();
+    assert!(sealed_1.is_empty());
+    // Second leaf: crosses budget → one seal covering both leaves.
+    let sealed_2 = append_leaf(
+        &cfg,
+        &tree,
+        &leaf2,
+        &summariser,
+        &LabelStrategy::UnionFromChildren,
+    )
+    .await
+    .unwrap();
+    assert_eq!(sealed_2.len(), 1);
+
+    let summary = store::get_summary(&cfg, &sealed_2[0]).unwrap().unwrap();
+    let entities: std::collections::BTreeSet<&str> =
+        summary.entities.iter().map(String::as_str).collect();
+    let topics: std::collections::BTreeSet<&str> =
+        summary.topics.iter().map(String::as_str).collect();
+    assert!(entities.contains("email:alice@example.com"));
+    assert!(entities.contains("topic:phoenix"));
+    assert!(entities.contains("person:bob"));
+    assert_eq!(
+        entities.len(),
+        3,
+        "expected 3 unique entities; got {entities:?}"
+    );
+    assert!(topics.contains("phoenix"));
+    assert!(topics.contains("launch"));
+    assert!(topics.contains("qa"));
+    assert_eq!(topics.len(), 3, "expected 3 unique topics; got {topics:?}");
+}
+
+#[tokio::test]
+async fn seal_with_empty_strategy_leaves_labels_empty() {
+    let (_tmp, cfg) = test_config();
+    let tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+    let summariser = InertSummariser::new();
+
+    // Leaf carries labels — Empty strategy should ignore them.
+    let leaf = seed_leaf(
+        &cfg,
+        0,
+        "alice@example.com discussing #launch",
+        vec!["email:alice@example.com".into(), "topic:launch".into()],
+        vec!["launch".into()],
+    );
+
+    let sealed = append_leaf(&cfg, &tree, &leaf, &summariser, &LabelStrategy::Empty)
+        .await
+        .unwrap();
+    assert_eq!(sealed.len(), 1);
+
+    let summary = store::get_summary(&cfg, &sealed[0]).unwrap().unwrap();
+    assert!(
+        summary.entities.is_empty(),
+        "Empty strategy must leave entities empty; got {:?}",
+        summary.entities
+    );
+    assert!(
+        summary.topics.is_empty(),
+        "Empty strategy must leave topics empty; got {:?}",
+        summary.topics
+    );
+}
+
+#[tokio::test]
+async fn topic_tree_seal_persists_topic_kind_not_source() {
+    use crate::openhuman::memory::tree::source_tree::types::TreeStatus;
+
+    let (_tmp, cfg) = test_config();
+    // Build a topic tree directly — `seal_one_level` runs for both
+    // source and topic trees, and previously hardcoded Source on the
+    // resulting summary regardless of the parent tree's kind.
+    let tree = Tree {
+        id: "topic-tree-test-id".to_string(),
+        kind: TreeKind::Topic,
+        scope: "topic:launch".to_string(),
+        root_id: None,
+        max_level: 0,
+        status: TreeStatus::Active,
+        created_at: Utc::now(),
+        last_sealed_at: None,
+    };
+    store::insert_tree(&cfg, &tree).unwrap();
+
+    let summariser = InertSummariser::new();
+    let leaf = seed_leaf(&cfg, 0, "topic content", vec![], vec![]);
+
+    let sealed = append_leaf(&cfg, &tree, &leaf, &summariser, &LabelStrategy::Empty)
+        .await
+        .unwrap();
+    assert_eq!(sealed.len(), 1);
+
+    let summary = store::get_summary(&cfg, &sealed[0]).unwrap().unwrap();
+    assert_eq!(
+        summary.tree_kind,
+        TreeKind::Topic,
+        "topic-tree summary must persist tree_kind=Topic, not Source"
+    );
+}
+
+#[test]
+fn scope_slug_non_gmail_uses_full_scope() {
+    // slack:#eng and discord:#eng must NOT produce the same scope slug.
+    // Previously, stripping everything before ':' made both → "eng".
+    // After Fix K, only gmail: strips the prefix — others use the full string.
+    use crate::openhuman::memory::tree::content_store::paths::slugify_source_id;
+
+    // Verify that the slug logic produces distinct values for different platforms.
+    let slack_slug = slugify_source_id("slack:#eng");
+    let discord_slug = slugify_source_id("discord:#eng");
+    assert_ne!(
+        slack_slug, discord_slug,
+        "slack:#eng and discord:#eng must produce distinct slugs; got slack={slack_slug:?} discord={discord_slug:?}"
+    );
+    // Both must include their platform prefix in the slug.
+    assert!(
+        slack_slug.contains("slack"),
+        "slack slug must include 'slack'; got {slack_slug:?}"
+    );
+    assert!(
+        discord_slug.contains("discord"),
+        "discord slug must include 'discord'; got {discord_slug:?}"
+    );
+
+    // Confirm gmail: correctly strips the "gmail:" prefix so the participants
+    // portion (used as the bucket key) matches the chunk path layout.
+    // scope_slug for a gmail source tree is built by stripping "gmail:" and
+    // slugifying the remainder; the result must equal slugify of just the
+    // participants string.
+    let participants = "alice@x.com|bob@y.com";
+    let participants_slug = slugify_source_id(participants);
+    let gmail_scope = format!("gmail:{participants}");
+    // Strip "gmail:" prefix as bucket_seal.rs does.
+    let gmail_slug = slugify_source_id(&gmail_scope["gmail:".len()..]);
+    assert_eq!(
+        participants_slug, gmail_slug,
+        "gmail scope_slug must equal slugify of participants portion; \
+         participants_slug={participants_slug:?} gmail_slug={gmail_slug:?}"
+    );
+
+    // Also assert the full-scope slug for gmail is DIFFERENT (shows the bug
+    // would still exist if we used the full string for gmail).
+    let gmail_full_slug = slugify_source_id(&gmail_scope);
+    assert_ne!(
+        gmail_full_slug, participants_slug,
+        "slugifying the full 'gmail:...' scope must differ from the participants-only slug"
+    );
 }

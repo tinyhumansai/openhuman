@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.53.1"
+version = "0.53.4"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -8,6 +8,14 @@ autobins = false
 [[bin]]
 name = "openhuman-core"
 path = "src/main.rs"
+
+[[bin]]
+name = "slack-backfill"
+path = "src/bin/slack_backfill.rs"
+
+[[bin]]
+name = "gmail-backfill-3d"
+path = "src/bin/gmail_backfill_3d.rs"
 
 [lib]
 name = "openhuman_core"
@@ -114,12 +122,15 @@ matrix-sdk = { version = "0.16", optional = true, default-features = false, feat
 fantoccini = { version = "0.22.0", optional = true, default-features = false, features = ["rustls-tls"] }
 serde-big-array = { version = "0.5", optional = true }
 pdf-extract = { version = "0.10", optional = true }
-wa-rs = { version = "0.2", optional = true, default-features = false }
-wa-rs-core = { version = "0.2", optional = true, default-features = false }
-wa-rs-binary = { version = "0.2", optional = true, default-features = false }
-wa-rs-proto = { version = "0.2", optional = true, default-features = false }
-wa-rs-ureq-http = { version = "0.2", optional = true }
-wa-rs-tokio-transport = { version = "0.2", optional = true, default-features = false }
+# WhatsApp Web — upstream `whatsapp-rust` 0.5. Replaces the previous `wa-rs`
+# 0.2 fork: upstream now ships its own SqliteStore (so we no longer need the
+# 1.3K-line custom RusqliteStore) and dispatches `Event::Message` for
+# LID-addressed contacts and group sender-key (skmsg) messages — both of
+# which the 0.2 fork silently dropped after decryption.
+whatsapp-rust = { version = "0.5", optional = true, default-features = false, features = ["sqlite-storage", "tokio-runtime"] }
+whatsapp-rust-tokio-transport = { version = "0.5", optional = true, default-features = false }
+whatsapp-rust-ureq-http-client = { version = "0.5", optional = true }
+wacore = { version = "0.5", optional = true, default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }
@@ -139,7 +150,7 @@ browser-native = ["dep:fantoccini"]
 fantoccini = ["browser-native"]
 landlock = ["sandbox-landlock"]
 rag-pdf = ["dep:pdf-extract"]
-whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-proto", "dep:wa-rs-ureq-http", "dep:wa-rs-tokio-transport", "serde-big-array"]
+whatsapp-web = ["dep:whatsapp-rust", "dep:whatsapp-rust-tokio-transport", "dep:whatsapp-rust-ureq-http-client", "dep:wacore", "serde-big-array"]
 
 # Fix whisper-rs-sys CRT mismatch on Windows MSVC (LNK2038).
 # Upstream cmake build defaults to /MD but Rust uses /MT.

@@ -22,8 +22,8 @@ pub mod store;
 pub mod summariser;
 pub mod types;
 
-pub use bucket_seal::{append_leaf, LeafRef};
+pub use bucket_seal::{append_leaf, append_leaf_deferred, LabelStrategy, LeafRef};
 pub use registry::get_or_create_source_tree;
 pub use store::{get_summary_embedding, set_summary_embedding};
-pub use summariser::{inert::InertSummariser, Summariser};
+pub use summariser::{build_summariser, inert::InertSummariser, llm::LlmSummariser, Summariser};
 pub use types::{Buffer, SummaryNode, Tree, TreeKind, TreeStatus, TOKEN_BUDGET};

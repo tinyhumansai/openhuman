@@ -18,6 +18,7 @@ mod telegram_scanner;
 mod webview_accounts;
 mod webview_apis;
 mod whatsapp_scanner;
+mod window_state;
 
 use std::sync::Mutex;
 
@@ -318,7 +319,36 @@ async fn restart_core_process(
 #[tauri::command]
 async fn restart_app(app: tauri::AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[app] restart_app invoked from frontend");
+    // Persist main-window geometry and hide the window before exit so
+    // the macOS WindowServer doesn't briefly black-out the desktop layer
+    // on the (now defunct) display when the focused app dies, and so
+    // the new process can land its window on the same display+position
+    // the user had it on. (#900 secondary fixes)
+    if let Some(window) = app.get_webview_window("main") {
+        window_state::save_main(&window);
+        if let Err(err) = window.hide() {
+            log::warn!("[app] hide main window before restart failed: {err}");
+        }
+    }
     app.restart();
+}
+
+/// Read the authoritative active user id from `active_user.toml` so the
+/// frontend can seed `userScopedStorage` BEFORE redux-persist hydrates.
+///
+/// The previous frontend-only seed (a `localStorage` key) was bound to the
+/// per-user CEF profile dir, so on every restart-driven user flip the new
+/// process read whatever value the new profile's `localStorage` happened to
+/// hold from a prior session — usually stale, triggering a false re-flip and
+/// a restart loop. The Rust core writes `active_user.toml` atomically as part
+/// of `auth_store_session`, so it's the only profile-independent source of
+/// truth available to the UI at boot. Reuses
+/// `cef_profile::default_root_openhuman_dir()` so the lookup honors
+/// `OPENHUMAN_WORKSPACE` overrides used in test harnesses. (#900)
+#[tauri::command]
+fn get_active_user_id() -> Result<Option<String>, String> {
+    let dir = cef_profile::default_root_openhuman_dir()?;
+    Ok(cef_profile::read_active_user_id(&dir))
 }
 
 #[tauri::command]
@@ -607,8 +637,13 @@ fn show_native_notification(
     tag: Option<String>,
 ) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
+    let permission_state = app
+        .notification()
+        .permission_state()
+        .map(|s| format!("{s:?}"))
+        .unwrap_or_else(|e| format!("err({e})"));
     log::debug!(
-        "[notify] show_native_notification title_chars={} body_chars={} tag={:?}",
+        "[notify] show_native_notification title_chars={} body_chars={} tag={:?} permission={permission_state}",
         title.len(),
         body.len(),
         tag
@@ -617,9 +652,100 @@ fn show_native_notification(
     if !body.is_empty() {
         builder = builder.body(&body);
     }
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.sound("default");
+    }
     builder
         .show()
         .map_err(|e| format!("notification show failed: {e}"))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_notification_permission_state_inner() -> Result<String, String> {
+    use std::ptr::NonNull;
+    use std::sync::mpsc;
+
+    use block2::RcBlock;
+    use objc2_user_notifications::{
+        UNAuthorizationStatus, UNNotificationSettings, UNUserNotificationCenter,
+    };
+
+    let center = UNUserNotificationCenter::currentNotificationCenter();
+    let (tx, rx) = mpsc::channel::<String>();
+    let completion = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
+        let status = unsafe { settings.as_ref().authorizationStatus() };
+        let state = if status == UNAuthorizationStatus::Authorized {
+            "granted"
+        } else if status == UNAuthorizationStatus::Denied {
+            "denied"
+        } else if status == UNAuthorizationStatus::NotDetermined {
+            "not_determined"
+        } else if status == UNAuthorizationStatus::Provisional {
+            "provisional"
+        } else if status == UNAuthorizationStatus::Ephemeral {
+            "ephemeral"
+        } else {
+            "unknown"
+        };
+        let _ = tx.send(state.to_string());
+    });
+    center.getNotificationSettingsWithCompletionHandler(&completion);
+    rx.recv_timeout(std::time::Duration::from_secs(2))
+        .map_err(|_| "timed out waiting for macOS notification settings".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_notification_permission_request_inner() -> Result<String, String> {
+    use block2::RcBlock;
+    use objc2::runtime::Bool;
+    use objc2_foundation::NSError;
+    use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
+    use std::sync::mpsc;
+
+    let center = UNUserNotificationCenter::currentNotificationCenter();
+    let (tx, rx) = mpsc::channel::<bool>();
+    let options = UNAuthorizationOptions::Alert
+        | UNAuthorizationOptions::Badge
+        | UNAuthorizationOptions::Sound;
+    let completion = RcBlock::new(move |granted: Bool, _error: *mut NSError| {
+        let _ = tx.send(granted.as_bool());
+    });
+    center.requestAuthorizationWithOptions_completionHandler(options, &completion);
+    let granted = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|_| "timed out waiting for macOS permission prompt result".to_string())?;
+    if granted {
+        Ok("granted".to_string())
+    } else {
+        // If the user denies or notifications are disabled for the app,
+        // macOS reports `false` here.
+        Ok("denied".to_string())
+    }
+}
+
+#[tauri::command]
+fn notification_permission_state() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return macos_notification_permission_state_inner();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok("granted".to_string())
+    }
+}
+
+#[tauri::command]
+fn notification_permission_request() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return macos_notification_permission_request_inner();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok("granted".to_string())
+    }
 }
 
 fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
@@ -824,9 +950,15 @@ pub fn run() {
             // silently disappears and huddle/call buttons no-op.
             ("--enable-features", Some("SharedArrayBuffer")),
         ];
-        if cfg!(debug_assertions) {
-            args.push(("--remote-debugging-port", Some("19222")));
-        }
+        // Always expose the CDP port, not just in debug. The webview-accounts
+        // CDP session opener navigates each embedded provider webview from its
+        // `about:blank#openhuman-acct-...` placeholder to the real provider URL
+        // via `Page.navigate`. Without this port available in release builds,
+        // the CDP client can't attach (`browser_ws_url()` 404s on /json/version),
+        // the navigation never fires, and the embedded webview stays on
+        // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
+        // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
+        args.push(("--remote-debugging-port", Some("19222")));
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
 
@@ -955,6 +1087,24 @@ pub fn run() {
                     log::warn!("[core-update] auto-update check failed (non-fatal): {err}");
                 }
             });
+
+            // Restore last-known window position+size before showing the
+            // window so the user's first paint after a restart-driven flow
+            // (#900 identity flip) lands on the same display they used,
+            // not back at the default centered initial size on the
+            // primary monitor. `tauri.conf.json` ships `visible: false`
+            // / `center: false` for the main window so the placement
+            // happens before the first paint and there's no jump.
+            if let Some(window) = app.get_webview_window("main") {
+                if !window_state::restore_main(&window) {
+                    window_state::center_main(&window);
+                }
+                if !daemon_mode {
+                    if let Err(err) = window.show() {
+                        log::warn!("[window-state] show main window failed: {err}");
+                    }
+                }
+            }
 
             if daemon_mode {
                 if let Some(window) = app.get_webview_window("main") {
@@ -1293,6 +1443,7 @@ pub fn run() {
             apply_app_update,
             restart_core_process,
             restart_app,
+            get_active_user_id,
             schedule_cef_profile_purge,
             service_install_direct,
             service_start_direct,
@@ -1328,6 +1479,8 @@ pub fn run() {
             gmail::gmail_trash,
             gmail::gmail_add_label,
             gmail::gmail_find_linkedin_profile_url,
+            notification_permission_state,
+            notification_permission_request,
             activate_main_window,
             show_native_notification
         ])

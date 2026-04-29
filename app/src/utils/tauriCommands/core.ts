@@ -72,6 +72,23 @@ export async function restartApp(): Promise<void> {
 }
 
 /**
+ * Read the active user id from `~/.openhuman/active_user.toml` via Rust.
+ * Used at startup (before redux-persist hydrates) to seed
+ * `userScopedStorage` from the profile-independent source of truth so
+ * the UI always lands on the right user namespace, regardless of any
+ * stale `localStorage` value bound to a previously-active CEF profile.
+ * (#900)
+ */
+export async function getActiveUserIdFromCore(): Promise<string | null> {
+  if (!isTauri()) return null;
+  try {
+    return await invoke<string | null>('get_active_user_id');
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Queue deletion of a user-scoped CEF profile on the next app launch.
  */
 export async function scheduleCefProfilePurge(userId?: string | null): Promise<string | null> {

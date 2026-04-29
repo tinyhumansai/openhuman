@@ -87,14 +87,31 @@ fn recap_to_hits(recap: RecapOutput, tree_id: &str, tree_scope: &str) -> Vec<Ret
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::memory::tree::content_store;
     use crate::openhuman::memory::tree::global_tree::digest::{end_of_day_digest, DigestOutcome};
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf, LeafRef};
+    use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+        append_leaf, LabelStrategy, LeafRef,
+    };
     use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
     use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::{DateTime, Utc};
     use tempfile::TempDir;
+
+    fn stage_test_chunks(cfg: &Config, chunks: &[Chunk]) {
+        let content_root = cfg.memory_tree_content_root();
+        std::fs::create_dir_all(&content_root).expect("create content_root for test");
+        let staged = content_store::stage_chunks(&content_root, chunks)
+            .expect("stage_chunks for test chunks");
+        crate::openhuman::memory::tree::store::with_connection(cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            crate::openhuman::memory::tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .expect("persist staged chunk pointers");
+    }
 
     fn test_config() -> (TempDir, Config) {
         let tmp = TempDir::new().unwrap();
@@ -120,7 +137,7 @@ mod tests {
         let summariser = InertSummariser::new();
         for seq in 0..2u32 {
             let c = Chunk {
-                id: chunk_id(SourceKind::Chat, scope, seq),
+                id: chunk_id(SourceKind::Chat, scope, seq, "test-content"),
                 content: format!("daily-{scope}-{seq}"),
                 metadata: Metadata {
                     source_kind: SourceKind::Chat,
@@ -134,8 +151,10 @@ mod tests {
                 token_count: 6_000,
                 seq_in_source: seq,
                 created_at: ts,
+                partial_message: false,
             };
             upsert_chunks(cfg, &[c.clone()]).unwrap();
+            stage_test_chunks(cfg, &[c.clone()]);
             append_leaf(
                 cfg,
                 &tree,
@@ -149,6 +168,7 @@ mod tests {
                     score: 0.5,
                 },
                 &summariser,
+                &LabelStrategy::Empty,
             )
             .await
             .unwrap();

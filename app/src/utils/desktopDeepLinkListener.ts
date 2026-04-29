@@ -10,6 +10,7 @@ import {
   completeDeepLinkAuthProcessing,
   failDeepLinkAuthProcessing,
 } from '../store/deepLinkAuthState';
+import { BILLING_DASHBOARD_URL } from './links';
 import { evaluateOAuthAppVersionGate } from './oauthAppVersionGate';
 import { openUrl } from './openUrl';
 import { storeSession } from './tauriCommands';
@@ -98,15 +99,17 @@ const handlePaymentDeepLink = async (parsed: URL) => {
 
     console.log('[DeepLink] Payment success, session_id:', sessionId);
 
-    // Broadcast to the app so billing components can react
+    // Broadcast to the app in case any listeners still care about legacy
+    // payment completion events.
     window.dispatchEvent(new CustomEvent('payment:success', { detail: { sessionId } }));
 
-    // Navigate to billing settings to show confirmation
-    window.location.hash = '/settings/billing';
+    await openUrl(BILLING_DASHBOARD_URL);
+    window.location.hash = '/home';
   } else if (path === 'cancel') {
     console.log('[DeepLink] Payment cancelled');
     window.dispatchEvent(new CustomEvent('payment:cancel', {}));
-    window.location.hash = '/settings/billing';
+    await openUrl(BILLING_DASHBOARD_URL);
+    window.location.hash = '/home';
   } else {
     console.warn('[DeepLink] Unknown payment path:', path);
   }

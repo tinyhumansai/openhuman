@@ -1,7 +1,7 @@
-import { useNavigate } from 'react-router-dom';
-
 import { useUsageState } from '../../hooks/useUsageState';
 import { useAppSelector } from '../../store/hooks';
+import { BILLING_DASHBOARD_URL } from '../../utils/links';
+import { openUrl } from '../../utils/openUrl';
 
 function formatTokens(n: number): string {
   if (n < 1000) return String(n);
@@ -42,7 +42,6 @@ function severityFromPct(pct: number): PillSeverity {
 }
 
 const TokenUsagePill = () => {
-  const navigate = useNavigate();
   const sessionTokens = useAppSelector(state => state.chatRuntime.sessionTokenUsage);
   const { usagePct10h, usagePct7d, isAtLimit, isNearLimit, currentTier, teamUsage } =
     useUsageState();
@@ -82,7 +81,9 @@ const TokenUsagePill = () => {
       {showPlanPill ? (
         <button
           type="button"
-          onClick={() => navigate('/settings/billing')}
+          onClick={() => {
+            void openUrl(BILLING_DASHBOARD_URL);
+          }}
           title={planTitle}
           className={`inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium ring-1 transition-colors ${planSeverity.bg} ${planSeverity.text} ${planSeverity.ring} hover:opacity-80`}>
           {isAtLimit ? 'Limit' : planSeverity.label}

@@ -174,6 +174,29 @@ Deep links require a `.app` bundle. Use `pnpm tauri build --debug --bundles app`
 
 The first Docker build compiles Rust + tauri-driver from source. Subsequent runs use cached layers. Cargo registry and git sources are cached via Docker volumes.
 
+## Spec: Notifications
+
+**File**: `app/test/e2e/specs/notifications.spec.ts`
+
+Tests notification RPC methods via the live core sidecar and the Notifications UI page:
+
+- `notification_ingest` — creates a new notification via core RPC
+- `notification_list` — verifies the ingested notification is returned
+- `notification_mark_read` — marks a notification as read
+- `notification_stats` — checks aggregate statistics shape
+- UI: Notifications page renders the integration notifications section (`[data-testid="integration-notifications-section"]`)
+- UI: Notifications page shows the System Events section (`[data-testid="system-events-section"]`)
+
+**Run**:
+
+```bash
+bash app/scripts/e2e-run-spec.sh test/e2e/specs/notifications.spec.ts notifications
+```
+
+**Platform note**: RPC tests (`notification_ingest`, `notification_list`, `notification_mark_read`, `notification_stats`) run on both Linux (tauri-driver) and macOS (Appium Mac2). UI assertions (Notifications page sections) require Linux / tauri-driver because `browser.execute()` is unavailable on Mac2 — those tests auto-skip when `supportsExecuteScript()` returns `false`.
+
+---
+
 ## Agent-observable artifact flow
 
 For a canonical, inspectable run that drops screenshots, page-source dumps, and mock request logs on disk:

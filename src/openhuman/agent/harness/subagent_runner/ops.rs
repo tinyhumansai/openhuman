@@ -563,12 +563,25 @@ async fn run_typed_mode(
     // Merge explicit orchestrator context with the parent's auto-loaded
     // memory context, but only when the definition opts into memory
     // inheritance.
+    let now = chrono::Local::now();
+    let now_str = format!(
+        "Current Date & Time: {} ({})",
+        now.format("%Y-%m-%d %H:%M:%S"),
+        now.format("%Z")
+    );
+
     let mut context_parts: Vec<&str> = Vec::new();
     if !definition.omit_memory_context {
         if let Some(ref mem_ctx) = parent.memory_context {
             context_parts.push(mem_ctx);
         }
     }
+
+    // Always include temporal context for typed sub-agents. System prompts
+    // for sub-agents are byte-stable for KV cache reuse, so "now" must
+    // ride in the user message.
+    context_parts.push(&now_str);
+
     if let Some(ref ctx) = options.context {
         context_parts.push(ctx);
     }

@@ -612,27 +612,27 @@ fn teardown_account_scanners<R: Runtime>(app: &AppHandle<R>, account_id: &str) {
     {
         let registry = registry.inner().clone();
         let acct = account_id.to_string();
-        tokio::spawn(async move { registry.forget(&acct).await });
+        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
     }
     if let Some(registry) = app.try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
     {
         let registry = registry.inner().clone();
         let acct = account_id.to_string();
-        tokio::spawn(async move { registry.forget(&acct).await });
+        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
     }
     if let Some(registry) =
         app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
     {
         let registry = registry.inner().clone();
         let acct = account_id.to_string();
-        tokio::spawn(async move { registry.forget(&acct).await });
+        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
     }
     if let Some(registry) =
         app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
     {
         let registry = registry.inner().clone();
         let acct = account_id.to_string();
-        tokio::spawn(async move { registry.forget(&acct).await });
+        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
     }
 }
 

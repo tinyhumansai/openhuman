@@ -1,11 +1,32 @@
 use super::*;
-use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf, LeafRef};
+use crate::openhuman::memory::tree::content_store;
+use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+    append_leaf, LabelStrategy, LeafRef,
+};
 use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
 use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
 use crate::openhuman::memory::tree::source_tree::types::TreeStatus;
 use crate::openhuman::memory::tree::store::upsert_chunks;
 use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
 use tempfile::TempDir;
+
+/// Stage a batch of chunks to the content store so that `read_chunk_body`
+/// can find the on-disk file during seals. Tests that call `upsert_chunks`
+/// and then trigger a seal MUST also call this helper; otherwise
+/// `hydrate_leaf_inputs` will fail with "no content_path for chunk_id".
+fn stage_test_chunks(cfg: &Config, chunks: &[Chunk]) {
+    let content_root = cfg.memory_tree_content_root();
+    std::fs::create_dir_all(&content_root).expect("create content_root for test");
+    let staged =
+        content_store::stage_chunks(&content_root, chunks).expect("stage_chunks for test chunks");
+    crate::openhuman::memory::tree::store::with_connection(cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        crate::openhuman::memory::tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .expect("persist staged chunk pointers");
+}
 
 fn test_config() -> (TempDir, Config) {
     let tmp = TempDir::new().unwrap();
@@ -25,7 +46,7 @@ async fn seed_source_tree_with_sealed_l1(cfg: &Config, scope: &str, ts: DateTime
     let summariser = InertSummariser::new();
 
     let c1 = Chunk {
-        id: chunk_id(SourceKind::Chat, scope, 0),
+        id: chunk_id(SourceKind::Chat, scope, 0, "test-content"),
         content: format!("chunk 1 in {scope}"),
         metadata: Metadata {
             source_kind: SourceKind::Chat,
@@ -39,9 +60,10 @@ async fn seed_source_tree_with_sealed_l1(cfg: &Config, scope: &str, ts: DateTime
         token_count: 6_000,
         seq_in_source: 0,
         created_at: ts,
+        partial_message: false,
     };
     let c2 = Chunk {
-        id: chunk_id(SourceKind::Chat, scope, 1),
+        id: chunk_id(SourceKind::Chat, scope, 1, "test-content"),
         content: format!("chunk 2 in {scope}"),
         metadata: Metadata {
             source_kind: SourceKind::Chat,
@@ -55,8 +77,10 @@ async fn seed_source_tree_with_sealed_l1(cfg: &Config, scope: &str, ts: DateTime
         token_count: 6_000,
         seq_in_source: 1,
         created_at: ts,
+        partial_message: false,
     };
     upsert_chunks(cfg, &[c1.clone(), c2.clone()]).unwrap();
+    stage_test_chunks(cfg, &[c1.clone(), c2.clone()]);
 
     let leaf1 = LeafRef {
         chunk_id: c1.id.clone(),
@@ -76,8 +100,12 @@ async fn seed_source_tree_with_sealed_l1(cfg: &Config, scope: &str, ts: DateTime
         topics: vec![],
         score: 0.5,
     };
-    append_leaf(cfg, &tree, &leaf1, &summariser).await.unwrap();
-    append_leaf(cfg, &tree, &leaf2, &summariser).await.unwrap();
+    append_leaf(cfg, &tree, &leaf1, &summariser, &LabelStrategy::Empty)
+        .await
+        .unwrap();
+    append_leaf(cfg, &tree, &leaf2, &summariser, &LabelStrategy::Empty)
+        .await
+        .unwrap();
     // 12k tokens > 10k budget → one L1 summary covering `ts`.
 }
 
@@ -215,4 +243,158 @@ async fn seven_days_cascade_to_weekly_seal() {
     let t = store::get_tree(&cfg, &global.id).unwrap().unwrap();
     assert_eq!(t.max_level, 1);
     assert_eq!(t.status, TreeStatus::Active);
+}
+
+/// Seed a source tree whose sealed L1 summary carries the given entities
+/// and topics. Entities are written into `mem_tree_entity_index` (where
+/// seal-time hydration reads them); topics are stored on chunk metadata
+/// tags. The seal then unions both into the L1 summary.
+async fn seed_source_tree_with_labeled_l1(
+    cfg: &Config,
+    scope: &str,
+    ts: DateTime<Utc>,
+    entities: Vec<String>,
+    topics: Vec<String>,
+) {
+    use crate::openhuman::memory::tree::score::extract::EntityKind;
+    use crate::openhuman::memory::tree::score::resolver::CanonicalEntity;
+    use crate::openhuman::memory::tree::score::store::index_entity;
+
+    let tree = get_or_create_source_tree(cfg, scope).unwrap();
+    let summariser = InertSummariser::new();
+
+    let mut chunks: Vec<Chunk> = Vec::new();
+    for seq in 0..2u32 {
+        chunks.push(Chunk {
+            id: chunk_id(SourceKind::Chat, scope, seq, "labeled-test"),
+            content: format!("labeled chunk {seq} in {scope}"),
+            metadata: Metadata {
+                source_kind: SourceKind::Chat,
+                source_id: scope.into(),
+                owner: "alice".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: topics.clone(),
+                source_ref: Some(SourceRef::new(format!("slack://{scope}/{seq}"))),
+            },
+            token_count: 6_000,
+            seq_in_source: seq,
+            created_at: ts,
+            partial_message: false,
+        });
+    }
+    upsert_chunks(cfg, &chunks).unwrap();
+    stage_test_chunks(cfg, &chunks);
+
+    for chunk in &chunks {
+        for entity_id in &entities {
+            let kind = entity_id
+                .split_once(':')
+                .map_or(EntityKind::Misc, |(k, _)| {
+                    EntityKind::parse(k).unwrap_or(EntityKind::Misc)
+                });
+            let surface = entity_id
+                .split_once(':')
+                .map_or(entity_id.as_str(), |(_, v)| v);
+            let e = CanonicalEntity {
+                canonical_id: entity_id.clone(),
+                kind,
+                surface: surface.to_string(),
+                span_start: 0,
+                span_end: surface.len() as u32,
+                score: 1.0,
+            };
+            index_entity(
+                cfg,
+                &e,
+                &chunk.id,
+                "leaf",
+                ts.timestamp_millis(),
+                Some(scope),
+            )
+            .unwrap();
+        }
+    }
+
+    // Two 6k-token leaves total 12k → exceeds L0 budget → seal fires on
+    // the second append, producing one L1 summary that unions all leaf
+    // labels (every leaf has the same set, so dedup yields the input set).
+    for chunk in &chunks {
+        let leaf = LeafRef {
+            chunk_id: chunk.id.clone(),
+            token_count: 6_000,
+            timestamp: ts,
+            content: chunk.content.clone(),
+            entities: entities.clone(),
+            topics: topics.clone(),
+            score: 0.5,
+        };
+        append_leaf(
+            cfg,
+            &tree,
+            &leaf,
+            &summariser,
+            &LabelStrategy::UnionFromChildren,
+        )
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn daily_digest_unions_labels_from_source_summaries() {
+    let (_tmp, cfg) = test_config();
+    let summariser = InertSummariser::new();
+
+    let day = NaiveDate::from_ymd_opt(2025, 5, 1).unwrap();
+    let ts = day.and_hms_opt(10, 0, 0).unwrap().and_utc();
+
+    // Source A's L1 carries (alice, phoenix-migration). Source B's L1
+    // carries (bob, phoenix-migration, qa). The daily L0 should union to
+    // (alice, bob, phoenix-migration) for entities and (phoenix-migration,
+    // qa) for topics — overlap dedup'd.
+    seed_source_tree_with_labeled_l1(
+        &cfg,
+        "slack:#a",
+        ts,
+        vec!["email:alice@example.com".into(), "topic:phoenix".into()],
+        vec!["phoenix-migration".into()],
+    )
+    .await;
+    seed_source_tree_with_labeled_l1(
+        &cfg,
+        "slack:#b",
+        ts,
+        vec!["person:bob".into(), "topic:phoenix".into()],
+        vec!["phoenix-migration".into(), "qa".into()],
+    )
+    .await;
+
+    let outcome = end_of_day_digest(&cfg, day, &summariser).await.unwrap();
+    let daily_id = match outcome {
+        DigestOutcome::Emitted { daily_id, .. } => daily_id,
+        other => panic!("expected Emitted, got {other:?}"),
+    };
+
+    let daily = store::get_summary(&cfg, &daily_id).unwrap().unwrap();
+    let entities: std::collections::BTreeSet<&str> =
+        daily.entities.iter().map(String::as_str).collect();
+    let topics: std::collections::BTreeSet<&str> =
+        daily.topics.iter().map(String::as_str).collect();
+
+    assert!(entities.contains("email:alice@example.com"));
+    assert!(entities.contains("person:bob"));
+    assert!(entities.contains("topic:phoenix"));
+    assert_eq!(
+        entities.len(),
+        3,
+        "expected 3 unique entities (deduped); got {entities:?}"
+    );
+    assert!(topics.contains("phoenix-migration"));
+    assert!(topics.contains("qa"));
+    assert_eq!(
+        topics.len(),
+        2,
+        "expected 2 unique topics (deduped); got {topics:?}"
+    );
 }

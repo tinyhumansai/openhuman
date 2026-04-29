@@ -20,6 +20,16 @@ pub type ControllerFuture = Pin<Box<dyn Future<Output = Result<Value, String>> +
 /// Handlers take a map of parameters and return a [`ControllerFuture`].
 pub type ControllerHandler = fn(Map<String, Value>) -> ControllerFuture;
 
+/// A function pointer type for domain-specific CLI handlers.
+pub type CliHandler = fn(&[String]) -> anyhow::Result<()>;
+
+/// A registered standalone CLI adapter for a domain.
+#[derive(Clone)]
+pub struct RegisteredCliAdapter {
+    pub namespace: &'static str,
+    pub handler: CliHandler,
+}
+
 /// A registered controller combining its schema and handler function.
 #[derive(Clone)]
 pub struct RegisteredController {
@@ -39,6 +49,9 @@ impl RegisteredController {
 /// The global static registry of all controllers, initialized once on first access.
 static REGISTRY: OnceLock<Vec<RegisteredController>> = OnceLock::new();
 
+/// The global static registry of standalone CLI adapters.
+static CLI_ADAPTERS: OnceLock<Vec<RegisteredCliAdapter>> = OnceLock::new();
+
 /// Returns a reference to the global controller registry.
 ///
 /// This function initializes the registry if it hasn't been already,
@@ -54,6 +67,16 @@ fn registry() -> &'static [RegisteredController] {
             registered
         })
         .as_slice()
+}
+
+/// Returns a reference to the global CLI adapter registry.
+fn cli_adapters() -> &'static [RegisteredCliAdapter] {
+    CLI_ADAPTERS.get_or_init(|| {
+        vec![RegisteredCliAdapter {
+            namespace: "voice",
+            handler: crate::openhuman::voice::cli::run_standalone_subcommand,
+        }]
+    })
 }
 
 /// Aggregates all controller implementations from across the codebase.
@@ -125,6 +148,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::memory::all_memory_tree_registered_controllers());
     // Memory tree retrieval layer (#710 — LLM-callable read tools over the tree)
     controllers.extend(crate::openhuman::memory::all_retrieval_registered_controllers());
+    // Slack → memory-tree ingestion engine (backfill + poll + 6hr bucket flush)
+    controllers.extend(crate::openhuman::memory::all_slack_ingestion_registered_controllers());
     // Link shortener for long tracking URLs — saves LLM tokens
     controllers
         .extend(crate::openhuman::redirect_links::all_redirect_links_registered_controllers());
@@ -200,6 +225,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_memory_tree_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_retrieval_controller_schemas());
+    schemas.extend(crate::openhuman::memory::all_slack_ingestion_controller_schemas());
     schemas.extend(crate::openhuman::redirect_links::all_redirect_links_controller_schemas());
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
@@ -301,6 +327,14 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         _ => None,
     }
+}
+
+/// Returns the CLI handler for a given namespace, if one is registered.
+pub fn cli_handler_for_namespace(namespace: &str) -> Option<CliHandler> {
+    cli_adapters()
+        .iter()
+        .find(|a| a.namespace == namespace)
+        .map(|a| a.handler)
 }
 
 /// Looks up an RPC method name based on namespace and function.

@@ -52,12 +52,20 @@ impl SessionTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActiveHours {
+    pub start: String,
+    pub end: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Schedule {
     Cron {
         expr: String,
         #[serde(default)]
         tz: Option<String>,
+        #[serde(default)]
+        active_hours: Option<ActiveHours>,
     },
     At {
         at: DateTime<Utc>,
@@ -214,6 +222,7 @@ mod tests {
         let s = Schedule::Cron {
             expr: "0 9 * * *".into(),
             tz: Some("America/Los_Angeles".into()),
+            active_hours: None,
         };
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["kind"], "cron");
@@ -232,8 +241,26 @@ mod tests {
             Schedule::Cron {
                 expr: "*/5 * * * *".into(),
                 tz: None,
+                active_hours: None,
             }
         );
+    }
+
+    #[test]
+    fn schedule_cron_variant_roundtrips_with_active_hours() {
+        let s = Schedule::Cron {
+            expr: "*/15 * * * *".into(),
+            tz: Some("UTC".into()),
+            active_hours: Some(ActiveHours {
+                start: "09:00".into(),
+                end: "17:30".into(),
+            }),
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["active_hours"]["start"], "09:00");
+        assert_eq!(v["active_hours"]["end"], "17:30");
+        let back: Schedule = serde_json::from_value(v).unwrap();
+        assert_eq!(back, s);
     }
 
     #[test]
