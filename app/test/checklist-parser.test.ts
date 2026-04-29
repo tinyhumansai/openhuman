@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-// @ts-expect-error — pure ESM module under repo-root scripts/, no .d.ts
 import { parseChecklist, summarize } from '../../scripts/lib/checklist-parser.mjs';
+
+interface ChecklistItem {
+  checked: boolean;
+  text: string;
+  naReason?: string;
+}
 
 describe('parseChecklist', () => {
   it('returns zero items for empty body', () => {
@@ -18,7 +23,7 @@ describe('parseChecklist', () => {
     const result = parseChecklist(body);
     expect(result.items).toHaveLength(3);
     expect(result.totalUnchecked).toBe(0);
-    expect(result.items.every(i => i.checked)).toBe(true);
+    expect(result.items.every((i: ChecklistItem) => i.checked)).toBe(true);
   });
 
   it('counts every unchecked non-N/A item as needing action', () => {
@@ -47,7 +52,7 @@ describe('parseChecklist', () => {
 - [X] uppercase
 - [ ] unchecked`;
     const result = parseChecklist(body);
-    expect(result.items.map(i => i.checked)).toEqual([true, true, false]);
+    expect(result.items.map((i: ChecklistItem) => i.checked)).toEqual([true, true, false]);
     const summary = summarize(result);
     expect(summary).toContain('2/3 items satisfied');
   });
