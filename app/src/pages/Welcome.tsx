@@ -194,7 +194,7 @@ const Welcome = () => {
               {/* OAuth buttons intentionally inert until auth flow is re-enabled. */}
               <div className="flex items-center justify-center gap-3">
                 {oauthProviderConfigs
-                  .filter(p => ['google', 'github', 'twitter'].includes(p.id))
+                  .filter(provider => provider.showOnWelcome)
                   .map(provider => (
                     <OAuthProviderButton
                       key={provider.id}

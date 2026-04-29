@@ -5,6 +5,7 @@ import { useDeepLinkAuthState } from '../../store/deepLinkAuthState';
 import Welcome from '../Welcome';
 
 const oauthButtonSpy = vi.fn();
+const oauthOverrideSpy = vi.fn();
 
 vi.mock('../../components/RotatingTetrahedronCanvas', () => ({
   default: () => <div data-testid="welcome-logo" />,
@@ -22,7 +23,10 @@ vi.mock('../../components/oauth/OAuthProviderButton', () => ({
       type="button"
       onClick={() => {
         oauthButtonSpy(provider.id);
-        onClickOverride?.();
+        if (onClickOverride) {
+          oauthOverrideSpy(provider.id);
+          onClickOverride();
+        }
       }}>
       {provider.id}
     </button>
@@ -30,7 +34,12 @@ vi.mock('../../components/oauth/OAuthProviderButton', () => ({
 }));
 
 vi.mock('../../components/oauth/providerConfigs', () => ({
-  oauthProviderConfigs: [{ id: 'google' }, { id: 'github' }, { id: 'twitter' }],
+  oauthProviderConfigs: [
+    { id: 'google', showOnWelcome: true },
+    { id: 'github', showOnWelcome: true },
+    { id: 'twitter', showOnWelcome: true },
+    { id: 'discord', showOnWelcome: false },
+  ],
 }));
 
 vi.mock('../../store/deepLinkAuthState', () => ({ useDeepLinkAuthState: vi.fn() }));
@@ -38,6 +47,7 @@ vi.mock('../../store/deepLinkAuthState', () => ({ useDeepLinkAuthState: vi.fn() 
 describe('Welcome auth entrypoint', () => {
   beforeEach(() => {
     oauthButtonSpy.mockReset();
+    oauthOverrideSpy.mockReset();
     vi.mocked(useDeepLinkAuthState).mockReturnValue({ isProcessing: false, errorMessage: null });
   });
 
@@ -49,6 +59,7 @@ describe('Welcome auth entrypoint', () => {
     expect(screen.getByRole('button', { name: 'google' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'github' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'twitter' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'discord' })).not.toBeInTheDocument();
   });
 
   it('keeps OAuth buttons as blank clicks on the welcome screen', () => {
@@ -61,6 +72,9 @@ describe('Welcome auth entrypoint', () => {
     expect(oauthButtonSpy).toHaveBeenNthCalledWith(1, 'google');
     expect(oauthButtonSpy).toHaveBeenNthCalledWith(2, 'github');
     expect(oauthButtonSpy).toHaveBeenNthCalledWith(3, 'twitter');
+    expect(oauthOverrideSpy).toHaveBeenNthCalledWith(1, 'google');
+    expect(oauthOverrideSpy).toHaveBeenNthCalledWith(2, 'github');
+    expect(oauthOverrideSpy).toHaveBeenNthCalledWith(3, 'twitter');
     expect(screen.queryByText('Connecting...')).not.toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
