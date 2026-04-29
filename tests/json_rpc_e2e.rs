@@ -797,6 +797,111 @@ async fn json_rpc_protocol_auth_and_agent_hello() {
 }
 
 #[tokio::test]
+async fn json_rpc_thread_labels_create_and_update() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // 1. Create a thread with an explicit label.
+    let create = post_json_rpc(
+        &rpc_base,
+        9001,
+        "openhuman.threads_create_new",
+        json!({ "labels": ["custom"] }),
+    )
+    .await;
+    let create_outer = assert_no_jsonrpc_error(&create, "threads_create_new with labels");
+    let created = create_outer
+        .get("data")
+        .expect("data envelope in create response");
+    let thread_id = created
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("id in created thread");
+    let created_labels = created
+        .get("labels")
+        .and_then(Value::as_array)
+        .expect("labels in created thread");
+    assert_eq!(
+        created_labels
+            .iter()
+            .map(|v| v.as_str().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        vec!["custom"],
+        "created thread should have labels=[\"custom\"]"
+    );
+
+    // 2. Update labels on the thread.
+    let update = post_json_rpc(
+        &rpc_base,
+        9002,
+        "openhuman.threads_update_labels",
+        json!({ "thread_id": thread_id, "labels": ["work", "briefing"] }),
+    )
+    .await;
+    let update_outer = assert_no_jsonrpc_error(&update, "threads_update_labels");
+    let updated = update_outer
+        .get("data")
+        .expect("data envelope in update response");
+    let updated_labels = updated
+        .get("labels")
+        .and_then(Value::as_array)
+        .expect("labels in updated thread");
+    assert_eq!(
+        updated_labels
+            .iter()
+            .map(|v| v.as_str().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        vec!["work", "briefing"],
+        "updated thread should have labels=[\"work\", \"briefing\"]"
+    );
+
+    // 3. Verify the updated labels are reflected in threads_list.
+    let list = post_json_rpc(&rpc_base, 9003, "openhuman.threads_list", json!({})).await;
+    let list_outer = assert_no_jsonrpc_error(&list, "threads_list after label update");
+    let list_result = list_outer
+        .get("data")
+        .expect("data envelope in list response");
+    let threads = list_result
+        .get("threads")
+        .and_then(Value::as_array)
+        .expect("threads array in list");
+    let persisted = threads
+        .iter()
+        .find(|t| t.get("id").and_then(Value::as_str) == Some(thread_id))
+        .expect("created thread must appear in list");
+    let persisted_labels = persisted
+        .get("labels")
+        .and_then(Value::as_array)
+        .expect("labels in persisted thread");
+    assert_eq!(
+        persisted_labels
+            .iter()
+            .map(|v| v.as_str().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        vec!["work", "briefing"],
+        "threads_list must reflect the updated labels"
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_memory_tree_end_to_end() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");

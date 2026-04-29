@@ -280,10 +280,13 @@ mod tests {
         // Note: this uses the same `load_config_with_timeout()` call path
         // that real startup uses. If some other test has written a session
         // profile to disk, this test accepts either outcome (Ok) gracefully.
-        let result = run_one_tick().await;
-        // Either Ok (no client, skipped) or Ok (backend unreachable handled
-        // gracefully). The `Err` branch only fires on config-load failure.
-        let _ = result;
+        let inner = tokio::time::timeout(Duration::from_secs(5), run_one_tick())
+            .await
+            .expect("run_one_tick should not hang indefinitely during tests");
+        assert!(
+            inner.is_ok(),
+            "run_one_tick should return Ok when no client is available: {inner:?}"
+        );
     }
 
     #[tokio::test]

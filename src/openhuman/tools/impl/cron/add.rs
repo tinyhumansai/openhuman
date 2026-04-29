@@ -6,6 +6,80 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 
+/// Look up the configured `allowed_users` list for a channel by name.
+/// Returns `None` if the channel is unknown or unconfigured. An empty
+/// `Some(&[])` means the channel is configured but accepts any sender.
+fn allowed_users_for_channel<'a>(config: &'a Config, channel: &str) -> Option<&'a [String]> {
+    let ch = channel.trim().to_ascii_lowercase();
+    let cc = &config.channels_config;
+    match ch.as_str() {
+        "telegram" => cc.telegram.as_ref().map(|c| c.allowed_users.as_slice()),
+        "discord" => cc.discord.as_ref().map(|c| c.allowed_users.as_slice()),
+        "slack" => cc.slack.as_ref().map(|c| c.allowed_users.as_slice()),
+        "mattermost" => cc.mattermost.as_ref().map(|c| c.allowed_users.as_slice()),
+        "matrix" => cc.matrix.as_ref().map(|c| c.allowed_users.as_slice()),
+        "irc" => cc.irc.as_ref().map(|c| c.allowed_users.as_slice()),
+        "lark" => cc.lark.as_ref().map(|c| c.allowed_users.as_slice()),
+        "dingtalk" => cc.dingtalk.as_ref().map(|c| c.allowed_users.as_slice()),
+        "qq" => cc.qq.as_ref().map(|c| c.allowed_users.as_slice()),
+        _ => None,
+    }
+}
+
+/// Validate a `DeliveryConfig` at cron-create time.
+///
+/// For `mode: "announce"` we require both `channel` and `to`, and we
+/// reject `to` values that are not in the channel's configured
+/// `allowed_users` list. This blocks an LLM (or RPC caller) from
+/// scheduling a cron whose output gets sent to an arbitrary chat id —
+/// see the "no cross-tenant `to`" acceptance criterion in #928.
+///
+/// `proactive` and `none` modes are not channel-targeted and are not
+/// validated here.
+fn validate_delivery(config: &Config, delivery: &DeliveryConfig) -> Result<(), String> {
+    let mode = delivery.mode.trim().to_ascii_lowercase();
+    if mode != "announce" {
+        return Ok(());
+    }
+
+    let channel = delivery
+        .channel
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "delivery.channel is required for announce mode".to_string())?;
+    let to = delivery
+        .to
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "delivery.to is required for announce mode".to_string())?;
+
+    // "web" announce is a degenerate case (web has no allowed_users
+    // gate). Other unknown channels (e.g. "email") fall through to the
+    // generic reject.
+    if channel.eq_ignore_ascii_case("web") {
+        return Ok(());
+    }
+
+    match allowed_users_for_channel(config, channel) {
+        Some(list) if list.is_empty() => Ok(()),
+        Some(list) => {
+            if list.iter().any(|u| u == to) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "delivery target '{to}' on channel '{channel}' is not in allowed_users \
+                     for that channel; refusing to schedule cross-tenant delivery"
+                ))
+            }
+        }
+        None => Err(format!(
+            "delivery channel '{channel}' is not configured; cannot validate target"
+        )),
+    }
+}
+
 pub struct CronAddTool {
     config: Arc<Config>,
     security: Arc<SecurityPolicy>,
@@ -24,7 +98,15 @@ impl Tool for CronAddTool {
     }
 
     fn description(&self) -> &str {
-        "Create a scheduled cron job (shell or agent) with cron/at/every schedules. Standardizes on device-local timezone unless 'tz' is set. Note: the scheduler polls on an interval (default 15s, minimum 5s) and does not 'catch up' missed runs."
+        "Create a scheduled cron job (shell or agent) with cron/at/every schedules. \
+         Standardizes on device-local timezone unless 'tz' is set. The scheduler polls on an \
+         interval (default 15s, minimum 5s) and does not 'catch up' missed runs.\n\
+         Delivery: agent jobs default to `mode: \"proactive\"` which lands in the in-app/web \
+         stream. When the current turn includes a `[Channel context]` block (e.g. Telegram, \
+         Discord, Slack), set `delivery` to `{ \"mode\": \"announce\", \"channel\": <channel>, \
+         \"to\": <reply target from the context block> }` so the reminder is delivered back to \
+         the same chat instead of the desktop. Only use the default proactive mode when the \
+         user explicitly asks for an in-app notification or when no channel context is present."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -224,6 +306,12 @@ impl Tool for CronAddTool {
                         best_effort: true,
                     }),
                 };
+
+                if let Some(ref cfg) = delivery {
+                    if let Err(msg) = validate_delivery(&self.config, cfg) {
+                        return Ok(ToolResult::error(msg));
+                    }
+                }
 
                 cron::add_agent_job(
                     &self.config,
@@ -441,5 +529,195 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("Missing 'prompt'"));
+    }
+
+    // ── #928: announce-mode delivery validation ───────────────────
+
+    use crate::openhuman::config::TelegramConfig;
+
+    fn cfg_with_telegram(tmp: &TempDir, allowed: Vec<String>) -> Arc<Config> {
+        let mut config = Config {
+            workspace_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        };
+        config.channels_config.telegram = Some(TelegramConfig {
+            bot_token: "test-token".into(),
+            allowed_users: allowed,
+            stream_mode: Default::default(),
+            draft_update_interval_ms: 1000,
+            silent_streaming: true,
+            mention_only: false,
+        });
+        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        Arc::new(config)
+    }
+
+    #[tokio::test]
+    async fn agent_job_announce_telegram_authorized_chat_succeeds() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = cfg_with_telegram(&tmp, vec!["123456".into()]);
+        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let result = tool
+            .execute(json!({
+                "schedule": { "kind": "every", "every_ms": 300000 },
+                "job_type": "agent",
+                "prompt": "remind me to drink water",
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "123456"
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error, "{:?}", result.output());
+        let jobs = cron::list_jobs(&cfg).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].delivery.mode, "announce");
+        assert_eq!(jobs[0].delivery.channel.as_deref(), Some("telegram"));
+        assert_eq!(jobs[0].delivery.to.as_deref(), Some("123456"));
+    }
+
+    #[tokio::test]
+    async fn agent_job_announce_telegram_open_bot_allows_any_chat() {
+        // Empty allowed_users == "any sender ok". Mirrors the existing
+        // channel runtime behavior: an open bot accepts cron targets too.
+        let tmp = TempDir::new().unwrap();
+        let cfg = cfg_with_telegram(&tmp, vec![]);
+        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let result = tool
+            .execute(json!({
+                "schedule": { "kind": "every", "every_ms": 300000 },
+                "job_type": "agent",
+                "prompt": "ping",
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "999"
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error, "{:?}", result.output());
+    }
+
+    #[tokio::test]
+    async fn agent_job_announce_telegram_unauthorized_chat_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = cfg_with_telegram(&tmp, vec!["alice".into()]);
+        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let result = tool
+            .execute(json!({
+                "schedule": { "kind": "every", "every_ms": 300000 },
+                "job_type": "agent",
+                "prompt": "ping",
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "mallory"
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert!(result.output().contains("not in allowed_users"));
+        // Job must not be persisted on rejection.
+        assert!(cron::list_jobs(&cfg).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_job_announce_unconfigured_channel_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = test_config(&tmp).await; // no telegram block
+        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let result = tool
+            .execute(json!({
+                "schedule": { "kind": "every", "every_ms": 300000 },
+                "job_type": "agent",
+                "prompt": "ping",
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "123"
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert!(result.output().contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn agent_job_announce_missing_target_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = cfg_with_telegram(&tmp, vec![]);
+        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let result = tool
+            .execute(json!({
+                "schedule": { "kind": "every", "every_ms": 300000 },
+                "job_type": "agent",
+                "prompt": "ping",
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram"
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert!(result.output().contains("delivery.to is required"));
+    }
+
+    #[test]
+    fn validate_delivery_skips_proactive_and_none_modes() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = cfg_with_telegram(&tmp, vec!["alice".into()]);
+
+        let proactive = DeliveryConfig {
+            mode: "proactive".into(),
+            channel: None,
+            to: None,
+            best_effort: true,
+        };
+        assert!(validate_delivery(&cfg, &proactive).is_ok());
+
+        let none = DeliveryConfig {
+            mode: "none".into(),
+            channel: None,
+            to: None,
+            best_effort: true,
+        };
+        assert!(validate_delivery(&cfg, &none).is_ok());
+    }
+
+    #[test]
+    fn validate_delivery_announce_web_is_a_no_op() {
+        // "web" doesn't have an allowed_users gate; announce to web is
+        // a degenerate but valid configuration (in-app explicit).
+        let tmp = TempDir::new().unwrap();
+        let cfg = test_config_sync(&tmp);
+        let cfg_unused = DeliveryConfig {
+            mode: "announce".into(),
+            channel: Some("web".into()),
+            to: Some("any".into()),
+            best_effort: true,
+        };
+        assert!(validate_delivery(&cfg, &cfg_unused).is_ok());
+    }
+
+    fn test_config_sync(tmp: &TempDir) -> Arc<Config> {
+        let config = Config {
+            workspace_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        };
+        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        Arc::new(config)
     }
 }

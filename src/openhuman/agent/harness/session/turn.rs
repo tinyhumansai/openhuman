@@ -170,6 +170,58 @@ impl Agent {
             .await
             .unwrap_or_default();
 
+        // ── Memory-tree eager prefetch (#710 wiring) ──────────────────
+        // The orchestrator session injects a cross-source digest on the
+        // first turn AND every `tree_loader::REFRESH_INTERVAL` (30 min by
+        // default) thereafter, so long-running conversations stay current
+        // with newly-ingested memory. Each injection still rides on the
+        // user message (NOT the system prompt) to keep the KV-cache prefix
+        // stable. Failure is non-fatal — bare `context` is returned on any
+        // error. The timestamp is bumped on every successful `load` (even
+        // when the digest is empty) so an empty workspace doesn't get
+        // re-queried every turn.
+        let now = std::time::Instant::now();
+        let context = if crate::openhuman::agent::tree_loader::should_prefetch(
+            self.last_tree_prefetch_at,
+            now,
+            crate::openhuman::agent::tree_loader::REFRESH_INTERVAL,
+        ) {
+            match crate::openhuman::config::rpc::load_config_with_timeout().await {
+                Ok(cfg) => {
+                    match crate::openhuman::agent::tree_loader::TreeContextLoader::load(&cfg).await
+                    {
+                        Ok(tree_ctx) => {
+                            let was_first = self.last_tree_prefetch_at.is_none();
+                            self.last_tree_prefetch_at = Some(now);
+                            if !tree_ctx.is_empty() {
+                                log::info!(
+                                    "[memory_tree] tree context injected first_turn={} chars={}",
+                                    was_first,
+                                    tree_ctx.chars().count()
+                                );
+                                format!("{context}{tree_ctx}")
+                            } else {
+                                context
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("[memory_tree] tree_loader.load failed (non-fatal): {e}");
+                            context
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[memory_tree] tree_loader skipped — config load failed (non-fatal): {e}"
+                    );
+                    context
+                }
+            }
+        } else {
+            log::trace!("[memory_tree] tree_loader skipped — within refresh interval");
+            context
+        };
+
         let enriched = if context.is_empty() {
             log::info!("[agent] no memory context found — using raw user message");
             self.last_memory_context = None;

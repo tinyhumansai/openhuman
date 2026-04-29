@@ -69,9 +69,9 @@ export const loadThreads = createAsyncThunk(
 
 export const createNewThread = createAsyncThunk(
   'thread/createNewThread',
-  async (_, { dispatch, rejectWithValue }) => {
+  async (labels: string[] | undefined, { dispatch, rejectWithValue }) => {
     try {
-      const thread = await threadApi.createNewThread();
+      const thread = await threadApi.createNewThread(labels);
       await dispatch(loadThreads()).unwrap();
       return thread;
     } catch (error) {
@@ -217,6 +217,21 @@ export const persistReaction = createAsyncThunk(
       return { threadId: payload.threadId, message: persisted };
     } catch (error) {
       return rejectWithValue(error instanceof Error ? error.message : 'Failed to save reaction');
+    }
+  }
+);
+
+export const updateThreadLabels = createAsyncThunk(
+  'thread/updateThreadLabels',
+  async (payload: { threadId: string; labels: string[] }, { dispatch, rejectWithValue }) => {
+    try {
+      const thread = await threadApi.updateLabels(payload.threadId, payload.labels);
+      await dispatch(loadThreads()).unwrap();
+      return thread;
+    } catch (error) {
+      return rejectWithValue(
+        error instanceof Error ? error.message : 'Failed to update thread labels'
+      );
     }
   }
 );

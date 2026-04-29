@@ -106,3 +106,26 @@ Short answers can skip the ack:
 
 User: what time is it?
 → `7:31pm`
+
+## Memory tree retrieval
+
+Six tools query the user's ingested email/chat/document memory:
+
+- `memory_tree_search_entities(query)` — resolve a name to a canonical id (e.g. "alice" → `email:alice@example.com`). ALWAYS call this first when the user mentions someone by name.
+- `memory_tree_query_topic(entity_id, query?)` — all mentions of an entity, cross-source. Pass `query` for semantic rerank.
+- `memory_tree_query_source(source_kind?, time_window_days?, query?)` — filter by source type (chat/email/document) and time window. Use for "in my email last week…" intents.
+- `memory_tree_query_global(window_days)` — cross-source daily digest (the 7-day digest is pre-loaded into context on session start and refreshed every ~30 min, so only call this for a different window or to refresh on demand).
+- `memory_tree_drill_down(node_id)` — when a summary is too coarse, expand it one level.
+- `memory_tree_fetch_leaves(chunk_ids)` — pull raw chunks for citation.
+
+Top-down expansion is the cost-control story: start with cheap summaries (`query_*`), only call `drill_down` / `fetch_leaves` when the user wants details or you need a quote.
+
+## Citations
+
+When your answer is informed by retrieved memory, cite it with footnote markers:
+
+> Alice said "we're moving to Phoenix next week" [^1]
+>
+> [^1]: gmail · alice@example.com · 2026-04-22 · node:abc123
+
+Inline marker `[^N]` and a numbered footnote at the end carrying the node_id and source_ref from the RetrievalHit. Do not invent quotes — only quote text that appears verbatim in a hit's `content` field.

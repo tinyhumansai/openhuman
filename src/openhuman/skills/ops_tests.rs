@@ -409,8 +409,13 @@ fn read_skill_resource_rejects_absolute_paths() {
     let ws = dir.path();
     make_legacy_skill(ws, "demo");
 
-    let err = read_skill_resource(ws, "demo", Path::new("/etc/passwd"))
-        .expect_err("absolute path must be rejected");
+    let absolute = if cfg!(windows) {
+        Path::new("C:\\Windows\\System32\\drivers\\etc\\hosts")
+    } else {
+        Path::new("/etc/passwd")
+    };
+    let err =
+        read_skill_resource(ws, "demo", absolute).expect_err("absolute path must be rejected");
     assert!(
         err.to_lowercase().contains("absolute"),
         "unexpected error: {err}"

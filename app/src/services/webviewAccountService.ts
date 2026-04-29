@@ -22,6 +22,8 @@ const MEET_ORCHESTRATOR_MODEL = 'reasoning-v1';
 const log = debug('webview-accounts');
 const errLog = debug('webview-accounts:error');
 
+export { isTauri };
+
 interface RecipeEventPayload {
   account_id: string;
   provider: string;

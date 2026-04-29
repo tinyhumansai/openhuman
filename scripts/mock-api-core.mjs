@@ -763,6 +763,262 @@ async function handleRequest(req, res) {
     });
     return;
   }
+
+  // Rewards & Progression snapshot — feature 12.x.
+  //
+  // Honours mockBehavior knobs so individual e2e cases can flip unlock state
+  // without rewriting fixtures:
+  //
+  //   rewardsScenario          — preset bundle:
+  //                              "default"          (FREE plan, no streak, no Discord)
+  //                              "activity_unlocked" (12.1.1 — streak/feature counts trigger achievement)
+  //                              "integration_unlocked" (12.1.2 — Discord member assigns role)
+  //                              "plan_unlocked"    (12.1.3 — PRO plan unlocks tier achievement)
+  //                              "high_usage"       (12.2.1/12.2.2 — message + token + streak metrics)
+  //                              "post_restart"     (12.2.3 — same metrics persist after the second fetch)
+  //   rewardsServiceError      — when "true", returns 503 to exercise the failure path.
+  //   rewardsLastSyncedAt      — overrides the metrics.lastSyncedAt timestamp (useful for restart drift assertions).
+  if (method === "GET" && /^\/rewards\/me\/?(\?.*)?$/.test(url)) {
+    if (mockBehavior.rewardsServiceError === "true") {
+      json(res, 503, {
+        success: false,
+        error: "Rewards service unavailable",
+      });
+      return;
+    }
+
+    const scenario = mockBehavior.rewardsScenario || "default";
+    const lastSyncedAt =
+      mockBehavior.rewardsLastSyncedAt || new Date().toISOString();
+
+    const baseAchievements = [
+      {
+        id: "STREAK_7",
+        title: "7-Day Streak",
+        description:
+          "Use OpenHuman on seven consecutive active days.",
+        actionLabel: "Keep your streak alive for 7 days",
+        unlocked: false,
+        progressLabel: "0 / 7 days",
+        roleId: "role-streak-7",
+        discordRoleStatus: "not_linked",
+        creditAmountUsd: null,
+      },
+      {
+        id: "DISCORD_MEMBER",
+        title: "Discord Member",
+        description: "Join the OpenHuman Discord server.",
+        actionLabel: "Connect Discord and join the server",
+        unlocked: false,
+        progressLabel: "Not joined",
+        roleId: "role-discord-member",
+        discordRoleStatus: "not_linked",
+        creditAmountUsd: null,
+      },
+      {
+        id: "PLAN_PRO",
+        title: "Pro Supporter",
+        description: "Upgrade to the Pro plan.",
+        actionLabel: "Upgrade to Pro",
+        unlocked: false,
+        progressLabel: "Locked",
+        roleId: "role-plan-pro",
+        discordRoleStatus: "not_assigned",
+        creditAmountUsd: 5,
+      },
+    ];
+
+    let snapshot;
+    switch (scenario) {
+      case "activity_unlocked":
+        snapshot = {
+          discord: {
+            linked: false,
+            discordId: null,
+            inviteUrl: "https://discord.gg/openhuman",
+            membershipStatus: "not_linked",
+          },
+          summary: {
+            unlockedCount: 1,
+            totalCount: 3,
+            assignedDiscordRoleCount: 0,
+            plan: "FREE",
+            hasActiveSubscription: false,
+          },
+          metrics: {
+            currentStreakDays: 7,
+            longestStreakDays: 7,
+            cumulativeTokens: 250000,
+            featuresUsedCount: 4,
+            trackedFeaturesCount: 6,
+            lastEvaluatedAt: lastSyncedAt,
+            lastSyncedAt,
+          },
+          achievements: [
+            {
+              ...baseAchievements[0],
+              unlocked: true,
+              progressLabel: "Unlocked",
+              discordRoleStatus: "not_linked",
+            },
+            baseAchievements[1],
+            baseAchievements[2],
+          ],
+        };
+        break;
+      case "integration_unlocked":
+        snapshot = {
+          discord: {
+            linked: true,
+            discordId: "discord-mock-123",
+            inviteUrl: "https://discord.gg/openhuman",
+            membershipStatus: "member",
+          },
+          summary: {
+            unlockedCount: 1,
+            totalCount: 3,
+            assignedDiscordRoleCount: 1,
+            plan: "FREE",
+            hasActiveSubscription: false,
+          },
+          metrics: {
+            currentStreakDays: 0,
+            longestStreakDays: 0,
+            cumulativeTokens: 0,
+            featuresUsedCount: 0,
+            trackedFeaturesCount: 6,
+            lastEvaluatedAt: lastSyncedAt,
+            lastSyncedAt,
+          },
+          achievements: [
+            baseAchievements[0],
+            {
+              ...baseAchievements[1],
+              unlocked: true,
+              progressLabel: "Unlocked",
+              discordRoleStatus: "assigned",
+            },
+            baseAchievements[2],
+          ],
+        };
+        break;
+      case "plan_unlocked":
+        snapshot = {
+          discord: {
+            linked: false,
+            discordId: null,
+            inviteUrl: "https://discord.gg/openhuman",
+            membershipStatus: "not_linked",
+          },
+          summary: {
+            unlockedCount: 1,
+            totalCount: 3,
+            assignedDiscordRoleCount: 0,
+            plan: "PRO",
+            hasActiveSubscription: true,
+          },
+          metrics: {
+            currentStreakDays: 0,
+            longestStreakDays: 0,
+            cumulativeTokens: 0,
+            featuresUsedCount: 0,
+            trackedFeaturesCount: 6,
+            lastEvaluatedAt: lastSyncedAt,
+            lastSyncedAt,
+          },
+          achievements: [
+            baseAchievements[0],
+            baseAchievements[1],
+            {
+              ...baseAchievements[2],
+              unlocked: true,
+              progressLabel: "Unlocked",
+              discordRoleStatus: "not_linked",
+            },
+          ],
+        };
+        break;
+      case "high_usage":
+      case "post_restart":
+        snapshot = {
+          discord: {
+            linked: true,
+            discordId: "discord-mock-123",
+            inviteUrl: "https://discord.gg/openhuman",
+            membershipStatus: "member",
+          },
+          summary: {
+            unlockedCount: 3,
+            totalCount: 3,
+            assignedDiscordRoleCount: 1,
+            plan: "PRO",
+            hasActiveSubscription: true,
+          },
+          metrics: {
+            currentStreakDays: 14,
+            longestStreakDays: 21,
+            cumulativeTokens: 12500000,
+            featuresUsedCount: 6,
+            trackedFeaturesCount: 6,
+            lastEvaluatedAt: lastSyncedAt,
+            lastSyncedAt,
+          },
+          achievements: [
+            {
+              ...baseAchievements[0],
+              unlocked: true,
+              progressLabel: "Unlocked",
+              discordRoleStatus: "assigned",
+            },
+            {
+              ...baseAchievements[1],
+              unlocked: true,
+              progressLabel: "Unlocked",
+              discordRoleStatus: "assigned",
+            },
+            {
+              ...baseAchievements[2],
+              unlocked: true,
+              progressLabel: "Unlocked",
+              discordRoleStatus: "assigned",
+            },
+          ],
+        };
+        break;
+      case "default":
+      default:
+        snapshot = {
+          discord: {
+            linked: false,
+            discordId: null,
+            inviteUrl: "https://discord.gg/openhuman",
+            membershipStatus: "not_linked",
+          },
+          summary: {
+            unlockedCount: 0,
+            totalCount: 3,
+            assignedDiscordRoleCount: 0,
+            plan: "FREE",
+            hasActiveSubscription: false,
+          },
+          metrics: {
+            currentStreakDays: 0,
+            longestStreakDays: 0,
+            cumulativeTokens: 0,
+            featuresUsedCount: 0,
+            trackedFeaturesCount: 6,
+            lastEvaluatedAt: lastSyncedAt,
+            lastSyncedAt,
+          },
+          achievements: baseAchievements,
+        };
+        break;
+    }
+
+    json(res, 200, { success: true, data: snapshot });
+    return;
+  }
+
   if (
     method === "POST" &&
     /^\/telegram\/settings\/onboarding-complete\/?$/.test(url)

@@ -28,7 +28,30 @@ Scheduled-job runtime. Owns cron-expression and human-delay parsing, the persist
 - `src/core/all.rs` — controller registry wires `all_cron_*`.
 - Channel and agent runtimes consume `Cron` events via the bus.
 
+## Delivery modes
+
+A cron job's `DeliveryConfig.mode` decides where its output ends up:
+
+- **`proactive`** (default for agent jobs) — `deliver_if_configured` publishes
+  `DomainEvent::ProactiveMessageRequested`. The proactive subscriber
+  (`channels::proactive`) always pushes to the in-app web stream and additionally
+  mirrors to `channels_config.active_channel` when set. Use for jobs whose
+  natural surface is the desktop UI (briefings, app-pushed notifications).
+- **`announce`** — explicit channel-targeted delivery. Requires `channel` and
+  `to`; publishes `DomainEvent::CronDeliveryRequested` and lands only in that
+  channel. The agent layer should pick this mode when a cron is created from a
+  non-web channel (Telegram, Discord, Slack, …) so the reminder ends up where
+  the user asked for it. The `cron_add` tool validates `to` against the
+  channel's `allowed_users` to reject cross-tenant targets.
+- **`none`** — silent; output is stored in `last_output` only.
+
+The `[Channel context]` block injected by `channels::runtime::dispatch` for
+non-web inbound turns instructs the model to default to `announce` with the
+current channel + reply target — that is the routing path for the Telegram
+"remind me to drink water" use case in #928.
+
 ## Tests
 
 - Unit: `ops_tests.rs`, `scheduler_tests.rs`, `store_tests.rs`.
 - Schema/parsing coverage lives inside `schedule.rs` and `schemas.rs` `#[cfg(test)] mod tests` blocks.
+- Delivery validation: `tools::impl::cron::add::tests` (announce-mode `allowed_users` checks).

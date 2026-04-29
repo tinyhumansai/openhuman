@@ -44,6 +44,41 @@ fn starts_with_any(s: &str, prefixes: &[&str]) -> bool {
     prefixes.iter().any(|p| s.starts_with(p))
 }
 
+/// Build the per-turn `[Channel context]` block prepended to the user
+/// message for non-web inbound channels (e.g. Telegram, Discord, Slack).
+///
+/// Surfaces the active channel and reply target so the model knows
+/// where it is talking and can route any tool side-effects (notably
+/// `cron_add`) back to the same chat instead of defaulting to the
+/// in-app web stream. See issue #928.
+///
+/// Returns an empty string for web/cli turns (the desktop UI is the
+/// default delivery surface, no hint needed).
+fn build_channel_context_block(msg: &traits::ChannelMessage) -> String {
+    let channel = msg.channel.trim();
+    if channel.is_empty()
+        || channel.eq_ignore_ascii_case("web")
+        || channel.eq_ignore_ascii_case("cli")
+    {
+        return String::new();
+    }
+
+    let reply_target = msg.reply_target.trim();
+    if reply_target.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "[Channel context]\n\
+         You are responding via the \"{channel}\" channel. Reply target: \"{reply_target}\".\n\
+         For any cron/scheduled reminder you create with `cron_add`, set `delivery` to \
+         `{{ \"mode\": \"announce\", \"channel\": \"{channel}\", \"to\": \"{reply_target}\" }}` \
+         so the reminder is delivered back here instead of the in-app web stream. \
+         Only fall back to the default proactive delivery if the user explicitly asks for \
+         in-app/desktop notification.\n\n"
+    )
+}
+
 /// Pick a contextual acknowledgment emoji for an inbound message.
 ///
 /// Intent categories are checked in priority order. Within each category two
@@ -764,10 +799,12 @@ pub(crate) async fn process_channel_message(
             .await;
     }
 
-    let enriched_message = if memory_context.is_empty() {
-        msg.content.clone()
-    } else {
-        format!("{memory_context}{}", msg.content)
+    let channel_context = build_channel_context_block(&msg);
+    let enriched_message = match (memory_context.is_empty(), channel_context.is_empty()) {
+        (true, true) => msg.content.clone(),
+        (false, true) => format!("{memory_context}{}", msg.content),
+        (true, false) => format!("{channel_context}{}", msg.content),
+        (false, false) => format!("{memory_context}{channel_context}{}", msg.content),
     };
 
     println!("  ⏳ Processing message...");
@@ -1308,5 +1345,54 @@ mod tests {
         let r = select_acknowledgment_reaction("?");
         // Single "?" falls into question category (contains '?').
         assert!(is_in(r, &["🤔", "✍️"]));
+    }
+
+    // ── build_channel_context_block (#928) ───────────────────────
+
+    fn cm(channel: &str, reply_target: &str) -> traits::ChannelMessage {
+        traits::ChannelMessage {
+            channel: channel.into(),
+            sender: "alice".into(),
+            content: "hi".into(),
+            id: "m1".into(),
+            reply_target: reply_target.into(),
+            thread_ts: None,
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn channel_context_block_omitted_for_web_and_cli() {
+        assert!(build_channel_context_block(&cm("web", "1")).is_empty());
+        assert!(build_channel_context_block(&cm("cli", "1")).is_empty());
+        assert!(build_channel_context_block(&cm("WEB", "1")).is_empty());
+        assert!(build_channel_context_block(&cm("", "1")).is_empty());
+    }
+
+    #[test]
+    fn channel_context_block_omitted_when_reply_target_missing() {
+        assert!(build_channel_context_block(&cm("telegram", "")).is_empty());
+        assert!(build_channel_context_block(&cm("telegram", "   ")).is_empty());
+    }
+
+    #[test]
+    fn channel_context_block_for_telegram_includes_routing_hint() {
+        let block = build_channel_context_block(&cm("telegram", "123456"));
+        assert!(block.contains("[Channel context]"));
+        assert!(block.contains("\"telegram\""));
+        assert!(block.contains("\"123456\""));
+        // Hint must steer the model toward announce mode with the same channel/target.
+        assert!(block.contains("announce"));
+        assert!(block.contains("cron_add"));
+    }
+
+    #[test]
+    fn channel_context_block_for_discord_and_slack_share_shape() {
+        for ch in ["discord", "slack", "matrix"] {
+            let block = build_channel_context_block(&cm(ch, "chan-42"));
+            assert!(block.contains(ch), "missing channel name in `{ch}` block");
+            assert!(block.contains("chan-42"));
+            assert!(block.contains("announce"));
+        }
     }
 }

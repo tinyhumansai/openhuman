@@ -486,6 +486,6 @@ mod tests {
         }
         assert!(!def.omit_memory_context);
         assert!(def.omit_identity);
-        assert_eq!(def.max_iterations, 6);
+        assert_eq!(def.max_iterations, 10);
     }
 }

@@ -56,6 +56,14 @@ pub struct Agent {
     /// Consumed by web-channel delivery to render source chips in the UI.
     pub(super) last_turn_citations: Vec<crate::openhuman::agent::memory_loader::MemoryCitation>,
     pub(super) history: Vec<ConversationMessage>,
+    /// Wall-clock timestamp of the last successful memory-tree prefetch
+    /// for this session. Drives the 30-minute refresh cadence in the turn
+    /// loop — `None` means "never fetched, fetch now"; otherwise we only
+    /// re-run `TreeContextLoader::load` when the elapsed time exceeds
+    /// `tree_loader::REFRESH_INTERVAL`. Updated on every successful call
+    /// (even when the digest came back empty) so an empty workspace
+    /// doesn't get hammered every turn.
+    pub(super) last_tree_prefetch_at: Option<std::time::Instant>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,
     pub(super) event_session_id: String,

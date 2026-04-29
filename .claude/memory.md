@@ -125,6 +125,13 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Webhook ops were all stubs** — `list_registrations`, `list_logs`, `clear_logs`, `register_echo`, `unregister_echo` in `ops.rs` all returned empty. Now backed by the real router via a `get_router()` helper.
 - **`GGML_NATIVE=OFF` for cargo check** — Sidestepping the whisper-rs macOS Tahoe build blocker for `cargo check`: `GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml`. Allows compilation checks without the cmake failure.
 
+## Agent Runtime Behavior
+
+- **`sandbox_mode = "read_only"` in agent.toml is metadata only** — Never enforced at runtime. Actual security policy comes from `config.autonomy` (global), defaulting to `Supervised`. Adding write tools to a read-only agent works at runtime but violates documented intent.
+- **`max_iterations` hard-fails, not graceful truncation** — When the welcome agent (or any agent) hits `max_iterations`, `tool_loop.rs:705` calls `anyhow::bail!`. There is no graceful truncation. Budget iterations carefully.
+- **Archivist agent auto-extracts memory** — It processes conversation history and persists preferences/facts into `user_profile` automatically. Agents do not need to explicitly call `memory_store` to persist conversational insights.
+- **`cargo check` / `cargo test` fails on main (llama.cpp cmake)** — `llama.cpp`'s cmake build script uses `-mcpu=native`, which is unsupported on Apple clang 21+ with `--target=arm64-apple-macosx`. Pre-existing issue on `main`, not branch-specific. Frontend checks (typecheck, lint, format) are unaffected. Workaround: set `GGML_NATIVE=OFF` (same fix as whisper-rs above).
+
 ## Cron Scheduler
 
 - **Cron loop was never spawned** — `tokio::spawn(cron::scheduler::run(config))` was missing from `src/core/jsonrpc.rs`. Added after the update scheduler spawn, gated on `config.cron.enabled`. Without it, scheduled jobs never auto-fire at startup (issue #830).

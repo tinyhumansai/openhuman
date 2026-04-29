@@ -2,7 +2,7 @@ id = "welcome"
 display_name = "Welcome"
 when_to_use = "First agent a new user speaks to. Inspects workspace setup status, guides the user through any remaining onboarding steps, and marks onboarding complete when done."
 temperature = 0.7
-max_iterations = 6
+max_iterations = 10
 sandbox_mode = "read_only"
 
 # Needs full memory context to personalize the welcome, but not the

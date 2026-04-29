@@ -1,0 +1,62 @@
+{
+  "_comment": "Sample GMAIL_FETCH_EMAILS response after Gmail post_process slim-envelope rewrite (see src/openhuman/composio/providers/gmail/post_process.rs). Phase 1 fixture for memory ingestion: one entry per Gmail message in the inbox. The driver script (scripts/test-memory-email-ingest.mjs) maps each entry to an EmailThread payload and ingests it via openhuman.memory_tree_ingest with source_kind=email.",
+  "messages": [
+    {
+      "id": "18f3a1b2c4d5e6f7",
+      "threadId": "18f3a1b2c4d5e6f7",
+      "subject": "Welcome to TinyHumans — getting started guide",
+      "from": "Onboarding <onboarding@tinyhumans.ai>",
+      "to": "Steven Enamakel <stevent95@gmail.com>",
+      "date": "Wed, 23 Apr 2026 09:14:22 -0700",
+      "labels": ["INBOX", "CATEGORY_UPDATES"],
+      "markdown": "Hi Steven,\n\nWelcome to TinyHumans! Here are three things to do in your first hour:\n\n1. Connect your Gmail and Slack accounts.\n2. Try a quick natural-language search across your inbox.\n3. Set up a daily morning briefing.\n\nReply to this email if you hit any snags.\n\n— The TinyHumans team",
+      "attachments": []
+    },
+    {
+      "id": "18f3b2d3e6f7a8b9",
+      "threadId": "18f3b2d3e6f7a8b9",
+      "subject": "Q2 OKR draft — please review by Friday",
+      "from": "Priya Raman <priya@tinyhumansai.com>",
+      "to": "Steven Enamakel <stevent95@gmail.com>, Eng Leads <eng-leads@tinyhumansai.com>",
+      "date": "Thu, 24 Apr 2026 11:02:05 -0700",
+      "labels": ["INBOX", "IMPORTANT", "STARRED"],
+      "markdown": "Hey team,\n\nDraft Q2 OKRs are in the doc: https://docs.tinyhumansai.com/okrs/q2-2026 — main themes:\n\n- Ship memory v2 (phase 1 ingestion + phase 2 scoring) by end of May.\n- Cut Slack ingestion cost per workspace by 40%.\n- Land the desktop release on Linux ARM.\n\nPlease leave comments by Friday EOD. Decision on the OKR list happens at Monday's leadership sync.\n\nThanks,\nPriya",
+      "attachments": []
+    },
+    {
+      "id": "18f3c4e5f7a8b9c0",
+      "threadId": "18f3c4e5f7a8b9c0",
+      "subject": "Your AWS bill for April 2026",
+      "from": "AWS Billing <no-reply@aws.amazon.com>",
+      "to": "billing@tinyhumansai.com",
+      "date": "Fri, 25 Apr 2026 02:11:48 +0000",
+      "labels": ["INBOX", "CATEGORY_UPDATES"],
+      "markdown": "Your AWS account 1234-5678-9012 was charged **$1,842.17** for the April 2026 billing period.\n\nTop services by spend:\n\n- EC2: $1,022.40\n- S3: $410.18\n- CloudWatch: $204.07\n- Other: $205.52\n\nView your invoice at https://console.aws.amazon.com/billing/.",
+      "attachments": [{"filename": "invoice-april-2026.pdf", "mimeType": "application/pdf"}]
+    },
+    {
+      "id": "18f3d5f6a8b9c0d1",
+      "threadId": "18f3a1b2c4d5e6f7",
+      "subject": "Re: Welcome to TinyHumans — getting started guide",
+      "from": "Steven Enamakel <stevent95@gmail.com>",
+      "to": "Onboarding <onboarding@tinyhumansai.com>",
+      "date": "Fri, 25 Apr 2026 08:42:00 -0700",
+      "labels": ["INBOX", "SENT"],
+      "markdown": "Connected Gmail + Slack and ran the morning brief — works great. One bug: the brief duplicates marketing emails. Filed a ticket internally.\n\nThanks!",
+      "attachments": []
+    },
+    {
+      "id": "18f3e6a8b9c0d1e2",
+      "threadId": "18f3e6a8b9c0d1e2",
+      "subject": "Lunch tomorrow?",
+      "from": "Mira Chen <mira@example.com>",
+      "to": "stevent95@gmail.com",
+      "date": "Sat, 26 Apr 2026 19:35:11 -0700",
+      "labels": ["INBOX", "CATEGORY_PERSONAL"],
+      "markdown": "Hey! Free for lunch tomorrow around 12:30 at the usual spot? Bring your laptop — I want to show you what we got working on the new agent runtime.\n\nCheers,\nM",
+      "attachments": []
+    }
+  ],
+  "nextPageToken": null,
+  "resultSizeEstimate": 5
+}

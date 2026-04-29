@@ -10,15 +10,16 @@
  *
  * Mounted once at AppShell root.
  */
-import { isTauri as coreIsTauri } from '@tauri-apps/api/core';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
 import {
   ensureNotificationPermission,
+  getNotificationPermissionState,
+  type NotificationPermissionState,
   showNativeNotification,
 } from '../lib/nativeNotifications/tauriBridge';
-import { purgeWebviewAccount } from '../services/webviewAccountService';
+import { isTauri, purgeWebviewAccount } from '../services/webviewAccountService';
 import { addAccount, removeAccount } from '../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { type Account, type AccountProvider, PROVIDERS } from '../types/accounts';
@@ -185,53 +186,61 @@ function renderBody(path: string, close: () => void) {
 // ── Notifications ────────────────────────────────────────────────────────
 
 const NotificationsBody = ({ close }: { close: () => void }) => {
-  const [status, setStatus] = useState<'idle' | 'sending' | 'queued' | 'sent' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
-  const TEST_NOTIFICATION_DELAY_MS = 3500;
-  const notificationTimeoutRef = useRef<number | null>(null);
-  const cancelledRef = useRef(false);
+  const [permissionState, setPermissionState] = useState<NotificationPermissionState>('unknown');
 
   useEffect(() => {
+    let mounted = true;
+    void getNotificationPermissionState({ requestIfNeeded: false }).then(next => {
+      if (!mounted) return;
+      setPermissionState(next);
+    });
     return () => {
-      cancelledRef.current = true;
-      if (notificationTimeoutRef.current !== null) {
-        window.clearTimeout(notificationTimeoutRef.current);
-        notificationTimeoutRef.current = null;
-      }
+      mounted = false;
     };
   }, []);
 
   const handleAllow = async () => {
+    if (status === 'sending') {
+      return;
+    }
+
     setStatus('sending');
     setError(null);
     try {
-      const granted = await ensureNotificationPermission();
-      if (coreIsTauri() && !granted) {
+      if (!isTauri()) {
         setStatus('error');
         setError(
-          'Notification permission was denied. Please enable notifications for OpenHuman in System Settings → Notifications.'
+          'Native notifications are only available in the desktop app (run `pnpm dev:app`).'
         );
         return;
       }
-      // Delay the test ping so users can move focus away from OpenHuman.
-      // macOS commonly suppresses banner popouts while the app is foreground.
-      setStatus('queued');
-      await new Promise<void>(resolve => {
-        notificationTimeoutRef.current = window.setTimeout(() => {
-          notificationTimeoutRef.current = null;
-          resolve();
-        }, TEST_NOTIFICATION_DELAY_MS);
-      });
-      if (cancelledRef.current) {
+
+      const granted = await ensureNotificationPermission();
+      if (!granted) {
+        const nextState = await getNotificationPermissionState({ requestIfNeeded: false });
+        setPermissionState(nextState);
+        setStatus('error');
+        setError(
+          'Notification permission is off. Enable OpenHuman in System Settings → Notifications, then retry.'
+        );
         return;
       }
-      await showNativeNotification({
+      const sendResult = await showNativeNotification({
         title: 'OpenHuman is good to go',
         body: 'You will get pings here when something needs your attention.',
+        tag: 'welcome-notification-test',
       });
-      if (cancelledRef.current) {
+      if (!sendResult.delivered) {
+        setStatus('error');
+        setError(
+          sendResult.error ??
+            'OpenHuman could not trigger a system notification. Check OS notification settings and retry.'
+        );
         return;
       }
+      setPermissionState('granted');
       setStatus('sent');
     } catch (e) {
       setStatus('error');
@@ -243,29 +252,39 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
     <div className="space-y-4 text-sm text-stone-700">
       <p>
         OpenHuman uses native notifications so it can ping you when something needs your attention,
-        even when the chat window is hidden. Click below to send a test, your OS will ask for
-        permission the first time.
+        even when the chat window is hidden.
       </p>
+      {permissionState === 'denied' && (
+        <div className="rounded-xl border border-coral-200 bg-coral-50 p-3 text-xs text-coral-700">
+          Notifications are currently blocked.
+          <br />
+          1. Open System Settings → Notifications → OpenHuman
+          <br />
+          2. Turn on Allow Notifications
+          <br />
+          3. Return here and tap Retry test notification
+        </div>
+      )}
+      {(permissionState === 'prompt' || permissionState === 'unknown') && (
+        <div className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs text-stone-700">
+          First step: tap Send test notification and allow permission in the macOS prompt.
+        </div>
+      )}
       <button
         type="button"
         onClick={() => void handleAllow()}
-        disabled={status === 'sending' || status === 'queued'}
+        disabled={status === 'sending'}
         className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60">
         {status === 'sending'
           ? 'Asking your OS…'
-          : status === 'queued'
-            ? 'Sending test in 3.5s… switch apps now'
+          : status === 'error'
+            ? 'Retry test notification'
             : 'Send test notification'}
       </button>
-      {status === 'queued' && (
-        <p className="text-xs text-stone-600">
-          Timer started. Switch to another app for a moment so the banner can pop out.
-        </p>
-      )}
       {status === 'sent' && (
         <p className="text-xs text-sage-700">
-          Sent. If you saw a pop-up in the corner, you're all set. If your OS asked for permission,
-          allow it and then tell the agent it's done.
+          Test notification sent. If you didn’t receive it, go to System Settings → Notifications →
+          OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.
         </p>
       )}
       {status === 'error' && <p className="text-xs text-coral-600">Couldn't send: {error}</p>}

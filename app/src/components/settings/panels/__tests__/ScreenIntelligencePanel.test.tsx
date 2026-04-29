@@ -155,7 +155,7 @@ describe('ScreenIntelligencePanel', () => {
     expect(baseState.refreshStatus).toHaveBeenCalledTimes(1);
   });
 
-  it('shows permission restart guidance and unsupported-platform messaging', async () => {
+  it('hides permissions section and shows unsupported-platform messaging', async () => {
     renderPanel({
       ...baseState,
       status: {
@@ -169,14 +169,18 @@ describe('ScreenIntelligencePanel', () => {
       },
     });
 
-    expect(await screen.findByText('Permissions')).toBeInTheDocument();
-    expect(screen.getByText(/After granting in System Settings, click/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          'Screen Awareness desktop capture and permission controls are currently supported on macOS only.'
+        )
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Permissions')).not.toBeInTheDocument();
+    expect(screen.queryByText(/After granting in System Settings, click/i)).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Restart & Refresh Permissions' })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Screen Awareness is currently supported on macOS only.')
-    ).toBeInTheDocument();
+      screen.queryByRole('button', { name: 'Restart & Refresh Permissions' })
+    ).not.toBeInTheDocument();
   });
 
   it('shows the last successful restart summary', async () => {

@@ -24,9 +24,10 @@ function unwrapEnvelope<T>(response: Envelope<T> | T): T {
 const generateTitleLog = debug('threadApi.generateTitleIfNeeded');
 
 export const threadApi = {
-  createNewThread: async (): Promise<Thread> => {
+  createNewThread: async (labels?: string[]): Promise<Thread> => {
     const response = await callCoreRpc<Envelope<Thread>>({
       method: 'openhuman.threads_create_new',
+      params: { labels },
     });
     return unwrapEnvelope(response);
   },
@@ -98,6 +99,14 @@ export const threadApi = {
   purge: async (): Promise<PurgeResultData> => {
     const response = await callCoreRpc<Envelope<PurgeResultData>>({
       method: 'openhuman.threads_purge',
+    });
+    return unwrapEnvelope(response);
+  },
+
+  updateLabels: async (threadId: string, labels: string[]): Promise<Thread> => {
+    const response = await callCoreRpc<Envelope<Thread>>({
+      method: 'openhuman.threads_update_labels',
+      params: { thread_id: threadId, labels },
     });
     return unwrapEnvelope(response);
   },

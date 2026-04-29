@@ -369,6 +369,7 @@ impl AgentBuilder {
             last_memory_context: None,
             last_turn_citations: Vec::new(),
             history: Vec::new(),
+            last_tree_prefetch_at: None,
             post_turn_hooks: self.post_turn_hooks,
             learning_enabled: self.learning_enabled,
             event_session_id: self
