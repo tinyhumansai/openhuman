@@ -17,6 +17,7 @@ use anyhow::Result;
 use chrono::{Duration, TimeZone, Utc};
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::read as content_read;
 use crate::openhuman::memory::tree::retrieval::types::{
     hit_from_summary, QueryResponse, RetrievalHit,
 };
@@ -229,7 +230,7 @@ fn fetch_topic_tree_root_summary(config: &Config, entity_id: &str) -> Result<Opt
         Some(id) => id.clone(),
         None => return Ok(None),
     };
-    let summary = match store::get_summary(config, &root_id)? {
+    let mut summary = match store::get_summary(config, &root_id)? {
         Some(s) => s,
         None => {
             log::warn!(
@@ -238,6 +239,17 @@ fn fetch_topic_tree_root_summary(config: &Config, entity_id: &str) -> Result<Opt
             return Ok(None);
         }
     };
+    // Hydrate the full body from disk — `summary.content` is a ≤500-char
+    // preview after the MD-on-disk migration. Non-fatal fallback for
+    // pre-MD-migration rows.
+    match content_read::read_summary_body(config, &root_id) {
+        Ok(body) => summary.content = body,
+        Err(e) => {
+            log::warn!(
+                "[retrieval::topic] read_summary_body failed for topic root — serving preview: {e:#}"
+            );
+        }
+    }
     Ok(Some(hit_from_summary(&summary, &tree.scope)))
 }
 
@@ -258,13 +270,23 @@ async fn entity_hit_to_retrieval_hit(
 
     tokio::task::spawn_blocking(move || -> Result<Option<RetrievalHit>> {
         if node_kind == "summary" {
-            let summary = match store::get_summary(&config_owned, &node_id)? {
+            let mut summary = match store::get_summary(&config_owned, &node_id)? {
                 Some(s) => s,
                 None => {
                     log::warn!("[retrieval::topic] entity index points at missing summary row");
                     return Ok(None);
                 }
             };
+            // Hydrate the full body from disk — `summary.content` is a
+            // ≤500-char preview after the MD-on-disk migration.
+            match content_read::read_summary_body(&config_owned, &node_id) {
+                Ok(body) => summary.content = body,
+                Err(e) => {
+                    log::warn!(
+                        "[retrieval::topic] read_summary_body failed — serving preview: {e:#}"
+                    );
+                }
+            }
             // Prefer tree scope from the summary's parent tree if resolvable.
             let scope = if let Some(tid) = &tree_id_opt {
                 store::get_tree(&config_owned, tid)?
@@ -283,13 +305,21 @@ async fn entity_hit_to_retrieval_hit(
         // Leaf: fetch chunk and hydrate.
         use crate::openhuman::memory::tree::retrieval::types::hit_from_chunk;
         use crate::openhuman::memory::tree::store::get_chunk;
-        let chunk = match get_chunk(&config_owned, &node_id)? {
+        let mut chunk = match get_chunk(&config_owned, &node_id)? {
             Some(c) => c,
             None => {
                 log::warn!("[retrieval::topic] entity index points at missing chunk row");
                 return Ok(None);
             }
         };
+        // Hydrate the full body from disk — `chunk.content` is a ≤500-char
+        // preview after the MD-on-disk migration.
+        match content_read::read_chunk_body(&config_owned, &node_id) {
+            Ok(body) => chunk.content = body,
+            Err(e) => {
+                log::warn!("[retrieval::topic] read_chunk_body failed — serving preview: {e:#}");
+            }
+        }
         let scope = if let Some(tid) = &tree_id_opt {
             store::get_tree(&config_owned, tid)?
                 .map(|t: Tree| t.scope)
@@ -545,7 +575,7 @@ mod tests {
         with_connection(&cfg, |conn| {
             let tx = conn.unchecked_transaction()?;
             tree_store::insert_tree_conn(&tx, &tree)?;
-            tree_store::insert_summary_tx(&tx, &summary)?;
+            tree_store::insert_summary_tx(&tx, &summary, None)?;
             score_store::index_entities_tx(
                 &tx,
                 &[entity],

@@ -172,13 +172,17 @@ impl Buffer {
     }
 }
 
-/// Token ceiling for one summariser invocation — aligned with the Phase 1
-/// chunker ceiling so a single leaf never busts a seal on its own.
+/// Token ceiling for one summariser invocation.
+///
+/// Sized for the local 1B summariser (`gemma3:1b-it-qat`), which produces
+/// noticeably better summaries with ≤4-5k input than at higher caps. The
+/// chunker's `DEFAULT_CHUNK_MAX_TOKENS` (3_000) sits below this so each
+/// L0 buffer accumulates roughly 1-3 chunks before sealing.
 ///
 /// Gates only the L0 → L1 seal: leaves are fan-in by raw token volume so
 /// the summariser input stays bounded. Summaries above L0 use
 /// [`SUMMARY_FANOUT`] instead — see `bucket_seal::should_seal`.
-pub const TOKEN_BUDGET: u32 = 10_000;
+pub const TOKEN_BUDGET: u32 = 4_500;
 
 /// Sibling count that triggers a seal at level ≥ 1 (summaries → next level).
 ///

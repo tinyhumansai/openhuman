@@ -2,6 +2,7 @@ import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 
 import { providerSurfacesApi } from '../services/api/providerSurfacesApi';
 import type { RespondQueueItem } from '../types/providerSurfaces';
+import { resetUserScopedState } from './resetActions';
 
 interface ProviderSurfaceState {
   queue: RespondQueueItem[];
@@ -57,7 +58,8 @@ const providerSurfaceSlice = createSlice({
           state.error = (action.payload as string) ?? 'Failed to load provider respond queue';
         }
         // silent failures: leave status/error as-is; a subsequent successful poll will clear
-      });
+      })
+      .addCase(resetUserScopedState, () => initialState);
   },
 });
 

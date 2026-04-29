@@ -998,7 +998,8 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                     )}
                   <div
                     className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className="relative w-full md:max-w-[75%]">
+                    <div
+                      className={`relative ${msg.sender === 'user' ? 'w-fit max-w-[75%]' : 'w-full md:max-w-[75%]'}`}>
                       {msg.sender === 'agent' ? (
                         <div className="space-y-1">
                           {splitAgentMessageIntoBubbles(msg.content).map(
@@ -1043,7 +1044,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                           )}
                         </div>
                       ) : (
-                        <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md">
+                        <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md break-words overflow-hidden">
                           <BubbleMarkdown content={msg.content} tone="user" />
                           {latestVisibleMessage?.id === msg.id && (
                             <p className="mt-1 text-[10px] text-white/60">

@@ -36,7 +36,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use super::types::{EntityKind, ExtractedEntities, ExtractedEntity};
+use super::types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};
 use super::EntityExtractor;
 
 // ── Configuration ────────────────────────────────────────────────────────
@@ -59,6 +59,15 @@ pub struct LlmExtractorConfig {
     /// If true, drop entities whose declared kind isn't in `allowed_kinds`
     /// instead of falling back to [`EntityKind::Misc`].
     pub strict_kinds: bool,
+    /// If true, the system prompt asks the model to also emit a
+    /// `topics` array (free-form theme labels), and the response parser
+    /// populates [`ExtractedEntities::topics`]. Default `false` — the
+    /// extractor's primary job is named-entity extraction; topics are
+    /// an opt-in side-channel for callers that need a thematic
+    /// summary in the same call (e.g. running over a sealed summary's
+    /// content). Adds prompt tokens and gives the model one more
+    /// schema field to keep track of, so leave off unless needed.
+    pub emit_topics: bool,
 }
 
 impl Default for LlmExtractorConfig {
@@ -73,8 +82,13 @@ impl Default for LlmExtractorConfig {
                 EntityKind::Location,
                 EntityKind::Event,
                 EntityKind::Product,
+                EntityKind::Datetime,
+                EntityKind::Technology,
+                EntityKind::Artifact,
+                EntityKind::Quantity,
             ],
             strict_kinds: false,
+            emit_topics: false,
         }
     }
 }
@@ -103,7 +117,7 @@ impl LlmEntityExtractor {
             messages: vec![
                 OllamaMessage {
                     role: "system".to_string(),
-                    content: SYSTEM_PROMPT.to_string(),
+                    content: build_system_prompt(self.cfg.emit_topics),
                 },
                 OllamaMessage {
                     role: "user".to_string(),
@@ -128,19 +142,54 @@ impl EntityExtractor for LlmEntityExtractor {
         // JSON parse) is logged as a warn and returns an empty
         // `ExtractedEntities` rather than `Err`. This makes the extractor
         // safe to call from any context, not just `score_chunk` (which
-        // separately catches errors from its own extractor chain). A caller
-        // distinguishes "LLM had nothing to say" from "LLM ran and returned
-        // zero entities" by inspecting `llm_importance` — `None` means the
-        // call didn't complete successfully.
-        Ok(self.extract_or_empty(text).await)
+        // separately catches errors from its own extractor chain).
+        //
+        // Transport failures get bounded retry-with-backoff before falling
+        // back to empty — see [`Self::try_extract`]. Non-transport failures
+        // (HTTP non-success, malformed JSON) fall back immediately because
+        // retrying the same input would yield the same bad response.
+        const MAX_ATTEMPTS: u32 = 3;
+        const BASE_BACKOFF_MS: u64 = 250;
+
+        for attempt in 0..MAX_ATTEMPTS {
+            match self.try_extract(text).await {
+                Some(extracted) => return Ok(extracted),
+                None => {
+                    // Transport failure. Retry with exponential backoff
+                    // unless we've exhausted attempts.
+                    if attempt + 1 < MAX_ATTEMPTS {
+                        let delay_ms = BASE_BACKOFF_MS * 2u64.pow(attempt);
+                        log::warn!(
+                            "[memory_tree::extract::llm] transport failure, retrying in \
+                             {delay_ms}ms (attempt {}/{})",
+                            attempt + 2,
+                            MAX_ATTEMPTS
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    }
+                }
+            }
+        }
+
+        log::warn!(
+            "[memory_tree::extract::llm] transport failed after {} attempts — \
+             returning empty extraction",
+            MAX_ATTEMPTS
+        );
+        Ok(ExtractedEntities::default())
     }
 }
 
 impl LlmEntityExtractor {
-    /// Internal: wraps the actual HTTP call and returns `ExtractedEntities`
-    /// for every failure mode via soft-fallback. Split out of `extract` so
-    /// the error branches can share logging without `?`-propagation.
-    async fn extract_or_empty(&self, text: &str) -> ExtractedEntities {
+    /// Internal: one attempt at calling Ollama.
+    ///
+    /// Returns:
+    /// - `Some(extracted)` — call completed (HTTP returned). Includes the
+    ///   "HTTP non-success" and "malformed JSON" cases, which return
+    ///   `Some(empty)` because retrying the same input won't help.
+    /// - `None` — transport-level failure (DNS, connect refused, timeout
+    ///   before any HTTP response). Caller may retry.
+    async fn try_extract(&self, text: &str) -> Option<ExtractedEntities> {
         let url = format!("{}/api/chat", self.cfg.endpoint.trim_end_matches('/'));
         let body = self.build_request(text);
         log::debug!(
@@ -152,11 +201,8 @@ impl LlmEntityExtractor {
         let resp = match self.http.post(&url).json(&body).send().await {
             Ok(r) => r,
             Err(e) => {
-                log::warn!(
-                    "[memory_tree::extract::llm] transport failure to {url}: {e} — \
-                     returning empty extraction"
-                );
-                return ExtractedEntities::default();
+                log::warn!("[memory_tree::extract::llm] transport failure to {url}: {e}");
+                return None;
             }
         };
 
@@ -168,7 +214,7 @@ impl LlmEntityExtractor {
                  returning empty extraction",
                 truncate_for_log(&body, 200)
             );
-            return ExtractedEntities::default();
+            return Some(ExtractedEntities::default());
         }
 
         let envelope: OllamaChatResponse = match resp.json().await {
@@ -178,7 +224,7 @@ impl LlmEntityExtractor {
                     "[memory_tree::extract::llm] response body not Ollama-shaped JSON: {e} — \
                      returning empty extraction"
                 );
-                return ExtractedEntities::default();
+                return Some(ExtractedEntities::default());
             }
         };
         log::debug!(
@@ -194,38 +240,97 @@ impl LlmEntityExtractor {
                      response: {e}; content was: {} — returning empty extraction",
                     truncate_for_log(&envelope.message.content, 400)
                 );
-                return ExtractedEntities::default();
+                return Some(ExtractedEntities::default());
             }
         };
 
-        parsed.into_extracted_entities(text, &self.cfg)
+        Some(parsed.into_extracted_entities(text, &self.cfg))
     }
 }
 
 // ── Prompt ───────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT: &str = "\
-You are a named-entity extractor and importance rater. Return JSON only — \
+/// Build the system prompt for the extractor. When `emit_topics` is true
+/// the schema, required-fields list, and example outputs include a
+/// `topics` array (free-form theme labels). When false the prompt
+/// matches the pre-flag behaviour exactly — no mention of topics
+/// anywhere — so the small model isn't asked to produce a field the
+/// caller doesn't want.
+fn build_system_prompt(emit_topics: bool) -> String {
+    let topics_schema_line = if emit_topics {
+        "  \"topics\": [\"<short theme label>\"],\n"
+    } else {
+        ""
+    };
+    let topics_required = if emit_topics { "topics, " } else { "" };
+    let fields_count = if emit_topics { "four" } else { "three" };
+    let topics_guide = if emit_topics {
+        "Topics are short free-form theme labels for what the text is ABOUT \
+         (e.g. \"rate limiting\", \"memory tree\", \"auth flow\"). They are \
+         distinct from entities — entities are specific named things mentioned \
+         in the text; topics are the abstract themes those things relate to.\n"
+    } else {
+        ""
+    };
+    let example1_topics = if emit_topics {
+        ",\"topics\":[\"shipping\",\"auth\"]"
+    } else {
+        ""
+    };
+    let example2_topics = if emit_topics {
+        ",\"topics\":[\"product launch\",\"revenue\"]"
+    } else {
+        ""
+    };
+
+    format!(
+        "You are a named-entity extractor and importance rater. Return JSON only — \
 no prose, no markdown, no commentary. Do not summarize. Extract every named \
 entity mention you find, including duplicates, and rate the chunk's overall \
 importance as a float in [0.0, 1.0].
 
 Schema:
-{
+{{
   \"entities\": [
-    { \"kind\": \"person|organization|location|event|product\",
-      \"text\": \"<exact surface form as it appears in the text>\" }
+    {{ \"kind\": \"person|organization|location|event|product|datetime|technology|artifact|quantity\",
+      \"text\": \"<exact surface form as it appears in the text>\" }}
   ],
-  \"importance\": 0.0,
+{topics_schema_line}  \"importance\": 0.0,
   \"importance_reason\": \"<one short sentence explaining the rating>\"
-}
+}}
+
+Kinds guide:
+  person       named human                            (\"Alice\", \"Steven Enamakel\")
+  organization company / team / project               (\"Anthropic\", \"TinyHumans\")
+  location     place                                  (\"SF office\", \"London\")
+  event        scheduled occurrence                   (\"Q2 launch\", \"design review\")
+  product      commercial offering                    (\"Claude Code\", \"OpenHuman\")
+  datetime     temporal expression                    (\"Friday\", \"Q2 2026\", \"EOD tomorrow\")
+  technology   tool / framework / language / service  (\"Rust\", \"OAuth\", \"Slack API\")
+  artifact     code / ticket / doc reference          (\"PR #934\", \"src/foo.rs\", \"OH-42\")
+  quantity     amount / metric / money                (\"$5K\", \"20/min\", \"10k tokens\")
+
+{topics_guide} 
+If a mention doesn't clearly fit a kind above, omit it rather than guessing.
+Always emit ALL {fields_count} top-level fields (entities, {topics_required}importance, importance_reason),
+even when entities is empty.
+
+Examples:
+
+Input: alice and bob shipped the auth migration friday. PR #42 ships OAuth refactor in src/auth/.
+Output: {{\"entities\":[{{\"kind\":\"person\",\"text\":\"alice\"}},{{\"kind\":\"person\",\"text\":\"bob\"}},{{\"kind\":\"event\",\"text\":\"auth migration\"}},{{\"kind\":\"datetime\",\"text\":\"friday\"}},{{\"kind\":\"artifact\",\"text\":\"PR #42\"}},{{\"kind\":\"technology\",\"text\":\"OAuth\"}},{{\"kind\":\"artifact\",\"text\":\"src/auth/\"}}]{example1_topics},\"importance\":0.9,\"importance_reason\":\"explicit shipping commitment\"}}
+
+Input: Anthropic shipped Claude Code in SF — $20M ARR target by Q2.
+Output: {{\"entities\":[{{\"kind\":\"organization\",\"text\":\"Anthropic\"}},{{\"kind\":\"product\",\"text\":\"Claude Code\"}},{{\"kind\":\"location\",\"text\":\"SF\"}},{{\"kind\":\"quantity\",\"text\":\"$20M ARR\"}},{{\"kind\":\"datetime\",\"text\":\"Q2\"}}]{example2_topics},\"importance\":0.85,\"importance_reason\":\"factual content with key business metric\"}}
 
 Importance guide:
   0.9+  actionable decisions, key information, explicit commitments
   0.6+  substantive discussion, factual content, named entities
   0.3+  ambient context, low-density prose
   <0.3  reactions, acknowledgments, bots, trivial exchanges
-";
+"
+    )
+}
 
 // ── Wire types (Ollama API) ──────────────────────────────────────────────
 
@@ -265,6 +370,11 @@ struct OllamaResponseMessage {
 struct LlmExtractionOutput {
     #[serde(default)]
     entities: Vec<LlmEntity>,
+    /// Free-form theme labels — populated only when the extractor is
+    /// configured with `emit_topics = true`. Always tolerant of absence
+    /// so models that ignore the field don't fail parsing.
+    #[serde(default)]
+    topics: Vec<String>,
     #[serde(default)]
     importance: Option<f32>,
     #[serde(default)]
@@ -355,9 +465,26 @@ impl LlmExtractionOutput {
 
         let llm_importance = self.importance.map(|v| v.clamp(0.0, 1.0));
 
+        // Topics: only populated when the caller enabled `emit_topics`
+        // (the prompt asked for them). Otherwise this is empty by
+        // default — the model didn't know to emit topics, so any value
+        // here would be hallucination.
+        let topics = self
+            .topics
+            .into_iter()
+            .filter_map(|raw| {
+                let label = raw.trim().to_string();
+                if label.is_empty() {
+                    None
+                } else {
+                    Some(ExtractedTopic { label, score: 0.85 })
+                }
+            })
+            .collect();
+
         ExtractedEntities {
             entities,
-            topics: Vec::new(),
+            topics,
             llm_importance,
             llm_importance_reason: self.importance_reason,
         }
@@ -373,6 +500,14 @@ fn parse_kind(s: &str) -> Option<EntityKind> {
         "location" | "place" | "loc" => Some(EntityKind::Location),
         "event" => Some(EntityKind::Event),
         "product" => Some(EntityKind::Product),
+        "datetime" | "date" | "time" | "timestamp" => Some(EntityKind::Datetime),
+        "technology" | "tech" | "tool" | "framework" | "library" | "language" | "service" => {
+            Some(EntityKind::Technology)
+        }
+        "artifact" | "reference" | "ref" | "pr" | "ticket" | "file" | "commit" => {
+            Some(EntityKind::Artifact)
+        }
+        "quantity" | "amount" | "metric" | "number" | "money" => Some(EntityKind::Quantity),
         "misc" | "miscellaneous" | "other" => Some(EntityKind::Misc),
         _ => None,
     }

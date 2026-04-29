@@ -12,7 +12,9 @@ import OverlayApp from './overlay/OverlayApp';
 import './polyfills';
 import { initSentry } from './services/analytics';
 import { setStoreForApiClient } from './services/apiClient';
+import { primeActiveUserId } from './store/userScopedStorage';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
+import { getActiveUserIdFromCore } from './utils/tauriCommands';
 
 setStoreForApiClient(() => getCoreStateSnapshot().snapshot.sessionToken);
 
@@ -43,14 +45,27 @@ if (!isOverlayWindow) {
   });
 }
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  <React.StrictMode>{isOverlayWindow ? <OverlayApp /> : <App />}</React.StrictMode>
-);
+// Prime `userScopedStorage` from the Rust core's `active_user.toml`
+// BEFORE redux-persist hydrates. The previous localStorage-only seed was
+// bound to the per-user CEF profile dir and went stale across the
+// restart-driven user flips that #900 introduced, so the new process
+// would read the previous user's namespace, mis-detect a flip, and bounce
+// into a second restart. Reading the Rust state up front pins the right
+// namespace from the first storage call. (#900)
+function bootRender() {
+  const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
+  root.render(<React.StrictMode>{isOverlayWindow ? <OverlayApp /> : <App />}</React.StrictMode>);
 
-if (!isOverlayWindow) {
-  // Mount error notification in an isolated React root so it survives App crashes.
-  const errorRoot = document.createElement('div');
-  errorRoot.id = 'error-report-root';
-  document.body.appendChild(errorRoot);
-  ReactDOM.createRoot(errorRoot).render(<ErrorReportNotification />);
+  if (!isOverlayWindow) {
+    // Mount error notification in an isolated React root so it survives App crashes.
+    const errorRoot = document.createElement('div');
+    errorRoot.id = 'error-report-root';
+    document.body.appendChild(errorRoot);
+    ReactDOM.createRoot(errorRoot).render(<ErrorReportNotification />);
+  }
 }
+
+getActiveUserIdFromCore()
+  .then(id => primeActiveUserId(id))
+  .catch(() => primeActiveUserId(null))
+  .finally(bootRender);

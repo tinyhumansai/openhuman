@@ -11,6 +11,7 @@ fn test_chunk(content: &str) -> Chunk {
         metadata: meta,
         seq_in_source: 0,
         created_at: Utc::now(),
+        partial_message: false,
     }
 }
 

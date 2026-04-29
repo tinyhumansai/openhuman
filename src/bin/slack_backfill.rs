@@ -96,6 +96,21 @@ struct Cli {
     /// re-attempts cascade on the next append.
     #[arg(long = "seal-probe", default_value_t = false)]
     seal_probe: bool,
+
+    /// Fire N back-to-back `SLACK_FETCH_CONVERSATION_HISTORY` calls
+    /// against the first listed channel and report a per-call tally
+    /// of {success, ratelimit, other-failure} + total duration. No
+    /// pacing by default (see --probe-pacing-ms), no ingestion. Used
+    /// to characterise Composio/Slack quota behaviour without
+    /// touching the memory tree.
+    #[arg(long = "probe-ratelimit")]
+    probe_ratelimit: Option<u32>,
+
+    /// Sleep this many milliseconds between probe calls. 0 = fire
+    /// back-to-back (default). Use to find the threshold at which
+    /// rate-limits stop firing.
+    #[arg(long = "probe-pacing-ms", default_value_t = 0)]
+    probe_pacing_ms: u64,
 }
 
 #[tokio::main]
@@ -240,6 +255,130 @@ async fn main() -> Result<()> {
             "{}",
             serde_json::to_string_pretty(&resp.data).unwrap_or_default()
         );
+        return Ok(());
+    }
+
+    if let Some(n) = cli.probe_ratelimit {
+        // Pure quota probe: fire N back-to-back
+        // SLACK_FETCH_CONVERSATION_HISTORY calls against the first
+        // discoverable channel. No pacing, no retry, no ingest. Reports
+        // a per-call status table + summary so we can characterise
+        // Composio/Slack rate-limit behaviour without contaminating the
+        // memory tree or burning extra quota on retries.
+        log::info!("[probe-ratelimit] requesting one channel via SLACK_LIST_CONVERSATIONS");
+        let list_resp = client
+            .execute_tool(
+                "SLACK_LIST_CONVERSATIONS",
+                Some(serde_json::json!({ "exclude_archived": true, "limit": 1 })),
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("SLACK_LIST_CONVERSATIONS failed: {e:#}"))?;
+        if !list_resp.successful {
+            anyhow::bail!(
+                "SLACK_LIST_CONVERSATIONS returned non-success: {:?}",
+                list_resp.error
+            );
+        }
+        let channel_id = ["/data/channels/0/id", "/channels/0/id", "/data/0/id"]
+            .iter()
+            .find_map(|p| list_resp.data.pointer(p).and_then(|v| v.as_str()))
+            .map(str::to_string)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "could not find a channel id in SLACK_LIST_CONVERSATIONS response: {}",
+                    serde_json::to_string(&list_resp.data).unwrap_or_default()
+                )
+            })?;
+        log::info!("[probe-ratelimit] firing {n} calls against channel={channel_id}");
+
+        #[derive(Debug)]
+        enum Outcome {
+            Ok,
+            Ratelimit,
+            OtherFail(String),
+            Transport(String),
+        }
+        let mut outcomes: Vec<(u32, std::time::Duration, Outcome)> = Vec::with_capacity(n as usize);
+        let probe_started = Instant::now();
+        for i in 1..=n {
+            if i > 1 && cli.probe_pacing_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(cli.probe_pacing_ms)).await;
+            }
+            let t0 = Instant::now();
+            let resp = client
+                .execute_tool(
+                    "SLACK_FETCH_CONVERSATION_HISTORY",
+                    Some(serde_json::json!({ "channel": channel_id, "limit": 1000 })),
+                )
+                .await;
+            let dt = t0.elapsed();
+            let outcome = match resp {
+                Err(e) => Outcome::Transport(format!("{e:#}")),
+                Ok(r) if r.successful => Outcome::Ok,
+                Ok(r) => {
+                    let err = r.error.as_deref().unwrap_or("provider failure");
+                    if err.contains("ratelimited")
+                        || err.contains("rate_limit")
+                        || err.contains("rate limit")
+                    {
+                        log::warn!(
+                            "[probe-ratelimit] call {i} ratelimited; body: {}",
+                            serde_json::to_string(&r.data).unwrap_or_default()
+                        );
+                        Outcome::Ratelimit
+                    } else {
+                        Outcome::OtherFail(err.to_string())
+                    }
+                }
+            };
+            log::info!(
+                "[probe-ratelimit] call {i}/{n} took {:.2}s -> {:?}",
+                dt.as_secs_f64(),
+                outcome
+            );
+            outcomes.push((i, dt, outcome));
+        }
+        let total = probe_started.elapsed();
+
+        let ok = outcomes
+            .iter()
+            .filter(|(_, _, o)| matches!(o, Outcome::Ok))
+            .count();
+        let rl = outcomes
+            .iter()
+            .filter(|(_, _, o)| matches!(o, Outcome::Ratelimit))
+            .count();
+        let other = outcomes
+            .iter()
+            .filter(|(_, _, o)| matches!(o, Outcome::OtherFail(_)))
+            .count();
+        let transport = outcomes
+            .iter()
+            .filter(|(_, _, o)| matches!(o, Outcome::Transport(_)))
+            .count();
+        let avg_ms = if !outcomes.is_empty() {
+            outcomes.iter().map(|(_, d, _)| d.as_millis()).sum::<u128>() / outcomes.len() as u128
+        } else {
+            0
+        };
+
+        println!("=== probe-ratelimit summary ===");
+        println!("channel:           {channel_id}");
+        println!("calls fired:       {n}");
+        println!("total duration:    {:.2}s", total.as_secs_f64());
+        println!("avg per call:      {avg_ms} ms");
+        println!("successful:        {ok}");
+        println!("ratelimited:       {rl}");
+        println!("other failures:    {other}");
+        println!("transport errors:  {transport}");
+        if rl > 0 {
+            let first_rl = outcomes
+                .iter()
+                .find(|(_, _, o)| matches!(o, Outcome::Ratelimit))
+                .map(|(i, _, _)| *i)
+                .unwrap_or(0);
+            println!("first ratelimit:   call #{first_rl}");
+        }
         return Ok(());
     }
 

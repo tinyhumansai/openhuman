@@ -203,6 +203,23 @@ pub struct Config {
     pub chat_onboarding_completed: bool,
 }
 
+impl Config {
+    /// Resolve the root directory where chunk `.md` files are stored.
+    ///
+    /// Resolution order:
+    /// 1. `memory_tree.content_dir` if `Some`.
+    /// 2. Default: `<workspace_dir>/memory_tree/content/`.
+    ///
+    /// This is the only place in the codebase that should compute the content
+    /// root — all code that needs the path should call this method.
+    pub fn memory_tree_content_root(&self) -> PathBuf {
+        self.memory_tree
+            .content_dir
+            .clone()
+            .unwrap_or_else(|| self.workspace_dir.join("memory_tree").join("content"))
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let openhuman_dir =

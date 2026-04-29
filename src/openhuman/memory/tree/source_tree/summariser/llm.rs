@@ -6,10 +6,12 @@
 //! When the source / topic / global tree's bucket-seal cascade decides to
 //! fold N contributions (raw leaves at L0→L1, or lower-level summaries at
 //! L_n→L_{n+1}), this summariser is asked to produce the parent node's
-//! `content` + derived `entities` + `topics`. The seal machinery itself
-//! (bucket budgeting, level promotion, `mem_tree_summaries` persistence)
-//! is unchanged — only the text inside the summary row differs from
-//! [`super::inert::InertSummariser`].
+//! `content`. The seal machinery itself (bucket budgeting, level
+//! promotion, `mem_tree_summaries` persistence) is unchanged — only the
+//! text inside the summary row differs from [`super::inert::InertSummariser`].
+//! Entities and topics on `SummaryOutput` are always emitted empty by
+//! this summariser; canonical entity ids are populated separately by the
+//! entity extractor.
 //!
 //! ## Soft-fallback contract
 //!
@@ -18,14 +20,12 @@
 //! parent row. We therefore promise **never** to return `Err`: every
 //! failure (transport, HTTP status, JSON shape) falls back to the same
 //! deterministic concat-and-truncate behaviour as `InertSummariser` and
-//! logs a warn. Callers distinguish "LLM ran fine" from "we fell back"
-//! only by observing whether the returned `entities`/`topics` are
-//! populated — the inert branch emits empty vecs.
+//! logs a warn.
 //!
 //! ## Prompt shape
 //!
 //! The system prompt commits the model to returning JSON with the shape
-//! `{ summary, entities, topics }`. We use Ollama's `format: "json"` +
+//! `{ summary }`. We use Ollama's `format: "json"` +
 //! `temperature: 0.0` to maximise determinism — same knobs the entity
 //! extractor already uses with success.
 
@@ -40,15 +40,24 @@ use super::inert::InertSummariser;
 use super::{Summariser, SummaryContext, SummaryInput, SummaryOutput};
 use crate::openhuman::memory::tree::types::approx_token_count;
 
-/// Hard cap on summary OUTPUT tokens, regardless of the seal's
-/// `ctx.token_budget`. Driven by the embedder's context window —
-/// `nomic-embed-text-v1.5` accepts up to 8192 tokens and Phase 4
-/// (`source_tree::bucket_seal`) embeds the summary right after we
-/// produce it. If our summary overshoots, the embedder returns 500
-/// and the whole seal transaction rolls back → no summary persists.
-/// 6000 leaves a safety margin for tokenizer differences and the
-/// JSON wrapper.
-const MAX_SUMMARY_OUTPUT_TOKENS: u32 = 6_000;
+/// Hard cap on summariser output length (in approximate tokens).
+///
+/// Two constraints set this:
+///
+/// 1. The downstream embedder (`nomic-embed-text-v1.5`) accepts up to
+///    8192 tokens, and Phase 4 (`source_tree::bucket_seal`) embeds the
+///    summary right after we produce it. An overshoot returns HTTP 500
+///    and rolls back the whole seal transaction.
+/// 2. Empirically, small instruction-tuned models running locally
+///    degrade quickly past ~3500 tokens — they drift, hallucinate, or
+///    produce repetitive boilerplate as they extend toward longer
+///    targets. Keeping the cap below that breakeven keeps output
+///    quality stable on local Ollama deployments.
+///
+/// 3500 sits comfortably under the embedder ceiling AND below the local
+/// LLM quality cliff. The post-generation [`clamp_to_budget`] enforces
+/// this regardless of what the model produces.
+const MAX_SUMMARY_OUTPUT_TOKENS: u32 = 3_500;
 
 /// Context window we ask Ollama for. Must match the value below in
 /// [`OllamaOptions::num_ctx`] so the per-input clamp computed in
@@ -261,31 +270,18 @@ impl Summariser for LlmSummariser {
 
         let (content, token_count) = clamp_to_budget(&parsed.summary, effective_budget);
         log::debug!(
-            "[source_tree::summariser::llm] sealed tree_id={} level={} inputs={} tokens={} \
-             surface_entities_dropped={} topics={}",
+            "[source_tree::summariser::llm] sealed tree_id={} level={} inputs={} tokens={}",
             ctx.tree_id,
             ctx.target_level,
             inputs.len(),
-            token_count,
-            parsed.entities.len(),
-            parsed.topics.len()
+            token_count
         );
 
-        // Drop LLM-emitted entities. The model returns surface forms
-        // ("Alice", "she"), but `SummaryNode.entities` is indexed via
-        // `index_summary_entity_ids_tx` as canonical ids. Surface forms
-        // would silently corrupt that index — searches by canonical id
-        // would not find these summaries. Canonicalisation is the
-        // entity extractor's job, not the summariser's. Topics stay
-        // because they're free-form labels, not indexed as canonical
-        // ids. The `entities` field stays in the prompt to nudge the
-        // model toward entity-aware summarisation; we just don't
-        // persist its output.
         Ok(SummaryOutput {
             content,
             token_count,
             entities: Vec::new(),
-            topics: dedupe_sorted(parsed.topics),
+            topics: Vec::new(),
         })
     }
 }
@@ -314,20 +310,21 @@ fn build_user_prompt(inputs: &[SummaryInput], per_input_cap_tokens: u32) -> Stri
     out
 }
 
-/// System prompt. Token budget is templated in so the model aims under it.
-fn system_prompt(budget: u32) -> String {
-    format!(
-        "You are a precise summariser. Summarise the user-provided contributions into a \
-         single cohesive passage that preserves concrete facts, decisions, named entities, \
-         and temporal ordering. Do not invent facts. Stay well under {budget} tokens.\n\
-         \n\
-         Return JSON only — no prose, no markdown, no commentary. Schema:\n\
-         {{\n\
-         \x20 \"summary\": \"<summary body>\",\n\
-         \x20 \"entities\": [\"<named entity surface forms mentioned in the summary>\"],\n\
-         \x20 \"topics\": [\"<short topic labels covered by the summary>\"]\n\
-         }}"
-    )
+/// System prompt. Length isn't templated in — empirically, telling small
+/// instruction-tuned models "stay under N tokens" makes them produce
+/// curt, generic output even when the input has plenty of substance.
+/// Output is clamped post-generation by [`clamp_to_budget`] in the
+/// caller, so we don't need the model to self-police length.
+fn system_prompt(_budget: u32) -> String {
+    "You are a precise summariser. Summarise the user-provided contributions into a \
+     single cohesive passage that preserves concrete facts, decisions, \
+     and temporal ordering. Do not invent facts.\n\
+     \n\
+     Return JSON only — no prose, no markdown, no commentary. Schema:\n\
+     {\n\
+     \x20 \"summary\": \"<summary body>\"\n\
+     }"
+    .to_string()
 }
 
 /// Truncate to the caller's token budget using the same ~4 chars/token
@@ -341,16 +338,6 @@ fn clamp_to_budget(text: &str, budget: u32) -> (String, u32) {
     let truncated: String = text.chars().take(char_ceiling).collect();
     let tokens = approx_token_count(&truncated);
     (truncated, tokens)
-}
-
-fn dedupe_sorted(mut items: Vec<String>) -> Vec<String> {
-    for item in items.iter_mut() {
-        *item = item.trim().to_string();
-    }
-    items.retain(|s| !s.is_empty());
-    items.sort();
-    items.dedup();
-    items
 }
 
 fn truncate_for_log(s: &str, max_chars: usize) -> String {
@@ -405,10 +392,6 @@ struct OllamaResponseMessage {
 struct LlmSummaryOutput {
     #[serde(default)]
     summary: String,
-    #[serde(default)]
-    entities: Vec<String>,
-    #[serde(default)]
-    topics: Vec<String>,
 }
 
 #[cfg(test)]
@@ -493,12 +476,16 @@ mod tests {
     }
 
     #[test]
-    fn system_prompt_templates_budget() {
+    fn system_prompt_describes_schema() {
+        // Budget is no longer templated into the prompt — small models
+        // produced overly curt output when told to "stay under N tokens".
+        // The clamp in `clamp_to_budget` handles enforcement instead.
         let p = system_prompt(4096);
-        assert!(p.contains("4096"));
+        assert!(!p.contains("4096"));
+        assert!(!p.contains("Stay well under"));
         assert!(p.contains("\"summary\""));
-        assert!(p.contains("\"entities\""));
-        assert!(p.contains("\"topics\""));
+        assert!(!p.contains("\"entities\""));
+        assert!(!p.contains("\"topics\""));
     }
 
     #[test]
@@ -514,19 +501,6 @@ mod tests {
         let (out, t) = clamp_to_budget(&long, 5);
         assert!(out.len() < long.len());
         assert!(t <= 6);
-    }
-
-    #[test]
-    fn dedupe_sorted_trims_and_dedupes() {
-        let out = dedupe_sorted(vec![
-            "Bob".into(),
-            "  Alice  ".into(),
-            "Bob".into(),
-            "".into(),
-            "   ".into(),
-            "Alice".into(),
-        ]);
-        assert_eq!(out, vec!["Alice", "Bob"]);
     }
 
     #[test]
@@ -592,16 +566,24 @@ mod tests {
         assert!(!req.stream);
         assert_eq!(req.options.temperature, 0.0);
         assert_eq!(req.messages[0].role, "system");
-        assert!(req.messages[0].content.contains("2048"));
+        assert!(req.messages[0].content.contains("\"summary\""));
         assert_eq!(req.messages[1].role, "user");
         assert_eq!(req.messages[1].content, "body");
     }
 
     #[test]
-    fn llm_output_deserialises_with_missing_fields() {
+    fn llm_output_deserialises_with_only_summary() {
         let v: LlmSummaryOutput = serde_json::from_str(r#"{"summary":"hi"}"#).unwrap();
         assert_eq!(v.summary, "hi");
-        assert!(v.entities.is_empty());
-        assert!(v.topics.is_empty());
+    }
+
+    #[test]
+    fn llm_output_ignores_extraneous_fields() {
+        // Prompt no longer asks for entities/topics, but if the model
+        // emits them anyway we should still parse `summary` cleanly.
+        let v: LlmSummaryOutput =
+            serde_json::from_str(r#"{"summary":"hi","entities":["Alice"],"topics":["x"]}"#)
+                .unwrap();
+        assert_eq!(v.summary, "hi");
     }
 }
