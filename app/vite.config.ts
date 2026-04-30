@@ -78,6 +78,10 @@ export default defineConfig(async () => ({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
+    // Desktop CEF has surfaced a runtime where `link.relList.supports` is
+    // truthy but not callable, which breaks Vite's injected modulepreload
+    // polyfill before React mounts (blank white window).
+    modulePreload: { polyfill: false },
     // Emit source maps so @sentry/vite-plugin can upload them; the plugin
     // deletes the on-disk .map files after upload so users don't receive
     // them in the shipped bundle.
