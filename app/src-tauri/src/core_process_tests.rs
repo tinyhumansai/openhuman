@@ -6,6 +6,15 @@ use super::{
 };
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+fn env_lock() -> MutexGuard<'static, ()> {
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("env lock poisoned")
+}
 
 struct EnvGuard {
     key: &'static str,
@@ -38,6 +47,7 @@ impl Drop for EnvGuard {
 
 #[test]
 fn default_core_run_mode_env_parsing() {
+    let _env_lock = env_lock();
     let _unset = EnvGuard::unset("OPENHUMAN_CORE_RUN_MODE");
     assert_eq!(default_core_run_mode(false), CoreRunMode::ChildProcess);
 
@@ -50,6 +60,7 @@ fn default_core_run_mode_env_parsing() {
 
 #[test]
 fn default_core_port_env_and_fallback() {
+    let _env_lock = env_lock();
     let _unset = EnvGuard::unset("OPENHUMAN_CORE_PORT");
     assert_eq!(default_core_port(), 7788);
 
@@ -109,6 +120,7 @@ fn same_executable_path_handles_symlinks() {
 // Tests for default_core_bin() - PR: make linux CEF deb package runnable
 #[test]
 fn default_core_bin_env_override_takes_precedence() {
+    let _env_lock = env_lock();
     let temp_dir = std::env::temp_dir().join("openhuman-core-test-");
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");
@@ -138,11 +150,11 @@ fn default_core_bin_env_override_takes_precedence() {
 
     // Cleanup
     let _ = std::fs::remove_dir_all(&temp_dir);
-    std::env::remove_var("OPENHUMAN_CORE_BIN");
 }
 
 #[test]
 fn default_core_bin_env_override_nonexistent_warns() {
+    let _env_lock = env_lock();
     let _guard = EnvGuard::set("OPENHUMAN_CORE_BIN", "/nonexistent/path/openhuman-core");
 
     let _result = default_core_bin();
@@ -154,6 +166,7 @@ fn default_core_bin_env_override_nonexistent_warns() {
 
 #[test]
 fn default_core_bin_returns_none_when_no_binary_found() {
+    let _env_lock = env_lock();
     // Clear env override
     let _guard = EnvGuard::unset("OPENHUMAN_CORE_BIN");
 
@@ -166,6 +179,7 @@ fn default_core_bin_returns_none_when_no_binary_found() {
 
 #[test]
 fn default_core_bin_prefers_staged_sidecar_in_dev() {
+    let _env_lock = env_lock();
     // This test verifies the dev build behavior where we look for
     // staged binaries in src-tauri/binaries
     // In test mode (debug_assertions), this path is checked
