@@ -1,4 +1,4 @@
-//! Gmail provider — incremental sync with per-item persistence.
+//! Gmail provider — incremental sync into the memory tree.
 //!
 //! On each sync pass:
 //!
@@ -6,9 +6,14 @@
 //!   2. Check the daily request budget — bail early if exhausted.
 //!   3. Fetch a page of recent messages via `GMAIL_FETCH_EMAILS`, adding
 //!      a date filter when a cursor exists so only newer mail is returned.
-//!   4. Deduplicate against `synced_ids` in the state.
-//!   5. Persist each **new** message as its own memory document (not a
-//!      single giant snapshot) so agent recall can find individual emails.
+//!   4. Run [`ComposioProvider::post_process_action_result`] (HTML→md,
+//!      normalise, sanitise) on the page so the LLM-facing chunk content
+//!      is cleaned, not raw.
+//!   5. Filter against `synced_ids` for an early-stop optimisation,
+//!      then ingest the new messages into the memory tree via
+//!      [`super::ingest::ingest_page_into_memory_tree`] — same pipeline
+//!      the standalone `gmail-backfill-3d` binary uses, mirroring the
+//!      Slack provider's `ingest_chat` pattern.
 //!   6. Paginate (up to budget) until no more results or all items in the
 //!      page are already synced.
 //!   7. Advance the cursor and save state.
@@ -20,10 +25,9 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use super::ingest::ingest_page_into_memory_tree;
 use super::sync;
-use crate::openhuman::composio::providers::sync_state::{
-    extract_item_id, persist_single_item, SyncState,
-};
+use crate::openhuman::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::composio::providers::{
     pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
     SyncReason,
@@ -258,9 +262,9 @@ impl ComposioProvider for GmailProvider {
                 args["page_token"] = json!(token);
             }
 
-            let resp = ctx
+            let mut resp = ctx
                 .client
-                .execute_tool(ACTION_FETCH_EMAILS, Some(args))
+                .execute_tool(ACTION_FETCH_EMAILS, Some(args.clone()))
                 .await
                 .map_err(|e| {
                     format!("[composio:gmail] {ACTION_FETCH_EMAILS} page {page_num}: {e:#}")
@@ -280,6 +284,11 @@ impl ComposioProvider for GmailProvider {
                 ));
             }
 
+            // ── Step 4: post-process the page (HTML→md, normalise, sanitise)
+            //    so chunk content is clean before ingest. Same pipeline the
+            //    standalone gmail-backfill-3d binary runs.
+            self.post_process_action_result(ACTION_FETCH_EMAILS, Some(&args), &mut resp.data);
+
             let messages = sync::extract_messages(&resp.data);
             total_fetched += messages.len();
 
@@ -291,15 +300,15 @@ impl ComposioProvider for GmailProvider {
                 break;
             }
 
-            // ── Step 4: deduplicate and persist per-item ────────────
+            // ── Step 5: filter against synced_ids for early-stop, advance
+            //    cursor tracker, and collect new messages for batched
+            //    memory-tree ingest.
             let mut all_already_synced = true;
+            let mut new_messages: Vec<Value> = Vec::with_capacity(messages.len());
             for msg in &messages {
-                let Some(msg_id) = extract_item_id(msg, MESSAGE_ID_PATHS) else {
-                    tracing::debug!("[composio:gmail] message missing ID, skipping");
-                    continue;
-                };
-
-                // Track the newest date we've seen for cursor advancement.
+                // Track the newest date we've seen for cursor advancement,
+                // independent of dedup status — we want the cursor to move
+                // even if we've already ingested this page's content.
                 if let Some(date_val) = extract_item_id(msg, MESSAGE_DATE_PATHS) {
                     if newest_date
                         .as_ref()
@@ -309,45 +318,44 @@ impl ComposioProvider for GmailProvider {
                     }
                 }
 
-                if state.is_synced(&msg_id) {
-                    continue;
+                let msg_id = extract_item_id(msg, MESSAGE_ID_PATHS);
+                if let Some(ref id) = msg_id {
+                    if state.is_synced(id) {
+                        continue;
+                    }
+                    state.mark_synced(id);
                 }
                 all_already_synced = false;
+                new_messages.push(msg.clone());
+            }
 
-                // Build a human-readable title for this email document.
-                let subject = pick_str(
-                    msg,
-                    &[
-                        "subject",
-                        "data.subject",
-                        "payload.headers.Subject",
-                        "snippet",
-                    ],
-                )
-                .unwrap_or_else(|| format!("Email {msg_id}"));
-                let doc_id = format!("composio-gmail-msg-{msg_id}");
-                let title = format!("Gmail: {subject}");
-
-                match persist_single_item(
-                    &memory,
-                    "gmail",
-                    &doc_id,
-                    &title,
-                    msg,
-                    "gmail",
-                    ctx.connection_id.as_deref(),
-                )
-                .await
+            // Single batched ingest into memory_tree. Chunk IDs are
+            // content-hashed so re-ingest of the same message is an
+            // idempotent UPSERT at the SQL layer; per-message dedup above
+            // is purely an optimisation for the hot path.
+            if !new_messages.is_empty() {
+                let owner = format!("gmail-sync:{connection_id}");
+                match ingest_page_into_memory_tree(ctx.config.as_ref(), &owner, &new_messages).await
                 {
-                    Ok(_) => {
-                        state.mark_synced(&msg_id);
-                        total_persisted += 1;
+                    Ok(n) => {
+                        // total_persisted tracks messages, not chunks, for
+                        // metric stability with the previous per-message
+                        // persist path. n is the chunk count which we log
+                        // for diagnostic purposes only.
+                        total_persisted += new_messages.len();
+                        tracing::debug!(
+                            page = page_num,
+                            new_messages = new_messages.len(),
+                            ingested_chunks = n,
+                            "[composio:gmail] page ingested into memory tree"
+                        );
                     }
                     Err(e) => {
                         tracing::warn!(
-                            msg_id = %msg_id,
-                            error = %e,
-                            "[composio:gmail] failed to persist message (continuing)"
+                            error = %format!("{e:#}"),
+                            page = page_num,
+                            new_messages = new_messages.len(),
+                            "[composio:gmail] ingest_page_into_memory_tree failed (continuing)"
                         );
                     }
                 }
