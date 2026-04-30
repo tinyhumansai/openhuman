@@ -37,8 +37,8 @@ impl Tool for CheckOnboardingStatusTool {
     fn description(&self) -> &str {
         "Read-only markdown snapshot of the user's workspace setup. \
          No side effects, no flag flips. Takes no arguments. Call this \
-         ONCE on your first iteration to craft a personalised welcome \
-         and decide when to call `complete_onboarding`.\n\
+         at the start of each turn to get a fresh snapshot before \
+         generating any text.\n\
          \n\
          Returns a compact markdown bulleted list:\n\
          ```\n\

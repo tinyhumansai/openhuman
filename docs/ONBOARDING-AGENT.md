@@ -39,7 +39,7 @@ The welcome agent is the first conversation a new user has after completing the 
 - No "as an AI" or self-identification
 - No mentioning "orchestrator", "handoff", or "different agent"
 - No doing real work (email triage, drafts, research, etc.) — only onboarding tools available
-- Messages under 4 sentences per turn
+- Messages under 3 sentences per turn
 - Plain prose only, no JSON or code fences
 
 ## Completion gate
