@@ -45,6 +45,7 @@ pub mod types;
 
 mod atom;
 mod cdp_fetch;
+pub mod notify_poll;
 mod print_view;
 mod reads;
 mod session;
@@ -64,6 +65,16 @@ pub async fn cdp_list_messages(
     label: Option<String>,
 ) -> Result<Vec<GmailMessage>, String> {
     reads::list_messages(account_id, limit, label).await
+}
+
+/// Cache-bypassing variant of `cdp_list_messages`. Used by the
+/// notification poll loop so each tick observes a fresh atom-feed body.
+pub async fn cdp_list_messages_uncached(
+    account_id: &str,
+    limit: u32,
+    label: Option<String>,
+) -> Result<Vec<GmailMessage>, String> {
+    reads::list_messages_uncached(account_id, limit, label).await
 }
 
 pub async fn cdp_search(

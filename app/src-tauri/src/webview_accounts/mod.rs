@@ -97,6 +97,14 @@ fn provider_allowed_hosts(provider: &str) -> &'static [&'static str] {
             "googleusercontent.com",
             "gstatic.com",
             "googleapis.com",
+            // Google's SSO sign-in flow does a cross-domain `SetSID` step on
+            // accounts.youtube.com (`accounts.youtube.com/accounts/SetSID?…
+            // &continue=https://mail.google.com/…`) to propagate the
+            // `__Secure-1PSID` cookie across Google properties. Without
+            // youtube.com here the navigation falls out to the system
+            // browser, the auth cookies never land in the CEF profile, and
+            // post-2FA login hangs on a blank page indefinitely.
+            "youtube.com",
         ],
         "slack" => &["slack.com", "slack-edge.com", "slackb.com"],
         "discord" => &[
@@ -110,6 +118,9 @@ fn provider_allowed_hosts(provider: &str) -> &'static [&'static str] {
             "googleusercontent.com",
             "gstatic.com",
             "googleapis.com",
+            // Same Google SSO `SetSID` cross-domain hop as gmail — see the
+            // comment in the gmail arm.
+            "youtube.com",
         ],
         "zoom" => &["zoom.us", "zoom.com", "zoomgov.com", "zdassets.com"],
         "browserscan" => &["browserscan.net"],
@@ -171,6 +182,18 @@ fn url_is_internal(provider: &str, url: &Url) -> bool {
     let Some(host) = url.host_str() else {
         return true;
     };
+    // Google's SSO post-password flow routes through country-localized
+    // `accounts.google.<ccTLD>` (e.g. `accounts.google.co.in`,
+    // `accounts.google.co.uk`, `accounts.google.com.au`) for the `SetSID`
+    // cross-domain cookie handshake. Listing every ccTLD in
+    // `provider_allowed_hosts` would be unwieldy and brittle; instead
+    // short-circuit to true for any `accounts.google.*` host (and the
+    // adjacent `accounts.youtube.com` cookie hop) when the provider speaks
+    // Google's auth surface. Without this, the post-password redirect leaks
+    // to the system browser and login hangs in the embedded webview.
+    if matches!(provider, "gmail" | "google-meet") && is_google_sso_host(host) {
+        return true;
+    }
     let allowed = provider_allowed_hosts(provider);
     if allowed.is_empty() {
         return true;
@@ -178,6 +201,34 @@ fn url_is_internal(provider: &str, url: &Url) -> bool {
     allowed
         .iter()
         .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
+}
+
+/// `true` for hosts that are part of Google's authentication surface.
+/// Matches `accounts.google.<anything>` (covers every ccTLD Google uses
+/// for sign-in: `.com`, `.co.in`, `.co.uk`, `.com.au`, `.fr`, `.de`, etc.)
+/// plus `accounts.youtube.com` (which sets a cross-property session cookie
+/// during the OAuth handshake). Constraints: leftmost label must be
+/// `accounts`, second label must be `google`, and the remaining 1-3 TLD
+/// labels must be ASCII alphanumeric. Trade-off: a hypothetical
+/// `accounts.google.<attacker-tld>` would also match — but Google brand /
+/// DNS controls make that a non-issue for any TLD a normal user routes
+/// through, and the alternative (200-entry hardcoded ccTLD list) rots.
+fn is_google_sso_host(host: &str) -> bool {
+    if host == "accounts.youtube.com" {
+        return true;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 3 || labels.len() > 5 {
+        return false;
+    }
+    if labels[0] != "accounts" || labels[1] != "google" {
+        return false;
+    }
+    labels[2..].iter().all(|l| {
+        !l.is_empty()
+            && l.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    })
 }
 
 /// `true` if the provider needs `window.open(url)` to return a live
@@ -495,6 +546,11 @@ pub struct WebviewAccountsState {
     /// keeps the UA override resident (see `cdp::session`); aborted on
     /// close/purge so reopen cycles don't stack multiple live loops.
     cdp_sessions: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// account_id -> Gmail notification poll task. Spawned for
+    /// `provider == "gmail"` accounts and aborted on close/purge so the
+    /// 30 s atom-feed loop in `gmail::notify_poll` does not survive past
+    /// the webview that owns it.
+    gmail_notify_polls: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     /// account_id -> 15s `webview-account:load{state:"timeout"}` watchdog.
     /// Aborted in close/purge so a watchdog spawned for a now-closed
     /// account can't fire a stale timeout against a freshly-reused id.
@@ -546,6 +602,19 @@ impl WebviewAccountsState {
             task.abort();
             log::debug!(
                 "[webview-accounts] shutdown abort watchdog account={}",
+                acct
+            );
+        }
+        let notify_polls: Vec<_> = self
+            .gmail_notify_polls
+            .lock()
+            .ok()
+            .map(|mut g| g.drain().collect())
+            .unwrap_or_default();
+        for (acct, task) in notify_polls {
+            task.abort();
+            log::debug!(
+                "[webview-accounts] shutdown abort gmail notify-poll account={}",
                 acct
             );
         }
@@ -873,11 +942,7 @@ fn forward_native_notification<R: Runtime>(
                 prev
             );
             std::thread::spawn(move || {
-                let _ = mac_notification_sys::set_application(if tauri::is_dev() {
-                    "com.apple.Terminal"
-                } else {
-                    &app_id
-                });
+                let _ = mac_notification_sys::set_application(&app_id);
                 use mac_notification_sys::Notification as MacNotif;
                 let mut n = MacNotif::new();
                 n.title(&title_c).message(&body_c);
@@ -895,11 +960,7 @@ fn forward_native_notification<R: Runtime>(
             }
             let _guard = Guard;
 
-            let _ = mac_notification_sys::set_application(if tauri::is_dev() {
-                "com.apple.Terminal"
-            } else {
-                &app_id
-            });
+            let _ = mac_notification_sys::set_application(&app_id);
             use mac_notification_sys::{Notification as MacNotif, NotificationResponse};
             let t = title_c;
             let b = body_c;
@@ -1723,6 +1784,36 @@ pub async fn webview_account_open<R: Runtime>(
         }
     }
 
+    // Gmail's BrowserChannel real-time push does not deliver in CEF
+    // (mail arrives server-side but the page never observes it without
+    // a manual reload), so we route around the web frontend by polling
+    // the Atom feed and firing synthetic toasts for newly-seen unread
+    // messages. See `gmail::notify_poll`. The handle goes into
+    // `gmail_notify_polls` so close/purge can abort it.
+    if args.provider == "gmail" {
+        match app.path().app_local_data_dir() {
+            Ok(base) => {
+                let handle =
+                    crate::gmail::notify_poll::spawn(app.clone(), args.account_id.clone(), base);
+                if let Some(old) = state
+                    .gmail_notify_polls
+                    .lock()
+                    .unwrap()
+                    .insert(args.account_id.clone(), handle)
+                {
+                    old.abort();
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "[gmail-notify-poll] could not resolve app_local_data_dir for {}: {} — skipping spawn",
+                    args.account_id,
+                    e
+                );
+            }
+        }
+    }
+
     // For providers we know how to scrape via CDP, kick off the IndexedDB
     // scanner. CDP requires the CEF runtime's remote-debugging port.
     {
@@ -1883,6 +1974,18 @@ pub async fn webview_account_close<R: Runtime>(
             browser_id
         );
     }
+    if let Some(task) = state
+        .gmail_notify_polls
+        .lock()
+        .unwrap()
+        .remove(&args.account_id)
+    {
+        task.abort();
+        log::debug!(
+            "[gmail-notify-poll] aborted poll task for account={}",
+            args.account_id
+        );
+    }
     if let Some(task) = state.cdp_sessions.lock().unwrap().remove(&args.account_id) {
         task.abort();
         log::debug!(
@@ -1948,6 +2051,18 @@ pub async fn webview_account_purge<R: Runtime>(
             browser_id
         );
     }
+    if let Some(task) = state
+        .gmail_notify_polls
+        .lock()
+        .unwrap()
+        .remove(&args.account_id)
+    {
+        task.abort();
+        log::debug!(
+            "[gmail-notify-poll] purge aborted poll task for account={}",
+            args.account_id
+        );
+    }
     if let Some(task) = state.cdp_sessions.lock().unwrap().remove(&args.account_id) {
         task.abort();
         log::debug!(
@@ -1990,6 +2105,28 @@ pub async fn webview_account_purge<R: Runtime>(
             );
         } else {
             log::info!("[webview-accounts] purged data dir {}", data_dir.display());
+        }
+    }
+
+    // Drop the Gmail notification seen-set so a re-login does not skip
+    // toasts for messages that arrived while the previous session was
+    // active. Lives outside `data_directory_for` because that path is
+    // CEF-owned; the seen-set is OpenHuman-owned state.
+    if let Ok(base) = app.path().app_local_data_dir() {
+        let notify_dir = base.join("gmail").join(&args.account_id);
+        if notify_dir.exists() {
+            if let Err(err) = std::fs::remove_dir_all(&notify_dir) {
+                log::warn!(
+                    "[gmail-notify-poll] purge remove_dir_all {} failed: {}",
+                    notify_dir.display(),
+                    err
+                );
+            } else {
+                log::info!(
+                    "[gmail-notify-poll] purged seen-set dir {}",
+                    notify_dir.display()
+                );
+            }
         }
     }
 
@@ -2339,6 +2476,51 @@ mod tests {
         Url::parse(s).expect("valid url")
     }
 
+    // ── Google SSO host matcher ─────────────────────────────
+
+    #[test]
+    fn is_google_sso_host_accepts_com() {
+        assert!(is_google_sso_host("accounts.google.com"));
+    }
+
+    #[test]
+    fn is_google_sso_host_accepts_country_cctlds() {
+        // The post-password SetSID hop observed in #1020 smoke; broader
+        // ccTLD set covers users routed through localized Google
+        // properties.
+        assert!(is_google_sso_host("accounts.google.co.in"));
+        assert!(is_google_sso_host("accounts.google.co.uk"));
+        assert!(is_google_sso_host("accounts.google.com.au"));
+        assert!(is_google_sso_host("accounts.google.fr"));
+        assert!(is_google_sso_host("accounts.google.de"));
+    }
+
+    #[test]
+    fn is_google_sso_host_accepts_youtube_cookie_hop() {
+        assert!(is_google_sso_host("accounts.youtube.com"));
+    }
+
+    #[test]
+    fn is_google_sso_host_rejects_non_google() {
+        assert!(!is_google_sso_host("accounts.example.com"));
+        assert!(!is_google_sso_host("accounts.googleblog.com"));
+        assert!(!is_google_sso_host("google.com"));
+        assert!(!is_google_sso_host("mail.google.com")); // not the accounts surface
+        assert!(!is_google_sso_host("evil.com"));
+        assert!(!is_google_sso_host(""));
+    }
+
+    #[test]
+    fn url_is_internal_keeps_google_sso_setsid_in_app_for_gmail_and_meet() {
+        // The exact URL pattern that leaked to the system browser pre-fix.
+        let setsid = url("https://accounts.google.co.in/accounts/SetSID?ssdc=1&continue=https://mail.google.com/mail/u/0/");
+        assert!(url_is_internal("gmail", &setsid));
+        assert!(url_is_internal("google-meet", &setsid));
+        // Other providers should still go through the normal allowed_hosts
+        // suffix-match (slack/whatsapp/etc don't speak Google SSO).
+        assert!(!url_is_internal("slack", &setsid));
+    }
+
     // ── shutdown teardown ──────────────────────────────────
 
     /// Smoke-test [`WebviewAccountsState::drain_for_shutdown`] in isolation
@@ -2364,6 +2546,9 @@ mod tests {
         let watchdog_task = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(60)).await;
         });
+        let notify_poll_task = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
 
         state
             .cdp_sessions
@@ -2375,6 +2560,11 @@ mod tests {
             .lock()
             .unwrap()
             .insert("acct-1".into(), watchdog_task);
+        state
+            .gmail_notify_polls
+            .lock()
+            .unwrap()
+            .insert("acct-1".into(), notify_poll_task);
         state
             .browser_ids
             .lock()
@@ -2409,6 +2599,7 @@ mod tests {
         );
         assert!(state.cdp_sessions.lock().unwrap().is_empty());
         assert!(state.load_watchdogs.lock().unwrap().is_empty());
+        assert!(state.gmail_notify_polls.lock().unwrap().is_empty());
         assert!(state.browser_ids.lock().unwrap().is_empty());
         assert!(state.inner.lock().unwrap().is_empty());
         assert!(state.loaded_accounts.lock().unwrap().is_empty());

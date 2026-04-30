@@ -45,13 +45,43 @@ pub async fn list_messages(
     limit: u32,
     label: Option<String>,
 ) -> Result<Vec<GmailMessage>, String> {
+    list_messages_internal(account_id, limit, label, cdp_fetch::FetchOptions::default()).await
+}
+
+/// Cache-bypassing variant used by the notification poll loop. Each
+/// tick must observe a fresh atom body — without `disableCache: true`
+/// CEF returns the same response across consecutive polls and new mail
+/// is invisible to the diff.
+pub async fn list_messages_uncached(
+    account_id: &str,
+    limit: u32,
+    label: Option<String>,
+) -> Result<Vec<GmailMessage>, String> {
+    list_messages_internal(
+        account_id,
+        limit,
+        label,
+        cdp_fetch::FetchOptions {
+            disable_cache: true,
+        },
+    )
+    .await
+}
+
+async fn list_messages_internal(
+    account_id: &str,
+    limit: u32,
+    label: Option<String>,
+    options: cdp_fetch::FetchOptions,
+) -> Result<Vec<GmailMessage>, String> {
     log::debug!(
-        "[gmail][{account_id}] list_messages limit={limit} label={:?}",
-        label
+        "[gmail][{account_id}] list_messages limit={limit} label={:?} disable_cache={}",
+        label,
+        options.disable_cache
     );
     let url = atom_feed_url(label.as_deref());
     let (mut cdp, session_id) = session::attach(account_id).await?;
-    let body = match cdp_fetch::fetch(&mut cdp, &session_id, &url).await {
+    let body = match cdp_fetch::fetch_with_options(&mut cdp, &session_id, &url, options).await {
         Ok(b) => b,
         Err(e) => {
             session::detach(&mut cdp, &session_id).await;

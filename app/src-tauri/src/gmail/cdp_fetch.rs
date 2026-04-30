@@ -29,12 +29,42 @@ use crate::cdp::CdpConn;
 /// without asking the browser to buffer the universe.
 const READ_CHUNK: usize = 256 * 1024;
 
+/// Per-fetch options that callers can flip without breaking the default
+/// shape. Today the only knob is HTTP cache bypass — the polling-based
+/// notification path needs `disable_cache: true` so each tick observes
+/// fresh atom-feed bytes (Gmail's atom URL otherwise returns a cached
+/// body across consecutive CDP fetches), while one-shot reads and the
+/// search/get paths keep the default `disable_cache: false` to take
+/// advantage of in-flight CEF caching.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FetchOptions {
+    pub disable_cache: bool,
+}
+
 /// Issue an authenticated GET through the attached CDP session.
+///
+/// Uses the default [`FetchOptions`] (cache enabled). Callers that need
+/// cache bypass should reach for [`fetch_with_options`] directly.
 pub async fn fetch(cdp: &mut CdpConn, session: &str, url: &str) -> Result<String, String> {
+    fetch_with_options(cdp, session, url, FetchOptions::default()).await
+}
+
+/// Issue an authenticated GET through the attached CDP session with
+/// explicit options. The polling notification path uses this to bypass
+/// the HTTP cache.
+pub async fn fetch_with_options(
+    cdp: &mut CdpConn,
+    session: &str,
+    url: &str,
+    options: FetchOptions,
+) -> Result<String, String> {
     // `Network.loadNetworkResource` needs a frameId to charge the
     // request against — we use the main frame of the target.
     let frame_id = main_frame_id(cdp, session).await?;
-    log::debug!("[gmail-cdp-fetch] session={session} frame={frame_id} url={url}");
+    log::debug!(
+        "[gmail-cdp-fetch] session={session} frame={frame_id} url={url} disable_cache={}",
+        options.disable_cache
+    );
 
     // Network must be enabled for loadNetworkResource to work on some
     // CDP builds. Enabling is idempotent — safe to call every fetch.
@@ -50,7 +80,7 @@ pub async fn fetch(cdp: &mut CdpConn, session: &str, url: &str) -> Result<String
                 "frameId": frame_id,
                 "url": url,
                 "options": {
-                    "disableCache": false,
+                    "disableCache": options.disable_cache,
                     "includeCredentials": true,
                 },
             }),
