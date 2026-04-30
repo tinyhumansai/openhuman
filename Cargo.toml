@@ -158,6 +158,17 @@ whatsapp-web = ["dep:whatsapp-rust", "dep:whatsapp-rust-tokio-transport", "dep:w
 [patch.crates-io]
 whisper-rs-sys = { git = "https://github.com/tinyhumansai/whisper-rs-sys.git", branch = "main" }
 
+# Emit just enough DWARF in release builds for Sentry to symbolicate Rust
+# panics + render surrounding source lines. `line-tables-only` keeps the
+# binary small (only file+line tables, no full type info) while still
+# letting `sentry-cli debug-files upload --include-sources` produce a
+# usable `.src.zip`. `split-debuginfo = "packed"` writes the debug data
+# into a separate `.dSYM` bundle on macOS so the shipped executable
+# itself stays slim.
+[profile.release]
+debug = "line-tables-only"
+split-debuginfo = "packed"
+
 # Fast CI builds: trade runtime perf for compile speed
 [profile.ci]
 inherits = "release"
