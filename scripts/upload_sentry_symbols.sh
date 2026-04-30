@@ -199,7 +199,9 @@ upload_symbols() {
         "--org" "${SENTRY_ORG}"
         "--project" "${SENTRY_PROJECT}"
         "--include-sources"
-        "--log-level=warning"
+        # sentry-cli 3.x renamed `warning` → `warn`. Use the short form
+        # to stay compatible with both the 2.x and 3.x families.
+        "--log-level=warn"
     )
 
     # Find and upload all debug symbol files
