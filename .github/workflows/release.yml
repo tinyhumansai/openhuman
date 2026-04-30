@@ -318,8 +318,8 @@ jobs:
         run: |
           set +e
           for BIN in \
-            app/src-tauri/target/${{ matrix.settings.target }}/release/OpenHuman \
-            target/${{ matrix.settings.target }}/release/OpenHuman; do
+            app/src-tauri/target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/OpenHuman \
+            target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/OpenHuman; do
             if [ -x "$BIN" ]; then
               echo "ldd $BIN"
               ldd "$BIN" | grep 'not found' || echo "  all resolved"
@@ -466,26 +466,35 @@ jobs:
 
           SIDE_CAR_BASE="$(node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('app/src-tauri/tauri.conf.json','utf8'));const b=(c.bundle&&Array.isArray(c.bundle.externalBin)&&c.bundle.externalBin[0])||'binaries/openhuman-core';process.stdout.write(String(b).split('/').pop());")"
           CORE_BIN_NAME="${SIDE_CAR_BASE}"
-
+          BUILD_PROFILE="${BUILD_PROFILE:-release}"
           echo "core_dir=$CORE_DIR" >> "$GITHUB_OUTPUT"
           echo "core_manifest=$CORE_DIR/Cargo.toml" >> "$GITHUB_OUTPUT"
-          # Cargo workspace: release artifacts are under repo root target/, not <member>/target/
-          echo "core_target_dir=target/$MATRIX_TARGET/release" >> "$GITHUB_OUTPUT"
+          # Cargo workspace artifacts are under repo root target/, not <member>/target/
+          echo "core_target_dir=target/$MATRIX_TARGET/$BUILD_PROFILE" >> "$GITHUB_OUTPUT"
+          echo "build_profile=$BUILD_PROFILE" >> "$GITHUB_OUTPUT"
           echo "core_bin_name=$CORE_BIN_NAME" >> "$GITHUB_OUTPUT"
           echo "sidecar_base=$SIDE_CAR_BASE" >> "$GITHUB_OUTPUT"
         env:
           MATRIX_TARGET: ${{ matrix.settings.target }}
-
+          BUILD_PROFILE: ${{ inputs.build_target == 'staging' && 'debug' || 'release' }}
       - name: Build sidecar core binary
         shell: bash
         run: |
-          cargo build \
-            --manifest-path "$CORE_MANIFEST" \
-            --release \
-            --target "$MATRIX_TARGET" \
-            --bin "$CORE_BIN_NAME"
+          if [ "$BUILD_PROFILE" = "release" ]; then
+            cargo build \
+              --manifest-path "$CORE_MANIFEST" \
+              --release \
+              --target "$MATRIX_TARGET" \
+              --bin "$CORE_BIN_NAME"
+          else
+            cargo build \
+              --manifest-path "$CORE_MANIFEST" \
+              --target "$MATRIX_TARGET" \
+              --bin "$CORE_BIN_NAME"
+          fi
         env:
           MATRIX_TARGET: ${{ matrix.settings.target }}
+          BUILD_PROFILE: ${{ steps.core-paths.outputs.build_profile }}
           CORE_MANIFEST: ${{ steps.core-paths.outputs.core_manifest }}
           CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
           OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
@@ -560,7 +569,11 @@ jobs:
           # Inline NODE_OPTIONS so it reaches the vite child spawned by
           # beforeBuildCommand. Step-level env was observed not to propagate
           # on macos-arm64 runners, causing OOM at node's ~2GB auto default.
-          NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+          if [ "${{ inputs.build_target }}" = "staging" ]; then
+            NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build --debug -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+          else
+            NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+          fi
 
       # tauri-action previously uploaded non-macOS installer assets directly
       # to the release. Replicate that for Linux + Windows here (macOS goes
@@ -572,12 +585,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare-build.outputs.tag }}
           MATRIX_TARGET: ${{ matrix.settings.target }}
+          BUILD_PROFILE: ${{ inputs.build_target == 'staging' && 'debug' || 'release' }}
         run: |
           set -euo pipefail
           shopt -s nullglob
           BUNDLE_ROOTS=(
-            "app/src-tauri/target/${MATRIX_TARGET}/release/bundle"
-            "target/${MATRIX_TARGET}/release/bundle"
+            "app/src-tauri/target/${MATRIX_TARGET}/${BUILD_PROFILE}/bundle"
+            "target/${MATRIX_TARGET}/${BUILD_PROFILE}/bundle"
           )
           UPLOAD=()
           for root in "${BUNDLE_ROOTS[@]}"; do
@@ -611,8 +625,8 @@ jobs:
           # depending on workspace config — search both
           APP_PATH=""
           for candidate in \
-            "app/src-tauri/target/${{ matrix.settings.target }}/release/bundle/macos/OpenHuman.app" \
-            "target/${{ matrix.settings.target }}/release/bundle/macos/OpenHuman.app"; do
+            "app/src-tauri/target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/macos/OpenHuman.app" \
+            "target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/macos/OpenHuman.app"; do
             if [ -d "$candidate" ]; then
               APP_PATH="$candidate"
               break
@@ -621,7 +635,7 @@ jobs:
 
           # Fallback: search for it
           if [ -z "$APP_PATH" ]; then
-            APP_PATH="$(find . -path '*/release/bundle/macos/OpenHuman.app' -type d 2>/dev/null | head -1)"
+            APP_PATH="$(find . -path "*/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/macos/OpenHuman.app" -type d 2>/dev/null | head -1)"
           fi
 
           if [ -z "$APP_PATH" ]; then
@@ -760,9 +774,8 @@ jobs:
         with:
           name: desktop-bundles-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix }}
           path: |
-            app/src-tauri/target/${{ matrix.settings.target }}/release/bundle/**
-            target/${{ matrix.settings.target }}/release/bundle/**
-
+            app/src-tauri/target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/**
+            target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/**
       - name: Upload standalone CLI artifacts
         uses: actions/upload-artifact@v4
         with:
