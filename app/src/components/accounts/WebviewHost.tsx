@@ -120,7 +120,7 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
   return (
     <div
       ref={ref}
-      className="relative h-full w-full overflow-hidden rounded-lg border border-stone-200 bg-stone-100"
+      className="relative h-full w-full overflow-hidden rounded-2xl border border-stone-200/70 bg-stone-100"
       aria-label={`webview host for account ${accountId}`}>
       {isLoading ? (
         <div
