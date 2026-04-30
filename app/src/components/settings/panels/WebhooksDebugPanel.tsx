@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useBackendUrl } from '../../../hooks/useBackendUrl';
 import { tunnelsApi } from '../../../services/api/tunnelsApi';
 import { getCoreHttpBaseUrl } from '../../../services/coreRpcClient';
-import { BACKEND_URL } from '../../../utils/config';
 import {
   openhumanWebhooksClearLogs,
   openhumanWebhooksListLogs,
@@ -15,8 +15,6 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const LOG_LIMIT = 100;
-
-const fallbackBackendUrl = BACKEND_URL || 'https://api.tinyhumans.ai';
 
 function formatDateTime(timestamp: number): string {
   if (!timestamp) return '-';
@@ -42,6 +40,7 @@ function prettyJson(value: unknown): string {
 
 const WebhooksDebugPanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const backendUrl = useBackendUrl();
   const [registrations, setRegistrations] = useState<WebhookDebugRegistration[]>([]);
   const [logs, setLogs] = useState<WebhookDebugLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -210,7 +209,9 @@ const WebhooksDebugPanel = () => {
                     </div>
                   </div>
                   <div className="mt-1 text-[11px] text-stone-500 font-mono break-all">
-                    {tunnelsApi.ingressUrl(fallbackBackendUrl, registration.tunnel_uuid)}
+                    {backendUrl
+                      ? tunnelsApi.ingressUrl(backendUrl, registration.tunnel_uuid)
+                      : 'Resolving backend URL…'}
                   </div>
                 </div>
               ))}
