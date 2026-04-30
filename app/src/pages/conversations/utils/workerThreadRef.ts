@@ -1,10 +1,10 @@
 /**
  * Parses the `[worker_thread_ref]…[/worker_thread_ref]` envelope the
  * Rust core's `spawn_subagent` tool emits when it spawns a sub-agent
- * with `dedicated_thread: true` (Issue #930). The envelope is appended
- * to the parent thread's tool_result text so the UI can render a
- * clickable card linking to the new worker thread instead of dumping
- * the sub-agent's full transcript inline.
+ * with `dedicated_thread: true`. The envelope is appended to the parent
+ * thread's tool_result text so the UI can render a clickable card
+ * linking to the new worker thread instead of dumping the sub-agent's
+ * full transcript inline.
  */
 
 export interface WorkerThreadRef {

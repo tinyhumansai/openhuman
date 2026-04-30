@@ -5,10 +5,9 @@ import type { WorkerThreadRef } from '../utils/workerThreadRef';
 
 /**
  * Compact card rendered inside a parent thread's tool timeline when the
- * orchestrator delegated a sub-task into a dedicated worker thread
- * (Issue #930). Clicking the card swaps the active thread so the user
- * can read the sub-agent's full transcript without losing the parent
- * conversation.
+ * orchestrator delegated a sub-task into a dedicated worker thread.
+ * Clicking the card swaps the active thread so the user can read the
+ * sub-agent's full transcript without losing the parent conversation.
  */
 export function WorkerThreadRefCard({ ref }: { ref: WorkerThreadRef }) {
   const dispatch = useDispatch();
