@@ -302,9 +302,14 @@ impl ComposioProvider for GmailProvider {
 
             // ── Step 5: filter against synced_ids for early-stop, advance
             //    cursor tracker, and collect new messages for batched
-            //    memory-tree ingest.
+            //    memory-tree ingest. We collect candidate IDs to mark
+            //    synced but defer the mark until the batch ingest returns
+            //    Ok — otherwise a total ingest failure would leave these
+            //    messages flagged as synced (gmail-side fetch dedup) but
+            //    NOT in the memory tree, with no way to retry.
             let mut all_already_synced = true;
             let mut new_messages: Vec<Value> = Vec::with_capacity(messages.len());
+            let mut pending_synced_ids: Vec<String> = Vec::with_capacity(messages.len());
             for msg in &messages {
                 // Track the newest date we've seen for cursor advancement,
                 // independent of dedup status — we want the cursor to move
@@ -323,7 +328,7 @@ impl ComposioProvider for GmailProvider {
                     if state.is_synced(id) {
                         continue;
                     }
-                    state.mark_synced(id);
+                    pending_synced_ids.push(id.clone());
                 }
                 all_already_synced = false;
                 new_messages.push(msg.clone());
@@ -333,11 +338,21 @@ impl ComposioProvider for GmailProvider {
             // content-hashed so re-ingest of the same message is an
             // idempotent UPSERT at the SQL layer; per-message dedup above
             // is purely an optimisation for the hot path.
+            //
+            // `synced_ids` here means "Gmail-side fetch dedup" (don't burn
+            // API quota re-fetching this message), not "fully durable in
+            // memory tree". We only commit those marks once the batch
+            // returns Ok; on Err, nothing is marked, so the next sync
+            // re-fetches and the chunk-id content hash handles dedup at
+            // the storage layer.
             if !new_messages.is_empty() {
                 let owner = format!("gmail-sync:{connection_id}");
                 match ingest_page_into_memory_tree(ctx.config.as_ref(), &owner, &new_messages).await
                 {
                     Ok(n) => {
+                        for id in &pending_synced_ids {
+                            state.mark_synced(id);
+                        }
                         // total_persisted tracks messages, not chunks, for
                         // metric stability with the previous per-message
                         // persist path. n is the chunk count which we log
