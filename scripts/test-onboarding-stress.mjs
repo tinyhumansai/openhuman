@@ -23,12 +23,18 @@ const OPENHUMAN_HOME = process.env.OPENHUMAN_WORKSPACE
   ? path.join(process.env.OPENHUMAN_WORKSPACE)
   : path.join(homedir(), '.openhuman');
 
+// Set OPENHUMAN_USER_ID to pin to a specific user directory deterministically.
 function findConfigPath() {
   const usersDir = path.join(OPENHUMAN_HOME, 'users');
+  const pinnedId = process.env.OPENHUMAN_USER_ID;
+  if (pinnedId) {
+    const candidate = path.join(usersDir, pinnedId, 'config.toml');
+    if (existsSync(candidate)) return candidate;
+  }
   if (existsSync(usersDir)) {
     try {
-      for (const entry of readdirSync(usersDir)) {
-        if (entry === 'local') continue;
+      const entries = readdirSync(usersDir).filter(e => e !== 'local').sort();
+      for (const entry of entries) {
         const candidate = path.join(usersDir, entry, 'config.toml');
         if (existsSync(candidate)) return candidate;
       }

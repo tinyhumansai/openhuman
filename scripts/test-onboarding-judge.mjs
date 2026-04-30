@@ -35,12 +35,18 @@ const OPENHUMAN_HOME = process.env.OPENHUMAN_WORKSPACE
 
 // Config lives in a per-user subdirectory (e.g. ~/.openhuman/users/<id>/config.toml)
 // when authenticated, or at the root for fresh installs. Find the right one.
+// Set OPENHUMAN_USER_ID to pin to a specific user directory deterministically.
 function findConfigPath() {
   const usersDir = path.join(OPENHUMAN_HOME, 'users');
+  const pinnedId = process.env.OPENHUMAN_USER_ID;
+  if (pinnedId) {
+    const candidate = path.join(usersDir, pinnedId, 'config.toml');
+    if (existsSync(candidate)) return candidate;
+  }
   if (existsSync(usersDir)) {
     try {
-      for (const entry of readdirSync(usersDir)) {
-        if (entry === 'local') continue; // skip local fallback
+      const entries = readdirSync(usersDir).filter(e => e !== 'local').sort();
+      for (const entry of entries) {
         const candidate = path.join(usersDir, entry, 'config.toml');
         if (existsSync(candidate)) return candidate;
       }
