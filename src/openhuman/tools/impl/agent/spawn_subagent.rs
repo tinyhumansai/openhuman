@@ -73,7 +73,8 @@ impl Tool for SpawnSubagentTool {
     }
 
     fn description(&self) -> &str {
-        "Delegate a task to a specialised sub-agent. See the Delegation \
+        "Delegate a task to a specialised sub-agent only when direct \
+         response or direct tools are insufficient. See the Delegation \
          Guide in the system prompt for available agent_ids and when to \
          use each. When delegating to `integrations_agent`, you MUST also pass \
          `toolkit=\"<name>\"` naming the Composio integration the \

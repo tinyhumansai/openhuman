@@ -64,11 +64,14 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
     const measureAndSync = () => {
       if (!el || cancelled) return;
       const rect = el.getBoundingClientRect();
+      // Inset the native webview by the container's border-radius so the
+      // rounded HTML border is visible around the edges.
+      const inset = 8;
       const bounds = {
-        x: Math.round(rect.left),
-        y: Math.round(rect.top),
-        width: Math.max(1, Math.round(rect.width)),
-        height: Math.max(1, Math.round(rect.height)),
+        x: Math.round(rect.left + inset),
+        y: Math.round(rect.top + inset),
+        width: Math.max(1, Math.round(rect.width - inset * 2)),
+        height: Math.max(1, Math.round(rect.height - inset * 2)),
       };
       const last = lastBoundsRef.current;
       const unchanged =
@@ -120,7 +123,7 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
   return (
     <div
       ref={ref}
-      className="relative h-full w-full overflow-hidden rounded-lg border border-stone-200 bg-stone-100"
+      className="relative h-full w-full overflow-hidden rounded-2xl border border-stone-200/70 bg-stone-100 shadow-soft"
       aria-label={`webview host for account ${accountId}`}>
       {isLoading ? (
         <div
