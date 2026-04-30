@@ -167,27 +167,41 @@ function SettingsModal() {
 
 ### Configuration (`utils/config.ts`)
 
-Environment variable access with defaults.
+Build-time environment variable access. These constants only carry the value
+that was baked into the bundle — for the **runtime** URL the app actually
+talks to, see `services/backendUrl` and `hooks/useBackendUrl` below.
 
 ```typescript
-// Backend URL
+// Build-time fallback only (used outside Tauri).
 export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://api.example.com';
 
 // Debug mode
 export const DEBUG = import.meta.env.VITE_DEBUG === 'true';
 ```
 
-**Usage:**
+**Usage (build-time only — feature flags, debug toggles, …):**
 
 ```typescript
-import { BACKEND_URL, DEBUG } from '../utils/config';
-
-const response = await fetch(`${BACKEND_URL}/api/users`);
+import { DEBUG } from '../utils/config';
 
 if (DEBUG) {
-  console.log('Response:', response);
+  console.log('debug enabled');
 }
 ```
+
+> **Do not** import `BACKEND_URL` directly to make API calls. Resolve the URL
+> at runtime so the core sidecar's `api_url` (set on the login screen via
+> `openhuman.config_resolve_api_url`) takes effect:
+>
+> ```typescript
+> // React components
+> import { useBackendUrl } from '../hooks/useBackendUrl';
+> const backendUrl = useBackendUrl();
+>
+> // Non-React code
+> import { getBackendUrl } from '../services/backendUrl';
+> const backendUrl = await getBackendUrl();
+> ```
 
 ### Deep Link (`utils/deeplink.ts`)
 

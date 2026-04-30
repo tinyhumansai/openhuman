@@ -1,8 +1,8 @@
 import { useState } from 'react';
 
 import type { TunnelRegistration } from '../../features/webhooks/types';
+import { useBackendUrl } from '../../hooks/useBackendUrl';
 import { type Tunnel, tunnelsApi } from '../../services/api/tunnelsApi';
-import { BACKEND_URL } from '../../utils/config';
 
 interface TunnelListProps {
   tunnels: Tunnel[];
@@ -34,6 +34,7 @@ export default function TunnelList({
   const [newDesc, setNewDesc] = useState('');
   const [creating, setCreating] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const backendUrl = useBackendUrl();
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -53,8 +54,7 @@ export default function TunnelList({
 
   const getRegistration = (uuid: string) => registrations.find(r => r.tunnel_uuid === uuid);
 
-  const webhookUrl = (uuid: string) =>
-    tunnelsApi.ingressUrl(BACKEND_URL || 'https://api.tinyhumans.ai', uuid);
+  const webhookUrl = (uuid: string) => (backendUrl ? tunnelsApi.ingressUrl(backendUrl, uuid) : '');
 
   return (
     <div className="space-y-4">
@@ -242,11 +242,12 @@ function TunnelCard({
           )}
           <div className="mt-2 flex items-center gap-2">
             <code className="text-xs text-stone-500 bg-stone-50 px-2 py-1 rounded font-mono truncate max-w-[400px]">
-              {webhookUrl}
+              {webhookUrl || 'Resolving backend URL…'}
             </code>
             <button
               onClick={handleCopy}
-              className="text-xs text-primary-500 hover:text-primary-700 whitespace-nowrap">
+              disabled={!webhookUrl}
+              className="text-xs text-primary-500 hover:text-primary-700 whitespace-nowrap disabled:text-stone-400 disabled:cursor-not-allowed">
               {copied ? 'Copied!' : 'Copy'}
             </button>
           </div>

@@ -58,10 +58,35 @@ App.tsx
 
 ```
 services/
-  ├─ apiClient        → REST to VITE_BACKEND_URL with JWT from Redux
+  ├─ apiClient        → REST to a URL resolved at runtime via `services/backendUrl#getBackendUrl`
+  ├─ backendUrl       → Calls `openhuman.config_resolve_api_url`; falls back to VITE_BACKEND_URL only outside Tauri
   ├─ socketService    → Socket.io; realtime + MCP-style envelopes
   └─ coreRpcClient    → HTTP to local openhuman core (JSON-RPC), used with Tauri relay
 ```
+
+### Runtime config precedence
+
+The desktop app does not bake the core RPC URL or the API host into the
+bundle as a hard requirement. At runtime the app resolves them in this order
+(highest first):
+
+1. **Login-screen RPC URL field** — saved via `utils/configPersistence` and
+   restored on next launch. End users configure the sidecar address here, not
+   by hand-editing `config.toml` or `.env` files.
+2. **Tauri `core_rpc_url` command** — the port the bundled sidecar is
+   listening on for this process.
+3. **`VITE_OPENHUMAN_CORE_RPC_URL`** — build-time fallback for development.
+4. The hardcoded `http://127.0.0.1:7788/rpc` default.
+
+Once the RPC handshake succeeds, `services/backendUrl` calls
+`openhuman.config_resolve_api_url` to pull `api_url` (and other safe client
+fields) from the loaded core `Config`. `VITE_BACKEND_URL` is only used as a
+web fallback when the app runs outside Tauri.
+
+Components that need the backend URL should call `useBackendUrl()` (or
+`getBackendUrl()` from non-React code) — they must not import the static
+`BACKEND_URL` constant from `utils/config`, which represents the build-time
+value only.
 
 ## Related docs
 

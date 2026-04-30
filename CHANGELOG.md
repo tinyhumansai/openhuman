@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Core now exposes `openhuman.config_get_client` RPC method returning safe client fields
   - Frontend `coreRpcClient` respects user-configured URL over build-time defaults
   - Unit tests added for URL persistence and validation utilities
+  - Added `useBackendUrl` hook so React components resolve the API URL from
+    the core's `openhuman.config_resolve_api_url` instead of importing the
+    build-time `BACKEND_URL` constant. Migrated `WebhooksDebugPanel` and
+    `TunnelList` off the synchronous fallback, removing the hardcoded
+    `https://api.tinyhumans.ai` short-circuit
+  - Documented the runtime URL precedence in `app/.env.example`,
+    `docs/src/01-architecture.md`, and `docs/src/08-hooks-utils.md`
+  - Added `services/__tests__/backendUrl.test.ts` (resolver happy path,
+    caching, `apiUrl` alias, empty-response refusal) and
+    `hooks/useBackendUrl.test.ts` (resolve, failure, and unmount-safety)
 
 - **DevOps**: Added Sentry debug symbol upload to CI/CD pipeline
   - Rust debug symbols from Tauri build are now automatically uploaded to Sentry on every main branch push
