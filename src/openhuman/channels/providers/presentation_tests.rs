@@ -72,10 +72,12 @@ fn max_segments_respected_without_dropping_content() {
     let result = segment_for_delivery(&text);
     assert!(result.len() <= MAX_SEGMENTS);
     let joined = result.join("\n\n");
-    for i in 0..10 {
+    // Assert the full paragraph body survives, not just the prefix —
+    // a mid-text truncation would slip past a substring-only check.
+    for (i, original) in paras.iter().enumerate() {
         assert!(
-            joined.contains(&format!("Paragraph number {} ", i)),
-            "paragraph {} missing from delivered segments",
+            joined.contains(original),
+            "paragraph {} truncated or missing from delivered segments",
             i
         );
     }

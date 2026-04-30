@@ -261,10 +261,23 @@ fn cap_segments(segments: Vec<String>, max: usize, joiner: &str) -> Vec<String> 
     if max == 0 || segments.len() <= max {
         return segments;
     }
+    let original_len = segments.len();
     let mut iter = segments.into_iter();
     let mut result: Vec<String> = (&mut iter).take(max - 1).collect();
     let tail: Vec<String> = iter.collect();
-    result.push(tail.join(joiner));
+    let tail_count = tail.len();
+    let merged = tail.join(joiner);
+    tracing::debug!(
+        target: "presentation",
+        max,
+        original_len,
+        tail_count,
+        tail_len = merged.len(),
+        joiner_len = joiner.len(),
+        "[presentation:segment] merging {} overflow segments into tail",
+        tail_count
+    );
+    result.push(merged);
     result
 }
 
