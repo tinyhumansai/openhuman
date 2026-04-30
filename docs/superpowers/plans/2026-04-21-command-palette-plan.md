@@ -97,7 +97,7 @@ if (typeof window !== 'undefined') {
 
 ```bash
 # From the repository root:
-yarn --cwd app dev:app
+pnpm --cwd app dev:app
 ```
 
 - [ ] **Step 3: Exercise the target shortcuts**
@@ -145,23 +145,25 @@ git commit -m "plan: remap nav shortcuts to mod+alt+N (Gate 0 CEF capture)"
 
 **Files:**
 - Modify: `app/package.json`
-- Modify: `app/yarn.lock`
+- Modify: `app/pnpm-lock.yaml`
 
 - [ ] **Step 1: Install cmdk and Radix Dialog**
 
+From the repository root:
+
 ```bash
-cd /Users/jwalinshah/projects/openhuman-frontend/app
-yarn add cmdk@^1 @radix-ui/react-dialog@^1
+cd app
+pnpm add cmdk@^1 @radix-ui/react-dialog@^1
 ```
 
 - [ ] **Step 2: Verify install**
 
-Run `yarn --cwd app compile` — no errors. `grep -E '"(cmdk|@radix-ui/react-dialog)"' app/package.json` shows both.
+Run `pnpm --cwd app compile` — no errors. `grep -E '"(cmdk|@radix-ui/react-dialog)"' app/package.json` shows both.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add app/package.json app/yarn.lock
+git add app/package.json app/pnpm-lock.yaml
 git commit -m "chore(deps): add cmdk + @radix-ui/react-dialog for command palette"
 ```
 
@@ -337,7 +339,7 @@ describe('formatShortcut', () => {
 - [ ] **Step 2: Run test, verify fail**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands/__tests__/shortcut.test.ts
+pnpm --cwd app test:unit src/lib/commands/__tests__/shortcut.test.ts
 ```
 
 Expected: FAIL — "Failed to resolve import '../shortcut'".
@@ -444,7 +446,7 @@ export function formatShortcut(parsed: ParsedShortcut, mac: boolean): string[] {
 - [ ] **Step 2: Run tests, verify pass**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands/__tests__/shortcut.test.ts
+pnpm --cwd app test:unit src/lib/commands/__tests__/shortcut.test.ts
 ```
 
 Expected: all PASS.
@@ -580,7 +582,7 @@ describe('registry', () => {
 - [ ] **Step 2: Run test, verify fail**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands/__tests__/registry.test.ts
+pnpm --cwd app test:unit src/lib/commands/__tests__/registry.test.ts
 ```
 
 Expected: FAIL — "Failed to resolve import '../registry'".
@@ -716,7 +718,7 @@ export const registry = createRegistry();
 - [ ] **Step 2: Run tests, verify pass**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands/__tests__/registry.test.ts
+pnpm --cwd app test:unit src/lib/commands/__tests__/registry.test.ts
 ```
 
 Expected: all PASS.
@@ -907,7 +909,7 @@ describe('hotkeyManager', () => {
 - [ ] **Step 2: Run test, verify fail**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands/__tests__/hotkeyManager.test.ts
+pnpm --cwd app test:unit src/lib/commands/__tests__/hotkeyManager.test.ts
 ```
 
 Expected: FAIL — "Failed to resolve import '../hotkeyManager'".
@@ -1071,7 +1073,7 @@ export const hotkeyManager = createHotkeyManager();
 - [ ] **Step 2: Run tests, verify pass**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands/__tests__/hotkeyManager.test.ts
+pnpm --cwd app test:unit src/lib/commands/__tests__/hotkeyManager.test.ts
 ```
 
 Expected: all PASS.
@@ -1209,7 +1211,7 @@ describe('useRegisterAction', () => {
 - [ ] **Step 2: Run, verify fail**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands/__tests__/useHotkey.test.tsx src/lib/commands/__tests__/useRegisterAction.test.tsx
+pnpm --cwd app test:unit src/lib/commands/__tests__/useHotkey.test.tsx src/lib/commands/__tests__/useRegisterAction.test.tsx
 ```
 
 Expected: FAIL — missing modules.
@@ -1323,7 +1325,7 @@ export function useRegisterAction(action: Action): void {
 - [ ] **Step 4: Run tests, verify pass**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands/__tests__/useHotkey.test.tsx src/lib/commands/__tests__/useRegisterAction.test.tsx
+pnpm --cwd app test:unit src/lib/commands/__tests__/useHotkey.test.tsx src/lib/commands/__tests__/useRegisterAction.test.tsx
 ```
 
 Expected: all PASS.
@@ -1396,7 +1398,7 @@ describe('CommandScope', () => {
 - [ ] **Step 2: Run, verify fail**
 
 ```bash
-yarn --cwd app test:unit src/components/commands/__tests__/CommandScope.test.tsx
+pnpm --cwd app test:unit src/components/commands/__tests__/CommandScope.test.tsx
 ```
 
 Expected: FAIL (missing module).
@@ -1446,7 +1448,7 @@ export default function CommandScope({ id, kind = 'page', children }: Props) {
 - [ ] **Step 2: Run tests, verify pass**
 
 ```bash
-yarn --cwd app test:unit src/components/commands/__tests__/CommandScope.test.tsx
+pnpm --cwd app test:unit src/components/commands/__tests__/CommandScope.test.tsx
 ```
 
 Expected: all PASS.
@@ -1499,7 +1501,7 @@ If `boxShadow` already exists in `extend`, append the key; do not replace the ob
 - [ ] **Step 2: Sanity check**
 
 ```bash
-yarn --cwd app compile
+pnpm --cwd app compile
 ```
 
 Expected: 0 errors.
@@ -1587,20 +1589,20 @@ The bash wrapper inverts: the script exits 0 iff `rg` finds NO matches; exits 1 
 Append to the husky pre-push hook (path discovered in Step 1) inside the frontend section:
 
 ```bash
-yarn --cwd app lint:commands-tokens
+pnpm --cwd app lint:commands-tokens
 ```
 
 If there is no existing pre-push hook, skip wiring — surface this at commit time:
 
 ```bash
 # run manually or wire when husky is added:
-yarn --cwd app lint:commands-tokens
+pnpm --cwd app lint:commands-tokens
 ```
 
 - [ ] **Step 4: Run the lint script against empty dir**
 
 ```bash
-yarn --cwd app lint:commands-tokens
+pnpm --cwd app lint:commands-tokens
 ```
 
 Expected: exit 0 (no matches yet, since `components/commands/` holds only `CommandScope.tsx` which uses no Tailwind color classes).
@@ -1667,7 +1669,7 @@ describe('Kbd', () => {
 - [ ] **Step 2: Run, verify fail**
 
 ```bash
-yarn --cwd app test:unit src/components/commands/__tests__/Kbd.test.tsx
+pnpm --cwd app test:unit src/components/commands/__tests__/Kbd.test.tsx
 ```
 
 ---
@@ -1712,7 +1714,7 @@ export default memo(Kbd);
 - [ ] **Step 2: Run tests, verify pass**
 
 ```bash
-yarn --cwd app test:unit src/components/commands/__tests__/Kbd.test.tsx
+pnpm --cwd app test:unit src/components/commands/__tests__/Kbd.test.tsx
 ```
 
 - [ ] **Step 3: Commit**
@@ -1789,7 +1791,7 @@ describe('commandTestUtils', () => {
 - [ ] **Step 3: Run meta-test**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands/__tests__/testUtils.meta.test.ts
+pnpm --cwd app test:unit src/lib/commands/__tests__/testUtils.meta.test.ts
 ```
 
 Expected: PASS.
@@ -1872,7 +1874,7 @@ describe('CommandPalette', () => {
 - [ ] **Step 2: Run, verify fail**
 
 ```bash
-yarn --cwd app test:unit src/components/commands/__tests__/CommandPalette.test.tsx
+pnpm --cwd app test:unit src/components/commands/__tests__/CommandPalette.test.tsx
 ```
 
 ---
@@ -1987,7 +1989,7 @@ export default function CommandPalette({ open, onOpenChange }: Props) {
 - [ ] **Step 2: Run tests, verify pass**
 
 ```bash
-yarn --cwd app test:unit src/components/commands/__tests__/CommandPalette.test.tsx
+pnpm --cwd app test:unit src/components/commands/__tests__/CommandPalette.test.tsx
 ```
 
 - [ ] **Step 3: Commit**
@@ -2069,7 +2071,7 @@ describe('HelpOverlay', () => {
 - [ ] **Step 2: Run, verify fail**
 
 ```bash
-yarn --cwd app test:unit src/components/commands/__tests__/HelpOverlay.test.tsx
+pnpm --cwd app test:unit src/components/commands/__tests__/HelpOverlay.test.tsx
 ```
 
 ---
@@ -2173,7 +2175,7 @@ export default function HelpOverlay({ open, onOpenChange }: Props) {
 - [ ] **Step 2: Run tests, verify pass**
 
 ```bash
-yarn --cwd app test:unit src/components/commands/__tests__/HelpOverlay.test.tsx
+pnpm --cwd app test:unit src/components/commands/__tests__/HelpOverlay.test.tsx
 ```
 
 - [ ] **Step 3: Commit**
@@ -2239,7 +2241,7 @@ describe('registerGlobalActions', () => {
 - [ ] **Step 2: Run, verify fail**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands/__tests__/globalActions.test.tsx
+pnpm --cwd app test:unit src/lib/commands/__tests__/globalActions.test.tsx
 ```
 
 - [ ] **Step 3: Implement globalActions.ts**
@@ -2281,7 +2283,7 @@ export function registerGlobalActions(
 - [ ] **Step 4: Run tests, verify pass**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands/__tests__/globalActions.test.tsx
+pnpm --cwd app test:unit src/lib/commands/__tests__/globalActions.test.tsx
 ```
 
 - [ ] **Step 5: Commit**
@@ -2383,7 +2385,7 @@ describe('CommandProvider', () => {
 - [ ] **Step 2: Run, verify fail**
 
 ```bash
-yarn --cwd app test:unit src/components/commands/__tests__/CommandProvider.test.tsx
+pnpm --cwd app test:unit src/components/commands/__tests__/CommandProvider.test.tsx
 ```
 
 ---
@@ -2474,7 +2476,7 @@ export default function CommandProvider({ children }: Props) {
 - [ ] **Step 2: Run tests, verify pass**
 
 ```bash
-yarn --cwd app test:unit src/components/commands/__tests__/CommandProvider.test.tsx
+pnpm --cwd app test:unit src/components/commands/__tests__/CommandProvider.test.tsx
 ```
 
 - [ ] **Step 3: Commit**
@@ -2492,7 +2494,7 @@ git commit -m "feat(commands): CommandProvider root mount with palette + help"
 - [ ] **Step 1: Run all command tests**
 
 ```bash
-yarn --cwd app test:unit src/lib/commands src/components/commands src/test/commandTestUtils.ts
+pnpm --cwd app test:unit src/lib/commands src/components/commands src/test/commandTestUtils.ts
 ```
 
 Expected: all PASS.
@@ -2500,7 +2502,7 @@ Expected: all PASS.
 - [ ] **Step 2: Typecheck**
 
 ```bash
-yarn --cwd app compile
+pnpm --cwd app compile
 ```
 
 Expected: 0 errors.
@@ -2508,7 +2510,7 @@ Expected: 0 errors.
 - [ ] **Step 3: Lint**
 
 ```bash
-yarn --cwd app lint
+pnpm --cwd app lint
 ```
 
 Expected: 0 errors in `src/lib/commands/` and `src/components/commands/`.
@@ -2516,7 +2518,7 @@ Expected: 0 errors in `src/lib/commands/` and `src/components/commands/`.
 - [ ] **Step 4: Token lint**
 
 ```bash
-yarn --cwd app lint:commands-tokens
+pnpm --cwd app lint:commands-tokens
 ```
 
 Expected: exit 0.
@@ -2596,7 +2598,7 @@ And the matching close:
 - [ ] **Step 2: Typecheck**
 
 ```bash
-yarn --cwd app compile
+pnpm --cwd app compile
 ```
 
 Expected: 0 errors.
@@ -2604,7 +2606,7 @@ Expected: 0 errors.
 - [ ] **Step 3: Smoke test via dev**
 
 ```bash
-yarn --cwd app dev:app
+pnpm --cwd app dev:app
 ```
 
 With the app at `/home` (log in if needed):
@@ -2698,7 +2700,7 @@ describe('Command palette', () => {
 - [ ] **Step 3: Build and run**
 
 ```bash
-yarn --cwd app test:e2e:build
+pnpm --cwd app test:e2e:build
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/command-palette.spec.ts command-palette
 ```
 
@@ -2720,7 +2722,7 @@ git commit -m "test(e2e): command palette happy path + regression probe"
 - [ ] **Step 1: Typecheck**
 
 ```bash
-yarn --cwd app compile
+pnpm --cwd app compile
 ```
 
 Expected: 0 errors.
@@ -2728,7 +2730,7 @@ Expected: 0 errors.
 - [ ] **Step 2: Lint**
 
 ```bash
-yarn --cwd app lint
+pnpm --cwd app lint
 ```
 
 Expected: 0 errors.
@@ -2736,7 +2738,7 @@ Expected: 0 errors.
 - [ ] **Step 3: Token lint**
 
 ```bash
-yarn --cwd app lint:commands-tokens
+pnpm --cwd app lint:commands-tokens
 ```
 
 Expected: exit 0.
@@ -2744,7 +2746,7 @@ Expected: exit 0.
 - [ ] **Step 4: Unit tests with coverage**
 
 ```bash
-yarn --cwd app test:coverage
+pnpm --cwd app test:coverage
 ```
 
 Expected: `src/lib/commands/shortcut.ts`, `registry.ts`, `hotkeyManager.ts` each ≥95% line, ≥90% branch. Components + hooks ≥80% line.
@@ -2752,7 +2754,7 @@ Expected: `src/lib/commands/shortcut.ts`, `registry.ts`, `hotkeyManager.ts` each
 - [ ] **Step 5: Rust drift check**
 
 ```bash
-yarn --cwd app rust:format:check && yarn --cwd app rust:check
+pnpm --cwd app rust:format:check && pnpm --cwd app rust:check
 ```
 
 Expected: 0 errors.
@@ -2762,7 +2764,7 @@ Expected: 0 errors.
 - [ ] **Step 1: Dev run**
 
 ```bash
-yarn --cwd app dev:app
+pnpm --cwd app dev:app
 ```
 
 - [ ] **Step 2: Smoke checklist**
@@ -2796,7 +2798,7 @@ Expected files:
 - `app/tailwind.config.js`
 - `app/src/index.css`
 - `app/src/App.tsx`
-- `app/package.json`, `app/yarn.lock`
+- `app/package.json`, `app/pnpm-lock.yaml`
 - husky hook file (if applicable)
 - `docs/superpowers/specs/2026-04-21-command-palette-design.md`
 - `docs/superpowers/plans/2026-04-21-command-palette-plan.md`
@@ -2816,7 +2818,7 @@ gh pr create --title "feat(commands): ⌘K palette + global keyboard shortcut sy
 - No existing visuals touched. No Redux changes.
 
 ## Test plan
-- [x] Unit: `yarn test:coverage` (≥95% on core, ≥80% on UI)
+- [x] Unit: `pnpm test:coverage` (≥95% on core, ≥80% on UI)
 - [x] E2E: `bash app/scripts/e2e-run-spec.sh test/e2e/specs/command-palette.spec.ts command-palette`
 - [x] Manual smoke + a11y (VoiceOver, reduced-motion)
 - [x] Gate 0 platform verify (⌘1–⌘4 not captured by CEF)

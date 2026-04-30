@@ -31,6 +31,7 @@ interface AppStateSnapshotResult {
   sessionToken: string | null;
   currentUser: User | null;
   onboardingCompleted: boolean;
+  chatOnboardingCompleted: boolean;
   analyticsEnabled: boolean;
   localState: {
     encryptionKey?: string | null;

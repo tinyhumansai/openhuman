@@ -10,9 +10,13 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
+use std::sync::Arc;
+
+use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::source_tree::types::TreeKind;
 
 pub mod inert;
+pub mod llm;
 
 /// One contribution being folded — either a raw leaf (chunk) at L0→L1, or
 /// a lower-level summary at L_n→L_{n+1}.
@@ -59,4 +63,67 @@ pub trait Summariser: Send + Sync {
         inputs: &[SummaryInput],
         ctx: &SummaryContext<'_>,
     ) -> Result<SummaryOutput>;
+}
+
+/// Build the summariser implementation driven by the workspace's
+/// [`Config`]. When `memory_tree.llm_summariser_endpoint` and
+/// `llm_summariser_model` are both set, return the Ollama-backed
+/// [`llm::LlmSummariser`] (which itself soft-falls-back to inert on
+/// transport failure). Otherwise return [`inert::InertSummariser`].
+///
+/// Returned as `Arc<dyn Summariser>` so the ingest pipeline can pass it
+/// by reference to `append_leaf` and `route_leaf_to_topic_trees`
+/// without threading a generic type parameter through every caller.
+pub fn build_summariser(config: &Config) -> Arc<dyn Summariser> {
+    let endpoint = config
+        .memory_tree
+        .llm_summariser_endpoint
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let model = config
+        .memory_tree
+        .llm_summariser_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let (Some(endpoint), Some(model)) = (endpoint, model) else {
+        log::debug!(
+            "[source_tree::summariser] llm_summariser not configured — using InertSummariser"
+        );
+        return Arc::new(inert::InertSummariser::new());
+    };
+
+    // 120s default — matches `LlmSummariserConfig::default()`. Lets a
+    // small/medium local model finish the seal-budget summary on a
+    // cold-loaded weight cache without spurious timeouts.
+    let timeout_ms = config
+        .memory_tree
+        .llm_summariser_timeout_ms
+        .unwrap_or(120_000);
+
+    let cfg = llm::LlmSummariserConfig {
+        endpoint: endpoint.to_string(),
+        model: model.to_string(),
+        timeout: std::time::Duration::from_millis(timeout_ms),
+    };
+    match llm::LlmSummariser::new(cfg) {
+        Ok(s) => {
+            log::info!(
+                "[source_tree::summariser] using LlmSummariser endpoint={} model={} timeout_ms={}",
+                endpoint,
+                model,
+                timeout_ms
+            );
+            Arc::new(s)
+        }
+        Err(err) => {
+            log::warn!(
+                "[source_tree::summariser] LlmSummariser construction failed: {err:#} — \
+                 falling back to InertSummariser"
+            );
+            Arc::new(inert::InertSummariser::new())
+        }
+    }
 }

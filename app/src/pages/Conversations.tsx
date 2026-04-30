@@ -1,15 +1,18 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
+import PillTabBar from '../components/PillTabBar';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
+import { isWelcomeLocked } from '../lib/coreState/store';
+import { useCoreState } from '../providers/CoreStateProvider';
 import { chatCancel, chatSend, useRustChat } from '../services/chatService';
 import {
   beginInferenceTurn,
@@ -22,7 +25,6 @@ import {
   addMessageLocal,
   createNewThread,
   deleteThread,
-  fetchSuggestedQuestions,
   loadThreadMessages,
   loadThreads,
   persistReaction,
@@ -32,6 +34,8 @@ import {
 import type { ConfirmationModal as ConfirmationModalType } from '../types/intelligence';
 import type { ThreadMessage } from '../types/thread';
 import { splitAgentMessageIntoBubbles } from '../utils/agentMessageBubbles';
+import { BILLING_DASHBOARD_URL } from '../utils/links';
+import { openUrl } from '../utils/openUrl';
 import {
   isTauri,
   notifyOverlaySttState,
@@ -43,6 +47,7 @@ import {
 } from '../utils/tauriCommands';
 import { formatTimelineEntry } from '../utils/toolTimelineFormatting';
 import { AgentMessageBubble, BubbleMarkdown } from './conversations/components/AgentMessageBubble';
+import { CitationChips, type MessageCitation } from './conversations/components/CitationChips';
 import { LimitPill } from './conversations/components/LimitPill';
 import { ToolTimelineBlock } from './conversations/components/ToolTimelineBlock';
 import {
@@ -76,6 +81,39 @@ interface ConversationsProps {
   variant?: 'page' | 'sidebar';
 }
 
+export function isComposerInteractionBlocked(args: {
+  activeThreadId: string | null;
+  welcomePending: boolean;
+  rustChat: boolean;
+}): boolean {
+  return !args.rustChat || Boolean(args.activeThreadId) || args.welcomePending;
+}
+
+function WelcomeThinkingTypewriter() {
+  const text = 'Your agent is thinking...';
+  const [visibleChars, setVisibleChars] = useState(0);
+
+  useEffect(() => {
+    const isComplete = visibleChars >= text.length;
+    const delayMs = isComplete ? 950 : 42;
+    const timeoutId = window.setTimeout(() => {
+      setVisibleChars(current => (current >= text.length ? 0 : current + 1));
+    }, delayMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [text.length, visibleChars]);
+
+  return (
+    <p className="flex items-center text-sm text-stone-600 font-mono tracking-tight">
+      <span>{text.slice(0, visibleChars)}</span>
+      <span
+        aria-hidden="true"
+        className="ml-0.5 inline-block h-4 w-px bg-stone-400 animate-pulse"
+      />
+    </p>
+  );
+}
+
 const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
@@ -85,10 +123,25 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     messages,
     isLoadingMessages,
     messagesError,
-    suggestedQuestions,
-    isLoadingSuggestions,
     activeThreadId,
+    welcomeThreadId,
   } = useAppSelector(state => state.thread);
+
+  const { snapshot } = useCoreState();
+  const welcomeLocked = isWelcomeLocked(snapshot);
+  // While the proactive welcome agent is running and hasn't published its
+  // first message yet, hide the composer (and a few other non-message
+  // chrome bits) so the user just sees the "Your agent is thinking..."
+  // loader. Flips off the moment the first agent message arrives.
+  const welcomePending =
+    !!welcomeThreadId && selectedThreadId === welcomeThreadId && messages.length === 0;
+  const chatOnboardingCompleted = snapshot.chatOnboardingCompleted;
+  const previousChatOnboardingCompletedRef = useRef<boolean | null>(null);
+  // Guard against the mount-time `loadThreads()` promise resolving AFTER
+  // the welcome-lock unlock transition creates a fresh thread. Without
+  // this, the stale `.then(...)` would re-select the old welcome thread
+  // and clobber the auto-created one (#883 CodeRabbit feedback).
+  const skipInitialThreadSelectionRef = useRef(false);
 
   const [showSidebar, setShowSidebar] = useState(true);
   const [inputValue, setInputValue] = useState('');
@@ -99,6 +152,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
   const [isPlayingReply, setIsPlayingReply] = useState(false);
+  const [selectedLabel, setSelectedLabel] = useState<string>('all');
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
   const socketStatus = useAppSelector(selectSocketStatus);
@@ -176,7 +230,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     void dispatch(loadThreads())
       .unwrap()
       .then(data => {
-        if (cancelled) return;
+        if (cancelled || skipInitialThreadSelectionRef.current) return;
         if (data.threads.length > 0) {
           const mostRecent = data.threads[0];
           dispatch(setSelectedThread(mostRecent.id));
@@ -198,11 +252,27 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     }
   }, [selectedThreadId, dispatch]);
 
+  // Welcome lockdown unlock (#883) — when `chatOnboardingCompleted`
+  // transitions from `false` → `true` (the welcome agent just called
+  // `complete_onboarding(action: "complete")`), open a fresh thread so
+  // the user starts their first "real" conversation with the orchestrator
+  // instead of continuing the welcome thread. Ref-tracked one-shot so
+  // the 2s snapshot poll cannot re-fire this.
   useEffect(() => {
-    if (selectedThreadId && messages.length === 0) {
-      dispatch(fetchSuggestedQuestions(selectedThreadId));
+    const prev = previousChatOnboardingCompletedRef.current;
+    previousChatOnboardingCompletedRef.current = chatOnboardingCompleted;
+    if (prev === false && chatOnboardingCompleted === true) {
+      // Signal the mount-time `loadThreads()` promise to bail if it is
+      // still pending — otherwise its stale resolution would overwrite
+      // our freshly created thread selection.
+      skipInitialThreadSelectionRef.current = true;
+      console.debug('[welcome-lock] chat onboarding completed — opening new thread');
+      void handleCreateNewThread();
     }
-  }, [selectedThreadId, messages.length, dispatch]);
+    // handleCreateNewThread is stable for the component lifetime (only
+    // uses `dispatch`); the ref guards against duplicate fires.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatOnboardingCompleted]);
 
   const location = useLocation();
   const { containerRef: messagesContainerRef, endRef: messagesEndRef } = useStickToBottom(
@@ -371,6 +441,13 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const handleSlashCommand = (command: string): boolean => {
     const cmd = command.toLowerCase();
     if (cmd === '/new' || cmd === '/clear') {
+      // Welcome lockdown (#883) — consume the command so it is not sent
+      // to the agent, but skip thread creation/reset so the user cannot
+      // escape the welcome conversation via `/new` or `/clear`.
+      if (welcomeLocked) {
+        setInputValue('');
+        return true;
+      }
       setInputValue('');
       void handleCreateNewThread();
       return true;
@@ -382,7 +459,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     const normalized = text ?? inputValue;
     const trimmed = normalized.trim();
 
-    if (!trimmed || !selectedThreadId || composerBlocked) return;
+    if (!trimmed || !selectedThreadId || composerInteractionBlocked) return;
 
     if (handleSlashCommand(trimmed)) return;
 
@@ -403,11 +480,9 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       return;
     }
 
-    if (composerBlocked) return;
-
     const sendingThreadId = selectedThreadId;
     const userMessage: ThreadMessage = {
-      id: `msg_${Date.now()}_${Math.random()}`,
+      id: `msg_${globalThis.crypto.randomUUID()}`,
       content: trimmed,
       type: 'text',
       extraMetadata: {},
@@ -693,6 +768,9 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const activeSubagentTimelineEntry = selectedThreadToolTimeline.find(
     entry => entry.status === 'running' && entry.name.startsWith('subagent:')
   );
+  const activeToolTimelineEntry = [...selectedThreadToolTimeline]
+    .reverse()
+    .find(entry => entry.status === 'running' && !entry.name.startsWith('subagent:'));
   const selectedInferenceStatus = selectedThreadId
     ? (inferenceStatusByThread[selectedThreadId] ?? null)
     : null;
@@ -700,9 +778,14 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     ? (streamingAssistantByThread[selectedThreadId] ?? null)
     : null;
   const inlineCompletionSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
-  // composerBlocked: any thread is in-flight (blocks ALL sends/voice actions).
+  // Blocks all composer interaction while a turn is in-flight, the
+  // proactive welcome opener is pending, or Rust chat is unavailable.
   // isSending: the *selected* thread is in-flight (drives selected-thread UI only).
-  const composerBlocked = Boolean(activeThreadId);
+  const composerInteractionBlocked = isComposerInteractionBlocked({
+    activeThreadId,
+    welcomePending,
+    rustChat,
+  });
   const isSending = Boolean(
     selectedThreadId &&
     (inferenceTurnLifecycleByThread[selectedThreadId] === 'started' ||
@@ -711,9 +794,38 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const shouldRenderTimelineBeforeLatestAgentMessage =
     selectedThreadToolTimeline.length > 0 && !isSending && Boolean(latestVisibleAgentMessage);
 
-  const sortedThreads = [...threads].sort(
-    (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
-  );
+  const filteredThreads = useMemo(() => {
+    return threads.filter(t => {
+      if (selectedLabel === 'all') return true;
+      return t.labels?.includes(selectedLabel);
+    });
+  }, [threads, selectedLabel]);
+
+  const sortedThreads = useMemo(() => {
+    return [...filteredThreads].sort(
+      (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+    );
+  }, [filteredThreads]);
+
+  const allLabels = useMemo(() => {
+    return Array.from(new Set(threads.flatMap(t => t.labels ?? []))).sort();
+  }, [threads]);
+
+  // Fixed tab set so categories don't disappear when empty and the active
+  // filter state remains unambiguous regardless of what threads exist.
+  const labelTabs = [
+    { label: 'All', value: 'all' },
+    { label: 'Work', value: 'work' },
+    { label: 'Briefing', value: 'briefing' },
+    { label: 'Notification', value: 'notification' },
+  ];
+
+  // Reset stale selectedLabel when the last thread carrying that label is deleted.
+  useEffect(() => {
+    if (selectedLabel !== 'all' && !allLabels.includes(selectedLabel)) {
+      setSelectedLabel('all');
+    }
+  }, [allLabels, selectedLabel]);
 
   const isSidebar = variant === 'sidebar';
 
@@ -725,8 +837,10 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
           : 'h-full relative z-10 flex justify-center overflow-hidden p-4 pt-6 gap-3'
       }>
       {/* Thread sidebar — only shown in page mode (when Conversations itself
-          is a top-level route, not embedded as a sidebar in another page). */}
-      {!isSidebar && showSidebar && (
+          is a top-level route, not embedded as a sidebar in another page).
+          Suppressed during welcome lockdown (#883) — the user must stay in
+          the welcome conversation. */}
+      {!isSidebar && showSidebar && !welcomeLocked && (
         <div className="w-64 flex-shrink-0 flex flex-col bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100">
             <h2 className="text-sm font-semibold text-stone-700">Threads</h2>
@@ -744,9 +858,19 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
               </svg>
             </button>
           </div>
+          <div className="px-4 py-2 border-b border-stone-50">
+            <PillTabBar
+              items={labelTabs}
+              selected={selectedLabel}
+              onChange={setSelectedLabel}
+              containerClassName="flex gap-1 overflow-x-auto py-1 scrollbar-hide"
+            />
+          </div>
           <div className="flex-1 overflow-y-auto">
             {sortedThreads.length === 0 ? (
-              <p className="px-4 py-6 text-xs text-stone-400 text-center">No threads yet</p>
+              <p className="px-4 py-6 text-xs text-stone-400 text-center">
+                {selectedLabel === 'all' ? 'No threads yet' : `No "${selectedLabel}" threads`}
+              </p>
             ) : (
               sortedThreads.map(thread => (
                 <div
@@ -836,32 +960,38 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             : 'flex-1 flex flex-col min-w-0 max-w-2xl bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden'
         }>
         {/* Chat header — only shown in page mode; the sidebar embed uses the
-            parent page's chrome instead. */}
-        {!isSidebar && (
+            parent page's chrome instead. Hidden entirely during welcome
+            lockdown (#883) so the onboarding chat is just the conversation
+            with no chrome around it. */}
+        {!isSidebar && !welcomeLocked && (
           <div className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100">
-            <button
-              onClick={() => setShowSidebar(prev => !prev)}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
-              title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}>
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 6h16M4 12h16M4 18h16"
-                />
-              </svg>
-            </button>
+            {!welcomeLocked && (
+              <button
+                onClick={() => setShowSidebar(prev => !prev)}
+                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
+                title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6h16M4 12h16M4 18h16"
+                  />
+                </svg>
+              </button>
+            )}
             <h3 className="text-sm font-medium text-stone-700 truncate flex-1">
               {threads.find(t => t.id === selectedThreadId)?.title ?? 'Select a thread'}
             </h3>
             <TokenUsagePill />
-            <button
-              onClick={() => void handleCreateNewThread()}
-              className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
-              title="New thread (/new)">
-              + New
-            </button>
+            {!welcomeLocked && (
+              <button
+                onClick={() => void handleCreateNewThread()}
+                className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
+                title="New thread (/new)">
+                + New
+              </button>
+            )}
           </div>
         )}
         <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-5 py-4 bg-[#f6f6f6]">
@@ -909,7 +1039,8 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                     )}
                   <div
                     className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className="relative w-full md:max-w-[75%]">
+                    <div
+                      className={`relative ${msg.sender === 'user' ? 'w-fit max-w-[75%]' : 'w-full md:max-w-[75%]'}`}>
                       {msg.sender === 'agent' ? (
                         <div className="space-y-1">
                           {splitAgentMessageIntoBubbles(msg.content).map(
@@ -932,6 +1063,21 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                               );
                             }
                           )}
+                          {(() => {
+                            const raw = msg.extraMetadata?.citations;
+                            if (!Array.isArray(raw)) return null;
+                            const citations = raw.filter(
+                              (item): item is MessageCitation =>
+                                typeof item === 'object' &&
+                                item !== null &&
+                                typeof (item as MessageCitation).id === 'string' &&
+                                typeof (item as MessageCitation).key === 'string' &&
+                                typeof (item as MessageCitation).snippet === 'string' &&
+                                typeof (item as MessageCitation).timestamp === 'string'
+                            );
+                            if (citations.length === 0) return null;
+                            return <CitationChips citations={citations} />;
+                          })()}
                           {latestVisibleMessage?.id === msg.id && (
                             <p className="px-1 text-[10px] text-stone-400">
                               {formatRelativeTime(msg.createdAt)}
@@ -939,7 +1085,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                           )}
                         </div>
                       ) : (
-                        <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md">
+                        <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md break-words overflow-hidden">
                           <BubbleMarkdown content={msg.content} tone="user" />
                           {latestVisibleMessage?.id === msg.id && (
                             <p className="mt-1 text-[10px] text-white/60">
@@ -1113,7 +1259,16 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                         ? `Thinking (iteration ${selectedInferenceStatus.iteration})...`
                         : 'Thinking...')}
                     {selectedInferenceStatus.phase === 'tool_use' &&
-                      `Running ${selectedInferenceStatus.activeTool ?? 'tool'}...`}
+                      `${
+                        formatTimelineEntry(
+                          activeToolTimelineEntry ?? {
+                            id: 'active-tool',
+                            name: selectedInferenceStatus.activeTool ?? 'tool',
+                            round: selectedInferenceStatus.iteration,
+                            status: 'running',
+                          }
+                        ).title
+                      }...`}
                     {selectedInferenceStatus.phase === 'subagent' &&
                       `${
                         formatTimelineEntry(
@@ -1146,6 +1301,19 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
               )}
               <div ref={messagesEndRef} />
             </div>
+          ) : welcomeThreadId && selectedThreadId === welcomeThreadId ? (
+            // Welcome thread, no messages yet — the proactive welcome agent
+            // is running in the background. Show a friendly loader until
+            // the first agent message lands (which flips us into the
+            // `hasVisibleMessages` branch above).
+            <div className="flex-1 flex flex-col items-center justify-center h-full gap-3">
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
+                <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
+                <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:300ms]" />
+              </div>
+              <WelcomeThinkingTypewriter />
+            </div>
           ) : (
             <div className="flex-1 flex items-center justify-center h-full">
               <p className="text-sm text-stone-600">No messages yet</p>
@@ -1153,141 +1321,132 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
           )}
         </div>
 
-        {!hasVisibleMessages && suggestedQuestions.length > 0 && !isLoadingSuggestions && (
-          <div className="flex-shrink-0 px-4 py-3">
-            <div className="flex gap-2 overflow-x-auto scrollbar-hide">
-              {suggestedQuestions.map((s, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => {
-                    void handleSendMessage(s.text);
-                  }}
-                  disabled={isSending || !rustChat}
-                  className="flex-shrink-0 px-3 py-1.5 rounded-lg text-[12px] whitespace-nowrap bg-white text-stone-500 border border-stone-200 hover:bg-stone-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                  {s.text}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         <div className="flex-shrink-0 border-t border-stone-200 px-4 py-3">
-          {isNearLimit &&
-            !isAtLimit &&
-            isFreeTier &&
-            shouldShowBanner('conversations-warning', 24 * 60 * 60 * 1000) && (
-              <div className="mb-3">
-                <UpsellBanner
-                  variant="warning"
-                  title="Approaching usage limit"
-                  message={`You've used ${Math.round(Math.max(usagePct10h, usagePct7d) * 100)}% of your inference budget. Upgrade for higher limits.`}
-                  ctaLabel="Upgrade"
-                  onCtaClick={() => navigate('/settings/billing')}
-                  dismissible
-                  onDismiss={() => dismissBanner('conversations-warning')}
-                />
-              </div>
-            )}
-          {teamUsage && (shouldShowBudgetCompletedMessage || isRateLimited) && (
-            <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <svg
-                  className="w-4 h-4 text-coral-400 flex-shrink-0"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                  />
-                </svg>
-                <p className="text-xs text-coral-600 truncate">
-                  {shouldShowBudgetCompletedMessage
-                    ? teamUsage.cycleBudgetUsd > 0
-                      ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
-                      : 'Your included budget is complete. Add credits or upgrade to continue.'
-                    : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
-                </p>
-              </div>
-              {shouldShowBudgetCompletedMessage && (
-                <button
-                  onClick={() => navigate('/settings/billing')}
-                  className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
-                  Top Up
-                </button>
-              )}
-            </div>
-          )}
-
-          <div className="flex items-center justify-end gap-2 mb-2">
-            {(isLoadingBudget || teamUsage) && (
-              <div className="relative group">
-                {teamUsage ? (
-                  <div className="flex items-center gap-2">
-                    {!teamUsage.bypassCycleLimit && (
-                      <LimitPill
-                        label="5h"
-                        usedPct={
-                          teamUsage.fiveHourCapUsd > 0
-                            ? Math.min(1, teamUsage.cycleLimit5hr / teamUsage.fiveHourCapUsd)
-                            : 0
-                        }
-                      />
-                    )}
-                    <LimitPill
-                      label="7d"
-                      usedPct={
-                        teamUsage.cycleBudgetUsd > 0
-                          ? Math.min(
-                              1,
-                              (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) /
-                                teamUsage.cycleBudgetUsd
-                            )
-                          : 0
-                      }
+          {!welcomeLocked && !welcomePending && (
+            <>
+              {isNearLimit &&
+                !isAtLimit &&
+                isFreeTier &&
+                shouldShowBanner('conversations-warning', 24 * 60 * 60 * 1000) && (
+                  <div className="mb-3">
+                    <UpsellBanner
+                      variant="warning"
+                      title="Approaching usage limit"
+                      message={`You've used ${Math.round(Math.max(usagePct10h, usagePct7d) * 100)}% of your inference budget. Upgrade for higher limits.`}
+                      ctaLabel="Upgrade"
+                      onCtaClick={() => {
+                        void openUrl(BILLING_DASHBOARD_URL);
+                      }}
+                      dismissible
+                      onDismiss={() => dismissBanner('conversations-warning')}
                     />
                   </div>
-                ) : (
-                  <span className="text-[10px] text-stone-400 animate-pulse">loading…</span>
                 )}
-                {teamUsage && (
-                  <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
-                    <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
-                      {!teamUsage.bypassCycleLimit && (
-                        <div className="flex items-center justify-between gap-4">
-                          <span className="text-stone-400">5-hour limit</span>
-                          <span>
-                            ${(teamUsage.cycleLimit5hr ?? 0).toFixed(2)} / $
-                            {(teamUsage.fiveHourCapUsd ?? 0).toFixed(2)}
-                            {teamUsage.fiveHourResetsAt && (
-                              <span className="text-stone-400 ml-1">
-                                — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="text-stone-400">Weekly limit</span>
-                        <span>
-                          ${(teamUsage.remainingUsd ?? 0).toFixed(2)} / $
-                          {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} left
-                          {teamUsage.cycleEndsAt && (
-                            <span className="text-stone-400 ml-1">
-                              — resets {formatResetTime(teamUsage.cycleEndsAt)}
-                            </span>
-                          )}
-                        </span>
+              {teamUsage && (shouldShowBudgetCompletedMessage || isRateLimited) && (
+                <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <svg
+                      className="w-4 h-4 text-coral-400 flex-shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                      />
+                    </svg>
+                    <p className="text-xs text-coral-600 truncate">
+                      {shouldShowBudgetCompletedMessage
+                        ? teamUsage.cycleBudgetUsd > 0
+                          ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
+                          : 'Your included budget is complete. Add credits or upgrade to continue.'
+                        : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
+                    </p>
+                  </div>
+                  {shouldShowBudgetCompletedMessage && (
+                    <button
+                      onClick={() => {
+                        void openUrl(BILLING_DASHBOARD_URL);
+                      }}
+                      className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
+                      Top Up
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Quota / usage pills — hidden during welcome lockdown so the
+                  onboarding chat doesn't surface billing affordances. */}
+              <div className="flex items-center justify-end gap-2 mb-2">
+                {(isLoadingBudget || teamUsage) && (
+                  <div className="relative group">
+                    {teamUsage ? (
+                      <div className="flex items-center gap-2">
+                        {!teamUsage.bypassCycleLimit && (
+                          <LimitPill
+                            label="5h"
+                            usedPct={
+                              teamUsage.fiveHourCapUsd > 0
+                                ? Math.min(1, teamUsage.cycleLimit5hr / teamUsage.fiveHourCapUsd)
+                                : 0
+                            }
+                          />
+                        )}
+                        <LimitPill
+                          label="7d"
+                          usedPct={
+                            teamUsage.cycleBudgetUsd > 0
+                              ? Math.min(
+                                  1,
+                                  (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) /
+                                    teamUsage.cycleBudgetUsd
+                                )
+                              : 0
+                          }
+                        />
                       </div>
-                    </div>
+                    ) : (
+                      <span className="text-[10px] text-stone-400 animate-pulse">loading…</span>
+                    )}
+                    {teamUsage && (
+                      <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
+                        <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
+                          {!teamUsage.bypassCycleLimit && (
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="text-stone-400">5-hour limit</span>
+                              <span>
+                                ${(teamUsage.cycleLimit5hr ?? 0).toFixed(2)} / $
+                                {(teamUsage.fiveHourCapUsd ?? 0).toFixed(2)}
+                                {teamUsage.fiveHourResetsAt && (
+                                  <span className="text-stone-400 ml-1">
+                                    — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-stone-400">Weekly limit</span>
+                            <span>
+                              ${(teamUsage.remainingUsd ?? 0).toFixed(2)} / $
+                              {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} left
+                              {teamUsage.cycleEndsAt && (
+                                <span className="text-stone-400 ml-1">
+                                  — resets {formatResetTime(teamUsage.cycleEndsAt)}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-          </div>
+            </>
+          )}
 
           {sendError && (
             <div className="flex items-center justify-between mb-2">
@@ -1331,7 +1490,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                   onKeyDown={handleInputKeyDown}
                   placeholder="Type a message..."
                   rows={1}
-                  disabled={isSending || !rustChat}
+                  disabled={composerInteractionBlocked}
                   className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 placeholder:text-stone-400 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
@@ -1340,7 +1499,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                 onClick={() => {
                   void handleSendMessage();
                 }}
-                disabled={!inputValue.trim() || isSending || !rustChat}
+                disabled={!inputValue.trim() || composerInteractionBlocked}
                 className="w-10 h-10 flex items-center justify-center rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0">
                 {isSending ? (
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">

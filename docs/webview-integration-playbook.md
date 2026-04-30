@@ -28,8 +28,8 @@ integrations can follow the same pattern and debug the same way.
            TinyHumans Neocortex memory (chunked + embedded + graph)
 ```
 
-Only ① requires the `cef` feature — the wry runtime has no remote debugging
-port. Gate scanner spawn with `#[cfg(feature = "cef")]`.
+Step ① relies on CEF's remote debugging port (CEF is the only supported
+runtime for this app).
 
 ---
 
@@ -37,7 +37,7 @@ port. Gate scanner spawn with `#[cfg(feature = "cef")]`.
 
 ### 0. Pre-work: find stable DOM / IDB hooks
 
-Open the site in the CEF webview (any build with `yarn dev:cef`), then open
+Open the site in the CEF webview (any build with `pnpm dev:cef`), then open
 DevTools at <http://localhost:9222>. Look for:
 
 - **Stable selectors** — `data-*` attributes, `role`, `aria-label`. CSS
@@ -103,7 +103,7 @@ if let Ok(account_id) = std::env::var("OPENHUMAN_DEV_AUTO_INSTAGRAM") {
 Then during development:
 
 ```bash
-OPENHUMAN_DEV_AUTO_INSTAGRAM=<account-uuid> yarn dev:cef >/tmp/oh-cef.log 2>&1 &
+OPENHUMAN_DEV_AUTO_INSTAGRAM=<account-uuid> pnpm dev:cef >/tmp/oh-cef.log 2>&1 &
 ```
 
 The account UUID is stable across runs so the webview profile persists
@@ -238,7 +238,7 @@ DOM scraping via `Runtime.evaluate` needs none of the above.
 
 | Problem                                 | Cause                                                        | Fix                                                      |
 | --------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
-| Scanner never runs                      | Wrong Cargo feature                                          | Use `yarn dev:cef`, not `yarn dev`                       |
+| Scanner never runs                      | App not started via the CEF dev script                       | Use `pnpm dev:cef`                                       |
 | `helloCount: 0` despite wrapper running | CSP blocks `blob:` workers                                   | Skip the workers entirely — use DOM scrape               |
 | 10s-per-worker timeouts                 | CEF worker targets don't answer CDP Runtime calls            | Don't probe workers                                      |
 | `patched=N, appended=N` duplicates      | DOM row indexed twice, only one key removed on patch         | Track consumed rows by a stable `dataId`, not by map key |

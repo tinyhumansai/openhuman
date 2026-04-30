@@ -2,6 +2,7 @@ import debug from 'debug';
 import { useCallback, useEffect, useRef } from 'react';
 
 import { requestUsageRefresh } from '../hooks/usageRefresh';
+import { useRefetchSnapshotOnTurnEnd } from '../hooks/useRefetchSnapshotOnTurnEnd';
 import {
   type ChatInferenceStartEvent,
   type ChatIterationStartEvent,
@@ -37,12 +38,13 @@ import {
   setActiveThread,
   setSelectedThread,
 } from '../store/threadSlice';
+import { IS_PROD } from '../utils/config';
 import { formatTimelineEntry, promptFromArgsBuffer } from '../utils/toolTimelineFormatting';
 
 const logChatRuntime = debug('openhuman:chat-runtime');
 
 function rtLog(message: string, fields?: Record<string, string | number | null | undefined>) {
-  if (import.meta.env.PROD) return;
+  if (IS_PROD) return;
   if (fields && Object.keys(fields).length > 0) {
     const parts = Object.entries(fields)
       .filter(([, v]) => v !== undefined && v !== '' && v !== null)
@@ -55,6 +57,7 @@ function rtLog(message: string, fields?: Record<string, string | number | null |
 
 const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   const dispatch = useAppDispatch();
+  const { refetch: refetchSnapshot } = useRefetchSnapshotOnTurnEnd();
   const socketStatus = useAppSelector(selectSocketStatus);
   const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
   const inferenceStatusByThread = useAppSelector(
@@ -386,7 +389,11 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         )
           return;
         void dispatch(
-          addInferenceResponse({ content: segmentText(event), threadId: event.thread_id })
+          addInferenceResponse({
+            content: segmentText(event),
+            threadId: event.thread_id,
+            extraMetadata: event.citations?.length ? { citations: event.citations } : undefined,
+          })
         );
       },
       onTextDelta: event => {
@@ -524,7 +531,13 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           void (async () => {
             try {
               await dispatch(
-                addInferenceResponse({ content: event.full_response, threadId: event.thread_id })
+                addInferenceResponse({
+                  content: event.full_response,
+                  threadId: event.thread_id,
+                  extraMetadata: event.citations?.length
+                    ? { citations: event.citations }
+                    : undefined,
+                })
               ).unwrap();
               void dispatch(
                 generateThreadTitleIfNeeded({
@@ -545,6 +558,13 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
               reason: 'chat_done',
             });
             requestUsageRefresh();
+            rtLog('snapshot_refetch_queued', {
+              thread: event.thread_id,
+              request: event.request_id,
+              reason: 'chat_done',
+              path: 'proactive',
+            });
+            refetchSnapshot();
             dispatch(endInferenceTurn({ threadId: event.thread_id }));
             dispatch(setActiveThread(null));
           })();
@@ -563,6 +583,13 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           reason: 'chat_done',
         });
         requestUsageRefresh();
+        rtLog('snapshot_refetch_queued', {
+          thread: event.thread_id,
+          request: event.request_id,
+          reason: 'chat_done',
+          path: 'ordinary',
+        });
+        refetchSnapshot();
         dispatch(endInferenceTurn({ threadId: event.thread_id }));
         dispatch(setActiveThread(null));
       },
@@ -625,7 +652,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       rtLog('unsubscribe_chat_events');
       cleanup();
     };
-  }, [dispatch, resolveVisibleThreadForProactive, socketStatus]);
+  }, [dispatch, resolveVisibleThreadForProactive, socketStatus, refetchSnapshot]);
 
   return <>{children}</>;
 };

@@ -158,13 +158,30 @@ fn assemble_recap(covering: &[&SummaryNode], level: u32) -> RecapOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::memory::tree::content_store;
     use crate::openhuman::memory::tree::global_tree::digest::{end_of_day_digest, DigestOutcome};
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf, LeafRef};
+    use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+        append_leaf, LabelStrategy, LeafRef,
+    };
     use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
     use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use tempfile::TempDir;
+
+    fn stage_test_chunks(cfg: &Config, chunks: &[Chunk]) {
+        let content_root = cfg.memory_tree_content_root();
+        std::fs::create_dir_all(&content_root).expect("create content_root for test");
+        let staged = content_store::stage_chunks(&content_root, chunks)
+            .expect("stage_chunks for test chunks");
+        crate::openhuman::memory::tree::store::with_connection(cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            crate::openhuman::memory::tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .expect("persist staged chunk pointers");
+    }
 
     fn test_config() -> (TempDir, Config) {
         let tmp = TempDir::new().unwrap();
@@ -202,7 +219,7 @@ mod tests {
         let tree = get_or_create_source_tree(cfg, scope).unwrap();
         let summariser = InertSummariser::new();
         let c1 = Chunk {
-            id: chunk_id(SourceKind::Chat, scope, 0),
+            id: chunk_id(SourceKind::Chat, scope, 0, "test-content"),
             content: format!("c1-{scope}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
@@ -216,9 +233,10 @@ mod tests {
             token_count: 6_000,
             seq_in_source: 0,
             created_at: ts,
+            partial_message: false,
         };
         let c2 = Chunk {
-            id: chunk_id(SourceKind::Chat, scope, 1),
+            id: chunk_id(SourceKind::Chat, scope, 1, "test-content"),
             content: format!("c2-{scope}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
@@ -232,8 +250,10 @@ mod tests {
             token_count: 6_000,
             seq_in_source: 1,
             created_at: ts,
+            partial_message: false,
         };
         upsert_chunks(cfg, &[c1.clone(), c2.clone()]).unwrap();
+        stage_test_chunks(cfg, &[c1.clone(), c2.clone()]);
         append_leaf(
             cfg,
             &tree,
@@ -247,6 +267,7 @@ mod tests {
                 score: 0.5,
             },
             &summariser,
+            &LabelStrategy::Empty,
         )
         .await
         .unwrap();
@@ -263,6 +284,7 @@ mod tests {
                 score: 0.5,
             },
             &summariser,
+            &LabelStrategy::Empty,
         )
         .await
         .unwrap();

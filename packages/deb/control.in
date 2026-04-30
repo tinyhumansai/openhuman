@@ -5,6 +5,7 @@ Priority: optional
 Architecture: @ARCH@
 Maintainer: OpenHuman <hello@tinyhumans.ai>
 Homepage: https://github.com/tinyhumansai/openhuman
+Depends: libc6, libgcc-s1, libstdc++6, libssl3, zlib1g, libzstd1, libasound2, libx11-6, libxcb1, libxau6, libxdmcp6, libxext6, libxinerama1, libxtst6, libxdo3, libxkbcommon0
 Description: AI-powered assistant for communities
  OpenHuman is an AI-powered CLI for crypto communities and
  collaborative workspaces.

@@ -9,14 +9,14 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **`openhuman.agent_server_status` doesn't exist** — This RPC method is not registered in the core. The gate checks it but it always errors. The gate passes if either service is Running OR agent server is running OR core is reachable.
 - **Cargo incremental builds can serve stale UI** — If the app shows old frontend after a Rust rebuild, run `cargo clean --manifest-path app/src-tauri/Cargo.toml` before rebuilding.
 - **`build.rs` missing `rerun-if-changed` causes stale ACL / "Command not found" at runtime** — `app/src-tauri/build.rs` had no `cargo:rerun-if-changed` directives for `permissions/` or `capabilities/`. Adding/changing TOML or JSON files there did not re-trigger `tauri-build`, so ACL tables were stale and registered commands silently failed. Fixed by adding `println!("cargo:rerun-if-changed=permissions")` and `println!("cargo:rerun-if-changed=capabilities")` in `build.rs` (issue #270). Also: any new Tauri command must have a matching entry in a `permissions/` TOML file or it will hit the same error even if it is in `generate_handler!`.
-- **macOS deep links require .app bundle** — `yarn tauri dev` does NOT support deep links. Must use `yarn tauri build --debug --bundles app`.
+- **macOS deep links require .app bundle** — `pnpm tauri dev` does NOT support deep links. Must use `pnpm tauri build --debug --bundles app`.
 
 ## Strict Rules
 
 - **No dynamic imports in `app/src/`** — Use static `import` at file top. Guard call sites with `try/catch` for Tauri/non-Tauri safety. See CLAUDE.md.
 - **Service RPC calls must use Tauri IPC** — Never use `callCoreRpc()` for service operations. Use `invoke('core_rpc_relay', { request: { method, params } })`.
 - **All frontend env vars go through `app/src/utils/config.ts`** — Never read `import.meta.env.VITE_*` directly in other files. Import from config.ts instead. See `.env.example` files for the full list.
-- **Always run checks before commit** — `yarn typecheck`, `yarn lint`, `yarn format:check`, `yarn build`, `yarn tauri dev`. Husky hooks enforce some but run all manually first.
+- **Always run checks before commit** — `pnpm workspace openhuman-app compile`, `pnpm lint`, `pnpm format:check`, `pnpm build`, `pnpm tauri dev`. Husky hooks enforce some but run all manually first.
 - **Stage specific files** — Never `git add -A`. Always `git add <specific-files>`.
 
 ## Workflow
@@ -33,7 +33,7 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **`OPENHUMAN_LOCAL_AI_TIER` env var** overrides the selected tier at config load time (in `load.rs`).
 - **Frontend tier selector** is in `LocalModelPanel.tsx` under Settings > Local AI Model. Uses `coreRpcClient` to call 3 RPC methods: `local_ai_device_profile`, `local_ai_presets`, `local_ai_apply_preset`.
 - **Default config maps to Medium tier** (`gemma3:4b-it-qat`). If someone changes `model_ids.rs` defaults, they should keep `presets.rs` in sync.
-- **Daemon binary gotcha** — A daemon process (`openhuman-aarch64-apple-darwin run`) auto-starts on port 7788 and respawns on kill. `yarn tauri dev` reuses it if already running. When adding new RPC methods, you must replace this binary: `cp -f target/debug/openhuman-core app/src-tauri/binaries/openhuman-aarch64-apple-darwin`, then kill the old PID so it respawns with the new binary.
+- **Daemon binary gotcha** — A daemon process (`openhuman-aarch64-apple-darwin run`) auto-starts on port 7788 and respawns on kill. `pnpm tauri dev` reuses it if already running. When adding new RPC methods, you must replace this binary: `cp -f target/debug/openhuman-core app/src-tauri/binaries/openhuman-aarch64-apple-darwin`, then kill the old PID so it respawns with the new binary.
 
 ## Onboarding System
 
@@ -125,8 +125,25 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Webhook ops were all stubs** — `list_registrations`, `list_logs`, `clear_logs`, `register_echo`, `unregister_echo` in `ops.rs` all returned empty. Now backed by the real router via a `get_router()` helper.
 - **`GGML_NATIVE=OFF` for cargo check** — Sidestepping the whisper-rs macOS Tahoe build blocker for `cargo check`: `GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml`. Allows compilation checks without the cmake failure.
 
+## Agent Runtime Behavior
+
+- **`sandbox_mode = "read_only"` in agent.toml is metadata only** — Never enforced at runtime. Actual security policy comes from `config.autonomy` (global), defaulting to `Supervised`. Adding write tools to a read-only agent works at runtime but violates documented intent.
+- **`max_iterations` hard-fails, not graceful truncation** — When the welcome agent (or any agent) hits `max_iterations`, `tool_loop.rs:705` calls `anyhow::bail!`. There is no graceful truncation. Budget iterations carefully.
+- **Archivist agent auto-extracts memory** — It processes conversation history and persists preferences/facts into `user_profile` automatically. Agents do not need to explicitly call `memory_store` to persist conversational insights.
+- **`cargo check` / `cargo test` fails on main (llama.cpp cmake)** — `llama.cpp`'s cmake build script uses `-mcpu=native`, which is unsupported on Apple clang 21+ with `--target=arm64-apple-macosx`. Pre-existing issue on `main`, not branch-specific. Frontend checks (typecheck, lint, format) are unaffected. Workaround: set `GGML_NATIVE=OFF` (same fix as whisper-rs above).
+
+## Cron Scheduler
+
+- **Cron loop was never spawned** — `tokio::spawn(cron::scheduler::run(config))` was missing from `src/core/jsonrpc.rs`. Added after the update scheduler spawn, gated on `config.cron.enabled`. Without it, scheduled jobs never auto-fire at startup (issue #830).
+
+## Build & Tooling Gotchas
+
+- **`pnpm typecheck` script was renamed** — Check `app/package.json` for the current name; as of issue #830 work, use `pnpm workspace openhuman-app compile` for tsc checks.
+- **PR #745 (command palette) merged without its deps** — `@radix-ui/react-dialog`, `cmdk`, and `@testing-library/user-event` are missing from `package.json`. Install them if tsc fails after syncing main.
+- **Pre-push hooks fail on upstream lint warnings** — ESLint warns on `setState` in effects and unused `eslint-disable` directives inherited from upstream. Use `--no-verify` only when the lint errors are pre-existing upstream issues, not new code.
+
 ## Environment
 
 - **Core sidecar port** — `7788` (default). Check with `lsof -i :7788`.
-- **Stage sidecar** — `cd app && yarn core:stage` (required for core RPC).
+- **Stage sidecar** — `cd app && pnpm core:stage` (required for core RPC).
 - **Kill stuck processes** — `lsof -i :7788` then `kill <PID>`.

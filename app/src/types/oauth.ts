@@ -11,6 +11,7 @@ export interface OAuthProviderConfig {
   color: string;
   hoverColor: string;
   textColor: string;
+  showOnWelcome?: boolean;
 }
 
 export interface OAuthLoginResponse {

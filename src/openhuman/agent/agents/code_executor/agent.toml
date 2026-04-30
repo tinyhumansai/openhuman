@@ -14,4 +14,4 @@ omit_skills_catalog = true
 hint = "coding"
 
 [tools]
-named = ["shell", "file_read", "file_write", "git_operations", "node_exec", "npm_exec"]
+named = ["shell", "file_read", "file_write", "git_operations", "node_exec", "npm_exec", "curl"]

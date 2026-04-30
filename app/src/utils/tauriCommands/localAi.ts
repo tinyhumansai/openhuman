@@ -35,11 +35,6 @@ export interface LocalAiStatus {
   gen_toks_per_sec?: number | null;
 }
 
-export interface LocalAiSuggestion {
-  text: string;
-  confidence: number;
-}
-
 export interface LocalAiAssetStatus {
   state: string;
   id: string;
@@ -280,16 +275,6 @@ export async function openhumanLocalAiSummarize(
   return await callCoreRpc<CommandResponse<string>>({
     method: 'openhuman.local_ai_summarize',
     params: { text, max_tokens: maxTokens },
-  });
-}
-
-export async function openhumanLocalAiSuggestQuestions(
-  context?: string,
-  lines?: string[]
-): Promise<CommandResponse<LocalAiSuggestion[]>> {
-  return await callCoreRpc<CommandResponse<LocalAiSuggestion[]>>({
-    method: 'openhuman.local_ai_suggest_questions',
-    params: { context, lines },
   });
 }
 

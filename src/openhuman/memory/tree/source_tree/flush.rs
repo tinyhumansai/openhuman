@@ -13,7 +13,7 @@ use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::source_tree::bucket_seal::cascade_all_from;
+use crate::openhuman::memory::tree::source_tree::bucket_seal::{cascade_all_from, LabelStrategy};
 use crate::openhuman::memory::tree::source_tree::store;
 use crate::openhuman::memory::tree::source_tree::summariser::Summariser;
 use crate::openhuman::memory::tree::source_tree::types::DEFAULT_FLUSH_AGE_SECS;
@@ -25,6 +25,7 @@ pub async fn flush_stale_buffers(
     config: &Config,
     max_age: Duration,
     summariser: &dyn Summariser,
+    strategy: &LabelStrategy,
 ) -> Result<usize> {
     let now = Utc::now();
     let cutoff = now - max_age;
@@ -48,7 +49,8 @@ pub async fn flush_stale_buffers(
                 continue;
             }
         };
-        let sealed = cascade_all_from(config, &tree, buf.level, summariser, Some(now)).await?;
+        let sealed =
+            cascade_all_from(config, &tree, buf.level, summariser, Some(now), strategy).await?;
         seals += sealed.len();
     }
     Ok(seals)
@@ -58,11 +60,13 @@ pub async fn flush_stale_buffers(
 pub async fn flush_stale_buffers_default(
     config: &Config,
     summariser: &dyn Summariser,
+    strategy: &LabelStrategy,
 ) -> Result<usize> {
     flush_stale_buffers(
         config,
         Duration::seconds(DEFAULT_FLUSH_AGE_SECS),
         summariser,
+        strategy,
     )
     .await
 }
@@ -74,21 +78,37 @@ pub async fn force_flush_tree(
     tree_id: &str,
     summariser: &dyn Summariser,
     now: Option<DateTime<Utc>>,
+    strategy: &LabelStrategy,
 ) -> Result<Vec<String>> {
     let tree = store::get_tree(config, tree_id)?
         .ok_or_else(|| anyhow::anyhow!("no tree with id {tree_id}"))?;
-    cascade_all_from(config, &tree, 0, summariser, now).await
+    cascade_all_from(config, &tree, 0, summariser, now, strategy).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::memory::tree::content_store;
     use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf, LeafRef};
     use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
     use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use tempfile::TempDir;
+
+    fn stage_test_chunks(cfg: &Config, chunks: &[Chunk]) {
+        let content_root = cfg.memory_tree_content_root();
+        std::fs::create_dir_all(&content_root).expect("create content_root for test");
+        let staged = content_store::stage_chunks(&content_root, chunks)
+            .expect("stage_chunks for test chunks");
+        crate::openhuman::memory::tree::store::with_connection(cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            crate::openhuman::memory::tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .expect("persist staged chunk pointers");
+    }
 
     fn test_config() -> (TempDir, Config) {
         let tmp = TempDir::new().unwrap();
@@ -110,7 +130,7 @@ mod tests {
         // Persist one chunk with an old timestamp (10 days ago).
         let old_ts = Utc::now() - Duration::days(10);
         let c = Chunk {
-            id: chunk_id(SourceKind::Chat, "slack:#eng", 0),
+            id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "test-content"),
             content: "old content that should get sealed".into(),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
@@ -124,8 +144,10 @@ mod tests {
             token_count: 100,
             seq_in_source: 0,
             created_at: old_ts,
+            partial_message: false,
         };
         upsert_chunks(&cfg, &[c.clone()]).unwrap();
+        stage_test_chunks(&cfg, &[c.clone()]);
 
         let leaf = LeafRef {
             chunk_id: c.id.clone(),
@@ -136,12 +158,15 @@ mod tests {
             topics: vec![],
             score: 0.5,
         };
-        append_leaf(&cfg, &tree, &leaf, &summariser).await.unwrap();
-        assert_eq!(store::count_summaries(&cfg, &tree.id).unwrap(), 0);
-
-        let seals = flush_stale_buffers(&cfg, Duration::days(7), &summariser)
+        append_leaf(&cfg, &tree, &leaf, &summariser, &LabelStrategy::Empty)
             .await
             .unwrap();
+        assert_eq!(store::count_summaries(&cfg, &tree.id).unwrap(), 0);
+
+        let seals =
+            flush_stale_buffers(&cfg, Duration::days(7), &summariser, &LabelStrategy::Empty)
+                .await
+                .unwrap();
         assert_eq!(seals, 1);
         assert_eq!(store::count_summaries(&cfg, &tree.id).unwrap(), 1);
 
@@ -158,7 +183,7 @@ mod tests {
         // Persist a leaf stamped now so it's NOT stale.
         let now = Utc::now();
         let c = Chunk {
-            id: chunk_id(SourceKind::Chat, "slack:#eng", 0),
+            id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "test-content"),
             content: "fresh".into(),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
@@ -172,6 +197,7 @@ mod tests {
             token_count: 50,
             seq_in_source: 0,
             created_at: now,
+            partial_message: false,
         };
         upsert_chunks(&cfg, &[c.clone()]).unwrap();
         let leaf = LeafRef {
@@ -183,11 +209,14 @@ mod tests {
             topics: vec![],
             score: 0.5,
         };
-        append_leaf(&cfg, &tree, &leaf, &summariser).await.unwrap();
-
-        let seals = flush_stale_buffers(&cfg, Duration::days(7), &summariser)
+        append_leaf(&cfg, &tree, &leaf, &summariser, &LabelStrategy::Empty)
             .await
             .unwrap();
+
+        let seals =
+            flush_stale_buffers(&cfg, Duration::days(7), &summariser, &LabelStrategy::Empty)
+                .await
+                .unwrap();
         assert_eq!(seals, 0);
         assert_eq!(store::count_summaries(&cfg, &tree.id).unwrap(), 0);
     }

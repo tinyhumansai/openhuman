@@ -40,18 +40,27 @@ pub fn new_provider(
         .filter(|s| !s.is_empty());
 
     let provider_kind = local_ai_config.provider.trim().to_ascii_lowercase();
-    let use_openai_compat_local =
-        override_base.is_some() || matches!(provider_kind.as_str(), "llamacpp" | "llama-server");
+    let use_openai_compat_local = override_base.is_some()
+        || matches!(
+            provider_kind.as_str(),
+            "llamacpp" | "llama-server" | "custom_openai"
+        );
 
     let (provider_label, local_base, health) = if use_openai_compat_local {
-        let base = override_base.unwrap_or_else(|| "http://127.0.0.1:8080/v1".to_string());
+        let base = override_base
+            .or_else(|| local_ai_config.base_url.clone())
+            .unwrap_or_else(|| "http://127.0.0.1:8080/v1".to_string());
         let probe = format!("{base}/models");
         tracing::debug!(
             provider = %provider_kind,
             "[routing] local inference configured via OpenAI-compat (non-ollama)"
         );
         (
-            "llamacpp",
+            if provider_kind == "custom_openai" {
+                "custom_openai"
+            } else {
+                "llamacpp"
+            },
             base,
             Arc::new(LocalHealthChecker::with_probe_url(probe, LOCAL_HEALTH_TTL)),
         )
@@ -68,7 +77,7 @@ pub fn new_provider(
     let local: Box<dyn Provider> = Box::new(OpenAiCompatibleProvider::new(
         provider_label,
         &local_base,
-        None, // local servers do not require authentication
+        local_ai_config.api_key.as_deref(),
         AuthStyle::Bearer,
     ));
 

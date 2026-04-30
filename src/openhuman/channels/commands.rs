@@ -53,7 +53,11 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
                     tg.allowed_users.clone(),
                     tg.mention_only,
                 )
-                .with_streaming(tg.stream_mode, tg.draft_update_interval_ms),
+                .with_streaming(
+                    tg.stream_mode,
+                    tg.draft_update_interval_ms,
+                    tg.silent_streaming,
+                ),
             ),
         ));
     }
@@ -319,6 +323,7 @@ mod tests {
             allowed_users: vec!["user1".into()],
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 2000,
+            silent_streaming: true,
             mention_only: false,
         });
         let _ = doctor_channels(config).await;
@@ -375,6 +380,7 @@ mod tests {
             allowed_users: vec![],
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 2000,
+            silent_streaming: true,
             mention_only: false,
         });
         config.channels_config.discord = Some(DiscordConfig {

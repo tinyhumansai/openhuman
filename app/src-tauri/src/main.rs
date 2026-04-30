@@ -7,7 +7,7 @@
 // CEF's process dispatcher — our normal startup only runs for the browser
 // process. The macro is a no-op relative to our own `core` subcommand
 // multiplexing since that path never carries `--type=`.
-#[cfg_attr(feature = "cef", tauri::cef_entry_point)]
+#[tauri::cef_entry_point]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("core") {

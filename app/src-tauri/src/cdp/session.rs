@@ -1,36 +1,41 @@
 //! Per-account CDP session opener. One long-lived task per webview account
 //! that keeps a session attached to the target for the lifetime of the
-//! webview so the UA override (and any future per-target overrides) stays
-//! applied.
+//! webview.
 //!
-//! Why long-lived: `Emulation.setUserAgentOverride` reverts when the
-//! session detaches. If we attached just once and dropped, subsequent HTTP
-//! requests + navigator reads would revert to WKWebView defaults.
+//! Why long-lived: the session subscribes to `Page.loadEventFired` (used as
+//! a belt-and-braces signal for `webview-account:load`). If we attached
+//! once and dropped, the load signal would never reach the frontend.
 //!
-//! Pairs with the `data:` placeholder URL the webview is created with —
-//! the opener finds the target by its unique `openhuman:{account_id}`
-//! marker in the initial URL, applies the UA override, then navigates the
-//! target to the real provider URL with a `#openhuman-account-{id}`
-//! fragment appended so other scanners (discord/telegram/slack/whatsapp)
-//! can disambiguate multi-account setups without title-marker injection.
+//! Pairs with the placeholder URL the webview is created with — the opener
+//! finds the target by its unique `openhuman:{account_id}` marker in the
+//! initial URL, injects the notification-permission shim before the page's
+//! own JS runs, then navigates the target to the real provider URL with a
+//! `#openhuman-account-{id}` fragment appended so other scanners
+//! (discord/telegram/slack/whatsapp) can disambiguate multi-account setups
+//! without title-marker injection.
 
 use std::time::Duration;
 
 use serde_json::json;
+use tauri::{AppHandle, Runtime};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
-use super::{browser_ws_url, find_page_target_where, set_user_agent_override, CdpConn, UaSpec};
+use super::{browser_ws_url, find_page_target_where, CdpConn};
+use crate::webview_accounts::emit_load_finished;
 
 /// Backoff between failed attach attempts / reconnects. Intentionally
 /// short — once the webview is open, the target usually shows up within
 /// 500ms.
 const ATTACH_BACKOFF: Duration = Duration::from_secs(2);
 
+/// Watchdog budget before we synthesise a `webview-account:load` event with
+/// `state: "timeout"` so the frontend never holds its loading spinner open on
+/// a flaky network. Matches the timeout documented in issue #867.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Returns the unique marker substring that the account's initial
-/// placeholder URL contains so `Target.getTargets` can identify it. Same
-/// marker is embedded into the document title of the placeholder so
-/// `TargetInfo.title` can also be used as a fallback match key.
+/// placeholder URL contains so `Target.getTargets` can identify it.
 pub fn placeholder_marker(account_id: &str) -> String {
     format!("openhuman-acct-{account_id}")
 }
@@ -41,32 +46,99 @@ pub fn target_url_fragment(account_id: &str) -> String {
     format!("#openhuman-account-{account_id}")
 }
 
-/// Build the `data:` URL used as the webview's initial location. Holding
-/// here for the ~hundreds of ms we need to attach CDP + apply overrides
-/// before the first real HTTP request. URL-encoded by hand (the payload
-/// is tiny, no external dep).
-pub fn placeholder_data_url(account_id: &str) -> String {
+/// Build the placeholder URL used as the webview's initial location.
+/// `about:blank` is sufficient for the short holding page we need while CDP
+/// attaches and applies overrides before the first real HTTP request.
+///
+/// We store the account marker in the fragment so `TargetInfo.url` stays
+/// unique per account without depending on Tauri's optional `data:` support.
+pub fn placeholder_url(account_id: &str) -> String {
+    format!("about:blank#{}", placeholder_marker(account_id))
+}
+
+/// Extract the origin (`scheme://host[:port]`) from an absolute URL string.
+/// Used to scope `Browser.grantPermissions` — the CDP method requires an
+/// origin (no path / no fragment / no query) and rejects malformed input.
+///
+/// Returns `None` for non-`http(s)://` schemes (e.g. `about:blank`,
+/// `data:`, `blob:`) where the grant has no meaningful target, and for
+/// any input that fails to parse as an absolute URL.
+///
+/// Implementation note: uses Tauri's re-exported `url::Url` so query
+/// strings, fragments, userinfo, and IPv6 hosts are handled correctly
+/// instead of relying on raw byte counting.
+fn origin_of(url: &str) -> Option<String> {
+    let parsed = tauri::Url::parse(url).ok()?;
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    // `Url::host_str` is the canonical lowercased host. We only emit a
+    // bare `scheme://host[:port]` triple — no userinfo, no path, no
+    // query, no fragment — since `Browser.grantPermissions` rejects
+    // anything else as a malformed origin.
+    let host = parsed.host_str()?;
+    if let Some(port) = parsed.port() {
+        Some(format!("{scheme}://{host}:{port}"))
+    } else {
+        Some(format!("{scheme}://{host}"))
+    }
+}
+
+fn target_matches_account_url(target_url: &str, account_id: &str) -> bool {
     let marker = placeholder_marker(account_id);
-    format!(
-        "data:text/html;charset=utf-8,%3C%21DOCTYPE%20html%3E%3Ctitle%3E{marker}%3C%2Ftitle%3E%3Cbody%20style%3D%22background%3A%23111%22%3E%3C%2Fbody%3E"
-    )
+    let marker_fragment = format!("#{marker}");
+    let fragment = target_url_fragment(account_id);
+    target_url.ends_with(&marker_fragment) || target_url.ends_with(&fragment)
+}
+
+/// Per-account spawn result. Both handles are owned by `WebviewAccountsState`
+/// (see `cdp_sessions` and `load_watchdogs`) so close/purge can abort each one
+/// without leaking tasks across reopen cycles.
+pub struct SpawnedSession {
+    pub session: JoinHandle<()>,
+    pub watchdog: JoinHandle<()>,
 }
 
 /// Spawn the per-account CDP session. Returns immediately; the background
-/// task keeps the session alive and retries on disconnect. Idempotent at
-/// the call site — the caller is expected to only call this once per
-/// `webview_account_open`.
+/// task keeps the session alive and retries on disconnect. Also spawns a
+/// 15 s watchdog task that fires a `webview-account:load{state:"timeout"}`
+/// event if neither the native `on_page_load` nor CDP `Page.loadEventFired`
+/// signals arrive in time.
 ///
-/// **Shutdown**: returns the `JoinHandle` for the spawned loop so the
-/// caller (`webview_account_close` / `webview_account_purge`) can
-/// `abort()` it when the account goes away. Without abort the loop
-/// would keep retrying `attach_to_target` against a vanished target
-/// forever and accumulate across reopen cycles.
-pub fn spawn_session(account_id: String, real_url: String) -> JoinHandle<()> {
-    tokio::spawn(async move { run_session_forever(account_id, real_url).await })
+/// Both `JoinHandle`s inside the returned [`SpawnedSession`] must be stored
+/// by the caller and aborted on account close/purge to prevent task leaks
+/// across reopen cycles.
+pub fn spawn_session<R: Runtime>(
+    app: AppHandle<R>,
+    account_id: String,
+    real_url: String,
+) -> SpawnedSession {
+    // Load-overlay watchdog — independent of the session loop. Emits a
+    // `timeout` signal after LOAD_TIMEOUT so the frontend's loading spinner
+    // is always released even if neither the native `on_page_load` nor the
+    // CDP `Page.loadEventFired` signal arrives (flaky network, provider
+    // blocking, CDP socket hiccup).
+    //
+    // `emit_load_finished` dedups via `WebviewAccountsState.loaded_accounts`
+    // so a late watchdog is a no-op once either signal has fired. The
+    // returned `JoinHandle` is stored in `WebviewAccountsState.load_watchdogs`
+    // and aborted on close/purge so a watchdog spawned for a vanished
+    // account can't fire a stale timeout against a freshly-reused id.
+    let watchdog = {
+        let app = app.clone();
+        let account_id = account_id.clone();
+        let real_url = real_url.clone();
+        tokio::spawn(async move {
+            sleep(LOAD_TIMEOUT).await;
+            emit_load_finished(&app, &account_id, "timeout", &real_url);
+        })
+    };
+    let session = tokio::spawn(async move { run_session_forever(app, account_id, real_url).await });
+    SpawnedSession { session, watchdog }
 }
 
-async fn run_session_forever(account_id: String, real_url: String) {
+async fn run_session_forever<R: Runtime>(app: AppHandle<R>, account_id: String, real_url: String) {
     log::info!(
         "[cdp-session][{}] up real_url={} marker={}",
         account_id,
@@ -74,10 +146,10 @@ async fn run_session_forever(account_id: String, real_url: String) {
         placeholder_marker(&account_id)
     );
     // Let the webview's target appear in CDP before we start hammering
-    // `/json/version`. The placeholder URL is tiny so this is quick.
+    // `/json/version`. The placeholder URL is trivial so this is quick.
     sleep(Duration::from_millis(500)).await;
     loop {
-        match run_session_cycle(&account_id, &real_url).await {
+        match run_session_cycle(&app, &account_id, &real_url).await {
             Ok(()) => {
                 log::info!(
                     "[cdp-session][{}] session ended cleanly, reconnecting",
@@ -92,20 +164,21 @@ async fn run_session_forever(account_id: String, real_url: String) {
     }
 }
 
-async fn run_session_cycle(account_id: &str, real_url: &str) -> Result<(), String> {
+async fn run_session_cycle<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
+    real_url: &str,
+) -> Result<(), String> {
     let browser_ws = browser_ws_url().await?;
     let mut cdp = CdpConn::open(&browser_ws).await?;
 
-    // Account-unique match. Both the placeholder title and the real-URL
-    // fragment are appended verbatim, so we can use ends_with / exact
-    // equality instead of substring contains — that avoids cross-account
-    // collisions like `…account-abc` vs `…account-abcdef`.
-    let marker = placeholder_marker(account_id);
+    // Account-unique match. The placeholder URL and the real provider URL
+    // both carry account-specific fragments, so we can use ends_with and
+    // avoid substring collisions like `…account-abc` vs `…account-abcdef`.
     let fragment = target_url_fragment(account_id);
-    let target = find_page_target_where(&mut cdp, |t| {
-        t.title == marker || t.url.ends_with(&fragment)
-    })
-    .await?;
+    let target =
+        find_page_target_where(&mut cdp, |t| target_matches_account_url(&t.url, account_id))
+            .await?;
     log::info!(
         "[cdp-session][{}] attaching to target {} url={}",
         account_id,
@@ -125,17 +198,6 @@ async fn run_session_cycle(account_id: &str, real_url: &str) -> Result<(), Strin
         .and_then(|x| x.as_str())
         .ok_or_else(|| "attach missing sessionId".to_string())?
         .to_string();
-
-    // UA override BEFORE navigate so the first real HTTP request carries
-    // the Chrome UA at the network layer AND navigator.* readouts return
-    // the spoofed values from the very first page script.
-    let ua = UaSpec::chrome_mac();
-    set_user_agent_override(&mut cdp, &session_id, &ua).await?;
-    log::info!(
-        "[cdp-session][{}] ua override applied session={}",
-        account_id,
-        session_id
-    );
 
     // Stub the Web Notifications permission API before any provider JS
     // runs. Without this, providers like Slack and Gmail show in-app
@@ -199,6 +261,48 @@ async fn run_session_cycle(account_id: &str, real_url: &str) -> Result<(), Strin
         account_id
     );
 
+    // The JS shim above masks `Notification.permission` so providers stop
+    // showing "enable notifications" banners, but it does NOT cause CEF's
+    // real native-toast pipeline to fire. For that we have to actually grant
+    // `notifications` for the provider's origin via the browser-level
+    // `Browser.grantPermissions` CDP method (sessionId = None routes to the
+    // browser target). With this grant, `new Notification(...)` from the
+    // page reaches the CEF helper's notify-IPC, which posts back to
+    // `forward_native_notification` in `webview_accounts`. Without it,
+    // the constructor silently no-ops and no toast ever fires (#1016).
+    if let Some(origin) = origin_of(&real_url) {
+        if let Err(e) = cdp
+            .call(
+                "Browser.grantPermissions",
+                json!({
+                    "origin": origin,
+                    "permissions": ["notifications"],
+                }),
+                None,
+            )
+            .await
+        {
+            log::warn!(
+                "[cdp-session][{}] Browser.grantPermissions(notifications) for {} failed: {}",
+                account_id,
+                origin,
+                e
+            );
+        } else {
+            log::info!(
+                "[cdp-session][{}] granted notifications for origin={}",
+                account_id,
+                origin
+            );
+        }
+    }
+
+    // Enable the Page domain so `Page.loadEventFired` reaches our
+    // `pump_events` callback below. Must happen BEFORE `Page.navigate` so
+    // the first top-level load event for the real provider URL isn't missed.
+    cdp.call("Page.enable", json!({}), Some(&session_id))
+        .await?;
+
     // Drive the webview from the placeholder to the real provider URL.
     // Fragment survives same-origin navigations so scanners can match on
     // it indefinitely. Skip navigation if the target is already on the
@@ -225,10 +329,98 @@ async fn run_session_cycle(account_id: &str, real_url: &str) -> Result<(), Strin
     // override reverts when we detach, so we intentionally block here.
     // pump_events returns when the CDP ws closes (browser process exits
     // or `Target.detachFromTarget` is called from elsewhere).
-    cdp.pump_events(&session_id, |_method, _params| {
-        // We don't subscribe to any domain here — the session exists
-        // purely to keep the UA override resident. Per-provider scanners
-        // attach their own sessions for Network / IndexedDB / DOMSnapshot.
+    //
+    // The callback emits `webview-account:load{state:"finished"}` on the
+    // first `Page.loadEventFired` as a belt-and-braces fallback to the
+    // native `WebviewBuilder::on_page_load` handler wired in
+    // `webview_account_open`. `emit_load_finished` dedups across both paths
+    // so the frontend only sees one signal per cold open.
+    let cb_app = app.clone();
+    let cb_account_id = account_id.to_string();
+    let cb_real_url = real_url.to_string();
+    cdp.pump_events(&session_id, move |method, _params| {
+        if method == "Page.loadEventFired" {
+            emit_load_finished(&cb_app, &cb_account_id, "finished", &cb_real_url);
+        }
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_url_uses_about_blank_fragment_marker() {
+        assert_eq!(
+            placeholder_url("acct-42"),
+            "about:blank#openhuman-acct-acct-42"
+        );
+    }
+
+    #[test]
+    fn origin_of_strips_path_query_and_fragment() {
+        assert_eq!(
+            origin_of("https://app.slack.com/client/T123/C456?foo=bar#frag"),
+            Some("https://app.slack.com".to_string())
+        );
+    }
+
+    #[test]
+    fn origin_of_preserves_explicit_port() {
+        assert_eq!(
+            origin_of("http://localhost:7788/health"),
+            Some("http://localhost:7788".to_string())
+        );
+    }
+
+    #[test]
+    fn origin_of_returns_none_for_non_http_schemes() {
+        assert_eq!(origin_of("about:blank"), None);
+        assert_eq!(origin_of("data:text/plain,hello"), None);
+        assert_eq!(origin_of("blob:https://app.slack.com/abc"), None);
+        assert_eq!(origin_of("file:///etc/hosts"), None);
+    }
+
+    #[test]
+    fn origin_of_returns_none_for_malformed_input() {
+        assert_eq!(origin_of(""), None);
+        assert_eq!(origin_of("not-a-url"), None);
+        assert_eq!(origin_of("http://"), None);
+    }
+
+    #[test]
+    fn origin_of_lowercases_host() {
+        // tauri::Url normalises to lowercase host so we never grant
+        // permissions twice for `Slack.com` vs `slack.com`.
+        assert_eq!(
+            origin_of("https://APP.SLACK.COM/client"),
+            Some("https://app.slack.com".to_string())
+        );
+    }
+
+    #[test]
+    fn target_match_accepts_placeholder_and_real_provider_fragments_only_for_same_account() {
+        assert!(target_matches_account_url(
+            "about:blank#openhuman-acct-acct-42",
+            "acct-42"
+        ));
+        assert!(target_matches_account_url(
+            "https://discord.com/channels/@me#openhuman-account-acct-42",
+            "acct-42"
+        ));
+
+        assert!(!target_matches_account_url(
+            "about:blank#openhuman-acct-acct-420",
+            "acct-42"
+        ));
+        assert!(!target_matches_account_url(
+            "https://example.com/openhuman-acct-acct-42",
+            "acct-42"
+        ));
+        assert!(!target_matches_account_url(
+            "https://discord.com/channels/@me#openhuman-account-acct-420",
+            "acct-42"
+        ));
+    }
 }

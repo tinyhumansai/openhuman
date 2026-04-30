@@ -38,19 +38,19 @@ along and the app refused to build / run until they did:
 
 - **Submodule** `app/src-tauri/vendor/tauri-cef` — not initialised in the
   new worktree; `cargo check` failed with "Unable to update … tauri-cef".
-- **`.env`** at repo root — `yarn dev:app` sources it; missing = exit 1.
+- **`.env`** at repo root — `pnpm dev:app` sources it; missing = exit 1.
 - **`app/src-tauri/binaries/openhuman-core-*`** — the Tauri build script
   demands the staged sidecar exist even for `cargo check`.
 
 **Fix:** one-shot `scripts/worktree-bootstrap.sh` that runs
 `git submodule update --init --recursive`, symlinks `.env` from main,
-builds+stages the core sidecar, and runs `yarn tauri:ensure`. Run once
+builds+stages the core sidecar, and runs `pnpm tauri:ensure`. Run once
 after `git worktree add`.
 
 ### 3. CLAUDE.md drift
 
-CLAUDE.md said `cargo build --bin openhuman` and `yarn tauri dev`. The
-real names are `cargo build --bin openhuman-core` and `yarn dev:app`
+CLAUDE.md said `cargo build --bin openhuman` and `pnpm tauri dev`. The
+real names are `cargo build --bin openhuman-core` and `pnpm dev:app`
 (from `app/`, which chains `tauri:ensure`, `core:stage`,
 `setup-chromium-safe-storage`, dotenv, then `cargo tauri dev`).
 
@@ -60,10 +60,10 @@ against `package.json` / `Cargo.toml` and flags stale names.
 
 ### 4. Tauri CLI not in PATH in a fresh worktree
 
-`yarn tauri dev` fails 127 ("tauri: command not found") unless the
-vendored `cargo-tauri` has been installed to `~/.cargo/bin`. `yarn dev:app`
-auto-runs `yarn tauri:ensure` which installs it, so the surface symptom
-is "the docs said `yarn tauri dev` but only `yarn dev:app` works".
+`pnpm tauri dev` fails 127 ("tauri: command not found") unless the
+vendored `cargo-tauri` has been installed to `~/.cargo/bin`. `pnpm dev:app`
+auto-runs `pnpm tauri:ensure` which installs it, so the surface symptom
+is "the docs said `pnpm tauri dev` but only `pnpm dev:app` works".
 
 ## What we did
 

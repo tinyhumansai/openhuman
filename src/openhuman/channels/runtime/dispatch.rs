@@ -7,6 +7,7 @@ use crate::openhuman::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RU
 use crate::openhuman::agent::harness::definition::{
     AgentDefinition, AgentDefinitionRegistry, ToolScope,
 };
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::channels::context::{
     build_memory_context, compact_sender_history, conversation_history_key,
     conversation_memory_key, is_context_window_overflow_error, ChannelRuntimeContext,
@@ -41,6 +42,41 @@ fn contains_any(s: &str, words: &[&str]) -> bool {
 #[inline]
 fn starts_with_any(s: &str, prefixes: &[&str]) -> bool {
     prefixes.iter().any(|p| s.starts_with(p))
+}
+
+/// Build the per-turn `[Channel context]` block prepended to the user
+/// message for non-web inbound channels (e.g. Telegram, Discord, Slack).
+///
+/// Surfaces the active channel and reply target so the model knows
+/// where it is talking and can route any tool side-effects (notably
+/// `cron_add`) back to the same chat instead of defaulting to the
+/// in-app web stream. See issue #928.
+///
+/// Returns an empty string for web/cli turns (the desktop UI is the
+/// default delivery surface, no hint needed).
+fn build_channel_context_block(msg: &traits::ChannelMessage) -> String {
+    let channel = msg.channel.trim();
+    if channel.is_empty()
+        || channel.eq_ignore_ascii_case("web")
+        || channel.eq_ignore_ascii_case("cli")
+    {
+        return String::new();
+    }
+
+    let reply_target = msg.reply_target.trim();
+    if reply_target.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "[Channel context]\n\
+         You are responding via the \"{channel}\" channel. Reply target: \"{reply_target}\".\n\
+         For any cron/scheduled reminder you create with `cron_add`, set `delivery` to \
+         `{{ \"mode\": \"announce\", \"channel\": \"{channel}\", \"to\": \"{reply_target}\" }}` \
+         so the reminder is delivered back here instead of the in-app web stream. \
+         Only fall back to the default proactive delivery if the user explicitly asks for \
+         in-app/desktop notification.\n\n"
+    )
 }
 
 /// Pick a contextual acknowledgment emoji for an inbound message.
@@ -310,7 +346,7 @@ impl AgentScoping {
 ///   so the LLM cannot accidentally send messages or write files
 ///   while guiding the user through setup. The welcome agent decides
 ///   when the user is ready and calls
-///   `complete_onboarding(action="complete")`, which flips the flag.
+///   `complete_onboarding`, which flips the flag.
 ///
 /// * **`true`** → route to the `orchestrator` agent. Orchestrator
 ///   delegates real work to specialist subagents via a `subagents`
@@ -352,16 +388,18 @@ async fn resolve_target_agent(channel: &str) -> AgentScoping {
         }
     };
 
-    let target_id = if config.chat_onboarding_completed {
-        "orchestrator"
-    } else {
-        // Increment the process-global exchange counter every time a user
-        // message is routed to the welcome agent. The `complete_onboarding`
-        // tool reads this counter to decide whether `ready_to_complete` is
-        // `true` and to enforce the minimum-engagement guard in `complete`.
-        crate::openhuman::tools::implementations::agent::complete_onboarding::increment_welcome_exchange_count();
-        "welcome"
-    };
+    // Welcome is **desktop-app only**. The web channel has its own
+    // bespoke chat path (`channels::providers::web::run_chat_task` →
+    // `pick_target_agent_id`) that routes to the welcome agent while
+    // `chat_onboarding_completed` is false. Every other channel
+    // (telegram, slack, discord, mattermost, signal, …) flows through
+    // this function, and we always send those straight to the
+    // orchestrator regardless of onboarding state — an external user
+    // pinging us from Telegram should never land on the welcome
+    // agent's narrow setup-checklist toolset, since the checklist
+    // (notifications permission, in-app account setup, etc.) is only
+    // meaningful inside the desktop app.
+    let target_id = "orchestrator";
 
     tracing::info!(
         channel = %channel,
@@ -761,10 +799,12 @@ pub(crate) async fn process_channel_message(
             .await;
     }
 
-    let enriched_message = if memory_context.is_empty() {
-        msg.content.clone()
-    } else {
-        format!("{memory_context}{}", msg.content)
+    let channel_context = build_channel_context_block(&msg);
+    let enriched_message = match (memory_context.is_empty(), channel_context.is_empty()) {
+        (true, true) => msg.content.clone(),
+        (false, true) => format!("{memory_context}{}", msg.content),
+        (true, false) => format!("{channel_context}{}", msg.content),
+        (false, false) => format!("{memory_context}{channel_context}{}", msg.content),
     };
 
     println!("  ⏳ Processing message...");
@@ -789,8 +829,8 @@ pub(crate) async fn process_channel_message(
         .is_some_and(|ch| ch.supports_draft_updates());
 
     // Set up streaming channel if supported
-    let (delta_tx, delta_rx) = if use_streaming {
-        let (tx, rx) = tokio::sync::mpsc::channel::<String>(64);
+    let (progress_tx, progress_rx) = if use_streaming {
+        let (tx, rx) = tokio::sync::mpsc::channel::<AgentProgress>(64);
         (Some(tx), Some(rx))
     } else {
         (None, None)
@@ -818,9 +858,9 @@ pub(crate) async fn process_channel_message(
         None
     };
 
-    // Spawn a task to forward streaming deltas to draft updates
+    // Spawn a task to forward streaming progress to draft updates
     let draft_updater = if let (Some(mut rx), Some(draft_id_ref), Some(channel_ref)) = (
-        delta_rx,
+        progress_rx,
         draft_message_id.as_deref(),
         target_channel.as_ref(),
     ) {
@@ -829,13 +869,56 @@ pub(crate) async fn process_channel_message(
         let draft_id = draft_id_ref.to_string();
         Some(tokio::spawn(async move {
             let mut accumulated = String::new();
-            while let Some(delta) = rx.recv().await {
-                accumulated.push_str(&delta);
-                if let Err(e) = channel
-                    .update_draft(&reply_target, &draft_id, &accumulated)
-                    .await
-                {
-                    tracing::debug!("Draft update failed: {e}");
+            let mut last_thinking_update = None;
+            const THINKING_UPDATE_INTERVAL_MS: u128 = 2000;
+
+            while let Some(progress) = rx.recv().await {
+                match progress {
+                    AgentProgress::TextDelta { delta, .. } => {
+                        accumulated.push_str(&delta);
+                        if let Err(e) = channel
+                            .update_draft(&reply_target, &draft_id, &accumulated)
+                            .await
+                        {
+                            tracing::debug!("Draft update failed: {e}");
+                        }
+                    }
+                    AgentProgress::ThinkingDelta { .. } => {
+                        // Suppress thinking text to Telegram; only show a placeholder if we haven't
+                        // started receiving the final answer yet.
+                        if accumulated.is_empty() {
+                            let now = std::time::Instant::now();
+                            let should_update = match last_thinking_update {
+                                None => true,
+                                Some(last) => {
+                                    now.duration_since(last).as_millis()
+                                        > THINKING_UPDATE_INTERVAL_MS
+                                }
+                            };
+
+                            if should_update {
+                                if let Err(e) = channel
+                                    .update_draft(&reply_target, &draft_id, "Thinking...")
+                                    .await
+                                {
+                                    tracing::debug!("Thinking update failed: {e}");
+                                }
+                                last_thinking_update = Some(now);
+                            }
+                        }
+                    }
+                    AgentProgress::ToolCallStarted { tool_name, .. } => {
+                        if accumulated.is_empty() {
+                            let _ = channel
+                                .update_draft(
+                                    &reply_target,
+                                    &draft_id,
+                                    &format!("Working ({})...", tool_name),
+                                )
+                                .await;
+                        }
+                    }
+                    _ => {}
                 }
             }
         }))
@@ -901,11 +984,11 @@ pub(crate) async fn process_channel_message(
         channel_name: msg.channel.clone(),
         multimodal: ctx.multimodal.clone(),
         max_tool_iterations: ctx.max_tool_iterations,
-        on_delta: delta_tx,
+        on_delta: None, // on_progress handles text deltas now
         target_agent_id: scoping.target_agent_id,
         visible_tool_names: scoping.visible_tool_names,
         extra_tools: scoping.extra_tools,
-        on_progress: None,
+        on_progress: progress_tx,
     };
     tracing::debug!(
         channel = %msg.channel,
@@ -1262,5 +1345,54 @@ mod tests {
         let r = select_acknowledgment_reaction("?");
         // Single "?" falls into question category (contains '?').
         assert!(is_in(r, &["🤔", "✍️"]));
+    }
+
+    // ── build_channel_context_block (#928) ───────────────────────
+
+    fn cm(channel: &str, reply_target: &str) -> traits::ChannelMessage {
+        traits::ChannelMessage {
+            channel: channel.into(),
+            sender: "alice".into(),
+            content: "hi".into(),
+            id: "m1".into(),
+            reply_target: reply_target.into(),
+            thread_ts: None,
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn channel_context_block_omitted_for_web_and_cli() {
+        assert!(build_channel_context_block(&cm("web", "1")).is_empty());
+        assert!(build_channel_context_block(&cm("cli", "1")).is_empty());
+        assert!(build_channel_context_block(&cm("WEB", "1")).is_empty());
+        assert!(build_channel_context_block(&cm("", "1")).is_empty());
+    }
+
+    #[test]
+    fn channel_context_block_omitted_when_reply_target_missing() {
+        assert!(build_channel_context_block(&cm("telegram", "")).is_empty());
+        assert!(build_channel_context_block(&cm("telegram", "   ")).is_empty());
+    }
+
+    #[test]
+    fn channel_context_block_for_telegram_includes_routing_hint() {
+        let block = build_channel_context_block(&cm("telegram", "123456"));
+        assert!(block.contains("[Channel context]"));
+        assert!(block.contains("\"telegram\""));
+        assert!(block.contains("\"123456\""));
+        // Hint must steer the model toward announce mode with the same channel/target.
+        assert!(block.contains("announce"));
+        assert!(block.contains("cron_add"));
+    }
+
+    #[test]
+    fn channel_context_block_for_discord_and_slack_share_shape() {
+        for ch in ["discord", "slack", "matrix"] {
+            let block = build_channel_context_block(&cm(ch, "chan-42"));
+            assert!(block.contains(ch), "missing channel name in `{ch}` block");
+            assert!(block.contains("chan-42"));
+            assert!(block.contains("announce"));
+        }
     }
 }

@@ -41,6 +41,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     messageCount: 0,
     lastMessageAt: '2026-01-01T00:00:00.000Z',
     createdAt: '2026-01-01T00:00:00.000Z',
+    labels: [],
     ...overrides,
   };
 }
@@ -72,7 +73,6 @@ describe('threadSlice synchronous reducers', () => {
     expect(state.messages).toEqual([]);
     expect(state.isLoadingThreads).toBe(false);
     expect(state.isLoadingMessages).toBe(false);
-    expect(state.suggestedQuestions).toEqual([]);
   });
 
   it('setSelectedThread copies cached messages into the visible list', async () => {
@@ -90,7 +90,6 @@ describe('threadSlice synchronous reducers', () => {
     expect(state.selectedThreadId).toBe('t-1');
     expect(state.messages).toEqual(cached);
     expect(state.messagesError).toBeNull();
-    expect(state.suggestedQuestions).toEqual([]);
   });
 
   it('setSelectedThread resets messages when cache is empty', () => {

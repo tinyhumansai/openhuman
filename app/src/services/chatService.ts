@@ -52,6 +52,17 @@ export interface ChatDoneEvent {
   reaction_emoji?: string | null;
   /** Total segments when the response was split into bubbles by Rust. */
   segment_total?: number | null;
+  /** Memory citations captured during retrieval for this response. */
+  citations?: ChatCitation[] | null;
+}
+
+export interface ChatCitation {
+  id: string;
+  key: string;
+  namespace?: string;
+  score?: number;
+  timestamp: string;
+  snippet: string;
 }
 
 /** A single segment of a multi-bubble response, emitted before `chat_done`. */
@@ -67,6 +78,7 @@ export interface ChatSegmentEvent {
   segment_index: number;
   segment_total: number;
   reaction_emoji?: string | null;
+  citations?: ChatCitation[] | null;
 }
 
 /** Return the segment text from a {@link ChatSegmentEvent} (avoids the misleading wire name). */

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import {
   aiGetConfig,
@@ -21,16 +21,7 @@ const AIPanel = () => {
   const [error, setError] = useState<string>('');
   const [localAiStatus, setLocalAiStatus] = useState<LocalAiStatus | null>(null);
 
-  useEffect(() => {
-    loadAIPreview();
-    void loadLocalAiStatus();
-    const timer = setInterval(() => {
-      void loadLocalAiStatus();
-    }, 5000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const loadAIPreview = async () => {
+  const loadAIPreview = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -45,16 +36,25 @@ const AIPanel = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const loadLocalAiStatus = async () => {
+  const loadLocalAiStatus = useCallback(async () => {
     try {
       const result = await openhumanLocalAiStatus();
       setLocalAiStatus(result.result);
     } catch {
       setLocalAiStatus(null);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void loadAIPreview();
+    void loadLocalAiStatus();
+    const timer = setInterval(() => {
+      void loadLocalAiStatus();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [loadAIPreview, loadLocalAiStatus]);
 
   const refreshConfig = async (target: 'soul' | 'tools' | 'all') => {
     setRefreshingComponent(target);

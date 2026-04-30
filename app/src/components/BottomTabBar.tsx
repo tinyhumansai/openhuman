@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { isWelcomeLocked } from '../lib/coreState/store';
 import { useCoreState } from '../providers/CoreStateProvider';
 import { useAppSelector } from '../store/hooks';
 import { selectUnreadCount } from '../store/notificationSlice';
@@ -52,21 +53,22 @@ const tabs = [
       </svg>
     ),
   },
-  {
-    id: 'intelligence',
-    label: 'Memory',
-    path: '/intelligence',
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={1.8}
-          d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-        />
-      </svg>
-    ),
-  },
+  // Memory tab hidden until Intelligence feature is ready (#976)
+  // {
+  //   id: 'intelligence',
+  //   label: 'Memory',
+  //   path: '/intelligence',
+  //   icon: (
+  //     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  //       <path
+  //         strokeLinecap="round"
+  //         strokeLinejoin="round"
+  //         strokeWidth={1.8}
+  //         d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+  //       />
+  //     </svg>
+  //   ),
+  // },
   {
     id: 'notifications',
     label: 'Alerts',
@@ -135,6 +137,13 @@ const BottomTabBar = () => {
     !token ||
     hiddenPaths.some(path => location.pathname === path || location.pathname.startsWith(`${path}/`))
   ) {
+    return null;
+  }
+
+  // Welcome lockdown (#883) — hide the bottom nav entirely while the
+  // chat-based welcome-agent flow is still in progress so the user
+  // cannot navigate away from the welcome conversation.
+  if (isWelcomeLocked(snapshot)) {
     return null;
   }
 

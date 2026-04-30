@@ -13,6 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::time::Duration;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::StagedChunk;
 use crate::openhuman::memory::tree::types::{Chunk, Metadata, SourceKind, SourceRef};
 
 const DB_DIR: &str = "memory_tree";
@@ -20,6 +21,12 @@ const DB_FILE: &str = "chunks.db";
 const DEFAULT_LIST_LIMIT: usize = 100;
 const MAX_LIST_LIMIT: usize = 10_000;
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub const CHUNK_STATUS_PENDING_EXTRACTION: &str = "pending_extraction";
+pub const CHUNK_STATUS_ADMITTED: &str = "admitted";
+pub const CHUNK_STATUS_BUFFERED: &str = "buffered";
+pub const CHUNK_STATUS_SEALED: &str = "sealed";
+pub const CHUNK_STATUS_DROPPED: &str = "dropped";
 
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
@@ -174,6 +181,35 @@ CREATE TABLE IF NOT EXISTS mem_tree_entity_hotness (
 
 CREATE INDEX IF NOT EXISTS idx_mem_tree_entity_hotness_score
     ON mem_tree_entity_hotness(last_hotness);
+
+-- Async job queue for memory-tree work (extract → admit → buffer → seal →
+-- topic-route → daily digest). Producers (ingest, schedulers, handlers)
+-- enqueue rows transactionally; the worker pool claims them via the
+-- `(status, available_at_ms)` index. `dedupe_key` is enforced as unique
+-- only for ready/running rows so a completed job's key can be re-used.
+CREATE TABLE IF NOT EXISTS mem_tree_jobs (
+    id                     TEXT PRIMARY KEY,
+    kind                   TEXT NOT NULL,
+    payload_json           TEXT NOT NULL,
+    dedupe_key             TEXT,
+    status                 TEXT NOT NULL DEFAULT 'ready',
+    attempts               INTEGER NOT NULL DEFAULT 0,
+    max_attempts           INTEGER NOT NULL DEFAULT 5,
+    available_at_ms        INTEGER NOT NULL,
+    locked_until_ms        INTEGER,
+    last_error             TEXT,
+    created_at_ms          INTEGER NOT NULL,
+    started_at_ms          INTEGER,
+    completed_at_ms        INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_tree_jobs_ready
+    ON mem_tree_jobs(status, available_at_ms);
+CREATE INDEX IF NOT EXISTS idx_mem_tree_jobs_kind
+    ON mem_tree_jobs(kind);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_tree_jobs_dedupe_active
+    ON mem_tree_jobs(dedupe_key)
+    WHERE dedupe_key IS NOT NULL AND status IN ('ready', 'running');
 ";
 
 /// Upsert a batch of chunks atomically.
@@ -247,6 +283,66 @@ pub(crate) fn upsert_chunks_tx(tx: &Transaction<'_>, chunks: &[Chunk]) -> Result
     )?;
     upsert_chunks_with_statement(&mut stmt, chunks)?;
     Ok(chunks.len())
+}
+
+/// Upsert staged chunks (with content_path + content_sha256) using an existing transaction.
+///
+/// Identical to `upsert_chunks_tx` but also writes the Phase MD-content pointer columns.
+/// `content` column receives a ≤500-char plain-text preview of the body (the full body
+/// lives on disk at `content_path`).
+pub(crate) fn upsert_staged_chunks_tx(
+    tx: &Transaction<'_>,
+    staged: &[StagedChunk],
+) -> Result<usize> {
+    if staged.is_empty() {
+        return Ok(0);
+    }
+    let mut stmt = tx.prepare(
+        "INSERT INTO mem_tree_chunks (
+            id, source_kind, source_id, source_ref, owner,
+            timestamp_ms, time_range_start_ms, time_range_end_ms,
+            tags_json, content, token_count, seq_in_source, created_at_ms,
+            content_path, content_sha256
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        ON CONFLICT(id) DO UPDATE SET
+            source_kind = excluded.source_kind,
+            source_id = excluded.source_id,
+            source_ref = excluded.source_ref,
+            owner = excluded.owner,
+            timestamp_ms = excluded.timestamp_ms,
+            time_range_start_ms = excluded.time_range_start_ms,
+            time_range_end_ms = excluded.time_range_end_ms,
+            tags_json = excluded.tags_json,
+            content = excluded.content,
+            token_count = excluded.token_count,
+            seq_in_source = excluded.seq_in_source,
+            created_at_ms = excluded.created_at_ms,
+            content_path = excluded.content_path,
+            content_sha256 = excluded.content_sha256",
+    )?;
+    for s in staged {
+        let chunk = &s.chunk;
+        // Store a ≤500-char preview in the `content` column; full body is on disk.
+        let preview: String = chunk.content.chars().take(500).collect();
+        stmt.execute(params![
+            chunk.id,
+            chunk.metadata.source_kind.as_str(),
+            chunk.metadata.source_id,
+            chunk.metadata.source_ref.as_ref().map(|r| r.value.as_str()),
+            chunk.metadata.owner,
+            chunk.metadata.timestamp.timestamp_millis(),
+            chunk.metadata.time_range.0.timestamp_millis(),
+            chunk.metadata.time_range.1.timestamp_millis(),
+            serde_json::to_string(&chunk.metadata.tags)?,
+            preview,
+            chunk.token_count,
+            chunk.seq_in_source,
+            chunk.created_at.timestamp_millis(),
+            s.content_path,
+            s.content_sha256,
+        ])?;
+    }
+    Ok(staged.len())
 }
 
 fn upsert_chunks_with_statement(
@@ -361,6 +457,70 @@ pub fn count_chunks(config: &Config) -> Result<u64> {
     })
 }
 
+pub fn set_chunk_lifecycle_status(config: &Config, chunk_id: &str, status: &str) -> Result<()> {
+    with_connection(config, |conn| {
+        set_chunk_lifecycle_status_conn(conn, chunk_id, status)
+    })
+}
+
+pub(crate) fn set_chunk_lifecycle_status_tx(
+    tx: &Transaction<'_>,
+    chunk_id: &str,
+    status: &str,
+) -> Result<()> {
+    set_chunk_lifecycle_status_conn(tx, chunk_id, status)
+}
+
+pub fn get_chunk_lifecycle_status(config: &Config, chunk_id: &str) -> Result<Option<String>> {
+    with_connection(config, |conn| {
+        get_chunk_lifecycle_status_conn(conn, chunk_id)
+    })
+}
+
+pub(crate) fn get_chunk_lifecycle_status_tx(
+    tx: &Transaction<'_>,
+    chunk_id: &str,
+) -> Result<Option<String>> {
+    get_chunk_lifecycle_status_conn(tx, chunk_id)
+}
+
+fn get_chunk_lifecycle_status_conn(conn: &Connection, chunk_id: &str) -> Result<Option<String>> {
+    let row = conn
+        .query_row(
+            "SELECT lifecycle_status FROM mem_tree_chunks WHERE id = ?1",
+            params![chunk_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(row)
+}
+
+pub fn count_chunks_by_lifecycle_status(config: &Config, status: &str) -> Result<u64> {
+    with_connection(config, |conn| {
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_chunks WHERE lifecycle_status = ?1",
+            params![status],
+            |r| r.get(0),
+        )?;
+        Ok(n.max(0) as u64)
+    })
+}
+
+fn set_chunk_lifecycle_status_conn(conn: &Connection, chunk_id: &str, status: &str) -> Result<()> {
+    let changed = conn.execute(
+        "UPDATE mem_tree_chunks SET lifecycle_status = ?1 WHERE id = ?2",
+        params![status, chunk_id],
+    )?;
+    if changed == 0 {
+        log::warn!(
+            "[memory_tree::store] lifecycle update affected 0 rows chunk_id={} status={}",
+            chunk_id,
+            status
+        );
+    }
+    Ok(())
+}
+
 fn row_to_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
     let id: String = row.get(0)?;
     let source_kind_s: String = row.get(1)?;
@@ -401,6 +561,10 @@ fn row_to_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
         token_count: token_count.max(0) as u32,
         seq_in_source: seq.max(0) as u32,
         created_at,
+        // partial_message is not stored in SQLite — it's a transient chunker
+        // signal. Chunks read back from DB always get false (the column doesn't
+        // exist; callers that need this flag hold the Chunk in memory).
+        partial_message: false,
     })
 }
 
@@ -451,7 +615,122 @@ pub(crate) fn with_connection<T>(
     // legacy summaries from Phases 1-3 read back as None; retrieval
     // tolerates NULL by dropping the row to the bottom of a rerank.
     add_column_if_missing(&conn, "mem_tree_summaries", "embedding", "BLOB")?;
+    // Async-pipeline lifecycle flag. Default 'admitted' so chunks ingested
+    // before the queue migration stay queryable. New writes start at
+    // 'pending_extraction'; the extract handler advances them to 'admitted'
+    // (then 'buffered' / 'sealed') or 'dropped'.
+    add_column_if_missing(
+        &conn,
+        "mem_tree_chunks",
+        "lifecycle_status",
+        "TEXT NOT NULL DEFAULT 'admitted'",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_mem_tree_chunks_lifecycle \
+         ON mem_tree_chunks(lifecycle_status);",
+    )
+    .context("Failed to create mem_tree_chunks lifecycle index")?;
+    // Phase MD-content (#TBD): pointer + integrity hash. Body lives at
+    // <content_root>/<content_path> as a .md file. Both nullable so chunks
+    // ingested before this migration read back with NULL (body still in
+    // `content`). New writes populate both columns. The `content` column
+    // stores a 500-char plain-text preview instead of the full body.
+    add_column_if_missing(&conn, "mem_tree_chunks", "content_path", "TEXT")?;
+    add_column_if_missing(&conn, "mem_tree_chunks", "content_sha256", "TEXT")?;
+    // Phase MD-content (summaries): same pointer pattern for summary nodes.
+    // `content_path` is the relative path to the .md file under
+    // `<content_root>/summaries/...`. `content_sha256` is the SHA-256 hex
+    // of the body bytes only (front-matter excluded). Both nullable so
+    // legacy rows (from before this migration) read back with NULL — callers
+    // fall back to the `content` column for those rows.
+    add_column_if_missing(&conn, "mem_tree_summaries", "content_path", "TEXT")?;
+    add_column_if_missing(&conn, "mem_tree_summaries", "content_sha256", "TEXT")?;
     f(&conn)
+}
+
+/// Return both `content_path` and `content_sha256` stored in SQLite for `chunk_id`.
+///
+/// Returns `Ok(None)` if the chunk does not exist or has no content_path recorded yet.
+pub fn get_chunk_content_pointers(
+    config: &Config,
+    chunk_id: &str,
+) -> Result<Option<(String, String)>> {
+    with_connection(config, |conn| {
+        let row = conn
+            .query_row(
+                "SELECT content_path, content_sha256 FROM mem_tree_chunks WHERE id = ?1",
+                params![chunk_id],
+                |r| {
+                    let path: Option<String> = r.get(0)?;
+                    let sha: Option<String> = r.get(1)?;
+                    Ok((path, sha))
+                },
+            )
+            .optional()?;
+        Ok(row.and_then(|(p, s)| p.zip(s)))
+    })
+}
+
+/// Return the `content_path` stored in SQLite for `chunk_id`, if any.
+pub fn get_chunk_content_path(config: &Config, chunk_id: &str) -> Result<Option<String>> {
+    with_connection(config, |conn| {
+        let row = conn
+            .query_row(
+                "SELECT content_path FROM mem_tree_chunks WHERE id = ?1",
+                params![chunk_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(row)
+    })
+}
+
+/// Return both `content_path` and `content_sha256` stored in SQLite for `summary_id`.
+///
+/// Returns `Ok(None)` if the summary does not exist or has no content_path recorded yet
+/// (legacy rows pre-MD-content migration).
+pub fn get_summary_content_pointers(
+    config: &Config,
+    summary_id: &str,
+) -> Result<Option<(String, String)>> {
+    with_connection(config, |conn| {
+        let row = conn
+            .query_row(
+                "SELECT content_path, content_sha256 FROM mem_tree_summaries WHERE id = ?1",
+                params![summary_id],
+                |r| {
+                    let path: Option<String> = r.get(0)?;
+                    let sha: Option<String> = r.get(1)?;
+                    Ok((path, sha))
+                },
+            )
+            .optional()?;
+        Ok(row.and_then(|(p, s)| p.zip(s)))
+    })
+}
+
+/// List all summary rows that have a non-NULL `content_path`. Used by the
+/// bin integrity checker.
+pub fn list_summaries_with_content_path(config: &Config) -> Result<Vec<(String, String, String)>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, content_path, content_sha256
+               FROM mem_tree_summaries
+              WHERE content_path IS NOT NULL AND content_sha256 IS NOT NULL
+                AND deleted = 0",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                let id: String = r.get(0)?;
+                let path: String = r.get(1)?;
+                let sha: String = r.get(2)?;
+                Ok((id, path, sha))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to list summaries with content_path")?;
+        Ok(rows)
+    })
 }
 
 fn normalized_limit(requested: Option<usize>) -> i64 {
@@ -525,171 +804,5 @@ pub fn get_chunk_embedding(config: &Config, chunk_id: &str) -> Result<Option<Vec
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::memory::tree::types::chunk_id;
-    use chrono::TimeZone;
-    use tempfile::TempDir;
-
-    fn test_config() -> (TempDir, Config) {
-        let tmp = TempDir::new().expect("tempdir");
-        let mut cfg = Config::default();
-        cfg.workspace_dir = tmp.path().to_path_buf();
-        (tmp, cfg)
-    }
-
-    fn sample_chunk(source_id: &str, seq: u32, ts_ms: i64) -> Chunk {
-        let ts = Utc.timestamp_millis_opt(ts_ms).unwrap();
-        Chunk {
-            id: chunk_id(SourceKind::Chat, source_id, seq),
-            content: format!("content {source_id} {seq}"),
-            metadata: Metadata {
-                source_kind: SourceKind::Chat,
-                source_id: source_id.to_string(),
-                owner: "alice@example.com".to_string(),
-                timestamp: ts,
-                time_range: (ts, ts),
-                tags: vec!["eng".into()],
-                source_ref: Some(SourceRef::new(format!("slack://{source_id}/{seq}"))),
-            },
-            token_count: 12,
-            seq_in_source: seq,
-            created_at: ts,
-        }
-    }
-
-    #[test]
-    fn upsert_then_get() {
-        let (_tmp, cfg) = test_config();
-        let c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
-        assert_eq!(upsert_chunks(&cfg, &[c.clone()]).unwrap(), 1);
-        let got = get_chunk(&cfg, &c.id).unwrap().expect("chunk stored");
-        assert_eq!(got, c);
-    }
-
-    #[test]
-    fn upsert_is_idempotent() {
-        let (_tmp, cfg) = test_config();
-        let c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
-        upsert_chunks(&cfg, &[c.clone()]).unwrap();
-        upsert_chunks(&cfg, &[c.clone()]).unwrap();
-        assert_eq!(count_chunks(&cfg).unwrap(), 1);
-    }
-
-    #[test]
-    fn reingest_preserves_existing_embedding() {
-        let (_tmp, cfg) = test_config();
-        let mut c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
-        upsert_chunks(&cfg, &[c.clone()]).unwrap();
-        set_chunk_embedding(&cfg, &c.id, &[0.1, 0.2, 0.3]).unwrap();
-
-        c.content = "updated content".into();
-        c.token_count = 99;
-        upsert_chunks(&cfg, &[c.clone()]).unwrap();
-
-        let embedding = get_chunk_embedding(&cfg, &c.id).unwrap().unwrap();
-        assert_eq!(embedding, vec![0.1, 0.2, 0.3]);
-        let got = get_chunk(&cfg, &c.id).unwrap().unwrap();
-        assert_eq!(got.content, "updated content");
-        assert_eq!(got.token_count, 99);
-    }
-
-    #[test]
-    fn list_filters_by_source_kind() {
-        let (_tmp, cfg) = test_config();
-        let c1 = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
-        let mut c2 = sample_chunk("gmail:t1", 0, 1_700_000_001_000);
-        c2.metadata.source_kind = SourceKind::Email;
-        upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
-        let q = ListChunksQuery {
-            source_kind: Some(SourceKind::Email),
-            ..Default::default()
-        };
-        let rows = list_chunks(&cfg, &q).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].metadata.source_kind, SourceKind::Email);
-    }
-
-    #[test]
-    fn list_filters_by_time_range() {
-        let (_tmp, cfg) = test_config();
-        let a = sample_chunk("s", 0, 1_700_000_000_000);
-        let b = sample_chunk("s", 1, 1_700_000_010_000);
-        let c = sample_chunk("s", 2, 1_700_000_020_000);
-        upsert_chunks(&cfg, &[a.clone(), b.clone(), c.clone()]).unwrap();
-        let q = ListChunksQuery {
-            since_ms: Some(1_700_000_005_000),
-            until_ms: Some(1_700_000_015_000),
-            ..Default::default()
-        };
-        let rows = list_chunks(&cfg, &q).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id, b.id);
-    }
-
-    #[test]
-    fn list_orders_by_timestamp_desc() {
-        let (_tmp, cfg) = test_config();
-        let a = sample_chunk("s", 0, 1_700_000_000_000);
-        let b = sample_chunk("s", 1, 1_700_000_010_000);
-        upsert_chunks(&cfg, &[a.clone(), b.clone()]).unwrap();
-        let rows = list_chunks(&cfg, &ListChunksQuery::default()).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].id, b.id); // newest first
-        assert_eq!(rows[1].id, a.id);
-    }
-
-    #[test]
-    fn list_orders_equal_timestamps_by_sequence() {
-        let (_tmp, cfg) = test_config();
-        let a = sample_chunk("s", 0, 1_700_000_000_000);
-        let b = sample_chunk("s", 1, 1_700_000_000_000);
-        upsert_chunks(&cfg, &[b.clone(), a.clone()]).unwrap();
-        let rows = list_chunks(&cfg, &ListChunksQuery::default()).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].seq_in_source, 0);
-        assert_eq!(rows[1].seq_in_source, 1);
-    }
-
-    #[test]
-    fn list_limit_is_clamped_to_sane_range() {
-        let (_tmp, cfg) = test_config();
-        let chunks = (0..3)
-            .map(|idx| sample_chunk("s", idx, 1_700_000_000_000 + i64::from(idx)))
-            .collect::<Vec<_>>();
-        upsert_chunks(&cfg, &chunks).unwrap();
-
-        let zero_limit = list_chunks(
-            &cfg,
-            &ListChunksQuery {
-                limit: Some(0),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(zero_limit.len(), 1);
-
-        let huge_limit = list_chunks(
-            &cfg,
-            &ListChunksQuery {
-                limit: Some(usize::MAX),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(huge_limit.len(), 3);
-    }
-
-    #[test]
-    fn missing_chunk_returns_none() {
-        let (_tmp, cfg) = test_config();
-        assert!(get_chunk(&cfg, "nonexistent").unwrap().is_none());
-    }
-
-    #[test]
-    fn empty_batch_is_noop() {
-        let (_tmp, cfg) = test_config();
-        assert_eq!(upsert_chunks(&cfg, &[]).unwrap(), 0);
-        assert_eq!(count_chunks(&cfg).unwrap(), 0);
-    }
-}
+#[path = "store_tests.rs"]
+mod tests;

@@ -3,7 +3,7 @@ use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use log::{debug, warn};
 use once_cell::sync::Lazy;
@@ -26,7 +26,17 @@ use crate::rpc::RpcOutcome;
 
 const LOG_PREFIX: &str = "[app_state]";
 const APP_STATE_FILENAME: &str = "app-state.json";
+const CURRENT_USER_REFRESH_TTL: Duration = Duration::from_secs(5);
 static APP_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static CURRENT_USER_CACHE: Lazy<Mutex<Option<CachedCurrentUser>>> = Lazy::new(|| Mutex::new(None));
+
+#[derive(Debug, Clone)]
+struct CachedCurrentUser {
+    api_base: String,
+    token: String,
+    fetched_at: Instant,
+    user: Value,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +75,13 @@ pub struct AppStateSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_user: Option<Value>,
     pub onboarding_completed: bool,
+    /// Whether the chat-based welcome-agent flow has completed. Sourced
+    /// from [`Config::chat_onboarding_completed`]. The React app hides
+    /// the bottom tab bar, thread sidebar, and account rail while this is
+    /// `false` (and `onboarding_completed` is `true`) so the user stays
+    /// with the welcome agent until it calls
+    /// `complete_onboarding(action="complete")`.
+    pub chat_onboarding_completed: bool,
     pub analytics_enabled: bool,
     pub local_state: StoredAppState,
     pub runtime: RuntimeSnapshot,
@@ -288,6 +305,100 @@ async fn fetch_current_user(config: &Config, token: &str) -> Result<Option<Value
     Ok(Some(user))
 }
 
+fn sanitize_snapshot_user(user: Option<Value>) -> Option<Value> {
+    match user {
+        Some(Value::Object(map)) if map.is_empty() => None,
+        Some(Value::Null) => None,
+        other => other,
+    }
+}
+
+async fn fetch_current_user_cached(config: &Config, token: &str) -> Result<Option<Value>, String> {
+    let api_base = effective_api_url(&config.api_url)
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+
+    {
+        let cache = CURRENT_USER_CACHE.lock();
+        if let Some(entry) = cache.as_ref() {
+            if entry.api_base == api_base
+                && entry.token == token
+                && entry.fetched_at.elapsed() < CURRENT_USER_REFRESH_TTL
+            {
+                debug!(
+                    "{LOG_PREFIX} using cached current user age_ms={}",
+                    entry.fetched_at.elapsed().as_millis()
+                );
+                return Ok(Some(entry.user.clone()));
+            }
+        }
+    }
+
+    let fetched = sanitize_snapshot_user(fetch_current_user(config, token).await?);
+
+    let mut cache = CURRENT_USER_CACHE.lock();
+    match fetched.clone() {
+        Some(user) => {
+            debug!("{LOG_PREFIX} refreshed current user from backend");
+            *cache = Some(CachedCurrentUser {
+                api_base,
+                token: token.to_string(),
+                fetched_at: Instant::now(),
+                user,
+            });
+        }
+        None => {
+            debug!("{LOG_PREFIX} backend returned empty current user; clearing cache");
+            *cache = None;
+        }
+    }
+
+    Ok(fetched)
+}
+
+/// Synchronous, network-free peek at the cached `auth_get_me` response,
+/// returning only the identifying fields the prompt layer is allowed to
+/// embed (`id`, `name`, `email`). Tokens stay locked behind the JWT
+/// helpers — never returned through this path. See issue #926.
+///
+/// Returns `None` when no `auth_get_me` call has populated the cache
+/// yet (CLI-only flows, fresh installs, signed-out sessions). The
+/// cache TTL is **ignored** here intentionally — for prompt rendering
+/// a slightly stale identity is fine; the freshness check only
+/// matters for the snapshot RPC that fronts the React shell.
+pub fn peek_cached_current_user_identity() -> Option<crate::openhuman::agent::prompts::UserIdentity>
+{
+    let cache = CURRENT_USER_CACHE.lock();
+    let entry = cache.as_ref()?;
+    let user = entry.user.as_object()?;
+
+    let pluck = |key: &str| -> Option<String> {
+        user.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+
+    let id = pluck("id")
+        .or_else(|| pluck("user_id"))
+        .or_else(|| pluck("userId"));
+    let name = pluck("name")
+        .or_else(|| pluck("displayName"))
+        .or_else(|| pluck("display_name"))
+        .or_else(|| pluck("full_name"))
+        .or_else(|| pluck("fullName"));
+    let email = pluck("email");
+
+    let identity = crate::openhuman::agent::prompts::UserIdentity { id, name, email };
+    if identity.is_empty() {
+        None
+    } else {
+        Some(identity)
+    }
+}
+
 async fn build_runtime_snapshot(config: &Config) -> RuntimeSnapshot {
     let screen_intelligence = {
         let _ = crate::openhuman::screen_intelligence::global_engine()
@@ -334,22 +445,29 @@ async fn build_runtime_snapshot(config: &Config) -> RuntimeSnapshot {
 
 pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     let config = config_rpc::load_config_with_timeout().await?;
-    let auth = build_session_state(&config)?;
+    let mut auth = build_session_state(&config)?;
     let session_token = get_session_token(&config)?;
-    let current_user = auth.user.clone().or(
-        if let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) {
-            fetch_current_user(&config, &token).await?
-        } else {
-            None
-        },
-    );
+    let stored_user = sanitize_snapshot_user(auth.user.clone());
+    let current_user = if let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) {
+        match fetch_current_user_cached(&config, &token).await {
+            Ok(fresh_user) => fresh_user.or(stored_user.clone()),
+            Err(error) => {
+                warn!("{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {error}");
+                stored_user.clone()
+            }
+        }
+    } else {
+        stored_user.clone()
+    };
+    auth.user = current_user.clone();
     let local_state = load_stored_app_state(&config)?;
     let runtime = build_runtime_snapshot(&config).await;
 
     debug!(
-        "{LOG_PREFIX} snapshot auth={} onboarding={} analytics={} wallet_present={} si_active={} local_ai_state={} autocomplete_phase={} service_state={:?}",
+        "{LOG_PREFIX} snapshot auth={} onboarding={} chat_onboarding={} analytics={} wallet_present={} si_active={} local_ai_state={} autocomplete_phase={} service_state={:?}",
         auth.is_authenticated,
         config.onboarding_completed,
+        config.chat_onboarding_completed,
         config.observability.analytics_enabled,
         local_state.primary_wallet_address.is_some(),
         runtime.screen_intelligence.session.active,
@@ -364,6 +482,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             session_token,
             current_user,
             onboarding_completed: config.onboarding_completed,
+            chat_onboarding_completed: config.chat_onboarding_completed,
             analytics_enabled: config.observability.analytics_enabled,
             local_state,
             runtime,
@@ -411,3 +530,7 @@ pub async fn update_local_state(
         vec!["core local app state updated".to_string()],
     ))
 }
+
+#[cfg(test)]
+#[path = "ops_tests.rs"]
+mod tests;

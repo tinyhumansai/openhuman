@@ -8,6 +8,10 @@ RPC_PORT=7810
 RPC_URL="http://127.0.0.1:${RPC_PORT}/rpc"
 FIXTURES="./tests/fixtures/subconscious"
 
+# Pre-seed the RPC bearer token so curl calls authenticate correctly.
+# The core reads OPENHUMAN_CORE_TOKEN at startup and skips writing a token file.
+RPC_TOKEN="$(openssl rand -hex 32 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(32))')"
+
 if [ ! -f "$CORE_BIN" ]; then echo "ERROR: Core binary not found"; exit 1; fi
 
 # Check Ollama
@@ -21,13 +25,13 @@ echo ""
 
 # Start core server
 echo "[setup] Starting core on port $RPC_PORT..."
-OPENHUMAN_CORE_PORT="$RPC_PORT" "$CORE_BIN" serve > /tmp/subconscious-test.log 2>&1 &
+OPENHUMAN_CORE_PORT="$RPC_PORT" OPENHUMAN_CORE_TOKEN="$RPC_TOKEN" "$CORE_BIN" serve > /tmp/subconscious-test.log 2>&1 &
 SERVER_PID=$!
 cleanup() { kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
 for i in $(seq 1 15); do
-  if curl -s "$RPC_URL" -H "Content-Type: application/json" \
+  if curl -s "$RPC_URL" -H "Content-Type: application/json" -H "Authorization: Bearer $RPC_TOKEN" \
     -d '{"jsonrpc":"2.0","id":0,"method":"openhuman.health_snapshot","params":{}}' 2>/dev/null | grep -q "result"; then
     echo "[setup] Server ready."
     break
@@ -37,7 +41,10 @@ for i in $(seq 1 15); do
 done
 
 rpc() {
-  curl -s --max-time 120 "$RPC_URL" -H "Content-Type: application/json" -d "$1" 2>&1
+  curl -s --max-time 120 "$RPC_URL" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $RPC_TOKEN" \
+    -d "$1" 2>&1
 }
 
 # Write HEARTBEAT.md to the workspace

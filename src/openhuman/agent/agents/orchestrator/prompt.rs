@@ -9,7 +9,8 @@
 //! `agent_id` in a shared section impl.
 
 use crate::openhuman::context::prompt::{
-    render_tools, render_user_files, render_workspace, ConnectedIntegration, PromptContext,
+    render_datetime, render_tools, render_user_files, render_workspace, ConnectedIntegration,
+    PromptContext,
 };
 use anyhow::Result;
 use std::fmt::Write;
@@ -42,6 +43,12 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     let tools = render_tools(ctx)?;
     if !tools.trim().is_empty() {
         out.push_str(tools.trim_end());
+        out.push_str("\n\n");
+    }
+
+    let datetime = render_datetime(ctx)?;
+    if !datetime.trim().is_empty() {
+        out.push_str(datetime.trim_end());
         out.push_str("\n\n");
     }
 
@@ -110,6 +117,7 @@ mod tests {
             connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
+            user_identity: None,
         }
     }
 
@@ -118,6 +126,12 @@ mod tests {
         let body = build(&ctx_with(&[])).unwrap();
         assert!(!body.is_empty());
         assert!(!body.contains("## Delegation Guide"));
+    }
+
+    #[test]
+    fn build_includes_datetime() {
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(body.contains("## Current Date & Time"));
     }
 
     #[test]

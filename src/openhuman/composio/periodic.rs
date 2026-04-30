@@ -221,6 +221,8 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::config::TEST_ENV_LOCK as ENV_LOCK;
+    use tempfile::tempdir;
 
     #[test]
     fn tick_seconds_is_sane_default() {
@@ -273,17 +275,29 @@ mod tests {
 
     #[tokio::test]
     async fn run_one_tick_returns_ok_when_no_client() {
-        // With no session stored, `build_composio_client` returns None and
-        // the tick should silently skip (returning Ok). This covers the
-        // early-return path that's otherwise only hit in production.
-        //
-        // Note: this uses the same `load_config_with_timeout()` call path
-        // that real startup uses. If some other test has written a session
-        // profile to disk, this test accepts either outcome (Ok) gracefully.
-        let result = run_one_tick().await;
-        // Either Ok (no client, skipped) or Ok (backend unreachable handled
-        // gracefully). The `Err` branch only fires on config-load failure.
-        let _ = result;
+        // Isolate the workspace/env so config loading doesn't contend with
+        // sibling tests mutating OPENHUMAN_WORKSPACE in parallel.
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let tmp = tempdir().expect("tempdir");
+        unsafe {
+            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+        }
+
+        // With no session stored in the isolated workspace,
+        // `build_composio_client` returns None and the tick should
+        // silently skip (returning Ok). This covers the early-return
+        // path that's otherwise only hit in production.
+        let inner = tokio::time::timeout(Duration::from_secs(5), run_one_tick())
+            .await
+            .expect("run_one_tick should not hang indefinitely during tests");
+        assert!(
+            inner.is_ok(),
+            "run_one_tick should return Ok when no client is available: {inner:?}"
+        );
+
+        unsafe {
+            std::env::remove_var("OPENHUMAN_WORKSPACE");
+        }
     }
 
     #[tokio::test]

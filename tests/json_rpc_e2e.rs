@@ -15,8 +15,12 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tempfile::tempdir;
 
+use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_core::core::jsonrpc::build_core_http_router;
 use openhuman_core::openhuman::memory::all_memory_tree_registered_controllers;
+
+const TEST_RPC_TOKEN: &str = "json-rpc-e2e-local-token";
+static JSON_RPC_AUTH_INIT: OnceLock<()> = OnceLock::new();
 
 struct EnvVarGuard {
     key: &'static str,
@@ -175,11 +179,31 @@ fn mock_upstream_router() -> Router {
         if let Some(model) = body.get("model").and_then(Value::as_str) {
             with_chat_completion_models(|models| models.push(model.to_string()));
         }
+        let is_triage_turn = body
+            .get("messages")
+            .and_then(Value::as_array)
+            .map(|messages| {
+                messages.iter().any(|m| {
+                    m.get("content")
+                        .and_then(Value::as_str)
+                        .is_some_and(|content| {
+                            content.contains("SOURCE: ")
+                                && content.contains("DISPLAY_LABEL: ")
+                                && content.contains("PAYLOAD:")
+                        })
+                })
+            })
+            .unwrap_or(false);
+        let content = if is_triage_turn {
+            "{\"action\":\"react\",\"reason\":\"e2e triage mock\"}"
+        } else {
+            "Hello from e2e mock agent"
+        };
         Json(json!({
             "choices": [{
                 "message": {
                     "role": "assistant",
-                    "content": "Hello from e2e mock agent"
+                    "content": content
                 }
             }]
         }))
@@ -426,6 +450,7 @@ async fn serve_on_ephemeral(
     SocketAddr,
     tokio::task::JoinHandle<Result<(), std::io::Error>>,
 ) {
+    ensure_test_rpc_auth();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -448,6 +473,7 @@ async fn post_json_rpc(rpc_base: &str, id: i64, method: &str, params: Value) -> 
     let url = format!("{}/rpc", rpc_base.trim_end_matches('/'));
     let resp = client
         .post(&url)
+        .header(AUTHORIZATION, format!("Bearer {TEST_RPC_TOKEN}"))
         .json(&body)
         .send()
         .await
@@ -471,6 +497,7 @@ async fn read_first_sse_event(events_url: &str) -> Value {
         .expect("client");
     let resp = client
         .get(events_url)
+        .header(AUTHORIZATION, format!("Bearer {TEST_RPC_TOKEN}"))
         .send()
         .await
         .unwrap_or_else(|e| panic!("GET {events_url}: {e}"));
@@ -517,6 +544,7 @@ async fn read_sse_event_by_type(events_url: &str, target_event: &str) -> Value {
         .expect("client");
     let resp = client
         .get(events_url)
+        .header(AUTHORIZATION, format!("Bearer {TEST_RPC_TOKEN}"))
         .send()
         .await
         .unwrap_or_else(|e| panic!("GET {events_url}: {e}"));
@@ -642,6 +670,18 @@ enabled = false
 
     let _: openhuman_core::openhuman::config::Config =
         toml::from_str(&cfg).expect("config toml must match Config schema");
+}
+
+fn ensure_test_rpc_auth() {
+    JSON_RPC_AUTH_INIT.get_or_init(|| {
+        // SAFETY: set_var is inside get_or_init so it runs exactly once across
+        // all test threads. Rust 1.81+ requires unsafe for set_var in
+        // multi-threaded contexts; the OnceLock guard limits the mutation to a
+        // single call at init time, before any concurrent env reads occur.
+        unsafe { std::env::set_var(CORE_TOKEN_ENV_VAR, TEST_RPC_TOKEN) };
+        let token_dir = std::env::temp_dir().join("openhuman-json-rpc-e2e-auth");
+        init_rpc_token(&token_dir).expect("init rpc auth token for json_rpc_e2e");
+    });
 }
 
 #[tokio::test]
@@ -777,6 +817,210 @@ async fn json_rpc_protocol_auth_and_agent_hello() {
 }
 
 #[tokio::test]
+async fn json_rpc_thread_labels_create_and_update() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // 1. Create a thread with an explicit label.
+    let create = post_json_rpc(
+        &rpc_base,
+        9001,
+        "openhuman.threads_create_new",
+        json!({ "labels": ["custom"] }),
+    )
+    .await;
+    let create_outer = assert_no_jsonrpc_error(&create, "threads_create_new with labels");
+    let created = create_outer
+        .get("data")
+        .expect("data envelope in create response");
+    let thread_id = created
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("id in created thread");
+    let created_labels = created
+        .get("labels")
+        .and_then(Value::as_array)
+        .expect("labels in created thread");
+    assert_eq!(
+        created_labels
+            .iter()
+            .map(|v| v.as_str().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        vec!["custom"],
+        "created thread should have labels=[\"custom\"]"
+    );
+
+    // 2. Update labels on the thread.
+    let update = post_json_rpc(
+        &rpc_base,
+        9002,
+        "openhuman.threads_update_labels",
+        json!({ "thread_id": thread_id, "labels": ["work", "briefing"] }),
+    )
+    .await;
+    let update_outer = assert_no_jsonrpc_error(&update, "threads_update_labels");
+    let updated = update_outer
+        .get("data")
+        .expect("data envelope in update response");
+    let updated_labels = updated
+        .get("labels")
+        .and_then(Value::as_array)
+        .expect("labels in updated thread");
+    assert_eq!(
+        updated_labels
+            .iter()
+            .map(|v| v.as_str().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        vec!["work", "briefing"],
+        "updated thread should have labels=[\"work\", \"briefing\"]"
+    );
+
+    // 3. Verify the updated labels are reflected in threads_list.
+    let list = post_json_rpc(&rpc_base, 9003, "openhuman.threads_list", json!({})).await;
+    let list_outer = assert_no_jsonrpc_error(&list, "threads_list after label update");
+    let list_result = list_outer
+        .get("data")
+        .expect("data envelope in list response");
+    let threads = list_result
+        .get("threads")
+        .and_then(Value::as_array)
+        .expect("threads array in list");
+    let persisted = threads
+        .iter()
+        .find(|t| t.get("id").and_then(Value::as_str) == Some(thread_id))
+        .expect("created thread must appear in list");
+    let persisted_labels = persisted
+        .get("labels")
+        .and_then(Value::as_array)
+        .expect("labels in persisted thread");
+    assert_eq!(
+        persisted_labels
+            .iter()
+            .map(|v| v.as_str().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        vec!["work", "briefing"],
+        "threads_list must reflect the updated labels"
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_memory_sync_and_learn() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _embed_strict_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "false");
+    let _embed_endpoint_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", "");
+    let _embed_model_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", "");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── memory_sync_all: returns requested:true ──────────────────────────────
+    let sync_all = post_json_rpc(&rpc_base, 7001, "openhuman.memory_sync_all", json!({})).await;
+    let sync_all_result = assert_no_jsonrpc_error(&sync_all, "memory_sync_all");
+    assert_eq!(
+        sync_all_result.get("requested"),
+        Some(&json!(true)),
+        "memory_sync_all must return requested:true"
+    );
+
+    // ── memory_sync_channel: echoes channel_id and returns requested:true ─────
+    let sync_ch = post_json_rpc(
+        &rpc_base,
+        7002,
+        "openhuman.memory_sync_channel",
+        json!({ "channel_id": "test-channel-abc" }),
+    )
+    .await;
+    let sync_ch_result = assert_no_jsonrpc_error(&sync_ch, "memory_sync_channel");
+    assert_eq!(
+        sync_ch_result.get("requested"),
+        Some(&json!(true)),
+        "memory_sync_channel must return requested:true"
+    );
+    assert_eq!(
+        sync_ch_result.get("channel_id").and_then(Value::as_str),
+        Some("test-channel-abc"),
+        "memory_sync_channel must echo channel_id"
+    );
+
+    // ── memory_sync_channel: missing channel_id returns a JSON-RPC error ────
+    let sync_bad = post_json_rpc(&rpc_base, 7003, "openhuman.memory_sync_channel", json!({})).await;
+    assert!(
+        sync_bad.get("error").is_some(),
+        "missing channel_id must return an error, got: {sync_bad}"
+    );
+
+    // ── memory_learn_all: no namespaces → zero processed (empty store) ──────
+    let learn_all = post_json_rpc(&rpc_base, 7004, "openhuman.memory_learn_all", json!({})).await;
+    let learn_result = assert_no_jsonrpc_error(&learn_all, "memory_learn_all");
+    let processed = learn_result
+        .get("namespaces_processed")
+        .and_then(Value::as_u64)
+        .expect("namespaces_processed must be present");
+    assert_eq!(processed, 0, "no namespaces in a fresh store");
+    let results_arr = learn_result
+        .get("results")
+        .and_then(Value::as_array)
+        .expect("results array must be present");
+    assert!(
+        results_arr.is_empty(),
+        "results must be empty when no namespaces"
+    );
+
+    // ── memory_learn_all: constrained to non-existent namespace → also zero ──
+    let learn_constrained = post_json_rpc(
+        &rpc_base,
+        7005,
+        "openhuman.memory_learn_all",
+        json!({ "namespaces": ["does-not-exist"] }),
+    )
+    .await;
+    let learn_c_result =
+        assert_no_jsonrpc_error(&learn_constrained, "memory_learn_all constrained");
+    assert_eq!(
+        learn_c_result
+            .get("namespaces_processed")
+            .and_then(Value::as_u64),
+        Some(0),
+        "non-existent namespace must be filtered out"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_memory_tree_end_to_end() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");
@@ -805,6 +1049,7 @@ async fn json_rpc_memory_tree_end_to_end() {
         "openhuman.memory_tree_ingest".to_string(),
         "openhuman.memory_tree_list_chunks".to_string(),
         "openhuman.memory_tree_get_chunk".to_string(),
+        "openhuman.memory_tree_trigger_digest".to_string(),
     ];
     assert_eq!(controllers.len(), expected_methods.len());
     for method in &expected_methods {
@@ -1294,6 +1539,20 @@ async fn json_rpc_app_state_snapshot_returns_runtime_shape() {
         body.get("localState").and_then(Value::as_object).is_some(),
         "expected localState object: {body}"
     );
+    assert_eq!(
+        body.get("onboardingCompleted").and_then(Value::as_bool),
+        Some(false),
+        "expected onboardingCompleted=false default: {body}"
+    );
+    // Welcome-lockdown frontend gate (#883). `write_min_config` sets
+    // `chat_onboarding_completed = true` so the test harness bypasses the
+    // welcome agent; the snapshot must surface the same camelCase key the
+    // React app reads.
+    assert_eq!(
+        body.get("chatOnboardingCompleted").and_then(Value::as_bool),
+        Some(true),
+        "expected chatOnboardingCompleted=true from test config: {body}"
+    );
 
     let runtime = body.get("runtime").expect("expected runtime object");
     assert!(
@@ -1317,6 +1576,66 @@ async fn json_rpc_app_state_snapshot_returns_runtime_shape() {
     assert!(
         runtime.get("service").and_then(Value::as_object).is_some(),
         "expected runtime.service object: {runtime}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+/// #883 — when `chat_onboarding_completed` is unset in config.toml (fresh
+/// user), the `openhuman.app_state_snapshot` RPC must surface the flag as
+/// `false` so the React welcome-lockdown kicks in.
+#[tokio::test]
+async fn json_rpc_app_state_snapshot_chat_onboarding_defaults_false() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+
+    // Fresh-user config: no `chat_onboarding_completed` key → serde default
+    // of `false`. Cannot reuse `write_min_config` because it hard-codes the
+    // flag to `true` so the e2e mock can bypass the welcome agent.
+    let cfg = format!(
+        r#"api_url = "{mock_origin}"
+default_model = "e2e-mock-model"
+default_temperature = 0.7
+
+[secrets]
+encrypt = false
+"#
+    );
+    std::fs::create_dir_all(&openhuman_home).expect("mkdir openhuman");
+    std::fs::write(openhuman_home.join("config.toml"), &cfg).expect("write config");
+    std::fs::create_dir_all(openhuman_home.join("users").join("local")).expect("mkdir users/local");
+    std::fs::write(
+        openhuman_home
+            .join("users")
+            .join("local")
+            .join("config.toml"),
+        &cfg,
+    )
+    .expect("write user config");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let snapshot = post_json_rpc(&rpc_base, 1005, "openhuman.app_state_snapshot", json!({})).await;
+    let result = assert_no_jsonrpc_error(&snapshot, "app_state_snapshot");
+    let body = result.get("result").unwrap_or(result);
+
+    assert_eq!(
+        body.get("chatOnboardingCompleted").and_then(Value::as_bool),
+        Some(false),
+        "fresh-user config without chat_onboarding_completed must surface chatOnboardingCompleted=false: {body}"
     );
 
     mock_join.abort();
@@ -1656,32 +1975,34 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
         .get("presets")
         .and_then(Value::as_array)
         .expect("presets should be an array");
-    assert_eq!(presets_arr.len(), 5, "expected 5 presets: {presets_result}");
+    assert_eq!(
+        presets_arr.len(),
+        1,
+        "MVP exposes only the 1B preset: {presets_result}"
+    );
+    assert_eq!(
+        presets_arr[0].get("tier").and_then(Value::as_str),
+        Some("ram_2_4gb"),
+        "only the ram_2_4gb (1B) preset should be exposed: {presets_result}"
+    );
 
     let recommended = presets_result
         .get("recommended_tier")
         .and_then(Value::as_str)
         .expect("should have recommended_tier");
-    assert!(
-        [
-            "ram_1gb",
-            "ram_2_4gb",
-            "ram_4_8gb",
-            "ram_8_16gb",
-            "ram_16_plus_gb",
-        ]
-        .contains(&recommended),
-        "unexpected recommended_tier: {recommended}"
+    assert_eq!(
+        recommended, "ram_2_4gb",
+        "MVP recommends the only allowed tier: {recommended}"
     );
 
     let current = presets_result
         .get("current_tier")
         .and_then(Value::as_str)
         .expect("should have current_tier");
-    // Default config uses gemma3:4b-it-qat which now maps to the 8-16 GB tier.
+    // Default config now uses gemma3:1b-it-qat which maps to the only allowed (2-4 GB) tier.
     assert_eq!(
-        current, "ram_8_16gb",
-        "default config should be the 8-16 GB tier"
+        current, "ram_2_4gb",
+        "default config should be the 1B / 2-4 GB tier"
     );
 
     // --- apply_preset (switch to 2-4 GB) ---
@@ -2278,6 +2599,147 @@ async fn notification_settings_roundtrip_and_disabled_ingest_skip() {
     rpc_join.abort();
 }
 
+#[tokio::test]
+async fn credentials_crud_roundtrip() {
+    // Tests the provider-credential lifecycle over the JSON-RPC transport:
+    //   store → list → list-filtered → remove → verify-gone
+    //
+    // Provider credentials are stored locally (auth-profiles.json) and require
+    // no upstream network calls, so no mock session/JWT is needed.
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    // A mock upstream is required so config validation passes and api_url is
+    // well-formed, even though provider-credential calls don't hit the network.
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── 1. store a provider credential ──────────────────────────────────────
+    let store = post_json_rpc(
+        &rpc_base,
+        5001,
+        "openhuman.auth_store_provider_credentials",
+        json!({
+            "provider": "openai",
+            "profile": "default",
+            "token": "sk-e2e-test-key",
+            "setActive": true
+        }),
+    )
+    .await;
+    // assert_no_jsonrpc_error returns the JSON-RPC `result` field which is the
+    // RpcOutcome envelope: {"logs": [...], "result": { <AuthProfileSummary> }}.
+    let store_outer = assert_no_jsonrpc_error(&store, "auth_store_provider_credentials");
+    let store_result = store_outer.get("result").unwrap_or(store_outer);
+    assert_eq!(
+        store_result.get("provider").and_then(Value::as_str),
+        Some("openai"),
+        "stored profile should have provider=openai: {store_result}"
+    );
+    assert_eq!(
+        store_result.get("profileName").and_then(Value::as_str),
+        Some("default"),
+        "stored profile should have profileName=default: {store_result}"
+    );
+    assert_eq!(
+        store_result.get("hasToken").and_then(Value::as_bool),
+        Some(true),
+        "stored profile should report hasToken=true: {store_result}"
+    );
+
+    // ── 2. list all provider credentials — should find openai ───────────────
+    let list_all = post_json_rpc(
+        &rpc_base,
+        5002,
+        "openhuman.auth_list_provider_credentials",
+        json!({}),
+    )
+    .await;
+    let list_outer = assert_no_jsonrpc_error(&list_all, "auth_list_provider_credentials (all)");
+    let list_result = list_outer.get("result").unwrap_or(list_outer);
+    let profiles = list_result
+        .as_array()
+        .unwrap_or_else(|| panic!("expected array from list: {list_result}"));
+    assert_eq!(profiles.len(), 1, "expected exactly one stored credential");
+    assert_eq!(
+        profiles[0].get("provider").and_then(Value::as_str),
+        Some("openai")
+    );
+
+    // ── 3. list filtered by provider name ───────────────────────────────────
+    let list_filtered = post_json_rpc(
+        &rpc_base,
+        5003,
+        "openhuman.auth_list_provider_credentials",
+        json!({ "provider": "openai" }),
+    )
+    .await;
+    let filtered_outer =
+        assert_no_jsonrpc_error(&list_filtered, "auth_list_provider_credentials (filtered)");
+    let filtered_result = filtered_outer.get("result").unwrap_or(filtered_outer);
+    let filtered_profiles = filtered_result
+        .as_array()
+        .unwrap_or_else(|| panic!("expected array from filtered list: {filtered_result}"));
+    assert_eq!(
+        filtered_profiles.len(),
+        1,
+        "filter by openai should return exactly one entry"
+    );
+
+    // ── 4. remove the stored credential ─────────────────────────────────────
+    let remove = post_json_rpc(
+        &rpc_base,
+        5004,
+        "openhuman.auth_remove_provider_credentials",
+        json!({
+            "provider": "openai",
+            "profile": "default"
+        }),
+    )
+    .await;
+    let remove_outer = assert_no_jsonrpc_error(&remove, "auth_remove_provider_credentials");
+    let remove_result = remove_outer.get("result").unwrap_or(remove_outer);
+    assert_eq!(
+        remove_result.get("removed").and_then(Value::as_bool),
+        Some(true),
+        "remove should report removed=true: {remove_result}"
+    );
+
+    // ── 5. verify the credential is gone ────────────────────────────────────
+    let list_after = post_json_rpc(
+        &rpc_base,
+        5005,
+        "openhuman.auth_list_provider_credentials",
+        json!({}),
+    )
+    .await;
+    let after_outer =
+        assert_no_jsonrpc_error(&list_after, "auth_list_provider_credentials (after remove)");
+    let after_result = after_outer.get("result").unwrap_or(after_outer);
+    let after_profiles = after_result
+        .as_array()
+        .unwrap_or_else(|| panic!("expected array after remove: {after_result}"));
+    assert!(
+        after_profiles.is_empty(),
+        "credentials list should be empty after remove, got {after_profiles:?}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
 /// End-to-end coverage for `openhuman.skills_uninstall`.
 ///
 /// Validates that the RPC method is registered, wire-decodes
@@ -2385,6 +2847,146 @@ async fn skills_uninstall_rpc_e2e() {
             || traversal_msg.contains("path escapes")
             || traversal_msg.contains("not installed"),
         "expected traversal rejection error, got: {traversal_err}"
+    );
+
+    rpc_join.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Auth middleware tests
+// ---------------------------------------------------------------------------
+
+/// POST /rpc without any Authorization header → 401 with error=unauthorized.
+#[tokio::test]
+async fn rpc_rejects_unauthenticated_request() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("http://{rpc_addr}/rpc"))
+        .header("Content-Type", "application/json")
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"core.ping","params":{}}"#)
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 401, "missing Authorization must yield 401");
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body["error"], "unauthorized",
+        "error field must be 'unauthorized'"
+    );
+
+    rpc_join.abort();
+}
+
+/// POST /rpc with a syntactically valid but wrong bearer token → 401.
+#[tokio::test]
+async fn rpc_rejects_wrong_token() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("http://{rpc_addr}/rpc"))
+        .header(
+            AUTHORIZATION,
+            "Bearer deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        )
+        .header("Content-Type", "application/json")
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"core.ping","params":{}}"#)
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 401, "wrong token must yield 401");
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["error"], "unauthorized");
+
+    rpc_join.abort();
+}
+
+/// Every path in PUBLIC_PATHS must bypass the auth middleware — i.e. never
+/// return 401 — even without an Authorization header.  Some paths return
+/// non-2xx for other reasons (missing query params, no WebSocket upgrade
+/// headers) so the assertion is `!= 401`, not `.is_success()`.
+#[tokio::test]
+async fn public_paths_accessible_without_token() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+    let base = format!("http://{rpc_addr}");
+
+    // Paths that return 200 without any extra params.
+    for path in ["/", "/health", "/schema", "/events/webhooks"] {
+        let resp = client
+            .get(format!("{base}{path}"))
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("GET {path}: {e}"));
+        assert!(
+            resp.status().is_success(),
+            "public path {path} must return 2xx without auth, got {}",
+            resp.status()
+        );
+    }
+
+    // Paths that bypass auth but return non-2xx for unrelated reasons
+    // (missing required query params, no WebSocket upgrade headers, etc.).
+    // The invariant is that the auth middleware does NOT reject them with 401.
+    for path in ["/auth/telegram", "/events", "/ws/dictation"] {
+        let resp = client
+            .get(format!("{base}{path}"))
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("GET {path}: {e}"));
+        assert_ne!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "public path {path} must not be auth-gated (got {})",
+            resp.status()
+        );
+    }
+
+    rpc_join.abort();
+}
+
+/// Simulate an external process using a guessed token — must be rejected.
+#[tokio::test]
+async fn external_process_with_guessed_token_is_rejected() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth(); // server validates against TEST_RPC_TOKEN
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    // An attacker process trying a plausible-looking token that isn't the real one.
+    let attacker_token = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+    assert_ne!(
+        attacker_token, TEST_RPC_TOKEN,
+        "attacker token must differ from real one"
+    );
+
+    let resp = client
+        .post(format!("http://{rpc_addr}/rpc"))
+        .header(AUTHORIZATION, format!("Bearer {attacker_token}"))
+        .header("Content-Type", "application/json")
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"core.ping","params":{}}"#)
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(
+        resp.status(),
+        401,
+        "external process with wrong token must be rejected"
     );
 
     rpc_join.abort();

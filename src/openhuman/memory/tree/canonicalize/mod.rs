@@ -12,6 +12,7 @@
 pub mod chat;
 pub mod document;
 pub mod email;
+pub mod email_clean;
 
 use serde::{Deserialize, Serialize};
 

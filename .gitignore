@@ -33,6 +33,12 @@ prompt-dumps/
 scripts/ci-secrets.json
 scripts/ci-secrets.local.json
 
+# act (local GitHub Actions runner)
+.secrets
+.vars
+.actrc
+.github/act-event.json
+
 # Editor directories and files
 .idea
 .DS_Store
@@ -60,9 +66,11 @@ tauri.key
 tauri.key.pub
 /target/
 src-tauri/target/
+.target-codex/
 
 workflow
 .fastembed_cache
 overlay/src-tauri/target/
 .claude/*.lock
 app/.claude/scheduled_tasks.lock
+target-test-run

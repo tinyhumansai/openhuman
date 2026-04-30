@@ -2,7 +2,7 @@ id = "welcome"
 display_name = "Welcome"
 when_to_use = "First agent a new user speaks to. Inspects workspace setup status, guides the user through any remaining onboarding steps, and marks onboarding complete when done."
 temperature = 0.7
-max_iterations = 6
+max_iterations = 10
 sandbox_mode = "read_only"
 
 # Needs full memory context to personalize the welcome, but not the
@@ -22,9 +22,23 @@ omit_profile = false
 omit_memory_md = false
 
 [model]
-hint = "agentic"
+# Welcome replies are short and conversational, no deep reasoning needed.
+# `fast` cuts response latency from ~10–20s to a couple of seconds.
+hint = "fast"
 
 [tools]
-# complete_onboarding: check setup status and mark onboarding done.
+# check_onboarding_status: read-only snapshot of setup state (auth, channels,
+#   Composio toolkits, webview logins, exchange count, ready-to-complete flag).
+# complete_onboarding: finalize the welcome flow once ready_to_complete is true.
 # memory_recall: pull additional user details beyond injected context.
-named = ["complete_onboarding", "memory_recall", "composio_authorize"]
+# composio_authorize: start an OAuth flow for a toolkit (e.g. gmail).
+# gitbooks_*: answer "how does X work" / "what can OpenHuman do" questions
+#   during onboarding from the real product docs instead of guessing.
+named = [
+    "check_onboarding_status",
+    "complete_onboarding",
+    "memory_recall",
+    "composio_authorize",
+    "gitbooks_search",
+    "gitbooks_get_page",
+]

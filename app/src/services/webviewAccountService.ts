@@ -9,7 +9,8 @@ import {
   setAccountStatus,
   setActiveAccount,
 } from '../store/accountsSlice';
-import { addNotification } from '../store/notificationsSlice';
+import { addIntegrationNotification } from '../store/notificationSlice';
+import { fetchRespondQueue } from '../store/providerSurfaceSlice';
 import type { AccountProvider, IngestedMessage } from '../types/accounts';
 import { threadApi } from './api/threadApi';
 import { chatSend } from './chatService';
@@ -20,6 +21,8 @@ const MEET_ORCHESTRATOR_MODEL = 'reasoning-v1';
 
 const log = debug('webview-accounts');
 const errLog = debug('webview-accounts:error');
+
+export { isTauri };
 
 interface RecipeEventPayload {
   account_id: string;
@@ -58,6 +61,22 @@ interface NotificationClickPayload {
   provider: string;
 }
 
+interface WebviewAccountLoadPayload {
+  account_id: string;
+  // `'finished'` — native `on_page_load` or CDP `Page.loadEventFired` fired
+  // `'timeout'`  — 15 s watchdog elapsed; reveal anyway so spinner isn't stuck
+  // `'reused'`   — warm re-open of already-loaded account; reveal synchronously
+  state: 'finished' | 'timeout' | 'reused' | string;
+  url: string;
+}
+
+interface WebviewAccountBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface RecipeNotifyPayload {
   title?: string;
   body?: string;
@@ -69,8 +88,22 @@ interface RecipeNotifyPayload {
 
 let unlisten: UnlistenFn | null = null;
 let unlistenNotifyClick: UnlistenFn | null = null;
+let unlistenLoad: UnlistenFn | null = null;
 let started = false;
 let permissionChecked = false;
+
+// Last bounds the frontend handed to Rust per account. Updated on every
+// `setWebviewAccountBounds` call (even when the invoke itself is skipped
+// because the account is still loading). The `webview-account:load` listener
+// reads back from here so it can issue `webview_account_reveal` with the
+// correct rect without a second round-trip.
+const lastBoundsByAccount = new Map<string, WebviewAccountBounds>();
+
+// Track which accounts are still in their initial load cycle (spawned
+// off-screen, waiting for the first page-loaded signal). Bounds updates for
+// these are cached but NOT forwarded to Rust — moving the off-screen webview
+// to the on-screen rect prematurely would defeat the loading overlay.
+const loadingAccounts = new Set<string>();
 
 export function startWebviewAccountService(): void {
   if (started) return;
@@ -99,6 +132,17 @@ export function startWebviewAccountService(): void {
     } catch (err) {
       errLog('failed to attach notification:click listener', err);
     }
+    try {
+      // Rust emits `webview-account:load` from three independent signals
+      // (native `on_page_load`, CDP `Page.loadEventFired`, 15 s watchdog).
+      // It dedups server-side so we see exactly one event per cold open.
+      unlistenLoad = await listen<WebviewAccountLoadPayload>('webview-account:load', evt => {
+        handleWebviewAccountLoad(evt.payload);
+      });
+      log('webview-account:load listener attached');
+    } catch (err) {
+      errLog('failed to attach webview-account:load listener', err);
+    }
   })();
 }
 
@@ -111,7 +155,53 @@ export function stopWebviewAccountService(): void {
     unlistenNotifyClick();
     unlistenNotifyClick = null;
   }
+  if (unlistenLoad) {
+    unlistenLoad();
+    unlistenLoad = null;
+  }
+  // Drop module-level state so a subsequent start (HMR / shutdown→restart)
+  // doesn't see stale per-account entries that survived the listener
+  // teardown. Otherwise an account whose webview was destroyed mid-load
+  // would resurface as "still loading" on restart and silently drop bounds
+  // updates because `loadingAccounts.has(...)` is true.
+  lastBoundsByAccount.clear();
+  loadingAccounts.clear();
   started = false;
+}
+
+function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
+  const accountId = payload?.account_id;
+  if (!accountId) {
+    errLog('webview-account:load missing account_id — ignoring: %o', payload);
+    return;
+  }
+  log('load event account=%s state=%s url=%s', accountId, payload.state, payload.url);
+  loadingAccounts.delete(accountId);
+
+  // Rust already resized the webview to `requested_bounds` as part of
+  // `emit_load_finished`, so the native side is already correct. We still
+  // issue `webview_account_reveal` here as a belt-and-braces idempotent
+  // no-op: if the frontend bounds diverged from the Rust-stored ones (e.g.
+  // a resize landed during the load window) this reapplies the latest
+  // measured rect. When the cache is empty (host already unmounted) we
+  // simply skip.
+  //
+  // Dispatch `'open'` after the reveal settles (success or failure) so the
+  // spinner is only dismissed once the webview is actually positioned. On
+  // error we still flip to `'open'` so the spinner never hangs indefinitely —
+  // the webview will have been positioned server-side by `emit_load_finished`.
+  const bounds = lastBoundsByAccount.get(accountId);
+  if (bounds) {
+    invoke('webview_account_reveal', { args: { account_id: accountId, bounds } })
+      .catch(err => {
+        errLog('webview_account_reveal failed account=%s: %o', accountId, err);
+      })
+      .finally(() => {
+        store.dispatch(setAccountStatus({ accountId, status: 'open' }));
+      });
+  } else {
+    store.dispatch(setAccountStatus({ accountId, status: 'open' }));
+  }
 }
 
 function handleNotificationClick(payload: NotificationClickPayload) {
@@ -188,6 +278,9 @@ function handleRecipeEvent(evt: RecipeEventPayload) {
 
     store.dispatch(appendMessages({ accountId, messages, unread: ingest.unread }));
 
+    // Tauri already forwarded this ingest to core; refresh queue immediately for Agent pane.
+    void store.dispatch(fetchRespondQueue({ silent: true }));
+
     // Fire-and-forget memory write via the existing core RPC.
     // Namespace mirrors the skill-sync convention so the recall pipeline
     // can find these alongside other ingested context.
@@ -210,7 +303,7 @@ function handleRecipeEvent(evt: RecipeEventPayload) {
       .then(result => {
         if (result.skipped) return;
         store.dispatch(
-          addNotification({
+          addIntegrationNotification({
             id: result.id,
             provider: evt.provider,
             account_id: accountId,
@@ -716,16 +809,23 @@ export async function openWebviewAccount(args: OpenAccountArgs): Promise<void> {
   if (!isTauri()) throw new Error('webview accounts require the desktop app');
   log('open account=%s provider=%s', args.accountId, args.provider);
   store.dispatch(setAccountStatus({ accountId: args.accountId, status: 'pending' }));
+  lastBoundsByAccount.set(args.accountId, args.bounds);
+  loadingAccounts.add(args.accountId);
   void ensureNotificationPermission();
   try {
     await invoke('webview_account_open', {
       args: { account_id: args.accountId, provider: args.provider, bounds: args.bounds },
     });
-    store.dispatch(setAccountStatus({ accountId: args.accountId, status: 'open' }));
+    // Rust confirmed `add_child`. The webview is spawned off-screen; keep us
+    // in the loading state until `webview-account:load` arrives (at which point
+    // the listener dispatches `'open'`). Warm re-opens are resolved by the
+    // `'reused'` event which the listener also handles.
+    store.dispatch(setAccountStatus({ accountId: args.accountId, status: 'loading' }));
     void setFocusedAccount(args.accountId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     errLog('open failed: %s', msg);
+    loadingAccounts.delete(args.accountId);
     store.dispatch(
       setAccountStatus({ accountId: args.accountId, status: 'error', lastError: msg })
     );
@@ -735,9 +835,18 @@ export async function openWebviewAccount(args: OpenAccountArgs): Promise<void> {
 
 export async function setWebviewAccountBounds(
   accountId: string,
-  bounds: { x: number; y: number; width: number; height: number }
+  bounds: WebviewAccountBounds
 ): Promise<void> {
   if (!isTauri()) return;
+  // Always keep the cache fresh — the load-event listener needs it whether or
+  // not we forward this particular call to Rust.
+  lastBoundsByAccount.set(accountId, bounds);
+  if (loadingAccounts.has(accountId)) {
+    // Webview is parked off-screen waiting for its first page-loaded signal.
+    // Skip the invoke so we don't drag the CEF subview back on-screen over
+    // the React loading overlay.
+    return;
+  }
   try {
     await invoke('webview_account_bounds', { args: { account_id: accountId, bounds } });
   } catch (err) {
@@ -767,6 +876,8 @@ export async function closeWebviewAccount(accountId: string): Promise<void> {
   if (!isTauri()) return;
   log('close account=%s', accountId);
   await flushMeetingIfAny(accountId, 'webview-closed');
+  lastBoundsByAccount.delete(accountId);
+  loadingAccounts.delete(accountId);
   try {
     await invoke('webview_account_close', { args: { account_id: accountId } });
     store.dispatch(setAccountStatus({ accountId, status: 'closed' }));
@@ -783,6 +894,8 @@ export async function purgeWebviewAccount(accountId: string): Promise<void> {
   if (!isTauri()) return;
   log('purge account=%s', accountId);
   await flushMeetingIfAny(accountId, 'webview-purged');
+  lastBoundsByAccount.delete(accountId);
+  loadingAccounts.delete(accountId);
   try {
     await invoke('webview_account_purge', { args: { account_id: accountId } });
     store.dispatch(setAccountStatus({ accountId, status: 'closed' }));

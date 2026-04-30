@@ -6,7 +6,7 @@
 //! post-processing in the runner.
 
 use crate::openhuman::context::prompt::{
-    render_tools, render_user_files, render_workspace, PromptContext,
+    render_datetime, render_tools, render_user_files, render_workspace, PromptContext,
 };
 use anyhow::Result;
 
@@ -26,6 +26,12 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     let tools = render_tools(ctx)?;
     if !tools.trim().is_empty() {
         out.push_str(tools.trim_end());
+        out.push_str("\n\n");
+    }
+
+    let datetime = render_datetime(ctx)?;
+    if !datetime.trim().is_empty() {
+        out.push_str(datetime.trim_end());
         out.push_str("\n\n");
     }
 
@@ -61,6 +67,7 @@ mod tests {
             connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
+            user_identity: None,
         };
         let body = build(&ctx).unwrap();
         assert!(!body.is_empty());

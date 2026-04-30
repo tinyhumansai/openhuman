@@ -15,7 +15,7 @@ integration needed.
 - `review` / `fix`: `--executor-llm <tool>` (default `claude`). Picks the CLI that
   drives the agent prompt. An optional trailing positional `<extra-prompt>` is
   appended verbatim to the executor's prompt (e.g.
-  `yarn review fix 123 "focus on the retry logic"`).
+  `pnpm review fix 123 "focus on the retry logic"`).
 - `merge`: `--summary-llm <tool>` (default `gemini`). The LLM that condenses the PR
   body + commit messages into a concise squash commit body. Use `--summary-llm none`
   to skip summarization and keep the raw PR body.
@@ -24,15 +24,15 @@ Any tool that accepts `-p "<prompt>"` and prints its response to stdout works.
 
 ## Usage
 
-Via yarn (preferred):
+Via pnpm (preferred):
 
 ```sh
-yarn review sync 123
-yarn review review 123
-yarn review fix 123
-yarn review merge 123              # --squash
-yarn review merge 123 --rebase
-yarn review --help
+pnpm review sync 123
+pnpm review review 123
+pnpm review fix 123
+pnpm review merge 123              # --squash
+pnpm review merge 123 --rebase
+pnpm review --help
 ```
 
 Or invoke the scripts directly:

@@ -11,8 +11,8 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::memory::rpc::{
     self, ClearNamespaceParams, DeleteDocParams, GraphQueryParams, GraphUpsertParams,
-    IngestDocParams, KvGetDeleteParams, KvSetParams, NamespaceOnlyParams, PutDocParams,
-    QueryNamespaceParams, RecallNamespaceParams,
+    IngestDocParams, KvGetDeleteParams, KvSetParams, LearnAllParams, NamespaceOnlyParams,
+    PutDocParams, QueryNamespaceParams, RecallNamespaceParams, SyncChannelParams,
 };
 use crate::openhuman::memory::{
     DeleteDocumentRequest, EmptyRequest, ListDocumentsRequest, ListMemoryFilesRequest,
@@ -52,6 +52,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("graph_upsert"),
         schemas("graph_query"),
         schemas("clear_namespace"),
+        schemas("sync_channel"),
+        schemas("sync_all"),
+        schemas("learn_all"),
     ]
 }
 
@@ -153,6 +156,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("clear_namespace"),
             handler: handle_clear_namespace,
+        },
+        RegisteredController {
+            schema: schemas("sync_channel"),
+            handler: handle_sync_channel,
+        },
+        RegisteredController {
+            schema: schemas("sync_all"),
+            handler: handle_sync_all,
+        },
+        RegisteredController {
+            schema: schemas("learn_all"),
+            handler: handle_learn_all,
         },
     ]
 }
@@ -914,6 +929,70 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
         },
 
+        // ----- sync / learn -----
+        "sync_channel" => ControllerSchema {
+            namespace: "memory",
+            function: "sync_channel",
+            description: "Request a memory sync for a specific channel. Publishes MemorySyncRequested on the event bus. No ingestion consumers exist yet; this is a hook for future pull-based subscribers.",
+            inputs: vec![FieldSchema {
+                name: "channel_id",
+                ty: TypeSchema::String,
+                comment: "ID of the channel to sync.",
+                required: true,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "requested",
+                    ty: TypeSchema::Bool,
+                    comment: "Always true when the event was published.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "channel_id",
+                    ty: TypeSchema::String,
+                    comment: "Echo of the channel_id that was requested.",
+                    required: true,
+                },
+            ],
+        },
+        "sync_all" => ControllerSchema {
+            namespace: "memory",
+            function: "sync_all",
+            description: "Request a memory sync for all channels. Publishes MemorySyncRequested { channel_id: None } on the event bus.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "requested",
+                ty: TypeSchema::Bool,
+                comment: "Always true when the event was published.",
+                required: true,
+            }],
+        },
+        "learn_all" => ControllerSchema {
+            namespace: "memory",
+            function: "learn_all",
+            description: "Run the tree summarizer over all memory namespaces (or a constrained subset). Processes namespaces sequentially; a failing namespace is recorded but does not abort the rest.",
+            inputs: vec![FieldSchema {
+                name: "namespaces",
+                ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                comment: "Optional list of namespaces to constrain. Defaults to all namespaces.",
+                required: false,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "namespaces_processed",
+                    ty: TypeSchema::U64,
+                    comment: "Total number of namespaces processed.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "results",
+                    ty: TypeSchema::Json,
+                    comment: "Per-namespace outcomes: [{ namespace, status: 'ok'|'skipped'|'error', error? }].",
+                    required: true,
+                },
+            ],
+        },
+
         // ----- fallback -----
         _other => ControllerSchema {
             namespace: "memory",
@@ -1112,6 +1191,24 @@ fn handle_clear_namespace(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_sync_channel(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = parse_params::<SyncChannelParams>(params)?;
+        to_json(rpc::memory_sync_channel(payload).await?)
+    })
+}
+
+fn handle_sync_all(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(rpc::memory_sync_all().await?) })
+}
+
+fn handle_learn_all(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = parse_params::<LearnAllParams>(params)?;
+        to_json(rpc::memory_learn_all(payload).await?)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -1125,115 +1222,5 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    const ALL_FUNCTIONS: &[&str] = &[
-        "init",
-        "list_documents",
-        "list_namespaces",
-        "delete_document",
-        "query_namespace",
-        "recall_context",
-        "recall_memories",
-        "list_files",
-        "read_file",
-        "write_file",
-        "namespace_list",
-        "doc_put",
-        "doc_ingest",
-        "doc_list",
-        "doc_delete",
-        "context_query",
-        "context_recall",
-        "kv_set",
-        "kv_get",
-        "kv_delete",
-        "kv_list_namespace",
-        "graph_upsert",
-        "graph_query",
-        "clear_namespace",
-    ];
-
-    #[test]
-    fn all_controller_schemas_has_entry_per_supported_function() {
-        let names: Vec<_> = all_controller_schemas()
-            .into_iter()
-            .map(|s| s.function)
-            .collect();
-        assert_eq!(names.len(), ALL_FUNCTIONS.len());
-        for expected in ALL_FUNCTIONS {
-            assert!(names.contains(expected), "missing schema for {expected}");
-        }
-    }
-
-    #[test]
-    fn all_registered_controllers_has_handler_per_schema() {
-        let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), ALL_FUNCTIONS.len());
-        let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
-        for expected in ALL_FUNCTIONS {
-            assert!(names.contains(expected), "missing handler for {expected}");
-        }
-    }
-
-    #[test]
-    fn every_schema_uses_memory_namespace() {
-        for s in all_controller_schemas() {
-            assert_eq!(
-                s.namespace, "memory",
-                "schema {} must use the memory namespace",
-                s.function
-            );
-        }
-    }
-
-    #[test]
-    fn every_schema_has_a_non_empty_description() {
-        for s in all_controller_schemas() {
-            assert!(
-                !s.description.is_empty(),
-                "schema {} has empty description",
-                s.function
-            );
-        }
-    }
-
-    #[test]
-    fn schemas_unknown_function_returns_unknown_placeholder() {
-        let s = schemas("not-a-real-function");
-        assert_eq!(s.namespace, "memory");
-        assert_eq!(s.function, "unknown");
-    }
-
-    // ── parse_params helper ──────────────────────────────────────
-
-    #[test]
-    fn parse_params_deserializes_simple_struct() {
-        #[derive(serde::Deserialize, Debug)]
-        struct Simple {
-            name: String,
-            count: u32,
-        }
-        let mut m = Map::new();
-        m.insert("name".into(), json!("hi"));
-        m.insert("count".into(), json!(7));
-        let out: Simple = parse_params(m).unwrap();
-        assert_eq!(out.name, "hi");
-        assert_eq!(out.count, 7);
-    }
-
-    #[test]
-    fn parse_params_surfaces_deserialization_errors_with_context() {
-        #[derive(serde::Deserialize, Debug)]
-        struct Strict {
-            #[allow(dead_code)]
-            count: u32,
-        }
-        let mut m = Map::new();
-        m.insert("count".into(), json!("not-a-number"));
-        let err = parse_params::<Strict>(m).unwrap_err();
-        assert!(err.contains("invalid params"));
-    }
-}
+#[path = "schemas_tests.rs"]
+mod tests;

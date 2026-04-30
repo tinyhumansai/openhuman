@@ -26,11 +26,43 @@ function parseToolTimeoutSecs(): number {
 
 export const TOOL_TIMEOUT_SECS = parseToolTimeoutSecs();
 
+/**
+ * Per-request timeout for Core JSON-RPC `fetch()` calls, in milliseconds.
+ * Without this the UI can hang indefinitely if the core sidecar stops
+ * responding mid-flight. Bounded to [1s, 10min]; default 30s. Override with
+ * `VITE_CORE_RPC_TIMEOUT_MS`.
+ */
+const DEFAULT_CORE_RPC_TIMEOUT_MS = 30_000;
+const MIN_CORE_RPC_TIMEOUT_MS = 1_000;
+const MAX_CORE_RPC_TIMEOUT_MS = 10 * 60 * 1_000;
+
+function parseCoreRpcTimeoutMs(): number {
+  const raw = import.meta.env.VITE_CORE_RPC_TIMEOUT_MS as string | undefined;
+  if (raw === undefined || raw === '') return DEFAULT_CORE_RPC_TIMEOUT_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < MIN_CORE_RPC_TIMEOUT_MS || n > MAX_CORE_RPC_TIMEOUT_MS) {
+    return DEFAULT_CORE_RPC_TIMEOUT_MS;
+  }
+  return Math.round(n);
+}
+
+export const CORE_RPC_TIMEOUT_MS = parseCoreRpcTimeoutMs();
+
 export const IS_DEV = import.meta.env.DEV;
+export const IS_PROD = import.meta.env.PROD;
 
 /** Dev only: skip `.skip_onboarding` workspace check and ignore onboarded state so `/onboarding` always shows. Set `VITE_DEV_FORCE_ONBOARDING=true` in `.env.local`. */
 export const DEV_FORCE_ONBOARDING =
   import.meta.env.DEV && import.meta.env.VITE_DEV_FORCE_ONBOARDING === 'true';
+
+/**
+ * Consumer-first-session UX (intent picker, home IA, trust affordances).
+ * **Default off** so `main` stays unchanged until slices ship behind this flag.
+ * Opt in locally or in staging: `VITE_CONSUMER_FIRST_SESSION=true` in `app/.env.local`.
+ * Spec: `docs/plans/consumer-first-session-spec.md`.
+ */
+export const CONSUMER_FIRST_SESSION_ENABLED =
+  import.meta.env.VITE_CONSUMER_FIRST_SESSION === 'true';
 
 export const SKILLS_GITHUB_REPO =
   import.meta.env.VITE_SKILLS_GITHUB_REPO || 'tinyhumansai/openhuman-skills';

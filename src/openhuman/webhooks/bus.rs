@@ -117,7 +117,6 @@ impl EventHandler for WebhookRequestSubscriber {
                     // Spawn the triage pipeline so we don't block the
                     // broadcast channel's dispatch task during LLM calls.
                     let corr = correlation_id.clone();
-                    let _skill = reg.agent_id.clone().or_else(|| Some(reg.skill_id.clone()));
                     tokio::spawn(async move {
                         let result =
                             tokio::time::timeout(std::time::Duration::from_secs(60), async {

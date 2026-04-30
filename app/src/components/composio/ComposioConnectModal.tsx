@@ -384,25 +384,35 @@ export default function ComposioConnectModal({
             <>
               <div className="flex items-center gap-2 text-sm text-sage-700">
                 <div className="w-2 h-2 rounded-full bg-sage-500" />
-                {toolkit.name} is connected.
+                <div>
+                  {toolkit.name} is connected. &nbsp;
+                  {activeConnection && (
+                    <span className="text-[11px] text-stone-400 font-mono">
+                      (id: {activeConnection.id})
+                    </span>
+                  )}
+                </div>
               </div>
-              {activeConnection && (
-                <p className="text-[11px] text-stone-400 font-mono break-all">
-                  id: {activeConnection.id}
-                </p>
-              )}
               <ScopeToggles
                 scopes={scopes}
                 savingScope={savingScope}
                 onToggle={handleToggleScope}
                 error={scopeError}
               />
-              <button
-                type="button"
-                onClick={() => void handleDisconnect()}
-                className="w-full rounded-xl border border-coral-200 bg-coral-50 text-coral-700 text-sm font-medium py-2.5 hover:bg-coral-100 transition-colors">
-                Disconnect
-              </button>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => void handleDisconnect()}
+                  className="w-full rounded-xl border border-coral-200 bg-coral-50 text-coral-700 text-sm font-medium py-2.5 hover:bg-coral-100 transition-colors">
+                  Disconnect
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
+                  Close
+                </button>
+              </div>
             </>
           )}
 

@@ -3,8 +3,8 @@
 //!
 //! Instead of re-implementing prompt assembly, this module routes
 //! through [`Agent::from_config_for_agent`] — the same entry point the
-//! Tauri web channel, CLI, and `welcome_proactive` all use — and then
-//! calls [`Agent::build_system_prompt`] on the constructed session. The
+//! Tauri web channel and CLI use — and then calls
+//! [`Agent::build_system_prompt`] on the constructed session. The
 //! output is byte-identical to what the LLM would receive on turn 1 of
 //! that agent.
 //!
@@ -392,6 +392,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
         connected_identities_md: crate::openhuman::agent::prompts::render_connected_identities(),
         include_profile: !definition.omit_profile,
         include_memory_md: !definition.omit_memory_md,
+        user_identity: None,
     };
 
     let mut text = build(&ctx)

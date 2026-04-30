@@ -226,17 +226,21 @@ mod tests {
     #[test]
     fn target_paths_preserve_absolute_overrides() {
         let (_tmp, mut config) = temp_config();
-        config.local_ai.stt_model_id = "/tmp/stt-model.bin".to_string();
-        config.local_ai.tts_voice_id = "/tmp/voice.onnx".to_string();
+        let stt = if cfg!(windows) {
+            "C:\\tmp\\stt-model.bin"
+        } else {
+            "/tmp/stt-model.bin"
+        };
+        let tts = if cfg!(windows) {
+            "C:\\tmp\\voice.onnx"
+        } else {
+            "/tmp/voice.onnx"
+        };
+        config.local_ai.stt_model_id = stt.to_string();
+        config.local_ai.tts_voice_id = tts.to_string();
 
-        assert_eq!(
-            stt_model_target_path(&config),
-            PathBuf::from("/tmp/stt-model.bin")
-        );
-        assert_eq!(
-            tts_model_target_path(&config),
-            PathBuf::from("/tmp/voice.onnx")
-        );
+        assert_eq!(stt_model_target_path(&config), PathBuf::from(stt));
+        assert_eq!(tts_model_target_path(&config), PathBuf::from(tts));
     }
 
     #[test]

@@ -127,6 +127,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         toml: include_str!("summarizer/agent.toml"),
         prompt_fn: super::summarizer::prompt::build,
     },
+    BuiltinAgent {
+        id: "help",
+        toml: include_str!("help/agent.toml"),
+        prompt_fn: super::help::prompt::build,
+    },
 ];
 
 /// Parse every entry in [`BUILTINS`] into an [`AgentDefinition`].
@@ -172,7 +177,7 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 14, "expected 14 built-in agents");
+        assert_eq!(defs.len(), 15, "expected 15 built-in agents");
     }
 
     #[test]
@@ -261,6 +266,7 @@ mod tests {
                         connected_identities_md: String::new(),
                         include_profile: false,
                         include_memory_md: false,
+                        user_identity: None,
                     };
                     let body = build(&ctx)
                         .unwrap_or_else(|e| panic!("{} prompt build failed: {e}", def.id));
@@ -326,6 +332,41 @@ mod tests {
         assert!(def.omit_safety_preamble);
     }
 
+    /// Planner runs `composio_execute` so it can ground plans in real
+    /// integration data, but it must stay strictly read-only — issue
+    /// #685. `sandbox_mode = "read_only"` in `planner/agent.toml` is the
+    /// runtime hook that activates the agent-level gate inside
+    /// `ComposioExecuteTool::execute`; this test pins that contract so a
+    /// future TOML edit that drops the sandbox mode can never silently
+    /// turn the planner into a write-capable agent.
+    #[test]
+    fn planner_is_read_only_with_composio_meta_tools() {
+        let def = find("planner");
+        assert_eq!(
+            def.sandbox_mode,
+            SandboxMode::ReadOnly,
+            "planner.sandbox_mode must be read_only — gates Write/Admin composio actions",
+        );
+        match &def.tools {
+            ToolScope::Named(names) => {
+                for required in [
+                    "composio_list_toolkits",
+                    "composio_list_connections",
+                    "composio_list_tools",
+                    "composio_execute",
+                ] {
+                    assert!(
+                        names.iter().any(|n| n == required),
+                        "planner tool list missing `{required}` — composio meta-tools must \
+                         all be present so the planner can inspect integrations under the \
+                         read-only sandbox gate",
+                    );
+                }
+            }
+            other => panic!("planner must use Named tool scope, got {other:?}"),
+        }
+    }
+
     #[test]
     fn integrations_agent_tool_scope_honours_toml() {
         let def = find("integrations_agent");
@@ -366,12 +407,92 @@ mod tests {
     }
 
     #[test]
+    fn help_uses_gitbooks_tools_and_is_read_only() {
+        let def = find("help");
+        assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert!(
+                    tools.iter().any(|t| t == "gitbooks_search"),
+                    "help needs gitbooks_search"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "gitbooks_get_page"),
+                    "help needs gitbooks_get_page"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "memory_recall"),
+                    "help needs memory_recall for personalisation"
+                );
+                // Help is docs-only — no write/exec tools.
+                assert!(!tools.iter().any(|t| t == "shell"));
+                assert!(!tools.iter().any(|t| t == "file_write"));
+                assert!(!tools.iter().any(|t| t == "curl"));
+                assert!(!tools.iter().any(|t| t == "spawn_subagent"));
+            }
+            ToolScope::Wildcard => panic!("help must have a Named tool scope"),
+        }
+        assert!(def.omit_identity);
+        assert!(def.omit_safety_preamble);
+        assert!(!def.omit_memory_context);
+    }
+
+    #[test]
+    fn researcher_has_curl_for_artifact_downloads() {
+        let def = find("researcher");
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert!(
+                    tools.iter().any(|t| t == "curl"),
+                    "researcher needs curl for artifact downloads"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "http_request"),
+                    "researcher still needs http_request"
+                );
+            }
+            ToolScope::Wildcard => panic!("researcher must have Named tool scope"),
+        }
+    }
+
+    #[test]
+    fn code_executor_has_curl_for_artifact_downloads() {
+        let def = find("code_executor");
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert!(
+                    tools.iter().any(|t| t == "curl"),
+                    "code_executor needs curl for artifact/dataset fetches"
+                );
+            }
+            ToolScope::Wildcard => panic!("code_executor must have Named tool scope"),
+        }
+    }
+
+    #[test]
+    fn orchestrator_does_not_get_curl() {
+        // Per design: curl is a `Write` permission tool that writes
+        // to the workspace. The orchestrator delegates rather than
+        // executing — code_executor / researcher own actual downloads.
+        let def = find("orchestrator");
+        if let ToolScope::Named(tools) = &def.tools {
+            assert!(
+                !tools.iter().any(|t| t == "curl"),
+                "orchestrator must not have curl — it should delegate"
+            );
+        }
+    }
+
+    #[test]
     fn welcome_has_onboarding_and_memory_tools() {
         let def = find("welcome");
         assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
         match &def.tools {
             ToolScope::Named(tools) => {
-                assert_eq!(tools.len(), 3, "welcome should have exactly three tools");
+                assert!(
+                    tools.iter().any(|t| t == "check_onboarding_status"),
+                    "welcome needs check_onboarding_status"
+                );
                 assert!(
                     tools.iter().any(|t| t == "complete_onboarding"),
                     "welcome needs complete_onboarding"
@@ -384,11 +505,23 @@ mod tests {
                     tools.iter().any(|t| t == "composio_authorize"),
                     "welcome needs composio_authorize"
                 );
+                assert!(
+                    tools.iter().any(|t| t == "gitbooks_search"),
+                    "welcome needs gitbooks_search to answer 'how does X work' during onboarding"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "gitbooks_get_page"),
+                    "welcome needs gitbooks_get_page for full-page lookups"
+                );
+                // Welcome must not gain write/exec power; onboarding stays read-only.
+                assert!(!tools.iter().any(|t| t == "shell"));
+                assert!(!tools.iter().any(|t| t == "file_write"));
+                assert!(!tools.iter().any(|t| t == "curl"));
             }
             ToolScope::Wildcard => panic!("welcome must have a Named tool scope"),
         }
         assert!(!def.omit_memory_context);
         assert!(def.omit_identity);
-        assert_eq!(def.max_iterations, 6);
+        assert_eq!(def.max_iterations, 10);
     }
 }

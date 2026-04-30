@@ -1,44 +1,95 @@
 #!/usr/bin/env sh
 
+# Windows Git Bash can miss Node/Pnpm in PATH when hooks run.
+# Recover from common PATH drift by hydrating from where.exe.
+has_node() {
+  command -v node >/dev/null 2>&1 || command -v node.exe >/dev/null 2>&1
+}
+
+has_pnpm() {
+  command -v pnpm >/dev/null 2>&1 || command -v pnpm.exe >/dev/null 2>&1
+}
+
+prepend_windows_exe_dir() {
+  EXE_NAME="$1"
+  WIN_EXE="$(where.exe "$EXE_NAME" 2>/dev/null | tr -d '\r' | head -n 1)"
+  if [ -z "$WIN_EXE" ]; then
+    return
+  fi
+
+  if command -v cygpath >/dev/null 2>&1; then
+    EXE_PATH="$(cygpath -u "$WIN_EXE" 2>/dev/null)"
+  else
+    EXE_PATH="$(printf '%s' "$WIN_EXE" | sed 's#\\#/#g')"
+  fi
+
+  if [ -n "$EXE_PATH" ]; then
+    PATH="$(dirname "$EXE_PATH"):$PATH"
+    export PATH
+  fi
+}
+
+if [ "${OS:-}" = "Windows_NT" ]; then
+  if ! has_node; then
+    prepend_windows_exe_dir node
+  fi
+
+  if ! command -v pnpm >/dev/null 2>&1; then
+    prepend_windows_exe_dir pnpm
+  fi
+fi
+
+if ! has_node; then
+  echo "Pre-push checks require Node.js, but 'node' is not available on PATH."
+  echo "Install Node.js or expose node.exe in PATH, then retry git push."
+  exit 1
+fi
+
+if ! has_pnpm; then
+  echo "Pre-push checks require pnpm, but 'pnpm' is not available on PATH."
+  echo "Install pnpm (https://pnpm.io/installation) or expose pnpm.exe in PATH, then retry git push."
+  exit 1
+fi
+
 # Run format check first (capture exit code without breaking script)
 set +e
-yarn format:check
+pnpm format:check
 FORMAT_EXIT=$?
 set -e
 
 # If format check failed, run format to auto-fix
 if [ $FORMAT_EXIT -ne 0 ]; then
   echo "Formatting issues detected. Running format to auto-fix..."
-  yarn format
+  pnpm format
 fi
 
 # Run lint check (capture exit code without breaking script)
 set +e
-yarn lint
+pnpm lint
 LINT_EXIT=$?
 set -e
 
 # If lint check failed, run lint:fix to auto-fix
 if [ $LINT_EXIT -ne 0 ]; then
   echo "Linting issues detected. Running lint:fix to auto-fix..."
-  yarn lint:fix
+  pnpm lint:fix
 fi
 
 # Run TypeScript compile check (capture exit code without breaking script)
 set +e
-yarn compile
+pnpm compile
 COMPILE_EXIT=$?
 set -e
 
 # Run Rust compile checks for both the core and Tauri codebases
 set +e
-yarn rust:check
+pnpm rust:check
 RUST_CHECK_EXIT=$?
 set -e
 
 # Enforce scoped cmd-* tokens in components/commands/
 set +e
-yarn --cwd app lint:commands-tokens
+pnpm --dir app run lint:commands-tokens
 CMD_TOKENS_EXIT=$?
 set -e
 

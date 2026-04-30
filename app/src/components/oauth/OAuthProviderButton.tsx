@@ -10,16 +10,23 @@ interface OAuthProviderButtonProps {
   provider: OAuthProviderConfig;
   className?: string;
   disabled?: boolean;
+  onClickOverride?: () => void;
 }
 
 const OAuthProviderButton = ({
   provider,
   className = '',
   disabled: externalDisabled = false,
+  onClickOverride,
 }: OAuthProviderButtonProps) => {
   const [isLoading, setIsLoading] = useState(false);
 
   const handleOAuthLogin = async () => {
+    if (onClickOverride) {
+      onClickOverride();
+      return;
+    }
+
     if (externalDisabled || isLoading) return;
 
     console.log(`Starting ${provider.name} OAuth login`, isTauri());

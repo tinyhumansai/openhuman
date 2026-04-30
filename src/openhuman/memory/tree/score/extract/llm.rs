@@ -36,7 +36,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use super::types::{EntityKind, ExtractedEntities, ExtractedEntity};
+use super::types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};
 use super::EntityExtractor;
 
 // ── Configuration ────────────────────────────────────────────────────────
@@ -59,6 +59,15 @@ pub struct LlmExtractorConfig {
     /// If true, drop entities whose declared kind isn't in `allowed_kinds`
     /// instead of falling back to [`EntityKind::Misc`].
     pub strict_kinds: bool,
+    /// If true, the system prompt asks the model to also emit a
+    /// `topics` array (free-form theme labels), and the response parser
+    /// populates [`ExtractedEntities::topics`]. Default `false` — the
+    /// extractor's primary job is named-entity extraction; topics are
+    /// an opt-in side-channel for callers that need a thematic
+    /// summary in the same call (e.g. running over a sealed summary's
+    /// content). Adds prompt tokens and gives the model one more
+    /// schema field to keep track of, so leave off unless needed.
+    pub emit_topics: bool,
 }
 
 impl Default for LlmExtractorConfig {
@@ -73,8 +82,13 @@ impl Default for LlmExtractorConfig {
                 EntityKind::Location,
                 EntityKind::Event,
                 EntityKind::Product,
+                EntityKind::Datetime,
+                EntityKind::Technology,
+                EntityKind::Artifact,
+                EntityKind::Quantity,
             ],
             strict_kinds: false,
+            emit_topics: false,
         }
     }
 }
@@ -103,7 +117,7 @@ impl LlmEntityExtractor {
             messages: vec![
                 OllamaMessage {
                     role: "system".to_string(),
-                    content: SYSTEM_PROMPT.to_string(),
+                    content: build_system_prompt(self.cfg.emit_topics),
                 },
                 OllamaMessage {
                     role: "user".to_string(),
@@ -128,19 +142,54 @@ impl EntityExtractor for LlmEntityExtractor {
         // JSON parse) is logged as a warn and returns an empty
         // `ExtractedEntities` rather than `Err`. This makes the extractor
         // safe to call from any context, not just `score_chunk` (which
-        // separately catches errors from its own extractor chain). A caller
-        // distinguishes "LLM had nothing to say" from "LLM ran and returned
-        // zero entities" by inspecting `llm_importance` — `None` means the
-        // call didn't complete successfully.
-        Ok(self.extract_or_empty(text).await)
+        // separately catches errors from its own extractor chain).
+        //
+        // Transport failures get bounded retry-with-backoff before falling
+        // back to empty — see [`Self::try_extract`]. Non-transport failures
+        // (HTTP non-success, malformed JSON) fall back immediately because
+        // retrying the same input would yield the same bad response.
+        const MAX_ATTEMPTS: u32 = 3;
+        const BASE_BACKOFF_MS: u64 = 250;
+
+        for attempt in 0..MAX_ATTEMPTS {
+            match self.try_extract(text).await {
+                Some(extracted) => return Ok(extracted),
+                None => {
+                    // Transport failure. Retry with exponential backoff
+                    // unless we've exhausted attempts.
+                    if attempt + 1 < MAX_ATTEMPTS {
+                        let delay_ms = BASE_BACKOFF_MS * 2u64.pow(attempt);
+                        log::warn!(
+                            "[memory_tree::extract::llm] transport failure, retrying in \
+                             {delay_ms}ms (attempt {}/{})",
+                            attempt + 2,
+                            MAX_ATTEMPTS
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    }
+                }
+            }
+        }
+
+        log::warn!(
+            "[memory_tree::extract::llm] transport failed after {} attempts — \
+             returning empty extraction",
+            MAX_ATTEMPTS
+        );
+        Ok(ExtractedEntities::default())
     }
 }
 
 impl LlmEntityExtractor {
-    /// Internal: wraps the actual HTTP call and returns `ExtractedEntities`
-    /// for every failure mode via soft-fallback. Split out of `extract` so
-    /// the error branches can share logging without `?`-propagation.
-    async fn extract_or_empty(&self, text: &str) -> ExtractedEntities {
+    /// Internal: one attempt at calling Ollama.
+    ///
+    /// Returns:
+    /// - `Some(extracted)` — call completed (HTTP returned). Includes the
+    ///   "HTTP non-success" and "malformed JSON" cases, which return
+    ///   `Some(empty)` because retrying the same input won't help.
+    /// - `None` — transport-level failure (DNS, connect refused, timeout
+    ///   before any HTTP response). Caller may retry.
+    async fn try_extract(&self, text: &str) -> Option<ExtractedEntities> {
         let url = format!("{}/api/chat", self.cfg.endpoint.trim_end_matches('/'));
         let body = self.build_request(text);
         log::debug!(
@@ -152,11 +201,8 @@ impl LlmEntityExtractor {
         let resp = match self.http.post(&url).json(&body).send().await {
             Ok(r) => r,
             Err(e) => {
-                log::warn!(
-                    "[memory_tree::extract::llm] transport failure to {url}: {e} — \
-                     returning empty extraction"
-                );
-                return ExtractedEntities::default();
+                log::warn!("[memory_tree::extract::llm] transport failure to {url}: {e}");
+                return None;
             }
         };
 
@@ -168,7 +214,7 @@ impl LlmEntityExtractor {
                  returning empty extraction",
                 truncate_for_log(&body, 200)
             );
-            return ExtractedEntities::default();
+            return Some(ExtractedEntities::default());
         }
 
         let envelope: OllamaChatResponse = match resp.json().await {
@@ -178,7 +224,7 @@ impl LlmEntityExtractor {
                     "[memory_tree::extract::llm] response body not Ollama-shaped JSON: {e} — \
                      returning empty extraction"
                 );
-                return ExtractedEntities::default();
+                return Some(ExtractedEntities::default());
             }
         };
         log::debug!(
@@ -194,38 +240,97 @@ impl LlmEntityExtractor {
                      response: {e}; content was: {} — returning empty extraction",
                     truncate_for_log(&envelope.message.content, 400)
                 );
-                return ExtractedEntities::default();
+                return Some(ExtractedEntities::default());
             }
         };
 
-        parsed.into_extracted_entities(text, &self.cfg)
+        Some(parsed.into_extracted_entities(text, &self.cfg))
     }
 }
 
 // ── Prompt ───────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT: &str = "\
-You are a named-entity extractor and importance rater. Return JSON only — \
+/// Build the system prompt for the extractor. When `emit_topics` is true
+/// the schema, required-fields list, and example outputs include a
+/// `topics` array (free-form theme labels). When false the prompt
+/// matches the pre-flag behaviour exactly — no mention of topics
+/// anywhere — so the small model isn't asked to produce a field the
+/// caller doesn't want.
+fn build_system_prompt(emit_topics: bool) -> String {
+    let topics_schema_line = if emit_topics {
+        "  \"topics\": [\"<short theme label>\"],\n"
+    } else {
+        ""
+    };
+    let topics_required = if emit_topics { "topics, " } else { "" };
+    let fields_count = if emit_topics { "four" } else { "three" };
+    let topics_guide = if emit_topics {
+        "Topics are short free-form theme labels for what the text is ABOUT \
+         (e.g. \"rate limiting\", \"memory tree\", \"auth flow\"). They are \
+         distinct from entities — entities are specific named things mentioned \
+         in the text; topics are the abstract themes those things relate to.\n"
+    } else {
+        ""
+    };
+    let example1_topics = if emit_topics {
+        ",\"topics\":[\"shipping\",\"auth\"]"
+    } else {
+        ""
+    };
+    let example2_topics = if emit_topics {
+        ",\"topics\":[\"product launch\",\"revenue\"]"
+    } else {
+        ""
+    };
+
+    format!(
+        "You are a named-entity extractor and importance rater. Return JSON only — \
 no prose, no markdown, no commentary. Do not summarize. Extract every named \
 entity mention you find, including duplicates, and rate the chunk's overall \
 importance as a float in [0.0, 1.0].
 
 Schema:
-{
+{{
   \"entities\": [
-    { \"kind\": \"person|organization|location|event|product\",
-      \"text\": \"<exact surface form as it appears in the text>\" }
+    {{ \"kind\": \"person|organization|location|event|product|datetime|technology|artifact|quantity\",
+      \"text\": \"<exact surface form as it appears in the text>\" }}
   ],
-  \"importance\": 0.0,
+{topics_schema_line}  \"importance\": 0.0,
   \"importance_reason\": \"<one short sentence explaining the rating>\"
-}
+}}
+
+Kinds guide:
+  person       named human                            (\"Alice\", \"Steven Enamakel\")
+  organization company / team / project               (\"Anthropic\", \"TinyHumans\")
+  location     place                                  (\"SF office\", \"London\")
+  event        scheduled occurrence                   (\"Q2 launch\", \"design review\")
+  product      commercial offering                    (\"Claude Code\", \"OpenHuman\")
+  datetime     temporal expression                    (\"Friday\", \"Q2 2026\", \"EOD tomorrow\")
+  technology   tool / framework / language / service  (\"Rust\", \"OAuth\", \"Slack API\")
+  artifact     code / ticket / doc reference          (\"PR #934\", \"src/foo.rs\", \"OH-42\")
+  quantity     amount / metric / money                (\"$5K\", \"20/min\", \"10k tokens\")
+
+{topics_guide} 
+If a mention doesn't clearly fit a kind above, omit it rather than guessing.
+Always emit ALL {fields_count} top-level fields (entities, {topics_required}importance, importance_reason),
+even when entities is empty.
+
+Examples:
+
+Input: alice and bob shipped the auth migration friday. PR #42 ships OAuth refactor in src/auth/.
+Output: {{\"entities\":[{{\"kind\":\"person\",\"text\":\"alice\"}},{{\"kind\":\"person\",\"text\":\"bob\"}},{{\"kind\":\"event\",\"text\":\"auth migration\"}},{{\"kind\":\"datetime\",\"text\":\"friday\"}},{{\"kind\":\"artifact\",\"text\":\"PR #42\"}},{{\"kind\":\"technology\",\"text\":\"OAuth\"}},{{\"kind\":\"artifact\",\"text\":\"src/auth/\"}}]{example1_topics},\"importance\":0.9,\"importance_reason\":\"explicit shipping commitment\"}}
+
+Input: Anthropic shipped Claude Code in SF — $20M ARR target by Q2.
+Output: {{\"entities\":[{{\"kind\":\"organization\",\"text\":\"Anthropic\"}},{{\"kind\":\"product\",\"text\":\"Claude Code\"}},{{\"kind\":\"location\",\"text\":\"SF\"}},{{\"kind\":\"quantity\",\"text\":\"$20M ARR\"}},{{\"kind\":\"datetime\",\"text\":\"Q2\"}}]{example2_topics},\"importance\":0.85,\"importance_reason\":\"factual content with key business metric\"}}
 
 Importance guide:
   0.9+  actionable decisions, key information, explicit commitments
   0.6+  substantive discussion, factual content, named entities
   0.3+  ambient context, low-density prose
   <0.3  reactions, acknowledgments, bots, trivial exchanges
-";
+"
+    )
+}
 
 // ── Wire types (Ollama API) ──────────────────────────────────────────────
 
@@ -265,6 +370,11 @@ struct OllamaResponseMessage {
 struct LlmExtractionOutput {
     #[serde(default)]
     entities: Vec<LlmEntity>,
+    /// Free-form theme labels — populated only when the extractor is
+    /// configured with `emit_topics = true`. Always tolerant of absence
+    /// so models that ignore the field don't fail parsing.
+    #[serde(default)]
+    topics: Vec<String>,
     #[serde(default)]
     importance: Option<f32>,
     #[serde(default)]
@@ -355,9 +465,26 @@ impl LlmExtractionOutput {
 
         let llm_importance = self.importance.map(|v| v.clamp(0.0, 1.0));
 
+        // Topics: only populated when the caller enabled `emit_topics`
+        // (the prompt asked for them). Otherwise this is empty by
+        // default — the model didn't know to emit topics, so any value
+        // here would be hallucination.
+        let topics = self
+            .topics
+            .into_iter()
+            .filter_map(|raw| {
+                let label = raw.trim().to_string();
+                if label.is_empty() {
+                    None
+                } else {
+                    Some(ExtractedTopic { label, score: 0.85 })
+                }
+            })
+            .collect();
+
         ExtractedEntities {
             entities,
-            topics: Vec::new(),
+            topics,
             llm_importance,
             llm_importance_reason: self.importance_reason,
         }
@@ -373,6 +500,14 @@ fn parse_kind(s: &str) -> Option<EntityKind> {
         "location" | "place" | "loc" => Some(EntityKind::Location),
         "event" => Some(EntityKind::Event),
         "product" => Some(EntityKind::Product),
+        "datetime" | "date" | "time" | "timestamp" => Some(EntityKind::Datetime),
+        "technology" | "tech" | "tool" | "framework" | "library" | "language" | "service" => {
+            Some(EntityKind::Technology)
+        }
+        "artifact" | "reference" | "ref" | "pr" | "ticket" | "file" | "commit" => {
+            Some(EntityKind::Artifact)
+        }
+        "quantity" | "amount" | "metric" | "number" | "money" => Some(EntityKind::Quantity),
         "misc" | "miscellaneous" | "other" => Some(EntityKind::Misc),
         _ => None,
     }
@@ -431,254 +566,5 @@ fn truncate_for_log(s: &str, max_chars: usize) -> String {
 // ── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_kind_normalisation() {
-        assert_eq!(parse_kind("Person"), Some(EntityKind::Person));
-        assert_eq!(parse_kind("organisation"), Some(EntityKind::Organization));
-        assert_eq!(parse_kind(" PRODUCT "), Some(EntityKind::Product));
-        assert!(parse_kind("Spaceship").is_none());
-    }
-
-    #[test]
-    fn find_char_span_handles_unicode() {
-        let text = "中 Alice met Bob";
-        let span = find_char_span(text, "Alice").unwrap();
-        assert_eq!(span, (2, 7));
-    }
-
-    #[test]
-    fn find_char_span_returns_none_for_missing() {
-        assert!(find_char_span("hello world", "absent").is_none());
-    }
-
-    #[test]
-    fn find_char_span_from_advances_past_prior_match() {
-        let text = "Alice met Bob then Alice left";
-        let (s1, e1, byte_after) = find_char_span_from(text, "Alice", 0, 0).unwrap();
-        assert_eq!((s1, e1), (0, 5));
-        // Resuming from the cursor must find the second Alice.
-        let (s2, e2, _) = find_char_span_from(text, "Alice", byte_after, e1).unwrap();
-        assert_eq!((s2, e2), (19, 24));
-    }
-
-    #[test]
-    fn find_char_span_from_returns_none_after_exhaustion() {
-        let text = "Alice met Bob";
-        let (_, _, byte_after) = find_char_span_from(text, "Alice", 0, 0).unwrap();
-        // No second Alice → None.
-        assert!(find_char_span_from(text, "Alice", byte_after, 5).is_none());
-    }
-
-    #[test]
-    fn find_char_span_from_preserves_utf8() {
-        // Two "中" characters (3 bytes each in UTF-8); "Alice" between.
-        let text = "中 Alice 中 Alice";
-        let (s1, e1, byte_after) = find_char_span_from(text, "Alice", 0, 0).unwrap();
-        assert_eq!((s1, e1), (2, 7));
-        let (s2, e2, _) = find_char_span_from(text, "Alice", byte_after, e1).unwrap();
-        // First "中 Alice " = 2 + 5 + 1 + 1 + 1 chars; second Alice starts at char 10.
-        assert_eq!((s2, e2), (10, 15));
-    }
-
-    #[test]
-    fn find_char_span_from_rejects_non_char_boundary() {
-        // "中" is 3 bytes; offsets 1 and 2 are mid-codepoint.
-        let text = "中Alice";
-        assert!(find_char_span_from(text, "Alice", 1, 0).is_none());
-    }
-
-    #[test]
-    fn into_extracted_entities_gives_distinct_spans_to_duplicate_mentions() {
-        // Two "Alice" mentions in source → two distinct ExtractedEntity rows
-        // with non-overlapping spans. Previously both got (0, 5).
-        let out = LlmExtractionOutput {
-            entities: vec![
-                LlmEntity {
-                    kind: "person".into(),
-                    text: "Alice".into(),
-                },
-                LlmEntity {
-                    kind: "person".into(),
-                    text: "Alice".into(),
-                },
-            ],
-            importance: None,
-            importance_reason: None,
-        };
-        let cfg = LlmExtractorConfig::default();
-        let e = out.into_extracted_entities("Alice met Bob then Alice left", &cfg);
-        assert_eq!(e.entities.len(), 2);
-        assert_eq!((e.entities[0].span_start, e.entities[0].span_end), (0, 5));
-        assert_eq!((e.entities[1].span_start, e.entities[1].span_end), (19, 24));
-    }
-
-    #[test]
-    fn into_extracted_entities_drops_extra_duplicate_when_source_only_has_one() {
-        // Three "Alice" mentions returned by LLM, only one in source → keep
-        // one, drop the rest as exhausted-duplicate.
-        let out = LlmExtractionOutput {
-            entities: vec![
-                LlmEntity {
-                    kind: "person".into(),
-                    text: "Alice".into(),
-                },
-                LlmEntity {
-                    kind: "person".into(),
-                    text: "Alice".into(),
-                },
-                LlmEntity {
-                    kind: "person".into(),
-                    text: "Alice".into(),
-                },
-            ],
-            importance: None,
-            importance_reason: None,
-        };
-        let cfg = LlmExtractorConfig::default();
-        let e = out.into_extracted_entities("Alice met Bob", &cfg);
-        assert_eq!(e.entities.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn extract_soft_fallback_on_unreachable_endpoint() {
-        // Point at an unreachable port so the transport fails. extract()
-        // must NOT return Err — it must return an empty ExtractedEntities
-        // with a warn log.
-        let cfg = LlmExtractorConfig {
-            endpoint: "http://127.0.0.1:1".to_string(),
-            timeout: std::time::Duration::from_millis(100),
-            ..LlmExtractorConfig::default()
-        };
-        let ex = LlmEntityExtractor::new(cfg).unwrap();
-        let out = ex.extract("some text").await.unwrap();
-        assert!(out.entities.is_empty());
-        assert!(out.topics.is_empty());
-        assert!(out.llm_importance.is_none());
-    }
-
-    #[test]
-    fn into_extracted_entities_drops_hallucinations() {
-        let out = LlmExtractionOutput {
-            entities: vec![
-                LlmEntity {
-                    kind: "person".into(),
-                    text: "Alice".into(),
-                },
-                LlmEntity {
-                    kind: "person".into(),
-                    text: "ImaginaryPerson".into(),
-                },
-            ],
-            importance: Some(0.7),
-            importance_reason: Some("substantive".into()),
-        };
-        let cfg = LlmExtractorConfig::default();
-        let e = out.into_extracted_entities("Alice met Bob today.", &cfg);
-        // Hallucinated "ImaginaryPerson" dropped; "Alice" kept.
-        assert_eq!(e.entities.len(), 1);
-        assert_eq!(e.entities[0].text, "Alice");
-        assert_eq!(e.llm_importance, Some(0.7));
-        assert_eq!(e.llm_importance_reason.as_deref(), Some("substantive"));
-    }
-
-    #[test]
-    fn into_extracted_entities_clamps_importance() {
-        let out = LlmExtractionOutput {
-            entities: vec![],
-            importance: Some(1.5),
-            importance_reason: None,
-        };
-        let cfg = LlmExtractorConfig::default();
-        let e = out.into_extracted_entities("text", &cfg);
-        assert_eq!(e.llm_importance, Some(1.0));
-    }
-
-    #[test]
-    fn into_extracted_entities_strict_drops_unknown_kinds() {
-        let out = LlmExtractionOutput {
-            entities: vec![LlmEntity {
-                kind: "spaceship".into(),
-                text: "Enterprise".into(),
-            }],
-            importance: None,
-            importance_reason: None,
-        };
-        let cfg = LlmExtractorConfig {
-            strict_kinds: true,
-            ..LlmExtractorConfig::default()
-        };
-        let e = out.into_extracted_entities("Enterprise launched.", &cfg);
-        assert!(e.entities.is_empty());
-    }
-
-    #[test]
-    fn into_extracted_entities_lenient_falls_back_to_misc() {
-        let out = LlmExtractionOutput {
-            entities: vec![LlmEntity {
-                kind: "spaceship".into(),
-                text: "Enterprise".into(),
-            }],
-            importance: None,
-            importance_reason: None,
-        };
-        let cfg = LlmExtractorConfig::default(); // strict_kinds = false
-        let e = out.into_extracted_entities("Enterprise launched.", &cfg);
-        assert_eq!(e.entities.len(), 1);
-        assert_eq!(e.entities[0].kind, EntityKind::Misc);
-    }
-
-    #[test]
-    fn into_extracted_entities_disallowed_known_kind_falls_back_to_misc() {
-        // "person" is a known kind but might be excluded by allowed_kinds.
-        let out = LlmExtractionOutput {
-            entities: vec![LlmEntity {
-                kind: "person".into(),
-                text: "Alice".into(),
-            }],
-            importance: None,
-            importance_reason: None,
-        };
-        let cfg = LlmExtractorConfig {
-            allowed_kinds: vec![EntityKind::Organization], // Person not allowed
-            strict_kinds: false,
-            ..LlmExtractorConfig::default()
-        };
-        let e = out.into_extracted_entities("Alice met Bob.", &cfg);
-        assert_eq!(e.entities.len(), 1);
-        assert_eq!(e.entities[0].kind, EntityKind::Misc);
-    }
-
-    #[test]
-    fn build_request_uses_configured_model() {
-        let cfg = LlmExtractorConfig {
-            model: "test-model".into(),
-            ..LlmExtractorConfig::default()
-        };
-        let ex = LlmEntityExtractor::new(cfg).unwrap();
-        let req = ex.build_request("hello");
-        assert_eq!(req.model, "test-model");
-        assert_eq!(req.format, "json");
-        assert!(!req.stream);
-        assert_eq!(req.options.temperature, 0.0);
-        assert_eq!(req.messages.len(), 2);
-        assert_eq!(req.messages[0].role, "system");
-        assert_eq!(req.messages[1].role, "user");
-        assert!(req.messages[1].content.contains("hello"));
-    }
-
-    #[test]
-    fn truncate_for_log_short_input_unchanged() {
-        assert_eq!(truncate_for_log("hi", 10), "hi");
-    }
-
-    #[test]
-    fn truncate_for_log_long_input_appends_ellipsis() {
-        let long = "x".repeat(500);
-        let out = truncate_for_log(&long, 10);
-        assert_eq!(out.chars().count(), 11); // 10 + "…"
-        assert!(out.ends_with('…'));
-    }
-}
+#[path = "llm_tests.rs"]
+mod tests;

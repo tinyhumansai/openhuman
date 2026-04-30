@@ -1,19 +1,17 @@
+---
 name: Build CI Docker Image
-
 on:
   push:
     branches: [main]
     paths:
-      - ".github/Dockerfile"
-      - ".github/workflows/docker-ci-image.yml"
-      - "e2e/docker-entrypoint.sh"
-      - ".gitmodules"
+      - .github/Dockerfile
+      - .github/workflows/docker-ci-image.yml
+      - e2e/docker-entrypoint.sh
+      - .gitmodules
   workflow_dispatch:
-
 permissions:
   contents: read
   packages: write
-
 jobs:
   build-image:
     name: Build and push CI image
@@ -25,14 +23,12 @@ jobs:
         with:
           # vendored tauri-cef fork is compiled into the image
           submodules: recursive
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -40,6 +36,6 @@ jobs:
           file: .github/Dockerfile
           push: true
           provenance: false
-          tags: |
+          tags: |-
             ghcr.io/tinyhumansai/openhuman_ci:latest
             ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0

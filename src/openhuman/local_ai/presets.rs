@@ -27,10 +27,8 @@ pub enum ModelTier {
     Custom,
 }
 
-/// Maximum tier allowed in the current MVP build. Tiers above this ceiling
-/// are hidden from the UI, rejected by the apply-preset RPC, and clamped at
-/// bootstrap. Bump this constant (or remove the cap) when broader model
-/// selection is re-enabled post-MVP.
+/// Single local model tier exposed in the current build. Larger local models
+/// stay blocked to keep summarization lightweight and battery-friendly.
 pub const MVP_MAX_TIER: ModelTier = ModelTier::Ram2To4Gb;
 
 /// Minimum host RAM (in whole GB) below which the **default** is to skip
@@ -125,8 +123,9 @@ pub fn all_presets() -> Vec<ModelPreset> {
         },
         ModelPreset {
             tier: ModelTier::Ram2To4Gb,
-            label: "2-4 GB",
-            description: "Speed-first Gemma tier for low-memory devices. Vision disabled.",
+            label: "Gemma 3 1B",
+            description:
+                "Battery-friendly local summarization preset. Uses the 1B Gemma model with vision disabled.",
             chat_model_id: "gemma3:1b-it-qat",
             vision_model_id: "",
             embedding_model_id: "all-minilm:latest",
@@ -198,17 +197,7 @@ pub fn preset_for_tier(tier: ModelTier) -> Option<ModelPreset> {
 /// Recommend a tier based on device capabilities.
 pub fn recommend_tier(device: &DeviceProfile) -> ModelTier {
     let ram_gb = device.total_ram_gb();
-    let tier = if ram_gb >= 16 {
-        ModelTier::Ram16PlusGb
-    } else if ram_gb >= 8 {
-        ModelTier::Ram8To16Gb
-    } else if ram_gb >= 4 {
-        ModelTier::Ram4To8Gb
-    } else if ram_gb >= 2 {
-        ModelTier::Ram2To4Gb
-    } else {
-        ModelTier::Ram1Gb
-    };
+    let tier = MVP_MAX_TIER;
     tracing::debug!(ram_gb, ?tier, "[local_ai] recommended model tier");
     tier
 }
@@ -323,11 +312,11 @@ mod tests {
 
     #[test]
     fn recommend_tier_scales_with_ram() {
-        assert_eq!(recommend_tier(&test_device(1)), ModelTier::Ram1Gb);
+        assert_eq!(recommend_tier(&test_device(1)), ModelTier::Ram2To4Gb);
         assert_eq!(recommend_tier(&test_device(3)), ModelTier::Ram2To4Gb);
-        assert_eq!(recommend_tier(&test_device(4)), ModelTier::Ram4To8Gb);
-        assert_eq!(recommend_tier(&test_device(8)), ModelTier::Ram8To16Gb);
-        assert_eq!(recommend_tier(&test_device(32)), ModelTier::Ram16PlusGb);
+        assert_eq!(recommend_tier(&test_device(4)), ModelTier::Ram2To4Gb);
+        assert_eq!(recommend_tier(&test_device(8)), ModelTier::Ram2To4Gb);
+        assert_eq!(recommend_tier(&test_device(32)), ModelTier::Ram2To4Gb);
     }
 
     #[test]
@@ -350,10 +339,10 @@ mod tests {
     #[test]
     fn preset_application_and_round_trip() {
         let mut config = LocalAiConfig::default();
-        apply_preset_to_config(&mut config, ModelTier::Ram1Gb);
-        assert_eq!(config.chat_model_id, "gemma3:270m-it-qat");
-        assert_eq!(config.selected_tier, Some("ram_1gb".to_string()));
-        assert_eq!(current_tier_from_config(&config), ModelTier::Ram1Gb);
+        apply_preset_to_config(&mut config, ModelTier::Ram2To4Gb);
+        assert_eq!(config.chat_model_id, "gemma3:1b-it-qat");
+        assert_eq!(config.selected_tier, Some("ram_2_4gb".to_string()));
+        assert_eq!(current_tier_from_config(&config), ModelTier::Ram2To4Gb);
         assert!(!config.preload_vision_model);
         assert_eq!(vision_mode_for_config(&config), VisionMode::Disabled);
     }
@@ -380,8 +369,8 @@ mod tests {
     #[test]
     fn default_config_maps_to_balanced_tier() {
         let config = LocalAiConfig::default();
-        assert_eq!(current_tier_from_config(&config), ModelTier::Ram8To16Gb);
-        assert_eq!(vision_mode_for_config(&config), VisionMode::Bundled);
+        assert_eq!(current_tier_from_config(&config), ModelTier::Ram2To4Gb);
+        assert_eq!(vision_mode_for_config(&config), VisionMode::Disabled);
     }
 
     #[test]

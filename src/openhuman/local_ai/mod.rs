@@ -36,5 +36,5 @@ pub(crate) use service::whisper_engine;
 pub use service::LocalAiService;
 pub use types::{
     LocalAiAssetStatus, LocalAiAssetsStatus, LocalAiDownloadProgressItem, LocalAiDownloadsProgress,
-    LocalAiEmbeddingResult, LocalAiSpeechResult, LocalAiStatus, LocalAiTtsResult, Suggestion,
+    LocalAiEmbeddingResult, LocalAiSpeechResult, LocalAiStatus, LocalAiTtsResult,
 };
