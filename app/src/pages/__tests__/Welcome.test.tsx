@@ -72,6 +72,11 @@ describe('Welcome auth entrypoint', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Signing you in...');
   });
 
+  it('shows the advanced RPC URL link in dev mode', () => {
+    render(<Welcome />);
+    expect(screen.getByText('Configure RPC URL (Advanced)')).toBeInTheDocument();
+  });
+
   it('renders deep-link auth errors', () => {
     vi.mocked(useDeepLinkAuthState).mockReturnValue({
       isProcessing: false,
