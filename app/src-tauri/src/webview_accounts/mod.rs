@@ -1080,12 +1080,17 @@ fn redact_url_for_log(raw: &str) -> String {
 }
 
 /// Grow the first-cold-open webview back to its full requested bounds and
-/// notify the frontend — exactly once per account open. Called from the
-/// three independent signals (native `WebviewBuilder::on_page_load`, CDP
-/// `Page.loadEventFired`, 15 s watchdog) — the first one wins and the rest
-/// short-circuit via `WebviewAccountsState.loaded_accounts`. Resetting
-/// happens in `webview_account_close` / `webview_account_purge` so a reopen
-/// fires again.
+/// notify the frontend once the page is actually loaded. Called from three
+/// signals (native `WebviewBuilder::on_page_load`, CDP `Page.loadEventFired`,
+/// and the 15 s watchdog).
+///
+/// Timeout is a non-terminal state: we emit `webview-account:load{state:
+/// "timeout"}` so the frontend can show retry/help UI, but we deliberately do
+/// NOT reveal or mark the account as loaded yet. If a later `finished` signal
+/// arrives, that call still reveals and emits `state:"finished"`.
+///
+/// Resetting the terminal loaded marker happens in `webview_account_close` /
+/// `webview_account_purge` so a reopen fires again.
 ///
 /// Doing the `set_size` server-side (instead of waiting for the frontend to
 /// invoke `webview_account_reveal`) avoids an extra IPC round-trip and the
@@ -1110,12 +1115,50 @@ pub(crate) fn emit_load_finished<R: Runtime>(
         return;
     };
 
-    let is_first = app_state
+    if state == "timeout" {
+        // If we've already observed a terminal load, ignore late watchdogs.
+        let already_loaded = app_state
+            .loaded_accounts
+            .lock()
+            .unwrap()
+            .contains(account_id);
+        if already_loaded {
+            log::debug!(
+                "[webview-accounts][{}] timeout deduped after terminal load url={}",
+                account_id,
+                url
+            );
+            return;
+        }
+
+        log::info!(
+            "[webview-accounts][{}] load timeout event url={}",
+            account_id,
+            redact_url_for_log(url)
+        );
+        if let Err(err) = app.emit(
+            "webview-account:load",
+            serde_json::json!({
+                "account_id": account_id,
+                "state": state,
+                "url": url,
+            }),
+        ) {
+            log::warn!(
+                "[webview-accounts][{}] emit webview-account:load(timeout) failed: {}",
+                account_id,
+                err
+            );
+        }
+        return;
+    }
+
+    let is_first_terminal = app_state
         .loaded_accounts
         .lock()
         .unwrap()
         .insert(account_id.to_string());
-    if !is_first {
+    if !is_first_terminal {
         log::debug!(
             "[webview-accounts][{}] load event deduped state={} url={}",
             account_id,
@@ -1578,31 +1621,42 @@ pub async fn webview_account_open<R: Runtime>(
         builder = builder.devtools(true);
     }
 
-    // Wire the native page-load signal so the frontend can hide its spinner as
-    // soon as CEF's LoadHandler reports the main frame finished. Dedup against
-    // the CDP `Page.loadEventFired` subscription and the 15 s watchdog through
-    // `emit_load_finished` so we only fire the first winning signal per open.
+    // Wire the native page-load signal and forward only *usable* load
+    // completions to `emit_load_finished`:
+    //   - skip placeholder `about:blank#openhuman-acct-*` commits (otherwise
+    //     we reveal a blank viewport before real content arrives),
+    //   - treat Chromium network error pages (`chrome-error://…`) as timeout
+    //     signals so frontend shows retry/help UI instead of the dino page.
     //
-    // Skip `data:` URLs: an early placeholder shape on some platforms
-    // fires `Finished` synchronously and we don't want to dedup-claim
-    // the load slot on it.
-    //
-    // We deliberately do NOT skip `about:blank#…` here: in practice the
-    // CDP `Page.loadEventFired` subscription isn't reaching us reliably
-    // (Gmail finishes loading but the event doesn't fire through
-    // pump_events — separate triage). The `about:blank` native load
-    // fires within ~50ms of spawn and is the only fast-path reveal we
-    // get. The downside is the user sees the placeholder briefly until
-    // the real provider page paints — better than waiting 15 s for the
-    // watchdog timeout.
+    // Real provider commits still emit `finished`. Dedup against CDP
+    // `Page.loadEventFired` + watchdog happens in `emit_load_finished`.
     let page_load_app = app.clone();
     let page_load_account_id = args.account_id.clone();
+    let page_load_placeholder_fragment = format!("#{}", cdp::placeholder_marker(&args.account_id));
+    let page_load_real_url = real_url_str.clone();
     builder = builder.on_page_load(move |_webview, payload| {
         if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
             return;
         }
         let url = payload.url();
         if url.scheme() == "data" {
+            return;
+        }
+        if !skip_cdp_for_debug && url.as_str().ends_with(&page_load_placeholder_fragment) {
+            log::debug!(
+                "[webview-accounts][{}] skipping placeholder native-finished url={}",
+                page_load_account_id,
+                redact_url_for_log(url.as_str())
+            );
+            return;
+        }
+        if url.scheme() == "chrome-error" {
+            emit_load_finished(
+                &page_load_app,
+                &page_load_account_id,
+                "timeout",
+                &page_load_real_url,
+            );
             return;
         }
         emit_load_finished(

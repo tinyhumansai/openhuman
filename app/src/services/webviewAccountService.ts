@@ -64,7 +64,7 @@ interface NotificationClickPayload {
 interface WebviewAccountLoadPayload {
   account_id: string;
   // `'finished'` — native `on_page_load` or CDP `Page.loadEventFired` fired
-  // `'timeout'`  — 15 s watchdog elapsed; reveal anyway so spinner isn't stuck
+  // `'timeout'`  — 15 s watchdog elapsed; keep hidden and show retry UI
   // `'reused'`   — warm re-open of already-loaded account; reveal synchronously
   state: 'finished' | 'timeout' | 'reused' | string;
   url: string;
@@ -104,6 +104,12 @@ const lastBoundsByAccount = new Map<string, WebviewAccountBounds>();
 // these are cached but NOT forwarded to Rust — moving the off-screen webview
 // to the on-screen rect prematurely would defeat the loading overlay.
 const loadingAccounts = new Set<string>();
+
+function looksLikeChromiumErrorUrl(rawUrl: string | undefined | null): boolean {
+  if (!rawUrl) return false;
+  const u = rawUrl.toLowerCase();
+  return u.startsWith('chrome-error://') || u.includes('chromewebdata');
+}
 
 export function startWebviewAccountService(): void {
   if (started) return;
@@ -178,6 +184,21 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
   log('load event account=%s state=%s url=%s', accountId, payload.state, payload.url);
   loadingAccounts.delete(accountId);
 
+  const timeoutLike =
+    payload.state === 'timeout' ||
+    (payload.state === 'finished' && looksLikeChromiumErrorUrl(payload.url));
+
+  if (timeoutLike) {
+    log('load timeout account=%s reason=%s url=%s', accountId, payload.state, payload.url);
+    // Force-hide the child webview so the timeout overlay is visible even if
+    // the provider loaded a Chromium internal error page (`chromewebdata`).
+    void invoke('webview_account_hide', { args: { account_id: accountId } }).catch(err => {
+      errLog('webview_account_hide failed during timeout account=%s: %o', accountId, err);
+    });
+    store.dispatch(setAccountStatus({ accountId, status: 'timeout' }));
+    return;
+  }
+
   // Rust already resized the webview to `requested_bounds` as part of
   // `emit_load_finished`, so the native side is already correct. We still
   // issue `webview_account_reveal` here as a belt-and-braces idempotent
@@ -191,6 +212,7 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
   // error we still flip to `'open'` so the spinner never hangs indefinitely —
   // the webview will have been positioned server-side by `emit_load_finished`.
   const bounds = lastBoundsByAccount.get(accountId);
+  log('load finished account=%s state=%s reveal=%s', accountId, payload.state, Boolean(bounds));
   if (bounds) {
     invoke('webview_account_reveal', { args: { account_id: accountId, bounds } })
       .catch(err => {
@@ -807,7 +829,7 @@ interface OpenAccountArgs {
 
 export async function openWebviewAccount(args: OpenAccountArgs): Promise<void> {
   if (!isTauri()) throw new Error('webview accounts require the desktop app');
-  log('open account=%s provider=%s', args.accountId, args.provider);
+  log('load start account=%s provider=%s', args.accountId, args.provider);
   store.dispatch(setAccountStatus({ accountId: args.accountId, status: 'pending' }));
   lastBoundsByAccount.set(args.accountId, args.bounds);
   loadingAccounts.add(args.accountId);
@@ -831,6 +853,23 @@ export async function openWebviewAccount(args: OpenAccountArgs): Promise<void> {
     );
     throw err;
   }
+}
+
+/**
+ * Retry a stalled initial load for an embedded webview account while preserving
+ * the existing profile/session cookies on disk.
+ */
+export async function retryWebviewAccountLoad(
+  accountId: string,
+  provider: AccountProvider
+): Promise<void> {
+  const bounds = lastBoundsByAccount.get(accountId);
+  if (!bounds) {
+    errLog('retry skipped: missing bounds account=%s provider=%s', accountId, provider);
+    return;
+  }
+  log('retry load account=%s provider=%s', accountId, provider);
+  await openWebviewAccount({ accountId, provider, bounds });
 }
 
 export async function setWebviewAccountBounds(

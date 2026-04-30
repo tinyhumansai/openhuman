@@ -30,8 +30,8 @@ use crate::webview_accounts::emit_load_finished;
 const ATTACH_BACKOFF: Duration = Duration::from_secs(2);
 
 /// Watchdog budget before we synthesise a `webview-account:load` event with
-/// `state: "timeout"` so the frontend never holds its loading spinner open on
-/// a flaky network. Matches the timeout documented in issue #867.
+/// `state: "timeout"` so the frontend can switch from an empty loading state
+/// to explicit retry/help UI on flaky networks. Matches issue #867.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Returns the unique marker substring that the account's initial
@@ -120,11 +120,13 @@ pub fn spawn_session<R: Runtime>(
     // CDP `Page.loadEventFired` signal arrives (flaky network, provider
     // blocking, CDP socket hiccup).
     //
-    // `emit_load_finished` dedups via `WebviewAccountsState.loaded_accounts`
-    // so a late watchdog is a no-op once either signal has fired. The
-    // returned `JoinHandle` is stored in `WebviewAccountsState.load_watchdogs`
-    // and aborted on close/purge so a watchdog spawned for a vanished
-    // account can't fire a stale timeout against a freshly-reused id.
+    // `emit_load_finished` only treats terminal load signals (`finished`) as
+    // dedup markers. If the watchdog fires first, frontend sees `timeout`
+    // and can show retry UI; a later real `finished` signal can still reveal.
+    // Late watchdogs after a terminal load are no-ops. The returned
+    // `JoinHandle` is stored in `WebviewAccountsState.load_watchdogs` and
+    // aborted on close/purge so a watchdog spawned for a vanished account
+    // can't fire a stale timeout against a freshly-reused id.
     let watchdog = {
         let app = app.clone();
         let account_id = account_id.clone();

@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import {
   hideWebviewAccount,
   openWebviewAccount,
+  retryWebviewAccountLoad,
   setWebviewAccountBounds,
 } from '../../services/webviewAccountService';
 import { useAppSelector } from '../../store/hooks';
@@ -17,6 +18,18 @@ interface WebviewHostProps {
 }
 
 const LOADING_STATUSES: ReadonlySet<AccountStatus> = new Set(['pending', 'loading']);
+
+const PROVIDER_COPY: Record<AccountProvider, string> = {
+  whatsapp: 'WhatsApp',
+  telegram: 'Telegram',
+  linkedin: 'LinkedIn',
+  gmail: 'Gmail',
+  slack: 'Slack',
+  discord: 'Discord',
+  'google-meet': 'Google Meet',
+  zoom: 'Zoom',
+  browserscan: 'BrowserScan',
+};
 
 /**
  * Reserves a rectangular slot in the React layout that the native child
@@ -44,6 +57,8 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
   // the `setAccountStatus('pending')` dispatch in `openWebviewAccount` is
   // visually indistinguishable from no overlay, so this is safe.
   const isLoading = status !== undefined && LOADING_STATUSES.has(status);
+  const isTimeout = status === 'timeout';
+  const providerName = PROVIDER_COPY[provider] ?? 'app';
 
   // Spawn / show + keep bounds synced on every layout change.
   // IMPORTANT: both refs are reset on cleanup so switching accountIds
@@ -130,7 +145,33 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
           aria-live="polite"
           aria-label="Loading account">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-300 border-t-stone-600" />
-          <span className="text-xs font-medium tracking-wide">Loading…</span>
+          <span className="text-xs font-medium tracking-wide">{`Loading ${providerName}...`}</span>
+        </div>
+      ) : null}
+
+      {isTimeout ? (
+        <div
+          data-testid={`webview-timeout-${accountId}`}
+          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-stone-50/95 px-6 text-center"
+          role="status"
+          aria-live="polite"
+          aria-label="Webview load timeout">
+          <div className="max-w-sm space-y-1">
+            <p className="text-sm font-semibold text-stone-800">{`${providerName} is taking longer than expected.`}</p>
+            <p className="text-xs text-stone-600">
+              The embedded app may still be starting up. Retry to reload it without signing in
+              again.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              log('retry clicked account=%s provider=%s', accountId, provider);
+              void retryWebviewAccountLoad(accountId, provider);
+            }}
+            className="rounded-md bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-primary-700">
+            Retry loading
+          </button>
         </div>
       ) : null}
     </div>
