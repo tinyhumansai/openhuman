@@ -56,7 +56,10 @@ fn numbered_list_detection() {
 }
 
 #[test]
-fn max_segments_respected() {
+fn max_segments_respected_without_dropping_content() {
+    // Regression: the prior `.take(MAX_SEGMENTS)` silently dropped every
+    // paragraph past the cap (issue #1041). Verify the cap holds AND no
+    // input paragraph disappears from the delivered output.
     let paras: Vec<String> = (0..10)
         .map(|i| {
             format!(
@@ -68,6 +71,96 @@ fn max_segments_respected() {
     let text = paras.join("\n\n");
     let result = segment_for_delivery(&text);
     assert!(result.len() <= MAX_SEGMENTS);
+    let joined = result.join("\n\n");
+    // Assert the full paragraph body survives, not just the prefix —
+    // a mid-text truncation would slip past a substring-only check.
+    for (i, original) in paras.iter().enumerate() {
+        assert!(
+            joined.contains(original),
+            "paragraph {} truncated or missing from delivered segments",
+            i
+        );
+    }
+}
+
+#[test]
+fn cap_segments_passthrough_when_under_cap() {
+    let segs = vec!["one".to_string(), "two".to_string(), "three".to_string()];
+    assert_eq!(cap_segments(segs.clone(), 5, "\n\n"), segs);
+    assert_eq!(cap_segments(segs.clone(), 3, "\n\n"), segs);
+}
+
+#[test]
+fn cap_segments_merges_overflow_into_tail() {
+    let segs = vec![
+        "one".to_string(),
+        "two".to_string(),
+        "three".to_string(),
+        "four".to_string(),
+        "five".to_string(),
+        "six".to_string(),
+    ];
+    let out = cap_segments(segs, 3, "\n\n");
+    assert_eq!(out.len(), 3);
+    assert_eq!(out[0], "one");
+    assert_eq!(out[1], "two");
+    assert_eq!(out[2], "three\n\nfour\n\nfive\n\nsix");
+}
+
+#[test]
+fn cap_segments_handles_zero_max() {
+    let segs = vec!["one".to_string(), "two".to_string()];
+    // max=0 is a no-op: returns input unchanged rather than panicking.
+    assert_eq!(cap_segments(segs.clone(), 0, " "), segs);
+}
+
+#[test]
+fn issue_1041_transcript_preserves_bullets_and_trailing_paragraphs() {
+    // The exact shape of the agent reply that triggered issue #1041:
+    // 11 paragraphs including a bullet list and 4 trailing paragraphs.
+    // Pre-fix `.take(MAX_SEGMENTS)` dropped paragraphs 6-11 entirely;
+    // post-fix they must survive (merged into the final segment).
+    let text = "here's the full message with a sharper CTA:\n\n\
+        ---\n\n\
+        hey [name], great meeting you at Startup Grind SF last week. really enjoyed our conversation about [insert 1 specific detail if you remember, otherwise remove this line].\n\n\
+        i'm reaching out to share what we're building at TinyHumans. we just launched OpenHuman, and the insight is simple: AI agents are incredibly powerful, but today they're locked behind developer workflows. setup, API keys, terminals. the 99% who can't code are completely left out.\n\n\
+        OpenHuman fixes that. it's AI agents that work out of the box. no setup, no API keys, no copy-paste. just plain English.\n\n\
+        we launched a week ago and the response has been strong:\n\n\
+        - 100+ paying users\n- 200+ GitHub stars, growing ~150% week over week\n- 50+ outside PRs merged\n\n\
+        attaching a screenshot of our growth curve since day one.\n\n\
+        we're second-time founders. previously scaled products to 100k DAUs, had a 1.5M exit, and built to 3M ARR. now we're going after the \"Apple moment\" for AI agents, making them actually usable for everyone.\n\n\
+        are you open to a 15-min demo next week? happy to work around your schedule.\n\n\
+        cheers,\n[your name]";
+
+    let result = segment_for_delivery(text);
+    assert!(
+        result.len() <= MAX_SEGMENTS,
+        "segment count {} exceeds cap",
+        result.len()
+    );
+
+    let joined = result.join("\n\n");
+    // Bullet list — the highest-priority symptom of #1041
+    assert!(joined.contains("100+ paying users"), "bullet 1 dropped");
+    assert!(joined.contains("200+ GitHub stars"), "bullet 2 dropped");
+    assert!(
+        joined.contains("50+ outside PRs merged"),
+        "bullet 3 dropped"
+    );
+    // Trailing paragraphs — also dropped pre-fix
+    assert!(
+        joined.contains("attaching a screenshot"),
+        "screenshot paragraph dropped"
+    );
+    assert!(
+        joined.contains("second-time founders"),
+        "founders paragraph dropped"
+    );
+    assert!(
+        joined.contains("15-min demo next week"),
+        "demo ask paragraph dropped"
+    );
+    assert!(joined.contains("[your name]"), "signature dropped");
 }
 
 #[test]

@@ -187,7 +187,7 @@ fn segment_for_delivery(text: &str) -> Vec<String> {
                 segments = merged.len(),
                 "[presentation:segment] split by paragraphs"
             );
-            return merged.into_iter().take(MAX_SEGMENTS).collect();
+            return cap_segments(merged, MAX_SEGMENTS, "\n\n");
         }
     }
 
@@ -200,7 +200,7 @@ fn segment_for_delivery(text: &str) -> Vec<String> {
                 segments = grouped.len(),
                 "[presentation:segment] split by sentences"
             );
-            return grouped.into_iter().take(MAX_SEGMENTS).collect();
+            return cap_segments(grouped, MAX_SEGMENTS, " ");
         }
     }
 
@@ -247,6 +247,38 @@ fn is_numbered_list_item(line: &str) -> bool {
     }
     // Must have consumed at least one digit, followed by ". ".
     i > 0 && i <= 3 && bytes.get(i) == Some(&b'.') && bytes.get(i + 1) == Some(&b' ')
+}
+
+/// Cap the number of delivered segments at `max` without losing content:
+/// the first `max - 1` segments are kept as-is, and any overflow is
+/// concatenated into a single trailing segment using `joiner`.
+///
+/// The earlier behavior (`.take(MAX_SEGMENTS)`) silently dropped every
+/// segment past the cap, which truncated long agent replies in the UI
+/// (issue #1041). Merging into the tail preserves all content while
+/// still bounding the inter-bubble delay budget.
+fn cap_segments(segments: Vec<String>, max: usize, joiner: &str) -> Vec<String> {
+    if max == 0 || segments.len() <= max {
+        return segments;
+    }
+    let original_len = segments.len();
+    let mut iter = segments.into_iter();
+    let mut result: Vec<String> = (&mut iter).take(max - 1).collect();
+    let tail: Vec<String> = iter.collect();
+    let tail_count = tail.len();
+    let merged = tail.join(joiner);
+    tracing::debug!(
+        target: "presentation",
+        max,
+        original_len,
+        tail_count,
+        tail_len = merged.len(),
+        joiner_len = joiner.len(),
+        "[presentation:segment] merging {} overflow segments into tail",
+        tail_count
+    );
+    result.push(merged);
+    result
 }
 
 /// Merge adjacent segments shorter than MIN_SEGMENT_CHARS.
