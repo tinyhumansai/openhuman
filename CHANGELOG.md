@@ -24,9 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `https://api.tinyhumans.ai` short-circuit
   - Documented the runtime URL precedence in `app/.env.example`,
     `docs/src/01-architecture.md`, and `docs/src/08-hooks-utils.md`
-  - Added `services/__tests__/backendUrl.test.ts` covering the
-    `config_resolve_api_url` happy path, caching, the `apiUrl` alias, and the
-    empty-response refusal
+  - Added `services/__tests__/backendUrl.test.ts` (resolver happy path,
+    caching, `apiUrl` alias, empty-response refusal) and
+    `hooks/useBackendUrl.test.ts` (resolve, failure, and unmount-safety)
 
 - **DevOps**: Added Sentry debug symbol upload to CI/CD pipeline
   - Rust debug symbols from Tauri build are now automatically uploaded to Sentry on every main branch push
