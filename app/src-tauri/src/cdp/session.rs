@@ -85,6 +85,17 @@ fn origin_of(url: &str) -> Option<String> {
     }
 }
 
+/// Does `origin` (a `scheme://host[:port]` string from [`origin_of`]) match
+/// a specific host? Tolerates an explicit port suffix on `origin` so the
+/// callers can pass canonical hosts without hard-coding default ports.
+fn origin_host_is(origin: &str, host: &str) -> bool {
+    let Some(rest) = origin.strip_prefix("https://").or_else(|| origin.strip_prefix("http://")) else {
+        return false;
+    };
+    let host_part = rest.split(':').next().unwrap_or(rest);
+    host_part.eq_ignore_ascii_case(host)
+}
+
 fn target_matches_account_url(target_url: &str, account_id: &str) -> bool {
     let marker = placeholder_marker(account_id);
     let marker_fragment = format!("#{marker}");
@@ -271,27 +282,51 @@ async fn run_session_cycle<R: Runtime>(
     // `forward_native_notification` in `webview_accounts`. Without it,
     // the constructor silently no-ops and no toast ever fires (#1016).
     if let Some(origin) = origin_of(&real_url) {
+        // Default permission set every embedded provider needs. Origin-scoped
+        // so we don't leak grants across providers running in the same CEF
+        // browser process.
+        let mut perms: Vec<&str> = vec!["notifications"];
+
+        // Google Meet additionally needs:
+        //   - audioCapture / videoCapture: getUserMedia for cam/mic so the
+        //     pre-call greenroom auto-grants instead of falling back to
+        //     Meet's "Use microphone and camera" consent dialog
+        //   - displayCapture: getDisplayMedia for screen-share present
+        //   - clipboardReadWrite: copy meeting link / paste join code
+        // Without these, Meet sits on the consent dialog forever and cam/mic
+        // never enumerate (verified during #1022 smoke).
+        if origin_host_is(&origin, "meet.google.com") {
+            perms.extend_from_slice(&[
+                "audioCapture",
+                "videoCapture",
+                "displayCapture",
+                "clipboardReadWrite",
+            ]);
+        }
+
         if let Err(e) = cdp
             .call(
                 "Browser.grantPermissions",
                 json!({
                     "origin": origin,
-                    "permissions": ["notifications"],
+                    "permissions": perms,
                 }),
                 None,
             )
             .await
         {
             log::warn!(
-                "[cdp-session][{}] Browser.grantPermissions(notifications) for {} failed: {}",
+                "[cdp-session][{}] Browser.grantPermissions({:?}) for {} failed: {}",
                 account_id,
+                perms,
                 origin,
                 e
             );
         } else {
             log::info!(
-                "[cdp-session][{}] granted notifications for origin={}",
+                "[cdp-session][{}] granted {:?} for origin={}",
                 account_id,
+                perms,
                 origin
             );
         }
@@ -397,6 +432,24 @@ mod tests {
             origin_of("https://APP.SLACK.COM/client"),
             Some("https://app.slack.com".to_string())
         );
+    }
+
+    #[test]
+    fn origin_host_is_matches_canonical_origin() {
+        assert!(origin_host_is("https://meet.google.com", "meet.google.com"));
+        assert!(origin_host_is("http://meet.google.com:8080", "meet.google.com"));
+        assert!(origin_host_is("https://MEET.GOOGLE.COM", "meet.google.com"));
+    }
+
+    #[test]
+    fn origin_host_is_rejects_non_match() {
+        // Different host
+        assert!(!origin_host_is("https://workspace.google.com", "meet.google.com"));
+        // Subdomain mismatch
+        assert!(!origin_host_is("https://chat.meet.google.com", "meet.google.com"));
+        // Non-http scheme
+        assert!(!origin_host_is("about:blank", "meet.google.com"));
+        assert!(!origin_host_is("file:///etc/hosts", "meet.google.com"));
     }
 
     #[test]
