@@ -207,6 +207,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.orchestrator_worker_thread",
+        name: "Worker Thread Delegation",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "When a delegated sub-task is long or complex, the orchestrator can route it into a fresh worker-labeled conversation thread instead of flooding the parent thread. The user opens the worker thread from the thread list (or via the reference card in the parent) to read the sub-agent's full transcript.",
+        how_to: "Conversations > tap the worker reference card in the parent thread, or open the worker-labeled thread from the thread list",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.slack_memory_ingest",
         name: "Slack Memory Ingestion",
         domain: "intelligence",

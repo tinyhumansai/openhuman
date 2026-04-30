@@ -1,5 +1,7 @@
 import type { ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
 import { formatTimelineEntry } from '../../../utils/toolTimelineFormatting';
+import { parseWorkerThreadRef } from '../utils/workerThreadRef';
+import { WorkerThreadRefCard } from './WorkerThreadRefCard';
 
 export function ToolTimelineBlock({ entries }: { entries: ToolTimelineEntry[] }) {
   const latestRunningEntryId = [...entries].reverse().find(entry => entry.status === 'running')?.id;
@@ -18,6 +20,7 @@ export function ToolTimelineBlock({ entries }: { entries: ToolTimelineEntry[] })
         const formatted = formatTimelineEntry(entry);
         const detailContent =
           normalizeToolBody(formatted.detail) ?? normalizeToolBody(entry.argsBuffer);
+        const workerRef = parseWorkerThreadRef(formatted.detail ?? entry.detail);
         const shouldAutoExpand = latestRunningEntryId != null && latestRunningEntryId === entry.id;
         const statusTone =
           entry.status === 'running'
@@ -55,7 +58,14 @@ export function ToolTimelineBlock({ entries }: { entries: ToolTimelineEntry[] })
                     {entry.status}
                   </span>
                 </summary>
-                {formatted.detail ? (
+                {workerRef ? (
+                  <div
+                    className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[11px] whitespace-pre-wrap break-words ${statusTone.bubble}`}>
+                    {workerRef.before}
+                    <WorkerThreadRefCard ref={workerRef.ref} />
+                    {workerRef.after ? <div className="mt-1">{workerRef.after}</div> : null}
+                  </div>
+                ) : formatted.detail ? (
                   <div
                     className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[11px] whitespace-pre-wrap break-words ${statusTone.bubble}`}>
                     {formatted.detail}
