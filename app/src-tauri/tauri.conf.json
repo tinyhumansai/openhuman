@@ -56,6 +56,10 @@
           "libx11-6",
           "libgdk-pixbuf-2.0-0",
           "libglib2.0-0"
+        ],
+        "args": [
+          "--enable-features=UseOzonePlatform",
+          "--ozone-platform=x11"
         ]
       }
     },
