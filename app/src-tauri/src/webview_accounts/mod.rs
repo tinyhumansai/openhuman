@@ -303,8 +303,12 @@ fn is_google_auth_popup(url: &Url) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };
-    let is_google_auth_host =
-        host == "accounts.google.com" || host == "accounts.googleusercontent.com";
+    // Delegate the host check to `is_google_sso_host` so this matcher stays
+    // aligned with the navigation allowlist (`url_is_internal`). The shared
+    // helper covers `accounts.google.<ccTLD>` plus `accounts.youtube.com`;
+    // the popup flow additionally allows the `accounts.googleusercontent.com`
+    // host that some signed-out sign-in chooser variants land on.
+    let is_google_auth_host = is_google_sso_host(host) || host == "accounts.googleusercontent.com";
     if !is_google_auth_host {
         return false;
     }
