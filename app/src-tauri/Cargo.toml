@@ -89,7 +89,7 @@ env_logger = "0.11"
 # can be overridden at runtime via the same env var. Feature set mirrors the
 # core sidecar (`Cargo.toml` at repo root) minus `tracing` since the shell
 # uses `log` + `env_logger`.
-sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
+sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "debug-images", "reqwest", "rustls"] }
 
 # Used by the imessage_scanner module.
 anyhow = "1.0"
@@ -168,6 +168,17 @@ tauri-plugin-notification = { path = "vendor/tauri-plugin-notification" }
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
 tempfile = "3"
+
+# Emit just enough DWARF in release builds for Sentry to symbolicate Rust
+# panics + render surrounding source lines. `line-tables-only` keeps the
+# binary small (only file+line tables, no full type info) while still
+# letting `sentry-cli debug-files upload --include-sources` produce a
+# usable `.src.zip`. `split-debuginfo = "packed"` writes the debug data
+# into a separate `.dSYM` bundle on macOS so the shipped executable
+# itself stays slim.
+[profile.release]
+debug = "line-tables-only"
+split-debuginfo = "packed"
 
 # Fast CI builds: trade runtime perf for compile speed
 [profile.ci]

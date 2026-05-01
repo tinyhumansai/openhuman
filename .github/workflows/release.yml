@@ -54,6 +54,13 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
       sha: ${{ steps.resolve.outputs.sha }}
+      # First 12 chars of `sha` — matches the truncation done at runtime by
+      # app/src/utils/config.ts, app/vite.config.ts, src/main.rs, and
+      # app/src-tauri/src/lib.rs when they compute the canonical
+      # `openhuman@<version>+<short_sha>` release tag. Use this (not the
+      # full `sha`) anywhere CI constructs SENTRY_RELEASE so uploaded
+      # artifacts attach to the same release events report.
+      short_sha: ${{ steps.resolve.outputs.short_sha }}
       build_ref: ${{ steps.resolve.outputs.build_ref }}
       release_enabled: ${{ steps.resolve.outputs.release_enabled }}
       base_url: ${{ steps.resolve.outputs.base_url }}
@@ -150,9 +157,15 @@ jobs:
             RELEASE_ENABLED="false"
             BASE_URL="https://staging-api.tinyhumans.ai/"
           fi
+          # Match the 12-char truncation runtime code applies to
+          # VITE_BUILD_SHA / OPENHUMAN_BUILD_SHA when constructing the release
+          # tag at startup, so SENTRY_RELEASE assembled in CI agrees with
+          # the tag events emit.
+          SHORT_SHA="${SHA:0:12}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "build_ref=$BUILD_REF" >> "$GITHUB_OUTPUT"
           echo "release_enabled=$RELEASE_ENABLED" >> "$GITHUB_OUTPUT"
           echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
@@ -467,9 +480,14 @@ jobs:
           # by Tauri so source maps uploaded there resolve correctly against the
           # final bundle produced by the tauri-driven build.
           VITE_BUILD_SHA: ${{ needs.prepare-build.outputs.sha }}
+          # Use short_sha (12 chars) — matches what config.ts / vite.config.ts /
+          # main.rs / app/src-tauri/src/lib.rs all slice VITE_BUILD_SHA /
+          # OPENHUMAN_BUILD_SHA down to at runtime when emitting events. The
+          # vite plugin reads SENTRY_RELEASE raw, so a long-SHA value here
+          # would tag uploads against a different release than events report.
           SENTRY_RELEASE:
             openhuman@${{ needs.prepare-build.outputs.version }}+${{
-            needs.prepare-build.outputs.sha }}
+            needs.prepare-build.outputs.short_sha }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           # SENTRY_PROJECT here is consumed by sentry-vite-plugin during the
@@ -513,12 +531,13 @@ jobs:
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_CORE }}
           # Must match the release tag the running core binary reports
-          # (`openhuman@<version>+<sha>`, see `build_release_tag` in
-          # src/main.rs). If this drifts, DIFs attach to a different
+          # (`openhuman@<version>+<short_sha>`, see `build_release_tag` in
+          # src/main.rs). Uses short_sha (12 chars) — see the prepare-build
+          # outputs comment. If this drifts, DIFs attach to a different
           # release than events and stack traces stay un-symbolicated.
           SENTRY_RELEASE:
             openhuman@${{ needs.prepare-build.outputs.version }}+${{
-            needs.prepare-build.outputs.sha }}
+            needs.prepare-build.outputs.short_sha }}
           VERSION: ${{ needs.prepare-build.outputs.version }}
           MATRIX_TARGET: ${{ matrix.settings.target }}
         run: |
@@ -533,6 +552,40 @@ jobs:
           else
             echo "==> Skipping $deps_dir (not present)"
           fi
+
+      # Record a single Sentry deploy marker per matrix target so the release
+      # page shows commits → deploys (#405 acceptance criterion). Lives in
+      # its own step, not inside upload_sentry_symbols.sh, because the script
+      # may be invoked multiple times in a release lifecycle and
+      # `sentry-cli releases deploys ... new` does NOT deduplicate by
+      # (release, env) — every call adds another deploy row. One marker per
+      # matrix target × N platforms is the right shape: re-runs of CI for the
+      # same release intentionally produce additional rows representing
+      # separate deploy attempts.
+      - name: Record Sentry deploy marker
+        if:
+          needs.prepare-build.outputs.release_enabled == 'true' && env.SENTRY_AUTH_TOKEN
+          != ''
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          # Marker lives on the React project's release; events from all
+          # surfaces share the same `openhuman@<version>+<short_sha>` release
+          # tag, so the marker on any single project's release shows in the
+          # Sentry UI's "Deploys" tab for that release group.
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_REACT }}
+          SENTRY_RELEASE:
+            openhuman@${{ needs.prepare-build.outputs.version }}+${{
+            needs.prepare-build.outputs.short_sha }}
+          SENTRY_ENVIRONMENT: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
+        run: |
+          set -euo pipefail
+          echo "==> Recording deploy marker: ${SENTRY_RELEASE} -> ${SENTRY_ENVIRONMENT}"
+          sentry-cli releases deploys "${SENTRY_RELEASE}" new \
+            -e "${SENTRY_ENVIRONMENT}" || {
+            echo "[WARN] deploy marker failed (non-fatal)"
+          }
 
       # tauri-action previously uploaded non-macOS installer assets directly
       # to the release. Replicate that for Linux + Windows here (macOS goes
