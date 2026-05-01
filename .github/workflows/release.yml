@@ -3,23 +3,36 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      build_target:
-        description: Build target environment
+      release_source:
+        description: "Source ref to build production from"
         required: true
         type: choice
-        default: production
-        options: [production, staging]
-      release_type:
-        description: Version increment type
+        default: staging_tag
+        # staging_tag : default. Build from the staging tag chosen below
+        #               (or the latest `staging/v*` tag when blank). This
+        #               is the QA-validated path — production tracks what
+        #               staging already exercised.
+        # main_head   : escape hatch for hotfixes when no staging tag is
+        #               appropriate. Builds from `origin/main` HEAD.
+        options: [staging_tag, main_head]
+      staging_tag:
+        description: "Specific staging tag (e.g. staging/v0.53.4-2). Empty = latest staging tag. Ignored when release_source=main_head."
         required: false
-        default: patch
+        default: ""
+        type: string
+      release_type:
+        description: "Version increment (production owns minor/major; patch is allowed for hotfixes)"
+        required: false
+        default: minor
         type: choice
         options: [patch, minor, major]
 permissions:
   contents: write
   packages: write
+# Distinct from `release-staging`'s concurrency group so a staging cut
+# never blocks a production release and vice versa.
 concurrency:
-  group: release-${{ github.event.inputs.build_target || 'production' }}-main
+  group: release-production-main
   cancel-in-progress: false
 # ---------------------------------------------------------------------------
 # Job dependency graph
@@ -64,6 +77,9 @@ jobs:
       build_ref: ${{ steps.resolve.outputs.build_ref }}
       release_enabled: ${{ steps.resolve.outputs.release_enabled }}
       base_url: ${{ steps.resolve.outputs.base_url }}
+      source: ${{ steps.source.outputs.source }}
+      source_ref: ${{ steps.source.outputs.ref }}
+      source_sha: ${{ steps.source.outputs.sha }}
     steps:
       - name: Enforce main branch
         if: github.ref != 'refs/heads/main'
@@ -71,31 +87,22 @@ jobs:
           echo "This workflow can only run from main. Current ref: $GITHUB_REF"
           exit 1
       - name: Generate GitHub App token
-        if: inputs.build_target == 'production'
         id: app-token
         uses: tibdex/github-app-token@v1
         with:
           app_id: ${{ secrets.XGITHUB_APP_ID }}
           private_key: ${{ secrets.XGITHUB_APP_PRIVATE_KEY }}
-      - name: Checkout main for production release
-        if: inputs.build_target == 'production'
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
-      - name: Checkout main for staging build
-        if: inputs.build_target == 'staging'
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
       - name: Configure Git
-        if: inputs.build_target == 'production'
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -105,15 +112,26 @@ jobs:
           git fetch origin --tags
           git checkout main
           git pull origin main --ff-only
+      # Resolve the source ref BEFORE bumping the version. We want
+      # production releases to carry the **content** of the chosen source
+      # (the validated staging tag, by default) but the bump commit and
+      # release tag are created on `main` — the version-file mutations
+      # need to land somewhere everyone can pull. So: compute the source
+      # SHA here for traceability + pass it through to the matrix as
+      # `build_ref`, and bump versions on main as before.
+      - name: Resolve release source ref
+        id: source
+        shell: bash
+        env:
+          RELEASE_SOURCE: ${{ inputs.release_source }}
+          STAGING_TAG: ${{ inputs.staging_tag }}
+        run: bash scripts/release/resolve-release-source.sh
       - name: Compute next version and sync release files
-        if: inputs.build_target == 'production'
         id: bump
         run: node scripts/release/bump-version.js "${{ inputs.release_type }}"
       - name: Verify release version sync
-        if: inputs.build_target == 'production'
         run: node scripts/release/verify-version-sync.js "${{ steps.bump.outputs.version }}"
       - name: Ensure tag does not already exist
-        if: inputs.build_target == 'production'
         env:
           TAG: ${{ steps.bump.outputs.tag }}
         run: |
@@ -126,37 +144,31 @@ jobs:
             exit 1
           fi
       - name: Commit, push and tag
-        if: inputs.build_target == 'production'
         id: push
         env:
           VERSION: ${{ steps.bump.outputs.version }}
           TAG: ${{ steps.bump.outputs.tag }}
+          SOURCE: ${{ steps.source.outputs.source }}
+          SOURCE_REF: ${{ steps.source.outputs.ref }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           git add app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml Cargo.toml
-          git commit -m "chore(release): v${VERSION}"
+          git commit -m "chore(release): v${VERSION}" \
+            -m "source=${SOURCE} ref=${SOURCE_REF} sha=${SOURCE_SHA}"
           git push origin main
-          git tag -a "$TAG" -m "Release $TAG"
+          git tag -a "$TAG" -m "Release $TAG (source=${SOURCE} ref=${SOURCE_REF})"
           git push origin "$TAG"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Resolve build outputs
         id: resolve
         shell: bash
         run: |
-          if [ "${{ inputs.build_target }}" = "production" ]; then
-            VERSION="${{ steps.bump.outputs.version }}"
-            TAG="${{ steps.bump.outputs.tag }}"
-            SHA="${{ steps.push.outputs.sha }}"
-            BUILD_REF="$TAG"
-            RELEASE_ENABLED="true"
-            BASE_URL="https://api.tinyhumans.ai/"
-          else
-            VERSION="$(node -p "require('./app/package.json').version")"
-            TAG=""
-            SHA="$(git rev-parse HEAD)"
-            BUILD_REF="$SHA"
-            RELEASE_ENABLED="false"
-            BASE_URL="https://staging-api.tinyhumans.ai/"
-          fi
+          VERSION="${{ steps.bump.outputs.version }}"
+          TAG="${{ steps.bump.outputs.tag }}"
+          SHA="${{ steps.push.outputs.sha }}"
+          BUILD_REF="$TAG"
+          RELEASE_ENABLED="true"
+          BASE_URL="https://api.tinyhumans.ai/"
           # Match the 12-char truncation runtime code applies to
           # VITE_BUILD_SHA / OPENHUMAN_BUILD_SHA when constructing the release
           # tag at startup, so SENTRY_RELEASE assembled in CI agrees with
@@ -250,8 +262,8 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Keep in sync with DEFAULT_TELEGRAM_BOT_USERNAME_* in channels/controllers/ops.rs
-      OPENHUMAN_TELEGRAM_BOT_USERNAME: ${{ inputs.build_target == 'staging' && 'alphahumantest_bot' || 'openhumanaibot' }}
-      VITE_TELEGRAM_BOT_USERNAME: ${{ inputs.build_target == 'staging' && 'alphahumantest_bot' || 'openhumanaibot' }}
+      OPENHUMAN_TELEGRAM_BOT_USERNAME: openhumanaibot
+      VITE_TELEGRAM_BOT_USERNAME: openhumanaibot
     steps:
       - name: Checkout build ref
         uses: actions/checkout@v4
@@ -259,14 +271,6 @@ jobs:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
           submodules: recursive
-      - name: Configure staging app environment
-        if: inputs.build_target == 'staging'
-        shell: bash
-        run: |
-          echo "OPENHUMAN_APP_ENV=staging" >> "$GITHUB_ENV"
-          echo "VITE_OPENHUMAN_APP_ENV=staging" >> "$GITHUB_ENV"
-          echo "OPENHUMAN_TELEGRAM_BOT_USERNAME=alphahumantest_bot" >> "$GITHUB_ENV"
-          echo "VITE_TELEGRAM_BOT_USERNAME=alphahumantest_bot" >> "$GITHUB_ENV"
       - name: Set Xcode version
         if: matrix.settings.platform == 'macos-latest'
         uses: maxim-lobanov/setup-xcode@v1
@@ -301,8 +305,8 @@ jobs:
         run: |
           set +e
           for BIN in \
-            app/src-tauri/target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/OpenHuman \
-            target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/OpenHuman; do
+            app/src-tauri/target/${{ matrix.settings.target }}/release/OpenHuman \
+            target/${{ matrix.settings.target }}/release/OpenHuman; do
             if [ -x "$BIN" ]; then
               echo "ldd $BIN"
               ldd "$BIN" | grep 'not found' || echo "  all resolved"
@@ -457,8 +461,8 @@ jobs:
         working-directory: app
         env:
           BASE_URL: ${{ needs.prepare-build.outputs.base_url }}
-          OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
-          VITE_OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
+          OPENHUMAN_APP_ENV: production
+          VITE_OPENHUMAN_APP_ENV: production
           VITE_BACKEND_URL: ${{ needs.prepare-build.outputs.base_url }}
           # Re-declare Vite env so tauri.conf.json's `beforeBuildCommand`
           # (`vite build`) bakes Sentry + debug flags into the final bundle.
@@ -508,11 +512,7 @@ jobs:
           # Inline NODE_OPTIONS so it reaches the vite child spawned by
           # beforeBuildCommand. Step-level env was observed not to propagate
           # on macos-arm64 runners, causing OOM at node's ~2GB auto default.
-          if [ "${{ inputs.build_target }}" = "staging" ]; then
-            NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build --debug -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
-          else
-            NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
-          fi
+          NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
 
       # Upload Rust debug info to Sentry so all Rust stack traces (Tauri
       # shell + linked-in core) symbolicate in production. The frontend
@@ -571,7 +571,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare-build.outputs.tag }}
           MATRIX_TARGET: ${{ matrix.settings.target }}
-          BUILD_PROFILE: ${{ inputs.build_target == 'staging' && 'debug' || 'release' }}
+          BUILD_PROFILE: release
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -610,8 +610,8 @@ jobs:
           # depending on workspace config — search both
           APP_PATH=""
           for candidate in \
-            "app/src-tauri/target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/macos/OpenHuman.app" \
-            "target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/macos/OpenHuman.app"; do
+            "app/src-tauri/target/${{ matrix.settings.target }}/release/bundle/macos/OpenHuman.app" \
+            "target/${{ matrix.settings.target }}/release/bundle/macos/OpenHuman.app"; do
             if [ -d "$candidate" ]; then
               APP_PATH="$candidate"
               break
@@ -620,7 +620,7 @@ jobs:
 
           # Fallback: search for it
           if [ -z "$APP_PATH" ]; then
-            APP_PATH="$(find . -path "*/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/macos/OpenHuman.app" -type d 2>/dev/null | head -1)"
+            APP_PATH="$(find . -path "*/release/bundle/macos/OpenHuman.app" -type d 2>/dev/null | head -1)"
           fi
           if [ -z "$APP_PATH" ]; then
             echo "ERROR: Could not find OpenHuman.app bundle anywhere"
@@ -680,16 +680,6 @@ jobs:
           APP_PATH="${{ steps.locate-app.outputs.app_path }}"
           echo "Checking staple at: $APP_PATH"
           xcrun stapler validate "$APP_PATH" || echo "WARNING: Staple validation failed"
-      - name: Upload staging desktop bundles
-        if: needs.prepare-build.outputs.release_enabled != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name:
-            desktop-bundles-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix
-            }}
-          path: |
-            app/src-tauri/target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/**
-            target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/**
 
   # =========================================================================
   # Phase 5: Record a single Sentry deploy marker once the release has
@@ -730,7 +720,7 @@ jobs:
           SENTRY_RELEASE:
             openhuman@${{ needs.prepare-build.outputs.version }}+${{
             needs.prepare-build.outputs.short_sha }}
-          SENTRY_ENVIRONMENT: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
+          SENTRY_ENVIRONMENT: production
         run: |
           set -euo pipefail
           echo "==> Recording deploy marker: ${SENTRY_RELEASE} -> ${SENTRY_ENVIRONMENT}"

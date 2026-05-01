@@ -2,9 +2,12 @@
 name: Release (Staging)
 on:
   workflow_dispatch: {}
+# `contents: write` is required to push the immutable `staging/v*` tag
+# created by `prepare-build`. Permissions are kept narrower than the
+# production release workflow (no `packages` write) because staging
+# builds do not push container images or update releases.
 permissions:
-  contents: read
-  packages: read
+  contents: write
 concurrency:
   group: release-staging
   cancel-in-progress: false
@@ -38,28 +41,63 @@ jobs:
       # artifacts attach to the same release events report.
       short_sha: ${{ steps.resolve.outputs.short_sha }}
       build_ref: ${{ steps.resolve.outputs.build_ref }}
+      tag: ${{ steps.resolve.outputs.tag }}
       base_url: ${{ steps.resolve.outputs.base_url }}
     steps:
-      - name: Enforce staging branch
-        if: github.ref != 'refs/heads/staging'
+      - name: Enforce main branch
+        if: github.ref != 'refs/heads/main'
         run: |
-          echo "This workflow can only run from staging. Current ref: $GITHUB_REF"
+          echo "This workflow can only run from main. Current ref: $GITHUB_REF"
           exit 1
-      - name: Checkout staging
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: staging
-          fetch-depth: 1
+          ref: main
+          fetch-depth: 0
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-      - name: Resolve build outputs
-        id: resolve
+      - name: Configure Git
         shell: bash
         run: |
-          VERSION="$(node -p "require('./app/package.json').version")"
-          SHA="$(git rev-parse HEAD)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin --tags
+      # Compute the next `staging/vX.Y.Z-N` tag. The script reads the
+      # base version from `app/package.json` (kept untouched here — staging
+      # never bumps versioned files) and counts existing staging tags for
+      # that base to pick the next N.
+      - name: Compute next staging tag
+        id: bump
+        shell: bash
+        run: node scripts/release/next-staging-tag.js
+      - name: Ensure staging tag does not already exist on remote
+        env:
+          TAG: ${{ steps.bump.outputs.tag }}
+        shell: bash
+        run: |
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+            echo "Tag already exists on origin: ${TAG}"
+            exit 1
+          fi
+      - name: Create and push staging tag
+        id: tag
+        env:
+          TAG: ${{ steps.bump.outputs.tag }}
+        shell: bash
+        run: |
+          git tag -a "$TAG" -m "Staging build $TAG"
+          git push origin "$TAG"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Resolve build outputs
+        id: resolve
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+          TAG: ${{ steps.bump.outputs.tag }}
+          SHA: ${{ steps.tag.outputs.sha }}
+        shell: bash
+        run: |
           # Match the 12-char truncation runtime code applies to
           # VITE_BUILD_SHA / OPENHUMAN_BUILD_SHA when constructing the
           # release tag at startup, so SENTRY_RELEASE assembled in CI
@@ -68,7 +106,8 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
-          echo "build_ref=$SHA" >> "$GITHUB_OUTPUT"
+          echo "build_ref=$TAG" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "base_url=https://staging-api.tinyhumans.ai/" >> "$GITHUB_OUTPUT"
 
   # =========================================================================
@@ -455,3 +494,43 @@ jobs:
           echo "==> Recording deploy marker: ${SENTRY_RELEASE} -> ${SENTRY_ENVIRONMENT}"
           sentry-cli releases deploys "${SENTRY_RELEASE}" new \
             -e "${SENTRY_ENVIRONMENT}"
+
+  # =========================================================================
+  # Cleanup: if the build matrix fails or is cancelled, drop the staging
+  # tag we just pushed so it doesn't pollute the staging-tag history. A
+  # half-built staging tag has no use — production's `release_source`
+  # resolver picks the latest staging tag, and pointing it at a known-
+  # broken artifact would silently regress production. Tag deletion here
+  # is safe because nothing else has consumed it yet (this job runs in
+  # the same workflow run that created it).
+  # =========================================================================
+  cleanup-failed-staging:
+    name: Remove staging tag if build failed
+    runs-on: ubuntu-latest
+    needs: [prepare-build, build-desktop]
+    if: >-
+      always()
+      && needs.prepare-build.result == 'success'
+      && (needs.build-desktop.result == 'failure' || needs.build-desktop.result == 'cancelled')
+    steps:
+      - name: Delete remote staging tag
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = '${{ needs.prepare-build.outputs.tag }}';
+            if (!tag) {
+              core.info('No staging tag to delete');
+              return;
+            }
+            try {
+              await github.rest.git.deleteRef({ owner, repo, ref: `tags/${tag}` });
+              core.info(`Deleted remote tag ${tag}`);
+            } catch (e) {
+              if (e.status === 404) {
+                core.info(`Tag ${tag} already absent on remote`);
+              } else {
+                throw e;
+              }
+            }

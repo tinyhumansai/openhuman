@@ -8,12 +8,12 @@ Narrative architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Frontend
 
 ## Repository layout
 
-| Path | Role |
-| --- | --- |
-| **`app/`** | Yarn workspace `openhuman-app`: Vite + React (`app/src/`), Tauri desktop host (`app/src-tauri/`), Vitest tests |
-| **`src/`** (root) | Rust lib `openhuman_core` + `openhuman` CLI binary — `core_server`, `openhuman::*` domains, MCP routing |
-| **`Cargo.toml`** (root) | Core crate; `cargo build --bin openhuman` produces the sidecar staged by `app`'s `core:stage` |
-| **`docs/`** | Architecture and module guides |
+| Path                    | Role                                                                                                           |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **`app/`**              | Yarn workspace `openhuman-app`: Vite + React (`app/src/`), Tauri desktop host (`app/src-tauri/`), Vitest tests |
+| **`src/`** (root)       | Rust lib `openhuman_core` + `openhuman` CLI binary — `core_server`, `openhuman::*` domains, MCP routing        |
+| **`Cargo.toml`** (root) | Core crate; `cargo build --bin openhuman` produces the sidecar staged by `app`'s `core:stage`                  |
+| **`docs/`**             | Architecture and module guides                                                                                 |
 
 Commands assume the **repo root**; `pnpm dev` delegates to the `app` workspace. (Repo migrated from yarn to pnpm — `package.json` enforces pnpm via the `packageManager` field.)
 
@@ -26,6 +26,7 @@ Commands assume the **repo root**; `pnpm dev` delegates to the `app` workspace. 
 - **Core binary** (`openhuman`): spawned as a **sidecar**; the UI talks to it over HTTP (`core_rpc_relay` + `core_rpc` client), not by duplicating domain logic.
 
 **Where logic lives**
+
 - **Rust core**: business logic, execution, domains, RPC, persistence, CLI. Authoritative.
 - **Tauri + React (`app/`)**: UX, screens, navigation, bridging to the core. Presents and orchestrates only.
 
@@ -79,6 +80,7 @@ cargo check --manifest-path app/src-tauri/Cargo.toml
 ### Shared mock backend
 
 Used by both unit and Rust tests.
+
 - Core: `scripts/mock-api-core.mjs` · server: `scripts/mock-api-server.mjs` · E2E wrapper: `app/test/e2e/mock-server.ts`.
 - Admin: `GET /__admin/health`, `POST /__admin/reset`, `POST /__admin/behavior`, `GET /__admin/requests`.
 - Run manually: `pnpm mock:api`.
@@ -86,6 +88,7 @@ Used by both unit and Rust tests.
 ### E2E (WDIO — dual platform)
 
 Full guide: [`docs/E2E-TESTING.md`](docs/E2E-TESTING.md).
+
 - **Linux (CI)**: `tauri-driver` (WebDriver :4444).
 - **macOS (local)**: Appium Mac2 (XCUITest :4723) on the `.app` bundle.
 - Specs: `app/test/e2e/specs/*.spec.ts`. Helpers in `app/test/e2e/helpers/`. Config: `app/test/wdio.conf.ts`.
@@ -176,14 +179,14 @@ Typed pub/sub + in-process typed request/response. Both singletons — use modul
 
 Core types (all in `src/core/event_bus/`):
 
-| Type | File | Purpose |
-| --- | --- | --- |
-| `DomainEvent` | `events.rs` | `#[non_exhaustive]` enum of all cross-module events |
-| `EventBus` | `bus.rs` | Singleton over `tokio::sync::broadcast`; ctor is `pub(crate)` |
-| `NativeRegistry` / `NativeRequestError` | `native_request.rs` | Typed request/response registry by method name |
-| `EventHandler` | `subscriber.rs` | Async trait with optional `domains()` filter |
-| `SubscriptionHandle` | `subscriber.rs` | RAII — drops cancel the subscriber |
-| `TracingSubscriber` | `tracing.rs` | Built-in debug logger |
+| Type                                    | File                | Purpose                                                       |
+| --------------------------------------- | ------------------- | ------------------------------------------------------------- |
+| `DomainEvent`                           | `events.rs`         | `#[non_exhaustive]` enum of all cross-module events           |
+| `EventBus`                              | `bus.rs`            | Singleton over `tokio::sync::broadcast`; ctor is `pub(crate)` |
+| `NativeRegistry` / `NativeRequestError` | `native_request.rs` | Typed request/response registry by method name                |
+| `EventHandler`                          | `subscriber.rs`     | Async trait with optional `domains()` filter                  |
+| `SubscriptionHandle`                    | `subscriber.rs`     | RAII — drops cancel the subscriber                            |
+| `TracingSubscriber`                     | `tracing.rs`        | Built-in debug logger                                         |
 
 Singleton API: `init_global(capacity)`, `publish_global(event)`, `subscribe_global(handler)`, `register_native_global(method, handler)`, `request_native_global(method, req)`, `global()` / `native_registry()`.
 
@@ -211,6 +214,7 @@ Tauri/Rust in the shell is a **delivery vehicle** (windowing, process lifecycle,
 
 - Issues and PRs on upstream **[tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman)** — not a fork — unless explicitly told otherwise.
 - Issue templates: [`.github/ISSUE_TEMPLATE/feature.md`](.github/ISSUE_TEMPLATE/feature.md), [`.github/ISSUE_TEMPLATE/bug.md`](.github/ISSUE_TEMPLATE/bug.md). PR template: [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). AI-authored text should follow them verbatim.
+- **Releases**: staging and production are **separate workflows** — see [`docs/RELEASE.md`](docs/RELEASE.md). Staging cuts immutable `staging/vX.Y.Z-N` tags (no version-file bumps); production builds from the latest staging tag by default and bumps `minor`/`major`/`patch`.
 - PRs target **`main`**.
 
 ---
@@ -255,7 +259,7 @@ Specify → prove in Rust → prove over RPC → surface in the UI → test.
 
 - **File size**: prefer ≤ ~500 lines; split growing modules.
 - **Pre-merge** (code changes): Prettier, ESLint, `tsc --noEmit` in `app/`; `cargo fmt` + `cargo check` for changed Rust.
-- **No dynamic imports** in production `app/src` code — static `import` / `import type` only. No `import()`, `React.lazy(() => import(...))`, `await import(...)`. For heavy optional paths, use a static import and guard the call site with `try/catch` or a runtime check. *Exceptions*: Vitest harness patterns in `*.test.ts` / `__tests__` / `test/setup.ts`; ambient `typeof import('…')` in `.d.ts`; config files (e.g. `tailwind.config.js` JSDoc).
+- **No dynamic imports** in production `app/src` code — static `import` / `import type` only. No `import()`, `React.lazy(() => import(...))`, `await import(...)`. For heavy optional paths, use a static import and guard the call site with `try/catch` or a runtime check. _Exceptions_: Vitest harness patterns in `*.test.ts` / `__tests__` / `test/setup.ts`; ambient `typeof import('…')` in `.d.ts`; config files (e.g. `tailwind.config.js` JSDoc).
 - **Dual socket sync**: when changing the realtime protocol, keep `socketService` / MCP transport aligned with core socket behavior (see `docs/ARCHITECTURE.md` dual-socket section).
 
 ---
