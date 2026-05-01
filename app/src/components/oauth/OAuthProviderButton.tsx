@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { getBackendUrl } from '../../services/backendUrl';
+import { getDeepLinkAuthState } from '../../store/deepLinkAuthState';
 import type { OAuthProviderConfig } from '../../types/oauth';
 import { IS_DEV } from '../../utils/config';
 import { openUrl } from '../../utils/openUrl';
@@ -31,11 +32,32 @@ const OAuthProviderButton = ({
 
     const reset = () => setIsLoading(false);
 
-    // Window-focus reset is the fast path: when the user returns to OpenHuman
-    // after the system browser, the loading state lifts immediately so the
-    // button is clickable again.
+    // Skip reset when a deep-link auth round-trip is already in flight — the
+    // OAuth callback flips `isProcessing=true` AFTER the OS focus event fires,
+    // and resetting first would briefly re-enable the button mid-redirect.
+    const skipDuringDeepLink = (label: string) => {
+      if (getDeepLinkAuthState().isProcessing) {
+        console.debug(`[oauth-button][${provider.id}] ${label} — skip (deep-link processing)`);
+        return true;
+      }
+      return false;
+    };
+
+    // Fast path: window focus fires when the user returns from the system
+    // browser. On most platforms this lifts the loading state immediately.
     const handleFocus = () => {
+      if (skipDuringDeepLink('focus')) return;
       console.debug(`[oauth-button][${provider.id}] window focus → reset isLoading`);
+      reset();
+    };
+
+    // Backup path: macOS Spaces / virtual desktops sometimes restore window
+    // focus without firing a `focus` event. `visibilitychange` is the more
+    // reliable signal there.
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (skipDuringDeepLink('visibilitychange')) return;
+      console.debug(`[oauth-button][${provider.id}] visibilitychange visible → reset isLoading`);
       reset();
     };
 
@@ -45,10 +67,12 @@ const OAuthProviderButton = ({
     }, OAUTH_LOADING_TIMEOUT_MS);
 
     window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [isLoading, provider.id]);
 
@@ -60,7 +84,7 @@ const OAuthProviderButton = ({
 
     if (externalDisabled || isLoading) return;
 
-    console.log(`Starting ${provider.name} OAuth login`, isTauri());
+    console.debug(`[oauth-button][${provider.id}] starting OAuth login (isTauri=${isTauri()})`);
 
     setIsLoading(true);
 
