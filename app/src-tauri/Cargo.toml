@@ -139,6 +139,12 @@ custom-protocol = ["tauri/custom-protocol"]
 sandbox-bubblewrap = []
 
 [patch.crates-io]
+# `cargo tauri build` resolves dependencies from this manifest, so the
+# workspace-level whisper-rs-sys patch is not applied here. The fork forces
+# whisper.cpp to use MSVC's static runtime (/MT), matching CEF and avoiding
+# LNK2038/LNK1169 CRT conflicts on Windows.
+whisper-rs-sys = { git = "https://github.com/tinyhumansai/whisper-rs-sys.git", branch = "main" }
+
 # CEF support lives on the `feat/cef` branch of tauri-apps/tauri. We carry our
 # own fork at tinyhumansai/tauri-cef on `feat/cef-notification-intercept` which
 # adds native Web Notifications interception — `tauri-runtime-cef::notification`
