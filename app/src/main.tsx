@@ -5,7 +5,6 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 
 import App from './App';
-import ErrorReportNotification from './components/ErrorReportNotification';
 import './index.css';
 import { getCoreStateSnapshot } from './lib/coreState/store';
 import OverlayApp from './overlay/OverlayApp';
@@ -55,14 +54,6 @@ if (!isOverlayWindow) {
 function bootRender() {
   const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
   root.render(<React.StrictMode>{isOverlayWindow ? <OverlayApp /> : <App />}</React.StrictMode>);
-
-  if (!isOverlayWindow) {
-    // Mount error notification in an isolated React root so it survives App crashes.
-    const errorRoot = document.createElement('div');
-    errorRoot.id = 'error-report-root';
-    document.body.appendChild(errorRoot);
-    ReactDOM.createRoot(errorRoot).render(<ErrorReportNotification />);
-  }
 }
 
 getActiveUserIdFromCore()

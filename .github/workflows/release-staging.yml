@@ -331,24 +331,31 @@ jobs:
         run: |
           NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build --debug -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
 
-      # Upload Rust debug info to Sentry so backend + Tauri-shell stack
-      # traces symbolicate in the staging Sentry project too. Frontend
-      # source maps are handled by sentry-vite-plugin in the build step
-      # above; this is the Rust half. Symbols are keyed by debug-ID, so
-      # it's safe to run per-matrix-target without collisions — Sentry
-      # merges artifacts across platforms.
-      - name: Upload core sidecar debug symbols to Sentry
+      # Upload Rust debug info to Sentry so all Rust stack traces
+      # symbolicate in the staging Sentry projects. Frontend source maps
+      # are handled by sentry-vite-plugin in the build step above; this
+      # is the Rust half.
+      #
+      # Two distinct binaries → two distinct Sentry projects:
+      # - **Tauri shell** (`app/src-tauri/target/<triple>/debug`) — the
+      #   actual desktop app users run. Core lives in-process here as a
+      #   linked path dep, so the shell's DWARF covers core code too.
+      #   Events all route to `openhuman-tauri` (one `sentry::init` per
+      #   process, in `app/src-tauri/src/lib.rs::run()`).
+      # - **Standalone CLI** (`target/<triple>/debug`) — the separate
+      #   `openhuman-core` binary built by "Build sidecar core binary".
+      #   Has its own `sentry::init` in `src/main.rs` and reports to
+      #   `openhuman-core`. Currently unused at runtime in the desktop
+      #   build but kept symbolicated for any operator running it.
+      # Symbols are keyed by debug-ID so cross-platform / cross-binary
+      # uploads don't collide — Sentry just merges them.
+      - name: Upload Tauri shell debug symbols to Sentry (tauri project)
         if: env.SENTRY_AUTH_TOKEN != ''
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_CORE }}
-          # Must match the release tag the running core binary reports
-          # (`openhuman@<version>+<short_sha>`, see `build_release_tag` in
-          # src/main.rs). Uses short_sha (12 chars) — see the prepare-build
-          # outputs comment. If this drifts, DIFs attach to a different
-          # release than events and stack traces stay un-symbolicated.
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_TAURI }}
           SENTRY_RELEASE:
             openhuman@${{ needs.prepare-build.outputs.version }}+${{
             needs.prepare-build.outputs.short_sha }}
@@ -356,26 +363,35 @@ jobs:
           MATRIX_TARGET: ${{ matrix.settings.target }}
         run: |
           set -euo pipefail
-          # Two DIF locations on staging:
-          # - `app/src-tauri/target/<triple>/debug` — Tauri shell binary
-          #   (which links the core as a path dep, so its DWARF covers core
-          #   too).
-          # - `target/<triple>/debug` — standalone `openhuman-core` CLI
-          #   binary built by the "Build sidecar core binary" step earlier
-          #   and published as a separate artifact. Crashes from operators
-          #   running the standalone CLI need its DIFs to symbolicate.
-          # Symbols are keyed by debug-ID so cross-platform / cross-binary
-          # uploads don't collide — Sentry just merges them.
-          for dif_dir in \
-            "app/src-tauri/target/${MATRIX_TARGET}/debug" \
-            "target/${MATRIX_TARGET}/debug"; do
-            if [ -d "$dif_dir" ]; then
-              echo "==> Uploading symbols from $dif_dir to ${SENTRY_PROJECT}"
-              bash scripts/upload_sentry_symbols.sh "$VERSION" "$dif_dir"
-            else
-              echo "==> Skipping $dif_dir (not present)"
-            fi
-          done
+          dif_dir="app/src-tauri/target/${MATRIX_TARGET}/debug"
+          if [ -d "$dif_dir" ]; then
+            echo "==> Uploading symbols from $dif_dir to ${SENTRY_PROJECT}"
+            bash scripts/upload_sentry_symbols.sh "$VERSION" "$dif_dir"
+          else
+            echo "==> Skipping $dif_dir (not present)"
+          fi
+
+      - name: Upload standalone core CLI debug symbols to Sentry (core project)
+        if: env.SENTRY_AUTH_TOKEN != ''
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_CORE }}
+          SENTRY_RELEASE:
+            openhuman@${{ needs.prepare-build.outputs.version }}+${{
+            needs.prepare-build.outputs.short_sha }}
+          VERSION: ${{ needs.prepare-build.outputs.version }}
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+        run: |
+          set -euo pipefail
+          dif_dir="target/${MATRIX_TARGET}/debug"
+          if [ -d "$dif_dir" ]; then
+            echo "==> Uploading symbols from $dif_dir to ${SENTRY_PROJECT}"
+            bash scripts/upload_sentry_symbols.sh "$VERSION" "$dif_dir"
+          else
+            echo "==> Skipping $dif_dir (not present)"
+          fi
 
       - name: Upload staging desktop bundles
         uses: actions/upload-artifact@v4
