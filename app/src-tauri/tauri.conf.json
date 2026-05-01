@@ -4,9 +4,9 @@
   "version": "0.53.4",
   "identifier": "com.openhuman.app",
   "build": {
-    "beforeDevCommand": "pnpm run core:stage && pnpm run dev",
+    "beforeDevCommand": "pnpm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm run build:app && pnpm run core:stage",
+    "beforeBuildCommand": "pnpm run build:app",
     "frontendDist": "../dist"
   },
   "app": {
@@ -47,9 +47,6 @@
     "resources": [
       "../../src/openhuman/agent/prompts",
       "recipes/**/*"
-    ],
-    "externalBin": [
-      "binaries/openhuman-core"
     ],
     "linux": {
       "deb": {

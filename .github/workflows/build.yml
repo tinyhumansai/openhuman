@@ -61,19 +61,14 @@ jobs:
       - name: Install cmake (for whisper-rs)
         run: apt-get update && apt-get install -y --no-install-recommends cmake &&
           rm -rf /var/lib/apt/lists/*
-      - name: Build sidecar core binary
-        run: cargo build --profile ci --target x86_64-unknown-linux-gnu --bin openhuman-core
-      - name: Stage sidecar for Tauri bundler
-        run: |
-          mkdir -p app/src-tauri/binaries
-          cp target/x86_64-unknown-linux-gnu/ci/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
-          chmod +x app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
+      # Core is linked into the Tauri binary as a path dep — no separate
+      # sidecar build / stage step needed.
       - name: Build Tauri app (CEF default)
         working-directory: app
         run: |
           # Skip tsc in beforeBuildCommand — typechecking runs in the dedicated
           # `typecheck` workflow, so doing it again here is duplicated CI time.
-          TAURI_CONFIG_OVERRIDE='{"build":{"beforeBuildCommand":"npx vite build && pnpm run core:stage"},"plugins":{"updater":{"active":false}}}'
+          TAURI_CONFIG_OVERRIDE='{"build":{"beforeBuildCommand":"npx vite build"},"plugins":{"updater":{"active":false}}}'
           cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
         env:
           NODE_ENV: production

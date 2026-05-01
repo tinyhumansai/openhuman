@@ -8,10 +8,10 @@
   "scripts": {
     "dev": "vite",
     "dev:web": "vite",
-    "dev:app": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && pnpm core:stage && bash ../scripts/setup-chromium-safe-storage.sh && source ../scripts/load-dotenv.sh && APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev",
+    "dev:app": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && bash ../scripts/setup-chromium-safe-storage.sh && source ../scripts/load-dotenv.sh && APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev",
     "dev:cef": "pnpm dev:app",
-    "dev:wry": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && pnpm core:stage && source ../scripts/load-dotenv.sh && cargo tauri dev --no-default-features --features wry",
-    "core:stage": "node ../scripts/stage-core-sidecar.mjs",
+    "dev:wry": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && source ../scripts/load-dotenv.sh && cargo tauri dev --no-default-features --features wry",
+    "core:stage": "echo '[core:stage] no-op — core is linked in-process; sidecar removed (PR #1061)'",
     "tauri:ensure": "bash ../scripts/ensure-tauri-cli.sh",
     "build": "tsc && vite build",
     "build:app": "tsc && vite build",

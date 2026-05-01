@@ -130,13 +130,8 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
-      - name: Build sidecar core binary
-        run: cargo build --profile ci --target x86_64-unknown-linux-gnu --bin openhuman-core
-      - name: Stage sidecar for Tauri shell tests
-        run: |
-          mkdir -p app/src-tauri/binaries
-          cp target/x86_64-unknown-linux-gnu/ci/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
-          chmod +x app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
+      # Core is linked into the Tauri binary as a path dep, so the shell's
+      # cargo test pulls it in automatically — no separate sidecar build.
       - name: Test Tauri shell (OpenHuman)
         run: cargo test --manifest-path app/src-tauri/Cargo.toml
 

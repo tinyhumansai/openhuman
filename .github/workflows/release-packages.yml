@@ -1,19 +1,17 @@
 ---
 name: Release Packages
-# Triggered after the main release.yml publishes a release.
-# By the time this fires, macOS (aarch64 + x86_64) and Linux x86_64
-# CLI tarballs are already attached to the release by release.yml.
+# DISABLED while core distribution is Docker-only — see PR #1061.
 #
-# This workflow adds:
-#   1. Linux arm64 CLI tarball
-#   2. Homebrew tap formula update
-#   3. Debian apt repository (gh-pages)
-#   4. npm package publish
-#   5. Smoke tests for each channel
-#   6. One-time backlog issue for future package managers
+# This workflow built standalone CLI tarballs / .deb / Homebrew / npm
+# packages that wrapped the `openhuman-core` binary. Now that the core is
+# linked into the Tauri shell as a path dep and shipped via the desktop
+# bundle (with Docker as the only headless channel), there is no separate
+# CLI binary to redistribute. Re-enable by switching the trigger back to
+# `on: release: types: [published]` once a standalone CLI binary is
+# re-introduced — every job below still references `package-cli-tarball.sh`
+# and the `openhuman-core` cargo bin, so they will resume working then.
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 permissions:
   contents: write
   pages: write

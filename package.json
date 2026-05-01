@@ -8,7 +8,6 @@
   "scripts": {
     "build": "pnpm --filter openhuman-app build",
     "compile": "pnpm --filter openhuman-app compile",
-    "core:stage": "pnpm --filter openhuman-app core:stage",
     "dev": "pnpm --filter openhuman-app dev",
     "dev:app": "pnpm --filter openhuman-app dev:app",
     "dev:cef": "pnpm --filter openhuman-app dev:cef",

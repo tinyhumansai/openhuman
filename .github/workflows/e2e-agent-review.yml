@@ -89,12 +89,7 @@ jobs:
       - name: Build E2E app
         if: steps.gate.outputs.present == 'true'
         run: pnpm --filter openhuman-app test:e2e:build
-      - name: Stage sidecar next to app binary
-        if: steps.gate.outputs.present == 'true'
-        run: |
-          cp app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu \
-             app/src-tauri/target/debug/openhuman-core-x86_64-unknown-linux-gnu
-          chmod +x app/src-tauri/target/debug/openhuman-core-x86_64-unknown-linux-gnu
+      # Core is linked in-process — no sidecar staging needed.
       - name: Run agent-review E2E spec under Xvfb
         if: steps.gate.outputs.present == 'true'
         run: |

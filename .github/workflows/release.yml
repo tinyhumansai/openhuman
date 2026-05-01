@@ -427,84 +427,11 @@ jobs:
       # Note: vite build runs via tauri.conf.json's beforeBuildCommand during
       # the "Build and package Tauri app" step below. A separate frontend build
       # here would just double memory pressure (sentry-vite-plugin peaks hard).
-      - name: Resolve core manifest and binary names
-        id: core-paths
-        shell: bash
-        run: |
-          if [ -f "openhuman_core/Cargo.toml" ]; then
-            CORE_DIR="openhuman_core"
-          elif [ -f "rust-core/Cargo.toml" ]; then
-            CORE_DIR="rust-core"
-          elif [ -f "Cargo.toml" ] && grep -q '^name = "openhuman"' Cargo.toml; then
-            CORE_DIR="."
-          else
-            echo "No core Cargo manifest found (expected root Cargo.toml with openhuman, openhuman_core/Cargo.toml, or rust-core/Cargo.toml)"
-            exit 1
-          fi
-          SIDE_CAR_BASE="$(node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('app/src-tauri/tauri.conf.json','utf8'));const b=(c.bundle&&Array.isArray(c.bundle.externalBin)&&c.bundle.externalBin[0])||'binaries/openhuman-core';process.stdout.write(String(b).split('/').pop());")"
-          CORE_BIN_NAME="${SIDE_CAR_BASE}"
-          BUILD_PROFILE="${BUILD_PROFILE:-release}"
-          echo "core_dir=$CORE_DIR" >> "$GITHUB_OUTPUT"
-          echo "core_manifest=$CORE_DIR/Cargo.toml" >> "$GITHUB_OUTPUT"
-          # Cargo workspace artifacts are under repo root target/, not <member>/target/
-          echo "core_target_dir=target/$MATRIX_TARGET/$BUILD_PROFILE" >> "$GITHUB_OUTPUT"
-          echo "build_profile=$BUILD_PROFILE" >> "$GITHUB_OUTPUT"
-          echo "core_bin_name=$CORE_BIN_NAME" >> "$GITHUB_OUTPUT"
-          echo "sidecar_base=$SIDE_CAR_BASE" >> "$GITHUB_OUTPUT"
-        env:
-          MATRIX_TARGET: ${{ matrix.settings.target }}
-          BUILD_PROFILE: ${{ inputs.build_target == 'staging' && 'debug' || 'release' }}
-      - name: Build sidecar core binary
-        shell: bash
-        run: |
-          if [ "$BUILD_PROFILE" = "release" ]; then
-            cargo build \
-              --manifest-path "$CORE_MANIFEST" \
-              --release \
-              --target "$MATRIX_TARGET" \
-              --bin "$CORE_BIN_NAME"
-          else
-            cargo build \
-              --manifest-path "$CORE_MANIFEST" \
-              --target "$MATRIX_TARGET" \
-              --bin "$CORE_BIN_NAME"
-          fi
-        env:
-          MATRIX_TARGET: ${{ matrix.settings.target }}
-          BUILD_PROFILE: ${{ steps.core-paths.outputs.build_profile }}
-          CORE_MANIFEST: ${{ steps.core-paths.outputs.core_manifest }}
-          CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
-          OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
-          # Core (Rust openhuman sidecar) Sentry DSN — separate Sentry project
-          # from the React frontend and the Tauri shell.
-          OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_CORE_SENTRY_DSN }}
-          # Sentry release tracking (#405): `option_env!("OPENHUMAN_BUILD_SHA")`
-          # in src/main.rs bakes the short SHA into the release tag
-          # (`openhuman@<version>+<sha>`) so core events match the frontend.
-          OPENHUMAN_BUILD_SHA: ${{ needs.prepare-build.outputs.sha }}
-      - name: Stage sidecar for Tauri bundler
-        shell: bash
-        run: |
-          bash scripts/release/stage-sidecar.sh \
-            "${{ matrix.settings.target }}" \
-            "${{ steps.core-paths.outputs.core_target_dir }}" \
-            "${{ steps.core-paths.outputs.core_bin_name }}" \
-            "${{ steps.core-paths.outputs.sidecar_base }}"
-      - name: Resolve standalone core CLI artifact path
-        id: cli-paths
-        shell: bash
-        run: |
-          BASE_DIR="$CORE_TARGET_DIR"
-          EXE_SUFFIX=""
-          if [[ "$MATRIX_TARGET" == *"windows"* ]]; then
-            EXE_SUFFIX=".exe"
-          fi
-          echo "base_dir=$BASE_DIR" >> "$GITHUB_OUTPUT"
-          echo "cli_path=$BASE_DIR/${CORE_BIN_NAME}${EXE_SUFFIX}" >> "$GITHUB_OUTPUT"
-        env:
-          MATRIX_TARGET: ${{ matrix.settings.target }}
-          CORE_TARGET_DIR: ${{ steps.core-paths.outputs.core_target_dir }}
-          CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
+      #
+      # The core no longer ships as a sidecar — it's linked into the Tauri
+      # binary as a path dep (`openhuman_core` in app/src-tauri/Cargo.toml)
+      # and the JSON-RPC server runs as an in-process tokio task. Docker is
+      # the only standalone distribution channel for the core CLI now.
 
       # CEF is the default runtime — we build via the vendored tauri-cli so
       # the bundler copies Chromium Embedded Framework files into the .app /
@@ -596,37 +523,12 @@ jobs:
           MATRIX_TARGET: ${{ matrix.settings.target }}
         run: |
           set -euo pipefail
-          deps_dir="target/${MATRIX_TARGET}/release/deps"
-          if [ -d "$deps_dir" ]; then
-            echo "==> Uploading core symbols from $deps_dir to ${SENTRY_PROJECT}"
-            bash scripts/upload_sentry_symbols.sh "$VERSION" "$deps_dir"
-          else
-            echo "==> Skipping $deps_dir (not present)"
-          fi
-      - name: Upload Tauri shell debug symbols to Sentry
-        if:
-          needs.prepare-build.outputs.release_enabled == 'true' && env.SENTRY_AUTH_TOKEN
-          != ''
-        shell: bash
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_TAURI }}
-          # Must match the release tag the running shell binary reports
-          # (`openhuman@<version>+<sha>`, see `build_sentry_release_tag` in
-          # app/src-tauri/src/lib.rs). If this drifts, DIFs attach to a
-          # different release than events and stack traces stay
-          # un-symbolicated.
-          SENTRY_RELEASE:
-            openhuman@${{ needs.prepare-build.outputs.version }}+${{
-            needs.prepare-build.outputs.sha }}
-          VERSION: ${{ needs.prepare-build.outputs.version }}
-          MATRIX_TARGET: ${{ matrix.settings.target }}
-        run: |
-          set -euo pipefail
+          # Core is linked into the Tauri binary as a path dep, so all Rust
+          # debug info — core + shell — lives under the shell's target dir.
+          # upload-dif scans recursively.
           deps_dir="app/src-tauri/target/${MATRIX_TARGET}/release/deps"
           if [ -d "$deps_dir" ]; then
-            echo "==> Uploading Tauri shell symbols from $deps_dir to ${SENTRY_PROJECT}"
+            echo "==> Uploading symbols from $deps_dir to ${SENTRY_PROJECT}"
             bash scripts/upload_sentry_symbols.sh "$VERSION" "$deps_dir"
           else
             echo "==> Skipping $deps_dir (not present)"
@@ -705,7 +607,7 @@ jobs:
           echo "bundle_dir=$BUNDLE_DIR" >> "$GITHUB_OUTPUT"
           echo "Found .app at: $APP_PATH"
           echo "Bundle dir:    $BUNDLE_DIR"
-      - name: Re-sign sidecar with hardened runtime and notarize
+      - name: Sign and notarize macOS .app
         if: matrix.settings.platform == 'macos-latest'
         shell: bash
         env:
@@ -746,78 +648,13 @@ jobs:
             "${{ steps.locate-app.outputs.bundle_dir }}" \
             "${{ needs.prepare-build.outputs.version }}" \
             "${{ matrix.settings.target }}"
-      - name: Verify macOS app bundle sidecar layout
+      - name: Verify macOS notarization staple
         if: matrix.settings.platform == 'macos-latest'
         shell: bash
         run: |
           APP_PATH="${{ steps.locate-app.outputs.app_path }}"
-          echo "Inspecting bundle at: $APP_PATH"
-          ls -la "$APP_PATH/Contents/MacOS"
-          ls -la "$APP_PATH/Contents/Resources" | grep openhuman || true
-
-          # Sidecar may be in MacOS/ or Resources/ depending on Tauri version
-          FOUND=false
-          if ls "$APP_PATH/Contents/MacOS"/openhuman* 2>/dev/null | grep -qv OpenHuman; then
-            echo "Sidecar found in Contents/MacOS/"
-            FOUND=true
-          fi
-          if ls "$APP_PATH/Contents/Resources"/openhuman-* 2>/dev/null; then
-            echo "Sidecar found in Contents/Resources/"
-            FOUND=true
-          fi
-          if [ "$FOUND" = "false" ]; then
-            echo "WARNING: Sidecar binary not found in expected locations"
-          fi
-
-          # Verify notarization staple
-          echo "Checking staple..."
+          echo "Checking staple at: $APP_PATH"
           xcrun stapler validate "$APP_PATH" || echo "WARNING: Staple validation failed"
-      - name: Package CLI tarball and upload to release (unix)
-        if:
-          matrix.settings.platform != 'windows-latest' && needs.prepare-build.outputs.release_enabled
-          == 'true'
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # For macOS, prefer the notarized binary from inside the .app bundle
-          if [[ "${{ matrix.settings.platform }}" == "macos-latest" ]]; then
-            APP_PATH="${{ steps.locate-app.outputs.app_path }}"
-            BIN=$(find "$APP_PATH/Contents/MacOS" -maxdepth 1 -name "openhuman-core-*" \
-              ! -name "*.sig" 2>/dev/null | head -1 || true)
-            [[ -z "$BIN" ]] && BIN=$(find "$APP_PATH/Contents/Resources" -maxdepth 1 \
-              -name "openhuman-core-*" ! -name "*.sig" 2>/dev/null | head -1 || true)
-            if [[ -z "$BIN" ]]; then
-              echo "[pkg] Falling back to target dir binary (no notarized sidecar found)"
-              BIN="${{ steps.cli-paths.outputs.cli_path }}"
-            fi
-          else
-            BIN="${{ steps.cli-paths.outputs.cli_path }}"
-          fi
-          bash scripts/release/package-cli-tarball.sh \
-            "$BIN" \
-            "${{ needs.prepare-build.outputs.version }}" \
-            "${{ matrix.settings.target }}"
-      - name: Package CLI zip and upload to release (windows)
-        if:
-          matrix.settings.platform == 'windows-latest' && needs.prepare-build.outputs.release_enabled
-          == 'true'
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $Version = "${{ needs.prepare-build.outputs.version }}"
-          $Target = "${{ matrix.settings.target }}"
-          $BinPath = "${{ steps.cli-paths.outputs.cli_path }}"
-          $ZipName = "openhuman-core-${Version}-${Target}.zip"
-          $Work = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "cli-pkg-$(Get-Random)")
-          Copy-Item $BinPath (Join-Path $Work.FullName "openhuman-core.exe")
-          Compress-Archive -Path (Join-Path $Work.FullName "openhuman-core.exe") -DestinationPath $ZipName
-          $Hash = (Get-FileHash -Path $ZipName -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -Path "${ZipName}.sha256" -Value $Hash -NoNewline
-          Write-Host "[package-cli] Created $ZipName (sha256: $Hash)"
-          gh release upload "v${Version}" $ZipName "${ZipName}.sha256" --repo tinyhumansai/openhuman --clobber
-          Write-Host "[package-cli] Uploaded $ZipName to v${Version}"
       - name: Upload staging desktop bundles
         if: needs.prepare-build.outputs.release_enabled != 'true'
         uses: actions/upload-artifact@v4
@@ -828,14 +665,6 @@ jobs:
           path: |
             app/src-tauri/target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/**
             target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/**
-      - name: Upload standalone CLI artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name:
-            standalone-bins-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix
-            }}
-          path: |
-            ${{ steps.cli-paths.outputs.cli_path }}
 
   # =========================================================================
   # Phase 3b: Build & push Docker image (runs parallel with build-desktop)

@@ -80,15 +80,6 @@ hex = "0.4"
 # "No provider set" the first time `tauri dev` proxies a request. We install
 # the ring provider at startup in `lib.rs::run()`.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-semver = "1"
-# Auto-update archive extraction. GitHub release assets ship as
-# `openhuman-core-<version>-<triple>.tar.gz` on Unix and `…<triple>.zip`
-# on Windows; the inner binary is `openhuman-core` (or `.exe`) with no
-# wrapping directory. See `core_update.rs::extract_archive`.
-flate2 = "1"
-tar = "0.4"
-zip = { version = "2", default-features = false, features = ["deflate"] }
-
 log = "0.4"
 env_logger = "0.11"
 
@@ -113,6 +104,14 @@ async-trait = "0.1"
 # at `vendor/tauri-cef` and reference the crate by path.
 tauri-runtime-cef = { path = "vendor/tauri-cef/crates/tauri-runtime-cef" }
 cef = { version = "=146.4.1", default-features = false }
+
+# Core domain logic, embedded in-process so the core's HTTP/JSON-RPC server
+# runs as a tokio task inside the Tauri host. Avoids the orphan-sidecar class
+# of bugs (PR #1061: Cmd+Q leaving `openhuman-core` and CEF helpers behind)
+# by tying the core's lifetime to the GUI process. The existing port-7788
+# probe in `core_process::ensure_running` still attaches to a running
+# `openhuman-core run` harness when one is already listening.
+openhuman_core = { path = "../..", package = "openhuman", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", default-features = false, features = ["signal"] }
