@@ -3,6 +3,7 @@ pub mod openhuman_backend;
 pub mod ops;
 pub mod reliable;
 pub mod router;
+pub mod thread_context;
 pub mod traits;
 
 #[allow(unused_imports)]

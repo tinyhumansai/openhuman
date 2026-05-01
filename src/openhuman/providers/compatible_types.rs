@@ -38,6 +38,15 @@ pub(crate) struct NativeChatRequest {
     pub(crate) tools: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_choice: Option<String>,
+    /// OpenHuman backend extension: stable conversation identifier so the
+    /// server can group `InferenceLog` entries and align KV-cache keys
+    /// with the same logical chat thread the user sees in the UI. Skipped
+    /// when serialising for vanilla OpenAI-compatible providers that
+    /// don't recognise it (most reject only unknown *required* fields,
+    /// but emitting it here is gated on the ambient task-local being
+    /// set — see `crate::openhuman::providers::thread_context`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) thread_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

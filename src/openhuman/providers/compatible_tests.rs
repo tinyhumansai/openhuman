@@ -51,6 +51,40 @@ async fn chat_fails_without_key() {
 }
 
 #[test]
+fn native_request_emits_thread_id_when_present() {
+    let req = super::NativeChatRequest {
+        model: "sonnet".to_string(),
+        messages: Vec::new(),
+        temperature: 0.7,
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: Some("thread-abc".to_string()),
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        json.get("thread_id").and_then(|v| v.as_str()),
+        Some("thread-abc"),
+        "thread_id must be forwarded so the backend can group InferenceLog + KV cache by chat thread"
+    );
+
+    let req_no_thread = super::NativeChatRequest {
+        model: "sonnet".to_string(),
+        messages: Vec::new(),
+        temperature: 0.7,
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+    };
+    let json_no_thread = serde_json::to_value(&req_no_thread).unwrap();
+    assert!(
+        json_no_thread.get("thread_id").is_none(),
+        "absent thread_id must not be serialized so non-OpenHuman backends don't reject the field"
+    );
+}
+
+#[test]
 fn request_serializes_correctly() {
     let req = ApiChatRequest {
         model: "llama-3.3-70b".to_string(),

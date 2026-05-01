@@ -1362,6 +1362,7 @@ impl Provider for OpenAiCompatibleProvider {
                 stream: Some(true),
                 tool_choice: tools.as_ref().map(|_| "auto".to_string()),
                 tools: tools.clone(),
+                thread_id: super::thread_context::current_thread_id(),
             };
             let stream_dump_seq = reserve_dump_seq();
             dump_prompt_if_enabled(&self.name, model, stream_dump_seq, &native_request);
@@ -1381,6 +1382,13 @@ impl Provider for OpenAiCompatibleProvider {
             }
         }
 
+        let thread_id = super::thread_context::current_thread_id();
+        log::debug!(
+            "[provider:{}] chat() outbound thread_id={} model={}",
+            self.name,
+            thread_id.as_deref().unwrap_or("<none>"),
+            model
+        );
         let native_request = NativeChatRequest {
             model: model.to_string(),
             messages: Self::convert_messages_for_native(&effective_messages),
@@ -1388,6 +1396,7 @@ impl Provider for OpenAiCompatibleProvider {
             stream: Some(false),
             tool_choice: tools.as_ref().map(|_| "auto".to_string()),
             tools,
+            thread_id,
         };
         let dump_seq = reserve_dump_seq();
         dump_prompt_if_enabled(&self.name, model, dump_seq, &native_request);
