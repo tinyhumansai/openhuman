@@ -514,14 +514,19 @@ jobs:
             NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
           fi
 
-      # Upload Rust debug info to Sentry so backend + Tauri-shell stack traces
-      # symbolicate in production. The frontend source maps are handled by
-      # sentry-vite-plugin in the build step above; this is the Rust half.
-      # Core sidecar and Tauri shell go to **separate Sentry projects**
-      # (matching their separate DSNs) so events show up in the right place.
-      # Symbols are keyed by debug-ID, so it's safe to run per-matrix-target
-      # without collisions — Sentry merges artifacts across platforms.
-      - name: Upload core sidecar debug symbols to Sentry
+      # Upload Rust debug info to Sentry so all Rust stack traces (Tauri
+      # shell + linked-in core) symbolicate in production. The frontend
+      # source maps are handled by sentry-vite-plugin in the build step
+      # above; this is the Rust half.
+      #
+      # Since #1061 the core lives in-process as a library linked into the
+      # Tauri shell binary — there is exactly one Rust process and one
+      # `sentry::init` call (in `app/src-tauri/src/lib.rs::run()`), so all
+      # Rust events route to `openhuman-tauri`. Upload DIFs to that same
+      # project so they actually attach to the right events. Symbols are
+      # keyed by debug-ID, so it's safe to run per-matrix-target without
+      # collisions — Sentry merges artifacts across platforms.
+      - name: Upload Rust debug symbols to Sentry (tauri project)
         if:
           needs.prepare-build.outputs.release_enabled == 'true' && env.SENTRY_AUTH_TOKEN
           != ''
@@ -529,12 +534,13 @@ jobs:
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_CORE }}
-          # Must match the release tag the running core binary reports
-          # (`openhuman@<version>+<short_sha>`, see `build_release_tag` in
-          # src/main.rs). Uses short_sha (12 chars) — see the prepare-build
-          # outputs comment. If this drifts, DIFs attach to a different
-          # release than events and stack traces stay un-symbolicated.
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_TAURI }}
+          # Must match the release tag the running binary reports
+          # (`openhuman@<version>+<short_sha>`, see `build_sentry_release_tag`
+          # in `app/src-tauri/src/lib.rs`). Uses short_sha (12 chars) — see
+          # the prepare-build outputs comment. If this drifts, DIFs attach
+          # to a different release than events and stack traces stay
+          # un-symbolicated.
           SENTRY_RELEASE:
             openhuman@${{ needs.prepare-build.outputs.version }}+${{
             needs.prepare-build.outputs.short_sha }}
@@ -545,12 +551,12 @@ jobs:
           # Core is linked into the Tauri binary as a path dep, so all Rust
           # debug info — core + shell — lives under the shell's target dir.
           # upload-dif scans recursively.
-          deps_dir="app/src-tauri/target/${MATRIX_TARGET}/release/deps"
-          if [ -d "$deps_dir" ]; then
-            echo "==> Uploading symbols from $deps_dir to ${SENTRY_PROJECT}"
-            bash scripts/upload_sentry_symbols.sh "$VERSION" "$deps_dir"
+          dif_dir="app/src-tauri/target/${MATRIX_TARGET}/release"
+          if [ -d "$dif_dir" ]; then
+            echo "==> Uploading symbols from $dif_dir to ${SENTRY_PROJECT}"
+            bash scripts/upload_sentry_symbols.sh "$VERSION" "$dif_dir"
           else
-            echo "==> Skipping $deps_dir (not present)"
+            echo "==> Skipping $dif_dir (not present)"
           fi
 
       # tauri-action previously uploaded non-macOS installer assets directly
