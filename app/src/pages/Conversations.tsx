@@ -1040,7 +1040,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                   <div
                     className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div
-                      className={`relative ${msg.sender === 'user' ? 'w-fit max-w-[75%]' : 'w-full md:max-w-[75%]'}`}>
+                      className="relative w-fit max-w-[75%]">
                       {msg.sender === 'agent' ? (
                         <div className="space-y-1">
                           {splitAgentMessageIntoBubbles(msg.content).map(
@@ -1224,7 +1224,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                 (selectedStreamingAssistant.content.length > 0 ||
                   selectedStreamingAssistant.thinking.length > 0) && (
                   <div className="flex justify-start">
-                    <div className="relative w-full md:max-w-[75%]">
+                    <div className="relative w-fit max-w-[75%]">
                       {selectedStreamingAssistant.thinking.length > 0 && (
                         <details className="mb-1.5 bg-stone-100 rounded-lg px-3 py-1.5 text-xs text-stone-600 open:bg-stone-100">
                           <summary className="cursor-pointer select-none flex items-center gap-1.5">
