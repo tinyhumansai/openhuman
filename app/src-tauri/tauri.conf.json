@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenHuman",
-  "version": "0.52.28",
+  "version": "0.53.4",
   "identifier": "com.openhuman.app",
   "build": {
-    "beforeDevCommand": "pnpm run core:stage && pnpm run dev",
+    "beforeDevCommand": "pnpm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm run build:app && pnpm run core:stage",
+    "beforeBuildCommand": "pnpm run build:app",
     "frontendDist": "../dist"
   },
   "app": {
@@ -16,10 +16,10 @@
         "title": "OpenHuman",
         "width": 1000,
         "height": 800,
-        "visible": true,
+        "visible": false,
         "decorations": true,
         "resizable": true,
-        "center": true
+        "center": false
       }
     ],
     "security": {
@@ -48,9 +48,6 @@
       "../../src/openhuman/agent/prompts",
       "recipes/**/*"
     ],
-    "externalBin": [
-      "binaries/openhuman-core"
-    ],
     "linux": {
       "deb": {
         "depends": [
@@ -59,6 +56,10 @@
           "libx11-6",
           "libgdk-pixbuf-2.0-0",
           "libglib2.0-0"
+        ],
+        "args": [
+          "--enable-features=UseOzonePlatform",
+          "--ozone-platform=x11"
         ]
       }
     },
