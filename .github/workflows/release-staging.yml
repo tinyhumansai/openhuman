@@ -1,0 +1,296 @@
+---
+name: Release (Staging)
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: release-staging
+  cancel-in-progress: false
+# ---------------------------------------------------------------------------
+# Job dependency graph
+#
+#   prepare-build
+#        │
+#   build-desktop (matrix: macOS arm64, macOS x64, linux, windows)
+# ---------------------------------------------------------------------------
+jobs:
+  # =========================================================================
+  # Phase 1: Resolve build context (no version bump, no tag)
+  # =========================================================================
+  prepare-build:
+    name: Prepare build context
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      build_ref: ${{ steps.resolve.outputs.build_ref }}
+      base_url: ${{ steps.resolve.outputs.base_url }}
+    steps:
+      - name: Enforce staging branch
+        if: github.ref != 'refs/heads/staging'
+        run: |
+          echo "This workflow can only run from staging. Current ref: $GITHUB_REF"
+          exit 1
+      - name: Checkout staging
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+          fetch-depth: 1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: Resolve build outputs
+        id: resolve
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./app/package.json').version")"
+          SHA="$(git rev-parse HEAD)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "build_ref=$SHA" >> "$GITHUB_OUTPUT"
+          echo "base_url=https://staging-api.tinyhumans.ai/" >> "$GITHUB_OUTPUT"
+
+  # =========================================================================
+  # Phase 2: Build desktop artifacts (parallel matrix, debug profile)
+  # =========================================================================
+  build-desktop:
+    name: "Desktop: ${{ matrix.settings.artifact_suffix }}"
+    needs: [prepare-build]
+    runs-on: ${{ matrix.settings.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            target: aarch64-apple-darwin
+            artifact_suffix: aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            target: x86_64-apple-darwin
+            artifact_suffix: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            args: --target x86_64-unknown-linux-gnu --bundles deb
+            target: x86_64-unknown-linux-gnu
+            artifact_suffix: ubuntu
+          - platform: windows-latest
+            args: --target x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-msvc
+            artifact_suffix: windows
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      OPENHUMAN_APP_ENV: staging
+      VITE_OPENHUMAN_APP_ENV: staging
+      OPENHUMAN_TELEGRAM_BOT_USERNAME: alphahumantest_bot
+      VITE_TELEGRAM_BOT_USERNAME: alphahumantest_bot
+    steps:
+      - name: Checkout build ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-build.outputs.build_ref }}
+          fetch-depth: 1
+          submodules: recursive
+      - name: Set Xcode version
+        if: matrix.settings.platform == 'macos-latest'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          cache: true
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: Install Rust (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          targets: ${{ matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - name: Install Tauri dependencies (ubuntu only)
+        if: matrix.settings.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            patchelf cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libxi-dev \
+            libevdev-dev libssl-dev libclang-dev \
+            libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+            libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+            libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev
+      - name: Dump missing shared libs (debug)
+        if: matrix.settings.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set +e
+          for BIN in \
+            app/src-tauri/target/${{ matrix.settings.target }}/debug/OpenHuman \
+            target/${{ matrix.settings.target }}/debug/OpenHuman; do
+            if [ -x "$BIN" ]; then
+              echo "ldd $BIN"
+              ldd "$BIN" | grep 'not found' || echo "  all resolved"
+            fi
+          done
+
+      # Skip first 7 lines of Cargo.lock (workspace package version bumps) so the key tracks dependency changes only
+      - name: Cargo.lock fingerprint (deps only)
+        id: cargo-lock-fingerprint
+        shell: bash
+        run: |
+          echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - name: Cache Cargo registry and git sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key:
+            ${{ runner.os }}-cargo-registry-${{ steps.cargo-lock-fingerprint.outputs.hash
+            }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache CEF binary distribution (unix)
+        if: matrix.settings.platform != 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/tauri-cef
+            ~/.cache/tauri-cef
+          key:
+            cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml')
+            }}
+          restore-keys: |
+            cef-${{ matrix.settings.target }}-
+      - name: Cache CEF binary distribution (windows)
+        if: matrix.settings.platform == 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/tauri-cef
+          key:
+            cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml')
+            }}
+          restore-keys: |
+            cef-${{ matrix.settings.target }}-
+
+      - name: Cache vendored tauri-cli binary (unix)
+        if: matrix.settings.platform != 'windows-latest'
+        id: tauri-cli-cache-unix
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key:
+            vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml')
+            }}
+      - name: Cache vendored tauri-cli binary (windows)
+        if: matrix.settings.platform == 'windows-latest'
+        id: tauri-cli-cache-windows
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key:
+            vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml')
+            }}
+      - name: Install vendored tauri-cli (cef-aware bundler)
+        if:
+          (matrix.settings.platform == 'windows-latest' && steps.tauri-cli-cache-windows.outputs.cache-hit
+          != 'true') || (matrix.settings.platform != 'windows-latest' && steps.tauri-cli-cache-unix.outputs.cache-hit
+          != 'true')
+        shell: bash
+        run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Define Tauri configuration overrides
+        id: config-overrides
+        uses: actions/github-script@v7
+        env:
+          BASE_URL: ${{ needs.prepare-build.outputs.base_url }}
+        with:
+          script: |
+            const workspacePath = process.env.GITHUB_WORKSPACE.replace(/\\/g, '/');
+            const prefix = workspacePath.startsWith('/') ? 'file://' : 'file:///';
+            const moduleUrl = `${prefix}${workspacePath}/scripts/prepareTauriConfig.js`;
+            const { default: prepareTauriConfig } = await import(moduleUrl);
+            const config = prepareTauriConfig();
+            core.setOutput('json', JSON.stringify(config));
+
+      - name: Resolve core manifest and binary names
+        id: core-paths
+        shell: bash
+        run: |
+          if [ -f "openhuman_core/Cargo.toml" ]; then
+            CORE_DIR="openhuman_core"
+          elif [ -f "rust-core/Cargo.toml" ]; then
+            CORE_DIR="rust-core"
+          elif [ -f "Cargo.toml" ] && grep -q '^name = "openhuman"' Cargo.toml; then
+            CORE_DIR="."
+          else
+            echo "No core Cargo manifest found (expected root Cargo.toml with openhuman, openhuman_core/Cargo.toml, or rust-core/Cargo.toml)"
+            exit 1
+          fi
+          SIDE_CAR_BASE="$(node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('app/src-tauri/tauri.conf.json','utf8'));const b=(c.bundle&&Array.isArray(c.bundle.externalBin)&&c.bundle.externalBin[0])||'binaries/openhuman-core';process.stdout.write(String(b).split('/').pop());")"
+          CORE_BIN_NAME="${SIDE_CAR_BASE}"
+          BUILD_PROFILE="debug"
+          echo "core_dir=$CORE_DIR" >> "$GITHUB_OUTPUT"
+          echo "core_manifest=$CORE_DIR/Cargo.toml" >> "$GITHUB_OUTPUT"
+          echo "core_target_dir=target/$MATRIX_TARGET/$BUILD_PROFILE" >> "$GITHUB_OUTPUT"
+          echo "build_profile=$BUILD_PROFILE" >> "$GITHUB_OUTPUT"
+          echo "core_bin_name=$CORE_BIN_NAME" >> "$GITHUB_OUTPUT"
+          echo "sidecar_base=$SIDE_CAR_BASE" >> "$GITHUB_OUTPUT"
+        env:
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+      - name: Build sidecar core binary
+        shell: bash
+        run: |
+          cargo build \
+            --manifest-path "$CORE_MANIFEST" \
+            --target "$MATRIX_TARGET" \
+            --bin "$CORE_BIN_NAME"
+        env:
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+          CORE_MANIFEST: ${{ steps.core-paths.outputs.core_manifest }}
+          CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
+          OPENHUMAN_APP_ENV: staging
+      - name: Stage sidecar for Tauri bundler
+        shell: bash
+        run: |
+          bash scripts/release/stage-sidecar.sh \
+            "${{ matrix.settings.target }}" \
+            "${{ steps.core-paths.outputs.core_target_dir }}" \
+            "${{ steps.core-paths.outputs.core_bin_name }}" \
+            "${{ steps.core-paths.outputs.sidecar_base }}"
+
+      - name: Build and package Tauri app (CEF, vendored CLI, debug)
+        shell: bash
+        working-directory: app
+        env:
+          BASE_URL: ${{ needs.prepare-build.outputs.base_url }}
+          VITE_BACKEND_URL: ${{ needs.prepare-build.outputs.base_url }}
+          VITE_DEBUG: ${{ vars.VITE_DEBUG }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
+          TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
+          MATRIX_ARGS: ${{ matrix.settings.args }}
+        run: |
+          NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build --debug -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+
+      - name: Upload staging desktop bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name:
+            desktop-bundles-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix
+            }}
+          path: |
+            app/src-tauri/target/${{ matrix.settings.target }}/debug/bundle/**
+            target/${{ matrix.settings.target }}/debug/bundle/**
+      - name: Upload standalone CLI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name:
+            standalone-bins-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix
+            }}
+          path: |
+            ${{ steps.core-paths.outputs.core_target_dir }}/${{ steps.core-paths.outputs.core_bin_name }}${{ matrix.settings.platform == 'windows-latest' && '.exe' || '' }}
