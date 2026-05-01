@@ -325,6 +325,10 @@ fn redact_navigation_url(url: &Url) -> String {
     safe.set_fragment(None);
     safe.to_string()
 }
+
+fn redact_native_deep_link_url(url: &Url) -> String {
+    format!("{}://<redacted>", url.scheme())
+}
 /// Unwrap provider-side "link safety" redirects so the system browser
 /// lands on the real destination.
 ///
@@ -1588,7 +1592,7 @@ pub async fn webview_account_open<R: Runtime>(
                 log::warn!(
                     "[webview-accounts] suppressing native-app deep-link scheme={} url={} (would breach workspace isolation)",
                     url.scheme(),
-                    redact_navigation_url(url)
+                    redact_native_deep_link_url(url)
                 );
                 return false;
             }
@@ -1685,7 +1689,7 @@ pub async fn webview_account_open<R: Runtime>(
                 log::warn!(
                     "[webview-accounts] suppressing native-app deep-link scheme={} url={} (would breach workspace isolation)",
                     url.scheme(),
-                    redact_navigation_url(&url)
+                    redact_native_deep_link_url(&url)
                 );
                 return NewWindowResponse::Deny;
             }
