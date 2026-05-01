@@ -225,6 +225,30 @@ fn popup_should_stay_in_app(provider: &str, url: &Url) -> bool {
     }
 }
 
+/// `true` if `scheme` is a known provider native-desktop-app deep-link
+/// scheme. We suppress these instead of routing them to the system
+/// browser because macOS hands them to the native provider app
+/// (e.g. `slack://magic-login/<token>` signs the native Slack app into
+/// the workspace, breaking embedded-webview isolation: the workspace's
+/// session ends up inside the native client even though the user only
+/// signed in via OpenHuman's embedded webview).
+///
+/// The HTTPS fallback in each provider's web flow handles sign-in
+/// without the deep link, so suppression is safe — the page just
+/// continues on the next link in the sequence.
+///
+/// Caller contract: only suppress when [`rewrite_provider_deep_link`]
+/// has already returned `None` for the URL. Schemes we DO know how to
+/// rewrite into a web-client URL (e.g. `zoomus://`) must take the
+/// rewrite path first; those flows expect to stay in-app, not be
+/// silently dropped.
+fn is_provider_native_deep_link_scheme(scheme: &str) -> bool {
+    matches!(
+        scheme,
+        "slack" | "discord" | "tg" | "msteams" | "zoomus" | "zoommtg"
+    )
+}
+
 /// `true` if a popup request should be denied AND the parent webview
 /// should be navigated to the popup URL instead.
 ///
@@ -1554,6 +1578,20 @@ pub async fn webview_account_open<R: Runtime>(
         if url_is_internal(&nav_provider, url) {
             true
         } else {
+            // Suppress provider native-desktop-app deep-link schemes that
+            // we don't know how to rewrite. macOS would otherwise hand
+            // these to the native provider app — `slack://magic-login/…`
+            // signs the native Slack app into the workspace, breaking
+            // embedded-webview isolation (#1074). The web flow's HTTPS
+            // fallback handles sign-in without the deep link.
+            if is_provider_native_deep_link_scheme(url.scheme()) {
+                log::warn!(
+                    "[webview-accounts] suppressing native-app deep-link scheme={} url={} (would breach workspace isolation)",
+                    url.scheme(),
+                    redact_navigation_url(url)
+                );
+                return false;
+            }
             let target = unwrap_provider_redirect(url)
                 .map(|u| u.to_string())
                 .unwrap_or_else(|| url.to_string());
@@ -1638,6 +1676,19 @@ pub async fn webview_account_open<R: Runtime>(
             );
             NewWindowResponse::Allow
         } else {
+            // Suppress provider native-desktop-app deep-link schemes that
+            // we don't know how to rewrite (matches the on_navigation
+            // fallback). Without this, a `slack://...` popup would land
+            // in the native Slack app via macOS's URL handler and
+            // breach embedded-webview workspace isolation (#1074).
+            if is_provider_native_deep_link_scheme(url.scheme()) {
+                log::warn!(
+                    "[webview-accounts] suppressing native-app deep-link scheme={} url={} (would breach workspace isolation)",
+                    url.scheme(),
+                    redact_navigation_url(&url)
+                );
+                return NewWindowResponse::Deny;
+            }
             let target = unwrap_provider_redirect(&url)
                 .map(|u| u.to_string())
                 .unwrap_or_else(|| url.to_string());
@@ -2679,6 +2730,87 @@ mod tests {
             &url("msteams://teams.microsoft.com/l/meetup-join/666")
         )
         .is_none());
+    }
+
+    // ── is_provider_native_deep_link_scheme: native-app suppression ───
+    //
+    // These guard the workspace-isolation contract from #1074: provider
+    // native-desktop-app deep-link schemes must NEVER reach the system
+    // browser, because macOS hands them off to the native provider app
+    // which then signs the user into the workspace using session tokens
+    // intended only for the embedded webview (see slack://magic-login
+    // smoking gun in the #1074 trace).
+
+    #[test]
+    fn deep_link_scheme_matches_known_provider_native_apps() {
+        // Slack desktop ("slack://T01.../magic-login/<token>")
+        assert!(is_provider_native_deep_link_scheme("slack"));
+        // Discord desktop
+        assert!(is_provider_native_deep_link_scheme("discord"));
+        // Telegram desktop ("tg://join?invite=…")
+        assert!(is_provider_native_deep_link_scheme("tg"));
+        // Microsoft Teams
+        assert!(is_provider_native_deep_link_scheme("msteams"));
+        // Zoom client (both variants registered by the installer)
+        assert!(is_provider_native_deep_link_scheme("zoomus"));
+        assert!(is_provider_native_deep_link_scheme("zoommtg"));
+    }
+
+    #[test]
+    fn deep_link_scheme_rejects_legitimate_external_schemes() {
+        // HTTP(S) — the bread-and-butter external link.
+        assert!(!is_provider_native_deep_link_scheme("https"));
+        assert!(!is_provider_native_deep_link_scheme("http"));
+        // Mail clients are legit external — must NOT be suppressed.
+        assert!(!is_provider_native_deep_link_scheme("mailto"));
+        // Telephone / sms are legit external too.
+        assert!(!is_provider_native_deep_link_scheme("tel"));
+        assert!(!is_provider_native_deep_link_scheme("sms"));
+        // about: / data: / blob: handled elsewhere; never deep-link.
+        assert!(!is_provider_native_deep_link_scheme("about"));
+        assert!(!is_provider_native_deep_link_scheme("data"));
+        assert!(!is_provider_native_deep_link_scheme("blob"));
+        // Empty / unrelated string.
+        assert!(!is_provider_native_deep_link_scheme(""));
+        assert!(!is_provider_native_deep_link_scheme("file"));
+    }
+
+    #[test]
+    fn deep_link_scheme_matches_real_world_slack_magic_login_url() {
+        // Real slack://-flavoured magic-login URL recorded in the
+        // #1074 CDP trace. The handler must catch it before
+        // open_in_system_browser is reached.
+        let parsed = url("slack://T01CWHNCJ9Z/magic-login/11035712490054-abc");
+        assert!(is_provider_native_deep_link_scheme(parsed.scheme()));
+    }
+
+    #[test]
+    fn deep_link_scheme_does_not_match_https_app_slack_com() {
+        // The web-flow URL stays untouched — only the slack:// scheme is
+        // suppressed; ordinary HTTPS slack navigations route normally.
+        let parsed = url("https://app.slack.com/client/T01CWHNCJ9Z");
+        assert!(!is_provider_native_deep_link_scheme(parsed.scheme()));
+    }
+
+    /// Locks the contract that zoomus:// stays on the rewrite path
+    /// (handled by `rewrite_provider_deep_link` for the "zoom" provider)
+    /// rather than being silently suppressed.
+    ///
+    /// The wiring in on_navigation / on_new_window calls
+    /// `rewrite_provider_deep_link` BEFORE the suppress check, so a
+    /// rewriteable scheme is rewritten and never reaches the suppress
+    /// branch. This test pins both halves of that contract: the rewrite
+    /// still succeeds for zoom, AND the scheme is recognised as a
+    /// native-app deep-link (so if a future provider config dropped the
+    /// rewrite, suppression would be the safe fallback rather than
+    /// leaking to the system browser).
+    #[test]
+    fn zoomus_join_still_rewrites_and_is_recognized_as_native_scheme() {
+        let zoom_url = url("zoomus://zoom.us/join?action=join&confno=9819254358");
+        assert!(is_provider_native_deep_link_scheme(zoom_url.scheme()));
+        let rewritten = rewrite_provider_deep_link("zoom", &zoom_url)
+            .expect("zoom rewrite should still succeed before suppress branch");
+        assert_eq!(rewritten.as_str(), "https://app.zoom.us/wc/join/9819254358");
     }
 
     #[test]
