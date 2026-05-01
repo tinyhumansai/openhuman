@@ -43,20 +43,24 @@ describe('Skills page — Composio catalog fallback', () => {
   it('shows known composio integrations in their configured category groups when the live toolkit list is empty', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
+    expect(screen.getByRole('heading', { name: 'Chat' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Productivity' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Tools & Automation' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Social' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Platform' })).toBeInTheDocument();
+    expect(screen.getByText('Discord')).toBeInTheDocument();
     expect(screen.getByText('Google Calendar')).toBeInTheDocument();
     expect(screen.getByText('Google Drive')).toBeInTheDocument();
     expect(screen.getByText('Gmail')).toBeInTheDocument();
     expect(screen.getByText('Google Sheets')).toBeInTheDocument();
-    expect(screen.getByText('Notion')).toBeInTheDocument();
     expect(screen.getByText('Facebook')).toBeInTheDocument();
     expect(screen.getByText('GitHub')).toBeInTheDocument();
     expect(screen.getByText('Instagram')).toBeInTheDocument();
     expect(screen.getByText('Linear')).toBeInTheDocument();
     expect(screen.getByText('Reddit')).toBeInTheDocument();
     expect(screen.getByText('Slack')).toBeInTheDocument();
+    expect(screen.getByText('Supabase')).toBeInTheDocument();
+    expect(screen.getByText('Zoom')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Other' })).not.toBeInTheDocument();
   });
 
