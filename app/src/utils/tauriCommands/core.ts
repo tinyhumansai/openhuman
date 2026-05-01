@@ -4,6 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
+import { IS_DEV } from '../config';
 import { CommandResponse, isTauri } from './common';
 
 export interface CoreUpdateStatus {
@@ -61,10 +62,26 @@ export async function restartCoreProcess(): Promise<void> {
 
 /**
  * Restart the desktop shell so CEF relaunches with updated profile paths.
+ *
+ * In `pnpm dev:app` the launcher graph is:
+ *   `pnpm tauri dev` → `cargo run` → `tauri-cef` CLI → `vite` (child).
+ * Tauri's `app.restart()` exits the cargo parent, which orphans/kills the
+ * vite child and tears down the entire dev session (#1068). Use a webview
+ * reload in dev mode instead — module init re-runs, so localStorage seeds
+ * (e.g. `OPENHUMAN_ACTIVE_USER_ID`, set by `setActiveUserId` before the
+ * caller invokes us) are read fresh and redux-persist re-hydrates from
+ * the active user's namespace, all without touching the cargo / vite
+ * processes. Packaged builds keep the original `app.restart()` path —
+ * there is no vite child to orphan there.
  */
 export async function restartApp(): Promise<void> {
   if (!isTauri()) {
     console.debug('[app] restartApp: skipped — not running in Tauri');
+    return;
+  }
+  if (IS_DEV) {
+    console.debug('[app] restartApp: dev mode → window.location.reload()');
+    window.location.reload();
     return;
   }
   console.debug('[app] restartApp: invoking restart_app');
