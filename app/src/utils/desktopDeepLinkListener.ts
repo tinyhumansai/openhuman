@@ -1,10 +1,10 @@
+import * as Sentry from '@sentry/react';
 import { isTauri as coreIsTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
 import { getCoreStateSnapshot, patchCoreStateSnapshot } from '../lib/coreState/store';
 import { consumeLoginToken } from '../services/api/authApi';
-import { buildManualSentryEvent, enqueueError } from '../services/errorReportQueue';
 import {
   beginDeepLinkAuthProcessing,
   completeDeepLinkAuthProcessing,
@@ -152,26 +152,23 @@ const handleOAuthDeepLink = async (parsed: URL) => {
         versionGate.current === 'unknown'
           ? `OpenHuman could not verify this build against the minimum required for OAuth (${versionGate.minimum}). Install the latest release, then try connecting again.`
           : `This OpenHuman build (${versionGate.current}) is older than the minimum required for OAuth (${versionGate.minimum}). Install the latest release, then try connecting again.`;
+      console.warn(`[DeepLink][oauth:stale-app] ${msg}`);
       try {
         await openUrl(versionGate.downloadUrl);
       } catch (e) {
         console.warn('[DeepLink] Could not open latest release URL', e);
       }
-      enqueueError({
-        id: crypto.randomUUID(),
-        timestamp: Date.now(),
-        source: 'manual',
-        title: 'Update OpenHuman to finish OAuth',
-        message: msg,
-        sentryEvent: buildManualSentryEvent(
-          { type: 'OAuthStaleAppVersion', value: `${versionGate.current}<${versionGate.minimum}` },
-          {
+      Sentry.captureMessage(
+        `OAuth blocked: stale app version ${versionGate.current}<${versionGate.minimum}`,
+        {
+          level: 'warning',
+          tags: {
             component: 'desktopDeepLinkListener',
             current: versionGate.current,
             minimum: versionGate.minimum,
-          }
-        ),
-      });
+          },
+        }
+      );
       window.dispatchEvent(
         new CustomEvent('oauth:stale-app', {
           detail: {

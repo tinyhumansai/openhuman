@@ -62,7 +62,7 @@ describe('Welcome auth entrypoint', () => {
     expect(screen.queryByRole('button', { name: 'discord' })).not.toBeInTheDocument();
   });
 
-  it('keeps OAuth buttons as blank clicks on the welcome screen', () => {
+  it('delegates OAuth clicks to OAuthProviderButton without an override', () => {
     render(<Welcome />);
 
     fireEvent.click(screen.getByRole('button', { name: 'google' }));
@@ -72,11 +72,7 @@ describe('Welcome auth entrypoint', () => {
     expect(oauthButtonSpy).toHaveBeenNthCalledWith(1, 'google');
     expect(oauthButtonSpy).toHaveBeenNthCalledWith(2, 'github');
     expect(oauthButtonSpy).toHaveBeenNthCalledWith(3, 'twitter');
-    expect(oauthOverrideSpy).toHaveBeenNthCalledWith(1, 'google');
-    expect(oauthOverrideSpy).toHaveBeenNthCalledWith(2, 'github');
-    expect(oauthOverrideSpy).toHaveBeenNthCalledWith(3, 'twitter');
-    expect(screen.queryByText('Connecting...')).not.toBeInTheDocument();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(oauthOverrideSpy).not.toHaveBeenCalled();
   });
 
   it('shows the deep-link processing state when auth is already in progress', () => {

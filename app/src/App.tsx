@@ -21,7 +21,6 @@ import { startWebviewNotificationsService } from './lib/webviewNotifications';
 import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
 import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
-import { tagErrorSource } from './services/errorReportQueue';
 import { startWebviewAccountService } from './services/webviewAccountService';
 import { persistor, store } from './store';
 import { useAppDispatch, useAppSelector } from './store/hooks';
@@ -42,10 +41,7 @@ function App() {
     <Sentry.ErrorBoundary
       fallback={({ error, componentStack, resetError }) => (
         <ErrorFallbackScreen error={error} componentStack={componentStack} onReset={resetError} />
-      )}
-      onError={(_error, componentStack, eventId) => {
-        tagErrorSource(eventId, 'react', componentStack);
-      }}>
+      )}>
       <Provider store={store}>
         <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
           <CoreStateProvider>
