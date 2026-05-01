@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { getBackendUrl } from '../../services/backendUrl';
 import type { OAuthProviderConfig } from '../../types/oauth';
@@ -13,6 +13,11 @@ interface OAuthProviderButtonProps {
   onClickOverride?: () => void;
 }
 
+// Reset the loading state if the OAuth round-trip never completes — covers
+// the case where the user cancels in the system browser, or the backend
+// redirect fails so the `openhuman://` deep link never fires.
+const OAUTH_LOADING_TIMEOUT_MS = 90_000;
+
 const OAuthProviderButton = ({
   provider,
   className = '',
@@ -20,6 +25,32 @@ const OAuthProviderButton = ({
   onClickOverride,
 }: OAuthProviderButtonProps) => {
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isLoading) return;
+
+    const reset = () => setIsLoading(false);
+
+    // Window-focus reset is the fast path: when the user returns to OpenHuman
+    // after the system browser, the loading state lifts immediately so the
+    // button is clickable again.
+    const handleFocus = () => {
+      console.debug(`[oauth-button][${provider.id}] window focus → reset isLoading`);
+      reset();
+    };
+
+    const timer = window.setTimeout(() => {
+      console.debug(`[oauth-button][${provider.id}] timeout → reset isLoading`);
+      reset();
+    }, OAUTH_LOADING_TIMEOUT_MS);
+
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [isLoading, provider.id]);
 
   const handleOAuthLogin = async () => {
     if (onClickOverride) {
