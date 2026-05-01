@@ -4,6 +4,7 @@ import { Ghosty, ghostySchema } from "./Ghosty/Ghosty";
 import { GhostyIdle, ghostyIdleSchema } from "./Ghosty/GhostyIdle";
 import { GhostyRecording, ghostyRecordingSchema } from "./Ghosty/GhostyRecording";
 import { GhostyLoading, ghostyLoadingSchema } from "./Ghosty/GhostyLoading";
+import { GhostyPickup, ghostyPickupSchema } from "./Ghosty/GhostyPickup";
 
 // Each <Composition> is a Ghosty variant rendered with a transparent background.
 // Render any of them as alpha MOV via:
@@ -75,6 +76,19 @@ export const RemotionRoot: React.FC = () => {
           ...SHARED_DEFAULTS,
           arm: "none" as const,
           face: "loading" as const,
+        }}
+      />
+
+      <Composition
+        id="GhostyPickup"
+        component={GhostyPickup}
+        durationInFrames={Math.round(30 * 4)}
+        {...SHARED}
+        schema={ghostyPickupSchema}
+        defaultProps={{
+          ...SHARED_DEFAULTS,
+          arm: "none" as const,
+          face: "normal" as const,
         }}
       />
     </>

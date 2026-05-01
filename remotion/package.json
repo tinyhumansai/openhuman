@@ -29,7 +29,7 @@
     "upgrade": "remotion upgrade",
     "lint": "eslint src && tsc",
     "render": "./scripts/render-transparent.sh",
-    "render:all": "./scripts/render-transparent.sh GhostyWave GhostyIdle GhostyRecording GhostyLoading"
+    "render:all": "./scripts/render-transparent.sh GhostyWave GhostyIdle GhostyRecording GhostyLoading GhostyPickup"
   },
   "sideEffects": [
     "*.css"
