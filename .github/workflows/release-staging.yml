@@ -356,44 +356,26 @@ jobs:
           MATRIX_TARGET: ${{ matrix.settings.target }}
         run: |
           set -euo pipefail
-          # Core is linked into the Tauri binary as a path dep, so all Rust
-          # debug info — core + shell — lives under the shell's target dir.
-          # upload-dif scans recursively. Staging uses the `debug` profile.
-          deps_dir="app/src-tauri/target/${MATRIX_TARGET}/debug/deps"
-          if [ -d "$deps_dir" ]; then
-            echo "==> Uploading symbols from $deps_dir to ${SENTRY_PROJECT}"
-            bash scripts/upload_sentry_symbols.sh "$VERSION" "$deps_dir"
-          else
-            echo "==> Skipping $deps_dir (not present)"
-          fi
-
-      # Record a single Sentry deploy marker per matrix target so the
-      # release page shows commits → deploys for the staging environment.
-      # Lives in its own step — `sentry-cli releases deploys ... new` does
-      # NOT deduplicate by (release, env), so emitting it inside
-      # upload_sentry_symbols.sh would add a row per script invocation.
-      - name: Record Sentry deploy marker
-        if: env.SENTRY_AUTH_TOKEN != ''
-        shell: bash
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          # Marker lives on the React project's release; events from all
-          # surfaces share the same `openhuman@<version>+<short_sha>`
-          # release tag, so the marker on any single project's release
-          # shows in Sentry's "Deploys" tab for that release group.
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_REACT }}
-          SENTRY_RELEASE:
-            openhuman@${{ needs.prepare-build.outputs.version }}+${{
-            needs.prepare-build.outputs.short_sha }}
-          SENTRY_ENVIRONMENT: staging
-        run: |
-          set -euo pipefail
-          echo "==> Recording deploy marker: ${SENTRY_RELEASE} -> ${SENTRY_ENVIRONMENT}"
-          sentry-cli releases deploys "${SENTRY_RELEASE}" new \
-            -e "${SENTRY_ENVIRONMENT}" || {
-            echo "[WARN] deploy marker failed (non-fatal)"
-          }
+          # Two DIF locations on staging:
+          # - `app/src-tauri/target/<triple>/debug` — Tauri shell binary
+          #   (which links the core as a path dep, so its DWARF covers core
+          #   too).
+          # - `target/<triple>/debug` — standalone `openhuman-core` CLI
+          #   binary built by the "Build sidecar core binary" step earlier
+          #   and published as a separate artifact. Crashes from operators
+          #   running the standalone CLI need its DIFs to symbolicate.
+          # Symbols are keyed by debug-ID so cross-platform / cross-binary
+          # uploads don't collide — Sentry just merges them.
+          for dif_dir in \
+            "app/src-tauri/target/${MATRIX_TARGET}/debug" \
+            "target/${MATRIX_TARGET}/debug"; do
+            if [ -d "$dif_dir" ]; then
+              echo "==> Uploading symbols from $dif_dir to ${SENTRY_PROJECT}"
+              bash scripts/upload_sentry_symbols.sh "$VERSION" "$dif_dir"
+            else
+              echo "==> Skipping $dif_dir (not present)"
+            fi
+          done
 
       - name: Upload staging desktop bundles
         uses: actions/upload-artifact@v4
@@ -412,3 +394,44 @@ jobs:
             }}
           path: |
             ${{ steps.core-paths.outputs.core_target_dir }}/${{ steps.core-paths.outputs.core_bin_name }}${{ matrix.settings.platform == 'windows-latest' && '.exe' || '' }}
+
+  # =========================================================================
+  # Phase 3: Record a single Sentry deploy marker once the matrix is
+  # complete. Lives in its own job (not inside `build-desktop`) because
+  # `sentry-cli releases deploys ... new` does NOT deduplicate by
+  # (release, env) — running it inside the matrix would add one row per
+  # platform (×4 on this workflow). One row per release is the right
+  # shape: re-runs of CI for the same release intentionally produce
+  # additional rows representing separate deploy attempts.
+  # =========================================================================
+  record-sentry-deploy:
+    name: Record Sentry deploy marker
+    runs-on: ubuntu-latest
+    environment: Production
+    needs: [prepare-build, build-desktop]
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    steps:
+      - name: Install sentry-cli
+        if: env.SENTRY_AUTH_TOKEN != ''
+        shell: bash
+        run: curl -sSf https://sentry.io/get-cli/ | bash
+      - name: Record deploy marker
+        if: env.SENTRY_AUTH_TOKEN != ''
+        shell: bash
+        env:
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          # Marker lives on the React project's release; events from all
+          # surfaces share the same `openhuman@<version>+<short_sha>`
+          # release tag, so the marker on any single project's release
+          # shows in Sentry's "Deploys" tab for that release group.
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_REACT }}
+          SENTRY_RELEASE:
+            openhuman@${{ needs.prepare-build.outputs.version }}+${{
+            needs.prepare-build.outputs.short_sha }}
+          SENTRY_ENVIRONMENT: staging
+        run: |
+          set -euo pipefail
+          echo "==> Recording deploy marker: ${SENTRY_RELEASE} -> ${SENTRY_ENVIRONMENT}"
+          sentry-cli releases deploys "${SENTRY_RELEASE}" new \
+            -e "${SENTRY_ENVIRONMENT}"
