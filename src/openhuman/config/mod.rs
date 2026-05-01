@@ -32,10 +32,11 @@ pub use schema::{
     LocalAiConfig, MatrixConfig, MemoryConfig, ModelRouteConfig, MultimodalConfig,
     ObservabilityConfig, ProxyConfig, ProxyScope, ReflectionSource, ReliabilityConfig,
     ResourceLimitsConfig, RuntimeConfig, SandboxBackend, SandboxConfig, SchedulerConfig,
-    ScreenIntelligenceConfig, SecretsConfig, SecurityConfig, SlackConfig, StorageConfig,
-    StorageProviderConfig, StorageProviderSection, StreamMode, TelegramConfig, UpdateConfig,
-    VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig, DEFAULT_MODEL,
-    MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_V1,
+    SchedulerGateConfig, SchedulerGateMode, ScreenIntelligenceConfig, SecretsConfig,
+    SecurityConfig, SlackConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
+    StreamMode, TelegramConfig, UpdateConfig, VoiceActivationMode, VoiceServerConfig,
+    WebSearchConfig, WebhookConfig, DEFAULT_MODEL, MODEL_AGENTIC_V1, MODEL_CODING_V1,
+    MODEL_REASONING_V1,
 };
 pub use schema::{
     clear_active_user, default_root_openhuman_dir, pre_login_user_dir, read_active_user_id,

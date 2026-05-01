@@ -858,6 +858,11 @@ fn register_domain_subscribers(
         }
         crate::openhuman::composio::register_composio_trigger_subscriber();
         crate::openhuman::composio::start_periodic_sync();
+        // Initialise the scheduler gate before any background AI workers
+        // start so they observe a real policy on their first iteration
+        // (otherwise they fall back to `Policy::Normal` and miss the
+        // initial throttle decision on battery-powered hosts).
+        crate::openhuman::scheduler_gate::init_global(&config);
         crate::openhuman::memory::tree::jobs::start(config.clone());
 
         // Restart requests go through a subscriber so every trigger path shares

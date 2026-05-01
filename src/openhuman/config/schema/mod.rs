@@ -24,6 +24,7 @@ mod observability;
 mod proxy;
 mod routes;
 mod runtime;
+mod scheduler_gate;
 mod storage_memory;
 mod tools;
 mod update;
@@ -53,6 +54,7 @@ pub use proxy::{
 };
 pub use routes::{EmbeddingRouteConfig, ModelRouteConfig};
 pub use runtime::{DockerRuntimeConfig, ReliabilityConfig, RuntimeConfig, SchedulerConfig};
+pub use scheduler_gate::{SchedulerGateConfig, SchedulerGateMode};
 pub use storage_memory::{
     MemoryConfig, MemoryTreeConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
 };
