@@ -57,7 +57,7 @@
           "libgdk-pixbuf-2.0-0",
           "libglib2.0-0"
         ],
-        "desktop-template": "main.desktop"
+        "desktopTemplate": "main.desktop"
       }
     },
     "createUpdaterArtifacts": false,
