@@ -21,10 +21,16 @@
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
-use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
+use crate::openhuman::agent::harness::subagent_runner::{
+    run_subagent, SubagentRunOptions, SubagentRunOutcome,
+};
+use crate::openhuman::memory::conversations::{
+    self, ConversationMessage, CreateConversationThread,
+};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
+use std::path::PathBuf;
 
 /// Spawns a sub-agent of the requested type to handle a delegated task.
 ///
@@ -73,7 +79,8 @@ impl Tool for SpawnSubagentTool {
     }
 
     fn description(&self) -> &str {
-        "Delegate a task to a specialised sub-agent. See the Delegation \
+        "Delegate a task to a specialised sub-agent only when direct \
+         response or direct tools are insufficient. See the Delegation \
          Guide in the system prompt for available agent_ids and when to \
          use each. When delegating to `integrations_agent`, you MUST also pass \
          `toolkit=\"<name>\"` naming the Composio integration the \
@@ -128,6 +135,10 @@ impl Tool for SpawnSubagentTool {
                     "type": "string",
                     "enum": ["typed", "fork"],
                     "description": "`typed` (default) builds a narrow prompt + filtered tools. `fork` replays the parent's exact prompt for prefix-cache reuse on the inference backend."
+                },
+                "dedicated_thread": {
+                    "type": "boolean",
+                    "description": "Default `false`. Set `true` ONLY for long, complex sub-tasks where the parent thread should not be flooded with sub-agent output. The sub-agent's prompt and final summary land in a fresh worker-labeled thread the user can open from the thread list, and the parent receives a compact reference (worker thread id + brief summary) instead of the full transcript. Worker threads cannot themselves spawn another worker (sub-agents never see this tool), so this is a one-level-deep escape hatch."
                 }
             }
         })
@@ -166,6 +177,11 @@ impl Tool for SpawnSubagentTool {
             .filter(|s| !s.is_empty());
 
         let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("typed");
+
+        let dedicated_thread = args
+            .get("dedicated_thread")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         // ── Validation ─────────────────────────────────────────────────
         if agent_id.is_empty() {
@@ -328,6 +344,44 @@ impl Tool for SpawnSubagentTool {
                     output_chars: outcome.output.chars().count(),
                     iterations: outcome.iterations,
                 });
+
+                if dedicated_thread {
+                    let workspace_dir = current_parent()
+                        .map(|p| p.workspace_dir.clone())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    let parent_visible = match persist_worker_thread(
+                        &workspace_dir,
+                        &definition.id,
+                        &prompt,
+                        &outcome,
+                    ) {
+                        Ok(thread_id) => {
+                            render_worker_thread_result(&thread_id, &definition.id, &outcome)
+                        }
+                        Err(error) => {
+                            // Persistence failure must not silently swallow the
+                            // sub-agent's work — return the full output and
+                            // surface the worker-thread error so the parent
+                            // model can mention it. We deliberately fall
+                            // through to a `success` ToolResult so the agent
+                            // loop doesn't prepend "Error:" to text the
+                            // sub-agent produced legitimately.
+                            tracing::error!(
+                                target: "spawn_subagent",
+                                agent_id = %definition.id,
+                                error = %error,
+                                "[spawn_subagent] dedicated_thread persistence failed; \
+                                 returning full sub-agent output inline"
+                            );
+                            format!(
+                                "{}\n\n[worker_thread_error] failed to persist worker thread: {}",
+                                outcome.output, error
+                            )
+                        }
+                    };
+                    return Ok(ToolResult::success(parent_visible));
+                }
+
                 Ok(ToolResult::success(outcome.output))
             }
             Err(err) => {
@@ -361,9 +415,219 @@ impl Tool for SpawnSubagentTool {
     }
 }
 
+/// Trim a raw prompt down to a thread-list-friendly title.
+///
+/// Mirrors the visible-character cap the UI threads list uses so titles
+/// stay readable when the orchestrator hands in a multi-paragraph prompt.
+const WORKER_THREAD_TITLE_MAX_CHARS: usize = 80;
+
+fn build_worker_thread_title(prompt: &str) -> String {
+    let collapsed: String = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return "Worker task".to_string();
+    }
+    let mut iter = collapsed.chars();
+    let truncated: String = iter.by_ref().take(WORKER_THREAD_TITLE_MAX_CHARS).collect();
+    if iter.next().is_some() {
+        format!("{truncated}…")
+    } else {
+        truncated
+    }
+}
+
+fn persist_worker_thread(
+    workspace_dir: &std::path::Path,
+    agent_id: &str,
+    prompt: &str,
+    outcome: &SubagentRunOutcome,
+) -> Result<String, String> {
+    let thread_id = format!("worker-{}", uuid::Uuid::new_v4());
+    let title = build_worker_thread_title(prompt);
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conversations::ensure_thread(
+        workspace_dir.to_path_buf(),
+        CreateConversationThread {
+            id: thread_id.clone(),
+            title,
+            created_at: now.clone(),
+            labels: Some(vec!["worker".to_string()]),
+        },
+    )
+    .map_err(|err| format!("ensure_thread: {err}"))?;
+
+    conversations::append_message(
+        workspace_dir.to_path_buf(),
+        &thread_id,
+        ConversationMessage {
+            id: format!("user:{}", outcome.task_id),
+            content: prompt.to_string(),
+            message_type: "text".to_string(),
+            extra_metadata: json!({
+                "scope": "worker_thread",
+                "agent_id": agent_id,
+                "task_id": outcome.task_id,
+            }),
+            sender: "user".to_string(),
+            created_at: now.clone(),
+        },
+    )
+    .map_err(|err| format!("append user message: {err}"))?;
+
+    conversations::append_message(
+        workspace_dir.to_path_buf(),
+        &thread_id,
+        ConversationMessage {
+            id: format!("agent:{}", outcome.task_id),
+            content: outcome.output.clone(),
+            message_type: "text".to_string(),
+            extra_metadata: json!({
+                "scope": "worker_thread",
+                "agent_id": outcome.agent_id,
+                "task_id": outcome.task_id,
+                "elapsed_ms": outcome.elapsed.as_millis() as u64,
+                "iterations": outcome.iterations,
+            }),
+            sender: "agent".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        },
+    )
+    .map_err(|err| format!("append agent message: {err}"))?;
+
+    Ok(thread_id)
+}
+
+/// Build a parent-thread tool_result that refers the user to the worker
+/// thread instead of dumping the sub-agent's full transcript inline.
+///
+/// The `[worker_thread_ref] … [/worker_thread_ref]` envelope carries
+/// machine-readable metadata the UI parses to render a clickable card; the
+/// surrounding prose stays informative for the LLM that reads the result.
+fn render_worker_thread_result(
+    thread_id: &str,
+    agent_id: &str,
+    outcome: &SubagentRunOutcome,
+) -> String {
+    let payload = json!({
+        "thread_id": thread_id,
+        "label": "worker",
+        "agent_id": agent_id,
+        "task_id": outcome.task_id,
+        "elapsed_ms": outcome.elapsed.as_millis() as u64,
+        "iterations": outcome.iterations,
+    });
+    format!(
+        "Spawned worker thread `{thread_id}` for the delegated task. The \
+         user can open it from the thread list (label: `worker`) to see \
+         the sub-agent's full transcript. Continue from a brief summary \
+         in this thread instead of relaying the entire run.\n\n\
+         [worker_thread_ref]\n{payload}\n[/worker_thread_ref]",
+        thread_id = thread_id,
+        payload = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::agent::harness::subagent_runner::SubagentMode;
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    fn sample_outcome(output: &str) -> SubagentRunOutcome {
+        SubagentRunOutcome {
+            agent_id: "researcher".into(),
+            task_id: "sub-test-1".into(),
+            output: output.to_string(),
+            elapsed: Duration::from_millis(120),
+            iterations: 3,
+            mode: SubagentMode::Typed,
+        }
+    }
+
+    #[test]
+    fn build_worker_thread_title_collapses_whitespace_and_caps_length() {
+        let prompt = "  draft\n a very long\tplan that\nrambles ".to_string() + &"x".repeat(200);
+        let title = build_worker_thread_title(&prompt);
+        assert!(title.starts_with("draft a very long plan"));
+        assert!(title.chars().count() <= WORKER_THREAD_TITLE_MAX_CHARS + 1);
+        assert!(title.ends_with('…'));
+    }
+
+    #[test]
+    fn build_worker_thread_title_falls_back_when_empty() {
+        assert_eq!(build_worker_thread_title("   \n\t  "), "Worker task");
+    }
+
+    #[test]
+    fn parameters_schema_advertises_dedicated_thread_flag() {
+        let tool = SpawnSubagentTool;
+        let schema = tool.parameters_schema();
+        let props = schema.get("properties").expect("schema has properties");
+        let flag = props
+            .get("dedicated_thread")
+            .expect("dedicated_thread advertised");
+        assert_eq!(flag.get("type").and_then(|v| v.as_str()), Some("boolean"));
+        // Must be off by default — workers are an opt-in escape hatch, not
+        // a free upgrade for every spawn.
+        assert!(schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().all(|s| s.as_str() != Some("dedicated_thread")))
+            .unwrap_or(true));
+    }
+
+    #[test]
+    fn render_worker_thread_result_carries_machine_readable_envelope() {
+        let outcome = sample_outcome("done");
+        let rendered = render_worker_thread_result("worker-abc", "researcher", &outcome);
+        assert!(rendered.contains("Spawned worker thread `worker-abc`"));
+        assert!(rendered.contains("[worker_thread_ref]"));
+        assert!(rendered.contains("[/worker_thread_ref]"));
+        // The JSON payload between the markers must round-trip.
+        let start = rendered.find("[worker_thread_ref]\n").unwrap() + "[worker_thread_ref]\n".len();
+        let end = rendered.find("\n[/worker_thread_ref]").unwrap();
+        let payload: serde_json::Value =
+            serde_json::from_str(&rendered[start..end]).expect("valid json envelope");
+        assert_eq!(payload["thread_id"], "worker-abc");
+        assert_eq!(payload["label"], "worker");
+        assert_eq!(payload["agent_id"], "researcher");
+        assert_eq!(payload["task_id"], "sub-test-1");
+        assert_eq!(payload["iterations"], 3);
+    }
+
+    #[test]
+    fn persist_worker_thread_creates_thread_with_worker_label_and_messages() {
+        let temp = TempDir::new().expect("tempdir");
+        let outcome = sample_outcome("the answer is 42");
+        let thread_id = persist_worker_thread(
+            temp.path(),
+            "researcher",
+            "draft a long research plan",
+            &outcome,
+        )
+        .expect("worker thread persisted");
+
+        assert!(thread_id.starts_with("worker-"));
+
+        let threads = conversations::list_threads(temp.path().to_path_buf()).expect("list threads");
+        let worker = threads
+            .iter()
+            .find(|t| t.id == thread_id)
+            .expect("worker thread present");
+        assert!(worker.labels.contains(&"worker".to_string()));
+        assert!(worker.title.starts_with("draft a long research plan"));
+
+        let messages =
+            conversations::get_messages(temp.path().to_path_buf(), &thread_id).expect("messages");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].sender, "user");
+        assert_eq!(messages[0].content, "draft a long research plan");
+        assert_eq!(messages[1].sender, "agent");
+        assert_eq!(messages[1].content, "the answer is 42");
+        assert_eq!(messages[1].extra_metadata["iterations"], 3);
+        assert_eq!(messages[1].extra_metadata["scope"], "worker_thread");
+    }
 
     #[tokio::test]
     async fn missing_agent_id_returns_error() {

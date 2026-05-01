@@ -19,14 +19,14 @@ import { OnboardingContext, type OnboardingDraft } from './OnboardingContext';
  * turn and continue the conversation rather than starting fresh.
  *
  * The welcome agent's `prompt.md` matches on this exact string and
- * applies its long-lost-friend opener voice. Don't change without
- * updating the prompt's "Proactive opening" section.
+ * applies its opening voice. Don't change without updating the
+ * prompt's "Proactive opening" section.
  *
  * The trigger is **not** persisted as a user-side bubble (we skip
  * `addMessageLocal`), so the user only sees the agent's reply.
  */
 const WELCOME_TRIGGER_MESSAGE =
-  'the user just finished the desktop onboarding wizard. welcome the user like an old friend. say something interesting from the profile information above';
+  'the user just finished the desktop onboarding wizard. welcome the user. say something interesting from the profile information above';
 
 /**
  * Model id used for the welcome trigger send. Mirrors the constant in

@@ -7,26 +7,65 @@
 //! attaches to it instead of spawning a duplicate listener.
 
 use std::sync::Arc;
+use std::sync::LazyLock;
 
+use parking_lot::RwLock;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{timeout, Duration};
+
+/// Generate a 256-bit cryptographically-random bearer token as a hex string.
+///
+/// Uses the same encoding as `openhuman_core::core::auth::generate_token`
+/// (`hex::encode`) so the token format never silently diverges between the
+/// Tauri-side generator and the core-side validator.
+pub fn generate_rpc_token() -> String {
+    use rand::RngCore as _;
+    let mut bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+static CURRENT_RPC_TOKEN: LazyLock<RwLock<Option<String>>> = LazyLock::new(|| RwLock::new(None));
+
+pub fn current_rpc_token() -> Option<String> {
+    CURRENT_RPC_TOKEN.read().clone()
+}
 
 #[derive(Clone)]
 pub struct CoreProcessHandle {
     task: Arc<Mutex<Option<JoinHandle<()>>>>,
     restart_lock: Arc<Mutex<()>>,
     port: u16,
+    /// Bearer token the embedded server validates on every inbound request.
+    /// Passed to the embedded server through the `OPENHUMAN_CORE_TOKEN`
+    /// process env var (set in `ensure_running` before spawn) and exposed to
+    /// the frontend via the `core_rpc_token` Tauri command so every RPC call
+    /// can include `Authorization: Bearer`.
+    rpc_token: Arc<String>,
 }
 
 impl CoreProcessHandle {
     pub fn new(port: u16) -> Self {
+        // CURRENT_RPC_TOKEN is intentionally NOT set here. It is published by
+        // ensure_running() only after the embedded server has been spawned
+        // with OPENHUMAN_CORE_TOKEN in scope. Setting it here would advertise
+        // a token that an existing process listening on the port (the
+        // harness-attach fast-path) has never seen, causing 401s on every
+        // authenticated call.
+        let rpc_token = generate_rpc_token();
         Self {
             task: Arc::new(Mutex::new(None)),
             restart_lock: Arc::new(Mutex::new(())),
             port,
+            rpc_token: Arc::new(rpc_token),
         }
+    }
+
+    /// The bearer token the embedded core validates on inbound RPC requests.
+    pub fn rpc_token(&self) -> &str {
+        &self.rpc_token
     }
 
     pub fn rpc_url(&self) -> String {
@@ -60,7 +99,7 @@ impl CoreProcessHandle {
                 self.rpc_url()
             );
             log::warn!(
-                "[core] reusing port {} — another `openhuman-core` instance is already listening; this Tauri host will not spawn an embedded server",
+                "[core] reusing port {} — another `openhuman-core` instance is already listening; this Tauri host will not spawn an embedded server. Authenticated Tauri-side calls will 401 unless the listener was started with this process's OPENHUMAN_CORE_TOKEN.",
                 self.port
             );
             return Ok(());
@@ -70,6 +109,11 @@ impl CoreProcessHandle {
             let mut guard = self.task.lock().await;
             if guard.is_none() {
                 let port = self.port;
+                // Set OPENHUMAN_CORE_TOKEN as a process-global env var before
+                // spawning the embedded server. Same-process tokio task reads
+                // the same env, matching what a child sidecar would have
+                // received via Command::env.
+                std::env::set_var("OPENHUMAN_CORE_TOKEN", self.rpc_token.as_str());
                 log::info!("[core] spawning embedded in-process core server on port {port}");
                 let task = tokio::spawn(async move {
                     if let Err(e) =
@@ -82,6 +126,10 @@ impl CoreProcessHandle {
                     }
                 });
                 *guard = Some(task);
+                // Publish only after the embedded server has been spawned
+                // with OPENHUMAN_CORE_TOKEN in scope.
+                *CURRENT_RPC_TOKEN.write() = Some(self.rpc_token.to_string());
+                log::debug!("[auth] CURRENT_RPC_TOKEN set after embedded spawn");
             }
         }
 
@@ -162,13 +210,20 @@ impl CoreProcessHandle {
         result
     }
 
-    /// Stop the embedded server task. Safe to call when nothing is running.
-    pub async fn shutdown(&self) {
+    /// Lock the task slot, take its handle if any, and abort it. Shared by
+    /// `shutdown` (cleanup-on-drop semantics) and `send_terminate_signal`
+    /// (cooperative early teardown from `RunEvent::ExitRequested`).
+    async fn abort_task(&self, log_context: &str) {
         let mut task_guard = self.task.lock().await;
         if let Some(task) = task_guard.take() {
-            log::info!("[core] aborting embedded core server task");
+            log::info!("[core] aborting embedded core server task{log_context}");
             task.abort();
         }
+    }
+
+    /// Stop the embedded server task. Safe to call when nothing is running.
+    pub async fn shutdown(&self) {
+        self.abort_task("").await;
     }
 
     /// Synchronous-friendly shutdown for `RunEvent::ExitRequested`.
@@ -178,11 +233,7 @@ impl CoreProcessHandle {
     /// and non-blocking on the UI thread — `JoinHandle::abort` returns
     /// immediately.
     pub async fn send_terminate_signal(&self) {
-        let mut task_guard = self.task.lock().await;
-        if let Some(task) = task_guard.take() {
-            log::info!("[core] aborting embedded core server task on app shutdown");
-            task.abort();
-        }
+        self.abort_task(" on app shutdown").await;
     }
 }
 

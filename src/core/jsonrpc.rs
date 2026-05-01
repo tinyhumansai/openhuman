@@ -379,6 +379,11 @@ async fn dictation_ws_handler(ws: WebSocketUpgrade) -> Response {
 ///
 /// Includes routes for health, schema, SSE events, JSON-RPC, and Telegram auth.
 /// Conditionally attaches Socket.IO if enabled.
+///
+/// Middleware order (outermost → innermost):
+/// 1. `cors_middleware`       — handles `OPTIONS` preflight and adds CORS headers
+/// 2. `rpc_auth_middleware`   — validates `Authorization: Bearer <token>` on protected paths
+/// 3. `http_request_log_middleware` — logs non-RPC HTTP requests with timing
 pub fn build_core_http_router(socketio_enabled: bool) -> Router {
     let router = Router::new()
         .route("/", get(root_handler))
@@ -391,6 +396,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/auth/telegram", get(telegram_auth_handler))
         .fallback(not_found_handler)
         .layer(middleware::from_fn(http_request_log_middleware))
+        .layer(middleware::from_fn(crate::core::auth::rpc_auth_middleware))
         .layer(middleware::from_fn(cors_middleware))
         .with_state(AppState {
             core_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -608,6 +614,15 @@ async fn run_server_inner(
 ) -> anyhow::Result<()> {
     // Ensure all controllers are registered before starting.
     let _ = all::all_registered_controllers();
+
+    // Initialize the per-process RPC bearer token.
+    // Written to {workspace_dir}/core.token so the Tauri shell can read it.
+    let token_dir = crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
+        dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".openhuman")
+    });
+    crate::core::auth::init_rpc_token(&token_dir)?;
 
     let (resolved_port, port_source) = match port {
         Some(p) => (p, "CLI --port"),

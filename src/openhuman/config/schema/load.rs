@@ -771,7 +771,17 @@ impl Config {
                 if let Some(tier) =
                     crate::openhuman::local_ai::presets::ModelTier::from_str_opt(&tier_str)
                 {
-                    if tier != crate::openhuman::local_ai::presets::ModelTier::Custom {
+                    if tier == crate::openhuman::local_ai::presets::ModelTier::Custom {
+                        tracing::warn!(
+                            tier = %tier_str,
+                            "ignoring custom OPENHUMAN_LOCAL_AI_TIER; only built-in presets are supported"
+                        );
+                    } else if !tier.is_mvp_allowed() {
+                        tracing::warn!(
+                            tier = %tier_str,
+                            "ignoring OPENHUMAN_LOCAL_AI_TIER outside the 1B local-model allowlist"
+                        );
+                    } else {
                         crate::openhuman::local_ai::presets::apply_preset_to_config(
                             &mut self.local_ai,
                             tier,
@@ -781,7 +791,7 @@ impl Config {
                 } else {
                     tracing::warn!(
                         tier = %tier_str,
-                        "ignoring invalid OPENHUMAN_LOCAL_AI_TIER (valid: ram_1gb, ram_2_4gb, ram_4_8gb, ram_8_16gb, ram_16_plus_gb)"
+                        "ignoring invalid OPENHUMAN_LOCAL_AI_TIER (valid: ram_2_4gb)"
                     );
                 }
             }

@@ -15,8 +15,12 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tempfile::tempdir;
 
+use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_core::core::jsonrpc::build_core_http_router;
 use openhuman_core::openhuman::memory::all_memory_tree_registered_controllers;
+
+const TEST_RPC_TOKEN: &str = "json-rpc-e2e-local-token";
+static JSON_RPC_AUTH_INIT: OnceLock<()> = OnceLock::new();
 
 struct EnvVarGuard {
     key: &'static str,
@@ -446,6 +450,7 @@ async fn serve_on_ephemeral(
     SocketAddr,
     tokio::task::JoinHandle<Result<(), std::io::Error>>,
 ) {
+    ensure_test_rpc_auth();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -468,6 +473,7 @@ async fn post_json_rpc(rpc_base: &str, id: i64, method: &str, params: Value) -> 
     let url = format!("{}/rpc", rpc_base.trim_end_matches('/'));
     let resp = client
         .post(&url)
+        .header(AUTHORIZATION, format!("Bearer {TEST_RPC_TOKEN}"))
         .json(&body)
         .send()
         .await
@@ -491,6 +497,7 @@ async fn read_first_sse_event(events_url: &str) -> Value {
         .expect("client");
     let resp = client
         .get(events_url)
+        .header(AUTHORIZATION, format!("Bearer {TEST_RPC_TOKEN}"))
         .send()
         .await
         .unwrap_or_else(|e| panic!("GET {events_url}: {e}"));
@@ -537,6 +544,7 @@ async fn read_sse_event_by_type(events_url: &str, target_event: &str) -> Value {
         .expect("client");
     let resp = client
         .get(events_url)
+        .header(AUTHORIZATION, format!("Bearer {TEST_RPC_TOKEN}"))
         .send()
         .await
         .unwrap_or_else(|e| panic!("GET {events_url}: {e}"));
@@ -662,6 +670,18 @@ enabled = false
 
     let _: openhuman_core::openhuman::config::Config =
         toml::from_str(&cfg).expect("config toml must match Config schema");
+}
+
+fn ensure_test_rpc_auth() {
+    JSON_RPC_AUTH_INIT.get_or_init(|| {
+        // SAFETY: set_var is inside get_or_init so it runs exactly once across
+        // all test threads. Rust 1.81+ requires unsafe for set_var in
+        // multi-threaded contexts; the OnceLock guard limits the mutation to a
+        // single call at init time, before any concurrent env reads occur.
+        unsafe { std::env::set_var(CORE_TOKEN_ENV_VAR, TEST_RPC_TOKEN) };
+        let token_dir = std::env::temp_dir().join("openhuman-json-rpc-e2e-auth");
+        init_rpc_token(&token_dir).expect("init rpc auth token for json_rpc_e2e");
+    });
 }
 
 #[tokio::test]
@@ -898,6 +918,105 @@ async fn json_rpc_thread_labels_create_and_update() {
     );
 
     api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_memory_sync_and_learn() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _embed_strict_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "false");
+    let _embed_endpoint_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", "");
+    let _embed_model_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", "");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── memory_sync_all: returns requested:true ──────────────────────────────
+    let sync_all = post_json_rpc(&rpc_base, 7001, "openhuman.memory_sync_all", json!({})).await;
+    let sync_all_result = assert_no_jsonrpc_error(&sync_all, "memory_sync_all");
+    assert_eq!(
+        sync_all_result.get("requested"),
+        Some(&json!(true)),
+        "memory_sync_all must return requested:true"
+    );
+
+    // ── memory_sync_channel: echoes channel_id and returns requested:true ─────
+    let sync_ch = post_json_rpc(
+        &rpc_base,
+        7002,
+        "openhuman.memory_sync_channel",
+        json!({ "channel_id": "test-channel-abc" }),
+    )
+    .await;
+    let sync_ch_result = assert_no_jsonrpc_error(&sync_ch, "memory_sync_channel");
+    assert_eq!(
+        sync_ch_result.get("requested"),
+        Some(&json!(true)),
+        "memory_sync_channel must return requested:true"
+    );
+    assert_eq!(
+        sync_ch_result.get("channel_id").and_then(Value::as_str),
+        Some("test-channel-abc"),
+        "memory_sync_channel must echo channel_id"
+    );
+
+    // ── memory_sync_channel: missing channel_id returns a JSON-RPC error ────
+    let sync_bad = post_json_rpc(&rpc_base, 7003, "openhuman.memory_sync_channel", json!({})).await;
+    assert!(
+        sync_bad.get("error").is_some(),
+        "missing channel_id must return an error, got: {sync_bad}"
+    );
+
+    // ── memory_learn_all: no namespaces → zero processed (empty store) ──────
+    let learn_all = post_json_rpc(&rpc_base, 7004, "openhuman.memory_learn_all", json!({})).await;
+    let learn_result = assert_no_jsonrpc_error(&learn_all, "memory_learn_all");
+    let processed = learn_result
+        .get("namespaces_processed")
+        .and_then(Value::as_u64)
+        .expect("namespaces_processed must be present");
+    assert_eq!(processed, 0, "no namespaces in a fresh store");
+    let results_arr = learn_result
+        .get("results")
+        .and_then(Value::as_array)
+        .expect("results array must be present");
+    assert!(
+        results_arr.is_empty(),
+        "results must be empty when no namespaces"
+    );
+
+    // ── memory_learn_all: constrained to non-existent namespace → also zero ──
+    let learn_constrained = post_json_rpc(
+        &rpc_base,
+        7005,
+        "openhuman.memory_learn_all",
+        json!({ "namespaces": ["does-not-exist"] }),
+    )
+    .await;
+    let learn_c_result =
+        assert_no_jsonrpc_error(&learn_constrained, "memory_learn_all constrained");
+    assert_eq!(
+        learn_c_result
+            .get("namespaces_processed")
+            .and_then(Value::as_u64),
+        Some(0),
+        "non-existent namespace must be filtered out"
+    );
+
+    mock_join.abort();
     rpc_join.abort();
 }
 
@@ -1856,32 +1975,34 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
         .get("presets")
         .and_then(Value::as_array)
         .expect("presets should be an array");
-    assert_eq!(presets_arr.len(), 5, "expected 5 presets: {presets_result}");
+    assert_eq!(
+        presets_arr.len(),
+        1,
+        "MVP exposes only the 1B preset: {presets_result}"
+    );
+    assert_eq!(
+        presets_arr[0].get("tier").and_then(Value::as_str),
+        Some("ram_2_4gb"),
+        "only the ram_2_4gb (1B) preset should be exposed: {presets_result}"
+    );
 
     let recommended = presets_result
         .get("recommended_tier")
         .and_then(Value::as_str)
         .expect("should have recommended_tier");
-    assert!(
-        [
-            "ram_1gb",
-            "ram_2_4gb",
-            "ram_4_8gb",
-            "ram_8_16gb",
-            "ram_16_plus_gb",
-        ]
-        .contains(&recommended),
-        "unexpected recommended_tier: {recommended}"
+    assert_eq!(
+        recommended, "ram_2_4gb",
+        "MVP recommends the only allowed tier: {recommended}"
     );
 
     let current = presets_result
         .get("current_tier")
         .and_then(Value::as_str)
         .expect("should have current_tier");
-    // Default config uses gemma3:4b-it-qat which now maps to the 8-16 GB tier.
+    // Default config now uses gemma3:1b-it-qat which maps to the only allowed (2-4 GB) tier.
     assert_eq!(
-        current, "ram_8_16gb",
-        "default config should be the 8-16 GB tier"
+        current, "ram_2_4gb",
+        "default config should be the 1B / 2-4 GB tier"
     );
 
     // --- apply_preset (switch to 2-4 GB) ---
@@ -2726,6 +2847,146 @@ async fn skills_uninstall_rpc_e2e() {
             || traversal_msg.contains("path escapes")
             || traversal_msg.contains("not installed"),
         "expected traversal rejection error, got: {traversal_err}"
+    );
+
+    rpc_join.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Auth middleware tests
+// ---------------------------------------------------------------------------
+
+/// POST /rpc without any Authorization header → 401 with error=unauthorized.
+#[tokio::test]
+async fn rpc_rejects_unauthenticated_request() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("http://{rpc_addr}/rpc"))
+        .header("Content-Type", "application/json")
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"core.ping","params":{}}"#)
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 401, "missing Authorization must yield 401");
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body["error"], "unauthorized",
+        "error field must be 'unauthorized'"
+    );
+
+    rpc_join.abort();
+}
+
+/// POST /rpc with a syntactically valid but wrong bearer token → 401.
+#[tokio::test]
+async fn rpc_rejects_wrong_token() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("http://{rpc_addr}/rpc"))
+        .header(
+            AUTHORIZATION,
+            "Bearer deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        )
+        .header("Content-Type", "application/json")
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"core.ping","params":{}}"#)
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 401, "wrong token must yield 401");
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["error"], "unauthorized");
+
+    rpc_join.abort();
+}
+
+/// Every path in PUBLIC_PATHS must bypass the auth middleware — i.e. never
+/// return 401 — even without an Authorization header.  Some paths return
+/// non-2xx for other reasons (missing query params, no WebSocket upgrade
+/// headers) so the assertion is `!= 401`, not `.is_success()`.
+#[tokio::test]
+async fn public_paths_accessible_without_token() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth();
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+    let base = format!("http://{rpc_addr}");
+
+    // Paths that return 200 without any extra params.
+    for path in ["/", "/health", "/schema", "/events/webhooks"] {
+        let resp = client
+            .get(format!("{base}{path}"))
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("GET {path}: {e}"));
+        assert!(
+            resp.status().is_success(),
+            "public path {path} must return 2xx without auth, got {}",
+            resp.status()
+        );
+    }
+
+    // Paths that bypass auth but return non-2xx for unrelated reasons
+    // (missing required query params, no WebSocket upgrade headers, etc.).
+    // The invariant is that the auth middleware does NOT reject them with 401.
+    for path in ["/auth/telegram", "/events", "/ws/dictation"] {
+        let resp = client
+            .get(format!("{base}{path}"))
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("GET {path}: {e}"));
+        assert_ne!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "public path {path} must not be auth-gated (got {})",
+            resp.status()
+        );
+    }
+
+    rpc_join.abort();
+}
+
+/// Simulate an external process using a guessed token — must be rejected.
+#[tokio::test]
+async fn external_process_with_guessed_token_is_rejected() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    ensure_test_rpc_auth(); // server validates against TEST_RPC_TOKEN
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let client = reqwest::Client::new();
+
+    // An attacker process trying a plausible-looking token that isn't the real one.
+    let attacker_token = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+    assert_ne!(
+        attacker_token, TEST_RPC_TOKEN,
+        "attacker token must differ from real one"
+    );
+
+    let resp = client
+        .post(format!("http://{rpc_addr}/rpc"))
+        .header(AUTHORIZATION, format!("Bearer {attacker_token}"))
+        .header("Content-Type", "application/json")
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"core.ping","params":{}}"#)
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(
+        resp.status(),
+        401,
+        "external process with wrong token must be rejected"
     );
 
     rpc_join.abort();

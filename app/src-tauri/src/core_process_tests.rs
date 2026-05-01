@@ -1,4 +1,13 @@
-use super::{default_core_port, CoreProcessHandle};
+use super::{current_rpc_token, default_core_port, generate_rpc_token, CoreProcessHandle};
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+fn env_lock() -> MutexGuard<'static, ()> {
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("env lock poisoned")
+}
 
 struct EnvGuard {
     key: &'static str,
@@ -30,6 +39,7 @@ impl Drop for EnvGuard {
 
 #[test]
 fn default_core_port_env_and_fallback() {
+    let _env_lock = env_lock();
     let _unset = EnvGuard::unset("OPENHUMAN_CORE_PORT");
     assert_eq!(default_core_port(), 7788);
 
@@ -58,5 +68,88 @@ fn ensure_running_returns_ok_when_rpc_port_already_open() {
     assert!(
         result.is_ok(),
         "ensure_running should fast-path: {result:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Token generation tests
+// ---------------------------------------------------------------------------
+
+/// `generate_rpc_token` must produce a 64-character lowercase hex string
+/// (32 bytes × 2 hex digits = 64 chars), matching the format expected by the
+/// core's auth middleware.
+#[test]
+fn generate_rpc_token_produces_64_hex_chars() {
+    let token = generate_rpc_token();
+    assert_eq!(
+        token.len(),
+        64,
+        "256-bit token → 64 hex chars, got {token:?}"
+    );
+    assert!(
+        token.chars().all(|c| c.is_ascii_hexdigit()),
+        "token must be hex, got {token:?}"
+    );
+    assert!(
+        token.chars().all(|c| !c.is_uppercase()),
+        "token must be lowercase hex, got {token:?}"
+    );
+}
+
+/// Each call generates a different token (CSPRNG — not a constant).
+#[test]
+fn generate_rpc_token_is_not_constant() {
+    assert_ne!(
+        generate_rpc_token(),
+        generate_rpc_token(),
+        "two consecutive tokens must differ"
+    );
+}
+
+/// `CoreProcessHandle::new` must produce a non-empty, correctly-formatted
+/// bearer token immediately — no file I/O or timing dependency.
+#[test]
+fn core_process_handle_new_token_is_valid() {
+    let handle = CoreProcessHandle::new(19001);
+    let token = handle.rpc_token();
+    assert_eq!(token.len(), 64, "handle token must be 64 hex chars");
+    assert!(
+        token.chars().all(|c| c.is_ascii_hexdigit()),
+        "handle token must be hex"
+    );
+}
+
+/// `CoreProcessHandle::new()` must NOT publish the token to the global
+/// `CURRENT_RPC_TOKEN`. The global is set only after `ensure_running()`
+/// successfully spawns the embedded server with `OPENHUMAN_CORE_TOKEN` in
+/// scope. Advertising the token before spawn would 401 against any process
+/// already listening on the port that never received this token.
+#[test]
+fn new_does_not_publish_global_token() {
+    let before = current_rpc_token();
+    let handle = CoreProcessHandle::new(19002);
+    let after = current_rpc_token();
+
+    assert_ne!(
+        after.as_deref(),
+        Some(handle.rpc_token()),
+        "new() must not publish its token to CURRENT_RPC_TOKEN before ensure_running() spawns"
+    );
+    assert_eq!(
+        before, after,
+        "new() must leave CURRENT_RPC_TOKEN unchanged"
+    );
+}
+
+/// Two handles constructed sequentially must each have a unique token.
+#[test]
+fn each_handle_has_unique_token() {
+    let h1 = CoreProcessHandle::new(19003);
+    let h2 = CoreProcessHandle::new(19004);
+
+    assert_ne!(
+        h1.rpc_token(),
+        h2.rpc_token(),
+        "each handle must have a unique token"
     );
 }

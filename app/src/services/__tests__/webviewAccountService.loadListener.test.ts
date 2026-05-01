@@ -6,6 +6,7 @@ import { addAccount, resetAccountsState } from '../../store/accountsSlice';
 import {
   closeWebviewAccount,
   openWebviewAccount,
+  retryWebviewAccountLoad,
   setWebviewAccountBounds,
   startWebviewAccountService,
   stopWebviewAccountService,
@@ -136,17 +137,44 @@ describe('webviewAccountService load listener', () => {
     });
   });
 
-  it('still reveals on timeout fallback', async () => {
+  it('marks account timeout and skips reveal on timeout fallback', async () => {
     const bounds = { x: 0, y: 0, width: 800, height: 600 };
     await openWebviewAccount({ accountId: ACCOUNT_ID, provider: 'telegram', bounds });
     vi.mocked(invoke).mockClear();
 
     await fireLoadEvent({ state: 'timeout', url: '' });
 
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith('webview_account_reveal', expect.anything());
+    expect(store.getState().accounts.accounts[ACCOUNT_ID]?.status).toBe('timeout');
+  });
+
+  it('can recover from timeout when a later finished signal arrives', async () => {
+    const bounds = { x: 11, y: 22, width: 810, height: 610 };
+    await openWebviewAccount({ accountId: ACCOUNT_ID, provider: 'telegram', bounds });
+    vi.mocked(invoke).mockClear();
+
+    await fireLoadEvent({ state: 'timeout', url: '' });
+    expect(store.getState().accounts.accounts[ACCOUNT_ID]?.status).toBe('timeout');
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith('webview_account_reveal', expect.anything());
+
+    await fireLoadEvent({ state: 'finished', url: 'https://web.telegram.org/' });
     expect(vi.mocked(invoke)).toHaveBeenCalledWith('webview_account_reveal', {
       args: { account_id: ACCOUNT_ID, bounds },
     });
     expect(store.getState().accounts.accounts[ACCOUNT_ID]?.status).toBe('open');
+  });
+
+  it('treats chromium offline error-page URLs as timeout and hides webview', async () => {
+    const bounds = { x: 7, y: 9, width: 800, height: 620 };
+    await openWebviewAccount({ accountId: ACCOUNT_ID, provider: 'telegram', bounds });
+    vi.mocked(invoke).mockClear();
+
+    await fireLoadEvent({ state: 'finished', url: 'chrome-error://chromewebdata/' });
+
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('webview_account_hide', {
+      args: { account_id: ACCOUNT_ID },
+    });
+    expect(store.getState().accounts.accounts[ACCOUNT_ID]?.status).toBe('timeout');
   });
 
   it('treats `reused` event as finished (warm re-open path)', async () => {
@@ -169,5 +197,18 @@ describe('webviewAccountService load listener', () => {
     await fireLoadEvent({ state: 'finished', url: 'x' });
 
     expect(vi.mocked(invoke)).not.toHaveBeenCalled();
+  });
+
+  it('retry re-opens with cached bounds and provider', async () => {
+    const bounds = { x: 0, y: 0, width: 920, height: 700 };
+    await openWebviewAccount({ accountId: ACCOUNT_ID, provider: 'telegram', bounds });
+    vi.mocked(invoke).mockClear();
+
+    await retryWebviewAccountLoad(ACCOUNT_ID, 'telegram');
+
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('webview_account_open', {
+      args: { account_id: ACCOUNT_ID, provider: 'telegram', bounds },
+    });
+    expect(store.getState().accounts.accounts[ACCOUNT_ID]?.status).toBe('loading');
   });
 });

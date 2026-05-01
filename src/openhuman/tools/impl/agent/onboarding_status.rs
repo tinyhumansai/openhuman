@@ -7,11 +7,11 @@
 //! * An auth detector (`detect_auth`) that bools out whether a session
 //!   JWT is present.
 //! * The engagement-criteria gate that decides whether `complete` may
-//!   run (≥ [`MIN_EXCHANGES_TO_COMPLETE`] exchanges **and** ≥ 1 Composio
-//!   connection).
-//! * The JSON snapshot builder the agent consumes — now also exposing
-//!   the list of connected Composio toolkits and the per-provider
-//!   webview-login heuristic (see `openhuman::webview_accounts`).
+//!   run — at least one app connected (webview login **or** Composio
+//!   integration).
+//! * The JSON snapshot builder the agent consumes — exposing the list
+//!   of connected Composio toolkits and the per-provider webview-login
+//!   heuristic (see `openhuman::webview_accounts`).
 //!
 //! Keeping this in one place lets the two tools stay small and share
 //! the same snapshot shape without pulling in tool code from elsewhere.
@@ -20,9 +20,10 @@ use crate::openhuman::config::Config;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// Minimum number of welcome-agent exchanges required before
-/// `complete_onboarding` will accept a finalization request when no
-/// Composio integrations are connected.
+/// Historical exchange-count threshold. No longer used in the
+/// engagement gate (which now requires at least one app connected).
+/// Retained only for reference; will be removed in a future cleanup.
+#[allow(dead_code)]
 pub(crate) const MIN_EXCHANGES_TO_COMPLETE: u32 = 3;
 
 /// Process-global exchange counter for the welcome agent.
@@ -53,31 +54,34 @@ pub fn get_welcome_exchange_count() -> u32 {
     WELCOME_EXCHANGE_COUNT.load(Ordering::Relaxed)
 }
 
-/// Pure-logic helper: given an exchange count and the number of connected
-/// Composio integrations, returns whether the engagement criteria for
-/// `complete_onboarding` are satisfied.
-pub(crate) fn engagement_criteria_met(exchange_count: u32, composio_connections: u32) -> bool {
-    exchange_count >= MIN_EXCHANGES_TO_COMPLETE && composio_connections > 0
+/// Pure-logic helper: returns whether the engagement criteria for
+/// `complete_onboarding` are satisfied. The gate is "at least one app
+/// connected" — either a webview login (built-in browser app) or a
+/// Composio OAuth integration.
+pub(crate) fn engagement_criteria_met(
+    webview_logins: &serde_json::Value,
+    composio_connections: u32,
+) -> bool {
+    let has_webview = webview_logins
+        .as_object()
+        .map(|o| o.values().any(|v| v.as_bool().unwrap_or(false)))
+        .unwrap_or(false);
+    has_webview || composio_connections > 0
 }
 
 /// Build the user-facing error string for premature `complete_onboarding`
-/// calls.
-pub(crate) fn build_not_ready_to_complete_error(
-    exchange_count: u32,
-    composio_connections: u32,
-) -> String {
-    let remaining = MIN_EXCHANGES_TO_COMPLETE.saturating_sub(exchange_count);
-    let mut reasons = Vec::new();
-    if composio_connections == 0 {
-        reasons.push("at least one connected integration is required".to_string());
+/// calls. The reason string comes from `compute_state().ready_to_complete_reason`.
+pub(crate) fn build_not_ready_to_complete_error(reason: &str) -> String {
+    match reason {
+        "unauthenticated" => "Cannot complete onboarding: the user is not signed in. \
+             Guide them to log in via the desktop login flow first."
+            .to_string(),
+        "already_complete" => "Onboarding is already complete.".to_string(),
+        _ => "Cannot complete onboarding yet: the user hasn't connected any apps. \
+             At least one built-in app login (webview) or one connected integration \
+             is required before onboarding can be finalized."
+            .to_string(),
     }
-    if exchange_count < MIN_EXCHANGES_TO_COMPLETE {
-        reasons.push(format!(
-            "{remaining} more exchange(s) needed (minimum {MIN_EXCHANGES_TO_COMPLETE}, \
-             currently {exchange_count})"
-        ));
-    }
-    format!("Cannot complete onboarding yet: {}.", reasons.join("; "))
 }
 
 /// Reset the welcome exchange counter to zero. Test-only.
@@ -322,7 +326,10 @@ pub(crate) struct OnboardingState {
     pub ready_to_complete_reason: String,
 }
 
-pub(crate) async fn compute_state(config: &Config) -> OnboardingState {
+pub(crate) async fn compute_state(
+    config: &Config,
+    webview_logins: &serde_json::Value,
+) -> OnboardingState {
     let (is_authenticated, _) = detect_auth(config);
     let exchange_count = get_welcome_exchange_count();
     let integrations = crate::openhuman::composio::fetch_connected_integrations(config).await;
@@ -343,7 +350,7 @@ pub(crate) async fn compute_state(config: &Config) -> OnboardingState {
 
     let ready_to_complete = is_authenticated
         && !config.chat_onboarding_completed
-        && engagement_criteria_met(exchange_count, composio_connections);
+        && engagement_criteria_met(webview_logins, composio_connections);
     let ready_to_complete_reason = if !is_authenticated {
         "unauthenticated".to_string()
     } else if config.chat_onboarding_completed {
@@ -351,7 +358,7 @@ pub(crate) async fn compute_state(config: &Config) -> OnboardingState {
     } else if ready_to_complete {
         "criteria_met".to_string()
     } else {
-        "fewer_than_min_exchanges_and_no_skills_connected".to_string()
+        "no_apps_connected".to_string()
     };
 
     OnboardingState {
@@ -376,7 +383,7 @@ mod tests {
             "pending",
             0,
             false,
-            "fewer_than_min_exchanges_and_no_skills_connected",
+            "no_apps_connected",
             &[],
             json!({"gmail": false}),
         );
@@ -403,7 +410,7 @@ mod tests {
             "pending",
             2,
             false,
-            "fewer_than_min_exchanges_and_no_skills_connected",
+            "no_apps_connected",
             &["gmail".to_string(), "github".to_string()],
             json!({"gmail": true, "whatsapp": false}),
         );
@@ -434,37 +441,56 @@ mod tests {
     }
 
     #[test]
-    fn criteria_not_met_zero_exchanges_no_composio() {
-        assert!(!engagement_criteria_met(0, 0));
+    fn criteria_not_met_no_webview_no_composio() {
+        let logins = json!({"gmail": false, "whatsapp": false});
+        assert!(!engagement_criteria_met(&logins, 0));
     }
 
     #[test]
-    fn criteria_not_met_exchanges_only() {
-        // Exchanges alone are no longer sufficient — need at least 1 Composio connection.
-        assert!(!engagement_criteria_met(MIN_EXCHANGES_TO_COMPLETE, 0));
+    fn criteria_not_met_empty_webview() {
+        let logins = json!({});
+        assert!(!engagement_criteria_met(&logins, 0));
     }
 
     #[test]
-    fn criteria_not_met_composio_only() {
-        // Composio alone is not sufficient — need minimum exchanges too.
-        assert!(!engagement_criteria_met(0, 1));
+    fn criteria_met_via_webview_login() {
+        let logins = json!({"gmail": false, "whatsapp": true});
+        assert!(engagement_criteria_met(&logins, 0));
     }
 
     #[test]
-    fn criteria_met_both_present() {
-        assert!(engagement_criteria_met(MIN_EXCHANGES_TO_COMPLETE, 1));
+    fn criteria_met_via_composio() {
+        let logins = json!({"gmail": false});
+        assert!(engagement_criteria_met(&logins, 1));
     }
 
     #[test]
-    fn premature_complete_error_mentions_integration_and_exchanges() {
-        let msg = build_not_ready_to_complete_error(1, 0);
+    fn criteria_met_both_webview_and_composio() {
+        let logins = json!({"telegram": true});
+        assert!(engagement_criteria_met(&logins, 2));
+    }
+
+    #[test]
+    fn premature_complete_error_no_apps() {
+        let msg = build_not_ready_to_complete_error("no_apps_connected");
         assert!(
-            msg.contains("at least one connected integration is required"),
-            "missing integration requirement: {msg}"
+            msg.contains("hasn't connected any apps"),
+            "unexpected wording: {msg}"
         );
+    }
+
+    #[test]
+    fn premature_complete_error_unauthenticated() {
+        let msg = build_not_ready_to_complete_error("unauthenticated");
+        assert!(msg.contains("not signed in"), "unexpected wording: {msg}");
+    }
+
+    #[test]
+    fn premature_complete_error_already_complete() {
+        let msg = build_not_ready_to_complete_error("already_complete");
         assert!(
-            msg.contains("2 more exchange(s) needed"),
-            "dynamic counters: {msg}"
+            msg.contains("already complete"),
+            "unexpected wording: {msg}"
         );
     }
 }

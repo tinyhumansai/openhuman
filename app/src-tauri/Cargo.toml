@@ -72,6 +72,8 @@ tokio-tungstenite = { version = "0.24", default-features = false, features = ["c
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rand = "0.9"
+hex = "0.4"
 # Tauri's vendored dev-server proxy (see `vendor/tauri-cef/.../protocol/tauri.rs`)
 # builds a reqwest 0.13 client that requires a process-wide rustls
 # `CryptoProvider`. Without one, `ClientBuilder::build()` panics with
@@ -80,6 +82,14 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 log = "0.4"
 env_logger = "0.11"
+
+# Sentry for the Tauri shell (desktop host) process — separate Sentry project
+# from the React frontend and the Rust core sidecar. DSN is baked at compile
+# time via `option_env!("OPENHUMAN_TAURI_SENTRY_DSN")` in `lib.rs::run()` and
+# can be overridden at runtime via the same env var. Feature set mirrors the
+# core sidecar (`Cargo.toml` at repo root) minus `tracing` since the shell
+# uses `log` + `env_logger`.
+sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
 
 # Used by the imessage_scanner module.
 anyhow = "1.0"
@@ -97,10 +107,10 @@ cef = { version = "=146.4.1", default-features = false }
 
 # Core domain logic, embedded in-process so the core's HTTP/JSON-RPC server
 # runs as a tokio task inside the Tauri host. Avoids the orphan-sidecar class
-# of bugs (#? — Cmd+Q leaving `openhuman-core` and CEF helpers behind) by
-# tying the core's lifetime to the GUI process. The existing port-7788
+# of bugs (PR #1061: Cmd+Q leaving `openhuman-core` and CEF helpers behind)
+# by tying the core's lifetime to the GUI process. The existing port-7788
 # probe in `core_process::ensure_running` still attaches to a running
-# `openhuman core run` harness when one is already listening.
+# `openhuman-core run` harness when one is already listening.
 openhuman_core = { path = "../..", package = "openhuman", default-features = false }
 
 [target.'cfg(unix)'.dependencies]

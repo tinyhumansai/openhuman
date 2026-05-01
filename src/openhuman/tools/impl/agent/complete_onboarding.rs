@@ -2,14 +2,12 @@
 //!
 //! Used exclusively by the **welcome** agent. This is the finalizer
 //! half of the pair; the read-only inspection lives in
-//! [`crate::openhuman::tools::implementations::agent::check_onboarding_status`].
+//! [`super::check_onboarding_status`].
 //!
 //! Flips `chat_onboarding_completed` to `true` and seeds recurring
-//! proactive cron jobs. Rejects (returns a
-//! [`ToolResult::error`]) if the user has not yet met the minimum
-//! engagement threshold — at least
-//! [`onboarding_status::MIN_EXCHANGES_TO_COMPLETE`] welcome-agent exchanges
-//! **and** at least one connected Composio integration.
+//! proactive cron jobs. Rejects (returns a [`ToolResult::error`]) if
+//! the user has not yet connected any apps — at least one webview
+//! login or one Composio integration is required.
 
 use crate::openhuman::config::Config;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult, ToolScope};
@@ -48,8 +46,8 @@ impl Tool for CompleteOnboardingTool {
          `ready_to_complete: true` — the tool re-checks the criteria \
          server-side and **rejects** premature calls with a descriptive \
          error so the agent knows to keep conversing. Rejects when the \
-         user is unauthenticated, or when they have fewer than the \
-         required exchange count AND no connected Composio integrations."
+         user is unauthenticated, or when they have not connected any \
+         apps (no webview logins and no Composio integrations)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -97,7 +95,8 @@ async fn complete() -> anyhow::Result<ToolResult> {
     }
 
     // ── Engagement guard ──────────────────────────────────────────
-    let state = compute_state(&config).await;
+    let webview_logins = crate::openhuman::webview_accounts::detect_webview_logins();
+    let state = compute_state(&config, &webview_logins).await;
     tracing::debug!(
         exchange_count = state.exchange_count,
         composio_connections = state.composio_connected_toolkits.len(),
@@ -107,8 +106,7 @@ async fn complete() -> anyhow::Result<ToolResult> {
 
     if !state.ready_to_complete {
         return Ok(ToolResult::error(build_not_ready_to_complete_error(
-            state.exchange_count,
-            state.composio_connected_toolkits.len() as u32,
+            &state.ready_to_complete_reason,
         )));
     }
 

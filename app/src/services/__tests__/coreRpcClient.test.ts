@@ -1,6 +1,8 @@
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { dispatchLocalAiMethod } from '../../lib/ai/localCoreAiMemory';
+import { CORE_RPC_TIMEOUT_MS } from '../../utils/config';
 import type { AccessibilityStatus, CommandResponse } from '../../utils/tauriCommands';
 import { callCoreRpc } from '../coreRpcClient';
 
@@ -292,6 +294,58 @@ describe('coreRpcClient', () => {
     expect(body.method).toBe('openhuman.auth_sub_segment');
   });
 
+  test('rejects with a timeout error when fetch does not resolve within CORE_RPC_TIMEOUT_MS', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.mocked(fetch);
+      // Simulate a hung core: the fetch never resolves, but we honor the
+      // AbortSignal so the client's timeout can tear us down.
+      fetchMock.mockImplementationOnce(
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = (init as RequestInit).signal as AbortSignal | undefined;
+            if (!signal) return;
+            const onAbort = () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            };
+            if (signal.aborted) onAbort();
+            else signal.addEventListener('abort', onAbort, { once: true });
+          })
+      );
+
+      const pending = callCoreRpc({ method: 'openhuman.threads_list' });
+      // Swallow the unhandled rejection that would otherwise be raised when
+      // advancing timers triggers the abort before the `await expect` below.
+      pending.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(CORE_RPC_TIMEOUT_MS + 1);
+
+      await expect(pending).rejects.toThrow(
+        `Core RPC openhuman.threads_list timed out after ${CORE_RPC_TIMEOUT_MS}ms`
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('does not trigger the timeout path when fetch resolves promptly', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: { ok: true } }),
+    } as Response);
+
+    const result = await callCoreRpc<{ ok: boolean }>({ method: 'openhuman.threads_list' });
+    expect(result).toEqual({ ok: true });
+
+    // Signal on the request init must be populated so the timeout path
+    // can tear down a real hung call.
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
   test('sends content-type json header and POST method', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({
@@ -304,5 +358,67 @@ describe('coreRpcClient', () => {
     expect(init.method).toBe('POST');
     const headers = init.headers as Record<string, string>;
     expect(headers['Content-Type']).toBe('application/json');
+  });
+
+  test('adds bearer token header in Tauri mode', async () => {
+    vi.resetModules();
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'core_rpc_url') return 'http://127.0.0.1:7788/rpc';
+      if (cmd === 'core_rpc_token') return 'test-local-token';
+      throw new Error(`unexpected command: ${cmd}`);
+    });
+    const { callCoreRpc: callFreshCoreRpc } = await import('../coreRpcClient');
+
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: {} }),
+    } as Response);
+
+    await callFreshCoreRpc({ method: 'openhuman.threads_list' });
+
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer test-local-token');
+  });
+
+  test('fails closed in Tauri mode when core rpc token is unavailable', async () => {
+    vi.resetModules();
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'core_rpc_url') return 'http://127.0.0.1:7788/rpc';
+      if (cmd === 'core_rpc_token') throw new Error('denied');
+      throw new Error(`unexpected command: ${cmd}`);
+    });
+    const { callCoreRpc: callFreshCoreRpc } = await import('../coreRpcClient');
+
+    await expect(callFreshCoreRpc({ method: 'openhuman.threads_list' })).rejects.toThrow(
+      'Core RPC token unavailable in Tauri; local RPC auth cannot be satisfied'
+    );
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test('caches a missing token result after the first Tauri lookup failure', async () => {
+    vi.resetModules();
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'core_rpc_url') return 'http://127.0.0.1:7788/rpc';
+      if (cmd === 'core_rpc_token') throw new Error('denied');
+      throw new Error(`unexpected command: ${cmd}`);
+    });
+    const { callCoreRpc: callFreshCoreRpc } = await import('../coreRpcClient');
+
+    await expect(callFreshCoreRpc({ method: 'openhuman.threads_list' })).rejects.toThrow(
+      'Core RPC token unavailable in Tauri; local RPC auth cannot be satisfied'
+    );
+    await expect(callFreshCoreRpc({ method: 'openhuman.threads_list' })).rejects.toThrow(
+      'Core RPC token unavailable in Tauri; local RPC auth cannot be satisfied'
+    );
+
+    const tokenCalls = vi
+      .mocked(invoke)
+      .mock.calls.filter(([cmd]) => cmd === 'core_rpc_token').length;
+    expect(tokenCalls).toBe(1);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

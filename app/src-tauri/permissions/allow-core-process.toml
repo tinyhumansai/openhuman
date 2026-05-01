@@ -5,6 +5,7 @@ description = "Core RPC URL, sidecar restart, dictation hotkey, webview-account,
 [permission.commands]
 allow = [
     "core_rpc_url",
+    "core_rpc_token",
     "restart_core_process",
     # `restart_app` triggers `app.restart()` so CEF re-initializes against
     # the active user's `users/<id>/cef` profile after an identity flip

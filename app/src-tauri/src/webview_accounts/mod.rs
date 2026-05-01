@@ -243,10 +243,23 @@ fn popup_should_navigate_parent(provider: &str, url: &Url) -> Option<Url> {
                 return None;
             }
             if is_google_auth_popup(url) {
-                Some(url.clone())
-            } else {
-                None
+                return Some(url.clone());
             }
+            // Gmeet: "Start an instant meeting" / "New meeting" / clicking
+            // a meeting code link calls `window.open(meet.google.com/<roomid>)`
+            // to launch the room. Default popup handling would route the
+            // URL to the user's system browser, leaking the Meet session
+            // out of OpenHuman entirely. Deny the popup and navigate the
+            // embedded parent into the room URL instead — matches the
+            // user's expectation that the meeting stays in-app.
+            if provider == "google-meet" {
+                if let Some(host) = url.host_str() {
+                    if host == "meet.google.com" {
+                        return Some(url.clone());
+                    }
+                }
+            }
+            None
         }
         _ => None,
     }
@@ -1080,12 +1093,17 @@ fn redact_url_for_log(raw: &str) -> String {
 }
 
 /// Grow the first-cold-open webview back to its full requested bounds and
-/// notify the frontend — exactly once per account open. Called from the
-/// three independent signals (native `WebviewBuilder::on_page_load`, CDP
-/// `Page.loadEventFired`, 15 s watchdog) — the first one wins and the rest
-/// short-circuit via `WebviewAccountsState.loaded_accounts`. Resetting
-/// happens in `webview_account_close` / `webview_account_purge` so a reopen
-/// fires again.
+/// notify the frontend once the page is actually loaded. Called from three
+/// signals (native `WebviewBuilder::on_page_load`, CDP `Page.loadEventFired`,
+/// and the 15 s watchdog).
+///
+/// Timeout is a non-terminal state: we emit `webview-account:load{state:
+/// "timeout"}` so the frontend can show retry/help UI, but we deliberately do
+/// NOT reveal or mark the account as loaded yet. If a later `finished` signal
+/// arrives, that call still reveals and emits `state:"finished"`.
+///
+/// Resetting the terminal loaded marker happens in `webview_account_close` /
+/// `webview_account_purge` so a reopen fires again.
 ///
 /// Doing the `set_size` server-side (instead of waiting for the frontend to
 /// invoke `webview_account_reveal`) avoids an extra IPC round-trip and the
@@ -1110,12 +1128,50 @@ pub(crate) fn emit_load_finished<R: Runtime>(
         return;
     };
 
-    let is_first = app_state
+    if state == "timeout" {
+        // If we've already observed a terminal load, ignore late watchdogs.
+        let already_loaded = app_state
+            .loaded_accounts
+            .lock()
+            .unwrap()
+            .contains(account_id);
+        if already_loaded {
+            log::debug!(
+                "[webview-accounts][{}] timeout deduped after terminal load url={}",
+                account_id,
+                url
+            );
+            return;
+        }
+
+        log::info!(
+            "[webview-accounts][{}] load timeout event url={}",
+            account_id,
+            redact_url_for_log(url)
+        );
+        if let Err(err) = app.emit(
+            "webview-account:load",
+            serde_json::json!({
+                "account_id": account_id,
+                "state": state,
+                "url": url,
+            }),
+        ) {
+            log::warn!(
+                "[webview-accounts][{}] emit webview-account:load(timeout) failed: {}",
+                account_id,
+                err
+            );
+        }
+        return;
+    }
+
+    let is_first_terminal = app_state
         .loaded_accounts
         .lock()
         .unwrap()
         .insert(account_id.to_string());
-    if !is_first {
+    if !is_first_terminal {
         log::debug!(
             "[webview-accounts][{}] load event deduped state={} url={}",
             account_id,
@@ -1439,6 +1495,40 @@ pub async fn webview_account_open<R: Runtime>(
                 err
             );
         }
+        // Google Meet: when Google's edge SSR-redirects the post-account-
+        // picker URL to `workspace.google.com/products/meet/...` (the
+        // marketing landing page), `workspace.google.com` matches the
+        // bare `google.com` suffix in `provider_allowed_hosts` so
+        // `url_is_internal` would commit the navigation and the user
+        // would land on the Workspace marketing page instead of Meet.
+        // Catch this here and replace the parent URL with the canonical
+        // Meet entry point so the embedded view stays on the app.
+        if nav_provider == "google-meet" {
+            if let Some(host) = url.host_str() {
+                if host == "workspace.google.com" || host.ends_with(".workspace.google.com") {
+                    log::info!(
+                        "[webview-accounts] gmeet workspace marketing redirect intercepted ({}); rewriting parent to https://meet.google.com/",
+                        url
+                    );
+                    let app = nav_app.clone();
+                    let label = nav_label.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Some(wv) = app.get_webview(&label) {
+                            if let Ok(target) = Url::parse("https://meet.google.com/") {
+                                if let Err(e) = wv.navigate(target) {
+                                    log::warn!(
+                                        "[webview-accounts] gmeet workspace rewrite navigate failed label={} err={}",
+                                        label,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    });
+                    return false;
+                }
+            }
+        }
         if let Some(rewritten) = rewrite_provider_deep_link(&nav_provider, url) {
             log::info!(
                 "[webview-accounts] deep-link rewrite {} → {} (provider={})",
@@ -1578,31 +1668,42 @@ pub async fn webview_account_open<R: Runtime>(
         builder = builder.devtools(true);
     }
 
-    // Wire the native page-load signal so the frontend can hide its spinner as
-    // soon as CEF's LoadHandler reports the main frame finished. Dedup against
-    // the CDP `Page.loadEventFired` subscription and the 15 s watchdog through
-    // `emit_load_finished` so we only fire the first winning signal per open.
+    // Wire the native page-load signal and forward only *usable* load
+    // completions to `emit_load_finished`:
+    //   - skip placeholder `about:blank#openhuman-acct-*` commits (otherwise
+    //     we reveal a blank viewport before real content arrives),
+    //   - treat Chromium network error pages (`chrome-error://…`) as timeout
+    //     signals so frontend shows retry/help UI instead of the dino page.
     //
-    // Skip `data:` URLs: an early placeholder shape on some platforms
-    // fires `Finished` synchronously and we don't want to dedup-claim
-    // the load slot on it.
-    //
-    // We deliberately do NOT skip `about:blank#…` here: in practice the
-    // CDP `Page.loadEventFired` subscription isn't reaching us reliably
-    // (Gmail finishes loading but the event doesn't fire through
-    // pump_events — separate triage). The `about:blank` native load
-    // fires within ~50ms of spawn and is the only fast-path reveal we
-    // get. The downside is the user sees the placeholder briefly until
-    // the real provider page paints — better than waiting 15 s for the
-    // watchdog timeout.
+    // Real provider commits still emit `finished`. Dedup against CDP
+    // `Page.loadEventFired` + watchdog happens in `emit_load_finished`.
     let page_load_app = app.clone();
     let page_load_account_id = args.account_id.clone();
+    let page_load_placeholder_fragment = format!("#{}", cdp::placeholder_marker(&args.account_id));
+    let page_load_real_url = real_url_str.clone();
     builder = builder.on_page_load(move |_webview, payload| {
         if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
             return;
         }
         let url = payload.url();
         if url.scheme() == "data" {
+            return;
+        }
+        if !skip_cdp_for_debug && url.as_str().ends_with(&page_load_placeholder_fragment) {
+            log::debug!(
+                "[webview-accounts][{}] skipping placeholder native-finished url={}",
+                page_load_account_id,
+                redact_url_for_log(url.as_str())
+            );
+            return;
+        }
+        if url.scheme() == "chrome-error" {
+            emit_load_finished(
+                &page_load_app,
+                &page_load_account_id,
+                "timeout",
+                &page_load_real_url,
+            );
             return;
         }
         emit_load_finished(
@@ -2703,6 +2804,56 @@ mod tests {
             &url("https://accounts.google.com/signin/v2/identifier"),
         )
         .is_some());
+    }
+
+    #[test]
+    fn gmeet_room_popup_navigates_parent() {
+        // "Start an instant meeting" / "New meeting" calls
+        // window.open(meet.google.com/<roomid>) to launch a room.
+        // Without intervention this would route to system Chrome and
+        // leak the meeting out of OpenHuman.
+        assert_eq!(
+            popup_should_navigate_parent(
+                "google-meet",
+                &url("https://meet.google.com/abc-defg-hij"),
+            )
+            .map(|u| u.to_string()),
+            Some("https://meet.google.com/abc-defg-hij".to_string())
+        );
+    }
+
+    #[test]
+    fn gmeet_landing_popup_navigates_parent() {
+        // Bare meet.google.com (no room code) should also be kept
+        // in-app — matches the "back to Meet home" UX after hangup.
+        assert!(
+            popup_should_navigate_parent("google-meet", &url("https://meet.google.com/"),)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn gmeet_workspace_popup_does_not_navigate_parent() {
+        // workspace.google.com is the marketing page; if it ever
+        // arrives via window.open() we let the default external-route
+        // logic handle it (covered in the on_navigation rewrite path
+        // separately).
+        assert!(popup_should_navigate_parent(
+            "google-meet",
+            &url("https://workspace.google.com/products/meet/"),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn gmeet_unrelated_popup_does_not_navigate_parent() {
+        // External link in the post-call review screen, for instance.
+        // Should NOT navigate the parent — should fall through to the
+        // system-browser path.
+        assert!(
+            popup_should_navigate_parent("google-meet", &url("https://example.com/blog"),)
+                .is_none()
+        );
     }
 
     #[test]

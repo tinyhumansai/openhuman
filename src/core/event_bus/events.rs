@@ -65,6 +65,13 @@ pub enum DomainEvent {
     },
     /// A memory recall query completed.
     MemoryRecalled { query: String, hit_count: usize },
+    /// A memory sync was requested for a specific channel or all channels.
+    ///
+    /// Published by `openhuman.memory_sync_channel` (channel_id = Some(...)) and
+    /// `openhuman.memory_sync_all` (channel_id = None). No consumers exist yet —
+    /// this variant is a hook for future ingestion subscribers to react to pull
+    /// requests. See `src/openhuman/memory/ops.rs` for the RPC handlers.
+    MemorySyncRequested { channel_id: Option<String> },
 
     // ── Channels ────────────────────────────────────────────────────────
     /// An inbound channel message from the transport layer, ready for processing.
@@ -357,7 +364,9 @@ impl DomainEvent {
             | Self::SubagentCompleted { .. }
             | Self::SubagentFailed { .. } => "agent",
 
-            Self::MemoryStored { .. } | Self::MemoryRecalled { .. } => "memory",
+            Self::MemoryStored { .. }
+            | Self::MemoryRecalled { .. }
+            | Self::MemorySyncRequested { .. } => "memory",
 
             Self::ChannelInboundMessage { .. }
             | Self::ChannelMessageReceived { .. }

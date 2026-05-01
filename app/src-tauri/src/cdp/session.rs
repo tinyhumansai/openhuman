@@ -30,8 +30,8 @@ use crate::webview_accounts::emit_load_finished;
 const ATTACH_BACKOFF: Duration = Duration::from_secs(2);
 
 /// Watchdog budget before we synthesise a `webview-account:load` event with
-/// `state: "timeout"` so the frontend never holds its loading spinner open on
-/// a flaky network. Matches the timeout documented in issue #867.
+/// `state: "timeout"` so the frontend can switch from an empty loading state
+/// to explicit retry/help UI on flaky networks. Matches issue #867.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Returns the unique marker substring that the account's initial
@@ -54,6 +54,49 @@ pub fn target_url_fragment(account_id: &str) -> String {
 /// unique per account without depending on Tauri's optional `data:` support.
 pub fn placeholder_url(account_id: &str) -> String {
     format!("about:blank#{}", placeholder_marker(account_id))
+}
+
+/// Extract the origin (`scheme://host[:port]`) from an absolute URL string.
+/// Used to scope `Browser.grantPermissions` — the CDP method requires an
+/// origin (no path / no fragment / no query) and rejects malformed input.
+///
+/// Returns `None` for non-`http(s)://` schemes (e.g. `about:blank`,
+/// `data:`, `blob:`) where the grant has no meaningful target, and for
+/// any input that fails to parse as an absolute URL.
+///
+/// Implementation note: uses Tauri's re-exported `url::Url` so query
+/// strings, fragments, userinfo, and IPv6 hosts are handled correctly
+/// instead of relying on raw byte counting.
+fn origin_of(url: &str) -> Option<String> {
+    let parsed = tauri::Url::parse(url).ok()?;
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    // `Url::host_str` is the canonical lowercased host. We only emit a
+    // bare `scheme://host[:port]` triple — no userinfo, no path, no
+    // query, no fragment — since `Browser.grantPermissions` rejects
+    // anything else as a malformed origin.
+    let host = parsed.host_str()?;
+    if let Some(port) = parsed.port() {
+        Some(format!("{scheme}://{host}:{port}"))
+    } else {
+        Some(format!("{scheme}://{host}"))
+    }
+}
+
+/// Does `origin` (a `scheme://host[:port]` string from [`origin_of`]) match
+/// a specific host? Tolerates an explicit port suffix on `origin` so the
+/// callers can pass canonical hosts without hard-coding default ports.
+fn origin_host_is(origin: &str, host: &str) -> bool {
+    let Some(rest) = origin
+        .strip_prefix("https://")
+        .or_else(|| origin.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let host_part = rest.split(':').next().unwrap_or(rest);
+    host_part.eq_ignore_ascii_case(host)
 }
 
 fn target_matches_account_url(target_url: &str, account_id: &str) -> bool {
@@ -91,11 +134,13 @@ pub fn spawn_session<R: Runtime>(
     // CDP `Page.loadEventFired` signal arrives (flaky network, provider
     // blocking, CDP socket hiccup).
     //
-    // `emit_load_finished` dedups via `WebviewAccountsState.loaded_accounts`
-    // so a late watchdog is a no-op once either signal has fired. The
-    // returned `JoinHandle` is stored in `WebviewAccountsState.load_watchdogs`
-    // and aborted on close/purge so a watchdog spawned for a vanished
-    // account can't fire a stale timeout against a freshly-reused id.
+    // `emit_load_finished` only treats terminal load signals (`finished`) as
+    // dedup markers. If the watchdog fires first, frontend sees `timeout`
+    // and can show retry UI; a later real `finished` signal can still reveal.
+    // Late watchdogs after a terminal load are no-ops. The returned
+    // `JoinHandle` is stored in `WebviewAccountsState.load_watchdogs` and
+    // aborted on close/purge so a watchdog spawned for a vanished account
+    // can't fire a stale timeout against a freshly-reused id.
     let watchdog = {
         let app = app.clone();
         let account_id = account_id.clone();
@@ -232,6 +277,66 @@ async fn run_session_cycle<R: Runtime>(
         account_id
     );
 
+    // The JS shim above masks `Notification.permission` so providers stop
+    // showing "enable notifications" banners, but it does NOT cause CEF's
+    // real native-toast pipeline to fire. For that we have to actually grant
+    // `notifications` for the provider's origin via the browser-level
+    // `Browser.grantPermissions` CDP method (sessionId = None routes to the
+    // browser target). With this grant, `new Notification(...)` from the
+    // page reaches the CEF helper's notify-IPC, which posts back to
+    // `forward_native_notification` in `webview_accounts`. Without it,
+    // the constructor silently no-ops and no toast ever fires (#1016).
+    if let Some(origin) = origin_of(&real_url) {
+        // Default permission set every embedded provider needs. Origin-scoped
+        // so we don't leak grants across providers running in the same CEF
+        // browser process.
+        let mut perms: Vec<&str> = vec!["notifications"];
+
+        // Google Meet additionally needs:
+        //   - audioCapture / videoCapture: getUserMedia for cam/mic so the
+        //     pre-call greenroom auto-grants instead of falling back to
+        //     Meet's "Use microphone and camera" consent dialog
+        //   - displayCapture: getDisplayMedia for screen-share present
+        //   - clipboardReadWrite: copy meeting link / paste join code
+        // Without these, Meet sits on the consent dialog forever and cam/mic
+        // never enumerate (verified during #1022 smoke).
+        if origin_host_is(&origin, "meet.google.com") {
+            perms.extend_from_slice(&[
+                "audioCapture",
+                "videoCapture",
+                "displayCapture",
+                "clipboardReadWrite",
+            ]);
+        }
+
+        if let Err(e) = cdp
+            .call(
+                "Browser.grantPermissions",
+                json!({
+                    "origin": origin,
+                    "permissions": perms,
+                }),
+                None,
+            )
+            .await
+        {
+            log::warn!(
+                "[cdp-session][{}] Browser.grantPermissions({:?}) for {} failed: {}",
+                account_id,
+                perms,
+                origin,
+                e
+            );
+        } else {
+            log::info!(
+                "[cdp-session][{}] granted {:?} for origin={}",
+                account_id,
+                perms,
+                origin
+            );
+        }
+    }
+
     // Enable the Page domain so `Page.loadEventFired` reaches our
     // `pump_events` callback below. Must happen BEFORE `Page.navigate` so
     // the first top-level load event for the real provider URL isn't missed.
@@ -291,6 +396,74 @@ mod tests {
             placeholder_url("acct-42"),
             "about:blank#openhuman-acct-acct-42"
         );
+    }
+
+    #[test]
+    fn origin_of_strips_path_query_and_fragment() {
+        assert_eq!(
+            origin_of("https://app.slack.com/client/T123/C456?foo=bar#frag"),
+            Some("https://app.slack.com".to_string())
+        );
+    }
+
+    #[test]
+    fn origin_of_preserves_explicit_port() {
+        assert_eq!(
+            origin_of("http://localhost:7788/health"),
+            Some("http://localhost:7788".to_string())
+        );
+    }
+
+    #[test]
+    fn origin_of_returns_none_for_non_http_schemes() {
+        assert_eq!(origin_of("about:blank"), None);
+        assert_eq!(origin_of("data:text/plain,hello"), None);
+        assert_eq!(origin_of("blob:https://app.slack.com/abc"), None);
+        assert_eq!(origin_of("file:///etc/hosts"), None);
+    }
+
+    #[test]
+    fn origin_of_returns_none_for_malformed_input() {
+        assert_eq!(origin_of(""), None);
+        assert_eq!(origin_of("not-a-url"), None);
+        assert_eq!(origin_of("http://"), None);
+    }
+
+    #[test]
+    fn origin_of_lowercases_host() {
+        // tauri::Url normalises to lowercase host so we never grant
+        // permissions twice for `Slack.com` vs `slack.com`.
+        assert_eq!(
+            origin_of("https://APP.SLACK.COM/client"),
+            Some("https://app.slack.com".to_string())
+        );
+    }
+
+    #[test]
+    fn origin_host_is_matches_canonical_origin() {
+        assert!(origin_host_is("https://meet.google.com", "meet.google.com"));
+        assert!(origin_host_is(
+            "http://meet.google.com:8080",
+            "meet.google.com"
+        ));
+        assert!(origin_host_is("https://MEET.GOOGLE.COM", "meet.google.com"));
+    }
+
+    #[test]
+    fn origin_host_is_rejects_non_match() {
+        // Different host
+        assert!(!origin_host_is(
+            "https://workspace.google.com",
+            "meet.google.com"
+        ));
+        // Subdomain mismatch
+        assert!(!origin_host_is(
+            "https://chat.meet.google.com",
+            "meet.google.com"
+        ));
+        // Non-http scheme
+        assert!(!origin_host_is("about:blank", "meet.google.com"));
+        assert!(!origin_host_is("file:///etc/hosts", "meet.google.com"));
     }
 
     #[test]

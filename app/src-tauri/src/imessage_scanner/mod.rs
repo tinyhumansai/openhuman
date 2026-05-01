@@ -179,15 +179,15 @@ fn chat_allowed(chat_id: &str, allowed: &[String]) -> bool {
 /// - `Err(_)` on transport or parse errors (caller should retry next tick)
 #[cfg(target_os = "macos")]
 async fn fetch_imessage_gate() -> anyhow::Result<Option<Vec<String>>> {
-    let url = std::env::var("OPENHUMAN_CORE_RPC_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".into());
+    let url = crate::core_rpc::core_rpc_url_value();
     let body = json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "openhuman.config_get",
         "params": {}
     });
-    let res = http_client().post(&url).json(&body).send().await?;
+    let req = crate::core_rpc::apply_auth(http_client().post(&url)).map_err(anyhow::Error::msg)?;
+    let res = req.json(&body).send().await?;
     if !res.status().is_success() {
         anyhow::bail!("config_get http {}", res.status());
     }
@@ -407,8 +407,7 @@ fn message_body(m: &chatdb::Message) -> String {
 #[cfg(target_os = "macos")]
 async fn ingest_group(account_id: &str, key: &str, transcript: String) -> anyhow::Result<()> {
     let (chat_id, day) = key.split_once(':').unwrap_or((key, ""));
-    let url = std::env::var("OPENHUMAN_CORE_RPC_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".into());
+    let url = crate::core_rpc::core_rpc_url_value();
 
     let body = json!({
         "jsonrpc": "2.0",
@@ -430,7 +429,8 @@ async fn ingest_group(account_id: &str, key: &str, transcript: String) -> anyhow
         }
     });
 
-    let res = http_client().post(&url).json(&body).send().await?;
+    let req = crate::core_rpc::apply_auth(http_client().post(&url)).map_err(anyhow::Error::msg)?;
+    let res = req.json(&body).send().await?;
 
     if !res.status().is_success() {
         anyhow::bail!("core rpc {}: {}", res.status(), res.text().await?);

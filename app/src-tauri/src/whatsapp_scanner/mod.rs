@@ -68,6 +68,11 @@ pub struct ScanSnapshot {
     pub messages: Vec<Value>,
     /// DOM-scraped rendered bodies; merged into `messages` by id.
     pub dom_messages: Vec<Value>,
+    /// Active chat's display name parsed from
+    /// `header[data-testid="conversation-header"]`. Used by the merge step
+    /// to reverse-look-up `chatId` for DOM rows that lack one (modern
+    /// WhatsApp Web doesn't expose chat JID anywhere on the message rows).
+    pub active_chat_name: Option<String>,
 }
 
 /// Spawn a per-account CDP poller. Idempotent at call site (caller tracks
@@ -276,8 +281,9 @@ async fn scan_once<R: Runtime>(
         }
     }
     match dom_snapshot::capture_messages(&mut cdp, &page_session).await {
-        Ok((rows, _hash)) => {
+        Ok((rows, _hash, active_chat_name)) => {
             snap.dom_messages = rows.iter().map(dom_snapshot::DomMessage::to_json).collect();
+            snap.active_chat_name = active_chat_name;
         }
         Err(e) => {
             // Fast-tick DOM scans will retry every 2s, so degrade gracefully.
@@ -345,7 +351,7 @@ async fn scan_dom_once(
             None,
         )
         .await;
-    let (rows, hash) = captured?;
+    let (rows, hash, _active_chat_name) = captured?;
     let dom_messages: Vec<Value> = rows.iter().map(dom_snapshot::DomMessage::to_json).collect();
     log::debug!(
         "[wa][{}] fast dom-scan rows={} hash={}",
@@ -484,6 +490,49 @@ fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSn
         );
         return;
     }
+    // Resolve the active chat's JID from its display name (parsed from the
+    // conversation header). Modern WhatsApp Web doesn't put the chat JID
+    // anywhere on individual message rows or in the URL, so this is the
+    // only signal we have. The IDB-side `chats` map has `name → jid` (we
+    // store it as `jid → {name, …}`, so iterate). Match prefers exact
+    // case-sensitive equality and falls back to case-insensitive; ignore
+    // ambiguous matches (multiple chats with the same display name) so we
+    // don't mis-attribute messages.
+    let active_chat_jid: Option<String> = snap.active_chat_name.as_deref().and_then(|name| {
+        let name_lc = name.to_ascii_lowercase();
+        let mut exact: Vec<&str> = Vec::new();
+        let mut ci: Vec<&str> = Vec::new();
+        let mut substring: Vec<&str> = Vec::new();
+        for (jid, chat) in snap.chats.iter() {
+            let chat_name = chat.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if chat_name == name {
+                exact.push(jid);
+            } else if !chat_name.is_empty() && chat_name.to_ascii_lowercase() == name_lc {
+                ci.push(jid);
+            } else if !chat_name.is_empty()
+                && (chat_name.to_ascii_lowercase().contains(&name_lc)
+                    || name_lc.contains(&chat_name.to_ascii_lowercase()))
+            {
+                substring.push(jid);
+            }
+        }
+        // Prefer exact > case-insensitive > substring. Substring only wins
+        // when there's exactly one candidate (avoids cross-attribution when
+        // many chats share a token like a common first name).
+        match (exact.len(), ci.len(), substring.len()) {
+            (1, _, _) => Some(exact[0].to_string()),
+            (0, 1, _) => Some(ci[0].to_string()),
+            (0, 0, 1) => Some(substring[0].to_string()),
+            _ => None,
+        }
+    });
+    log::info!(
+        "[wa][{}] active chat resolution: name={:?} → jid={:?} chats_in_map={}",
+        account_id,
+        snap.active_chat_name,
+        active_chat_jid,
+        snap.chats.len()
+    );
     // Join DOM-scraped bodies into the messages list by msgId. WhatsApp
     // caches decrypted bodies in memory, so IndexedDB gives us metadata and
     // the DOM gives us text for currently-rendered chats — unioning them
@@ -525,7 +574,19 @@ fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSn
                 continue;
             }
             if let Some(mid) = mid_opt {
-                if let Some((did, dm)) = by_msg_id.get(&mid).cloned() {
+                // Try the full IDB id first (legacy compound `"true_chat_msg"`),
+                // then fall back to the bare msgId tail. Current WhatsApp Web
+                // (observed 2026-04-30) emits only the bare msgId on DOM rows
+                // while IDB still keys by the compound `_serialized` form, so
+                // the tail is the only segment that matches across both
+                // sources. `splitn` keeps the msgId intact when it contains
+                // underscores (legacy edge case).
+                let bare_mid = mid.rsplitn(2, '_').next().map(str::to_string);
+                let lookup = by_msg_id
+                    .get(&mid)
+                    .cloned()
+                    .or_else(|| bare_mid.as_deref().and_then(|b| by_msg_id.get(b).cloned()));
+                if let Some((did, dm)) = lookup {
                     if consumed.contains(&did) {
                         continue;
                     }
@@ -553,9 +614,26 @@ fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSn
                 .map(|s| !s.is_empty())
                 .unwrap_or(false)
             {
+                // Modern WhatsApp Web's DOM rows don't carry chatId. Fall
+                // back to the active conversation's JID (resolved above
+                // from the conversation header). Without this stamp,
+                // emit_grouped_whatsapp drops the row at its non-empty
+                // chat_id check (line ~643), so memory ingest stays empty
+                // even though we have decrypted body text in hand. Group
+                // chats are still tricky here — `from_me`/`author` come
+                // from the per-row data-pre-plain-text — but the chatId
+                // (group JID) is whatever the user has open, which is the
+                // common case for an active scanner tick.
+                let dom_chat_id = dm
+                    .get("chatId")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| Value::String(s.to_string()))
+                    .or_else(|| active_chat_jid.clone().map(Value::String))
+                    .unwrap_or(Value::Null);
                 messages.push(json!({
                     "id": dm.get("dataId").cloned().unwrap_or(Value::Null),
-                    "chatId": dm.get("chatId").cloned().unwrap_or(Value::Null),
+                    "chatId": dom_chat_id,
                     "fromMe": dm.get("fromMe").cloned().unwrap_or(Value::Null),
                     "body": dm.get("body").cloned().unwrap_or(Value::Null),
                     "author": dm.get("author").cloned().unwrap_or(Value::Null),
@@ -773,13 +851,6 @@ fn emit_grouped_whatsapp<R: Runtime>(
     }
 }
 
-/// Resolve the core JSON-RPC URL — same rule as the `core_rpc_url` Tauri
-/// command in lib.rs: env var or default loopback port.
-fn core_rpc_url_value() -> String {
-    std::env::var("OPENHUMAN_CORE_RPC_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".to_string())
-}
-
 /// Build the `openhuman.memory_doc_ingest` payload for a single
 /// (chatId, day) group and POST it directly to the core. The shape
 /// mirrors `persistWhatsappChatDay` on the React side so the memory docs
@@ -883,13 +954,14 @@ async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), 
         "params": params,
     });
 
-    let url = core_rpc_url_value();
+    let url = crate::core_rpc::core_rpc_url_value();
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| format!("http client: {e}"))?;
-    let resp = client
-        .post(&url)
+    let req = crate::core_rpc::apply_auth(client.post(&url))
+        .map_err(|e| format!("prepare {url}: {e}"))?;
+    let resp = req
         .json(&body)
         .send()
         .await

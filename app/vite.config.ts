@@ -39,17 +39,42 @@ function maybeSentryPlugin(): PluginOption | null {
     project: process.env.SENTRY_PROJECT,
     release: { name: computeSentryRelease() },
     sourcemaps: {
-      // Vite emits hashed asset files under dist/assets/ — upload every
+      // Vite emits hashed asset files into `app/dist/assets/`. Upload every
       // .js / .map the build produces.
-      assets: ["../dist/**/*.js", "../dist/**/*.map"],
+      //
+      // `assets` is resolved by sentry-vite-plugin against `process.cwd()`,
+      // not the Vite `root` — so a relative path like `../dist/**` would
+      // miss when `pnpm tauri build` runs with cwd=`app/` and silently emit
+      // `Didn't find any matching sources for debug ID upload`. Use absolute
+      // paths anchored at this config file's directory (`app/`) to be
+      // immune to whatever cwd the parent process sets.
+      assets: [
+        resolve(__dirname, "dist/**/*.js"),
+        resolve(__dirname, "dist/**/*.map"),
+      ],
       // Never ship raw .map files to end users; the upload keeps a copy
       // server-side for symbolication while the bundled app strips them.
-      filesToDeleteAfterUpload: ["../dist/**/*.map"],
+      filesToDeleteAfterUpload: [resolve(__dirname, "dist/**/*.map")],
     },
     // Release tagging + commits are handled by sentry-cli / the plugin
     // itself when AUTH_TOKEN and CI env (GITHUB_SHA etc.) are present.
     telemetry: false,
   });
+}
+
+function guardCefRelListSupportsPlugin(): PluginOption {
+  return {
+    name: "openhuman:guard-cef-rel-list-supports",
+    enforce: "post",
+    renderChunk(code) {
+      const unsafe =
+        'relList && relList.supports && relList.supports("modulepreload")';
+      const guarded =
+        'relList && typeof relList.supports === "function" && relList.supports("modulepreload")';
+      const next = code.split(unsafe).join(guarded);
+      return next === code ? null : { code: next, map: null };
+    },
+  };
 }
 
 // https://vite.dev/config/
@@ -68,6 +93,10 @@ export default defineConfig(async () => ({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
+    // Desktop CEF has surfaced a runtime where `link.relList.supports` is
+    // truthy but not callable. Vite calls it both in the modulepreload
+    // polyfill and the dynamic-import preload helper, before React mounts.
+    modulePreload: false,
     // Emit source maps so @sentry/vite-plugin can upload them; the plugin
     // deletes the on-disk .map files after upload so users don't receive
     // them in the shipped bundle.
@@ -82,6 +111,7 @@ export default defineConfig(async () => ({
         global: true,
       },
     }),
+    guardCefRelListSupportsPlugin(),
     react(),
     maybeSentryPlugin(),
   ].filter(Boolean) as PluginOption[],

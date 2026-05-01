@@ -1,12 +1,13 @@
 //! System prompt builder for the `orchestrator` built-in agent.
 //!
-//! The orchestrator is a pure delegator — it never executes Composio
-//! actions itself. Its integration block is a `## Delegation Guide`
-//! that tells the model to `spawn_subagent(integrations_agent, toolkit=…)`
-//! for anything touching an external service. That prose lives here
-//! (not in the shared prompts module) so the skill-executor voice
-//! stays in `integrations_agent/prompt.rs` and nobody has to branch on
-//! `agent_id` in a shared section impl.
+//! The orchestrator follows a direct-first policy: respond directly or use
+//! cheap direct tools whenever possible, and delegate only for specialised
+//! execution. It never executes Composio actions itself; the integration
+//! block points to `spawn_subagent(integrations_agent, toolkit=…)` for true
+//! external-service operations. That prose lives here (not in the shared
+//! prompts module) so the skill-executor voice stays in
+//! `integrations_agent/prompt.rs` and nobody has to branch on `agent_id`
+//! in a shared section impl.
 
 use crate::openhuman::context::prompt::{
     render_datetime, render_tools, render_user_files, render_workspace, ConnectedIntegration,
@@ -132,6 +133,15 @@ mod tests {
     fn build_includes_datetime() {
         let body = build(&ctx_with(&[])).unwrap();
         assert!(body.contains("## Current Date & Time"));
+    }
+
+    #[test]
+    fn build_includes_direct_first_decision_tree() {
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(body.contains("## Delegation Decision Tree (Direct-First)"));
+        assert!(body.contains(
+            "Default bias: **do not spawn a sub-agent when a direct response or direct tool call is sufficient**."
+        ));
     }
 
     #[test]
