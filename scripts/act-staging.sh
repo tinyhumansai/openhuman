@@ -19,11 +19,11 @@
 #   by default. Real macOS notarization / Windows MSI signing cannot run here.
 #   For local debugging, restrict to `-j prepare-build` or pair with a
 #   matrix-platform filter via `--matrix settings.platform:ubuntu-22.04`.
-# - `git push origin staging` and tag pushes inside the container will hit the
-#   real GitHub remote with the inherited token. Use `-n` (dry run) or run
-#   only `prepare-build` with the bump/push steps short-circuited if you want
-#   to avoid that. Set ACT_DRY_TAG_PUSH=1 to inject a step that no-ops the
-#   real push.
+# - `git push origin main` and tag pushes inside the container will hit the
+#   real GitHub remote with the inherited token — every full run produces a
+#   real `vX.Y.Z-staging` tag and a real bump commit on upstream `main`.
+#   To avoid that, either pass `-n` for a dry run, or scope to a read-only
+#   slice with `--list` / a job that has no side effects.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
