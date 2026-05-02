@@ -57,9 +57,12 @@ on:
       with_macos_signing:
         description:
           When true, run the sign + notarize + repackage-DMG path for the macOS
-          matrix entries. Production sets this; staging skips it.
+          matrix entries. Default true — both production and staging ship
+          notarized macOS bundles so Gatekeeper accepts the staging build the
+          same way it accepts production. Disable only for fast local-style
+          dry runs that intentionally skip Apple's notary service.
         type: boolean
-        default: false
+        default: true
       with_release_upload:
         description:
           When true, upload installer assets to the GitHub Release identified by

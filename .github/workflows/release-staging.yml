@@ -170,7 +170,11 @@ jobs:
       app_env: staging
       build_profile: debug
       telegram_bot_username: alphahumantest_bot
-      with_macos_signing: false
+      # Notarize staging too — QA installs the bundle from the Actions
+      # artifact, and unnotarized .app launches are blocked by Gatekeeper on
+      # macOS ≥ 10.15 (“damaged and can’t be opened”) without out-of-band
+      # `xattr -dr com.apple.quarantine` workarounds.
+      with_macos_signing: true
       with_release_upload: false
       build_sidecar: true
 

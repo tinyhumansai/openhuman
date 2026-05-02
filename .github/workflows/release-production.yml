@@ -320,7 +320,8 @@ jobs:
       app_env: production
       build_profile: release
       telegram_bot_username: openhumanaibot
-      with_macos_signing: true
+      # with_macos_signing defaults to true — left implicit; production
+      # always notarizes. See build-desktop.yml inputs.
       with_release_upload: true
       release_id: ${{ needs.create-release.outputs.release_id }}
       build_sidecar: false
