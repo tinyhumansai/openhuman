@@ -177,6 +177,13 @@ jobs:
             echo "No staging tags found matching v*-staging."
             exit 1
           fi
+          # Reject anything that isn't a `vX.Y.Z-staging` tag we cut
+          # ourselves — keeps an operator from accidentally promoting a
+          # hand-pushed ref or a stray pre-release tag.
+          if ! [[ "$STAGING_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-staging$ ]]; then
+            echo "Invalid staging tag format: $STAGING_TAG (expected vX.Y.Z-staging)"
+            exit 1
+          fi
           if ! git rev-parse --verify "refs/tags/$STAGING_TAG" >/dev/null 2>&1; then
             echo "Staging tag not present locally: $STAGING_TAG"
             exit 1
@@ -186,14 +193,31 @@ jobs:
           PROD_VERSION="${STAGING_TAG#v}"
           PROD_VERSION="${PROD_VERSION%-staging}"
           PROD_TAG="v${PROD_VERSION}"
-          # Sanity-check the staging commit's manifests agree on the version
-          # — if they drift, the bundled installer will report a different
-          # version than the GitHub Release tag.
-          MANIFEST_VERSION="$(git show "${STAGING_TAG}:app/package.json" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>process.stdout.write(JSON.parse(d).version||""))')"
-          if [ "$MANIFEST_VERSION" != "$PROD_VERSION" ]; then
-            echo "Staging tag $STAGING_TAG version mismatch: tag implies $PROD_VERSION but app/package.json says $MANIFEST_VERSION"
-            exit 1
-          fi
+          # Sanity-check every authoritative version source on the staging
+          # commit. They must all agree with PROD_VERSION — if they drift,
+          # the bundled installer reports a different version than the
+          # GitHub Release tag, and the Sentry release tag stops matching
+          # what the running binary emits.
+          read_json_version() {
+            git show "${STAGING_TAG}:$1" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>process.stdout.write(JSON.parse(d).version||""))'
+          }
+          read_cargo_version() {
+            git show "${STAGING_TAG}:$1" | sed -n '/^\[package\]/,/^\[/{ s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p; }' | head -n 1
+          }
+          for src in \
+            "app/package.json" \
+            "app/src-tauri/tauri.conf.json" \
+            "app/src-tauri/Cargo.toml" \
+            "Cargo.toml"; do
+            case "$src" in
+              *.json) actual="$(read_json_version "$src")" ;;
+              *.toml) actual="$(read_cargo_version "$src")" ;;
+            esac
+            if [ "$actual" != "$PROD_VERSION" ]; then
+              echo "Staging tag $STAGING_TAG version mismatch: $src reports '$actual' but tag implies '$PROD_VERSION'"
+              exit 1
+            fi
+          done
           echo "staging_tag=$STAGING_TAG" >> "$GITHUB_OUTPUT"
           echo "staging_sha=$STAGING_SHA" >> "$GITHUB_OUTPUT"
           echo "prod_version=$PROD_VERSION" >> "$GITHUB_OUTPUT"
