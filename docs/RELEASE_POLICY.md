@@ -40,17 +40,19 @@ Two first-class GitHub Actions workflows, one per environment. Pick by intent ra
 
 | Workflow                                                | Branch    | Bumps   | Tags pushed                | Concurrency group       | Use when                                                              |
 | ------------------------------------------------------- | --------- | ------- | -------------------------- | ----------------------- | --------------------------------------------------------------------- |
-| [`release-staging.yml`](../.github/workflows/release-staging.yml) | `staging` | `patch` only | `v<version>-staging`        | `release-staging`       | Cutting a staging build for QA. Runs frequently; narrow semver moves. |
+| [`release-staging.yml`](../.github/workflows/release-staging.yml) | `main`    | `patch` only | `v<version>-staging`        | `release-staging`       | Cutting a staging build for QA. Runs frequently; narrow semver moves. |
 | [`release-production.yml`](../.github/workflows/release-production.yml) | `main`    | `patch` / `minor` / `major` (only on `main_head`) | `v<version>`                | `release-production`    | Promoting a validated staging tag, or hotfixing from `main` HEAD.     |
 
 The matrix build / sign / Sentry-DIF / artifact-upload pipeline used by both flows lives in [`.github/workflows/build-desktop.yml`](../.github/workflows/build-desktop.yml) as a `workflow_call` reusable workflow. The two top-level workflows above own ref resolution, version bumping, tagging, and publish/cleanup; the build itself is shared.
 
 ### Cutting a staging build
 
-1. Push to `staging` branch. Run **Release (Staging)** via `workflow_dispatch`.
-2. The workflow bumps `patch` on staging, commits `chore(staging): vX.Y.Z`, pushes the branch, and creates an immutable `vX.Y.Z-staging` tag at that commit.
-3. Build matrix runs from the **tag** (not the branch tip), so reruns rebuild byte-identical content even if `staging` has moved on.
-4. On failure the staging tag is auto-deleted; the bump commit stays so the next cut continues from `vX.Y.(Z+1)`.
+1. Run **Release (Staging)** via `workflow_dispatch` from `main`.
+2. The workflow bumps `patch` on `main`, commits `chore(staging): vX.Y.Z`, pushes the branch, and creates an immutable `vX.Y.Z-staging` tag at that commit.
+3. Build matrix runs from the **tag** (not main HEAD), so reruns rebuild byte-identical content even if `main` has moved on.
+4. On failure the staging tag is auto-deleted; the bump commit on `main` stays so the next cut continues from `vX.Y.(Z+1)`.
+
+There is no separate `staging` branch — staging cuts and production promotions both live on `main`. The two are distinguished only by tag suffix (`-staging` vs none) and by which workflow created the tag.
 
 ### Promoting to production (default flow)
 
@@ -69,5 +71,5 @@ The matrix build / sign / Sentry-DIF / artifact-upload pipeline used by both flo
 - **Naming.** Staging tags use the SemVer pre-release suffix `-staging` (`v1.2.4-staging`) so they sort *before* the matching production tag. Promotion to production drops the suffix verbatim; the version embedded in the bundled installer is identical between the two tags.
 - **Collisions.** Both workflows fail fast if the target tag already exists locally or on `origin`. Resolve by deleting the stale tag (org maintainers only) or bumping past it.
 - **Rollback (production).** A failed build matrix triggers `cleanup-failed-release`, which deletes both the draft GitHub Release and the `v<version>` tag. The staging tag it was promoted from is left untouched and can be re-promoted after fixing.
-- **Rollback (staging).** A failed staging build deletes the `v<version>-staging` tag. The bump commit on the `staging` branch is left in place; the next staging cut continues from the new patch number rather than re-using it (we accept a small “gap” in patch numbers over racing with concurrent merges).
-- **Who can delete tags.** Same write-access as the `staging` / `main` branches. Workflow-driven cleanup deletes run with the workflow's token via `actions/github-script` (the GitHub App token is only used by `prepare-build` for the bump commit + tag push); manual deletes (`git push --delete origin <tag>`) require equivalent maintainer permissions.
+- **Rollback (staging).** A failed staging build deletes the `v<version>-staging` tag. The bump commit on `main` is left in place; the next staging cut continues from the new patch number rather than re-using it (we accept a small “gap” in patch numbers over racing with concurrent merges).
+- **Who can delete tags.** Same write-access as `main`. Workflow-driven cleanup deletes run with the workflow's token via `actions/github-script` (the GitHub App token is only used by `prepare-build` for the bump commit + tag push); manual deletes (`git push --delete origin <tag>`) require equivalent maintainer permissions.

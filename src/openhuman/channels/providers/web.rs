@@ -408,7 +408,17 @@ async fn run_chat_task(
         request_id.to_string(),
     );
 
-    let result = match agent.run_single(message).await {
+    // Make `thread_id` ambient for any outbound provider call inside
+    // the agent loop. The OpenAI-compatible provider reads it via
+    // `thread_context::current_thread_id()` and forwards it on
+    // `/openai/v1/chat/completions` so the backend can group
+    // InferenceLog entries and reuse the KV cache for this thread.
+    let result = match crate::openhuman::providers::thread_context::with_thread_id(
+        thread_id.to_string(),
+        agent.run_single(message),
+    )
+    .await
+    {
         Ok(response) => {
             let citations = agent.take_last_turn_citations();
             Ok(WebChatTaskResult {

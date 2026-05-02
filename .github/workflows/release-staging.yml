@@ -1,5 +1,5 @@
 ---
-name: Release (Staging)
+name: Release Staging
 on:
   workflow_dispatch: {}
 permissions:
@@ -27,11 +27,12 @@ concurrency:
 # ---------------------------------------------------------------------------
 jobs:
   # =========================================================================
-  # Phase 1: Patch-bump on the staging branch and create the immutable
+  # Phase 1: Patch-bump on `main` and create the immutable
   # `v<version>-staging` tag at that commit. The build matrix below then
-  # checks out the tag (not the branch tip) so reruns reproduce byte-for-
-  # byte. Production promotion (`release-production.yml`,
-  # `release_source = staging_tag`) reads this tag verbatim.
+  # checks out the tag (not main HEAD) so reruns reproduce byte-for-byte.
+  # Production promotion (`release-production.yml`,
+  # `release_source = staging_tag`) reads this tag verbatim and creates a
+  # `v<version>` tag at the same commit.
   # =========================================================================
   prepare-build:
     name: Prepare build context
@@ -58,10 +59,10 @@ jobs:
       build_ref: ${{ steps.resolve.outputs.build_ref }}
       base_url: ${{ steps.resolve.outputs.base_url }}
     steps:
-      - name: Enforce staging branch
-        if: github.ref != 'refs/heads/staging'
+      - name: Enforce main branch
+        if: github.ref != 'refs/heads/main'
         run: |
-          echo "This workflow can only run from staging. Current ref: $GITHUB_REF"
+          echo "This workflow can only run from main. Current ref: $GITHUB_REF"
           exit 1
       - name: Generate GitHub App token
         id: app-token
@@ -69,10 +70,10 @@ jobs:
         with:
           app_id: ${{ secrets.XGITHUB_APP_ID }}
           private_key: ${{ secrets.XGITHUB_APP_PRIVATE_KEY }}
-      - name: Checkout staging
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: staging
+          ref: main
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
       - name: Setup Node.js
@@ -87,12 +88,14 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
           git fetch origin --tags --prune --prune-tags
-          git checkout staging
-          git pull origin staging --ff-only
+          git checkout main
+          git pull origin main --ff-only
       # Patch-only bump for staging cuts. Minor/major promotions are owned
       # by `release-production.yml` and only happen on the production path.
-      # The bump commit lands on the staging branch so subsequent staging
-      # cuts see the new floor; merging staging back to main is a separate PR.
+      # Bump commit lands on `main` (we don't maintain a separate `staging`
+      # branch) and the immutable `v<version>-staging` tag pinpoints the
+      # exact main commit QA validated, so production promotion can later
+      # find the tagged commit reachable from main.
       - name: Bump patch version
         id: bump
         run: node scripts/release/bump-version.js patch
@@ -125,7 +128,7 @@ jobs:
         run: |
           git add app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml Cargo.toml
           git commit -m "chore(staging): v${VERSION}"
-          git push origin staging
+          git push origin main
           git tag -a "$TAG" -m "Staging cut $TAG"
           git push origin "$TAG"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -146,9 +149,9 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
-          # Build from the immutable staging tag rather than the branch tip
-          # so reruns of this workflow rebuild the same content even if the
-          # branch has moved on.
+          # Build from the immutable staging tag rather than main HEAD so
+          # reruns of this workflow rebuild the same content even if main
+          # has moved on (e.g. another patch cut, or a hotfix landed).
           echo "build_ref=$TAG" >> "$GITHUB_OUTPUT"
           echo "base_url=https://staging-api.tinyhumans.ai/" >> "$GITHUB_OUTPUT"
 
@@ -229,9 +232,9 @@ jobs:
 
   # =========================================================================
   # Cleanup: delete the staging tag if the build matrix failed. The version
-  # bump commit on the staging branch stays — reverting it would risk a
-  # race with concurrent merges into staging. Operators can manually push
-  # a follow-up bump if they need the same patch number on the next cut.
+  # bump commit on `main` stays — reverting it would risk a race with
+  # concurrent merges. The next staging cut just continues from the new
+  # patch number; the small “gap” in patch numbers is acceptable.
   # =========================================================================
   cleanup-failed-staging:
     name: Remove staging tag if build failed
