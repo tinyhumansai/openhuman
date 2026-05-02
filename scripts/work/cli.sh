@@ -19,8 +19,10 @@ Args:
                                  the agent prompt.
 
 Flags:
-  --agent <tool>                 Agent CLI to drive (default: claude). Any tool
-                                 that accepts \`-p "<prompt>"\` works (e.g. codex).
+  --agent <tool>                 Agent CLI to drive (default: claude). The
+                                 prompt is passed as a single positional
+                                 argument: \`<tool> "<prompt>"\` — works with
+                                 the `claude` CLI and `codex exec` style tools.
   --no-checkout                  Don't sync main / create the branch — just
                                  print the prompt and run the agent against
                                  the current branch.

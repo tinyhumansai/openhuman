@@ -100,7 +100,10 @@ if [ "$do_checkout" = "1" ]; then
   if git show-ref --verify --quiet "refs/heads/$branch"; then
     echo "[work] branch $branch already exists — checking it out and merging main"
     git checkout "$branch"
-    git merge main || echo "[work] ! conflicts merging main, continuing."
+    if ! git merge main; then
+      echo "[work] merge from main failed on branch $branch; resolve conflicts and re-run." >&2
+      exit 1
+    fi
   else
     echo "[work] creating branch $branch off main"
     git checkout -b "$branch"
