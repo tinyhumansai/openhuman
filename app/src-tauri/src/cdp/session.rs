@@ -309,6 +309,28 @@ async fn run_session_cycle<R: Runtime>(
             ]);
         }
 
+        // Slack Huddles need the same media-capture set as Meet:
+        //   - audioCapture / videoCapture: getUserMedia for huddle voice +
+        //     optional camera tile. Without these, the huddle pre-flight
+        //     enumerateDevices returns empty and the join button silently
+        //     no-ops.
+        //   - displayCapture: getDisplayMedia for in-huddle screen share.
+        //   - clipboardReadWrite: huddle invite-link copy + slash-command
+        //     paste flows.
+        // Mirrors the gmeet pattern from #1054. The huddle popup paint
+        // lifecycle bug is tracked separately under #1074 / the CEF
+        // tracking issue — granting these perms now means once the paint
+        // bug clears, the huddle is functional immediately rather than
+        // requiring a follow-up perms wire-up.
+        if origin_host_is(&origin, "app.slack.com") {
+            perms.extend_from_slice(&[
+                "audioCapture",
+                "videoCapture",
+                "displayCapture",
+                "clipboardReadWrite",
+            ]);
+        }
+
         if let Err(e) = cdp
             .call(
                 "Browser.grantPermissions",
@@ -464,6 +486,29 @@ mod tests {
         // Non-http scheme
         assert!(!origin_host_is("about:blank", "meet.google.com"));
         assert!(!origin_host_is("file:///etc/hosts", "meet.google.com"));
+    }
+
+    /// The slack-huddle media-perm grant is host-gated by
+    /// `origin_host_is(origin, "app.slack.com")`. Lock the matcher so a
+    /// future refactor can't silently widen / narrow the set of origins
+    /// that get `audioCapture`/`videoCapture`/`displayCapture` etc.
+    #[test]
+    fn origin_host_is_matches_app_slack_com_for_huddle_grant() {
+        // canonical slack web origin
+        assert!(origin_host_is("https://app.slack.com", "app.slack.com"));
+        // case-insensitive (matches Url-normalised input + raw header)
+        assert!(origin_host_is("https://APP.SLACK.COM", "app.slack.com"));
+        // explicit port tolerated
+        assert!(origin_host_is("https://app.slack.com:443", "app.slack.com"));
+
+        // marketing site / files CDN must NOT receive media perms — only
+        // the huddle-bearing app origin
+        assert!(!origin_host_is("https://slack.com", "app.slack.com"));
+        assert!(!origin_host_is("https://files.slack.com", "app.slack.com"));
+        // unrelated provider
+        assert!(!origin_host_is("https://meet.google.com", "app.slack.com"));
+        // non-http schemes never match (e.g. about:blank popup placeholder)
+        assert!(!origin_host_is("about:blank", "app.slack.com"));
     }
 
     #[test]
