@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# fix.sh <pr-number> [--executor-llm <tool>] [extra-prompt]
+# fix.sh <pr-number> [--agent <tool>] [extra-prompt]
 # Sync the PR, run pr-reviewer to identify issues and apply fixes, then hand
 # off to pr-manager-lite to run the quality suite, commit, and push.
 #
-# --executor-llm picks the CLI that drives the agent. Default: claude.
+# --agent picks the CLI that drives the work. Default: claude.
 # A trailing positional <extra-prompt> (any free-form text) is appended to the
-# executor's prompt verbatim.
+# agent's prompt verbatim.
 
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,13 +16,13 @@ require git gh jq
 require_pr_number "${1:-}"
 
 pr="$1"
-executor_llm="claude"
+agent="claude"
 extra_prompt=""
 shift
 while [ $# -gt 0 ]; do
   case "$1" in
-    --executor-llm) executor_llm="${2:?--executor-llm requires a value}"; shift 2 ;;
-    --executor-llm=*) executor_llm="${1#*=}"; shift ;;
+    --agent) agent="${2:?--agent requires a value}"; shift 2 ;;
+    --agent=*) agent="${1#*=}"; shift ;;
     *)
       if [ -n "$extra_prompt" ]; then
         echo "[review] unexpected extra arg: $1 (extra-prompt already set)" >&2
@@ -33,7 +33,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-require "$executor_llm"
+require "$agent"
 sync_pr "$pr"
 
 prompt="I've already checked out branch pr/$REVIEW_PR with main \
@@ -49,4 +49,4 @@ Additional instructions from the user:
 ${extra_prompt}"
 fi
 
-"$executor_llm" "$prompt"
+"$agent" "$prompt"

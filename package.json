@@ -25,6 +25,8 @@
     "test:rust": "pnpm --filter openhuman-app test:rust",
     "mock:api": "node scripts/mock-api-server.mjs",
     "review": "bash scripts/review/cli.sh",
+    "work": "bash scripts/work/cli.sh",
+    "debug": "bash scripts/debug/cli.sh",
     "rust:check": "pnpm --filter openhuman-app rust:check",
     "typecheck": "pnpm --filter openhuman-app compile"
   },
