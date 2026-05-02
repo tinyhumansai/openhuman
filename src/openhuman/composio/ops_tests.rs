@@ -680,3 +680,178 @@ fn cache_entries_expire_after_ttl() {
         "entry aged past CACHE_TTL must not be treated as fresh"
     );
 }
+
+// ── Trigger management ops (PR #671) ────────────────────────────────
+
+#[tokio::test]
+async fn composio_list_available_triggers_via_mock() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers/available",
+        get(|Query(q): Query<HashMap<String, String>>| async move {
+            // Echo back so the test can also assert what was forwarded.
+            Json(json!({
+                "success": true,
+                "data": {"triggers": [
+                    {
+                        "slug": "GMAIL_NEW_GMAIL_MESSAGE",
+                        "scope": "static",
+                        "defaultConfig": {"labelIds": "INBOX"},
+                        "_echoed_toolkit": q.get("toolkit"),
+                    }
+                ]}
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+
+    let outcome = composio_list_available_triggers(&config, "gmail", Some("c1".into()))
+        .await
+        .unwrap();
+    assert_eq!(outcome.value.triggers.len(), 1);
+    assert_eq!(outcome.value.triggers[0].slug, "GMAIL_NEW_GMAIL_MESSAGE");
+    assert_eq!(outcome.value.triggers[0].scope, "static");
+    assert!(outcome.logs.iter().any(|l| l.contains("available trigger")));
+}
+
+#[tokio::test]
+async fn composio_list_available_triggers_omits_connection_when_none() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers/available",
+        get(|Query(q): Query<HashMap<String, String>>| async move {
+            assert!(
+                q.get("connectionId").is_none(),
+                "should not forward connectionId"
+            );
+            Json(json!({"success": true, "data": {"triggers": []}}))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+
+    let outcome = composio_list_available_triggers(&config, "gmail", None)
+        .await
+        .unwrap();
+    assert!(outcome.value.triggers.is_empty());
+}
+
+#[tokio::test]
+async fn composio_list_triggers_via_mock_with_filter() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers",
+        get(|Query(_q): Query<HashMap<String, String>>| async move {
+            Json(json!({
+                "success": true,
+                "data": {"triggers": [
+                    {
+                        "id": "ti_1",
+                        "slug": "GMAIL_NEW_GMAIL_MESSAGE",
+                        "toolkit": "gmail",
+                        "connectionId": "c1",
+                        "state": "active"
+                    }
+                ]}
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+
+    let outcome = composio_list_triggers(&config, Some("gmail".into()))
+        .await
+        .unwrap();
+    assert_eq!(outcome.value.triggers.len(), 1);
+    assert_eq!(outcome.value.triggers[0].id, "ti_1");
+    assert_eq!(outcome.value.triggers[0].connection_id, "c1");
+}
+
+#[tokio::test]
+async fn composio_list_triggers_without_filter() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers",
+        get(|| async { Json(json!({"success": true, "data": {"triggers": []}})) }),
+    );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+
+    let outcome = composio_list_triggers(&config, None).await.unwrap();
+    assert!(outcome.value.triggers.is_empty());
+}
+
+#[tokio::test]
+async fn composio_enable_trigger_via_mock() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers",
+        post(|Json(body): Json<Value>| async move {
+            assert_eq!(body["slug"], "GMAIL_NEW_GMAIL_MESSAGE");
+            assert_eq!(body["connectionId"], "c1");
+            assert_eq!(body["triggerConfig"]["labelIds"], "INBOX");
+            Json(json!({
+                "success": true,
+                "data": {
+                    "triggerId": "ti_new",
+                    "slug": "GMAIL_NEW_GMAIL_MESSAGE",
+                    "connectionId": "c1"
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+
+    let outcome = composio_enable_trigger(
+        &config,
+        "c1",
+        "GMAIL_NEW_GMAIL_MESSAGE",
+        Some(json!({"labelIds": "INBOX"})),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.value.trigger_id, "ti_new");
+    assert_eq!(outcome.value.connection_id, "c1");
+    assert!(outcome.logs.iter().any(|l| l.contains("enabled trigger")));
+}
+
+#[tokio::test]
+async fn composio_disable_trigger_via_mock() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers/{id}",
+        axum::routing::delete(|Path(id): Path<String>| async move {
+            assert_eq!(id, "ti_1");
+            Json(json!({"success": true, "data": {"deleted": true}}))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+
+    let outcome = composio_disable_trigger(&config, "ti_1").await.unwrap();
+    assert!(outcome.value.deleted);
+    assert!(outcome.logs.iter().any(|l| l.contains("disabled trigger")));
+}
+
+#[tokio::test]
+async fn composio_disable_trigger_propagates_backend_error() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers/{id}",
+        axum::routing::delete(|Path(_id): Path<String>| async move {
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                Json(json!({"success": false, "error": "Trigger not found"})),
+            )
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+
+    let err = composio_disable_trigger(&config, "missing")
+        .await
+        .unwrap_err();
+    assert!(err.contains("disable_trigger failed"), "unexpected: {err}");
+}

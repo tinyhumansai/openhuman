@@ -153,3 +153,77 @@ fn to_json_wraps_outcome() {
     let v = to_json(RpcOutcome::single_log(json!({"x": 1}), "note")).unwrap();
     assert!(v.get("logs").is_some() || v.get("result").is_some() || v.get("x").is_some());
 }
+
+// ── Trigger management schema coverage ──────────────────────────────
+
+#[test]
+fn trigger_management_schemas_resolve() {
+    for k in [
+        "list_available_triggers",
+        "list_triggers",
+        "enable_trigger",
+        "disable_trigger",
+    ] {
+        let s = schemas(k);
+        assert_eq!(s.namespace, "composio");
+        assert_ne!(s.function, "unknown", "key `{k}` fell through");
+        assert!(!s.description.is_empty());
+        assert!(!s.outputs.is_empty());
+    }
+}
+
+#[test]
+fn list_available_triggers_schema_input_shape() {
+    let s = schemas("list_available_triggers");
+    assert!(s.inputs.iter().any(|f| f.name == "toolkit" && f.required));
+    let conn = s.inputs.iter().find(|f| f.name == "connection_id").unwrap();
+    assert!(!conn.required);
+}
+
+#[test]
+fn list_triggers_schema_input_shape() {
+    let s = schemas("list_triggers");
+    let tk = s.inputs.iter().find(|f| f.name == "toolkit").unwrap();
+    assert!(!tk.required);
+}
+
+#[test]
+fn enable_trigger_schema_input_shape() {
+    let s = schemas("enable_trigger");
+    assert!(s
+        .inputs
+        .iter()
+        .any(|f| f.name == "connection_id" && f.required));
+    assert!(s.inputs.iter().any(|f| f.name == "slug" && f.required));
+    let cfg = s
+        .inputs
+        .iter()
+        .find(|f| f.name == "trigger_config")
+        .unwrap();
+    assert!(!cfg.required);
+}
+
+#[test]
+fn disable_trigger_schema_input_shape() {
+    let s = schemas("disable_trigger");
+    assert!(s
+        .inputs
+        .iter()
+        .any(|f| f.name == "trigger_id" && f.required));
+}
+
+#[test]
+fn trigger_management_controllers_are_all_registered() {
+    let registered = all_registered_controllers();
+    for k in [
+        "list_available_triggers",
+        "list_triggers",
+        "enable_trigger",
+        "disable_trigger",
+    ] {
+        assert!(
+            registered.iter().any(|c| c.schema.function == k),
+            "controller {k} not registered"
+        );
+    }
+}

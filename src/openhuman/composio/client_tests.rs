@@ -335,3 +335,152 @@ async fn delete_connection_happy_path_returns_deleted_true() {
     let resp = client.delete_connection("conn-42").await.unwrap();
     assert!(resp.deleted);
 }
+
+// ── Trigger management (PR #671) ────────────────────────────────────
+
+#[tokio::test]
+async fn list_available_triggers_rejects_empty_toolkit() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+    let err = client
+        .list_available_triggers("   ", None)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("toolkit must not be empty"),
+        "unexpected: {err}"
+    );
+}
+
+#[tokio::test]
+async fn list_available_triggers_forwards_query_params() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers/available",
+        get(|Query(q): Query<HashMap<String, String>>| async move {
+            assert_eq!(q.get("toolkit").map(String::as_str), Some("github"));
+            assert_eq!(q.get("connectionId").map(String::as_str), Some("c1"));
+            Json(json!({
+                "success": true,
+                "data": {"triggers": [{"slug": "GITHUB_PUSH_EVENT", "scope": "github_repo"}]}
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client
+        .list_available_triggers("github", Some("c1"))
+        .await
+        .unwrap();
+    assert_eq!(resp.triggers.len(), 1);
+    assert_eq!(resp.triggers[0].scope, "github_repo");
+}
+
+#[tokio::test]
+async fn list_active_triggers_filters_by_toolkit() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers",
+        get(|Query(q): Query<HashMap<String, String>>| async move {
+            assert_eq!(q.get("toolkit").map(String::as_str), Some("gmail"));
+            Json(json!({
+                "success": true,
+                "data": {"triggers": []}
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client.list_active_triggers(Some("gmail")).await.unwrap();
+    assert!(resp.triggers.is_empty());
+}
+
+#[tokio::test]
+async fn enable_trigger_rejects_empty_inputs() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+
+    let err = client.enable_trigger("", "X", None).await.unwrap_err();
+    assert!(err.to_string().contains("connectionId must not be empty"));
+
+    let err = client.enable_trigger("c1", "  ", None).await.unwrap_err();
+    assert!(err.to_string().contains("slug must not be empty"));
+}
+
+#[tokio::test]
+async fn enable_trigger_posts_body_and_parses_response() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers",
+        post(|Json(body): Json<Value>| async move {
+            assert_eq!(body["connectionId"], "c1");
+            assert_eq!(body["slug"], "GMAIL_NEW_GMAIL_MESSAGE");
+            assert_eq!(body["triggerConfig"]["labelIds"], "INBOX");
+            Json(json!({
+                "success": true,
+                "data": {
+                    "triggerId": "ti_1",
+                    "slug": "GMAIL_NEW_GMAIL_MESSAGE",
+                    "connectionId": "c1"
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client
+        .enable_trigger(
+            "c1",
+            "GMAIL_NEW_GMAIL_MESSAGE",
+            Some(json!({"labelIds": "INBOX"})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.trigger_id, "ti_1");
+}
+
+#[tokio::test]
+async fn disable_trigger_rejects_empty_id() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+    let err = client.disable_trigger("").await.unwrap_err();
+    assert!(err.to_string().contains("triggerId must not be empty"));
+}
+
+#[tokio::test]
+async fn disable_trigger_calls_delete_path() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers/{id}",
+        axum::routing::delete(|Path(id): Path<String>| async move {
+            assert_eq!(id, "ti_1");
+            Json(json!({"success": true, "data": {"deleted": true}}))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client.disable_trigger("ti_1").await.unwrap();
+    assert!(resp.deleted);
+}
+
+#[tokio::test]
+async fn disable_trigger_surfaces_non_2xx_status() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers/{id}",
+        axum::routing::delete(|Path(_id): Path<String>| async move {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({"success": false, "error": "no"})),
+            )
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let err = client.disable_trigger("ti_x").await.unwrap_err();
+    assert!(err.to_string().contains("404"), "unexpected: {err}");
+}
