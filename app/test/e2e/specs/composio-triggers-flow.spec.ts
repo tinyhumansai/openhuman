@@ -21,6 +21,7 @@ import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
   textExists,
+  clickNativeButton,
   waitForText,
   waitForWebView,
   waitForWindowVisible,
@@ -147,10 +148,7 @@ describe('Composio trigger toggles (UI + core RPC)', () => {
     // Open whichever Manage button corresponds to Gmail. The modal then
     // loads available + active triggers via the new RPCs.
     try {
-      const el = await $('button=Manage');
-      if (el && (await el.isExisting())) {
-        await el.click();
-      }
+      await clickNativeButton('Manage');
     } catch (err) {
       step('Could not click Manage button', { err: String(err) });
     }

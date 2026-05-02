@@ -470,6 +470,82 @@ mod tests {
     }
 
     #[test]
+    fn available_trigger_deserializes_and_serializes_camelcase_fields() {
+        let raw = json!({
+            "slug": "GMAIL_NEW_GMAIL_MESSAGE",
+            "scope": "static",
+            "defaultConfig": { "labelIds": ["INBOX"] },
+            "requiredConfigKeys": ["labelIds"],
+            "repo": { "owner": "acme", "repo": "inbox" }
+        });
+        let trigger: ComposioAvailableTrigger = serde_json::from_value(raw).unwrap();
+        assert_eq!(trigger.slug, "GMAIL_NEW_GMAIL_MESSAGE");
+        assert_eq!(trigger.scope, "static");
+        assert_eq!(
+            trigger.default_config,
+            Some(json!({ "labelIds": ["INBOX"] }))
+        );
+        assert_eq!(
+            trigger.required_config_keys,
+            Some(vec!["labelIds".to_string()])
+        );
+        let repo = trigger.repo.as_ref().expect("repo");
+        assert_eq!(repo.owner, "acme");
+        assert_eq!(repo.repo, "inbox");
+
+        let value = serde_json::to_value(&trigger).unwrap();
+        assert!(value.get("defaultConfig").is_some());
+        assert!(value.get("requiredConfigKeys").is_some());
+    }
+
+    #[test]
+    fn active_trigger_parses_connection_id_and_optional_fields() {
+        let raw = json!({
+            "id": "ti_1",
+            "slug": "GMAIL_NEW_GMAIL_MESSAGE",
+            "toolkit": "gmail",
+            "connectionId": "c-1",
+            "triggerConfig": { "labelIds": "INBOX" },
+            "state": "active"
+        });
+        let trigger: ComposioActiveTrigger = serde_json::from_value(raw).unwrap();
+        assert_eq!(trigger.id, "ti_1");
+        assert_eq!(trigger.slug, "GMAIL_NEW_GMAIL_MESSAGE");
+        assert_eq!(trigger.connection_id, "c-1");
+        assert_eq!(trigger.trigger_config, Some(json!({"labelIds":"INBOX"})));
+        assert_eq!(trigger.state.as_deref(), Some("active"));
+
+        let value = serde_json::to_value(&trigger).unwrap();
+        assert!(value.get("connectionId").is_some());
+        assert!(value.get("triggerConfig").is_some());
+        assert!(value.get("state").is_some());
+    }
+
+    #[test]
+    fn trigger_enable_response_uses_camelcase_and_optional_defaults() {
+        let raw = json!({
+            "triggerId": "ti_9",
+            "slug": "GMAIL_NEW_GMAIL_MESSAGE",
+            "connectionId": "c-9"
+        });
+        let resp: ComposioEnableTriggerResponse = serde_json::from_value(raw).unwrap();
+        assert_eq!(resp.trigger_id, "ti_9");
+        assert_eq!(resp.slug, "GMAIL_NEW_GMAIL_MESSAGE");
+        assert_eq!(resp.connection_id, "c-9");
+
+        let serialized = serde_json::to_value(&resp).unwrap();
+        assert_eq!(serialized.get("triggerId").unwrap(), "ti_9");
+        assert_eq!(serialized.get("connectionId").unwrap(), "c-9");
+    }
+
+    #[test]
+    fn delete_trigger_response_defaults_deleted_to_false() {
+        let raw = json!({});
+        let resp: ComposioDisableTriggerResponse = serde_json::from_value(raw).unwrap();
+        assert!(!resp.deleted);
+    }
+
+    #[test]
     fn trigger_event_defaults_empty_fields_to_empty_strings() {
         let ev: ComposioTriggerEvent = serde_json::from_str("{}").unwrap();
         assert_eq!(ev.toolkit, "");

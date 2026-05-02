@@ -342,10 +342,12 @@ pub async fn composio_disable_trigger(
         .disable_trigger(trigger_id)
         .await
         .map_err(|e| format!("[composio] disable_trigger failed: {e:#}"))?;
-    Ok(RpcOutcome::new(
-        resp,
-        vec![format!("composio: disabled trigger {trigger_id}")],
-    ))
+    let message = if resp.deleted {
+        format!("composio: disabled trigger {trigger_id}")
+    } else {
+        format!("composio: trigger {trigger_id} was not active")
+    };
+    Ok(RpcOutcome::new(resp, vec![message]))
 }
 
 // ── Trigger history ────────────────────────────────────────────────

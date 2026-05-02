@@ -264,7 +264,8 @@ impl ComposioClient {
         }
         tracing::debug!(trigger_id = %trigger_id, "[composio] disable_trigger");
         self.raw_delete::<ComposioDisableTriggerResponse>(&format!(
-            "/agent-integrations/composio/triggers/{trigger_id}"
+            "/agent-integrations/composio/triggers/{}",
+            urlencoding::encode(trigger_id)
         ))
         .await
     }

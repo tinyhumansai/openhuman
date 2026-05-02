@@ -688,6 +688,8 @@ async fn composio_list_available_triggers_via_mock() {
     let app = Router::new().route(
         "/agent-integrations/composio/triggers/available",
         get(|Query(q): Query<HashMap<String, String>>| async move {
+            assert_eq!(q.get("toolkit"), Some(&"gmail".into()));
+            assert_eq!(q.get("connectionId"), Some(&"c1".into()));
             // Echo back so the test can also assert what was forwarded.
             Json(json!({
                 "success": true,
@@ -696,6 +698,7 @@ async fn composio_list_available_triggers_via_mock() {
                         "slug": "GMAIL_NEW_GMAIL_MESSAGE",
                         "scope": "static",
                         "defaultConfig": {"labelIds": "INBOX"},
+                        "_echoed_connectionId": q.get("connectionId"),
                         "_echoed_toolkit": q.get("toolkit"),
                     }
                 ]}
