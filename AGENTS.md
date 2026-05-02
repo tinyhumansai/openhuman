@@ -73,6 +73,38 @@ cargo check --manifest-path app/src-tauri/Cargo.toml
 
 **Quality**: ESLint + Prettier + Husky in the `app` workspace.
 
+### Agent debug runners (`scripts/debug/`)
+
+Use these wrappers instead of invoking Vitest / WDIO / cargo directly when iterating — they keep stdout summary-sized and tee full output to `target/debug-logs/<kind>-<suffix>-<timestamp>.log`. Add `--verbose` to also stream raw output. See [`scripts/debug/README.md`](scripts/debug/README.md).
+
+```bash
+# Vitest
+pnpm debug unit                                    # full suite
+pnpm debug unit src/components/Foo.test.tsx        # one file (positional pattern)
+pnpm debug unit -t "renders empty state"           # filter by test name
+pnpm debug unit Foo -t "renders empty" --verbose
+
+# WDIO E2E (one spec at a time)
+pnpm debug e2e test/e2e/specs/smoke.spec.ts
+pnpm debug e2e test/e2e/specs/cron-jobs-flow.spec.ts cron-jobs --verbose
+
+# cargo tests (delegates to scripts/test-rust-with-mock.sh)
+pnpm debug rust
+pnpm debug rust json_rpc_e2e
+
+# Inspect saved logs
+pnpm debug logs                  # list 50 most recent
+pnpm debug logs last             # print most recent (last 400 lines)
+pnpm debug logs unit             # most recent matching prefix "unit"
+pnpm debug logs last --tail 100
+```
+
+Files: `scripts/debug/{cli,unit,e2e,rust,logs,lib}.sh`. Entry point: `pnpm debug` (`scripts/debug/cli.sh`).
+
+### Coverage requirement (merge gate)
+
+PRs must meet **≥ 80% coverage on changed lines**. Enforced by [`.github/workflows/coverage.yml`](.github/workflows/coverage.yml) via `diff-cover` over merged Vitest + `cargo-llvm-cov` (core + Tauri shell) lcov outputs. Below the threshold the PR will not merge. Run `pnpm test:coverage` and `pnpm test:rust` locally; add tests for new/changed lines (happy path + at least one failure / edge case).
+
 ---
 
 ## Configuration
