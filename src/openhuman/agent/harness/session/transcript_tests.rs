@@ -142,9 +142,7 @@ fn md_companion_path_for_flat_jsonl_uses_iso_date_dir() {
     let today = chrono::Local::now().format("%Y_%m_%d").to_string();
     assert_eq!(
         md,
-        PathBuf::from(format!(
-            "/tmp/ws/sessions/{today}/1714000000_main.md"
-        )),
+        PathBuf::from(format!("/tmp/ws/sessions/{today}/1714000000_main.md")),
         "flat session_raw should map to sessions/YYYY_MM_DD/ on the md side"
     );
 }
@@ -228,9 +226,7 @@ fn find_latest_picks_newest_keyed_stem_in_flat_dir() {
     .unwrap();
 
     let latest = find_latest_transcript(dir.path(), "main").unwrap();
-    assert!(latest
-        .to_string_lossy()
-        .ends_with("1714999999_main.jsonl"));
+    assert!(latest.to_string_lossy().ends_with("1714999999_main.jsonl"));
 }
 
 #[test]

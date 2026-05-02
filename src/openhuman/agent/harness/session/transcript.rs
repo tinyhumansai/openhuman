@@ -699,9 +699,9 @@ fn raw_session_dir(workspace_dir: &Path) -> PathBuf {
 fn md_companion_path(jsonl_path: &Path) -> PathBuf {
     let components: Vec<_> = jsonl_path.components().collect();
 
-    let raw_idx = components.iter().position(
-        |comp| matches!(comp, std::path::Component::Normal(s) if *s == "session_raw"),
-    );
+    let raw_idx = components
+        .iter()
+        .position(|comp| matches!(comp, std::path::Component::Normal(s) if *s == "session_raw"));
 
     let Some(raw_idx) = raw_idx else {
         return jsonl_path.with_extension("md");

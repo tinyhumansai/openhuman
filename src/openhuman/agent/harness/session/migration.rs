@@ -156,10 +156,9 @@ fn move_jsonl_files_up(legacy_dir: &Path, flat_dir: &Path, outcome: &mut Migrati
     let entries = match fs::read_dir(legacy_dir) {
         Ok(it) => it,
         Err(err) => {
-            outcome.warnings.push(format!(
-                "read_dir({}) failed: {err}",
-                legacy_dir.display()
-            ));
+            outcome
+                .warnings
+                .push(format!("read_dir({}) failed: {err}", legacy_dir.display()));
             return;
         }
     };
