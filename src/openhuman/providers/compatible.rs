@@ -54,6 +54,14 @@ pub struct OpenAiCompatibleProvider {
     /// to the first `user` message, then drop the system messages.
     /// Required for providers that reject `role: system` (e.g. MiniMax).
     merge_system_into_user: bool,
+    /// When true, forward the OpenHuman backend extension `thread_id`
+    /// (read from `thread_context::current_thread_id`) on outbound
+    /// chat completions bodies. Off by default — only the
+    /// `OpenHumanBackendProvider` opts in, so third-party
+    /// OpenAI-compatible endpoints (Venice, Moonshot, Groq, GLM, …)
+    /// never see an unrecognized field that could trip strict input
+    /// validation.
+    emit_openhuman_thread_id: bool,
 }
 
 /// How the provider expects the API key to be sent.
@@ -121,6 +129,16 @@ impl OpenAiCompatibleProvider {
         Self::new_with_options(name, base_url, credential, auth_style, false, None, true)
     }
 
+    /// Opt this provider into emitting the OpenHuman backend extension
+    /// `thread_id` on outbound chat completions bodies. Only the
+    /// `OpenHumanBackendProvider` should call this — third-party
+    /// OpenAI-compatible providers must leave it off so they don't
+    /// receive an unknown field.
+    pub fn with_openhuman_thread_id(mut self) -> Self {
+        self.emit_openhuman_thread_id = true;
+        self
+    }
+
     fn new_with_options(
         name: &str,
         base_url: &str,
@@ -138,6 +156,19 @@ impl OpenAiCompatibleProvider {
             supports_responses_fallback,
             user_agent: user_agent.map(ToString::to_string),
             merge_system_into_user,
+            emit_openhuman_thread_id: false,
+        }
+    }
+
+    /// Read the ambient `thread_id` only when this provider has been
+    /// opted in via [`with_openhuman_thread_id`]. Returns `None` for
+    /// every third-party provider so the field is omitted by
+    /// `skip_serializing_if`.
+    fn outbound_thread_id(&self) -> Option<String> {
+        if self.emit_openhuman_thread_id {
+            super::thread_context::current_thread_id()
+        } else {
+            None
         }
     }
 
@@ -1362,7 +1393,7 @@ impl Provider for OpenAiCompatibleProvider {
                 stream: Some(true),
                 tool_choice: tools.as_ref().map(|_| "auto".to_string()),
                 tools: tools.clone(),
-                thread_id: super::thread_context::current_thread_id(),
+                thread_id: self.outbound_thread_id(),
             };
             let stream_dump_seq = reserve_dump_seq();
             dump_prompt_if_enabled(&self.name, model, stream_dump_seq, &native_request);
@@ -1382,7 +1413,7 @@ impl Provider for OpenAiCompatibleProvider {
             }
         }
 
-        let thread_id = super::thread_context::current_thread_id();
+        let thread_id = self.outbound_thread_id();
         log::debug!(
             "[provider:{}] chat() outbound thread_id={} model={}",
             self.name,

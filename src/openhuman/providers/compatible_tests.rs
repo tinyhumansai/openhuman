@@ -84,6 +84,30 @@ fn native_request_emits_thread_id_when_present() {
     );
 }
 
+#[tokio::test]
+async fn outbound_thread_id_is_gated_per_provider() {
+    use crate::openhuman::providers::thread_context::with_thread_id;
+
+    let third_party = make_provider("Venice", "https://api.venice.ai", None);
+    let openhuman =
+        make_provider("OpenHuman", "https://api.openhuman.test", None).with_openhuman_thread_id();
+
+    with_thread_id("thread-xyz", async {
+        assert!(
+            third_party.outbound_thread_id().is_none(),
+            "third-party OpenAI-compatible providers must NOT see the OpenHuman thread_id extension \
+             — unknown fields can trip strict input validation on Venice/Moonshot/Groq/etc."
+        );
+        assert_eq!(
+            openhuman.outbound_thread_id().as_deref(),
+            Some("thread-xyz"),
+            "the OpenHuman backend provider opts in via with_openhuman_thread_id() and must \
+             forward the ambient id so InferenceLog grouping + KV cache locality work"
+        );
+    })
+    .await;
+}
+
 #[test]
 fn request_serializes_correctly() {
     let req = ApiChatRequest {
