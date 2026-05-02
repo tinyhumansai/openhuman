@@ -62,12 +62,17 @@ impl OpenHumanBackendProvider {
     fn inner(&self, token: &str) -> anyhow::Result<OpenAiCompatibleProvider> {
         // Hosted OpenHuman API is chat-completions only; skip /v1/responses fallback so transport
         // errors stay a single clear message (fallback would duplicate the same connection failure).
+        // Opt into the `thread_id` extension so the backend can group
+        // InferenceLog entries and align KV-cache keys with the same
+        // logical chat thread the user sees — third-party providers
+        // never see this field (see `with_openhuman_thread_id`).
         Ok(OpenAiCompatibleProvider::new_no_responses_fallback(
             PROVIDER_LABEL,
             &self.base_url()?,
             Some(token),
             AuthStyle::Bearer,
-        ))
+        )
+        .with_openhuman_thread_id())
     }
 }
 
