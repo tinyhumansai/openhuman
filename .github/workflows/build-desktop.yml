@@ -84,6 +84,16 @@ on:
           the Tauri shell since #1061).
         type: boolean
         default: false
+      with_updater:
+        description:
+          When true, set `WITH_UPDATER=true` so the Tauri bundler emits the
+          signed `.sig` updater artifacts the auto-updater consumes.
+          Production sets this and assembles `latest.json` in a follow-on
+          job; staging leaves it off because there is no manifest publish
+          step to consume the .sig files — producing them just wastes
+          signing time and pollutes the artifact tree.
+        type: boolean
+        default: true
 jobs:
   build:
     name: "Desktop: ${{ matrix.settings.artifact_suffix }}"
@@ -178,9 +188,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key:
-            ${{ runner.os }}-cargo-registry-${{ steps.cargo-lock-fingerprint.outputs.hash
-            }}
+          key: ${{ runner.os }}-cargo-registry-${{ steps.cargo-lock-fingerprint.outputs.hash }}
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
 
@@ -194,9 +202,7 @@ jobs:
           path: |
             ~/Library/Caches/tauri-cef
             ~/.cache/tauri-cef
-          key:
-            cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml')
-            }}
+          key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml') }}
           restore-keys: |
             cef-${{ matrix.settings.target }}-
       - name: Cache CEF binary distribution (windows)
@@ -204,9 +210,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/AppData/Local/tauri-cef
-          key:
-            cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml')
-            }}
+          key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml') }}
           restore-keys: |
             cef-${{ matrix.settings.target }}-
 
@@ -219,18 +223,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-tauri
-          key:
-            vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml')
-            }}
+          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
       - name: Cache vendored tauri-cli binary (windows)
         if: matrix.settings.platform == 'windows-latest'
         id: tauri-cli-cache-windows
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
-          key:
-            vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml')
-            }}
+          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
       - name: Install vendored tauri-cli (cef-aware bundler)
         if:
           (matrix.settings.platform == 'windows-latest' && steps.tauri-cli-cache-windows.outputs.cache-hit
@@ -240,15 +240,18 @@ jobs:
         run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
       - name: Validate signing prerequisites
         # The minisign pubkey is baked into the static tauri.conf.json, not
         # injected from secrets; only the private key still has to come from
-        # secrets. macOS additionally needs the Apple notarization secret set
-        # when `with_macos_signing` is true.
+        # secrets, and only when `with_updater` is true (the bundler signs
+        # `.sig` artifacts then). macOS additionally needs the Apple
+        # notarization secret set when `with_macos_signing` is true.
         shell: bash
         env:
           MATRIX_PLATFORM: ${{ matrix.settings.platform }}
           WITH_MACOS_SIGNING: ${{ inputs.with_macos_signing }}
+          WITH_UPDATER: ${{ inputs.with_updater }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -261,8 +264,8 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD || secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "Missing TAURI_SIGNING_PRIVATE_KEY (or fallback UPDATER_PRIVATE_KEY)."
+          if [ "$WITH_UPDATER" = "true" ] && [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "Missing TAURI_SIGNING_PRIVATE_KEY (or fallback UPDATER_PRIVATE_KEY) and with_updater=true."
             exit 1
           fi
           if [ "$MATRIX_PLATFORM" = "macos-latest" ] && [ "$WITH_MACOS_SIGNING" = "true" ]; then
@@ -273,6 +276,7 @@ jobs:
               fi
             done
           fi
+
       - name: Define Tauri configuration overrides
         # `prepareTauriConfig.js` only reads `WITH_UPDATER` (flips
         # `bundle.createUpdaterArtifacts` on for the release pipeline) and
@@ -282,10 +286,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           BASE_URL: ${{ inputs.base_url }}
-          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY || vars.UPDATER_PUBLIC_KEY }}
-          UPDATER_ENDPOINT: ${{ vars.UPDATER_ENDPOINT }}
-          UPDATER_REPO: tinyhumansai/openhuman
-          WITH_UPDATER: "true"
+          WITH_UPDATER: ${{ inputs.with_updater && 'true' || 'false' }}
         with:
           script: |
             const workspacePath = process.env.GITHUB_WORKSPACE.replace(/\\/g, '/');
@@ -408,7 +409,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
-          WITH_UPDATER: "true"
+          WITH_UPDATER: ${{ inputs.with_updater && 'true' || 'false' }}
           VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
@@ -597,7 +598,7 @@ jobs:
 
       # ---- Actions-artifact uploads (when not pushing to a GH Release) ------
       - name: Upload desktop bundles as Actions artifact
-        if: '!inputs.with_release_upload'
+        if: "!inputs.with_release_upload"
         uses: actions/upload-artifact@v4
         with:
           name:

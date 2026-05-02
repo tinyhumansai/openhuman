@@ -176,6 +176,9 @@ jobs:
       # `xattr -dr com.apple.quarantine` workarounds.
       with_macos_signing: true
       with_release_upload: false
+      # No publish-updater-manifest job in staging — producing .sig artifacts
+      # would just leave them stranded in the Actions artifact tree.
+      with_updater: false
       build_sidecar: true
 
   # =========================================================================
