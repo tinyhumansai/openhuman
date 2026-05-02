@@ -1,5 +1,5 @@
 ---
-name: Release (Staging)
+name: Release Staging
 on:
   workflow_dispatch: {}
 permissions:
