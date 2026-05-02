@@ -1,0 +1,190 @@
+name: Coverage Gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-coverage:
+    name: Frontend Coverage (Vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          cache: true
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run Vitest with coverage
+        run: pnpm test:coverage
+        working-directory: app
+        env:
+          NODE_ENV: test
+      - name: Normalize lcov source paths to repo root
+        # Vitest writes paths relative to app/ (the Vite root). diff-cover
+        # resolves SF: paths against the repo root, so prefix them with `app/`
+        # to match how `git diff` names the files.
+        run: |
+          set -euo pipefail
+          test -f app/coverage/lcov.info
+          sed -i -E 's#^SF:(src/)#SF:app/\1#' app/coverage/lcov.info
+          sed -i -E 's#^SF:(\./src/)#SF:app/src/#' app/coverage/lcov.info
+      - name: Upload frontend lcov
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-frontend
+          path: app/coverage/lcov.info
+          retention-days: 7
+          if-no-files-found: error
+
+  rust-core-coverage:
+    name: Rust Core Coverage (cargo-llvm-cov)
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: '0'
+      # sccache is incompatible with `-C instrument-coverage` profiles, so we
+      # skip it for coverage runs and rely on Swatinem/rust-cache for warmup.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          cache-on-failure: true
+          key: core-coverage
+      - name: Install system dependencies (cmake, ALSA, X11)
+        run: apt-get update && apt-get install -y --no-install-recommends cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev && rm -rf /var/lib/apt/lists/*
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Run cargo llvm-cov for openhuman core
+        run: cargo llvm-cov -p openhuman --lcov --output-path lcov-core.info
+      - name: Upload core lcov
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-rust-core
+          path: lcov-core.info
+          retention-days: 7
+          if-no-files-found: error
+
+  rust-tauri-coverage:
+    name: Rust Tauri Coverage (cargo-llvm-cov)
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
+          key: tauri-coverage
+      - name: Cache CEF binary distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/tauri-cef
+          key: cef-ubuntu-22.04-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-ubuntu-22.04-
+      - name: Install system dependencies (cmake, ALSA, X11)
+        run: apt-get update && apt-get install -y --no-install-recommends cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev && rm -rf /var/lib/apt/lists/*
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Run cargo llvm-cov for Tauri shell
+        run: cargo llvm-cov --manifest-path app/src-tauri/Cargo.toml --lcov --output-path lcov-tauri.info
+      - name: Upload tauri lcov
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-rust-tauri
+          path: lcov-tauri.info
+          retention-days: 7
+          if-no-files-found: error
+
+  coverage-gate:
+    name: Coverage Gate (diff-cover ≥ 80%)
+    needs: [frontend-coverage, rust-core-coverage, rust-tauri-coverage]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # diff-cover needs full history for the merge-base with the PR base.
+          fetch-depth: 0
+      - name: Fetch PR base branch
+        run: git fetch origin "${{ github.base_ref }}" --depth=200
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install diff-cover
+        run: pip install 'diff-cover>=9.2.0'
+      - name: Download all lcov artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: lcov-artifacts
+          pattern: lcov-*
+          merge-multiple: false
+      - name: List collected lcov files
+        run: |
+          set -euo pipefail
+          find lcov-artifacts -type f -name '*.info' -print
+      - name: Enforce ≥ 80% coverage on changed lines
+        # diff-cover accepts multiple lcov inputs and computes coverage on
+        # *changed lines only*, scoped to files present in the lcov report.
+        # Test files are excluded from the lcov reports themselves (Vitest
+        # `coverage.exclude`, cargo-llvm-cov's `#[cfg(test)]` filtering),
+        # so changed test lines are simply not measured and do not skew the
+        # ratio.
+        run: |
+          set -euo pipefail
+          mapfile -t LCOV_FILES < <(find lcov-artifacts -type f -name '*.info' | sort)
+          if [ "${#LCOV_FILES[@]}" -eq 0 ]; then
+            echo "::error::No lcov files found — coverage gate cannot run"
+            exit 1
+          fi
+          diff-cover "${LCOV_FILES[@]}" \
+            --compare-branch="origin/${{ github.base_ref }}" \
+            --fail-under=80 \
+            --html-report diff-coverage.html \
+            --markdown-report diff-coverage.md
+      - name: Upload diff-cover report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diff-coverage-report
+          path: |
+            diff-coverage.html
+            diff-coverage.md
+          retention-days: 14
+          if-no-files-found: warn
