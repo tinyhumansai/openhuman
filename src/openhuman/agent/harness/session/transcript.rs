@@ -1,12 +1,34 @@
 //! Session transcript persistence for KV cache stability.
 //!
-//! **Source of truth**: `session_raw/{DDMMYYYY}/{agent}_{index}.jsonl`
+//! **Source of truth**: `session_raw/{stem}.jsonl` — a *flat* directory.
 //!
 //! Each JSONL file starts with a single metadata line (identified by an
 //! `_meta` key) followed by one JSON object per `ChatMessage`. On every
 //! write the companion `.md` file is re-rendered for human readability
-//! under `sessions/{DDMMYYYY}/{agent}_{index}.md`; it is **never** read
-//! back — all round-trip / resume logic uses the JSONL.
+//! under `sessions/{YYYY_MM_DD}/{stem}.md`; it is **never** read back —
+//! all round-trip / resume logic uses the JSONL.
+//!
+//! ## Storage layout
+//!
+//! ```text
+//! {workspace}/session_raw/{stem}.jsonl              ← source of truth (flat)
+//! {workspace}/sessions/YYYY_MM_DD/{stem}.md         ← human-readable view
+//! ```
+//!
+//! `stem` is `{unix_ts}_{agent_id}` for a root session, or
+//! `{parent_chain}__{unix_ts}_{agent_id}` for a sub-agent. Because the
+//! stem starts with the unix timestamp at agent-build time, a directory
+//! listing of `session_raw/` is naturally sorted by creation time and
+//! `find_latest_transcript` becomes O(scan one dir, filter by suffix)
+//! — it does not depend on the calendar date, so a session that's been
+//! idle for weeks resumes the same way as one from yesterday.
+//!
+//! ## Backward compatibility
+//!
+//! Older releases wrote into `session_raw/DDMMYYYY/{stem}.jsonl` (and
+//! the legacy `sessions/DDMMYYYY/{stem}.md`). [`find_latest_transcript`]
+//! falls back to scanning those date-grouped dirs when the flat
+//! directory yields nothing, so users upgrading don't lose resume.
 //!
 //! ## JSONL schema
 //!
@@ -25,13 +47,6 @@
 //!
 //! Only `role` and `content` are required. All other fields are optional.
 //! Unknown fields on read are ignored (forward-compat).
-//!
-//! ## Storage layout
-//!
-//! ```text
-//! {workspace}/session_raw/DDMMYYYY/{agent}_{index}.jsonl   ← source of truth
-//! {workspace}/sessions/DDMMYYYY/{agent}_{index}.md         ← human-readable view
-//! ```
 
 use crate::openhuman::providers::ChatMessage;
 use anyhow::{Context, Result};
@@ -363,25 +378,19 @@ fn read_transcript_jsonl(path: &Path) -> Result<SessionTranscript> {
 
 // ── Path resolution ──────────────────────────────────────────────────
 
-/// Resolve a new transcript path under
-/// `{workspace}/session_raw/DDMMYYYY/{agent}_{index}.jsonl`.
+/// Resolve a transcript path under `session_raw/{stem}.jsonl` — a
+/// *flat* directory keyed only by stem. Used by the session-key flow:
+/// the stem is `"{unix_ts}_{agent_id}"` for a root session, or
+/// `"{parent_chain}__{session_key}"` for a sub-agent, so nested
+/// delegations still produce a single flat filename that encodes the
+/// parent → child path.
 ///
-/// Creates the date directory if needed. Index = max existing + 1.
-/// Scans both the new `session_raw/` dir (for `.jsonl`) **and** the legacy
-/// `sessions/` dir (for `.md`) so indices stay unique across migration.
-/// Resolve a transcript path under `session_raw/DDMMYYYY/{stem}.jsonl`
-/// where `stem` is deterministic (no auto-indexing). Used by the new
-/// session-key flow: the session-key stem is `"{unix_ts}_{agent_id}"`
-/// for a root session, or `"{parent_chain}__{session_key}"` for a
-/// sub-agent — so nested delegations produce a single flat filename
-/// that encodes the parent → child path.
-///
-/// Creates the date directory if needed. Overwrites are intentional:
-/// the Agent persists the same transcript file across every turn of a
+/// Creates the directory if needed. Overwrites are intentional: the
+/// `Agent` persists the same transcript file across every turn of a
 /// session, and every sub-agent spawn gets a unique timestamp in its
 /// own key so collisions are effectively impossible.
 pub fn resolve_keyed_transcript_path(workspace_dir: &Path, stem: &str) -> Result<PathBuf> {
-    let raw_dir = today_raw_session_dir(workspace_dir);
+    let raw_dir = raw_session_dir(workspace_dir);
     fs::create_dir_all(&raw_dir)
         .with_context(|| format!("create session_raw dir {}", raw_dir.display()))?;
     let sanitized = sanitize_stem(stem);
@@ -389,9 +398,9 @@ pub fn resolve_keyed_transcript_path(workspace_dir: &Path, stem: &str) -> Result
 }
 
 /// Sanitize a user-supplied transcript stem so it never escapes the
-/// `session_raw/DDMMYYYY/` directory. Allows ASCII alphanumerics plus
-/// a small punctuation set (`_`, `-`, `.`); every other byte is
-/// replaced with `_`. Empty inputs fall back to `"session"`.
+/// `session_raw/` directory. Allows ASCII alphanumerics plus a small
+/// punctuation set (`_`, `-`, `.`); every other byte is replaced with
+/// `_`. Empty inputs fall back to `"session"`.
 fn sanitize_stem(stem: &str) -> String {
     let cleaned: String = stem
         .chars()
@@ -411,17 +420,17 @@ fn sanitize_stem(stem: &str) -> String {
 }
 
 pub fn resolve_new_transcript_path(workspace_dir: &Path, agent_name: &str) -> Result<PathBuf> {
-    let raw_dir = today_raw_session_dir(workspace_dir);
+    let raw_dir = raw_session_dir(workspace_dir);
     fs::create_dir_all(&raw_dir)
         .with_context(|| format!("create session_raw dir {}", raw_dir.display()))?;
 
     let sanitized = sanitize_agent_name(agent_name);
     let idx_raw = next_index(&raw_dir, &sanitized)?;
-    // Also consider the legacy sessions/ dir so companion .md (or legacy
-    // standalone .md) files don't cause index collisions.
-    let legacy_dir = today_session_dir(workspace_dir);
-    let idx_legacy = next_index(&legacy_dir, &sanitized)?;
-    let next_idx = idx_raw.max(idx_legacy);
+    // Also consider today's md companion dir so a stale .md from this
+    // session doesn't cause an index collision when only .md exists.
+    let md_dir = today_md_session_dir(workspace_dir);
+    let idx_md = next_index(&md_dir, &sanitized)?;
+    let next_idx = idx_raw.max(idx_md);
     let filename = format!("{}_{}.jsonl", sanitized, next_idx);
 
     Ok(raw_dir.join(filename))
@@ -429,28 +438,43 @@ pub fn resolve_new_transcript_path(workspace_dir: &Path, agent_name: &str) -> Re
 
 /// Find the most recent transcript for `agent_name`.
 ///
-/// Searches today's directory first, then yesterday's. Prefers `.jsonl`
-/// under `session_raw/` and falls back to `.md` under `sessions/` when
-/// only legacy files exist.
+/// **Primary**: scan the flat `session_raw/` directory and pick the
+/// newest matching stem (root sessions only — sub-agents are skipped).
+/// **Fallback**: scan the legacy `session_raw/DDMMYYYY/` dirs (today
+/// and yesterday) and the legacy `sessions/DDMMYYYY/` markdown dirs so
+/// users upgrading from the date-grouped layout don't lose resume.
+/// The fallback is one-release transitional and can be removed once
+/// existing transcripts have rolled forward.
 pub fn find_latest_transcript(workspace_dir: &Path, agent_name: &str) -> Option<PathBuf> {
     let sanitized = sanitize_agent_name(agent_name);
     let raw_root = workspace_dir.join("session_raw");
     let sessions_root = workspace_dir.join("sessions");
 
+    // Primary path: flat session_raw/ directory. The stem-suffix scan
+    // is naturally date-independent, so an idle thread resumes the same
+    // way today as it did weeks ago.
+    if raw_root.is_dir() {
+        if let Some(path) = latest_in_dir(&raw_root, &sanitized) {
+            return Some(path);
+        }
+    }
+
+    // Fallback: legacy date-grouped layout (one-release migration
+    // window). Today first, then yesterday — matches the previous
+    // behaviour so we don't regress while users still have files in
+    // the old structure.
     let today = chrono::Local::now().format("%d%m%Y").to_string();
     let yesterday = (chrono::Local::now() - chrono::Duration::days(1))
         .format("%d%m%Y")
         .to_string();
 
     for date_str in [&today, &yesterday] {
-        // Prefer the new session_raw/ location.
         let raw_dir = raw_root.join(date_str);
         if raw_dir.is_dir() {
             if let Some(path) = latest_in_dir(&raw_dir, &sanitized) {
                 return Some(path);
             }
         }
-        // Fall back to legacy sessions/ for pre-migration .md only.
         let legacy_dir = sessions_root.join(date_str);
         if legacy_dir.is_dir() {
             if let Some(path) = latest_in_dir(&legacy_dir, &sanitized) {
@@ -645,38 +669,62 @@ fn parse_legacy_messages(raw: &str) -> Result<Vec<ChatMessage>> {
 
 // ── Private helpers ───────────────────────────────────────────────────
 
-fn today_session_dir(workspace_dir: &Path) -> PathBuf {
-    let date = chrono::Local::now().format("%d%m%Y").to_string();
+/// Date-grouped directory for human-readable `.md` companions, e.g.
+/// `{workspace}/sessions/2026_05_02`. ISO-style `YYYY_MM_DD` so the
+/// listing sorts lexicographically by date.
+fn today_md_session_dir(workspace_dir: &Path) -> PathBuf {
+    let date = chrono::Local::now().format("%Y_%m_%d").to_string();
     workspace_dir.join("sessions").join(date)
 }
 
-fn today_raw_session_dir(workspace_dir: &Path) -> PathBuf {
-    let date = chrono::Local::now().format("%d%m%Y").to_string();
-    workspace_dir.join("session_raw").join(date)
+/// Flat directory for the JSONL source of truth, e.g.
+/// `{workspace}/session_raw`. Stems start with `{unix_ts}` so the
+/// listing is naturally time-ordered without a date subdirectory.
+fn raw_session_dir(workspace_dir: &Path) -> PathBuf {
+    workspace_dir.join("session_raw")
 }
 
-/// Given a `session_raw/DDMMYYYY/agent_N.jsonl` path, derive the companion
-/// `sessions/DDMMYYYY/agent_N.md` path by swapping the `session_raw`
-/// path component with `sessions` and the extension with `.md`.
+/// Given a `session_raw/{stem}.jsonl` path, derive the companion
+/// `sessions/YYYY_MM_DD/{stem}.md` path. The date is taken from the
+/// local clock at write time — fine for browsing because the source
+/// of truth lives in the flat raw dir; the `.md` is purely a view.
 ///
-/// If no `session_raw` component is present (e.g. tests using a flat
-/// tempdir), just swap the extension so the companion lives alongside.
+/// Legacy `session_raw/DDMMYYYY/{stem}.jsonl` paths (still on disk
+/// from older releases until they roll forward) keep their date
+/// component when generating the companion so we don't accidentally
+/// stamp old transcripts with today's date.
+///
+/// If no `session_raw` component is present (tests using a flat
+/// tempdir), the companion sits alongside as a sibling `.md`.
 fn md_companion_path(jsonl_path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    let mut swapped = false;
-    for comp in jsonl_path.components() {
-        match comp {
-            std::path::Component::Normal(s) if s == "session_raw" => {
-                out.push("sessions");
-                swapped = true;
-            }
-            other => out.push(other.as_os_str()),
-        }
-    }
-    if !swapped {
-        // Fall back to sibling .md in the same directory.
+    let components: Vec<_> = jsonl_path.components().collect();
+
+    let raw_idx = components.iter().position(
+        |comp| matches!(comp, std::path::Component::Normal(s) if *s == "session_raw"),
+    );
+
+    let Some(raw_idx) = raw_idx else {
         return jsonl_path.with_extension("md");
+    };
+
+    let mut out = PathBuf::new();
+    for comp in &components[..raw_idx] {
+        out.push(comp.as_os_str());
     }
+    out.push("sessions");
+
+    // Tail after `session_raw`:
+    //   * Flat: ["{stem}.jsonl"] — prepend today's YYYY_MM_DD.
+    //   * Legacy: ["DDMMYYYY", "{stem}.jsonl"] — keep the existing
+    //     date dir so we don't relabel old transcripts.
+    let tail = &components[raw_idx + 1..];
+    if tail.len() <= 1 {
+        out.push(chrono::Local::now().format("%Y_%m_%d").to_string());
+    }
+    for comp in tail {
+        out.push(comp.as_os_str());
+    }
+
     out.with_extension("md")
 }
 
