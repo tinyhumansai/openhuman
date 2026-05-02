@@ -538,12 +538,31 @@ All commands are documented in `CLAUDE.md` and `AGENTS.md` above. The most-used 
 - **Rust tests**: `cargo test --lib` (5600+ tests)
 - **Format check**: `pnpm format:check`
 
+### Running the Tauri desktop app on Linux cloud VMs
+
+The full desktop app can be built and run on headless Linux VMs with:
+
+```bash
+export CEF_PATH="$HOME/Library/Caches/tauri-cef"
+export LD_LIBRARY_PATH="$CEF_PATH/146.0.9/cef_linux_x86_64:$LD_LIBRARY_PATH"
+source scripts/load-dotenv.sh
+cargo tauri dev -- -- --no-sandbox
+```
+
+Key requirements:
+- `--no-sandbox` is required because Chromium refuses to run as root without it.
+- `LD_LIBRARY_PATH` must include the CEF distribution directory so `libcef.so` is found at runtime.
+- The vendored CEF-aware `cargo-tauri` must be installed first via `bash scripts/ensure-tauri-cli.sh`.
+- First build downloads ~300MB CEF binary and compiles ~900 crates; subsequent builds are incremental.
+- GTK/cairo libraries are required: `libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libglib2.0-dev libcairo2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev libatk1.0-dev libdbus-1-dev`.
+- WebGL errors in the log (`ContextResult::kFatalFailure: WebGL1/2 blocklisted`) are normal on GPU-less VMs and do not affect app functionality.
+
 ### Gotchas
 
 - `pnpm install` may warn about ignored build scripts (`@sentry/cli`, `esbuild`, etc.). The esbuild binary is correctly installed via its native platform package despite the warning — Vite and Vitest work fine.
 - Git submodules (`app/src-tauri/vendor/tauri-cef`, `app/src-tauri/vendor/tauri-plugin-notification`) must be initialized for Tauri shell compilation. Run `git submodule update --init --recursive` if not already done.
-- The Tauri desktop build (CEF) requires a ~300MB Chromium download on first build. This is handled automatically by `cef-dll-sys` but takes significant time.
 - `pnpm test:unit` does not exist at the root level; use `pnpm test` instead (which delegates to `vitest run` in the `app` workspace).
+- The Tauri shell `cargo check` requires GTK/desktop system libraries; without them, the pre-push hook's `pnpm rust:check` will fail. Use `--no-verify` on push if GTK libs are missing and the change is unrelated to the Tauri shell.
 
 
 <claude-mem-context>
