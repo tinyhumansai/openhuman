@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { IconType } from 'react-icons';
 import { FaDiscord, FaGlobe, FaTelegramPlane } from 'react-icons/fa';
+import { IoChatbubble } from 'react-icons/io5';
 import {
   LuBlocks,
   LuBot,
@@ -70,6 +71,14 @@ export const CHANNEL_ICONS: Record<string, ReactNode> = {
       label="Web"
       bgClassName="bg-stone-100"
       iconClassName="text-stone-600"
+    />
+  ),
+  imessage: (
+    <SkillIconBadge
+      icon={IoChatbubble}
+      label="iMessage"
+      bgClassName="bg-[#E8F8EE]"
+      iconClassName="text-[#34C759]"
     />
   ),
 };

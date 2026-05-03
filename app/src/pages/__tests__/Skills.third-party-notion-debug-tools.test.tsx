@@ -32,13 +32,13 @@ describe('Skills page — Notion composio integration', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
     expect(screen.getByRole('heading', { name: 'Integrations' })).toBeInTheDocument();
-    const notionTile = screen.getByRole('button', { name: /Notion.*Not connected.*Connect/i });
+    const notionTile = screen.getByRole('button', { name: /Notion.*Connect/i });
     expect(notionTile).toBeInTheDocument();
 
     fireEvent.click(notionTile);
 
     expect(await screen.findByRole('heading', { name: 'Connect Notion' })).toBeInTheDocument();
-    expect(screen.getByText(/Connect your Notion account through Composio/i)).toBeInTheDocument();
+    expect(screen.getByText(/Connect your Notion account\./i)).toBeInTheDocument();
     expect(screen.getByText(/OpenHuman's own agent permissions/i)).toBeInTheDocument();
   });
 });

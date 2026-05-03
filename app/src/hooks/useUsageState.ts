@@ -77,24 +77,24 @@ export function useUsageState(): UsageState {
   const isFreeTier = currentTier === 'FREE';
 
   const usagePct10h =
-    teamUsage && teamUsage.fiveHourCapUsd > 0
+    teamUsage && teamUsage.fiveHourCapUsd > 0.01
       ? Math.min(1, teamUsage.cycleLimit5hr / teamUsage.fiveHourCapUsd)
       : 0;
 
   const usagePct7d =
-    teamUsage && teamUsage.cycleBudgetUsd > 0
+    teamUsage && teamUsage.cycleBudgetUsd > 0.01
       ? Math.min(1, (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) / teamUsage.cycleBudgetUsd)
       : 0;
 
   const isBudgetExhausted = teamUsage
-    ? teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0
+    ? teamUsage.cycleBudgetUsd > 0.01 && teamUsage.remainingUsd <= 0.01
     : false;
 
   // Some users have no included recurring budget at all. They still need the
   // completed-budget warning in chat even though they are not in an exhausted
   // paid cycle.
   const shouldShowBudgetCompletedMessage = teamUsage
-    ? isBudgetExhausted || (teamUsage.cycleBudgetUsd <= 0 && teamUsage.remainingUsd <= 0)
+    ? isBudgetExhausted || (teamUsage.cycleBudgetUsd <= 0.01 && teamUsage.remainingUsd <= 0.01)
     : false;
 
   const isRateLimited =

@@ -143,7 +143,7 @@ const MANAGED_COMPOSIO_TOOLKITS: readonly ManagedToolkitEntry[] = Object.freeze(
   { slug: 'typeform', name: 'Typeform' },
   { slug: 'wakatime', name: 'WakaTime' },
   { slug: 'webex', name: 'Webex' },
-  { slug: 'whatsapp', name: 'WhatsApp' },
+  { slug: 'whatsapp', name: 'WhatsApp Business' },
   { slug: 'wrike', name: 'Wrike' },
   { slug: 'yandex', name: 'Yandex' },
   { slug: 'ynab', name: 'YNAB' },
@@ -286,7 +286,7 @@ function defaultDescription(name: string, category: SkillCategory): string {
     case 'Platform':
       return `Connect ${name} for developer, platform, CRM, and business system workflows.`;
     default:
-      return `Connect ${name} through Composio managed auth.`;
+      return `Connect ${name}.`;
   }
 }
 
