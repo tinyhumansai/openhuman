@@ -26,7 +26,7 @@ The flow is **fork-only**: `origin` must be the user's fork. If `origin` resolve
 
 ## Phase 2 — Push
 
-1. Determine current branch with `git rev-parse --abbrev-ref HEAD`. Confirm it follows the `feat/|fix/|refactor/|chore/|docs/|test/` prefix convention. Never push directly to `main`.
+1. Determine current branch with `git rev-parse --abbrev-ref HEAD`. Confirm it follows the `feat/|fix/|refactor/|chore/|docs/|test/` prefix convention. Never push directly to `main`. If the branch doesn't match the convention, stop and ask the user to either rename it or confirm the deviation — don't auto-rename pushed branches.
 2. Push to **`origin`** with `-u` if upstream tracking is missing. Never push to `upstream`. Never force-push to `main`.
 3. **Pre-push hook policy** (per `CLAUDE.md`): if a pre-push hook fails on something unrelated to your changes (pre-existing breakage on `main` in code you didn't touch), push with `--no-verify` and call it out in the PR body. If the hook fails on your own changes, fix and re-push. Don't ask — just do the right thing and tell the user what you did.
 
@@ -35,7 +35,9 @@ The flow is **fork-only**: `origin` must be the user's fork. If `origin` resolve
 1. Verify upstream remote with `git remote -v`. It should point at `tinyhumansai/openhuman`. If missing, ask the user before adding it.
 2. Check whether a PR already exists for this branch:
    `gh pr list --repo tinyhumansai/openhuman --head <fork-owner>:<branch> --state open --json number,url`
+   - **If a PR exists**, capture its `number` and `url`, print the URL, skip steps 3–5, and proceed straight to Phase 4 with that PR#.
 3. If none exists, draft a title (<70 chars) and a body that follows `.github/PULL_REQUEST_TEMPLATE.md` exactly. Inspect commits with `git log main..HEAD` and the diff with `git diff main...HEAD` to write the summary. If you bypassed a pre-push hook, note it in the PR body.
+   - When filling the Submission Checklist, write each item as `- [ ] N/A: <reason>` (the item text MUST start with `N/A:` for `scripts/check-pr-checklist.mjs` to count it as satisfied; trailing `— N/A: ...` won't match), or `- [x] <text>` for genuinely checked items.
 4. Create the PR:
    ```bash
    gh pr create --repo tinyhumansai/openhuman --base main --head <fork-owner>:<branch> \
@@ -51,11 +53,13 @@ The flow is **fork-only**: `origin` must be the user's fork. If `origin` resolve
 
 Repeat the following loop until the exit condition is met. Use `ScheduleWakeup` to pace at **270s** (stays inside the prompt-cache window) — re-enter this phase each tick by passing the same `/ship-and-babysit` invocation back as the prompt.
 
+**Hard cap: 12 ticks (~60 minutes).** After that, stop the loop and ask the user, including PR URL, current CI snapshot, and any unresolved CodeRabbit threads. Track tick count by counting commits or `ScheduleWakeup` invocations within the conversation — don't loop indefinitely on a stuck CI or a CodeRabbit feedback spiral.
+
 Each tick:
 
 1. **Fetch CI status**:
    `gh pr checks <PR#> --repo tinyhumansai/openhuman --json name,state,link,description`
-   - `gh pr checks --json` returns a `link` field (an Actions URL like `…/actions/runs/<id>/job/<jobId>`), not a run id directly. Extract the run id from the URL (e.g. `awk -F/ '{print $(NF-2)}'` on the `link` value, or use `gh run list --repo tinyhumansai/openhuman --branch <branch> --json databaseId --limit 1`).
+   - `gh pr checks --json` returns a `link` field (an Actions URL like `…/actions/runs/<id>/job/<jobId>`), not a run id directly. Extract the run id with a regex that's robust to trailing slashes (`sed -nE 's#.*/actions/runs/([0-9]+)/.*#\1#p'`) — positional `awk -F/` is brittle when the URL has a trailing slash. Or skip URL parsing entirely and call `gh run list --repo tinyhumansai/openhuman --branch <branch> --json databaseId --limit 1 --jq '.[0].databaseId'`.
    - If any check is `FAILURE` or `CANCELLED`, fetch logs with `gh run view <id> --log-failed --repo tinyhumansai/openhuman` and fix the underlying issue: edit code, commit (conventional prefix), push to `origin`. Do NOT skip hooks or disable failing tests to make CI green.
    - For local repro of common failures before pushing fixes:
      - Frontend: `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm test:unit`.
@@ -64,7 +68,16 @@ Each tick:
 2. **Fetch CodeRabbit review comments**:
    `gh api repos/tinyhumansai/openhuman/pulls/<PR#>/comments --paginate`
    Filter for comments authored by `coderabbitai` / `coderabbitai[bot]`. Also check issue-level comments: `gh api repos/tinyhumansai/openhuman/issues/<PR#>/comments --paginate`.
-   - For each unresolved CodeRabbit suggestion: read the file/line referenced and apply the fix if it is correct and in scope. If a suggestion is wrong or out of scope, leave a brief reply explaining why instead of silently ignoring.
+   - For each unresolved CodeRabbit suggestion: read the file/line referenced and apply the fix if it is correct and in scope. If a suggestion is wrong or out of scope, post a dismissing reply on that line before resolving the thread:
+     ```bash
+     gh api repos/tinyhumansai/openhuman/pulls/<PR#>/reviews \
+       -X POST \
+       -f commit_id="$(git rev-parse HEAD)" \
+       -f event=COMMENT \
+       -f 'comments[][path]=<file>' \
+       -F 'comments[][line]=<line>' \
+       -f 'comments[][body]=**Dismissed:** <reason>'
+     ```
    - After fixing, commit and push to `origin`.
    - Mark the corresponding review thread as resolved via the GraphQL API:
      ```bash
@@ -77,7 +90,7 @@ Each tick:
 3. **Exit condition** — stop the loop when ALL of these are true:
    - All required checks are `SUCCESS`. `PENDING` keeps the loop running, no exceptions — no "green" claim while CI is mid-run.
    - No unresolved CodeRabbit review threads remain.
-   - No new CodeRabbit issue comments since the last tick that request changes.
+   - No new CodeRabbit issue comments since the last tick that request changes. Track this by remembering the highest CodeRabbit issue-comment `id` seen on the previous tick (the GitHub issue-comment id is monotonic) and only treating ids strictly greater than that marker as new on the current tick.
    When the exit condition holds, do NOT call `ScheduleWakeup` — return a final one-line summary with the PR URL and current status.
 4. **Pacing**: if exiting, stop. Otherwise call `ScheduleWakeup` with `delaySeconds: 270`, `prompt: "/ship-and-babysit"`, and a specific `reason` like "waiting on CI for PR #123" or "applied 2 CodeRabbit fixes, re-checking".
 
