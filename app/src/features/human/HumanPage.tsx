@@ -44,11 +44,12 @@ const HumanPage = () => {
         Speak replies
       </label>
 
-      {/* Floating chat sidebar — leaves room for BottomTabBar (~80px) at the foot. */}
-      <aside
-        className="absolute top-4 right-4 bottom-24 w-[420px] z-10 rounded-2xl border border-stone-300 bg-white shadow-soft flex flex-col overflow-hidden">
-        <Conversations variant="sidebar" />
-      </aside>
+      {/* Floating chat sidebar — vertically centered above the BottomTabBar (~80px). */}
+      <div className="pointer-events-none absolute right-4 top-0 bottom-20 z-10 flex items-center">
+        <aside className="pointer-events-auto w-[420px] h-[min(720px,calc(100vh-160px))] rounded-2xl border border-stone-300 bg-white shadow-soft flex flex-col overflow-hidden">
+          <Conversations variant="sidebar" />
+        </aside>
+      </div>
     </div>
   );
 };
