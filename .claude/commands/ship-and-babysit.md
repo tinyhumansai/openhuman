@@ -12,11 +12,10 @@ Repo facts (from `CLAUDE.md`):
 - PR template: `.github/PULL_REQUEST_TEMPLATE.md`. Issue templates under `.github/ISSUE_TEMPLATE/`.
 
 **Resolve the fork owner once at the start** and reuse it for the rest of the flow:
+```bash
+FORK_OWNER=$(git remote get-url origin | sed -E 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#')
 ```
-FORK_OWNER=$(gh api repos/:owner/:repo --jq .owner.login 2>/dev/null \
-  || git remote get-url origin | sed -E 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#')
-```
-Or derive from `git remote get-url origin` directly. If `origin` points at `tinyhumansai/openhuman` (i.e. the user has push rights on upstream and there is no separate fork), skip the `--head <fork-owner>:` prefix and push to a branch on upstream — but warn the user first.
+The flow is **fork-only**: `origin` must be the user's fork. If `origin` resolves to `tinyhumansai` (the upstream org), stop and ask the user to add a fork remote — never push branches to the upstream repo.
 
 ## Phase 1 — Commit
 
@@ -38,7 +37,7 @@ Or derive from `git remote get-url origin` directly. If `origin` points at `tiny
    `gh pr list --repo tinyhumansai/openhuman --head <fork-owner>:<branch> --state open --json number,url`
 3. If none exists, draft a title (<70 chars) and a body that follows `.github/PULL_REQUEST_TEMPLATE.md` exactly. Inspect commits with `git log main..HEAD` and the diff with `git diff main...HEAD` to write the summary. If you bypassed a pre-push hook, note it in the PR body.
 4. Create the PR:
-   ```
+   ```bash
    gh pr create --repo tinyhumansai/openhuman --base main --head <fork-owner>:<branch> \
      --title "..." --body "$(cat <<'EOF'
    ...template-filled body...
@@ -56,7 +55,8 @@ Each tick:
 
 1. **Fetch CI status**:
    `gh pr checks <PR#> --repo tinyhumansai/openhuman --json name,state,link,description`
-   - If any check is `FAILURE` or `CANCELLED`, fetch logs (`gh run view <id> --log-failed`) and fix the underlying issue: edit code, commit (conventional prefix), push to `origin`. Do NOT skip hooks or disable failing tests to make CI green.
+   - `gh pr checks --json` returns a `link` field (an Actions URL like `…/actions/runs/<id>/job/<jobId>`), not a run id directly. Extract the run id from the URL (e.g. `awk -F/ '{print $(NF-2)}'` on the `link` value, or use `gh run list --repo tinyhumansai/openhuman --branch <branch> --json databaseId --limit 1`).
+   - If any check is `FAILURE` or `CANCELLED`, fetch logs with `gh run view <id> --log-failed --repo tinyhumansai/openhuman` and fix the underlying issue: edit code, commit (conventional prefix), push to `origin`. Do NOT skip hooks or disable failing tests to make CI green.
    - For local repro of common failures before pushing fixes:
      - Frontend: `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm test:unit`.
      - Rust: `cargo check --manifest-path Cargo.toml`, `cargo check --manifest-path app/src-tauri/Cargo.toml`, `pnpm test:rust`.
@@ -67,15 +67,15 @@ Each tick:
    - For each unresolved CodeRabbit suggestion: read the file/line referenced and apply the fix if it is correct and in scope. If a suggestion is wrong or out of scope, leave a brief reply explaining why instead of silently ignoring.
    - After fixing, commit and push to `origin`.
    - Mark the corresponding review thread as resolved via the GraphQL API:
-     ```
+     ```bash
      gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' -f id=<threadId>
      ```
      To list thread IDs:
-     ```
+     ```bash
      gh api graphql -f query='query($owner:String!,$repo:String!,$num:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$num){reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{author{login} body}}}}}}}' -F owner=tinyhumansai -F repo=openhuman -F num=<PR#>
      ```
 3. **Exit condition** — stop the loop when ALL of these are true:
-   - All required checks are `SUCCESS` (or `PENDING` for fewer than two consecutive ticks).
+   - All required checks are `SUCCESS`. `PENDING` keeps the loop running, no exceptions — no "green" claim while CI is mid-run.
    - No unresolved CodeRabbit review threads remain.
    - No new CodeRabbit issue comments since the last tick that request changes.
    When the exit condition holds, do NOT call `ScheduleWakeup` — return a final one-line summary with the PR URL and current status.
