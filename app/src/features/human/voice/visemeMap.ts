@@ -50,7 +50,7 @@ export function findActiveFrame(
   cursor = 0
 ): { frame: TimedFrame | null; cursor: number } {
   if (frames.length === 0) return { frame: null, cursor: 0 };
-  let i = Math.min(cursor, frames.length - 1);
+  let i = Math.max(0, Math.min(cursor, frames.length - 1));
   // Rewind if the caller jumped backward (e.g. replay).
   while (i > 0 && frames[i].start_ms > ms) i--;
   while (i < frames.length - 1 && frames[i].end_ms <= ms) i++;

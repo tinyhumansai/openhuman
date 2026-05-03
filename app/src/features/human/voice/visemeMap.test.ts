@@ -72,6 +72,12 @@ describe('findActiveFrame', () => {
     expect(cursor).toBe(3);
   });
 
+  it('clamps a negative cursor to 0 to avoid undefined-frame access', () => {
+    const result = findActiveFrame(frames, 50, -10);
+    expect(result.frame?.viseme).toBe('sil');
+    expect(result.cursor).toBeGreaterThanOrEqual(0);
+  });
+
   it('rewinds the cursor when time jumps backward', () => {
     const { cursor } = findActiveFrame(frames, 500, 0);
     const back = findActiveFrame(frames, 50, cursor);

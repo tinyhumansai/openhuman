@@ -44,7 +44,13 @@ export async function playBase64Audio(
     rejectEnded(new Error('audio playback error'));
   });
 
-  await audio.play();
+  try {
+    await audio.play();
+  } catch (err) {
+    cleanup();
+    rejectEnded(err instanceof Error ? err : new Error(String(err)));
+    throw err;
+  }
 
   return {
     currentMs: () => (endedNaturally || stopped ? -1 : audio.currentTime * 1000),

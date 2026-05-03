@@ -74,6 +74,9 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): {
   const playbackRef = useRef<PlaybackHandle | null>(null);
   const visemeFramesRef = useRef<{ viseme: string; start_ms: number; end_ms: number }[]>([]);
   const visemeCursorRef = useRef(0);
+  // Monotonic counter — only the latest startTtsPlayback's callbacks may
+  // mutate idle state; older invocations bail out.
+  const playbackSeqRef = useRef(0);
 
   const [, force] = useState(0);
 
@@ -92,14 +95,12 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): {
           setFace('normal');
           return;
         }
-        // Fire-and-forget — playback failures fall back to neutral.
-        void startTtsPlayback(e.full_response).catch(() => {
-          playbackRef.current = null;
-          visemeFramesRef.current = [];
-          setFace('normal');
-        });
+        // Fire-and-forget — startTtsPlayback owns its cleanup via finally.
+        void startTtsPlayback(e.full_response).catch(() => {});
       },
       onError: () => {
+        // Bump seq to invalidate any in-flight startTtsPlayback awaiters.
+        playbackSeqRef.current++;
         playbackRef.current?.stop();
         playbackRef.current = null;
         visemeFramesRef.current = [];
@@ -108,31 +109,48 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): {
     });
     return () => {
       unsub();
+      // Same — invalidate in-flight callbacks before tearing down.
+      playbackSeqRef.current++;
       playbackRef.current?.stop();
       playbackRef.current = null;
     };
   }, []);
 
   async function startTtsPlayback(text: string): Promise<void> {
-    setFace('thinking');
-    const tts = await synthesizeSpeech(text);
-    visemeFramesRef.current = tts.visemes ?? [];
+    // Cancel any in-flight playback so its handle.ended callback can't reset
+    // state belonging to the new run.
+    playbackRef.current?.stop();
+    playbackRef.current = null;
+    visemeFramesRef.current = [];
     visemeCursorRef.current = 0;
-    const handle = await playBase64Audio(tts.audio_base64, tts.audio_mime ?? 'audio/mpeg');
-    playbackRef.current = handle;
-    setFace('speaking');
-    handle.ended.then(
-      () => {
-        playbackRef.current = null;
-        visemeFramesRef.current = [];
-        setFace('normal');
-      },
-      () => {
+    const seq = ++playbackSeqRef.current;
+    const isStillCurrent = () => playbackSeqRef.current === seq;
+
+    try {
+      setFace('thinking');
+      const tts = await synthesizeSpeech(text);
+      if (!isStillCurrent()) return;
+      visemeFramesRef.current = tts.visemes ?? [];
+      visemeCursorRef.current = 0;
+      const handle = await playBase64Audio(tts.audio_base64, tts.audio_mime ?? 'audio/mpeg');
+      if (!isStillCurrent()) {
+        handle.stop();
+        return;
+      }
+      playbackRef.current = handle;
+      setFace('speaking');
+      try {
+        await handle.ended;
+      } catch {
+        // Promise rejects when stop() is called — fall through to cleanup.
+      }
+    } finally {
+      if (isStillCurrent()) {
         playbackRef.current = null;
         visemeFramesRef.current = [];
         setFace('normal');
       }
-    );
+    }
   }
 
   // RAF loop while we're speaking (either pseudo-lipsync decay or audio-driven).
