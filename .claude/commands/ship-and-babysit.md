@@ -53,14 +53,14 @@ The flow is **fork-only**: `origin` must be the user's fork. If `origin` resolve
 
 Repeat the following loop until the exit condition is met. Use `ScheduleWakeup` to pace at **270s** (stays inside the prompt-cache window) — re-enter this phase each tick by passing the same `/ship-and-babysit` invocation back as the prompt.
 
-**Hard cap: 12 ticks (~60 minutes).** After that, stop the loop and ask the user, including PR URL, current CI snapshot, and any unresolved CodeRabbit threads. Track tick count by counting commits or `ScheduleWakeup` invocations within the conversation — don't loop indefinitely on a stuck CI or a CodeRabbit feedback spiral.
+**Hard cap: 12 ticks (~60 minutes).** After that, stop the loop and ask the user, including PR URL, current CI snapshot, and any unresolved CodeRabbit threads. Maintain an explicit `tickCount` that increments by 1 on every loop entry (regardless of whether you commit or only wait on CI), and pass it through in the `ScheduleWakeup` `reason` (e.g. `"tick 5/12: waiting on CI for PR #1115"`) so the counter is visible across ticks and can't drift if a tick produces no commits.
 
 Each tick:
 
 1. **Fetch CI status**:
    `gh pr checks <PR#> --repo tinyhumansai/openhuman --json name,state,link,description`
    - `gh pr checks --json` returns a `link` field (an Actions URL like `…/actions/runs/<id>/job/<jobId>`), not a run id directly. Extract the run id with a regex that's robust to trailing slashes (`sed -nE 's#.*/actions/runs/([0-9]+)/.*#\1#p'`) — positional `awk -F/` is brittle when the URL has a trailing slash. Or skip URL parsing entirely and call `gh run list --repo tinyhumansai/openhuman --branch <branch> --json databaseId --limit 1 --jq '.[0].databaseId'`.
-   - If any check is `FAILURE` or `CANCELLED`, fetch logs with `gh run view <id> --log-failed --repo tinyhumansai/openhuman` and fix the underlying issue: edit code, commit (conventional prefix), push to `origin`. Do NOT skip hooks or disable failing tests to make CI green.
+   - If any check is `FAILURE` or `CANCELLED`, branch by check type: when `link` matches `/actions/runs/<id>/` (Actions-backed), extract `<id>` and fetch logs with `gh run view <id> --log-failed --repo tinyhumansai/openhuman`; when it doesn't (e.g. the `CodeRabbit` virtual check or any other status posted directly via the Checks API without an Actions run), skip `gh run view` and work from the `name`/`state`/`description` fields plus any review comments. Then fix the underlying issue: edit code, commit (conventional prefix), push to `origin`. Do NOT skip hooks or disable failing tests to make CI green.
    - For local repro of common failures before pushing fixes:
      - Frontend: `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm test:unit`.
      - Rust: `cargo check --manifest-path Cargo.toml`, `cargo check --manifest-path app/src-tauri/Cargo.toml`, `pnpm test:rust`.
