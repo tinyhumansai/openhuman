@@ -1,9 +1,23 @@
+import { useEffect, useState } from 'react';
+
 import Conversations from '../../pages/Conversations';
 import { Ghosty } from './Mascot';
 import { useHumanMascot } from './useHumanMascot';
 
+const SPEAK_REPLIES_KEY = 'human.speakReplies';
+
 const HumanPage = () => {
-  const { face, viseme } = useHumanMascot();
+  const [speakReplies, setSpeakReplies] = useState<boolean>(() => {
+    const raw = window.localStorage.getItem(SPEAK_REPLIES_KEY);
+    return raw === null ? true : raw === '1';
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(SPEAK_REPLIES_KEY, speakReplies ? '1' : '0');
+  }, [speakReplies]);
+
+  const { face, viseme } = useHumanMascot({ speakReplies });
+
   return (
     <div className="absolute inset-0 flex bg-stone-100">
       {/* Mascot stage */}
@@ -18,6 +32,16 @@ const HumanPage = () => {
         <div className="relative w-[min(80vh,80vw)] aspect-square">
           <Ghosty face={face} viseme={viseme} />
         </div>
+
+        <label className="absolute top-4 left-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/80 backdrop-blur-sm border border-stone-300 text-xs text-stone-700 shadow-soft cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={speakReplies}
+            onChange={e => setSpeakReplies(e.target.checked)}
+            className="cursor-pointer"
+          />
+          Speak replies
+        </label>
       </div>
 
       <aside className="w-[440px] border-l border-stone-300 bg-white flex flex-col overflow-hidden">

@@ -3,6 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 import { subscribeChatEvents } from '../../services/chatService';
 import type { MascotFace } from './Mascot';
 import { lerpViseme, type VisemeShape, VISEMES } from './Mascot/visemes';
+import { type PlaybackHandle, playBase64Audio } from './voice/audioPlayer';
+import { synthesizeSpeech } from './voice/ttsClient';
+import { findActiveFrame, oculusVisemeToShape } from './voice/visemeMap';
 
 /** ms the mouth holds the target viseme before decaying back to rest. */
 const VISEME_DECAY_MS = 180;
@@ -39,34 +42,96 @@ export function pickViseme(delta: string): VisemeShape {
   }
 }
 
+export interface UseHumanMascotOptions {
+  /** When true, post-stream replies are sent to ElevenLabs and the mouth
+   *  follows the returned viseme timeline while the audio plays. */
+  speakReplies?: boolean;
+}
+
 /**
- * Drives the mascot's face/mouth from streaming chat events.
- *
- * - `inference_start` → thinking
- * - `text_delta` → speaking, with the mouth shape picked from the delta and
- *   decaying back toward rest between deltas
- * - `chat_done` / `chat_error` → back to neutral
+ * Drives the mascot's face/mouth from chat events, with three phases:
+ * - inference_start → thinking
+ * - text_delta → speaking, pseudo-lipsync from the trailing letter of each delta
+ * - chat_done (with `speakReplies`) → speaking, real visemes from TTS audio
+ *   for the full response; falls back to neutral when audio ends or fails
  */
-export function useHumanMascot(): { face: MascotFace; viseme: VisemeShape } {
+export function useHumanMascot(
+  options: UseHumanMascotOptions = {}
+): { face: MascotFace; viseme: VisemeShape } {
+  const { speakReplies = false } = options;
+  const speakRef = useRef(speakReplies);
+  speakRef.current = speakReplies;
+
   const [face, setFace] = useState<MascotFace>('normal');
   const targetRef = useRef<VisemeShape>(VISEMES.REST);
   const lastDeltaAtRef = useRef(0);
+
+  // TTS playback state — non-null while audio is mid-flight.
+  const playbackRef = useRef<PlaybackHandle | null>(null);
+  const visemeFramesRef = useRef<{ viseme: string; start_ms: number; end_ms: number }[]>([]);
+  const visemeCursorRef = useRef(0);
+
   const [, force] = useState(0);
 
   useEffect(() => {
     const unsub = subscribeChatEvents({
       onInferenceStart: () => setFace('thinking'),
       onTextDelta: e => {
+        // Pseudo-lipsync only kicks in if no real audio is playing.
+        if (playbackRef.current) return;
         setFace('speaking');
         targetRef.current = pickViseme(e.delta);
         lastDeltaAtRef.current = performance.now();
       },
-      onDone: () => setFace('normal'),
-      onError: () => setFace('normal'),
+      onDone: e => {
+        if (!speakRef.current || !e.full_response?.trim()) {
+          setFace('normal');
+          return;
+        }
+        // Fire-and-forget — playback failures fall back to neutral.
+        void startTtsPlayback(e.full_response).catch(() => {
+          playbackRef.current = null;
+          visemeFramesRef.current = [];
+          setFace('normal');
+        });
+      },
+      onError: () => {
+        playbackRef.current?.stop();
+        playbackRef.current = null;
+        visemeFramesRef.current = [];
+        setFace('normal');
+      },
     });
-    return unsub;
+    return () => {
+      unsub();
+      playbackRef.current?.stop();
+      playbackRef.current = null;
+    };
   }, []);
 
+  async function startTtsPlayback(text: string): Promise<void> {
+    setFace('thinking');
+    const tts = await synthesizeSpeech(text);
+    visemeFramesRef.current = tts.visemes ?? [];
+    visemeCursorRef.current = 0;
+    const handle = await playBase64Audio(tts.audio_base64, tts.audio_mime ?? 'audio/mpeg');
+    playbackRef.current = handle;
+    setFace('speaking');
+    handle.ended.then(
+      () => {
+        playbackRef.current = null;
+        visemeFramesRef.current = [];
+        setFace('normal');
+      },
+      () => {
+        playbackRef.current = null;
+        visemeFramesRef.current = [];
+        setFace('normal');
+      }
+    );
+  }
+
+  // RAF loop while we're speaking (either pseudo-lipsync decay or audio-driven).
   useEffect(() => {
     if (face !== 'speaking') return;
     let raf = 0;
@@ -79,7 +144,15 @@ export function useHumanMascot(): { face: MascotFace; viseme: VisemeShape } {
   }, [face]);
 
   let viseme: VisemeShape = VISEMES.REST;
-  if (face === 'speaking') {
+  const playback = playbackRef.current;
+  if (playback) {
+    const ms = playback.currentMs();
+    if (ms >= 0) {
+      const { frame, cursor } = findActiveFrame(visemeFramesRef.current, ms, visemeCursorRef.current);
+      visemeCursorRef.current = cursor;
+      viseme = frame ? oculusVisemeToShape(frame.viseme) : VISEMES.REST;
+    }
+  } else if (face === 'speaking') {
     const since = performance.now() - lastDeltaAtRef.current;
     const decay = Math.max(0, Math.min(1, since / VISEME_DECAY_MS));
     viseme = lerpViseme(targetRef.current, VISEMES.REST, decay);
