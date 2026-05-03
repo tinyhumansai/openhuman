@@ -137,7 +137,11 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
 
       const state = store.getState().thread;
       const targetFromState =
-        state.selectedThreadId ?? state.activeThreadId ?? state.threads[0]?.id ?? null;
+        state.selectedThreadId ??
+        state.activeThreadId ??
+        state.welcomeThreadId ??
+        state.threads[0]?.id ??
+        null;
       if (targetFromState) {
         return targetFromState;
       }

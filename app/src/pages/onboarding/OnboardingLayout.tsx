@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 
+import { ONBOARDING_WELCOME_THREAD_LABEL } from '../../constants/onboardingChat';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { userApi } from '../../services/api/userApi';
 import { chatSend } from '../../services/chatService';
@@ -93,7 +94,7 @@ const OnboardingLayout = () => {
     // false).
     let welcomeThread: { id: string } | null = null;
     try {
-      const newThread = await dispatch(createNewThread()).unwrap();
+      const newThread = await dispatch(createNewThread([ONBOARDING_WELCOME_THREAD_LABEL])).unwrap();
       dispatch(setSelectedThread(newThread.id));
       // Track this thread so the post-onboarding watcher can delete it
       // once `chat_onboarding_completed` flips. The welcome conversation
