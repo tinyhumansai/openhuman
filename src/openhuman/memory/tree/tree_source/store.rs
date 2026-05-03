@@ -23,10 +23,10 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::content_store::StagedSummary;
 use crate::openhuman::memory::tree::score::embed::{decode_optional_blob, pack_checked};
+use crate::openhuman::memory::tree::store::with_connection;
 use crate::openhuman::memory::tree::tree_source::types::{
     Buffer, SummaryNode, Tree, TreeKind, TreeStatus,
 };
-use crate::openhuman::memory::tree::store::with_connection;
 
 fn ms_to_utc(ms: i64) -> rusqlite::Result<DateTime<Utc>> {
     Utc.timestamp_millis_opt(ms).single().ok_or_else(|| {

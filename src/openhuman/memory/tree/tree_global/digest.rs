@@ -30,17 +30,17 @@ use crate::openhuman::memory::tree::content_store::{
     atomic::stage_summary, paths::slugify_source_id, read as content_read, SummaryComposeInput,
     SummaryTreeKind,
 };
+use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
+use crate::openhuman::memory::tree::store::with_connection;
 use crate::openhuman::memory::tree::tree_global::registry::get_or_create_global_tree;
 use crate::openhuman::memory::tree::tree_global::seal::append_daily_and_cascade;
 use crate::openhuman::memory::tree::tree_global::GLOBAL_TOKEN_BUDGET;
-use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
 use crate::openhuman::memory::tree::tree_source::registry::new_summary_id;
 use crate::openhuman::memory::tree::tree_source::store;
 use crate::openhuman::memory::tree::tree_source::summariser::{
     Summariser, SummaryContext, SummaryInput,
 };
 use crate::openhuman::memory::tree::tree_source::types::{SummaryNode, Tree, TreeKind};
-use crate::openhuman::memory::tree::store::with_connection;
 
 /// Outcome of a single `end_of_day_digest` call — lets the caller decide
 /// whether to log skip details or propagate seal counts to telemetry.

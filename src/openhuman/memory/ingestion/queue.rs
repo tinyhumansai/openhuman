@@ -12,9 +12,9 @@ use std::time::Instant;
 
 use tokio::sync::mpsc;
 
-use crate::core::event_bus::{publish_global, DomainEvent};
 use super::state::IngestionState;
 use super::MemoryIngestionConfig;
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::memory::store::{NamespaceDocumentInput, UnifiedMemory};
 
 /// A job submitted to the ingestion worker.

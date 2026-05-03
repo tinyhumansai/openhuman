@@ -40,6 +40,7 @@ use crate::openhuman::memory::tree::content_store::{
 use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
 use crate::openhuman::memory::tree::score::extract::EntityExtractor;
 use crate::openhuman::memory::tree::score::resolver::canonicalise;
+use crate::openhuman::memory::tree::store::with_connection;
 use crate::openhuman::memory::tree::tree_source::registry::new_summary_id;
 use crate::openhuman::memory::tree::tree_source::store;
 use crate::openhuman::memory::tree::tree_source::summariser::{
@@ -48,7 +49,6 @@ use crate::openhuman::memory::tree::tree_source::summariser::{
 use crate::openhuman::memory::tree::tree_source::types::{
     Buffer, SummaryNode, Tree, TreeKind, SUMMARY_FANOUT, TOKEN_BUDGET,
 };
-use crate::openhuman::memory::tree::store::with_connection;
 
 /// Hard cap on cascade depth — prevents runaway loops if token accounting
 /// ever slips. 32 levels at even a 2x fan-in is more than enough for any

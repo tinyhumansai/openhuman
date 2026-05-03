@@ -28,12 +28,12 @@ use chrono::Utc;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::score::store::lookup_entity;
+use crate::openhuman::memory::tree::store::get_chunk;
 use crate::openhuman::memory::tree::tree_source::bucket_seal::{
     append_leaf, LabelStrategy, LeafRef,
 };
 use crate::openhuman::memory::tree::tree_source::summariser::Summariser;
 use crate::openhuman::memory::tree::tree_source::types::Tree;
-use crate::openhuman::memory::tree::store::get_chunk;
 use crate::openhuman::memory::tree::util::redact::redact;
 
 /// Max leaves to pull from the entity index during backfill. A hard cap
@@ -194,9 +194,9 @@ mod tests {
     use crate::openhuman::memory::tree::score::extract::EntityKind;
     use crate::openhuman::memory::tree::score::resolver::CanonicalEntity;
     use crate::openhuman::memory::tree::score::store::index_entity;
+    use crate::openhuman::memory::tree::store::upsert_chunks;
     use crate::openhuman::memory::tree::tree_source::store as src_store;
     use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
-    use crate::openhuman::memory::tree::store::upsert_chunks;
     use crate::openhuman::memory::tree::tree_topic::registry::get_or_create_topic_tree;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::{TimeZone, Utc};

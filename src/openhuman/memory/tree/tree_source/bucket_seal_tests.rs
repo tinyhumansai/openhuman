@@ -172,8 +172,8 @@ async fn crossing_budget_triggers_seal() {
 
 #[tokio::test]
 async fn fanout_at_l1_triggers_l2_seal() {
-    use crate::openhuman::memory::tree::tree_source::types::SUMMARY_FANOUT;
     use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::tree_source::types::SUMMARY_FANOUT;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::TimeZone;
 
@@ -261,8 +261,8 @@ async fn fanout_at_l1_triggers_l2_seal() {
 
 #[tokio::test]
 async fn upper_level_does_not_seal_below_fanout() {
-    use crate::openhuman::memory::tree::tree_source::types::SUMMARY_FANOUT;
     use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::tree_source::types::SUMMARY_FANOUT;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::TimeZone;
 

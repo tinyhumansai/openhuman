@@ -123,8 +123,8 @@ mod tests {
     use crate::openhuman::memory::tree::score::extract::EntityKind;
     use crate::openhuman::memory::tree::score::resolver::CanonicalEntity;
     use crate::openhuman::memory::tree::score::store::index_entity;
-    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::tree_topic::registry::{
         archive_topic_tree, get_or_create_topic_tree,
     };

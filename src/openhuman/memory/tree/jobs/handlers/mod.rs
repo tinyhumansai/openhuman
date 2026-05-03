@@ -4,7 +4,6 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::content_store::{
     self as content_store, read as content_read, tags as content_tags,
 };
-use crate::openhuman::memory::tree::tree_global::digest::{self, DigestOutcome};
 use crate::openhuman::memory::tree::jobs::store;
 use crate::openhuman::memory::tree::jobs::types::{
     AppendBufferPayload, AppendTarget, DigestDailyPayload, ExtractChunkPayload, FlushStalePayload,
@@ -14,10 +13,11 @@ use crate::openhuman::memory::tree::score;
 use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, pack_checked};
 use crate::openhuman::memory::tree::score::extract::build_summary_extractor;
 use crate::openhuman::memory::tree::score::store as score_store;
+use crate::openhuman::memory::tree::store as chunk_store;
+use crate::openhuman::memory::tree::tree_global::digest::{self, DigestOutcome};
 use crate::openhuman::memory::tree::tree_source::{
     build_summariser, get_or_create_source_tree, LabelStrategy, LeafRef,
 };
-use crate::openhuman::memory::tree::store as chunk_store;
 use crate::openhuman::memory::tree::tree_topic::curator;
 
 pub async fn handle_job(config: &Config, job: &Job) -> Result<()> {
@@ -514,10 +514,10 @@ mod tests {
     use crate::openhuman::memory::tree::content_store;
     use crate::openhuman::memory::tree::jobs::store::{count_by_status, count_total};
     use crate::openhuman::memory::tree::jobs::types::JobStatus;
+    use crate::openhuman::memory::tree::store::with_connection;
     use crate::openhuman::memory::tree::tree_source::bucket_seal::{append_leaf_deferred, LeafRef};
     use crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree;
     use crate::openhuman::memory::tree::tree_source::store as src_store;
-    use crate::openhuman::memory::tree::store::with_connection;
     use chrono::TimeZone;
     use rusqlite::params;
     use tempfile::TempDir;
@@ -765,8 +765,8 @@ mod tests {
         //    is to create a separate source tree, push two 6k leaves into
         //    it, and let the seal produce a summary we can address.
         let source_tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
-        use crate::openhuman::memory::tree::tree_source::bucket_seal::seal_one_level;
         use crate::openhuman::memory::tree::store::upsert_chunks;
+        use crate::openhuman::memory::tree::tree_source::bucket_seal::seal_one_level;
         use crate::openhuman::memory::tree::types::{
             chunk_id, Chunk, Metadata, SourceKind, SourceRef,
         };

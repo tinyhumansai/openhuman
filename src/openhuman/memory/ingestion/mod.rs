@@ -27,8 +27,8 @@ pub use types::{
 };
 
 use parse::{enrich_document_metadata, parse_document};
-use types::ParsedIngestion;
 use serde_json::json;
+use types::ParsedIngestion;
 
 use crate::openhuman::memory::store::types::NamespaceDocumentInput;
 use crate::openhuman::memory::UnifiedMemory;

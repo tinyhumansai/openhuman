@@ -161,8 +161,8 @@ async fn rerank_by_semantic_similarity(
     hits: Vec<RetrievalHit>,
 ) -> Result<Vec<RetrievalHit>> {
     use crate::openhuman::memory::tree::retrieval::types::NodeKind;
-    use crate::openhuman::memory::tree::tree_source::store as src_store;
     use crate::openhuman::memory::tree::store::get_chunk_embedding;
+    use crate::openhuman::memory::tree::tree_source::store as src_store;
 
     let embedder = build_embedder_from_config(config)?;
     let query_vec = embedder.embed(query).await?;
@@ -517,11 +517,11 @@ mod tests {
         use crate::openhuman::memory::tree::score::extract::EntityKind;
         use crate::openhuman::memory::tree::score::resolver::CanonicalEntity;
         use crate::openhuman::memory::tree::score::store as score_store;
+        use crate::openhuman::memory::tree::store::with_connection;
         use crate::openhuman::memory::tree::tree_source::store as tree_store;
         use crate::openhuman::memory::tree::tree_source::types::{
             SummaryNode, Tree, TreeKind, TreeStatus,
         };
-        use crate::openhuman::memory::tree::store::with_connection;
 
         let (_tmp, cfg) = test_config();
         let ts = Utc::now();

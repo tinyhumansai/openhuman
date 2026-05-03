@@ -20,17 +20,17 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::content_store::{
     atomic::stage_summary, SummaryComposeInput, SummaryTreeKind,
 };
+use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
+use crate::openhuman::memory::tree::store::with_connection;
 use crate::openhuman::memory::tree::tree_global::{
     GLOBAL_TOKEN_BUDGET, MONTHLY_SEAL_THRESHOLD, WEEKLY_SEAL_THRESHOLD, YEARLY_SEAL_THRESHOLD,
 };
-use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
 use crate::openhuman::memory::tree::tree_source::registry::new_summary_id;
 use crate::openhuman::memory::tree::tree_source::store;
 use crate::openhuman::memory::tree::tree_source::summariser::{
     Summariser, SummaryContext, SummaryInput,
 };
 use crate::openhuman::memory::tree::tree_source::types::{Buffer, SummaryNode, Tree, TreeKind};
-use crate::openhuman::memory::tree::store::with_connection;
 
 /// Hard cap on cascade depth — mirrors the source-tree constant. L0→L1→L2→L3
 /// is only 3 hops so we have ample slack.

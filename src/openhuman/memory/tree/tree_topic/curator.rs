@@ -171,8 +171,8 @@ mod tests {
     use crate::openhuman::memory::tree::score::extract::EntityKind;
     use crate::openhuman::memory::tree::score::resolver::CanonicalEntity;
     use crate::openhuman::memory::tree::score::store::index_entity;
-    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::tree_topic::store::get;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::{TimeZone, Utc};

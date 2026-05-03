@@ -1,12 +1,12 @@
 use super::*;
 use crate::openhuman::memory::tree::content_store;
+use crate::openhuman::memory::tree::store::upsert_chunks;
 use crate::openhuman::memory::tree::tree_source::bucket_seal::{
     append_leaf, LabelStrategy, LeafRef,
 };
 use crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree;
 use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
 use crate::openhuman::memory::tree::tree_source::types::TreeStatus;
-use crate::openhuman::memory::tree::store::upsert_chunks;
 use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
 use tempfile::TempDir;
 
