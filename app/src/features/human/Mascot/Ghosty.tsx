@@ -3,6 +3,7 @@ import React from 'react';
 import { GhostyDefs } from './Defs';
 import { ARM_PATH, BODY_PATH, LEFT_LEG_PATH, RIGHT_LEG_PATH, VIEWBOX } from './paths';
 import { useMascotClock } from './useMascotClock';
+import { type VisemeShape, VISEMES, visemePath } from './visemes';
 
 export type MascotFace = 'normal' | 'listening' | 'thinking' | 'speaking';
 
@@ -11,6 +12,8 @@ export interface GhostyProps {
   blushColor?: string;
   arm?: 'wave' | 'none';
   face?: MascotFace;
+  /** Active mouth shape. When omitted, the mouth rests in a smile. */
+  viseme?: VisemeShape;
   /** Override SVG element size; defaults to filling the parent. */
   size?: number | string;
   idPrefix?: string;
@@ -21,6 +24,7 @@ export const Ghosty: React.FC<GhostyProps> = ({
   blushColor = '#f4a3a3',
   arm = 'none',
   face = 'normal',
+  viseme,
   size = '100%',
   idPrefix = 'mascot',
 }) => {
@@ -109,12 +113,7 @@ export const Ghosty: React.FC<GhostyProps> = ({
           )}
         </g>
 
-        {/* Mouth — phase 1 placeholder smile. Viseme paths land in phase 4. */}
-        <path
-          d="M478,570 Q520,617 562,570 Q520,597 478,570 Z"
-          fill="#0a0a0a"
-          data-face={face}
-        />
+        <path d={visemePath(viseme ?? VISEMES.REST)} fill="#0a0a0a" data-face={face} />
 
         <ellipse cx={360} cy={545} rx={56} ry={26} fill={blushColor} opacity={0.18} />
         <ellipse cx={680} cy={545} rx={56} ry={26} fill={blushColor} opacity={0.18} />
