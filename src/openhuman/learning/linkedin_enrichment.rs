@@ -350,10 +350,7 @@ Rules:\n\
 - Keep the entire output under 400 words.\n\
 - Do not invent information — only use what is in the input.";
 
-    let model = config
-        .default_model
-        .as_deref()
-        .unwrap_or("neocortex-preview");
+    let model = "summarization-v1";
 
     tracing::debug!(
         model = model,
