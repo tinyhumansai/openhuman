@@ -175,6 +175,10 @@ export const checkAppUpdate = async (): Promise<AppUpdateInfo | null> => {
 /**
  * Download + install the latest shell build, then relaunch.
  *
+ * Legacy combined path — kept so the manual "do everything" flow still
+ * works. The auto-update flow uses {@link downloadAppUpdate} +
+ * {@link installAppUpdate} so the user can defer the restart.
+ *
  * The Rust side shuts the core sidecar down before the install step so the
  * macOS .app bundle replacement does not race with live file handles. After
  * `app.restart()` the new bundled sidecar is launched fresh.
@@ -194,6 +198,57 @@ export const applyAppUpdate = async (): Promise<void> => {
   // errors that come back before that.
   await invoke<void>('apply_app_update');
   console.debug('[app-update] applyAppUpdate: returned (no update was applied)');
+};
+
+export interface AppUpdateDownloadResult {
+  /** True when an update was found and bundle bytes are now staged. */
+  ready: boolean;
+  /** Version of the staged update, if any. */
+  version: string | null;
+  /** Release notes for the staged update, if the manifest provided any. */
+  body: string | null;
+}
+
+/**
+ * Probe the updater endpoint and, if a newer build is available, download
+ * the bundle bytes into memory but DO NOT install. Pair with
+ * {@link installAppUpdate} to finalize at a moment that's safe for the user.
+ *
+ * Emits the same `app-update:status` and `app-update:progress` events as
+ * {@link applyAppUpdate}, with status sequence
+ * `checking` → `downloading` → `ready_to_install` (or `up_to_date` / `error`).
+ */
+export const downloadAppUpdate = async (): Promise<AppUpdateDownloadResult | null> => {
+  if (!isTauri()) {
+    console.debug('[app-update] downloadAppUpdate: skipped — not running in Tauri');
+    return null;
+  }
+  console.debug('[app-update] downloadAppUpdate: invoking download_app_update');
+  const result = await invoke<AppUpdateDownloadResult>('download_app_update');
+  console.debug('[app-update] downloadAppUpdate: result', result);
+  return result;
+};
+
+/**
+ * Install the bundle bytes staged by a prior {@link downloadAppUpdate}, then
+ * relaunch. Throws if no download has been staged this session — the caller
+ * should fall back to {@link applyAppUpdate} in that case.
+ *
+ * The Rust side shuts the core sidecar down before install for the same
+ * reason as `apply_app_update` (avoid live file handles during the .app
+ * replacement on macOS).
+ */
+export const installAppUpdate = async (): Promise<void> => {
+  if (!isTauri()) {
+    console.debug('[app-update] installAppUpdate: skipped — not running in Tauri');
+    return;
+  }
+  console.debug('[app-update] installAppUpdate: invoking install_app_update');
+  // Like applyAppUpdate, the process restarts mid-await on success. Promise
+  // rejection from the abrupt termination is expected; failures BEFORE the
+  // restart bubble up here.
+  await invoke<void>('install_app_update');
+  console.debug('[app-update] installAppUpdate: returned (install did not relaunch)');
 };
 
 export async function resetOpenHumanDataAndRestartCore(): Promise<void> {
