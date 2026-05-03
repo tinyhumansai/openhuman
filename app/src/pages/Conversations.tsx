@@ -233,21 +233,22 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       .unwrap()
       .then(data => {
         if (cancelled || skipInitialThreadSelectionRef.current) return;
+        // Always prefer the welcome thread during lockdown regardless of
+        // whether the server list is empty or not. Without this guard the
+        // stale `.then` could select a pre-existing thread from a prior
+        // session and pull the user out of the welcome conversation.
+        const snapForSelect = getCoreStateSnapshot().snapshot;
+        const threadStateForSelect = store.getState().thread;
+        if (isWelcomeLocked(snapForSelect) && threadStateForSelect.welcomeThreadId) {
+          dispatch(setSelectedThread(threadStateForSelect.welcomeThreadId));
+          void dispatch(loadThreadMessages(threadStateForSelect.welcomeThreadId));
+          return;
+        }
         if (data.threads.length > 0) {
           const mostRecent = data.threads[0];
           dispatch(setSelectedThread(mostRecent.id));
           void dispatch(loadThreadMessages(mostRecent.id));
         } else {
-          // Onboarding already created a welcome thread in Redux, but the
-          // server list can briefly lag (or the thread row is filtered from
-          // the UI). Do not spawn a second blank thread while welcome-locked.
-          const threadState = store.getState().thread;
-          const snap = getCoreStateSnapshot().snapshot;
-          if (isWelcomeLocked(snap) && threadState.welcomeThreadId) {
-            dispatch(setSelectedThread(threadState.welcomeThreadId));
-            void dispatch(loadThreadMessages(threadState.welcomeThreadId));
-            return;
-          }
           void handleCreateNewThread();
         }
       });
@@ -817,7 +818,10 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     if (welcomeThreadId) {
       return base.filter(t => t.id === welcomeThreadId);
     }
-    return base.filter(t => !(t.labels ?? []).includes(ONBOARDING_WELCOME_THREAD_LABEL));
+    // Fallback: welcomeThreadId not yet set but the server already returned the
+    // thread (e.g. hot-reload). Keep only onboarding-labelled threads so the
+    // welcome thread is visible rather than hidden behind the empty-state message.
+    return base.filter(t => (t.labels ?? []).includes(ONBOARDING_WELCOME_THREAD_LABEL));
   }, [threads, selectedLabel, welcomeLocked, welcomeThreadId]);
 
   const sortedThreads = useMemo(() => {
@@ -847,6 +851,26 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   }, [allLabels, selectedLabel]);
 
   const isSidebar = variant === 'sidebar';
+  // During welcome lockdown keep the sidebar forced open so the user always
+  // sees the single onboarding thread entry and cannot accidentally close the
+  // panel via the toggle (leaving themselves with no thread list).
+  const effectiveShowSidebar = welcomeLocked ? true : showSidebar;
+
+  // Stable title resolver used by both the sidebar thread list and the header.
+  // Returns "Onboarding" for the welcome thread while welcome-locked; falls back
+  // to the thread's server-side title or a placeholder.
+  const resolveThreadDisplayTitle = (threadId: string | null): string => {
+    if (!threadId) return 'Select a thread';
+    const t = threads.find(thr => thr.id === threadId);
+    if (
+      welcomeLocked &&
+      t?.id === welcomeThreadId &&
+      (t?.labels ?? []).includes(ONBOARDING_WELCOME_THREAD_LABEL)
+    ) {
+      return 'Onboarding';
+    }
+    return t?.title ?? 'Select a thread';
+  };
 
   return (
     <div
@@ -857,9 +881,9 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       }>
       {/* Thread sidebar — only shown in page mode (when Conversations itself
           is a top-level route, not embedded as a sidebar in another page).
-          Suppressed during welcome lockdown (#883) — the user must stay in
-          the welcome conversation. */}
-      {!isSidebar && showSidebar && (
+          During welcome lockdown the sidebar is always open (effectiveShowSidebar
+          is clamped to true) so the single onboarding thread is always visible. */}
+      {!isSidebar && effectiveShowSidebar && (
         <div className="w-64 flex-shrink-0 flex flex-col bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100">
             <h2 className="text-sm font-semibold text-stone-700">Threads</h2>
@@ -924,10 +948,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                           ? 'font-medium text-primary-700'
                           : 'text-stone-700'
                       }`}>
-                      {thread.id === welcomeThreadId &&
-                      (thread.labels ?? []).includes(ONBOARDING_WELCOME_THREAD_LABEL)
-                        ? 'Onboarding'
-                        : thread.title}
+                      {resolveThreadDisplayTitle(thread.id)}
                     </p>
                     {!(welcomeLocked && thread.id === welcomeThreadId) ? (
                       <button
@@ -996,7 +1017,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             <button
               onClick={() => setShowSidebar(prev => !prev)}
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
-              title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}>
+              title={effectiveShowSidebar ? 'Hide sidebar' : 'Show sidebar'}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -1007,14 +1028,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
               </svg>
             </button>
             <h3 className="text-sm font-medium text-stone-700 truncate flex-1">
-              {welcomeLocked &&
-              welcomeThreadId &&
-              selectedThreadId === welcomeThreadId &&
-              (threads.find(t => t.id === selectedThreadId)?.labels ?? []).includes(
-                ONBOARDING_WELCOME_THREAD_LABEL
-              )
-                ? 'Onboarding'
-                : (threads.find(t => t.id === selectedThreadId)?.title ?? 'Select a thread')}
+              {resolveThreadDisplayTitle(selectedThreadId)}
             </h3>
             {!welcomeLocked ? (
               <>
