@@ -87,6 +87,38 @@ export function PromotionalCreditsBanner({ promoCredits }: { promoCredits: numbe
   );
 }
 
+export function EarlyBirdyBanner() {
+  return (
+    <div className="mb-3 mt-3 rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 px-4 py-4 text-left shadow-soft">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-100 text-lg">
+          🐦
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-orange-700">
+            The first 1,000 users get 60% off.
+          </p>
+          <p className="mt-1 text-sm leading-relaxed text-orange-600">
+            Use discount code{' '}
+            <span className="rounded-md border border-orange-300 bg-white px-1.5 py-0.5 font-mono text-[12px] font-bold text-orange-700">
+              EARLYBIRDY
+            </span>{' '}
+            to on your{' '}
+            <button
+              type="button"
+              onClick={() => {
+                void openUrl(BILLING_DASHBOARD_URL);
+              }}
+              className="cursor-pointer border-b border-amber-700 border-dashed font-bold text-amber-700 hover:text-amber-800">
+              first subscription.
+            </button>{' '}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DiscordBanner() {
   return (
     <button

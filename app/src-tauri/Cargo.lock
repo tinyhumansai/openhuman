@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "OpenHuman"
-version = "0.53.4"
+version = "0.53.11"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4522,7 +4522,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.53.4"
+version = "0.53.11"
 dependencies = [
  "aes-gcm",
  "anyhow",

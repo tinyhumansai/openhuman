@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import ConnectionIndicator from '../components/ConnectionIndicator';
 import {
   DiscordBanner,
+  EarlyBirdyBanner,
   PromotionalCreditsBanner,
   UsageLimitBanner,
 } from '../components/home/HomeBanners';
@@ -165,6 +166,8 @@ const Home = () => {
             Message OpenHuman
           </button>
         </div>
+
+        <EarlyBirdyBanner />
 
         <DiscordBanner />
 
