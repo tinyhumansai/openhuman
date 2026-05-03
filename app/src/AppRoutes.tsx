@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
+import HumanPage from './features/human/HumanPage';
 import Accounts from './pages/Accounts';
 import Channels from './pages/Channels';
 import Home from './pages/Home';
@@ -45,6 +46,15 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <Home />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/human"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <HumanPage />
           </ProtectedRoute>
         }
       />
