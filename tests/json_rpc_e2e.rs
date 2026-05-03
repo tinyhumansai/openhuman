@@ -981,6 +981,10 @@ async fn json_rpc_memory_sync_and_learn() {
         "missing channel_id must return an error, got: {sync_bad}"
     );
 
+    // ── memory.init: explicit one-shot bootstrap (no auto-init fallback) ────
+    let init_resp = post_json_rpc(&rpc_base, 7003, "openhuman.memory_init", json!({})).await;
+    assert_no_jsonrpc_error(&init_resp, "memory_init");
+
     // ── memory_learn_all: no namespaces → zero processed (empty store) ──────
     let learn_all = post_json_rpc(&rpc_base, 7004, "openhuman.memory_learn_all", json!({})).await;
     let learn_result = assert_no_jsonrpc_error(&learn_all, "memory_learn_all");
