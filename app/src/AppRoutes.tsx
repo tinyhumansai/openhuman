@@ -5,6 +5,10 @@ import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
 import HumanPage from './features/human/HumanPage';
 import Accounts from './pages/Accounts';
+import { APP_ENVIRONMENT } from './utils/config';
+
+/** /human is mascot work-in-progress — only mount the route pre-prod. */
+const HUMAN_ROUTE_ENABLED = APP_ENVIRONMENT !== 'production';
 import Channels from './pages/Channels';
 import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
@@ -50,14 +54,16 @@ const AppRoutes = () => {
         }
       />
 
-      <Route
-        path="/human"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <HumanPage />
-          </ProtectedRoute>
-        }
-      />
+      {HUMAN_ROUTE_ENABLED && (
+        <Route
+          path="/human"
+          element={
+            <ProtectedRoute requireAuth={true}>
+              <HumanPage />
+            </ProtectedRoute>
+          }
+        />
+      )}
 
       <Route
         path="/intelligence"

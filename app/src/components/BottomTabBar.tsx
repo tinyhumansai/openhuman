@@ -6,6 +6,10 @@ import { useCoreState } from '../providers/CoreStateProvider';
 import { useAppSelector } from '../store/hooks';
 import { selectUnreadCount } from '../store/notificationSlice';
 import { isAccountsFullscreen } from '../utils/accountsFullscreen';
+import { APP_ENVIRONMENT } from '../utils/config';
+
+/** /human is mascot work-in-progress — only surface it pre-prod. */
+const HUMAN_TAB_ENABLED = APP_ENVIRONMENT !== 'production';
 
 const tabs = [
   {
@@ -206,7 +210,9 @@ const BottomTabBar = () => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setRevealed(false);
         }}>
         <nav className="pointer-events-auto inline-flex items-center gap-1 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
-          {tabs.map(tab => {
+          {tabs
+            .filter(tab => tab.id !== 'human' || HUMAN_TAB_ENABLED)
+            .map(tab => {
             const active = isActive(tab.path);
             const showBadge = tab.id === 'notifications' && unreadCount > 0;
             return (
