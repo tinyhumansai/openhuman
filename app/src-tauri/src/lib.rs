@@ -1052,7 +1052,6 @@ async fn perform_early_teardown_async(app_handle: &AppHandle<AppRuntime>) {
 }
 
 /// Explicitly winds down CEF and Tauri before an app.exit(0)
-#[allow(dead_code)]
 fn shutdown_app_sync(app_handle: &AppHandle<AppRuntime>, exit_code: i32) {
     log::info!("[app] shutdown_app_sync — starting early teardown");
     perform_early_teardown_sync(app_handle);
