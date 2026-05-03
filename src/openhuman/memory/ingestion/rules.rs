@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use super::ingestion_regex::sanitize_entity_name;
-use super::ingestion_types::{ExtractionAccumulator, RawEntity, RawRelation};
+use super::regex::sanitize_entity_name;
+use super::types::{ExtractionAccumulator, RawEntity, RawRelation};
 use crate::openhuman::memory::UnifiedMemory;
 
 /// A validation rule for semantic relationships.

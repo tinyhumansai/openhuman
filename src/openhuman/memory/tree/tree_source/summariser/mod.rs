@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::source_tree::types::TreeKind;
+use crate::openhuman::memory::tree::tree_source::types::TreeKind;
 
 pub mod inert;
 pub mod llm;
@@ -90,7 +90,7 @@ pub fn build_summariser(config: &Config) -> Arc<dyn Summariser> {
 
     let (Some(endpoint), Some(model)) = (endpoint, model) else {
         log::debug!(
-            "[source_tree::summariser] llm_summariser not configured — using InertSummariser"
+            "[tree_source::summariser] llm_summariser not configured — using InertSummariser"
         );
         return Arc::new(inert::InertSummariser::new());
     };
@@ -111,7 +111,7 @@ pub fn build_summariser(config: &Config) -> Arc<dyn Summariser> {
     match llm::LlmSummariser::new(cfg) {
         Ok(s) => {
             log::info!(
-                "[source_tree::summariser] using LlmSummariser endpoint={} model={} timeout_ms={}",
+                "[tree_source::summariser] using LlmSummariser endpoint={} model={} timeout_ms={}",
                 endpoint,
                 model,
                 timeout_ms
@@ -120,7 +120,7 @@ pub fn build_summariser(config: &Config) -> Arc<dyn Summariser> {
         }
         Err(err) => {
             log::warn!(
-                "[source_tree::summariser] LlmSummariser construction failed: {err:#} — \
+                "[tree_source::summariser] LlmSummariser construction failed: {err:#} — \
                  falling back to InertSummariser"
             );
             Arc::new(inert::InertSummariser::new())

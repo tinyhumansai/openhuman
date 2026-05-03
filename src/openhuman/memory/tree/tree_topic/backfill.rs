@@ -9,7 +9,7 @@
 //!
 //! ## Why bounded by hotness window
 //!
-//! Hotness uses a 30-day recency decay (see `topic_tree::hotness`). Leaves
+//! Hotness uses a 30-day recency decay (see `tree_topic::hotness`). Leaves
 //! older than 30 days contribute zero to current hotness, so by definition
 //! they cannot be the reason a tree is spawning *now*. Including them
 //! bloats the spawn latency, wastes summariser LLM calls, and amplifies
@@ -28,11 +28,11 @@ use chrono::Utc;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::score::store::lookup_entity;
-use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+use crate::openhuman::memory::tree::tree_source::bucket_seal::{
     append_leaf, LabelStrategy, LeafRef,
 };
-use crate::openhuman::memory::tree::source_tree::summariser::Summariser;
-use crate::openhuman::memory::tree::source_tree::types::Tree;
+use crate::openhuman::memory::tree::tree_source::summariser::Summariser;
+use crate::openhuman::memory::tree::tree_source::types::Tree;
 use crate::openhuman::memory::tree::store::get_chunk;
 use crate::openhuman::memory::tree::util::redact::redact;
 
@@ -40,7 +40,7 @@ use crate::openhuman::memory::tree::util::redact::redact;
 /// keeps initial spawn latency bounded even for very active entities.
 const BACKFILL_LIMIT: usize = 500;
 
-/// Backfill window in days — matches `topic_tree::hotness::recency_decay`'s
+/// Backfill window in days — matches `tree_topic::hotness::recency_decay`'s
 /// hard cliff. Leaves older than this contribute zero to current hotness
 /// so they cannot have driven the spawn decision.
 pub const BACKFILL_WINDOW_DAYS: i64 = 30;
@@ -79,7 +79,7 @@ pub async fn backfill_topic_tree_at(
 ) -> Result<usize> {
     let cutoff_ms = now_ms.saturating_sub(BACKFILL_WINDOW_DAYS.saturating_mul(DAY_MS));
     log::info!(
-        "[topic_tree::backfill] start entity_id_hash={} tree_id={} window_days={} cutoff_ms={}",
+        "[tree_topic::backfill] start entity_id_hash={} tree_id={} window_days={} cutoff_ms={}",
         redact(entity_id),
         tree.id,
         BACKFILL_WINDOW_DAYS,
@@ -91,7 +91,7 @@ pub async fn backfill_topic_tree_at(
 
     if hits.is_empty() {
         log::debug!(
-            "[topic_tree::backfill] no entity-index hits for entity_id_hash={} — empty backfill",
+            "[tree_topic::backfill] no entity-index hits for entity_id_hash={} — empty backfill",
             redact(entity_id)
         );
         return Ok(0);
@@ -106,14 +106,14 @@ pub async fn backfill_topic_tree_at(
     let dropped = total_hits - hits.len();
     if dropped > 0 {
         log::debug!(
-            "[topic_tree::backfill] dropped {dropped} hits older than {BACKFILL_WINDOW_DAYS}d \
+            "[tree_topic::backfill] dropped {dropped} hits older than {BACKFILL_WINDOW_DAYS}d \
              for entity_id_hash={}",
             redact(entity_id)
         );
     }
     if hits.is_empty() {
         log::debug!(
-            "[topic_tree::backfill] all entity-index hits fell outside the {BACKFILL_WINDOW_DAYS}d \
+            "[tree_topic::backfill] all entity-index hits fell outside the {BACKFILL_WINDOW_DAYS}d \
              window for entity_id_hash={} — empty backfill",
             redact(entity_id)
         );
@@ -133,7 +133,7 @@ pub async fn backfill_topic_tree_at(
         // the point.
         if hit.node_kind != "leaf" {
             log::debug!(
-                "[topic_tree::backfill] skipping non-leaf hit node_id={} kind={}",
+                "[tree_topic::backfill] skipping non-leaf hit node_id={} kind={}",
                 hit.node_id,
                 hit.node_kind
             );
@@ -144,7 +144,7 @@ pub async fn backfill_topic_tree_at(
             Some(c) => c,
             None => {
                 log::warn!(
-                    "[topic_tree::backfill] missing chunk {} for entity_id_hash={} — skipping",
+                    "[tree_topic::backfill] missing chunk {} for entity_id_hash={} — skipping",
                     hit.node_id,
                     redact(entity_id)
                 );
@@ -179,7 +179,7 @@ pub async fn backfill_topic_tree_at(
     }
 
     log::info!(
-        "[topic_tree::backfill] done entity_id_hash={} tree_id={} appended={}",
+        "[tree_topic::backfill] done entity_id_hash={} tree_id={} appended={}",
         redact(entity_id),
         tree.id,
         appended
@@ -194,10 +194,10 @@ mod tests {
     use crate::openhuman::memory::tree::score::extract::EntityKind;
     use crate::openhuman::memory::tree::score::resolver::CanonicalEntity;
     use crate::openhuman::memory::tree::score::store::index_entity;
-    use crate::openhuman::memory::tree::source_tree::store as src_store;
-    use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
+    use crate::openhuman::memory::tree::tree_source::store as src_store;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
-    use crate::openhuman::memory::tree::topic_tree::registry::get_or_create_topic_tree;
+    use crate::openhuman::memory::tree::tree_topic::registry::get_or_create_topic_tree;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::{TimeZone, Utc};
     use tempfile::TempDir;

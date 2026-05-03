@@ -6,7 +6,7 @@
 //! tree aligned to the time axis (day / week / month / year) so
 //! window-scoped recap queries can map a duration to a level deterministically.
 //!
-//! Reuses Phase 3a storage primitives from `source_tree::store` without
+//! Reuses Phase 3a storage primitives from `tree_source::store` without
 //! their token-budget cascade logic — all global seals route through
 //! `mem_tree_summaries` on both sides (children and output), since even L0
 //! is a sealed summary node rather than a raw chunk.
@@ -20,16 +20,16 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::content_store::{
     atomic::stage_summary, SummaryComposeInput, SummaryTreeKind,
 };
-use crate::openhuman::memory::tree::global_tree::{
+use crate::openhuman::memory::tree::tree_global::{
     GLOBAL_TOKEN_BUDGET, MONTHLY_SEAL_THRESHOLD, WEEKLY_SEAL_THRESHOLD, YEARLY_SEAL_THRESHOLD,
 };
 use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
-use crate::openhuman::memory::tree::source_tree::registry::new_summary_id;
-use crate::openhuman::memory::tree::source_tree::store;
-use crate::openhuman::memory::tree::source_tree::summariser::{
+use crate::openhuman::memory::tree::tree_source::registry::new_summary_id;
+use crate::openhuman::memory::tree::tree_source::store;
+use crate::openhuman::memory::tree::tree_source::summariser::{
     Summariser, SummaryContext, SummaryInput,
 };
-use crate::openhuman::memory::tree::source_tree::types::{Buffer, SummaryNode, Tree, TreeKind};
+use crate::openhuman::memory::tree::tree_source::types::{Buffer, SummaryNode, Tree, TreeKind};
 use crate::openhuman::memory::tree::store::with_connection;
 
 /// Hard cap on cascade depth — mirrors the source-tree constant. L0→L1→L2→L3
@@ -49,7 +49,7 @@ pub async fn append_daily_and_cascade(
     summariser: &dyn Summariser,
 ) -> Result<Vec<String>> {
     log::debug!(
-        "[global_tree::seal] append_daily tree_id={} daily_id={} tokens={}",
+        "[tree_global::seal] append_daily tree_id={} daily_id={} tokens={}",
         tree.id,
         daily_summary.id,
         daily_summary.token_count
@@ -83,7 +83,7 @@ fn append_to_buffer(
         let mut buf = store::get_buffer_conn(&tx, tree_id, level)?;
         if buf.item_ids.iter().any(|existing| existing == item_id) {
             log::debug!(
-                "[global_tree::seal] append_to_buffer: {item_id} already in buffer \
+                "[tree_global::seal] append_to_buffer: {item_id} already in buffer \
                  tree_id={tree_id} level={level} — no-op"
             );
             return Ok(());
@@ -116,7 +116,7 @@ async fn cascade_seals(
             let buf = store::get_buffer(config, &tree.id, level)?;
             if !should_seal(&buf, level) {
                 log::debug!(
-                    "[global_tree::seal] cascade done tree_id={} stop_level={} count={}",
+                    "[tree_global::seal] cascade done tree_id={} stop_level={} count={}",
                     tree.id,
                     level,
                     buf.item_ids.len()
@@ -158,7 +158,7 @@ async fn seal_one_level(
     let inputs = hydrate_summary_inputs(config, &buf.item_ids)?;
     if inputs.is_empty() {
         anyhow::bail!(
-            "[global_tree::seal] refused to seal empty buffer tree_id={} level={}",
+            "[tree_global::seal] refused to seal empty buffer tree_id={} level={}",
             tree.id,
             level
         );
@@ -281,7 +281,7 @@ async fn seal_one_level(
         )
     })?;
     log::debug!(
-        "[global_tree::seal] staged summary {} → {}",
+        "[tree_global::seal] staged summary {} → {}",
         node.id,
         staged_global.content_path
     );
@@ -366,7 +366,7 @@ async fn seal_one_level(
     })?;
 
     log::info!(
-        "[global_tree::seal] sealed tree_id={} level={}→{} summary_id={} children={}",
+        "[tree_global::seal] sealed tree_id={} level={}→{} summary_id={} children={}",
         tree.id,
         level,
         target_level,
@@ -387,7 +387,7 @@ fn hydrate_summary_inputs(config: &Config, summary_ids: &[String]) -> Result<Vec
             Some(n) => n,
             None => {
                 log::warn!(
-                    "[global_tree::seal] hydrate_summary_inputs: missing summary {id} — skipping"
+                    "[tree_global::seal] hydrate_summary_inputs: missing summary {id} — skipping"
                 );
                 continue;
             }
@@ -409,8 +409,8 @@ fn hydrate_summary_inputs(config: &Config, summary_ids: &[String]) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::tree::global_tree::registry::get_or_create_global_tree;
-    use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
+    use crate::openhuman::memory::tree::tree_global::registry::get_or_create_global_tree;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use chrono::TimeZone;
     use tempfile::TempDir;
 

@@ -11,22 +11,23 @@
 //! 5. **Persistence**: Upserting the document, text chunks, and graph relations into
 //!    the memory store.
 
-#[path = "ingestion_parse.rs"]
-mod ingestion_parse;
-#[path = "ingestion_regex.rs"]
-mod ingestion_regex;
-#[path = "ingestion_rules.rs"]
-mod ingestion_rules;
-#[path = "ingestion_types.rs"]
-mod ingestion_types;
+mod parse;
+mod regex;
+mod rules;
+mod types;
 
-pub use ingestion_types::{
+pub mod queue;
+pub mod state;
+
+pub use queue::{IngestionJob, IngestionQueue};
+pub use state::{IngestionState, IngestionStatusSnapshot};
+pub use types::{
     ExtractedEntity, ExtractedRelation, ExtractionMode, MemoryIngestionConfig,
     MemoryIngestionRequest, MemoryIngestionResult, DEFAULT_MEMORY_EXTRACTION_MODEL,
 };
 
-use ingestion_parse::{enrich_document_metadata, parse_document};
-use ingestion_types::ParsedIngestion;
+use parse::{enrich_document_metadata, parse_document};
+use types::ParsedIngestion;
 use serde_json::json;
 
 use crate::openhuman::memory::store::types::NamespaceDocumentInput;
@@ -155,5 +156,4 @@ impl UnifiedMemory {
 }
 
 #[cfg(test)]
-#[path = "ingestion_tests.rs"]
 mod tests;

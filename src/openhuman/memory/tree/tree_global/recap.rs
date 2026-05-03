@@ -22,9 +22,9 @@ use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::global_tree::registry::get_or_create_global_tree;
-use crate::openhuman::memory::tree::source_tree::store;
-use crate::openhuman::memory::tree::source_tree::types::SummaryNode;
+use crate::openhuman::memory::tree::tree_global::registry::get_or_create_global_tree;
+use crate::openhuman::memory::tree::tree_source::store;
+use crate::openhuman::memory::tree::tree_source::types::SummaryNode;
 
 /// Aggregated recap returned to the caller.
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ pub struct RecapOutput {
 pub async fn recap(config: &Config, window: Duration) -> Result<Option<RecapOutput>> {
     let target_level = pick_level(window);
     log::info!(
-        "[global_tree::recap] recap window={:?} target_level={}",
+        "[tree_global::recap] recap window={:?} target_level={}",
         window,
         target_level
     );
@@ -69,14 +69,14 @@ pub async fn recap(config: &Config, window: Duration) -> Result<Option<RecapOutp
             continue;
         }
         log::debug!(
-            "[global_tree::recap] using level={} summaries={}",
+            "[tree_global::recap] using level={} summaries={}",
             level,
             covering.len()
         );
         return Ok(Some(assemble_recap(&covering, level)));
     }
 
-    log::info!("[global_tree::recap] no global summaries yet — nothing to recap");
+    log::info!("[tree_global::recap] no global summaries yet — nothing to recap");
     Ok(None)
 }
 
@@ -159,12 +159,12 @@ fn assemble_recap(covering: &[&SummaryNode], level: u32) -> RecapOutput {
 mod tests {
     use super::*;
     use crate::openhuman::memory::tree::content_store;
-    use crate::openhuman::memory::tree::global_tree::digest::{end_of_day_digest, DigestOutcome};
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+    use crate::openhuman::memory::tree::tree_global::digest::{end_of_day_digest, DigestOutcome};
+    use crate::openhuman::memory::tree::tree_source::bucket_seal::{
         append_leaf, LabelStrategy, LeafRef,
     };
-    use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
-    use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
+    use crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use tempfile::TempDir;

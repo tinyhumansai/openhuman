@@ -138,7 +138,7 @@ pub struct MemoryTreeConfig {
     pub llm_extractor_timeout_ms: Option<u64>,
 
     /// Ollama endpoint for the summariser
-    /// (`memory::tree::source_tree::summariser::llm::LlmSummariser`).
+    /// (`memory::tree::tree_source::summariser::llm::LlmSummariser`).
     /// When unset, bucket-seal cascades use `InertSummariser` — sealed
     /// nodes contain concatenated+truncated child text instead of a
     /// real LLM summary. Soft failures fall back to inert per seal.

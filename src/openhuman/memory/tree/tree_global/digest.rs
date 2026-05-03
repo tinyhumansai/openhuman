@@ -30,16 +30,16 @@ use crate::openhuman::memory::tree::content_store::{
     atomic::stage_summary, paths::slugify_source_id, read as content_read, SummaryComposeInput,
     SummaryTreeKind,
 };
-use crate::openhuman::memory::tree::global_tree::registry::get_or_create_global_tree;
-use crate::openhuman::memory::tree::global_tree::seal::append_daily_and_cascade;
-use crate::openhuman::memory::tree::global_tree::GLOBAL_TOKEN_BUDGET;
+use crate::openhuman::memory::tree::tree_global::registry::get_or_create_global_tree;
+use crate::openhuman::memory::tree::tree_global::seal::append_daily_and_cascade;
+use crate::openhuman::memory::tree::tree_global::GLOBAL_TOKEN_BUDGET;
 use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
-use crate::openhuman::memory::tree::source_tree::registry::new_summary_id;
-use crate::openhuman::memory::tree::source_tree::store;
-use crate::openhuman::memory::tree::source_tree::summariser::{
+use crate::openhuman::memory::tree::tree_source::registry::new_summary_id;
+use crate::openhuman::memory::tree::tree_source::store;
+use crate::openhuman::memory::tree::tree_source::summariser::{
     Summariser, SummaryContext, SummaryInput,
 };
-use crate::openhuman::memory::tree::source_tree::types::{SummaryNode, Tree, TreeKind};
+use crate::openhuman::memory::tree::tree_source::types::{SummaryNode, Tree, TreeKind};
 use crate::openhuman::memory::tree::store::with_connection;
 
 /// Outcome of a single `end_of_day_digest` call — lets the caller decide
@@ -77,7 +77,7 @@ pub async fn end_of_day_digest(
 ) -> Result<DigestOutcome> {
     let (day_start, day_end) = day_bounds_utc(day)?;
     log::info!(
-        "[global_tree::digest] end_of_day_digest day={} window=[{}, {})",
+        "[tree_global::digest] end_of_day_digest day={} window=[{}, {})",
         day,
         day_start,
         day_end
@@ -89,7 +89,7 @@ pub async fn end_of_day_digest(
     // matches this day.
     if let Some(existing) = find_existing_daily(config, &global.id, day_start, day_end)? {
         log::info!(
-            "[global_tree::digest] daily already exists for {day} id={} — skipping",
+            "[tree_global::digest] daily already exists for {day} id={} — skipping",
             existing.id
         );
         return Ok(DigestOutcome::Skipped {
@@ -100,7 +100,7 @@ pub async fn end_of_day_digest(
     // Gather one contribution per active source tree.
     let source_trees = store::list_trees_by_kind(config, TreeKind::Source)?;
     log::debug!(
-        "[global_tree::digest] scanning {} source trees",
+        "[tree_global::digest] scanning {} source trees",
         source_trees.len()
     );
     let mut inputs: Vec<SummaryInput> = Vec::with_capacity(source_trees.len());
@@ -108,7 +108,7 @@ pub async fn end_of_day_digest(
         match pick_source_contribution(config, source_tree, day_start, day_end)? {
             Some(inp) => {
                 log::debug!(
-                    "[global_tree::digest] source={} contributed id={} tokens={}",
+                    "[tree_global::digest] source={} contributed id={} tokens={}",
                     source_tree.scope,
                     inp.id,
                     inp.token_count
@@ -117,7 +117,7 @@ pub async fn end_of_day_digest(
             }
             None => {
                 log::debug!(
-                    "[global_tree::digest] source={} had no material for {day}",
+                    "[tree_global::digest] source={} had no material for {day}",
                     source_tree.scope
                 );
             }
@@ -126,7 +126,7 @@ pub async fn end_of_day_digest(
 
     if inputs.is_empty() {
         log::info!(
-            "[global_tree::digest] empty day — no source trees contributed material for {day}"
+            "[tree_global::digest] empty day — no source trees contributed material for {day}"
         );
         return Ok(DigestOutcome::EmptyDay);
     }
@@ -165,7 +165,7 @@ pub async fn end_of_day_digest(
     // seal time, so emergent themes don't need another extractor pass
     // here — global is a sink; union preserves "days that mentioned X"
     // retrieval without an extra LLM call. See LabelStrategy in
-    // source_tree::bucket_seal for the full design.
+    // tree_source::bucket_seal for the full design.
     let mut entities_set: BTreeSet<String> = BTreeSet::new();
     let mut topics_set: BTreeSet<String> = BTreeSet::new();
     for inp in &inputs {
@@ -233,7 +233,7 @@ pub async fn end_of_day_digest(
         )
     })?;
     log::debug!(
-        "[global_tree::digest] staged daily summary {} → {}",
+        "[tree_global::digest] staged daily summary {} → {}",
         daily.id,
         staged_daily.content_path
     );
@@ -261,7 +261,7 @@ pub async fn end_of_day_digest(
     })?;
 
     log::info!(
-        "[global_tree::digest] emitted daily id={} sources={} tokens={}",
+        "[tree_global::digest] emitted daily id={} sources={} tokens={}",
         daily.id,
         inputs.len(),
         daily.token_count
@@ -371,7 +371,7 @@ fn pick_source_contribution(
         Some(n) => n,
         None => {
             log::warn!(
-                "[global_tree::digest] picked id={id} for tree={} but row missing — skipping",
+                "[tree_global::digest] picked id={id} for tree={} but row missing — skipping",
                 source_tree.scope
             );
             return Ok(None);
@@ -385,7 +385,7 @@ fn pick_source_contribution(
         Ok(b) => b,
         Err(e) => {
             log::warn!(
-                "[global_tree::digest] read_summary_body failed for {} — using preview: {e:#}",
+                "[tree_global::digest] read_summary_body failed for {} — using preview: {e:#}",
                 node.id
             );
             // Non-fatal: fall back to preview for pre-MD-migration rows.

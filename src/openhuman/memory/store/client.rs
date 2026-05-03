@@ -12,11 +12,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::openhuman::memory::embeddings::{self, EmbeddingProvider};
+use crate::openhuman::memory::ingestion::queue as ingestion_queue;
 use crate::openhuman::memory::ingestion::{
-    MemoryIngestionConfig, MemoryIngestionRequest, MemoryIngestionResult,
+    IngestionJob, IngestionQueue, IngestionState, MemoryIngestionConfig, MemoryIngestionRequest,
+    MemoryIngestionResult,
 };
-use crate::openhuman::memory::ingestion_queue::{self, IngestionJob, IngestionQueue};
-use crate::openhuman::memory::ingestion_state::IngestionState;
 use crate::openhuman::memory::store::types::{
     NamespaceDocumentInput, NamespaceMemoryHit, NamespaceRetrievalContext,
 };

@@ -40,12 +40,12 @@ use crate::openhuman::memory::tree::content_store::{
 use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
 use crate::openhuman::memory::tree::score::extract::EntityExtractor;
 use crate::openhuman::memory::tree::score::resolver::canonicalise;
-use crate::openhuman::memory::tree::source_tree::registry::new_summary_id;
-use crate::openhuman::memory::tree::source_tree::store;
-use crate::openhuman::memory::tree::source_tree::summariser::{
+use crate::openhuman::memory::tree::tree_source::registry::new_summary_id;
+use crate::openhuman::memory::tree::tree_source::store;
+use crate::openhuman::memory::tree::tree_source::summariser::{
     Summariser, SummaryContext, SummaryInput,
 };
-use crate::openhuman::memory::tree::source_tree::types::{
+use crate::openhuman::memory::tree::tree_source::types::{
     Buffer, SummaryNode, Tree, TreeKind, SUMMARY_FANOUT, TOKEN_BUDGET,
 };
 use crate::openhuman::memory::tree::store::with_connection;
@@ -162,7 +162,7 @@ pub async fn append_leaf(
     strategy: &LabelStrategy,
 ) -> Result<Vec<String>> {
     log::debug!(
-        "[source_tree::bucket_seal] append_leaf tree_id={} leaf_id={} tokens={} strategy={:?}",
+        "[tree_source::bucket_seal] append_leaf tree_id={} leaf_id={} tokens={} strategy={:?}",
         tree.id,
         leaf.chunk_id,
         leaf.token_count,
@@ -218,7 +218,7 @@ fn append_to_buffer(
         // stays on first-seen.
         if buf.item_ids.iter().any(|existing| existing == item_id) {
             log::debug!(
-                "[source_tree::bucket_seal] append_to_buffer: {item_id} already in buffer \
+                "[tree_source::bucket_seal] append_to_buffer: {item_id} already in buffer \
                  tree_id={tree_id} level={level} — no-op"
             );
             return Ok(());
@@ -270,7 +270,7 @@ pub async fn cascade_all_from(
 
         if !forced && !should_seal(&buf) {
             log::debug!(
-                "[source_tree::bucket_seal] cascade done tree_id={} stop_level={} token_sum={}",
+                "[tree_source::bucket_seal] cascade done tree_id={} stop_level={} token_sum={}",
                 tree.id,
                 level,
                 buf.token_sum
@@ -279,7 +279,7 @@ pub async fn cascade_all_from(
         }
         if buf.is_empty() {
             log::debug!(
-                "[source_tree::bucket_seal] cascade hit empty buffer tree_id={} level={} — stopping",
+                "[tree_source::bucket_seal] cascade hit empty buffer tree_id={} level={} — stopping",
                 tree.id,
                 level
             );
@@ -350,7 +350,7 @@ pub(crate) async fn seal_one_level(
     let inputs = hydrate_inputs(config, level, &buf.item_ids)?;
     if inputs.is_empty() {
         anyhow::bail!(
-            "[source_tree::bucket_seal] refused to seal empty buffer tree_id={} level={}",
+            "[tree_source::bucket_seal] refused to seal empty buffer tree_id={} level={}",
             tree.id,
             level
         );
@@ -411,7 +411,7 @@ pub(crate) async fn seal_one_level(
     // even at 4× tokenizer ratio.
     let embed_input = truncate_for_embed(&output.content, 1_000);
     log::info!(
-        "[source_tree::bucket_seal] embed input: original_chars={} truncated_chars={}",
+        "[tree_source::bucket_seal] embed input: original_chars={} truncated_chars={}",
         output.content.len(),
         embed_input.len()
     );
@@ -422,7 +422,7 @@ pub(crate) async fn seal_one_level(
         )
     })?;
     log::debug!(
-        "[source_tree::bucket_seal] embedded summary tree_id={} level={}→{} bytes={} provider={}",
+        "[tree_source::bucket_seal] embedded summary tree_id={} level={}→{} bytes={} provider={}",
         tree.id,
         level,
         target_level,
@@ -523,7 +523,7 @@ pub(crate) async fn seal_one_level(
             )
         })?;
     log::debug!(
-        "[source_tree::bucket_seal] staged summary {} → {}",
+        "[tree_source::bucket_seal] staged summary {} → {}",
         node.id,
         staged.content_path
     );
@@ -657,7 +657,7 @@ pub(crate) async fn seal_one_level(
     })?;
 
     log::info!(
-        "[source_tree::bucket_seal] sealed tree_id={} level={}→{} summary_id={} children={}",
+        "[tree_source::bucket_seal] sealed tree_id={} level={}→{} summary_id={} children={}",
         tree.id,
         level,
         target_level,
@@ -718,7 +718,7 @@ fn hydrate_leaf_inputs(config: &Config, chunk_ids: &[String]) -> Result<Vec<Summ
             Some(c) => c,
             None => {
                 log::warn!(
-                    "[source_tree::bucket_seal] hydrate_leaf_inputs: missing chunk {id} — skipping"
+                    "[tree_source::bucket_seal] hydrate_leaf_inputs: missing chunk {id} — skipping"
                 );
                 continue;
             }
@@ -739,7 +739,7 @@ fn hydrate_leaf_inputs(config: &Config, chunk_ids: &[String]) -> Result<Vec<Summ
         // returns Err; callers that want to handle legacy rows should check
         // content_path presence before calling hydrate_inputs.
         let body = content_read::read_chunk_body(config, id).with_context(|| {
-            format!("[source_tree::bucket_seal] hydrate_leaf_inputs: read body for chunk {id}")
+            format!("[tree_source::bucket_seal] hydrate_leaf_inputs: read body for chunk {id}")
         })?;
         out.push(SummaryInput {
             id: chunk.id.clone(),
@@ -764,7 +764,7 @@ fn hydrate_summary_inputs(config: &Config, summary_ids: &[String]) -> Result<Vec
             Some(n) => n,
             None => {
                 log::warn!(
-                    "[source_tree::bucket_seal] hydrate_summary_inputs: missing summary {id} — skipping"
+                    "[tree_source::bucket_seal] hydrate_summary_inputs: missing summary {id} — skipping"
                 );
                 continue;
             }
@@ -773,7 +773,7 @@ fn hydrate_summary_inputs(config: &Config, summary_ids: &[String]) -> Result<Vec
         // after the MD-on-disk migration. Higher-level seals (L2+) summarise
         // over L1 summary content and need the full text, not a preview.
         let body = content_read::read_summary_body(config, id).with_context(|| {
-            format!("[source_tree::bucket_seal] hydrate_summary_inputs: read body for summary {id}")
+            format!("[tree_source::bucket_seal] hydrate_summary_inputs: read body for summary {id}")
         })?;
         out.push(SummaryInput {
             id: node.id.clone(),

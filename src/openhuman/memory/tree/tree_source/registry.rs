@@ -10,8 +10,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::source_tree::store;
-use crate::openhuman::memory::tree::source_tree::types::{Tree, TreeKind, TreeStatus};
+use crate::openhuman::memory::tree::tree_source::store;
+use crate::openhuman::memory::tree::tree_source::types::{Tree, TreeKind, TreeStatus};
 
 /// Look up the source tree for `scope`, or create a new one.
 ///
@@ -21,7 +21,7 @@ use crate::openhuman::memory::tree::source_tree::types::{Tree, TreeKind, TreeSta
 pub fn get_or_create_source_tree(config: &Config, scope: &str) -> Result<Tree> {
     if let Some(existing) = store::get_tree_by_scope(config, TreeKind::Source, scope)? {
         log::debug!(
-            "[source_tree::registry] found tree id={} scope={}",
+            "[tree_source::registry] found tree id={} scope={}",
             existing.id,
             scope
         );
@@ -41,7 +41,7 @@ pub fn get_or_create_source_tree(config: &Config, scope: &str) -> Result<Tree> {
     match store::insert_tree(config, &tree) {
         Ok(()) => {
             log::info!(
-                "[source_tree::registry] created source tree id={} scope={}",
+                "[tree_source::registry] created source tree id={} scope={}",
                 tree.id,
                 scope
             );
@@ -52,7 +52,7 @@ pub fn get_or_create_source_tree(config: &Config, scope: &str) -> Result<Tree> {
             // between our initial lookup and this insert. UNIQUE(kind,
             // scope) rejected our row; re-query and return the winner.
             log::debug!(
-                "[source_tree::registry] UNIQUE race for scope={} — re-querying",
+                "[tree_source::registry] UNIQUE race for scope={} — re-querying",
                 scope
             );
             store::get_tree_by_scope(config, TreeKind::Source, scope)?.ok_or_else(|| {

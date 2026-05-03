@@ -3,16 +3,16 @@
 //! Unlike source trees (one per `source_id`) the global tree is a true
 //! singleton per workspace — scope is the literal string `"global"`. The
 //! lookup and race-recovery pattern otherwise mirrors
-//! `source_tree::registry::get_or_create_source_tree`.
+//! `tree_source::registry::get_or_create_source_tree`.
 
 use anyhow::Result;
 use chrono::Utc;
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::global_tree::GLOBAL_SCOPE;
-use crate::openhuman::memory::tree::source_tree::store;
-use crate::openhuman::memory::tree::source_tree::types::{Tree, TreeKind, TreeStatus};
+use crate::openhuman::memory::tree::tree_global::GLOBAL_SCOPE;
+use crate::openhuman::memory::tree::tree_source::store;
+use crate::openhuman::memory::tree::tree_source::types::{Tree, TreeKind, TreeStatus};
 
 /// Return the workspace's singleton global tree, creating it lazily on
 /// first call. Safe to call on every ingest; subsequent calls short-circuit
@@ -20,7 +20,7 @@ use crate::openhuman::memory::tree::source_tree::types::{Tree, TreeKind, TreeSta
 pub fn get_or_create_global_tree(config: &Config) -> Result<Tree> {
     if let Some(existing) = store::get_tree_by_scope(config, TreeKind::Global, GLOBAL_SCOPE)? {
         log::debug!(
-            "[global_tree::registry] found global tree id={}",
+            "[tree_global::registry] found global tree id={}",
             existing.id
         );
         return Ok(existing);
@@ -38,14 +38,14 @@ pub fn get_or_create_global_tree(config: &Config) -> Result<Tree> {
     };
     match store::insert_tree(config, &tree) {
         Ok(()) => {
-            log::info!("[global_tree::registry] created global tree id={}", tree.id);
+            log::info!("[tree_global::registry] created global tree id={}", tree.id);
             Ok(tree)
         }
         Err(err) if is_unique_violation(&err) => {
             // Another caller beat us to it between our initial lookup and
             // the insert. The UNIQUE(kind, scope) index caught it —
             // re-query and return the winner.
-            log::debug!("[global_tree::registry] UNIQUE race for global tree — re-querying");
+            log::debug!("[tree_global::registry] UNIQUE race for global tree — re-querying");
             store::get_tree_by_scope(config, TreeKind::Global, GLOBAL_SCOPE)?.ok_or_else(|| {
                 anyhow::anyhow!(
                     "UNIQUE violation on global-tree insert but no row found on re-query"
@@ -57,7 +57,7 @@ pub fn get_or_create_global_tree(config: &Config) -> Result<Tree> {
 }
 
 /// True when `err` wraps a SQLite UNIQUE constraint violation. Duplicated
-/// from `source_tree::registry` to keep this module self-contained; the
+/// from `tree_source::registry` to keep this module self-contained; the
 /// two copies are ~5 lines and have the same shape.
 fn is_unique_violation(err: &anyhow::Error) -> bool {
     if let Some(rusqlite::Error::SqliteFailure(sqlite_err, _)) =
@@ -106,7 +106,7 @@ mod tests {
     fn race_recovery_returns_existing_row() {
         // Pre-seed a global tree so the second `get_or_create` path exercises
         // the normal lookup branch; the UNIQUE-race branch is covered by the
-        // shared `is_unique_violation` contract in `source_tree::registry`.
+        // shared `is_unique_violation` contract in `tree_source::registry`.
         let (_tmp, cfg) = test_config();
         let pre_existing = Tree {
             id: "global:preexisting".into(),

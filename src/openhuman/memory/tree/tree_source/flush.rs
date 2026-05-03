@@ -13,10 +13,10 @@ use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::source_tree::bucket_seal::{cascade_all_from, LabelStrategy};
-use crate::openhuman::memory::tree::source_tree::store;
-use crate::openhuman::memory::tree::source_tree::summariser::Summariser;
-use crate::openhuman::memory::tree::source_tree::types::DEFAULT_FLUSH_AGE_SECS;
+use crate::openhuman::memory::tree::tree_source::bucket_seal::{cascade_all_from, LabelStrategy};
+use crate::openhuman::memory::tree::tree_source::store;
+use crate::openhuman::memory::tree::tree_source::summariser::Summariser;
+use crate::openhuman::memory::tree::tree_source::types::DEFAULT_FLUSH_AGE_SECS;
 
 /// Seal every buffer whose oldest item is older than `max_age`. Returns
 /// the number of individual seal calls (not trees) that fired. When the
@@ -31,7 +31,7 @@ pub async fn flush_stale_buffers(
     let cutoff = now - max_age;
     let stale = store::list_stale_buffers(config, cutoff)?;
     log::info!(
-        "[source_tree::flush] found {} stale buffers (max_age={:?})",
+        "[tree_source::flush] found {} stale buffers (max_age={:?})",
         stale.len(),
         max_age
     );
@@ -42,7 +42,7 @@ pub async fn flush_stale_buffers(
             Some(t) => t,
             None => {
                 log::warn!(
-                    "[source_tree::flush] orphan buffer tree_id={} level={}",
+                    "[tree_source::flush] orphan buffer tree_id={} level={}",
                     buf.tree_id,
                     buf.level
                 );
@@ -89,9 +89,9 @@ pub async fn force_flush_tree(
 mod tests {
     use super::*;
     use crate::openhuman::memory::tree::content_store;
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf, LeafRef};
-    use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
-    use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
+    use crate::openhuman::memory::tree::tree_source::bucket_seal::{append_leaf, LeafRef};
+    use crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use tempfile::TempDir;

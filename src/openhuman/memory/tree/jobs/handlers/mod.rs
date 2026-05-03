@@ -4,7 +4,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::content_store::{
     self as content_store, read as content_read, tags as content_tags,
 };
-use crate::openhuman::memory::tree::global_tree::digest::{self, DigestOutcome};
+use crate::openhuman::memory::tree::tree_global::digest::{self, DigestOutcome};
 use crate::openhuman::memory::tree::jobs::store;
 use crate::openhuman::memory::tree::jobs::types::{
     AppendBufferPayload, AppendTarget, DigestDailyPayload, ExtractChunkPayload, FlushStalePayload,
@@ -14,11 +14,11 @@ use crate::openhuman::memory::tree::score;
 use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, pack_checked};
 use crate::openhuman::memory::tree::score::extract::build_summary_extractor;
 use crate::openhuman::memory::tree::score::store as score_store;
-use crate::openhuman::memory::tree::source_tree::{
+use crate::openhuman::memory::tree::tree_source::{
     build_summariser, get_or_create_source_tree, LabelStrategy, LeafRef,
 };
 use crate::openhuman::memory::tree::store as chunk_store;
-use crate::openhuman::memory::tree::topic_tree::curator;
+use crate::openhuman::memory::tree::tree_topic::curator;
 
 pub async fn handle_job(config: &Config, job: &Job) -> Result<()> {
     match job.kind {
@@ -200,8 +200,8 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<()> {
 }
 
 async fn handle_append_buffer(config: &Config, job: &Job) -> Result<()> {
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::should_seal;
-    use crate::openhuman::memory::tree::source_tree::store as src_store;
+    use crate::openhuman::memory::tree::tree_source::bucket_seal::should_seal;
+    use crate::openhuman::memory::tree::tree_source::store as src_store;
 
     let payload: AppendBufferPayload =
         serde_json::from_str(&job.payload_json).context("parse AppendBuffer payload")?;
@@ -338,9 +338,9 @@ async fn handle_append_buffer(config: &Config, job: &Job) -> Result<()> {
 }
 
 async fn handle_seal(config: &Config, job: &Job) -> Result<()> {
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{seal_one_level, should_seal};
-    use crate::openhuman::memory::tree::source_tree::store as src_store;
-    use crate::openhuman::memory::tree::source_tree::types::TreeKind;
+    use crate::openhuman::memory::tree::tree_source::bucket_seal::{seal_one_level, should_seal};
+    use crate::openhuman::memory::tree::tree_source::store as src_store;
+    use crate::openhuman::memory::tree::tree_source::types::TreeKind;
 
     let payload: SealPayload =
         serde_json::from_str(&job.payload_json).context("parse Seal payload")?;
@@ -428,7 +428,7 @@ async fn handle_topic_route(config: &Config, job: &Job) -> Result<()> {
             chunk_id.clone()
         }
         NodeRef::Summary { summary_id } => {
-            if crate::openhuman::memory::tree::source_tree::store::get_summary(config, summary_id)?
+            if crate::openhuman::memory::tree::tree_source::store::get_summary(config, summary_id)?
                 .is_none()
             {
                 log::warn!(
@@ -449,9 +449,9 @@ async fn handle_topic_route(config: &Config, job: &Job) -> Result<()> {
     let summariser = build_summariser(config);
     for entity_id in entity_ids {
         let _ = curator::maybe_spawn_topic_tree(config, &entity_id, summariser.as_ref()).await?;
-        if let Some(tree) = crate::openhuman::memory::tree::source_tree::store::get_tree_by_scope(
+        if let Some(tree) = crate::openhuman::memory::tree::tree_source::store::get_tree_by_scope(
             config,
-            crate::openhuman::memory::tree::source_tree::types::TreeKind::Topic,
+            crate::openhuman::memory::tree::tree_source::types::TreeKind::Topic,
             &entity_id,
         )? {
             let job = NewJob::append_buffer(&AppendBufferPayload {
@@ -491,10 +491,10 @@ async fn handle_flush_stale(config: &Config, job: &Job) -> Result<()> {
         serde_json::from_str(&job.payload_json).context("parse FlushStale payload")?;
     let age_secs = payload
         .max_age_secs
-        .unwrap_or(crate::openhuman::memory::tree::source_tree::types::DEFAULT_FLUSH_AGE_SECS);
+        .unwrap_or(crate::openhuman::memory::tree::tree_source::types::DEFAULT_FLUSH_AGE_SECS);
     let cutoff = chrono::Utc::now() - chrono::Duration::seconds(age_secs);
     let buffers =
-        crate::openhuman::memory::tree::source_tree::store::list_stale_buffers(config, cutoff)?;
+        crate::openhuman::memory::tree::tree_source::store::list_stale_buffers(config, cutoff)?;
     for buf in buffers {
         let seal = SealPayload {
             tree_id: buf.tree_id.clone(),
@@ -514,9 +514,9 @@ mod tests {
     use crate::openhuman::memory::tree::content_store;
     use crate::openhuman::memory::tree::jobs::store::{count_by_status, count_total};
     use crate::openhuman::memory::tree::jobs::types::JobStatus;
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf_deferred, LeafRef};
-    use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
-    use crate::openhuman::memory::tree::source_tree::store as src_store;
+    use crate::openhuman::memory::tree::tree_source::bucket_seal::{append_leaf_deferred, LeafRef};
+    use crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree;
+    use crate::openhuman::memory::tree::tree_source::store as src_store;
     use crate::openhuman::memory::tree::store::with_connection;
     use chrono::TimeZone;
     use rusqlite::params;
@@ -571,7 +571,7 @@ mod tests {
     /// fire `handle_seal` and inspect the result.
     async fn seed_source_tree_ready_to_seal(
         cfg: &Config,
-    ) -> crate::openhuman::memory::tree::source_tree::types::Tree {
+    ) -> crate::openhuman::memory::tree::tree_source::types::Tree {
         use crate::openhuman::memory::tree::store::upsert_chunks;
         use crate::openhuman::memory::tree::types::{
             chunk_id, Chunk, Metadata, SourceKind, SourceRef,
@@ -676,7 +676,7 @@ mod tests {
         // Spawn a topic tree directly via the registry (skipping curator's
         // hotness gate — we just need a TreeKind::Topic with leaves).
         let topic_tree =
-            crate::openhuman::memory::tree::topic_tree::registry::get_or_create_topic_tree(
+            crate::openhuman::memory::tree::tree_topic::registry::get_or_create_topic_tree(
                 &cfg,
                 "topic:phoenix-migration",
             )
@@ -753,7 +753,7 @@ mod tests {
 
         // 1. Create a target topic tree with a clean L0 buffer.
         let topic_tree =
-            crate::openhuman::memory::tree::topic_tree::registry::get_or_create_topic_tree(
+            crate::openhuman::memory::tree::tree_topic::registry::get_or_create_topic_tree(
                 &cfg,
                 "email:alice@example.com",
             )
@@ -765,7 +765,7 @@ mod tests {
         //    is to create a separate source tree, push two 6k leaves into
         //    it, and let the seal produce a summary we can address.
         let source_tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
-        use crate::openhuman::memory::tree::source_tree::bucket_seal::seal_one_level;
+        use crate::openhuman::memory::tree::tree_source::bucket_seal::seal_one_level;
         use crate::openhuman::memory::tree::store::upsert_chunks;
         use crate::openhuman::memory::tree::types::{
             chunk_id, Chunk, Metadata, SourceKind, SourceRef,
@@ -821,7 +821,7 @@ mod tests {
             &source_tree,
             &buf,
             summariser.as_ref(),
-            &crate::openhuman::memory::tree::source_tree::bucket_seal::LabelStrategy::Empty,
+            &crate::openhuman::memory::tree::tree_source::bucket_seal::LabelStrategy::Empty,
             // No follow-up enqueues — the test scopes assertions to the
             // append_buffer handler, not seal-side fan-out.
             false,

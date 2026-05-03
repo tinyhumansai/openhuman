@@ -5,12 +5,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::{json, Map, Value};
 
-use super::ingestion_regex::{
+use super::regex::{
     action_item_regex, classify_entity, email_header_regex, explicit_owner_regex,
     explicit_preference_regex, graph_fact_regex, named_email_regex, recipient_regex,
     sanitize_entity_name, sanitize_fact_text, spatial_regex, will_review_regex,
 };
-use super::ingestion_types::{
+use super::types::{
     ExtractedEntity, ExtractedRelation, ExtractionAccumulator, ExtractionMode, ExtractionUnit,
     MemoryIngestionConfig, ParsedIngestion, RawEntity, RawRelation, DEFAULT_CHUNK_TOKENS,
 };

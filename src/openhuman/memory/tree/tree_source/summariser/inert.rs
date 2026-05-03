@@ -13,7 +13,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::openhuman::memory::tree::source_tree::summariser::{
+use crate::openhuman::memory::tree::tree_source::summariser::{
     Summariser, SummaryContext, SummaryInput, SummaryOutput,
 };
 use crate::openhuman::memory::tree::types::approx_token_count;
@@ -56,7 +56,7 @@ impl Summariser for InertSummariser {
         let (content, token_count) = truncate_to_budget(&joined, ctx.token_budget);
 
         log::debug!(
-            "[source_tree::summariser::inert] sealed tree_id={} level={} inputs={} tokens={} \
+            "[tree_source::summariser::inert] sealed tree_id={} level={} inputs={} tokens={} \
              entities=0 topics=0 (honest stub — LLM summariser derives these)",
             ctx.tree_id,
             ctx.target_level,
@@ -92,7 +92,7 @@ fn truncate_to_budget(text: &str, budget: u32) -> (String, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::tree::source_tree::types::TreeKind;
+    use crate::openhuman::memory::tree::tree_source::types::TreeKind;
     use chrono::Utc;
 
     fn sample_input(id: &str, content: &str, entities: &[&str]) -> SummaryInput {

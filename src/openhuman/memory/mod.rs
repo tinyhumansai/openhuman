@@ -10,8 +10,6 @@ pub mod conversations;
 pub mod embeddings;
 pub mod global;
 pub mod ingestion;
-pub mod ingestion_queue;
-pub mod ingestion_state;
 pub mod ops;
 pub mod rpc_models;
 pub mod schemas;
@@ -21,11 +19,10 @@ pub mod traits;
 pub mod tree;
 
 pub use ingestion::{
-    ExtractedEntity, ExtractedRelation, ExtractionMode, MemoryIngestionConfig,
-    MemoryIngestionRequest, MemoryIngestionResult, DEFAULT_MEMORY_EXTRACTION_MODEL,
+    ExtractedEntity, ExtractedRelation, ExtractionMode, IngestionJob, IngestionQueue,
+    IngestionState, IngestionStatusSnapshot, MemoryIngestionConfig, MemoryIngestionRequest,
+    MemoryIngestionResult, DEFAULT_MEMORY_EXTRACTION_MODEL,
 };
-pub use ingestion_queue::{IngestionJob, IngestionQueue};
-pub use ingestion_state::{IngestionState, IngestionStatusSnapshot};
 pub use ops as rpc;
 pub use ops::*;
 pub use rpc_models::*;

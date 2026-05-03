@@ -22,7 +22,7 @@
 //!   easy to unit-test.
 //!
 //! Tree mechanics (buffer, seal, cascade) are **not reimplemented** here
-//! — `append_leaf` from [`super::source_tree::bucket_seal`] takes a
+//! — `append_leaf` from [`super::tree_source::bucket_seal`] takes a
 //! `&Tree` so it works for any `TreeKind`. The Phase 3c code only adds
 //! the hotness layer and the per-entity fan-out.
 

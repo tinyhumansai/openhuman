@@ -21,13 +21,13 @@
 use anyhow::Result;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+use crate::openhuman::memory::tree::tree_source::bucket_seal::{
     append_leaf, LabelStrategy, LeafRef,
 };
-use crate::openhuman::memory::tree::source_tree::store as src_store;
-use crate::openhuman::memory::tree::source_tree::summariser::Summariser;
-use crate::openhuman::memory::tree::source_tree::types::{TreeKind, TreeStatus};
-use crate::openhuman::memory::tree::topic_tree::curator::maybe_spawn_topic_tree;
+use crate::openhuman::memory::tree::tree_source::store as src_store;
+use crate::openhuman::memory::tree::tree_source::summariser::Summariser;
+use crate::openhuman::memory::tree::tree_source::types::{TreeKind, TreeStatus};
+use crate::openhuman::memory::tree::tree_topic::curator::maybe_spawn_topic_tree;
 
 /// Route `leaf` into every active topic tree matching one of
 /// `canonical_entities`. Also ticks the curator for each entity so the
@@ -47,7 +47,7 @@ pub async fn route_leaf_to_topic_trees(
     }
 
     log::debug!(
-        "[topic_tree::routing] leaf={} entities={}",
+        "[tree_topic::routing] leaf={} entities={}",
         leaf.chunk_id,
         canonical_entities.len()
     );
@@ -55,7 +55,7 @@ pub async fn route_leaf_to_topic_trees(
     for entity_id in canonical_entities {
         if let Err(e) = route_one_entity(config, leaf, entity_id, summariser).await {
             log::warn!(
-                "[topic_tree::routing] failed routing leaf={} entity={} err={:#}",
+                "[tree_topic::routing] failed routing leaf={} entity={} err={:#}",
                 leaf.chunk_id,
                 entity_id,
                 e
@@ -80,7 +80,7 @@ async fn route_one_entity(
     if let Some(tree) = src_store::get_tree_by_scope(config, TreeKind::Topic, entity_id)? {
         if tree.status == TreeStatus::Active {
             log::debug!(
-                "[topic_tree::routing] appending leaf={} → topic_tree={}",
+                "[tree_topic::routing] appending leaf={} → topic_tree={}",
                 leaf.chunk_id,
                 tree.id
             );
@@ -104,7 +104,7 @@ async fn route_one_entity(
             .await?;
         } else {
             log::debug!(
-                "[topic_tree::routing] skip archived topic tree id={} entity={}",
+                "[tree_topic::routing] skip archived topic tree id={} entity={}",
                 tree.id,
                 entity_id
             );
@@ -123,12 +123,12 @@ mod tests {
     use crate::openhuman::memory::tree::score::extract::EntityKind;
     use crate::openhuman::memory::tree::score::resolver::CanonicalEntity;
     use crate::openhuman::memory::tree::score::store::index_entity;
-    use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
-    use crate::openhuman::memory::tree::topic_tree::registry::{
+    use crate::openhuman::memory::tree::tree_topic::registry::{
         archive_topic_tree, get_or_create_topic_tree,
     };
-    use crate::openhuman::memory::tree::topic_tree::store::get as get_hotness;
+    use crate::openhuman::memory::tree::tree_topic::store::get as get_hotness;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::{TimeZone, Utc};
     use tempfile::TempDir;
@@ -190,7 +190,7 @@ mod tests {
             .unwrap();
         // No hotness rows were created.
         assert_eq!(
-            crate::openhuman::memory::tree::topic_tree::store::count(&cfg).unwrap(),
+            crate::openhuman::memory::tree::tree_topic::store::count(&cfg).unwrap(),
             0
         );
     }
@@ -298,18 +298,18 @@ mod tests {
         // to keep hotness above `TOPIC_CREATION_THRESHOLD` once the index
         // is queried (two indexed sources below → distinct_sources → 2).
         let mut counters =
-            crate::openhuman::memory::tree::topic_tree::types::HotnessCounters::fresh(entity_id, 0);
+            crate::openhuman::memory::tree::tree_topic::types::HotnessCounters::fresh(entity_id, 0);
         counters.mention_count_30d = 1_000;
         counters.distinct_sources = 2;
         counters.last_seen_ms = Some(Utc::now().timestamp_millis());
         counters.query_hits_30d = 5;
         counters.ingests_since_check =
-            crate::openhuman::memory::tree::topic_tree::types::TOPIC_RECHECK_EVERY - 1;
-        crate::openhuman::memory::tree::topic_tree::store::upsert(&cfg, &counters).unwrap();
+            crate::openhuman::memory::tree::tree_topic::types::TOPIC_RECHECK_EVERY - 1;
+        crate::openhuman::memory::tree::tree_topic::store::upsert(&cfg, &counters).unwrap();
 
         // Seed leaves in slack and gmail referencing Alice. Anchor the
         // timestamps to "now" so the 30-day backfill window
-        // (topic_tree::backfill::BACKFILL_WINDOW_DAYS) covers them.
+        // (tree_topic::backfill::BACKFILL_WINDOW_DAYS) covers them.
         let now_ms = Utc::now().timestamp_millis();
         let ts_c1 = now_ms - 20_000;
         let ts_c2 = now_ms - 10_000;

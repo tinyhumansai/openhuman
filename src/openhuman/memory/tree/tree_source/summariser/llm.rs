@@ -45,7 +45,7 @@ use crate::openhuman::memory::tree::types::approx_token_count;
 /// Two constraints set this:
 ///
 /// 1. The downstream embedder (`nomic-embed-text-v1.5`) accepts up to
-///    8192 tokens, and Phase 4 (`source_tree::bucket_seal`) embeds the
+///    8192 tokens, and Phase 4 (`tree_source::bucket_seal`) embeds the
 ///    summary right after we produce it. An overshoot returns HTTP 500
 ///    and rolls back the whole seal transaction.
 /// 2. Empirically, small instruction-tuned models running locally
@@ -191,7 +191,7 @@ impl Summariser for LlmSummariser {
         let body = build_user_prompt(inputs, per_input_cap);
         if body.trim().is_empty() {
             log::debug!(
-                "[source_tree::summariser::llm] empty prompt body (no non-blank inputs) \
+                "[tree_source::summariser::llm] empty prompt body (no non-blank inputs) \
                  tree_id={} level={} — returning empty summary",
                 ctx.tree_id,
                 ctx.target_level
@@ -208,7 +208,7 @@ impl Summariser for LlmSummariser {
         let req = self.build_request(&body, effective_budget);
 
         log::debug!(
-            "[source_tree::summariser::llm] POST {url} model={} tree_id={} level={} \
+            "[tree_source::summariser::llm] POST {url} model={} tree_id={} level={} \
              inputs={} budget={}",
             self.cfg.model,
             ctx.tree_id,
@@ -221,7 +221,7 @@ impl Summariser for LlmSummariser {
             Ok(r) => r,
             Err(e) => {
                 log::warn!(
-                    "[source_tree::summariser::llm] transport failure to {url}: {e} — \
+                    "[tree_source::summariser::llm] transport failure to {url}: {e} — \
                      falling back to inert summariser for tree_id={} level={}",
                     ctx.tree_id,
                     ctx.target_level
@@ -234,7 +234,7 @@ impl Summariser for LlmSummariser {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             log::warn!(
-                "[source_tree::summariser::llm] ollama non-success status {status} \
+                "[tree_source::summariser::llm] ollama non-success status {status} \
                  tree_id={} level={}: {} — falling back to inert",
                 ctx.tree_id,
                 ctx.target_level,
@@ -247,7 +247,7 @@ impl Summariser for LlmSummariser {
             Ok(v) => v,
             Err(e) => {
                 log::warn!(
-                    "[source_tree::summariser::llm] response not Ollama-shaped JSON: {e} — \
+                    "[tree_source::summariser::llm] response not Ollama-shaped JSON: {e} — \
                      falling back to inert for tree_id={} level={}",
                     ctx.tree_id,
                     ctx.target_level
@@ -260,7 +260,7 @@ impl Summariser for LlmSummariser {
             Ok(v) => v,
             Err(e) => {
                 log::warn!(
-                    "[source_tree::summariser::llm] model returned non-JSON or wrong-shape \
+                    "[tree_source::summariser::llm] model returned non-JSON or wrong-shape \
                      body: {e}; content was: {} — falling back to inert",
                     truncate_for_log(&envelope.message.content, 400)
                 );
@@ -270,7 +270,7 @@ impl Summariser for LlmSummariser {
 
         let (content, token_count) = clamp_to_budget(&parsed.summary, effective_budget);
         log::debug!(
-            "[source_tree::summariser::llm] sealed tree_id={} level={} inputs={} tokens={}",
+            "[tree_source::summariser::llm] sealed tree_id={} level={} inputs={} tokens={}",
             ctx.tree_id,
             ctx.target_level,
             inputs.len(),
@@ -397,7 +397,7 @@ struct LlmSummaryOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::tree::source_tree::types::TreeKind;
+    use crate::openhuman::memory::tree::tree_source::types::TreeKind;
     use chrono::Utc;
 
     fn sample_input(id: &str, content: &str) -> SummaryInput {

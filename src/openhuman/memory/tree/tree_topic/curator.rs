@@ -19,16 +19,16 @@ use anyhow::Result;
 use chrono::Utc;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::source_tree::store as src_store;
-use crate::openhuman::memory::tree::source_tree::summariser::Summariser;
-use crate::openhuman::memory::tree::source_tree::types::{Tree, TreeKind};
-use crate::openhuman::memory::tree::topic_tree::backfill::backfill_topic_tree;
-use crate::openhuman::memory::tree::topic_tree::hotness::hotness_at;
-use crate::openhuman::memory::tree::topic_tree::registry::get_or_create_topic_tree;
-use crate::openhuman::memory::tree::topic_tree::store::{
+use crate::openhuman::memory::tree::tree_source::store as src_store;
+use crate::openhuman::memory::tree::tree_source::summariser::Summariser;
+use crate::openhuman::memory::tree::tree_source::types::{Tree, TreeKind};
+use crate::openhuman::memory::tree::tree_topic::backfill::backfill_topic_tree;
+use crate::openhuman::memory::tree::tree_topic::hotness::hotness_at;
+use crate::openhuman::memory::tree::tree_topic::registry::get_or_create_topic_tree;
+use crate::openhuman::memory::tree::tree_topic::store::{
     distinct_sources_for, get_or_fresh, upsert,
 };
-use crate::openhuman::memory::tree::topic_tree::types::{
+use crate::openhuman::memory::tree::tree_topic::types::{
     HotnessCounters, TOPIC_CREATION_THRESHOLD, TOPIC_RECHECK_EVERY,
 };
 
@@ -54,7 +54,7 @@ pub enum SpawnOutcome {
 /// fires, consider spawning a topic tree.
 ///
 /// `summariser` is used only when a spawn + backfill happens; passing an
-/// [`InertSummariser`](crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser)
+/// [`InertSummariser`](crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser)
 /// is fine for Phase 3c.
 pub async fn maybe_spawn_topic_tree(
     config: &Config,
@@ -76,7 +76,7 @@ pub async fn maybe_spawn_topic_tree(
     if counters.ingests_since_check < TOPIC_RECHECK_EVERY {
         upsert(config, &counters)?;
         log::debug!(
-            "[topic_tree::curator] bumped counters entity={} mentions={} ingests_since_check={}",
+            "[tree_topic::curator] bumped counters entity={} mentions={} ingests_since_check={}",
             entity_id,
             counters.mention_count_30d,
             counters.ingests_since_check
@@ -123,7 +123,7 @@ async fn run_full_recompute(
 
     let outcome = if h < TOPIC_CREATION_THRESHOLD {
         log::debug!(
-            "[topic_tree::curator] below threshold entity={} hotness={:.3} threshold={}",
+            "[tree_topic::curator] below threshold entity={} hotness={:.3} threshold={}",
             entity_id,
             h,
             TOPIC_CREATION_THRESHOLD
@@ -131,7 +131,7 @@ async fn run_full_recompute(
         SpawnOutcome::BelowThreshold { hotness: h }
     } else if let Some(existing) = existing_topic_tree(config, entity_id)? {
         log::debug!(
-            "[topic_tree::curator] tree already exists entity={} tree_id={} hotness={:.3}",
+            "[tree_topic::curator] tree already exists entity={} tree_id={} hotness={:.3}",
             entity_id,
             existing.id,
             h
@@ -143,7 +143,7 @@ async fn run_full_recompute(
     } else {
         // Crossed threshold for the first time — materialise.
         log::info!(
-            "[topic_tree::curator] spawning topic tree entity={} hotness={:.3}",
+            "[tree_topic::curator] spawning topic tree entity={} hotness={:.3}",
             entity_id,
             h
         );
@@ -171,9 +171,9 @@ mod tests {
     use crate::openhuman::memory::tree::score::extract::EntityKind;
     use crate::openhuman::memory::tree::score::resolver::CanonicalEntity;
     use crate::openhuman::memory::tree::score::store::index_entity;
-    use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::store::upsert_chunks;
-    use crate::openhuman::memory::tree::topic_tree::store::get;
+    use crate::openhuman::memory::tree::tree_topic::store::get;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::{TimeZone, Utc};
     use tempfile::TempDir;
@@ -187,7 +187,7 @@ mod tests {
 
     fn seed_leaf_for_entity(cfg: &Config, entity_id: &str, source_tree: &str, seq: u32) {
         // Use a "now-anchored" timestamp so backfill's 30-day window
-        // (see topic_tree::backfill::BACKFILL_WINDOW_DAYS) always
+        // (see tree_topic::backfill::BACKFILL_WINDOW_DAYS) always
         // includes these seeded leaves. Spread by seq to keep ordering
         // deterministic.
         let ts_ms = Utc::now().timestamp_millis() - (seq as i64) * 1_000;

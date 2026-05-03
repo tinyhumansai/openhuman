@@ -23,7 +23,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::content_store::StagedSummary;
 use crate::openhuman::memory::tree::score::embed::{decode_optional_blob, pack_checked};
-use crate::openhuman::memory::tree::source_tree::types::{
+use crate::openhuman::memory::tree::tree_source::types::{
     Buffer, SummaryNode, Tree, TreeKind, TreeStatus,
 };
 use crate::openhuman::memory::tree::store::with_connection;
@@ -264,7 +264,7 @@ pub fn set_summary_embedding(
         )?;
         if changed == 0 {
             log::warn!(
-                "[source_tree::store] set_summary_embedding: no row for summary_id={summary_id}"
+                "[tree_source::store] set_summary_embedding: no row for summary_id={summary_id}"
             );
         }
         Ok(changed)

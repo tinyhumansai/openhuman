@@ -1,7 +1,7 @@
 use super::*;
 use crate::openhuman::memory::tree::content_store;
-use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
-use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
+use crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree;
+use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
 use tempfile::TempDir;
 
 /// Stage a batch of chunks to the content store so that `read_chunk_body`
@@ -172,7 +172,7 @@ async fn crossing_budget_triggers_seal() {
 
 #[tokio::test]
 async fn fanout_at_l1_triggers_l2_seal() {
-    use crate::openhuman::memory::tree::source_tree::types::SUMMARY_FANOUT;
+    use crate::openhuman::memory::tree::tree_source::types::SUMMARY_FANOUT;
     use crate::openhuman::memory::tree::store::upsert_chunks;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::TimeZone;
@@ -261,7 +261,7 @@ async fn fanout_at_l1_triggers_l2_seal() {
 
 #[tokio::test]
 async fn upper_level_does_not_seal_below_fanout() {
-    use crate::openhuman::memory::tree::source_tree::types::SUMMARY_FANOUT;
+    use crate::openhuman::memory::tree::tree_source::types::SUMMARY_FANOUT;
     use crate::openhuman::memory::tree::store::upsert_chunks;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::TimeZone;
@@ -573,7 +573,7 @@ async fn seal_with_empty_strategy_leaves_labels_empty() {
 
 #[tokio::test]
 async fn topic_tree_seal_persists_topic_kind_not_source() {
-    use crate::openhuman::memory::tree::source_tree::types::TreeStatus;
+    use crate::openhuman::memory::tree::tree_source::types::TreeStatus;
 
     let (_tmp, cfg) = test_config();
     // Build a topic tree directly — `seal_one_level` runs for both

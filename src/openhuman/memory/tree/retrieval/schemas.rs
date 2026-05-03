@@ -143,7 +143,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: NAMESPACE,
             function: "query_global",
             description: "Return the global digest for the last N days. Wraps \
-                 `global_tree::recap`; the returned hit carries `child_ids` pointing \
+                 `tree_global::recap`; the returned hit carries `child_ids` pointing \
                  at the folded per-day summary ids for drill-down.",
             inputs: vec![FieldSchema {
                 name: "window_days",

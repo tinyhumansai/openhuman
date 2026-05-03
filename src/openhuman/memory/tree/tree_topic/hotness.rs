@@ -23,7 +23,7 @@
 
 use chrono::Utc;
 
-use crate::openhuman::memory::tree::topic_tree::types::EntityIndexStats;
+use crate::openhuman::memory::tree::tree_topic::types::EntityIndexStats;
 
 /// Pure hotness function — no I/O, no clocks unless the caller passes one.
 ///
@@ -45,7 +45,7 @@ pub fn hotness_at(entity_id: &str, idx: &EntityIndexStats, now_ms: i64) -> f32 {
 
     let total = mention_weight + source_weight + recency_weight + centrality + query_weight;
     log::debug!(
-        "[topic_tree::hotness] id={} mentions={} sources={} recency={:.3} centrality={:.3} \
+        "[tree_topic::hotness] id={} mentions={} sources={} recency={:.3} centrality={:.3} \
          queries={} total={:.3}",
         entity_id,
         idx.mention_count_30d,
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn spike_of_mentions_pushes_over_creation_threshold() {
-        use crate::openhuman::memory::tree::topic_tree::types::TOPIC_CREATION_THRESHOLD;
+        use crate::openhuman::memory::tree::tree_topic::types::TOPIC_CREATION_THRESHOLD;
         let now_ms = 1_700_000_000_000;
         // 100 mentions across 5 sources, 3 recent query hits, seen today.
         let s = EntityIndexStats {

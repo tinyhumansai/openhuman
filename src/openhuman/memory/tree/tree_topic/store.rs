@@ -2,7 +2,7 @@
 //!
 //! The only new table owned here is `mem_tree_entity_hotness` — the
 //! per-entity counter block driving lazy materialisation. Tree rows and
-//! summary nodes are reused from [`super::super::source_tree::store`] via
+//! summary nodes are reused from [`super::super::tree_source::store`] via
 //! the shared `mem_tree_trees` / `mem_tree_summaries` / `mem_tree_buffers`
 //! tables, which already carry a `kind` column that discriminates
 //! `source` from `topic`. No schema additions for those tables in Phase
@@ -18,7 +18,7 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::store::with_connection;
-use crate::openhuman::memory::tree::topic_tree::types::HotnessCounters;
+use crate::openhuman::memory::tree::tree_topic::types::HotnessCounters;
 
 /// Fetch the hotness row for `entity_id`, or `None` if the entity has
 /// never been seen. Callers usually want [`get_or_fresh`] instead.

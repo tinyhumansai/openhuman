@@ -12,8 +12,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::source_tree::store;
-use crate::openhuman::memory::tree::source_tree::types::{Tree, TreeKind, TreeStatus};
+use crate::openhuman::memory::tree::tree_source::store;
+use crate::openhuman::memory::tree::tree_source::types::{Tree, TreeKind, TreeStatus};
 
 /// Look up the topic tree for `entity_id`, or create a new one.
 ///
@@ -23,7 +23,7 @@ use crate::openhuman::memory::tree::source_tree::types::{Tree, TreeKind, TreeSta
 pub fn get_or_create_topic_tree(config: &Config, entity_id: &str) -> Result<Tree> {
     if let Some(existing) = store::get_tree_by_scope(config, TreeKind::Topic, entity_id)? {
         log::debug!(
-            "[topic_tree::registry] found tree id={} entity={}",
+            "[tree_topic::registry] found tree id={} entity={}",
             existing.id,
             entity_id
         );
@@ -79,10 +79,10 @@ pub fn archive_topic_tree(config: &Config, tree_id: &str) -> Result<()> {
             .with_context(|| format!("failed to archive topic tree {tree_id}"))?;
         if n == 0 {
             log::warn!(
-                "[topic_tree::registry] archive_topic_tree: no topic tree with id={tree_id}"
+                "[tree_topic::registry] archive_topic_tree: no topic tree with id={tree_id}"
             );
         } else {
-            log::info!("[topic_tree::registry] archived topic tree id={tree_id}");
+            log::info!("[tree_topic::registry] archived topic tree id={tree_id}");
         }
         Ok(())
     })
@@ -102,7 +102,7 @@ fn create_new(config: &Config, entity_id: &str) -> Result<Tree> {
     match store::insert_tree(config, &tree) {
         Ok(()) => {
             log::info!(
-                "[topic_tree::registry] created topic tree id={} entity={}",
+                "[tree_topic::registry] created topic tree id={} entity={}",
                 tree.id,
                 entity_id
             );
@@ -110,7 +110,7 @@ fn create_new(config: &Config, entity_id: &str) -> Result<Tree> {
         }
         Err(err) if is_unique_violation(&err) => {
             log::debug!(
-                "[topic_tree::registry] UNIQUE race for entity={} — re-querying",
+                "[tree_topic::registry] UNIQUE race for entity={} — re-querying",
                 entity_id
             );
             store::get_tree_by_scope(config, TreeKind::Topic, entity_id)?.ok_or_else(|| {
@@ -137,7 +137,7 @@ fn new_topic_tree_id() -> String {
     format!("{}:{}", TreeKind::Topic.as_str(), Uuid::new_v4())
 }
 
-/// Row mapper — duplicated from `source_tree::store::row_to_tree` because
+/// Row mapper — duplicated from `tree_source::store::row_to_tree` because
 /// that one is private. Kept intentionally loose: topic-tree listing is
 /// not a hot path so the string parsing cost is immaterial.
 fn row_to_tree_loose(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tree> {
@@ -230,7 +230,7 @@ mod tests {
         // the UNIQUE constraint is on (kind, scope), not scope alone.
         let (_tmp, cfg) = test_config();
         let source =
-            crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree(
+            crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree(
                 &cfg,
                 "shared:slack:#eng",
             )
@@ -272,7 +272,7 @@ mod tests {
     fn list_topic_trees_returns_only_topics() {
         let (_tmp, cfg) = test_config();
         // Mix of source + topic trees.
-        crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree(
+        crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree(
             &cfg,
             "slack:#eng",
         )
