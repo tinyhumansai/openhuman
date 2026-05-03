@@ -136,8 +136,16 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       }
 
       const state = store.getState().thread;
+      // Resolution priority: selected > active (in-flight inference) > welcome
+      // (onboarding lockdown) > first thread in list. `activeThreadId` tracks
+      // the currently running inference thread — during single-threaded onboarding
+      // this will typically be the welcome thread itself, so the ordering is safe.
       const targetFromState =
-        state.selectedThreadId ?? state.activeThreadId ?? state.threads[0]?.id ?? null;
+        state.selectedThreadId ??
+        state.activeThreadId ??
+        state.welcomeThreadId ??
+        state.threads[0]?.id ??
+        null;
       if (targetFromState) {
         return targetFromState;
       }

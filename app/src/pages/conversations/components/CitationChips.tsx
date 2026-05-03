@@ -12,10 +12,11 @@ export type MessageCitation = {
 };
 
 export function CitationChips({ citations }: { citations: MessageCitation[] }) {
-  if (citations.length === 0) return null;
+  const filteredCitations = citations.filter(c => c.namespace !== 'global');
+  if (filteredCitations.length === 0) return null;
   return (
     <div className="mt-1.5 flex flex-wrap gap-1">
-      {citations.map(citation => {
+      {filteredCitations.map(citation => {
         const scoreLabel =
           typeof citation.score === 'number' ? ` ${Math.round(citation.score * 100)}%` : '';
         const title = `${citation.key}${citation.namespace ? ` (${citation.namespace})` : ''}\n${citation.snippet}`;
