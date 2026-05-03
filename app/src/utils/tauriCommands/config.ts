@@ -193,7 +193,7 @@ export async function aiGetConfig(): Promise<AIPreview> {
     soul: {
       raw: '',
       name: 'OpenHuman',
-      description: 'AI assistant',
+      description: 'Agent',
       personalityPreview: [],
       safetyRulesPreview: [],
       loadedAt: Date.now(),

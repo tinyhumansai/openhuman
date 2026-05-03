@@ -319,7 +319,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       setSendError(
         chatSendError(
           'safety_timeout',
-          'No response from the assistant after 10 minutes. Try again or check your connection.'
+          'No response from the agent after 10 minutes. Try again or check your connection.'
         )
       );
       dispatch(clearRuntimeForThread({ threadId }));

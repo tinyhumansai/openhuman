@@ -5,6 +5,7 @@ import { HashRouter as Router, useLocation, useNavigate } from 'react-router-dom
 import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
+import AppUpdatePrompt from './components/AppUpdatePrompt';
 import BottomTabBar from './components/BottomTabBar';
 import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
@@ -53,6 +54,7 @@ function App() {
                       <AppShell />
                       <DictationHotkeyManager />
                       <LocalAIDownloadSnackbar />
+                      <AppUpdatePrompt />
                     </ServiceBlockingGate>
                   </CommandProvider>
                 </Router>

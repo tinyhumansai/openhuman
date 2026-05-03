@@ -794,8 +794,9 @@ export default function Skills() {
                         Channels
                       </h2>
                       <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500">
-                        Connect messaging platforms so your assistant can chat where your community
-                        already lives.
+                        Connect messaging platforms so your agent can chat where you already are.
+                        Note that you will need to have OpenHuman running either on your desktop or
+                        in your own cloud.
                       </p>
                     </div>
                     <div
@@ -818,8 +819,8 @@ export default function Skills() {
                   <div className="px-1 pb-3 pt-1">
                     <h2 className="text-sm font-semibold text-stone-900">Integrations</h2>
                     <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500">
-                      Connect external apps. Connected services are sorted first and highlighted in
-                      green.
+                      Connect external apps. Connected services give your agent access to the tools
+                      it needs to perform tasks.
                     </p>
                   </div>
                   <div className="space-y-3 px-1 pb-3">

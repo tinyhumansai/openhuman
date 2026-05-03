@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import AboutPanel from '../components/settings/panels/AboutPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
@@ -294,6 +295,8 @@ const Settings = () => {
         <Route path="webhooks-debug" element={wrapSettingsPage(<WebhooksDebugPanel />)} />
         <Route path="memory-data" element={wrapSettingsPage(<MemoryDataPanel />)} />
         <Route path="memory-debug" element={wrapSettingsPage(<MemoryDebugPanel />)} />
+        {/* About / updates */}
+        <Route path="about" element={wrapSettingsPage(<AboutPanel />)} />
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/settings" replace />} />
       </Routes>
