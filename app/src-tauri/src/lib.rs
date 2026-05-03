@@ -418,8 +418,190 @@ async fn apply_app_update(
 
     if let Err(e) = download_result {
         log::error!("[app-update] download/install failed: {e}");
+        // Same recovery as `install_app_update`: the .app wasn't swapped,
+        // so revive the in-process core we shut down above.
+        if let Err(start_err) = state.inner().ensure_running().await {
+            log::error!("[app-update] failed to restart core after apply error: {start_err}");
+        }
         let _ = app.emit("app-update:status", "error");
         return Err(format!("download_and_install failed: {e}"));
+    }
+
+    log::info!("[app-update] install complete — relaunching");
+    let _ = app.emit("app-update:status", "restarting");
+    // Note: app.restart() never returns. Anything after this is unreachable.
+    app.restart();
+}
+
+/// Holds an `Update` handle plus its downloaded bytes between the
+/// `download_app_update` (background) and `install_app_update` (user
+/// confirmed restart) commands. Sized at ~100MB on macOS for the .app
+/// bundle, which is fine to keep in RAM until the user is ready.
+struct PendingAppUpdate {
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
+    version: String,
+}
+
+/// Tauri-managed state slot for the in-flight pending update. `None` means
+/// "no update has been downloaded since launch"; `Some(_)` means the bytes
+/// are ready and `install_app_update` can finalize without re-downloading.
+#[derive(Default)]
+struct PendingAppUpdateState(tokio::sync::Mutex<Option<PendingAppUpdate>>);
+
+/// Result returned to the frontend after a download attempt.
+#[derive(Debug, Clone, serde::Serialize)]
+struct AppUpdateDownloadResult {
+    /// True when an update was found and the bytes are now staged.
+    ready: bool,
+    /// Version of the staged update (if any).
+    version: Option<String>,
+    /// Release notes for the staged update.
+    body: Option<String>,
+}
+
+/// Probe the updater endpoint and, if a newer build is advertised, download
+/// the bundle bytes into memory but do NOT install. The frontend can then
+/// surface a "Restart to apply" prompt at a moment that's safe for the user
+/// (no in-flight conversation, etc.) before calling `install_app_update`.
+///
+/// Emits the same `app-update:status` and `app-update:progress` events as
+/// `apply_app_update`, so the React state machine can drive a single UI off
+/// either path. Status sequence: `checking` → `downloading` → `ready_to_install`,
+/// or `up_to_date` / `error`.
+#[tauri::command]
+async fn download_app_update(
+    app: tauri::AppHandle<AppRuntime>,
+    state: tauri::State<'_, PendingAppUpdateState>,
+) -> Result<AppUpdateDownloadResult, String> {
+    use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
+
+    log::info!("[app-update] download_app_update invoked from frontend");
+
+    let updater = app
+        .updater()
+        .map_err(|e| format!("updater plugin not initialized: {e}"))?;
+
+    let _ = app.emit("app-update:status", "checking");
+
+    let update = match updater.check().await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            log::info!("[app-update] no update available");
+            let _ = app.emit("app-update:status", "up_to_date");
+            return Ok(AppUpdateDownloadResult {
+                ready: false,
+                version: None,
+                body: None,
+            });
+        }
+        Err(e) => {
+            log::warn!("[app-update] check failed: {e}");
+            let _ = app.emit("app-update:status", "error");
+            return Err(format!("update check failed: {e}"));
+        }
+    };
+
+    let new_version = update.version.clone();
+    let body = update.body.clone();
+    log::info!("[app-update] downloading {} (background)", new_version);
+    let _ = app.emit("app-update:status", "downloading");
+
+    let progress_app = app.clone();
+    let download_result = update
+        .download(
+            move |chunk_length, content_length| {
+                let payload = serde_json::json!({
+                    "chunk": chunk_length,
+                    "total": content_length,
+                });
+                let _ = progress_app.emit("app-update:progress", payload);
+            },
+            || {
+                log::info!("[app-update] download complete — staging for install");
+            },
+        )
+        .await;
+
+    let bytes = match download_result {
+        Ok(b) => b,
+        Err(e) => {
+            log::error!("[app-update] download failed: {e}");
+            let _ = app.emit("app-update:status", "error");
+            return Err(format!("download failed: {e}"));
+        }
+    };
+
+    let mut slot = state.0.lock().await;
+    *slot = Some(PendingAppUpdate {
+        update,
+        bytes,
+        version: new_version.clone(),
+    });
+    drop(slot);
+
+    log::info!(
+        "[app-update] staged {} — awaiting user-initiated install",
+        new_version
+    );
+    let _ = app.emit("app-update:status", "ready_to_install");
+
+    Ok(AppUpdateDownloadResult {
+        ready: true,
+        version: Some(new_version),
+        body,
+    })
+}
+
+/// Install the previously-downloaded update bytes (staged by
+/// `download_app_update`), then relaunch. Errors with `no pending update`
+/// if `download_app_update` hasn't run yet — the frontend should fall back
+/// to a fresh `apply_app_update` in that case.
+///
+/// Acquires the core restart lock + shuts the in-process core server down
+/// before install, same as `apply_app_update`, so the macOS .app bundle
+/// replacement does not race against a live core holding file handles.
+#[tauri::command]
+async fn install_app_update(
+    core_state: tauri::State<'_, core_process::CoreProcessHandle>,
+    pending: tauri::State<'_, PendingAppUpdateState>,
+    app: tauri::AppHandle<AppRuntime>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    log::info!("[app-update] install_app_update invoked from frontend");
+
+    let staged = {
+        let mut slot = pending.0.lock().await;
+        slot.take()
+    };
+    let staged = match staged {
+        Some(s) => s,
+        None => {
+            log::warn!("[app-update] install requested but no staged update");
+            let _ = app.emit("app-update:status", "error");
+            return Err("no pending update — call download_app_update first".into());
+        }
+    };
+
+    log::info!("[app-update] installing staged version {}", staged.version);
+
+    let _guard = core_state.inner().restart_lock().await;
+    log::debug!("[app-update] acquired core restart lock");
+    core_state.inner().shutdown().await;
+
+    let _ = app.emit("app-update:status", "installing");
+    if let Err(e) = staged.update.install(staged.bytes) {
+        log::error!("[app-update] install failed: {e}");
+        // The .app on disk wasn't replaced, so we keep running the
+        // pre-install build — bring the core back up before returning
+        // so the user can keep working instead of being silently offline.
+        if let Err(start_err) = core_state.inner().ensure_running().await {
+            log::error!("[app-update] failed to restart core after install error: {start_err}");
+        }
+        let _ = app.emit("app-update:status", "error");
+        return Err(format!("install failed: {e}"));
     }
 
     log::info!("[app-update] install complete — relaunching");
@@ -970,7 +1152,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DictationHotkeyState(Mutex::new(Vec::new())))
         .manage(webview_accounts::WebviewAccountsState::default())
-        .manage(notification_settings::NotificationSettingsState::new());
+        .manage(notification_settings::NotificationSettingsState::new())
+        .manage(PendingAppUpdateState::default());
     let builder = builder.manage(std::sync::Arc::new(imessage_scanner::ScannerRegistry::new()));
     let builder = builder.manage(std::sync::Arc::new(
         gmessages_scanner::ScannerRegistry::new(),
@@ -1402,6 +1585,8 @@ pub fn run() {
             apply_core_update,
             check_app_update,
             apply_app_update,
+            download_app_update,
+            install_app_update,
             restart_core_process,
             restart_app,
             get_active_user_id,

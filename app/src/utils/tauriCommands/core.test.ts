@@ -92,6 +92,84 @@ describe('tauriCommands/core', () => {
     });
   });
 
+  describe('app-update wrappers', () => {
+    let checkAppUpdate: typeof import('./core').checkAppUpdate;
+    let applyAppUpdate: typeof import('./core').applyAppUpdate;
+    let downloadAppUpdate: typeof import('./core').downloadAppUpdate;
+    let installAppUpdate: typeof import('./core').installAppUpdate;
+
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof import('./core')>('./core');
+      checkAppUpdate = actual.checkAppUpdate;
+      applyAppUpdate = actual.applyAppUpdate;
+      downloadAppUpdate = actual.downloadAppUpdate;
+      installAppUpdate = actual.installAppUpdate;
+    });
+
+    test('checkAppUpdate returns null when not in Tauri', async () => {
+      mockIsTauri.mockReturnValue(false);
+      const out = await checkAppUpdate();
+      expect(out).toBeNull();
+      expect(mockInvoke).not.toHaveBeenCalled();
+    });
+
+    test('checkAppUpdate forwards invoke result on the happy path', async () => {
+      const expected = {
+        current_version: '0.50.0',
+        available: true,
+        available_version: '0.51.0',
+        body: 'notes',
+      };
+      mockInvoke.mockResolvedValueOnce(expected);
+
+      const out = await checkAppUpdate();
+
+      expect(mockInvoke).toHaveBeenCalledWith('check_app_update');
+      expect(out).toEqual(expected);
+    });
+
+    test('downloadAppUpdate returns null when not in Tauri', async () => {
+      mockIsTauri.mockReturnValue(false);
+      const out = await downloadAppUpdate();
+      expect(out).toBeNull();
+      expect(mockInvoke).not.toHaveBeenCalled();
+    });
+
+    test('downloadAppUpdate forwards invoke result on the happy path', async () => {
+      const expected = { ready: true, version: '0.51.0', body: null };
+      mockInvoke.mockResolvedValueOnce(expected);
+
+      const out = await downloadAppUpdate();
+
+      expect(mockInvoke).toHaveBeenCalledWith('download_app_update');
+      expect(out).toEqual(expected);
+    });
+
+    test('installAppUpdate is a no-op when not in Tauri', async () => {
+      mockIsTauri.mockReturnValue(false);
+      await installAppUpdate();
+      expect(mockInvoke).not.toHaveBeenCalled();
+    });
+
+    test('installAppUpdate invokes install_app_update', async () => {
+      mockInvoke.mockResolvedValueOnce(undefined);
+      await installAppUpdate();
+      expect(mockInvoke).toHaveBeenCalledWith('install_app_update');
+    });
+
+    test('applyAppUpdate is a no-op when not in Tauri', async () => {
+      mockIsTauri.mockReturnValue(false);
+      await applyAppUpdate();
+      expect(mockInvoke).not.toHaveBeenCalled();
+    });
+
+    test('applyAppUpdate invokes apply_app_update', async () => {
+      mockInvoke.mockResolvedValueOnce(undefined);
+      await applyAppUpdate();
+      expect(mockInvoke).toHaveBeenCalledWith('apply_app_update');
+    });
+  });
+
   describe('scheduleCefProfilePurge', () => {
     test('returns null and does not invoke when not in Tauri', async () => {
       mockIsTauri.mockReturnValue(false);
