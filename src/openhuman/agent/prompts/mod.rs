@@ -334,7 +334,7 @@ impl PromptSection for UserFilesSection {
             // behind `curated_memory.add/replace/remove`. Fall back to
             // the workspace file only when no snapshot is attached (pure
             // prompt-unit tests and older call sites).
-            if let Some(snap) = ctx.curated_snapshot {
+            if let Some(snap) = &ctx.curated_snapshot {
                 inject_snapshot_content(&mut out, "MEMORY.md", &snap.memory, USER_FILE_MAX_CHARS);
                 inject_snapshot_content(&mut out, "USER.md", &snap.user, USER_FILE_MAX_CHARS);
             } else {
