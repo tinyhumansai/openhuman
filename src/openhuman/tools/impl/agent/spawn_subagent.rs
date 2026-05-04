@@ -231,12 +231,50 @@ impl Tool for SpawnSubagentTool {
         // gets a precise, actionable error on every failure mode —
         // nothing reaches the LLM loop unless the spawn is valid.
         if definition.id == "integrations_agent" {
+            // The parent's `connected_integrations` Vec is frozen at
+            // session-start (see `session/turn.rs::fetch_connected_integrations`),
+            // so a toolkit the user authorised mid-thread isn't visible
+            // here. Refresh from the global integrations cache —
+            // invalidated by `ComposioConnectionCreatedSubscriber` once
+            // OAuth reaches ACTIVE — so the pre-flight sees the latest
+            // truth. Falls back to the parent's frozen list when the
+            // live fetch returns empty (no signed-in user, backend
+            // unreachable, …) so offline behaviour is unchanged.
             let parent_ctx = current_parent();
+            let live_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration> = {
+                match crate::openhuman::config::Config::load_or_init().await {
+                    Ok(config) => {
+                        let fresh =
+                            crate::openhuman::composio::fetch_connected_integrations(&config).await;
+                        if fresh.is_empty() {
+                            parent_ctx
+                                .as_ref()
+                                .map(|p| p.connected_integrations.clone())
+                                .unwrap_or_default()
+                        } else {
+                            tracing::debug!(
+                                target: "spawn_subagent",
+                                count = fresh.len(),
+                                "[spawn_subagent] refreshed connected_integrations for pre-flight"
+                            );
+                            fresh
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            target: "spawn_subagent",
+                            error = %e,
+                            "[spawn_subagent] config load failed; falling back to parent's frozen list"
+                        );
+                        parent_ctx
+                            .as_ref()
+                            .map(|p| p.connected_integrations.clone())
+                            .unwrap_or_default()
+                    }
+                }
+            };
             let allowlist: Vec<&crate::openhuman::context::prompt::ConnectedIntegration> =
-                parent_ctx
-                    .as_ref()
-                    .map(|p| p.connected_integrations.iter().collect())
-                    .unwrap_or_default();
+                live_integrations.iter().collect();
             let connected_slugs: Vec<String> = allowlist
                 .iter()
                 .filter(|ci| ci.connected)
