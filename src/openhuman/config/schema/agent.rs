@@ -216,8 +216,7 @@ impl AgentConfig {
                 let hard_cap = MemoryContextWindow::Maximum
                     .limits()
                     .max_memory_context_chars;
-                limits.max_memory_context_chars =
-                    self.max_memory_context_chars.min(hard_cap);
+                limits.max_memory_context_chars = self.max_memory_context_chars.min(hard_cap);
                 limits
             }
         }
@@ -327,7 +326,9 @@ mod memory_window_tests {
         assert_eq!(limits.max_memory_context_chars, 4_000);
         assert_eq!(
             limits.per_namespace_max_chars,
-            MemoryContextWindow::Balanced.limits().per_namespace_max_chars
+            MemoryContextWindow::Balanced
+                .limits()
+                .per_namespace_max_chars
         );
 
         // An unbounded legacy value is clamped to the Maximum preset's

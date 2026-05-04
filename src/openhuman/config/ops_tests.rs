@@ -278,8 +278,7 @@ async fn apply_memory_settings_updates_all_provided_fields() {
 async fn apply_memory_settings_ignores_unknown_memory_window_label() {
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
-    cfg.agent.memory_window =
-        Some(crate::openhuman::config::schema::MemoryContextWindow::Balanced);
+    cfg.agent.memory_window = Some(crate::openhuman::config::schema::MemoryContextWindow::Balanced);
     let original = cfg.agent.memory_window;
     let patch = MemorySettingsPatch {
         memory_window: Some("ginormous".into()),
