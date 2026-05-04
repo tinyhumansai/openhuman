@@ -48,6 +48,7 @@ fn prompt_builder_assembles_sections() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
     let rendered = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
@@ -78,6 +79,7 @@ fn identity_section_creates_missing_workspace_files() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
 
@@ -117,6 +119,7 @@ fn datetime_section_includes_timestamp_and_timezone() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
 
@@ -158,6 +161,7 @@ fn ctx_with_identity(identity: Option<UserIdentity>) -> PromptContext<'static> {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: identity,
     }
 }
@@ -296,6 +300,7 @@ fn tools_section_pformat_renders_signature_not_schema() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
 
@@ -341,6 +346,7 @@ fn tools_section_uses_pformat_signature_for_every_dispatcher() {
             connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
+            curated_snapshot: None,
             user_identity: None,
         };
         let rendered = ToolsSection.build(&ctx).unwrap();
@@ -382,6 +388,7 @@ fn user_memory_section_renders_namespaces_with_headings() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
@@ -411,6 +418,7 @@ fn user_memory_section_returns_empty_when_no_summaries() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
@@ -1059,6 +1067,7 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         connected_identities_md: String::new(),
         include_profile: true,
         include_memory_md: true,
+        curated_snapshot: None,
         user_identity: None,
     };
 
@@ -1101,6 +1110,7 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
     let narrow = builder.build(&ctx_narrow).unwrap();
@@ -1180,6 +1190,7 @@ fn prompt_tool_constructors_and_user_memory_skip_empty_bodies() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();

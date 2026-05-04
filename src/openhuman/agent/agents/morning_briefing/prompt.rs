@@ -76,6 +76,7 @@ mod tests {
             connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
+            curated_snapshot: None,
             user_identity: identity,
         }
     }
