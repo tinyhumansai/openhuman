@@ -502,7 +502,9 @@ impl IndexReader {
         // fts5_quote of a whitespace-only string is empty — FTS5 MATCH ""
         // is undefined and may error. Return empty results early.
         if query.is_empty() {
-            debug!("[life_capture] keyword_search: empty pattern after fts5_quote, returning no hits");
+            debug!(
+                "[life_capture] keyword_search: empty pattern after fts5_quote, returning no hits"
+            );
             return Ok(vec![]);
         }
         self.with_read_conn("keyword_search", move |conn| {
@@ -842,7 +844,10 @@ mod reader_keyword_tests {
         let idx = PersonalIndex::open_in_memory().await.unwrap();
         let reader = IndexReader::new(&idx);
         let hits = reader.keyword_search("   ", 10).await.unwrap();
-        assert!(hits.is_empty(), "whitespace-only query should yield no hits");
+        assert!(
+            hits.is_empty(),
+            "whitespace-only query should yield no hits"
+        );
     }
 }
 

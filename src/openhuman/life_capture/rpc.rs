@@ -159,8 +159,8 @@ pub async fn handle_search(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::openhuman::life_capture::embedder::Embedder;
+    use async_trait::async_trait;
 
     /// Stub embedder with fixed dimension; panics if embed_batch is called so
     /// tests that reach it will fail with a clear message.

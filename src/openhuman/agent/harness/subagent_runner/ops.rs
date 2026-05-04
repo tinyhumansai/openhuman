@@ -1167,6 +1167,5 @@ fn parse_tool_arguments(arguments: &str) -> serde_json::Value {
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
-    use super::*;
-    use crate::openhuman::agent::harness::definition::{ModelSpec, ToolScope};
-
+use super::*;
+use crate::openhuman::agent::harness::definition::{ModelSpec, ToolScope};
