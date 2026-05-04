@@ -378,7 +378,9 @@ describe('WalkthroughTooltip', () => {
   });
 
   it('renders progress bar', () => {
-    const { container } = render(<WalkthroughTooltip {...makeTooltipProps({ index: 2, size: 6 })} />);
+    const { container } = render(
+      <WalkthroughTooltip {...makeTooltipProps({ index: 2, size: 6 })} />
+    );
 
     // Gradient progress bar fills based on step progress
     const bar = container.querySelector('div.bg-gradient-to-r');
