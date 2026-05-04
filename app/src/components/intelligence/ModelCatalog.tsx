@@ -102,20 +102,28 @@ function CatalogRow({ model, installed, active, onDownload, onUse, onDelete }: C
         return prev + Math.max(2, Math.round((100 - prev) * 0.06));
       });
     }, 220);
+    let didFail = false;
     try {
       await onDownload(model);
       setProgress(100);
     } catch (err) {
       console.debug('[intelligence-settings] catalog download failed', { id: model.id, err });
       setState('error');
+      didFail = true;
     } finally {
       clearInterval(tick);
-      // Linger briefly at 100% so the user sees the bar fill before the
-      // row collapses back to its post-install state.
+      // Hold the terminal state long enough for the user to actually read
+      // it. Success collapses fast (~600 ms) so the row settles back to
+      // its post-install state without a long pause; error lingers ~3s
+      // so an unsuccessful pull doesn't snap back before the user has
+      // a chance to notice. Tracked via a local flag because `state` is
+      // React state and won't reflect the just-issued `setState('error')`
+      // until the next render.
+      const settleMs = didFail ? 3000 : 600;
       window.setTimeout(() => {
         setState('idle');
         setProgress(0);
-      }, 600);
+      }, settleMs);
     }
   };
 

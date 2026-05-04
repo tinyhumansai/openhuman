@@ -6,13 +6,9 @@ import IntelligenceSettingsTab from '../components/intelligence/IntelligenceSett
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
 import { ToastContainer } from '../components/intelligence/Toast';
-import { filterItems, getItemStats, groupItemsByTime } from '../components/intelligence/utils';
+import { filterItems, getItemStats } from '../components/intelligence/utils';
 import PillTabBar from '../components/PillTabBar';
 import { useConsciousItems } from '../hooks/useConsciousItems';
-import {
-  useSnoozeActionableItem,
-  useUpdateActionableItem,
-} from '../hooks/useIntelligenceApiFallback';
 import {
   useIntelligenceSocket,
   useIntelligenceSocketManager,
@@ -24,7 +20,6 @@ import { useSubconscious } from '../hooks/useSubconscious';
 import type {
   ActionableItem,
   ActionableItemSource,
-  ActionableItemStatus,
   ConfirmationModal as ConfirmationModalType,
   ToastNotification,
 } from '../types/intelligence';
@@ -36,21 +31,26 @@ export default function Intelligence() {
   const { status: ingestionStatus } = useMemoryIngestionStatus();
 
   const [activeTab, setActiveTab] = useState<IntelligenceTab>('memory');
-  const [sourceFilter, setSourceFilter] = useState<ActionableItemSource | 'all'>('all');
-  const [priorityFilter] = useState<'critical' | 'important' | 'normal' | 'all'>('all');
-  const [searchFilter, setSearchFilter] = useState('');
+  // The actionable-card filters (source / priority / search) are inert
+  // now that IntelligenceMemoryTab is gone — the new MemoryWorkspace owns
+  // its own search + lens state. Kept as constants so the legacy
+  // filterItems pipeline that feeds the header count badge still has the
+  // shape it expects, without exposing setters that nothing calls.
+  const sourceFilter: ActionableItemSource | 'all' = 'all';
+  const priorityFilter: 'critical' | 'important' | 'normal' | 'all' = 'all';
+  const searchFilter = '';
 
   // Conscious memory items (real data from the background analysis loop)
   const {
     items: consciousItems,
     loading: consciousLoading,
     isRunning,
-    refresh: refreshConscious,
-    triggerAnalysis,
   } = useConsciousItems();
 
-  const { mutateAsync: updateItemStatus } = useUpdateActionableItem();
-  const { mutateAsync: snoozeItem } = useSnoozeActionableItem();
+  // useUpdateActionableItem / useSnoozeActionableItem hooks were the
+  // mutations behind handleComplete / Dismiss / Snooze. Removed along
+  // with those handlers since the Memory tab no longer renders the
+  // actionable-card surface.
 
   // Subconscious engine data
   const {
@@ -96,7 +96,6 @@ export default function Intelligence() {
   const { items: screenIntelligenceItems, loading: screenIntelligenceLoading } =
     useScreenIntelligenceItems();
 
-  const usingMemoryData = consciousItems.length > 0 || screenIntelligenceItems.length > 0;
   const items: ActionableItem[] = useMemo(
     () => [...consciousItems, ...screenIntelligenceItems],
     [consciousItems, screenIntelligenceItems]
@@ -121,110 +120,16 @@ export default function Intelligence() {
     });
   }, [items, priorityFilter, searchFilter, sourceFilter]);
 
-  const timeGroups = useMemo(() => groupItemsByTime(filteredItems), [filteredItems]);
   const stats = useMemo(() => getItemStats(filteredItems), [filteredItems]);
 
-  // Item action handlers
-  const handleUpdateItemStatus = useCallback(
-    async (itemId: string, status: ActionableItemStatus) => {
-      try {
-        await updateItemStatus({ itemId, status });
-
-        let message = '';
-        switch (status) {
-          case 'completed':
-            message = 'Task marked as completed';
-            break;
-          case 'dismissed':
-            message = 'Task dismissed';
-            break;
-          case 'active':
-            message = 'Task reactivated';
-            break;
-          default:
-            message = 'Status updated';
-        }
-
-        addToast({ type: 'success', title: 'Status Updated', message });
-      } catch (error) {
-        console.error('Failed to update item status:', error);
-        addToast({
-          type: 'error',
-          title: 'Update Failed',
-          message: error instanceof Error ? error.message : 'Failed to update item status',
-        });
-      }
-    },
-    [updateItemStatus, addToast]
-  );
-
-  const handleComplete = useCallback(
-    async (item: ActionableItem) => {
-      await handleUpdateItemStatus(item.id, 'completed');
-    },
-    [handleUpdateItemStatus]
-  );
-
-  const handleDismiss = useCallback(
-    (item: ActionableItem) => {
-      setConfirmationModal({
-        isOpen: true,
-        title: 'Dismiss item?',
-        message: `Are you sure you want to dismiss "${item.title}"?`,
-        confirmText: 'Dismiss',
-        cancelText: 'Cancel',
-        destructive: item.priority === 'critical',
-        showDontShowAgain: !item.requiresConfirmation,
-        onConfirm: async () => {
-          try {
-            await handleUpdateItemStatus(item.id, 'dismissed');
-            addToast({
-              type: 'info',
-              title: 'Dismissed',
-              message: item.title.length > 40 ? `${item.title.substring(0, 40)}...` : item.title,
-              action: { label: 'Undo', handler: () => handleUpdateItemStatus(item.id, 'active') },
-            });
-          } catch (error) {
-            console.error('Failed to dismiss item:', error);
-          }
-        },
-        onCancel: () => {},
-      });
-    },
-    [handleUpdateItemStatus, addToast]
-  );
-
-  const handleSnooze = useCallback(
-    async (item: ActionableItem, duration: number) => {
-      try {
-        const snoozeUntil = new Date(Date.now() + duration);
-        await snoozeItem({ itemId: item.id, snoozeUntil });
-        const hours = Math.round(duration / (1000 * 60 * 60));
-        addToast({
-          type: 'info',
-          title: 'Snoozed',
-          message: `Reminded in ${hours === 1 ? '1 hour' : `${hours} hours`}`,
-        });
-      } catch (error) {
-        console.error('Failed to snooze item:', error);
-        addToast({
-          type: 'error',
-          title: 'Snooze Failed',
-          message: 'Failed to snooze item. Please try again.',
-        });
-      }
-    },
-    [snoozeItem, addToast]
-  );
-
-  const handleAnalyzeNow = useCallback(async () => {
-    await triggerAnalysis();
-    addToast({
-      type: 'info',
-      title: 'Analysis Started',
-      message: 'Analyzing your connected skills for actionable items…',
-    });
-  }, [triggerAnalysis, addToast]);
+  // Item-action handlers (handleComplete / Dismiss / Snooze / AnalyzeNow)
+  // were wired to the legacy IntelligenceMemoryTab's actionable cards,
+  // which the Memory tab no longer renders (it now mounts MemoryWorkspace
+  // — a memory_tree-backed browser). The cards' update / snooze flows
+  // live in IntelligenceSubconsciousTab + IntelligenceDreamsTab via
+  // their own hooks, so Intelligence.tsx no longer needs these closures.
+  // Removed to satisfy noUnusedLocals; reintroduce if a future tab
+  // surfaces actionable-card editing again.
 
   // System status
   const systemStatus = isRunning

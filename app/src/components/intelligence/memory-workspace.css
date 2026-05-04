@@ -7,11 +7,11 @@
 .memory-workspace-root {
   /* Match the rest of the app's stone palette — dropped the cream tones
      (#faf7f2 / #f4f0e9) that read yellowish next to the bottom nav bar. */
-  --paper: #fafaf9;             /* stone-50 — base surface */
-  --paper-elevated: #ffffff;    /* white — active/selected/list */
-  --paper-recessed: #f5f5f4;    /* stone-100 — hover */
+  --paper: #fafaf9; /* stone-50 — base surface */
+  --paper-elevated: #ffffff; /* white — active/selected/list */
+  --paper-recessed: #f5f5f4; /* stone-100 — hover */
   --paper-recessed-darker: #e7e5e4; /* stone-200 — pressed */
-  --hairline: #e7e5e4;          /* stone-200 — borders */
+  --hairline: #e7e5e4; /* stone-200 — borders */
   --ink: #1c1917;
   --ink-soft: #44403c;
   --ink-whisper: #78716c;
@@ -497,7 +497,9 @@
   line-height: 1.7;
   color: var(--ink);
   white-space: pre-wrap;
-  word-wrap: break-word;
+  /* `word-wrap` is the legacy alias of `overflow-wrap`; modern engines
+     respect `overflow-wrap` directly without the legacy fallback. */
+  overflow-wrap: break-word;
 }
 .mw-letter-body p {
   margin: 0 0 12px;
@@ -523,12 +525,14 @@
   cursor: pointer;
   background: transparent;
   border: none;
-  padding: 0;
+  /* Single padding declaration — was duplicated (`padding: 0` then
+     `padding: 6px 0` later in the block). Combined into the right
+     value below. */
+  padding: 6px 0;
   width: 100%;
   display: grid;
   grid-template-columns: 110px 1fr auto;
   gap: 12px;
-  padding: 6px 0;
   font-size: 13px;
   color: var(--ink);
   align-items: baseline;

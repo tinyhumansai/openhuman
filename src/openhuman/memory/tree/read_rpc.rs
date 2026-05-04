@@ -221,6 +221,13 @@ fn list_chunks_blocking(config: &Config, filter: &ChunkFilter) -> Result<ListChu
         if let Some(query) = &filter.query {
             let q = query.trim();
             if !q.is_empty() {
+                // NOTE: `c.content` is the ≤500-char preview kept in
+                // SQLite, not the canonical body — that lives on disk
+                // at `c.content_path`. This means search currently
+                // misses any chunk whose match is past the first 500
+                // chars. Acceptable for v1 (most matches land in the
+                // first paragraph anyway); a follow-up should swap to
+                // a full-text index over the on-disk body.
                 where_clauses.push("c.content LIKE ?".into());
                 params_owned.push(Box::new(format!("%{}%", q)));
             }
@@ -941,50 +948,56 @@ pub async fn set_llm_rpc(
 ) -> Result<RpcOutcome<LlmResponse>, String> {
     let parsed = crate::openhuman::config::LlmBackend::parse(&req.backend)
         .map_err(|e| format!("set_llm: {e}"))?;
-    config.memory_tree.llm_backend = parsed;
 
-    // Apply optional per-role model overrides. Only `Some(_)` fields touch
-    // the config — `None` leaves the existing key untouched so a caller
-    // flipping just the backend doesn't have to re-supply every model id.
+    // Stage all updates on a clone first, persist, and only commit to the
+    // live `&mut Config` if save succeeds. Without this, a save() failure
+    // (disk full, permissions, ENOSPC mid-write) leaves the in-memory
+    // config divergent from disk: the worker pool would build a chat
+    // provider against the new model id while config.toml still reflects
+    // the old one, so the next sidecar restart would silently revert.
+    let mut staged = config.clone();
+    staged.memory_tree.llm_backend = parsed;
+
     let mut changed_models: Vec<&'static str> = Vec::new();
     if let Some(model) = req.cloud_model {
         log::debug!(
-            "[memory_tree::read] overriding memory_tree.cloud_llm_model={}",
+            "[memory_tree::read] staging memory_tree.cloud_llm_model={}",
             model
         );
-        config.memory_tree.cloud_llm_model = Some(model);
+        staged.memory_tree.cloud_llm_model = Some(model);
         changed_models.push("cloud_model");
     }
     if let Some(model) = req.extract_model {
         log::debug!(
-            "[memory_tree::read] overriding memory_tree.llm_extractor_model={}",
+            "[memory_tree::read] staging memory_tree.llm_extractor_model={}",
             model
         );
-        config.memory_tree.llm_extractor_model = Some(model);
+        staged.memory_tree.llm_extractor_model = Some(model);
         changed_models.push("extract_model");
     }
     if let Some(model) = req.summariser_model {
         log::debug!(
-            "[memory_tree::read] overriding memory_tree.llm_summariser_model={}",
+            "[memory_tree::read] staging memory_tree.llm_summariser_model={}",
             model
         );
-        config.memory_tree.llm_summariser_model = Some(model);
+        staged.memory_tree.llm_summariser_model = Some(model);
         changed_models.push("summariser_model");
     }
 
-    // Persist to config.toml so the choice survives sidecar restart. Uses
-    // the same atomic write-temp + rename used by every other config write
-    // path (see Config::save). All updates above land in this single write.
+    // Persist the staged version to config.toml. Atomic write-temp +
+    // rename per Config::save. Commit to the live config only after a
+    // successful write.
     log::debug!(
         "[memory_tree::read] persisting memory_tree.llm_backend={} (changed_models={:?}) to {}",
         parsed.as_str(),
         changed_models,
-        config.config_path.display()
+        staged.config_path.display()
     );
-    config
+    staged
         .save()
         .await
         .map_err(|e| format!("set_llm: persist to config.toml failed: {e}"))?;
+    *config = staged;
 
     let effective = parsed.as_str().to_string();
     log::info!(

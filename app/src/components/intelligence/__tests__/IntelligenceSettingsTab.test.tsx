@@ -122,60 +122,71 @@ describe('IntelligenceSettingsTab', () => {
     );
   });
 
-  it('renders the four section headings', async () => {
-    renderWithProviders(<IntelligenceSettingsTab />);
-
+  // Helper: bootstrap into Local mode so the model assignment + catalog
+  // render. Cloud is the default; clicking the Advanced radio flips to
+  // local and renders the Ollama-related sections.
+  async function flipToLocal() {
     await waitFor(() => {
       expect(screen.getByText('AI backend')).toBeInTheDocument();
     });
-    expect(screen.getByText('Model catalog')).toBeInTheDocument();
-    expect(screen.getByText('Currently loaded')).toBeInTheDocument();
-  });
-
-  it('hides Model assignment in Cloud mode and reveals it in Local mode', async () => {
-    renderWithProviders(<IntelligenceSettingsTab />);
-
-    await waitFor(() => {
-      expect(screen.getByText('AI backend')).toBeInTheDocument();
-    });
-
-    // Cloud is the default — Model assignment heading should be absent.
-    expect(screen.queryByText('Model assignment')).not.toBeInTheDocument();
-
-    // Click the Local card. Two radio buttons exist (Cloud and Local);
-    // we pick the one tagged Advanced (the Cloud card is tagged Recommended).
     const radios = screen.getAllByRole('radio');
     const localCard = radios.find(el => /Advanced/.test(el.textContent ?? ''));
     expect(localCard).toBeDefined();
     fireEvent.click(localCard!);
-
     await waitFor(() => {
       expect(screen.getByText('Model assignment')).toBeInTheDocument();
     });
+  }
 
-    // The role rows are rendered with their labels.
-    expect(screen.getByText('Extract LLM')).toBeInTheDocument();
-    expect(screen.getByText('Summariser LLM')).toBeInTheDocument();
-    expect(screen.getByText('Embedder')).toBeInTheDocument();
-  });
-
-  it('shows model catalog rows with sizes', async () => {
+  it('renders the AI backend section in cloud mode (no local sections)', async () => {
     renderWithProviders(<IntelligenceSettingsTab />);
 
     await waitFor(() => {
-      expect(screen.getByText('qwen2.5:0.5b')).toBeInTheDocument();
+      expect(screen.getByText('AI backend')).toBeInTheDocument();
     });
-    expect(screen.getByText('gemma3:1b-it-qat')).toBeInTheDocument();
-    expect(screen.getByText('llama3.1:8b')).toBeInTheDocument();
-    // bge-m3 appears in both the embedder lookup line and the catalog.
+    // Cloud is default — local-only sections are hidden so cloud users
+    // never see Ollama-related UI.
+    expect(screen.queryByText('Model assignment')).not.toBeInTheDocument();
+    expect(screen.queryByText('Model catalog')).not.toBeInTheDocument();
+    // Currently-loaded panel was removed entirely (was dev-debug noise).
+    expect(screen.queryByText('Currently loaded')).not.toBeInTheDocument();
+  });
+
+  it('hides Model assignment in Cloud mode and reveals it in Local mode', async () => {
+    renderWithProviders(<IntelligenceSettingsTab />);
+    await flipToLocal();
+
+    // The new UI consolidates Extract + Summariser LLM into a single
+    // Memory LLM picker (the underlying RPC still fans out to both
+    // extract_model and summariser_model in config.toml).
+    expect(screen.getByText('Memory LLM')).toBeInTheDocument();
+    expect(screen.getByText('Embedder')).toBeInTheDocument();
+    // Old separate dropdowns must be absent.
+    expect(screen.queryByText('Extract LLM')).not.toBeInTheDocument();
+    expect(screen.queryByText('Summariser LLM')).not.toBeInTheDocument();
+  });
+
+  it('shows model catalog rows with sizes (in local mode)', async () => {
+    renderWithProviders(<IntelligenceSettingsTab />);
+    await flipToLocal();
+
+    await waitFor(() => {
+      expect(screen.getAllByText('qwen2.5:0.5b').length).toBeGreaterThanOrEqual(1);
+    });
+    // Each model can appear in the Memory LLM dropdown AND the catalog,
+    // so use getAllByText. Just confirm the catalog has at least one of
+    // each curated entry rendered somewhere on the screen.
+    expect(screen.getAllByText('gemma3:1b-it-qat').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('llama3.1:8b').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('bge-m3').length).toBeGreaterThanOrEqual(1);
 
-    // 4.9 GB is unique to llama3.1:8b in the catalog.
+    // 4.9 GB is unique to llama3.1:8b in the catalog row meta.
     expect(screen.getByText('4.9 GB')).toBeInTheDocument();
   });
 
   it('renders a Download action for models that are not installed', async () => {
     renderWithProviders(<IntelligenceSettingsTab />);
+    await flipToLocal();
 
     // qwen2.5:0.5b is NOT in the diagnostics installed list, so it shows
     // a Download button.
@@ -185,19 +196,6 @@ describe('IntelligenceSettingsTab', () => {
 
     const downloadButtons = screen.getAllByRole('button', { name: 'Download' });
     expect(downloadButtons.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('renders the Currently loaded readout with the embedder row', async () => {
-    renderWithProviders(<IntelligenceSettingsTab />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Currently loaded')).toBeInTheDocument();
-    });
-
-    // The embedder row uses font-mono for the model id; we just check
-    // it's present somewhere under the readout.
-    const embedderHits = screen.getAllByText('bge-m3');
-    expect(embedderHits.length).toBeGreaterThanOrEqual(1);
   });
 
   it('reads the backend via memoryTreeGetLlm on mount and persists toggles via memoryTreeSetLlm', async () => {
@@ -229,62 +227,29 @@ describe('IntelligenceSettingsTab', () => {
     expect(after.current).toBe('local');
   });
 
-  it('persists extract dropdown changes via memoryTreeSetLlm with extract_model', async () => {
-    // Switching the extract LLM dropdown in local mode must call the
-    // RPC with `{ backend: 'local', extract_model: <new id> }` so the
-    // pick is persisted to config.toml. The summariser/cloud fields are
-    // omitted, leaving the corresponding config keys untouched.
+  it('persists Memory LLM dropdown changes via memoryTreeSetLlm with both extract_model and summariser_model', async () => {
+    // The single Memory LLM picker fans out to BOTH extract_model and
+    // summariser_model in one atomic write — the underlying schema keeps
+    // the two keys separate so power users can split via the RPC, but the
+    // UI consolidates them into one cognitive unit.
     renderWithProviders(<IntelligenceSettingsTab />);
-
-    // Move into Local mode so ModelAssignment renders.
-    await waitFor(() => {
-      expect(screen.getByText('AI backend')).toBeInTheDocument();
-    });
-    const radios = screen.getAllByRole('radio');
-    const localCard = radios.find(el => /Advanced/.test(el.textContent ?? ''));
-    fireEvent.click(localCard!);
-    await waitFor(() => {
-      expect(screen.getByText('Model assignment')).toBeInTheDocument();
-    });
+    await flipToLocal();
 
     // Reset call history so the assertion below is scoped to the
     // dropdown change, not the earlier backend toggle.
     memoryTreeSetLlm.mockClear();
 
-    // Pick a different extract model. `llama3.1:8b` is in the curated
-    // catalog with role `extract`, so it appears in the dropdown.
-    const extractSelect = screen.getByLabelText('Extract LLM') as HTMLSelectElement;
-    fireEvent.change(extractSelect, { target: { value: 'llama3.1:8b' } });
+    // Pick a different memory LLM. `llama3.1:8b` is in the curated
+    // catalog with both `extract` and `summariser` roles.
+    const memorySelect = screen.getByLabelText(
+      'Memory LLM (extract + summarise)'
+    ) as HTMLSelectElement;
+    fireEvent.change(memorySelect, { target: { value: 'llama3.1:8b' } });
 
     await waitFor(() => {
       expect(memoryTreeSetLlm).toHaveBeenCalledWith({
         backend: 'local',
         extract_model: 'llama3.1:8b',
-      });
-    });
-  });
-
-  it('persists summariser dropdown changes via memoryTreeSetLlm with summariser_model', async () => {
-    renderWithProviders(<IntelligenceSettingsTab />);
-
-    await waitFor(() => {
-      expect(screen.getByText('AI backend')).toBeInTheDocument();
-    });
-    const radios = screen.getAllByRole('radio');
-    const localCard = radios.find(el => /Advanced/.test(el.textContent ?? ''));
-    fireEvent.click(localCard!);
-    await waitFor(() => {
-      expect(screen.getByText('Model assignment')).toBeInTheDocument();
-    });
-
-    memoryTreeSetLlm.mockClear();
-
-    const summariserSelect = screen.getByLabelText('Summariser LLM') as HTMLSelectElement;
-    fireEvent.change(summariserSelect, { target: { value: 'llama3.1:8b' } });
-
-    await waitFor(() => {
-      expect(memoryTreeSetLlm).toHaveBeenCalledWith({
-        backend: 'local',
         summariser_model: 'llama3.1:8b',
       });
     });

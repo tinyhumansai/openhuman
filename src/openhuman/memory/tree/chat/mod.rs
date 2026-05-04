@@ -114,10 +114,7 @@ pub fn build_chat_provider(
             // and fails with "No backend session" on any workspace not
             // located at the home default — the bug observed when running
             // with `OPENHUMAN_WORKSPACE` pointed elsewhere.
-            let openhuman_dir = config
-                .config_path
-                .parent()
-                .map(std::path::PathBuf::from);
+            let openhuman_dir = config.config_path.parent().map(std::path::PathBuf::from);
             log::debug!(
                 "[memory_tree::chat] building Cloud provider consumer={} model={} \
                  openhuman_dir={:?}",
