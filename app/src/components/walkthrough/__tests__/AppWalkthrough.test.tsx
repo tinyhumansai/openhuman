@@ -356,13 +356,13 @@ describe('WalkthroughTooltip', () => {
   it('shows Finish on the last step', () => {
     render(<WalkthroughTooltip {...makeTooltipProps({ isLastStep: true })} />);
 
-    expect(screen.getByText('Finish')).toBeInTheDocument();
+    expect(screen.getByText("Let's go!")).toBeInTheDocument();
   });
 
   it('shows Next on non-last steps', () => {
     render(<WalkthroughTooltip {...makeTooltipProps({ isLastStep: false })} />);
 
-    expect(screen.getByText('Next')).toBeInTheDocument();
+    expect(screen.getByText('Next →')).toBeInTheDocument();
   });
 
   it('hides Back button on the first step (index 0)', () => {
@@ -377,12 +377,13 @@ describe('WalkthroughTooltip', () => {
     expect(screen.getByText('Back')).toBeInTheDocument();
   });
 
-  it('renders progress dots matching step count', () => {
-    const { container } = render(<WalkthroughTooltip {...makeTooltipProps({ size: 4 })} />);
+  it('renders progress bar', () => {
+    const { container } = render(<WalkthroughTooltip {...makeTooltipProps({ index: 2, size: 6 })} />);
 
-    // Each dot is a <span> inside the progress row
-    const dots = container.querySelectorAll('div.flex.items-center.justify-center.gap-1\\.5 span');
-    expect(dots).toHaveLength(4);
+    // Gradient progress bar fills based on step progress
+    const bar = container.querySelector('div.bg-gradient-to-r');
+    expect(bar).not.toBeNull();
+    expect(bar?.getAttribute('style')).toContain('width: 50%');
   });
 });
 

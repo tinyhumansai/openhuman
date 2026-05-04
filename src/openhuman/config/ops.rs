@@ -45,9 +45,7 @@ pub async fn load_config_with_timeout() -> Result<Config, String> {
                 config.chat_onboarding_completed = true;
                 // Best-effort persist — don't fail the load if save errors.
                 if let Err(e) = config.save().await {
-                    tracing::warn!(
-                        "[config] failed to persist onboarding normalization: {e}"
-                    );
+                    tracing::warn!("[config] failed to persist onboarding normalization: {e}");
                 }
             }
             Ok(config)
