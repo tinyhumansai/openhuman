@@ -188,6 +188,10 @@ pub async fn store_session(
                 // there was no previous `active_user.toml`, wipe that anonymous
                 // conversation store so a fresh account never inherits demo or
                 // scratch threads from the pre-login bucket (#1157).
+                //
+                // This shares `memory::conversations`' process-wide mutex with
+                // `list_threads` / `purge_threads` on any workspace, so purge and
+                // concurrent thread RPC in this process cannot interleave.
                 if previous_active.is_none() {
                     let pre_ws = pre_login_user_dir(&root_dir).join("workspace");
                     let pre_ws_log = pre_ws.display().to_string();

@@ -247,11 +247,26 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     // workspace. Clear and re-list from the core so new signups never render
     // stale titles from another bucket (#1157). `handleIdentityFlip` already
     // dispatches `resetUserScopedState`, so skip when `isFlip` is true.
-    if (!isFlip && shouldClearScopedCaches && nextIdentity && !isLogout) {
+    // Match `commitState`'s request-id guard so a superseded refresh cannot
+    // clear threads after a newer snapshot has already won (CodeRabbit).
+    if (
+      requestId === snapshotRequestIdRef.current &&
+      !isFlip &&
+      shouldClearScopedCaches &&
+      nextIdentity &&
+      !isLogout
+    ) {
+      const threadReloadRequestId = requestId;
       store.dispatch(clearAllThreads());
-      void store.dispatch(loadThreads()).catch(err => {
-        log('post-identity thread reload failed: %O', sanitizeError(err));
-      });
+      void store
+        .dispatch(loadThreads())
+        .unwrap()
+        .catch(err => {
+          if (threadReloadRequestId !== snapshotRequestIdRef.current) {
+            return;
+          }
+          log('post-identity thread reload failed: %O', sanitizeError(err));
+        });
     }
 
     if (isFlip && nextIdentity) {
