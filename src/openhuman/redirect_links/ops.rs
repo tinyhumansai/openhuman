@@ -29,9 +29,14 @@ fn short_url_regex() -> &'static Regex {
 fn public_url_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     // Anchor on `https?://` and match the `openhm.xyz` domain specifically to
-    // avoid lookalikes (evil-openhm.xyz) or mid-token matches.
+    // avoid lookalikes (evil-openhm.xyz) or mid-token matches. Capture optional
+    // query and fragment as separate tail parts so callers can safely insert
+    // `?u=` into the query without polluting the fragment.
     RE.get_or_init(|| {
-        Regex::new(r#"https?://openhm\.xyz/[A-Za-z0-9_-]+(?:\?[\w\d./\?=%\-&#:+@~!,;]*)?"#).unwrap()
+        Regex::new(
+            r#"https?://openhm\.xyz/[A-Za-z0-9_-]+(?:\?[\w\d./\?=%\-&:+@~!,;]*)?(?:#[\w\d./\?=%\-&:+@~!,;]*)?"#,
+        )
+        .unwrap()
     })
 }
 
@@ -162,14 +167,24 @@ pub fn append_user_id_to_public_links(text: &str, user_id: Option<&str>) -> Stri
         let url = trim_trailing_punct(raw);
         let trailing = &raw[url.len()..];
 
-        if !url.contains("?u=") && !url.contains("&u=") {
-            let separator = if url.contains('?') { "&" } else { "?" };
-            out.push_str(url);
+        // Split off any fragment (#…) so `?u=` lands in the query, not the fragment.
+        let (base, fragment) = match url.split_once('#') {
+            Some((b, f)) => (b, Some(f)),
+            None => (url, None),
+        };
+
+        if !base.contains("?u=") && !base.contains("&u=") {
+            let separator = if base.contains('?') { "&" } else { "?" };
+            out.push_str(base);
             out.push_str(separator);
             out.push_str("u=");
             out.push_str(&encoded_user_id);
         } else {
-            out.push_str(url);
+            out.push_str(base);
+        }
+        if let Some(frag) = fragment {
+            out.push('#');
+            out.push_str(frag);
         }
         out.push_str(trailing);
         cursor = m.end();
@@ -403,6 +418,20 @@ mod tests {
         let text = "Click https://openhm.xyz/abc.";
         let got = append_user_id_to_public_links(text, Some("nikhil"));
         assert_eq!(got, "Click https://openhm.xyz/abc?u=nikhil.");
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_query_with_fragment() {
+        let text = "https://openhm.xyz/abc?foo=bar#frag";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(got, "https://openhm.xyz/abc?foo=bar&u=nikhil#frag");
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_bare_with_fragment() {
+        let text = "https://openhm.xyz/abc#frag";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(got, "https://openhm.xyz/abc?u=nikhil#frag");
     }
 
     #[test]
