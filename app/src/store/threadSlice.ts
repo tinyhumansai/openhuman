@@ -279,6 +279,19 @@ const threadSlice = createSlice({
       state.activeThreadId = null;
       state.welcomeThreadId = null;
     },
+    // Like `clearAllThreads` but keeps `selectedThreadId`. Used on the
+    // post-bootstrap identity-observation path (#1168 + #1157): we need to
+    // drop pre-auth in-memory thread rows but the persisted last-viewed
+    // thread id is still valid for the reloaded user, so preserving it lets
+    // the Conversations effect resume that thread instead of falling
+    // through to "most recent".
+    resetThreadCachesPreservingSelection: state => {
+      state.threads = [];
+      state.messagesByThreadId = {};
+      state.messages = [];
+      state.activeThreadId = null;
+      state.welcomeThreadId = null;
+    },
     // [#1123] True no-op — welcome-agent onboarding replaced by Joyride walkthrough.
     // Kept to avoid breaking existing imports; state.welcomeThreadId is never
     // mutated because the welcome-agent flow no longer runs.
@@ -350,6 +363,7 @@ export const {
   clearSelectedThread,
   setActiveThread,
   clearAllThreads,
+  resetThreadCachesPreservingSelection,
   setWelcomeThreadId,
 } = threadSlice.actions;
 
