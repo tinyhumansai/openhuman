@@ -130,8 +130,13 @@ const OnboardingLayout = () => {
     // }
 
     // Flag the Joyride walkthrough as pending so it auto-starts on /home.
-    setWalkthroughPending();
-    console.debug('[onboarding:layout] walkthrough pending flag set — navigating to /home');
+    // Best-effort: localStorage failures must not block navigation.
+    try {
+      setWalkthroughPending();
+      console.debug('[onboarding:layout] walkthrough pending flag set — navigating to /home');
+    } catch (e) {
+      console.warn('[onboarding:layout] could not set walkthrough pending flag; continuing', e);
+    }
 
     navigate('/home', { replace: true });
   }, [

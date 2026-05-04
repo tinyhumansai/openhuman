@@ -5,10 +5,11 @@
  *  - isWalkthroughPending / setWalkthroughPending / markWalkthroughComplete helpers
  *  - AppWalkthrough renders only when pending
  *  - AppWalkthrough does not render when already completed
- *  - Completing/skipping the tour sets localStorage correctly
+ *  - Completing/skipping the tour calls markWalkthroughComplete (localStorage set)
  *  - Step count matches WALKTHROUGH_STEPS
+ *  - WalkthroughTooltip renders step title, content, and navigation buttons
  */
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -17,12 +18,27 @@ import {
   setWalkthroughPending,
 } from '../AppWalkthrough';
 import { WALKTHROUGH_STEPS } from '../walkthroughSteps';
+// ── WalkthroughTooltip rendering tests ───────────────────────────────────
+
+import WalkthroughTooltip from '../WalkthroughTooltip';
 
 // ── Mock react-joyride so tests don't need a real DOM with
 //    positioned elements for each step target. ─────────────────────────────
+//    The mock captures the `onEvent` callback so individual tests can
+//    simulate tour events (TOUR_END with FINISHED / SKIPPED status).
+
+type JoyrideMockProps = {
+  run: boolean;
+  onEvent?: (data: { type: string; status: string; index: number }) => void;
+};
+
+let capturedOnEvent: JoyrideMockProps['onEvent'] | undefined;
 
 vi.mock('react-joyride', () => ({
-  Joyride: ({ run }: { run: boolean }) => <div data-testid="joyride-mock" data-run={String(run)} />,
+  Joyride: ({ run, onEvent }: JoyrideMockProps) => {
+    capturedOnEvent = onEvent;
+    return <div data-testid="joyride-mock" data-run={String(run)} />;
+  },
   EVENTS: { TOUR_END: 'tour:end' },
   STATUS: { FINISHED: 'finished', SKIPPED: 'skipped' },
 }));
@@ -34,6 +50,7 @@ const WALKTHROUGH_PENDING_KEY = 'openhuman:walkthrough_pending';
 
 beforeEach(() => {
   localStorage.clear();
+  capturedOnEvent = undefined;
 });
 
 afterEach(() => {
@@ -112,6 +129,177 @@ describe('AppWalkthrough component', () => {
     const { container } = render(<AppWalkthrough />);
 
     expect(container.firstChild).toBeNull();
+  });
+
+  it('calls markWalkthroughComplete and stops running when tour finishes (FINISHED)', async () => {
+    setWalkthroughPending();
+
+    const { default: AppWalkthrough } = await import('../AppWalkthrough');
+    render(<AppWalkthrough />);
+
+    // Joyride should be running initially
+    expect(screen.getByTestId('joyride-mock').getAttribute('data-run')).toBe('true');
+
+    // Simulate TOUR_END with FINISHED status
+    await act(async () => {
+      capturedOnEvent?.({ type: 'tour:end', status: 'finished', index: 5 });
+    });
+
+    // Walkthrough should be marked complete in localStorage
+    expect(localStorage.getItem(WALKTHROUGH_KEY)).toBe('true');
+    expect(localStorage.getItem(WALKTHROUGH_PENDING_KEY)).toBeNull();
+  });
+
+  it('calls markWalkthroughComplete and stops running when tour is skipped (SKIPPED)', async () => {
+    setWalkthroughPending();
+
+    const { default: AppWalkthrough } = await import('../AppWalkthrough');
+    render(<AppWalkthrough />);
+
+    expect(screen.getByTestId('joyride-mock').getAttribute('data-run')).toBe('true');
+
+    // Simulate TOUR_END with SKIPPED status
+    await act(async () => {
+      capturedOnEvent?.({ type: 'tour:end', status: 'skipped', index: 1 });
+    });
+
+    expect(localStorage.getItem(WALKTHROUGH_KEY)).toBe('true');
+    expect(localStorage.getItem(WALKTHROUGH_PENDING_KEY)).toBeNull();
+  });
+
+  it('does not call markWalkthroughComplete for non-TOUR_END events', async () => {
+    setWalkthroughPending();
+
+    const { default: AppWalkthrough } = await import('../AppWalkthrough');
+    render(<AppWalkthrough />);
+
+    // Simulate a step:after event (not tour:end)
+    await act(async () => {
+      capturedOnEvent?.({ type: 'step:after', status: 'running', index: 0 });
+    });
+
+    // Should NOT have marked complete
+    expect(localStorage.getItem(WALKTHROUGH_KEY)).toBeNull();
+    // Still running
+    expect(screen.getByTestId('joyride-mock')).toBeInTheDocument();
+  });
+});
+
+/** Build the minimal props required by WalkthroughTooltip without fighting the full TooltipRenderProps type. */
+function makeTooltipProps(
+  overrides: {
+    index?: number;
+    size?: number;
+    isLastStep?: boolean;
+    continuous?: boolean;
+    title?: string;
+    content?: string;
+  } = {}
+) {
+  const {
+    index = 0,
+    size = 3,
+    isLastStep = false,
+    continuous = true,
+    title = 'Step title',
+    content = 'Step content',
+  } = overrides;
+  // Cast to unknown then to the component's expected props to avoid fighting
+  // the exhaustive TooltipRenderProps type in test code.
+  return {
+    continuous,
+    index,
+    size,
+    isLastStep,
+    step: { title, content, target: 'body' },
+    backProps: {
+      'aria-label': 'Back',
+      onClick: vi.fn(),
+      role: 'button',
+      title: 'Back',
+      'data-action': 'back',
+    },
+    primaryProps: {
+      'aria-label': 'Next',
+      onClick: vi.fn(),
+      role: 'button',
+      title: 'Next',
+      'data-action': 'primary',
+    },
+    skipProps: {
+      'aria-label': 'Skip',
+      onClick: vi.fn(),
+      role: 'button',
+      title: 'Skip',
+      'data-action': 'skip',
+    },
+    tooltipProps: { role: 'tooltip' },
+    closeProps: {
+      'aria-label': 'Close',
+      onClick: vi.fn(),
+      role: 'button',
+      title: 'Close',
+      'data-action': 'close',
+    },
+  } as unknown as Parameters<typeof WalkthroughTooltip>[0];
+}
+
+describe('WalkthroughTooltip', () => {
+  it('renders step title and content', () => {
+    render(<WalkthroughTooltip {...makeTooltipProps()} />);
+
+    expect(screen.getByText('Step title')).toBeInTheDocument();
+    expect(screen.getByText('Step content')).toBeInTheDocument();
+  });
+
+  it('renders step counter showing current step of total', () => {
+    render(<WalkthroughTooltip {...makeTooltipProps({ index: 1, size: 6 })} />);
+
+    expect(screen.getByText('2 of 6')).toBeInTheDocument();
+  });
+
+  it('shows Skip button when not on last step', () => {
+    render(<WalkthroughTooltip {...makeTooltipProps({ isLastStep: false })} />);
+
+    expect(screen.getByText('Skip tour')).toBeInTheDocument();
+  });
+
+  it('hides Skip button on the last step', () => {
+    render(<WalkthroughTooltip {...makeTooltipProps({ isLastStep: true })} />);
+
+    expect(screen.queryByText('Skip tour')).toBeNull();
+  });
+
+  it('shows Finish on the last step', () => {
+    render(<WalkthroughTooltip {...makeTooltipProps({ isLastStep: true })} />);
+
+    expect(screen.getByText('Finish')).toBeInTheDocument();
+  });
+
+  it('shows Next on non-last steps', () => {
+    render(<WalkthroughTooltip {...makeTooltipProps({ isLastStep: false })} />);
+
+    expect(screen.getByText('Next')).toBeInTheDocument();
+  });
+
+  it('hides Back button on the first step (index 0)', () => {
+    render(<WalkthroughTooltip {...makeTooltipProps({ index: 0 })} />);
+
+    expect(screen.queryByText('Back')).toBeNull();
+  });
+
+  it('shows Back button after the first step', () => {
+    render(<WalkthroughTooltip {...makeTooltipProps({ index: 1 })} />);
+
+    expect(screen.getByText('Back')).toBeInTheDocument();
+  });
+
+  it('renders progress dots matching step count', () => {
+    const { container } = render(<WalkthroughTooltip {...makeTooltipProps({ size: 4 })} />);
+
+    // Each dot is a <span> inside the progress row
+    const dots = container.querySelectorAll('div.flex.items-center.justify-center.gap-1\\.5 span');
+    expect(dots).toHaveLength(4);
   });
 });
 

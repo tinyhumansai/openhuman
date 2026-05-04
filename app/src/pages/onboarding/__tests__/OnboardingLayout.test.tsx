@@ -187,4 +187,16 @@ describe('OnboardingLayout — Joyride walkthrough integration (#1123)', () => {
     const { thread } = store.getState() as { thread: { welcomeThreadId: string | null } };
     expect(thread.welcomeThreadId).toBeNull();
   });
+
+  // [#1123] Explicit guard: chatSend must never be called in the Joyride flow
+  it('does NOT call chatSend on completeAndExit', async () => {
+    await setupLayout();
+    const { chatSend } = await import('../../../services/chatService');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('complete-btn'));
+    });
+
+    expect(chatSend).not.toHaveBeenCalled();
+  });
 });

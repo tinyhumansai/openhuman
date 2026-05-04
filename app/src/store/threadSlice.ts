@@ -279,12 +279,11 @@ const threadSlice = createSlice({
       state.activeThreadId = null;
       state.welcomeThreadId = null;
     },
-    // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-    // Kept as a no-op to avoid breaking existing imports; state.welcomeThreadId
-    // is preserved in the type for type-checking compatibility.
-    setWelcomeThreadId: (state, action: { payload: string | null }) => {
-      // [#1123] No-op — welcome-agent replaced by Joyride walkthrough
-      state.welcomeThreadId = action.payload;
+    // [#1123] True no-op — welcome-agent onboarding replaced by Joyride walkthrough.
+    // Kept to avoid breaking existing imports; state.welcomeThreadId is never
+    // mutated because the welcome-agent flow no longer runs.
+    setWelcomeThreadId: () => {
+      // intentional no-op
     },
   },
   extraReducers: builder => {

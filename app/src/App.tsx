@@ -16,6 +16,7 @@ import MeshGradient from './components/MeshGradient';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
+import AppWalkthrough from './components/walkthrough/AppWalkthrough';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { isWelcomeLocked } from './lib/coreState/store';
 import { startNativeNotificationsService } from './lib/nativeNotifications';
@@ -174,6 +175,10 @@ function AppShell() {
         {!onOnboardingRoute && <BottomTabBar />}
       </div>
       <OpenhumanLinkModal />
+      {/* Post-onboarding Joyride walkthrough — mounted here (outside routes) so
+          it persists across tab navigations. Joyride targets span Home + BottomTabBar
+          tabs so it must stay mounted while the user moves between routes. */}
+      {!onOnboardingRoute && <AppWalkthrough />}
     </div>
   );
 }

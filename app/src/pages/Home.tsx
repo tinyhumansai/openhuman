@@ -9,7 +9,6 @@ import {
   UsageLimitBanner,
 } from '../components/home/HomeBanners';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
-import AppWalkthrough from '../components/walkthrough/AppWalkthrough';
 import { useUsageState } from '../hooks/useUsageState';
 import { useUser } from '../hooks/useUser';
 import { useAppSelector } from '../store/hooks';
@@ -185,9 +184,6 @@ const Home = () => {
         {showEarlyBirdy && <EarlyBirdyBanner onDismiss={handleDismissEarlyBirdy} />}
 
         <DiscordBanner />
-
-        {/* Post-onboarding product walkthrough — renders only when pending */}
-        <AppWalkthrough />
 
         {/* Next steps — compact directory of where to go next */}
         {/* <div className="mt-3 bg-white rounded-2xl shadow-soft border border-stone-200 p-4">

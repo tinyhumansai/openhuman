@@ -618,6 +618,20 @@ pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, S
         config.chat_onboarding_completed = true;
     }
 
+    // [#1123] Normalize legacy configs: existing users who completed onboarding
+    // before the Joyride migration may have onboarding_completed=true but
+    // chat_onboarding_completed=false (because the welcome-agent never ran or
+    // was never given a chance to call complete_onboarding). Fix them here so
+    // they are not put into the old welcome-lock state on upgrade.
+    if config.onboarding_completed && !config.chat_onboarding_completed {
+        tracing::debug!(
+            "[onboarding] legacy config detected: onboarding_completed=true but \
+             chat_onboarding_completed=false — normalizing to true \
+             (Joyride walkthrough migration)"
+        );
+        config.chat_onboarding_completed = true;
+    }
+
     config.save().await.map_err(|e| e.to_string())?;
 
     if value && !was_completed {

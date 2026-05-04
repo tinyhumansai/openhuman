@@ -24,9 +24,7 @@ const WalkthroughTooltip = ({
       {/* Header: title + step counter */}
       <div className="flex items-start justify-between mb-2 gap-2">
         {step.title && (
-          <h3 className="text-sm font-semibold text-stone-900 leading-snug flex-1">
-            {step.title as string}
-          </h3>
+          <h3 className="text-sm font-semibold text-stone-900 leading-snug flex-1">{step.title}</h3>
         )}
         <span className="shrink-0 text-xs text-stone-400 tabular-nums mt-px">
           {index + 1} of {size}
@@ -34,7 +32,7 @@ const WalkthroughTooltip = ({
       </div>
 
       {/* Body */}
-      <p className="text-sm text-stone-600 leading-relaxed mb-4">{step.content as string}</p>
+      <div className="text-sm text-stone-600 leading-relaxed mb-4">{step.content}</div>
 
       {/* Progress dots */}
       <div className="flex items-center justify-center gap-1.5 mb-4">

@@ -12,31 +12,54 @@ const WALKTHROUGH_PENDING_KEY = 'openhuman:walkthrough_pending';
 /**
  * Returns `true` when the walkthrough has been flagged as pending (the user
  * just finished onboarding) AND has not yet been completed or skipped.
+ *
+ * Wrapped in try/catch to gracefully handle SecurityError or quota exceptions
+ * (e.g., in private-browsing mode or when storage is full/blocked).
  */
 export function isWalkthroughPending(): boolean {
-  return (
-    localStorage.getItem(WALKTHROUGH_PENDING_KEY) === 'true' &&
-    localStorage.getItem(WALKTHROUGH_KEY) !== 'true'
-  );
+  try {
+    return (
+      localStorage.getItem(WALKTHROUGH_PENDING_KEY) === 'true' &&
+      localStorage.getItem(WALKTHROUGH_KEY) !== 'true'
+    );
+  } catch (e) {
+    console.warn('[walkthrough] localStorage unavailable — treating as not pending', e);
+    return false;
+  }
 }
 
 /**
  * Flags the walkthrough as pending. Called by OnboardingLayout when the user
  * completes the wizard and is about to navigate to /home.
+ *
+ * Best-effort: if localStorage is unavailable (SecurityError / quota) the
+ * error is logged and the call is silently swallowed so navigation always
+ * proceeds.
  */
 export function setWalkthroughPending(): void {
-  localStorage.setItem(WALKTHROUGH_PENDING_KEY, 'true');
-  console.debug('[walkthrough] pending flag set');
+  try {
+    localStorage.setItem(WALKTHROUGH_PENDING_KEY, 'true');
+    console.debug('[walkthrough] pending flag set');
+  } catch (e) {
+    console.warn('[walkthrough] could not set pending flag in localStorage', e);
+  }
 }
 
 /**
  * Marks the walkthrough as completed (or skipped). Once set, the walkthrough
  * will not show again.
+ *
+ * Wrapped in try/catch to prevent SecurityError/quota exceptions from
+ * interrupting the tour-end flow.
  */
 export function markWalkthroughComplete(): void {
-  localStorage.setItem(WALKTHROUGH_KEY, 'true');
-  localStorage.removeItem(WALKTHROUGH_PENDING_KEY);
-  console.debug('[walkthrough] marked as complete');
+  try {
+    localStorage.setItem(WALKTHROUGH_KEY, 'true');
+    localStorage.removeItem(WALKTHROUGH_PENDING_KEY);
+    console.debug('[walkthrough] marked as complete');
+  } catch (e) {
+    console.warn('[walkthrough] could not mark walkthrough complete in localStorage', e);
+  }
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
