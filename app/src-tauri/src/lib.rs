@@ -997,16 +997,110 @@ fn teardown_cef_prewarm<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), Str
     Ok(())
 }
 
+const CEF_CLOSE_FIXED_YIELD: std::time::Duration = std::time::Duration::from_millis(20);
+const CEF_CLOSE_POLL_BUDGET: std::time::Duration = std::time::Duration::from_millis(300);
+const CEF_CLOSE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+
+fn close_early_cef_webviews<R: tauri::Runtime>(app: &AppHandle<R>) -> Vec<String> {
+    let mut closed_labels = Vec::new();
+    if teardown_cef_prewarm(app).is_ok() {
+        closed_labels.push(CEF_PREWARM_LABEL.to_string());
+    }
+    if let Some(state) = app.try_state::<webview_accounts::WebviewAccountsState>() {
+        closed_labels.extend(state.shutdown_all(app));
+    }
+    closed_labels
+}
+
+fn shutdown_imessage_scanner<R: tauri::Runtime>(app: &AppHandle<R>) {
+    if let Some(registry) = app.try_state::<std::sync::Arc<imessage_scanner::ScannerRegistry>>() {
+        registry.inner().shutdown();
+    }
+}
+
+fn pending_cef_webview_labels<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    labels: &[String],
+) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    labels
+        .iter()
+        .filter(|label| seen.insert((*label).clone()))
+        .filter(|label| app.get_webview(label.as_str()).is_some())
+        .cloned()
+        .collect()
+}
+
+fn wait_for_cef_webviews_to_close_sync<R: tauri::Runtime>(app: &AppHandle<R>, labels: &[String]) {
+    if labels.is_empty() {
+        return;
+    }
+    log::info!(
+        "[app] waiting for CEF webview close requests labels={:?}",
+        labels
+    );
+    std::thread::sleep(CEF_CLOSE_FIXED_YIELD);
+    let start = std::time::Instant::now();
+    let mut pending = pending_cef_webview_labels(app, labels);
+    while !pending.is_empty() && start.elapsed() < CEF_CLOSE_POLL_BUDGET {
+        std::thread::sleep(CEF_CLOSE_POLL_INTERVAL);
+        pending = pending_cef_webview_labels(app, labels);
+    }
+    if pending.is_empty() {
+        log::info!(
+            "[app] CEF webview close poll drained labels={:?} elapsed_ms={}",
+            labels,
+            start.elapsed().as_millis()
+        );
+    } else {
+        log::info!(
+            "[app] CEF webview close poll still pending labels={:?} elapsed_ms={} (will continue in runtime shutdown)",
+            pending,
+            start.elapsed().as_millis()
+        );
+    }
+}
+
+async fn wait_for_cef_webviews_to_close_async<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    labels: &[String],
+) {
+    if labels.is_empty() {
+        return;
+    }
+    log::info!(
+        "[app] waiting for CEF webview close requests labels={:?}",
+        labels
+    );
+    tokio::time::sleep(CEF_CLOSE_FIXED_YIELD).await;
+    let start = std::time::Instant::now();
+    let mut pending = pending_cef_webview_labels(app, labels);
+    while !pending.is_empty() && start.elapsed() < CEF_CLOSE_POLL_BUDGET {
+        tokio::time::sleep(CEF_CLOSE_POLL_INTERVAL).await;
+        pending = pending_cef_webview_labels(app, labels);
+    }
+    if pending.is_empty() {
+        log::info!(
+            "[app] CEF webview close poll drained labels={:?} elapsed_ms={}",
+            labels,
+            start.elapsed().as_millis()
+        );
+    } else {
+        log::info!(
+            "[app] CEF webview close poll still pending labels={:?} elapsed_ms={} (will continue in runtime shutdown)",
+            pending,
+            start.elapsed().as_millis()
+        );
+    }
+}
+
 /// Shared early teardown logic before CEF's shutdown to prevent races and zombie processes.
 /// Synchronous version to be called from the main thread (e.g. `RunEvent::ExitRequested` or tray menu events).
 fn perform_early_teardown_sync(app_handle: &AppHandle<AppRuntime>) {
     log::info!("[app] perform_early_teardown_sync — early teardown");
 
-    let _ = teardown_cef_prewarm(app_handle);
-
-    if let Some(state) = app_handle.try_state::<webview_accounts::WebviewAccountsState>() {
-        state.shutdown_all(app_handle);
-    }
+    let closed_labels = close_early_cef_webviews(app_handle);
+    shutdown_imessage_scanner(app_handle);
 
     webview_apis::server::stop();
 
@@ -1019,9 +1113,7 @@ fn perform_early_teardown_sync(app_handle: &AppHandle<AppRuntime>) {
         });
     }
 
-    // Give CEF's UI message loop a brief window to process the
-    // queued browser close messages before the runtime calls `cef::shutdown()`.
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    wait_for_cef_webviews_to_close_sync(app_handle, &closed_labels);
 
     log::info!("[app] perform_early_teardown_sync — early teardown complete");
 }
@@ -1031,11 +1123,8 @@ fn perform_early_teardown_sync(app_handle: &AppHandle<AppRuntime>) {
 async fn perform_early_teardown_async(app_handle: &AppHandle<AppRuntime>) {
     log::info!("[app] perform_early_teardown_async — early teardown");
 
-    let _ = teardown_cef_prewarm(app_handle);
-
-    if let Some(state) = app_handle.try_state::<webview_accounts::WebviewAccountsState>() {
-        state.shutdown_all(app_handle);
-    }
+    let closed_labels = close_early_cef_webviews(app_handle);
+    shutdown_imessage_scanner(app_handle);
 
     webview_apis::server::stop();
 
@@ -1044,9 +1133,7 @@ async fn perform_early_teardown_async(app_handle: &AppHandle<AppRuntime>) {
         core.send_terminate_signal().await;
     }
 
-    // Give CEF's UI message loop a brief window to process the
-    // queued browser close messages before the runtime calls `cef::shutdown()`.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    wait_for_cef_webviews_to_close_async(app_handle, &closed_labels).await;
 
     log::info!("[app] perform_early_teardown_async — early teardown complete");
 }
