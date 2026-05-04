@@ -49,11 +49,6 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{json, Map, Value};
 
-/// `html2md` is fine for normal transactional emails, but large marketing
-/// HTML can explode CPU / latency. Above this size we switch to a bounded
-/// fast-strip path that preserves readable text and link labels.
-const MAX_HTML2MD_INPUT_BYTES: usize = 24_000;
-
 static HTML_NOISE_BLOCK_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?is)<!--.*?-->").expect("valid html comment regex"));
 
@@ -194,13 +189,26 @@ fn pick_header(msg: &Map<String, Value>, name: &str) -> Option<Value> {
 /// Extract the best body representation and return it as markdown.
 /// Walks `payload.parts[]` recursively — Gmail nests multipart/alternative
 /// inside multipart/mixed when attachments are present.
+///
+/// Preference order:
+///   1. `text/plain` — author-provided plaintext fallback. Standard MIME
+///      multipart/alternative. Bypasses html2md entirely. For LLM
+///      extraction + retrieval embedding, plaintext is generally the
+///      better input: less noise (no tracking URLs, inline CSS, table
+///      formatting artifacts), zero conversion cost, no allocator
+///      pressure from `html2md`'s pathological walk over nested HTML
+///      tables (verified GB-scale heap peaks via dhat-rs profiling).
+///   2. `text/html` → html2md — only used when the email shipped no
+///      plaintext part (rare; some HTML-only marketing senders).
+///   3. Top-level `messageText` (Composio convenience field) — html or
+///      plaintext depending on what the source had.
 fn extract_markdown_body(msg: &Map<String, Value>) -> String {
     if let Some(parts) = msg.get("payload").and_then(|p| p.get("parts")) {
-        if let Some(html) = find_decoded_part(parts, "text/html") {
-            return html_email_to_markdown(&html);
-        }
         if let Some(text) = find_decoded_part(parts, "text/plain") {
             return normalize_markdownish_text(&text);
+        }
+        if let Some(html) = find_decoded_part(parts, "text/html") {
+            return html_email_to_markdown(&html);
         }
     }
     // Fallback: top-level decoded plain text (Composio convenience field).
@@ -210,51 +218,47 @@ fn extract_markdown_body(msg: &Map<String, Value>) -> String {
                 text_bytes = text.len(),
                 "[composio:gmail][post-process] messageText looked like html, using fast html strip"
             );
-            return fast_html_email_to_markdown(text);
+            return html_email_to_markdown(text);
         }
         return normalize_markdownish_text(text);
     }
     String::new()
 }
 
-/// Convert raw HTML email into markdown-ish text that is safe and cheap for
-/// LLM consumption. Small / normal HTML uses `html2md`; oversized HTML falls
-/// back to a linear-time stripper so one pathological newsletter cannot stall
-/// the whole tool call.
+/// Convert raw HTML email into markdown-ish text suitable for LLM
+/// consumption.
+///
+/// Pipeline:
+///   1. `strip_html_noise_blocks` — remove `<script>`, `<style>`, `<head>`,
+///      `<title>`, `<svg>`, `<noscript>` plus the `<!-- ... -->` /
+///      `<!--[if]-->` MSO conditional comments.
+///   2. `fast_html_to_text` — linear-time tag-and-entity stripper.
+///   3. `normalize_markdownish_text` — collapse whitespace, decode
+///      remaining entities, drop invisible characters.
+///
+/// **Why not `html2md`**: the previous implementation used
+/// `html2md::parse_html` for "small" inputs (under 24 KB) and fell back
+/// to the fast stripper above the threshold. dhat-rs heap profiling on
+/// real Gmail inboxes (Otter.ai meeting summaries with deeply-nested
+/// `<table>` layouts) showed `html2md::walk` and `html2md::tables::handle`
+/// allocating **894 MB peak** on a 10 KB HTML input — roughly 37,000×
+/// input size. Cause: recursive walker holding per-frame Vec state
+/// across nested-table layers, plus 5 sequential `regex::replace_all`
+/// passes in `clean_markdown` each producing a fresh full-size String.
+/// We removed the dependency entirely; the fast stripper produces
+/// somewhat plainer output (no `**bold**` or `[label](url)` markdown
+/// affordances) but preserves all content and runs in O(n) memory.
+///
+/// For multipart emails, `extract_markdown_body` prefers `text/plain`
+/// before this function is reached, so this path only runs for
+/// HTML-only emails (rare).
 fn html_email_to_markdown(html: &str) -> String {
     let cleaned = strip_html_noise_blocks(html);
     let cleaned = cleaned.trim();
     if cleaned.is_empty() {
         return String::new();
     }
-
-    if cleaned.len() > MAX_HTML2MD_INPUT_BYTES {
-        tracing::debug!(
-            html_bytes = cleaned.len(),
-            threshold = MAX_HTML2MD_INPUT_BYTES,
-            "[composio:gmail][post-process] large html body, using fast strip fallback"
-        );
-        return normalize_markdownish_text(&fast_html_to_text(cleaned));
-    }
-
-    let md = html2md::parse_html(cleaned);
-    let normalized = normalize_markdownish_text(&md);
-    if normalized.is_empty()
-        || looks_like_raw_html(&normalized)
-        || suspiciously_short_markdown(cleaned, &normalized)
-    {
-        tracing::debug!(
-            html_bytes = cleaned.len(),
-            "[composio:gmail][post-process] html2md output still looked like html, using fast strip fallback"
-        );
-        return normalize_markdownish_text(&fast_html_to_text(cleaned));
-    }
-    normalized
-}
-
-fn fast_html_email_to_markdown(html: &str) -> String {
-    let cleaned = strip_html_noise_blocks(html);
-    normalize_markdownish_text(&fast_html_to_text(cleaned.trim()))
+    normalize_markdownish_text(&fast_html_to_text(cleaned))
 }
 
 fn strip_html_noise_blocks(html: &str) -> String {
@@ -308,13 +312,18 @@ fn looks_like_raw_html(s: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
-fn suspiciously_short_markdown(source_html: &str, markdown: &str) -> bool {
-    source_html.len() >= 2_000 && markdown.len().saturating_mul(20) < source_html.len()
-}
-
 /// Recursively search a `parts` array for the first MIME part whose
 /// `mimeType` starts with `prefix` (e.g. `"text/html"`), and return its
 /// base64url-decoded UTF-8 body.
+///
+/// **Skips attachment parts.** A `multipart/mixed` email may contain
+/// the real body (in a nested `multipart/alternative`) plus attached
+/// `.txt` / `.ics` / `.html` files. Each attachment also has a
+/// `text/plain` or `text/html` `mimeType` and a populated `body.data`,
+/// so a naive walk would return the attachment instead of the body.
+/// We treat any part with a non-empty `filename` (top-level or nested
+/// in `body.attachmentId`) as an attachment and skip its body — but
+/// still recurse into its `parts` for symmetry.
 fn find_decoded_part(parts: &Value, prefix: &str) -> Option<String> {
     let arr = parts.as_array()?;
     for part in arr {
@@ -322,7 +331,12 @@ fn find_decoded_part(parts: &Value, prefix: &str) -> Option<String> {
             .get("mimeType")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if mime.starts_with(prefix) {
+        let is_attachment = part
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        if mime.starts_with(prefix) && !is_attachment {
             if let Some(b64) = part.pointer("/body/data").and_then(|v| v.as_str()) {
                 if let Ok(bytes) = URL_SAFE_NO_PAD.decode(b64) {
                     if let Ok(s) = String::from_utf8(bytes) {
