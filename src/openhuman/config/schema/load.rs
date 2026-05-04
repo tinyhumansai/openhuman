@@ -821,8 +821,14 @@ impl Config {
             }
         }
 
+        // Prefer the namespaced name. `OPENHUMAN_SENTRY_DSN` is the legacy
+        // unprefixed name kept as a fallback so existing CI vars and local
+        // `.env` files keep working until the GH org-level variable can be
+        // renamed in lock-step.
         let dsn_value = env
-            .get("OPENHUMAN_SENTRY_DSN")
+            .get("OPENHUMAN_CORE_SENTRY_DSN")
+            .or_else(|| env.get("OPENHUMAN_SENTRY_DSN"))
+            .or_else(|| option_env!("OPENHUMAN_CORE_SENTRY_DSN").map(|s| s.to_string()))
             .or_else(|| option_env!("OPENHUMAN_SENTRY_DSN").map(|s| s.to_string()));
         if let Some(dsn) = dsn_value {
             let dsn = dsn.trim();
