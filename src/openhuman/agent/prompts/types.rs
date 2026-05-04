@@ -219,6 +219,11 @@ pub struct PromptContext<'a> {
     /// When `true`, inject `MEMORY.md` (archivist-curated long-term
     /// memory). Capped at [`USER_FILE_MAX_CHARS`] and frozen per session.
     pub include_memory_md: bool,
+    /// Session-scoped curated-memory snapshot (`MEMORY.md` + `USER.md`)
+    /// captured once at turn start and reused by every delegated
+    /// sub-agent to keep prompt context byte-identical within the turn.
+    /// `None` when curated-memory runtime is unavailable.
+    pub curated_snapshot: Option<std::sync::Arc<crate::openhuman::curated_memory::MemorySnapshot>>,
     /// Authenticated user identity (id/name/email) when available — see
     /// [`UserIdentity`]. `None` for unauthenticated paths (CLI without a
     /// session, tests). Pre-fetched by the caller from the

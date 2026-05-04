@@ -1339,6 +1339,7 @@ impl Agent {
             ),
             include_profile: !self.omit_profile,
             include_memory_md: !self.omit_memory_md,
+            curated_snapshot: None,
             user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
             curated_snapshot: self.curated_snapshot.as_deref(),
         };
