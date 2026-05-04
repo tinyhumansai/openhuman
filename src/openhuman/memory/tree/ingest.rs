@@ -1,12 +1,10 @@
-//! Ingest orchestrator (Phase 1 + Phase 2):
+//! Ingest orchestrator for the async memory-tree pipeline.
 //!
-//!   canonicalise → chunk → score → admission gate → persist (chunks + scores + entity index)
+//! The hot path now does:
+//! `canonicalise -> chunk -> fast score -> persist chunks/score rows -> enqueue extract jobs`
 //!
-//! Phase 2 inserts scoring between chunker and persistence. Low-scoring
-//! chunks are dropped (their rationale is still persisted to
-//! `mem_tree_score` for diagnostics); surviving chunks get their entities
-//! indexed so later phases can resolve "which chunks mention Alice?" in
-//! O(lookup).
+//! The slower work (full extraction, admission, tree buffering, sealing,
+//! topic routing, daily digests) runs out of the SQLite-backed jobs queue.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -19,24 +17,21 @@ use crate::openhuman::memory::tree::canonicalize::{
     CanonicalisedSource,
 };
 use crate::openhuman::memory::tree::chunker::{chunk_markdown, ChunkerInput, ChunkerOptions};
+use crate::openhuman::memory::tree::content_store;
+use crate::openhuman::memory::tree::jobs::{self, ExtractChunkPayload, NewJob};
 use crate::openhuman::memory::tree::score::{self, ScoreResult, ScoringConfig};
-use crate::openhuman::memory::tree::source_tree::{
-    append_leaf, get_or_create_source_tree, InertSummariser, LeafRef,
-};
 use crate::openhuman::memory::tree::store;
-use crate::openhuman::memory::tree::topic_tree::route_leaf_to_topic_trees;
-use crate::openhuman::memory::tree::types::Chunk;
 
-/// Outcome of one ingest call — extended with per-chunk admission info.
+/// Outcome of one ingest call.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IngestResult {
     pub source_id: String,
-    /// Number of chunks that passed the admission gate and were persisted.
+    /// Number of chunks persisted and queued for async extraction.
     pub chunks_written: usize,
-    /// Number of chunks that failed the admission gate and were NOT persisted
-    /// (their score rationale IS persisted for diagnostics).
+    /// Number of chunks the cheap fast-score path would drop. Final admission
+    /// still happens later in the extract job.
     pub chunks_dropped: usize,
-    /// IDs of all chunks that were persisted (in source order).
+    /// IDs of all chunks written and queued.
     pub chunk_ids: Vec<String>,
 }
 
@@ -51,7 +46,8 @@ impl IngestResult {
     }
 }
 
-/// Ingest a batch of chat messages scoped to one channel/group.
+/// Ingest a batch of chat messages: canonicalise → chunk → fast-score → persist
+/// → enqueue async extract jobs. Returns a noop [`IngestResult`] on an empty batch.
 pub async fn ingest_chat(
     config: &Config,
     source_id: &str,
@@ -59,11 +55,6 @@ pub async fn ingest_chat(
     tags: Vec<String>,
     batch: ChatBatch,
 ) -> Result<IngestResult> {
-    log::debug!(
-        "[memory_tree::ingest] chat source_id={} msg_count={}",
-        source_id,
-        batch.messages.len()
-    );
     let canonical =
         match chat::canonicalise(source_id, owner, &tags, batch).map_err(anyhow::Error::msg)? {
             Some(c) => c,
@@ -72,7 +63,8 @@ pub async fn ingest_chat(
     persist(config, source_id, canonical).await
 }
 
-/// Ingest a single email thread.
+/// Ingest an email thread: canonicalise → chunk → fast-score → persist → enqueue
+/// async extract jobs. Returns a noop [`IngestResult`] on an empty thread.
 pub async fn ingest_email(
     config: &Config,
     source_id: &str,
@@ -80,11 +72,6 @@ pub async fn ingest_email(
     tags: Vec<String>,
     thread: EmailThread,
 ) -> Result<IngestResult> {
-    log::debug!(
-        "[memory_tree::ingest] email source_id={} msg_count={}",
-        source_id,
-        thread.messages.len()
-    );
     let canonical =
         match email::canonicalise(source_id, owner, &tags, thread).map_err(anyhow::Error::msg)? {
             Some(c) => c,
@@ -93,7 +80,8 @@ pub async fn ingest_email(
     persist(config, source_id, canonical).await
 }
 
-/// Ingest a single standalone document.
+/// Ingest a single document: canonicalise → chunk → fast-score → persist →
+/// enqueue async extract jobs. Returns a noop [`IngestResult`] on empty input.
 pub async fn ingest_document(
     config: &Config,
     source_id: &str,
@@ -101,13 +89,6 @@ pub async fn ingest_document(
     tags: Vec<String>,
     doc: DocumentInput,
 ) -> Result<IngestResult> {
-    let title_len = doc.title.chars().count();
-    log::debug!(
-        "[memory_tree::ingest] document source_id={} has_title={} title_len={}",
-        source_id,
-        !doc.title.trim().is_empty(),
-        title_len
-    );
     let canonical =
         match document::canonicalise(source_id, owner, &tags, doc).map_err(anyhow::Error::msg)? {
             Some(c) => c,
@@ -121,7 +102,6 @@ async fn persist(
     source_id: &str,
     canonical: CanonicalisedSource,
 ) -> Result<IngestResult> {
-    // 1. Chunk
     let input = ChunkerInput {
         source_kind: canonical.metadata.source_kind,
         source_id: source_id.to_string(),
@@ -133,12 +113,15 @@ async fn persist(
         return Ok(IngestResult::empty(source_id));
     }
 
-    // 2. Score (async; uses configured extractor)
-    let scoring_cfg = ScoringConfig::default_regex_only();
-    let scores = score::score_chunks(&chunks, &scoring_cfg).await?;
+    // Phase MD-content: write chunk bodies to disk before the SQLite upsert.
+    // stage_chunks is sync I/O; run it here (still on the tokio thread) before
+    // spawn_blocking so errors surface before the DB transaction opens.
+    let content_root = config.memory_tree_content_root();
+    let staged = content_store::stage_chunks(&content_root, &chunks)
+        .map_err(|e| anyhow::anyhow!("[memory_tree::ingest] stage_chunks failed: {e}"))?;
 
-    // Fail fast on scorer length mismatch — silently truncating via zip would
-    // drop chunks (or their score rationale) without trace.
+    let scoring_cfg = ScoringConfig::from_config(config);
+    let scores = score::score_chunks_fast(&chunks, &scoring_cfg).await?;
     if scores.len() != chunks.len() {
         anyhow::bail!(
             "[memory_tree::ingest] scorer length mismatch: chunks={} scores={}",
@@ -147,37 +130,79 @@ async fn persist(
         );
     }
 
-    // 3. Partition kept vs dropped
-    let mut kept_chunks: Vec<Chunk> = Vec::new();
-    let mut all_results: Vec<(ScoreResult, i64)> = Vec::new();
-    for (chunk, result) in chunks.iter().zip(scores.into_iter()) {
-        let ts_ms = chunk.metadata.timestamp.timestamp_millis();
-        if result.kept {
-            kept_chunks.push(chunk.clone());
-        }
-        all_results.push((result, ts_ms));
-    }
-
+    let all_results: Vec<(ScoreResult, i64)> = chunks
+        .iter()
+        .zip(scores.into_iter())
+        .map(|(chunk, result)| (result, chunk.metadata.timestamp.timestamp_millis()))
+        .collect();
     let dropped = all_results.iter().filter(|(r, _)| !r.kept).count();
-    log::debug!(
-        "[memory_tree::ingest] scoring source_id={} kept={} dropped={}",
-        source_id,
-        kept_chunks.len(),
-        dropped
-    );
 
-    // 4. Persist (blocking SQLite — isolate on a dedicated thread)
     let config_owned = config.clone();
-    let kept_for_store = kept_chunks.clone();
+    let staged_for_store = staged.clone();
     let results_for_store = all_results.clone();
     let written = tokio::task::spawn_blocking(move || -> Result<usize> {
+        use std::collections::{HashMap, HashSet};
         store::with_connection(&config_owned, |conn| {
             let tx = conn.unchecked_transaction()?;
-            let n = store::upsert_chunks_tx(&tx, &kept_for_store)?;
+
+            // Read each chunk's CURRENT lifecycle BEFORE the upsert. This
+            // is the "did this chunk exist before this batch" snapshot,
+            // because `upsert_staged_chunks_tx` will either preserve the
+            // existing row's lifecycle (UPDATE doesn't touch the column) or
+            // insert a new row that picks up the column DEFAULT — so reading
+            // post-upsert can't distinguish "brand new" from
+            // "already-admitted-from-prior-ingest".
+            let mut prior: HashMap<String, Option<String>> = HashMap::new();
+            for s in &staged_for_store {
+                let status = store::get_chunk_lifecycle_status_tx(&tx, &s.chunk.id)?;
+                prior.insert(s.chunk.id.clone(), status);
+            }
+
+            let n = store::upsert_staged_chunks_tx(&tx, &staged_for_store)?;
+
+            // Re-ingest of identical content (same chunk_id) must NOT
+            // downgrade chunks that have already progressed through the
+            // async pipeline. Without this guard, a re-ingest would reset
+            // every chunk to 'pending_extraction' and enqueue a fresh
+            // `extract_chunk` job — sending already-buffered/sealed
+            // chunks back through extract → admit → append, ultimately
+            // duplicating them into a second summary in the same tree.
+            //
+            // Schedule a chunk for processing when its PRE-upsert state
+            // was either absent (genuinely new) or already
+            // `pending_extraction` (a prior ingest crashed before extract
+            // ran). Anything else — `admitted`, `buffered`, `sealed`,
+            // `dropped` — is past the point of accepting new work, so
+            // leave the lifecycle alone and skip the extract enqueue.
+            let mut to_schedule: HashSet<String> = HashSet::new();
+            for s in &staged_for_store {
+                let pre = prior.get(&s.chunk.id).cloned().flatten();
+                let needs_processing = matches!(
+                    pre.as_deref(),
+                    None | Some(store::CHUNK_STATUS_PENDING_EXTRACTION),
+                );
+                if needs_processing {
+                    store::set_chunk_lifecycle_status_tx(
+                        &tx,
+                        &s.chunk.id,
+                        store::CHUNK_STATUS_PENDING_EXTRACTION,
+                    )?;
+                    to_schedule.insert(s.chunk.id.clone());
+                }
+            }
+
             for (result, ts_ms) in &results_for_store {
-                // Persist rationale for EVERY chunk (kept or dropped).
-                // Index entities only for kept chunks (handled inside persist_score_tx).
+                if !to_schedule.contains(&result.chunk_id) {
+                    // Chunk has already progressed past pending_extraction
+                    // on a prior ingest — skip score re-persist and don't
+                    // enqueue a duplicate extract job.
+                    continue;
+                }
                 score::persist_score_tx(&tx, result, *ts_ms, None)?;
+                let extract = NewJob::extract_chunk(&ExtractChunkPayload {
+                    chunk_id: result.chunk_id.clone(),
+                })?;
+                let _ = jobs::enqueue_tx(&tx, &extract)?;
             }
             tx.commit()?;
             Ok(n)
@@ -186,94 +211,26 @@ async fn persist(
     .await
     .map_err(|e| anyhow::anyhow!("persist join error: {e}"))??;
 
-    // 5. Source-tree append (Phase 3a #709). Each kept leaf pushes into
-    //    the tree's L0 buffer and cascades upward when token_sum crosses
-    //    the budget. Entities/topics from the scorer are threaded in so
-    //    sealed summaries inherit the child signal set. Failures here
-    //    log at warn level but don't fail the ingest — leaves are already
-    //    persisted, and a later flush/retry can still rebuild the tree.
-    if let Err(e) = append_leaves_to_tree(config, source_id, &kept_chunks, &all_results).await {
-        log::warn!(
-            "[memory_tree::ingest] source_tree append failed source_id={} err={:#}",
-            source_id,
-            e
-        );
-    }
+    jobs::wake_workers();
 
     Ok(IngestResult {
         source_id: source_id.to_string(),
         chunks_written: written,
         chunks_dropped: dropped,
-        chunk_ids: kept_chunks.iter().map(|c| c.id.clone()).collect(),
+        chunk_ids: staged.iter().map(|s| s.chunk.id.clone()).collect(),
     })
-}
-
-/// Push every kept chunk into its source tree. Scoped to Phase 3a — all
-/// chunks from one ingest batch share the same `source_id`, so they share
-/// one tree lookup. The inert summariser is the default; future wiring
-/// can swap in an LLM summariser here.
-async fn append_leaves_to_tree(
-    config: &Config,
-    source_id: &str,
-    kept_chunks: &[Chunk],
-    all_results: &[(ScoreResult, i64)],
-) -> Result<()> {
-    if kept_chunks.is_empty() {
-        return Ok(());
-    }
-    let tree = get_or_create_source_tree(config, source_id)?;
-    let summariser = InertSummariser::new();
-
-    // Build a chunk_id → (score, entities, topics) map for quick lookup.
-    use std::collections::HashMap;
-    let mut score_by_id: HashMap<String, &ScoreResult> = HashMap::new();
-    for (r, _) in all_results {
-        score_by_id.insert(r.chunk_id.clone(), r);
-    }
-
-    for chunk in kept_chunks {
-        let (score_value, entities, topics) = match score_by_id.get(&chunk.id) {
-            Some(r) => (
-                r.total,
-                r.canonical_entities
-                    .iter()
-                    .map(|e| e.canonical_id.clone())
-                    .collect::<Vec<_>>(),
-                chunk.metadata.tags.clone(),
-            ),
-            None => (0.0, Vec::new(), chunk.metadata.tags.clone()),
-        };
-        let leaf = LeafRef {
-            chunk_id: chunk.id.clone(),
-            token_count: chunk.token_count,
-            timestamp: chunk.metadata.timestamp,
-            content: chunk.content.clone(),
-            entities: entities.clone(),
-            topics,
-            score: score_value,
-        };
-        append_leaf(config, &tree, &leaf, &summariser).await?;
-
-        // Phase 3c (#709): route the leaf to every matching topic tree
-        // and tick the curator for each entity. Non-fatal on error —
-        // the source-tree append has already succeeded above.
-        if let Err(e) = route_leaf_to_topic_trees(config, &leaf, &entities, &summariser).await {
-            log::warn!(
-                "[memory_tree::ingest] topic_tree routing failed chunk_id={} err={:#}",
-                chunk.id,
-                e
-            );
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::openhuman::memory::tree::canonicalize::chat::ChatMessage;
+    use crate::openhuman::memory::tree::jobs::drain_until_idle;
     use crate::openhuman::memory::tree::score::store::{count_scores, lookup_entity};
-    use crate::openhuman::memory::tree::store::{count_chunks, list_chunks, ListChunksQuery};
+    use crate::openhuman::memory::tree::store::{
+        count_chunks, count_chunks_by_lifecycle_status, get_chunk_embedding, list_chunks,
+        ListChunksQuery, CHUNK_STATUS_BUFFERED, CHUNK_STATUS_DROPPED,
+    };
     use crate::openhuman::memory::tree::types::SourceKind;
     use chrono::{TimeZone, Utc};
     use tempfile::TempDir;
@@ -282,10 +239,12 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut cfg = Config::default();
         cfg.workspace_dir = tmp.path().to_path_buf();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.memory_tree.embedding_strict = false;
         (tmp, cfg)
     }
 
-    /// Build a substantive batch that reliably passes the admission gate.
     fn substantive_batch() -> ChatBatch {
         ChatBatch {
             platform: "slack".into(),
@@ -294,17 +253,14 @@ mod tests {
                 ChatMessage {
                     author: "alice".into(),
                     timestamp: Utc.timestamp_millis_opt(1_700_000_000_000).unwrap(),
-                    text: "We are planning to ship the Phoenix migration on Friday \
-                           after reviewing the runbook and staging results. Please \
-                           confirm availability by replying here. alice@example.com"
+                    text: "We are planning to ship the Phoenix migration on Friday after reviewing the runbook and staging results. alice@example.com"
                         .into(),
                     source_ref: Some("slack://m1".into()),
                 },
                 ChatMessage {
                     author: "bob".into(),
                     timestamp: Utc.timestamp_millis_opt(1_700_000_010_000).unwrap(),
-                    text: "Confirmed — I'll handle the coordination and cut a release \
-                           candidate tonight. #launch-q2 will be tracked in Notion."
+                    text: "Confirmed, I will handle the coordination and launch tracking tonight."
                         .into(),
                     source_ref: None,
                 },
@@ -313,25 +269,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ingest_chat_writes_substantive_chunks() {
+    async fn ingest_chat_writes_and_queue_drains_to_admitted_chunk() {
         let (_tmp, cfg) = test_config();
         let out = ingest_chat(&cfg, "slack:#eng", "alice", vec![], substantive_batch())
             .await
             .unwrap();
+        // Greedy packing: both small messages fit under 10k token budget
+        // and are packed into a single chunk.
         assert_eq!(out.chunks_written, 1);
-        assert_eq!(out.chunks_dropped, 0);
         assert_eq!(count_chunks(&cfg).unwrap(), 1);
-        // Score row persisted for the kept chunk
-        assert_eq!(count_scores(&cfg).unwrap(), 1);
-        // Entity index populated from regex extraction (alice@example.com + hashtag)
-        let alice_hits = lookup_entity(&cfg, "email:alice@example.com", None).unwrap();
-        assert_eq!(alice_hits.len(), 1);
+
+        drain_until_idle(&cfg).await.unwrap();
+
+        // Final lifecycle is `buffered`: extract → admitted → append_buffer → buffered.
+        // The single packed chunk does not cross TOKEN_BUDGET so no seal fires.
+        assert_eq!(
+            count_chunks_by_lifecycle_status(&cfg, CHUNK_STATUS_BUFFERED).unwrap(),
+            1
+        );
+        assert!(count_scores(&cfg).unwrap() >= 1);
+        assert_eq!(
+            lookup_entity(&cfg, "email:alice@example.com", None)
+                .unwrap()
+                .len(),
+            1
+        );
         let rows = list_chunks(&cfg, &ListChunksQuery::default()).unwrap();
         assert_eq!(rows[0].metadata.source_kind, SourceKind::Chat);
+        assert!(get_chunk_embedding(&cfg, &out.chunk_ids[0])
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]
-    async fn low_signal_chunks_are_dropped_but_score_persists() {
+    async fn low_signal_chunks_end_up_dropped_after_queue_processing() {
         let (_tmp, cfg) = test_config();
         let batch = ChatBatch {
             platform: "slack".into(),
@@ -339,18 +310,22 @@ mod tests {
             messages: vec![ChatMessage {
                 author: "alice".into(),
                 timestamp: Utc.timestamp_millis_opt(1_700_000_000_000).unwrap(),
-                text: "+1".into(), // extremely low-signal
+                text: "+1".into(),
                 source_ref: None,
             }],
         };
         let out = ingest_chat(&cfg, "slack:#eng", "alice", vec![], batch)
             .await
             .unwrap();
-        assert_eq!(out.chunks_written, 0);
-        assert_eq!(out.chunks_dropped, 1);
-        // Chunk NOT in chunks table
-        assert_eq!(count_chunks(&cfg).unwrap(), 0);
-        // Score row IS persisted for diagnostics
+        assert_eq!(out.chunks_written, 1);
+        assert_eq!(count_chunks(&cfg).unwrap(), 1);
+
+        drain_until_idle(&cfg).await.unwrap();
+
+        assert_eq!(
+            count_chunks_by_lifecycle_status(&cfg, CHUNK_STATUS_DROPPED).unwrap(),
+            1
+        );
         assert_eq!(count_scores(&cfg).unwrap(), 1);
     }
 
@@ -366,7 +341,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.chunks_written, 0);
-        assert_eq!(out.chunks_dropped, 0);
         assert_eq!(count_chunks(&cfg).unwrap(), 0);
         assert_eq!(count_scores(&cfg).unwrap(), 0);
     }
@@ -377,9 +351,7 @@ mod tests {
         let doc = DocumentInput {
             provider: "notion".into(),
             title: "Launch plan".into(),
-            body: "We are planning to ship Phoenix on Friday after review. \
-                   Coordination is via email and the launch thread tracks \
-                   the relevant decisions. alice@example.com owns this."
+            body: "We are planning to ship Phoenix on Friday after review. alice@example.com owns this."
                 .into(),
             modified_at: Utc.timestamp_millis_opt(1_700_000_000_000).unwrap(),
             source_ref: Some("notion://page/abc".into()),
@@ -390,31 +362,8 @@ mod tests {
         ingest_document(&cfg, "notion:abc", "alice", vec![], doc)
             .await
             .unwrap();
+        drain_until_idle(&cfg).await.unwrap();
         assert_eq!(count_chunks(&cfg).unwrap(), 1);
         assert_eq!(count_scores(&cfg).unwrap(), 1);
-    }
-
-    #[tokio::test]
-    async fn chunks_preserve_source_ref_when_kept() {
-        let (_tmp, cfg) = test_config();
-        let doc = DocumentInput {
-            provider: "notion".into(),
-            title: "t".into(),
-            body: "Phoenix launch plan with enough substance to pass the admission \
-                   gate: we are reviewing the migration runbook alice@example.com \
-                   on Friday evening."
-                .into(),
-            modified_at: Utc::now(),
-            source_ref: Some("notion://x".into()),
-        };
-        ingest_document(&cfg, "notion:x", "alice", vec![], doc)
-            .await
-            .unwrap();
-        let rows = list_chunks(&cfg, &ListChunksQuery::default()).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            rows[0].metadata.source_ref.as_ref().unwrap().value,
-            "notion://x"
-        );
     }
 }

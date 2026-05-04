@@ -1,86 +1,33 @@
 /**
  * Analytics & Sentry service
  *
- * Manages Sentry error reporting gated behind user analytics consent.
- * Designed to capture ONLY:
- *   - Error message & stack trace
- *   - Device / browser metadata (via Sentry's default user-agent parsing)
- *   - Source file location (via source maps)
+ * Initializes Sentry for the React frontend with auto-send semantics:
+ * captured errors are sanitized in `beforeSend` and forwarded to Sentry,
+ * gated only by user analytics consent.
  *
- * Explicitly strips:
- *   - All breadcrumbs (console, click, network, etc.)
- *   - Redux state / localStorage / sessionStorage
- *   - User PII (IP address, cookies)
- *   - Request bodies / headers
- *   - Session replay
- *
- * Error flow: beforeSend intercepts all events, sanitizes them, queues them
- * in the errorReportQueue for user opt-in, and returns null to prevent
- * auto-sending. Users can then review and explicitly report each error.
+ * Privacy guarantees enforced in `beforeSend`:
+ *   - No breadcrumbs, requests, extras, or arbitrary contexts (only OS /
+ *     browser / device metadata kept)
+ *   - No frame-level locals or source-context snippets
+ *   - No PII — `user` is reduced to a stable anonymous id (or omitted)
+ *   - `sendDefaultPii: false` (no IP, no cookies)
+ *   - All breadcrumb-producing integrations disabled
  */
 import * as Sentry from '@sentry/react';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
-import { APP_ENVIRONMENT, IS_DEV, SENTRY_DSN, SENTRY_RELEASE } from '../utils/config';
-import { enqueueError, registerSentrySender, type SanitizedSentryEvent } from './errorReportQueue';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Strip sensitive fields from the exception object before including it
- * in the sanitized event shown to the user and sent to Sentry.
- *
- * Removes: local variables (vars), source code lines (context_line,
- * pre_context, post_context), mechanism.data, and module_metadata.
- */
-function sanitizeException(
-  exception: Sentry.Event['exception']
-): SanitizedSentryEvent['exception'] {
-  if (!exception?.values) return undefined;
-
-  return {
-    values: exception.values.map(entry => ({
-      type: entry.type ?? 'Error',
-      value: entry.value ?? '',
-      stacktrace: entry.stacktrace?.frames
-        ? {
-            frames: entry.stacktrace.frames.map(frame => ({
-              filename: frame.filename,
-              function: frame.function,
-              module: frame.module,
-              lineno: frame.lineno,
-              colno: frame.colno,
-              abs_path: frame.abs_path,
-              in_app: frame.in_app,
-              // Stripped: vars, context_line, pre_context, post_context,
-              //          instruction_addr, addr_mode, debug_id, module_metadata
-            })),
-          }
-        : undefined,
-      mechanism: entry.mechanism
-        ? { type: entry.mechanism.type, handled: entry.mechanism.handled }
-        : undefined,
-      // Stripped: mechanism.data (arbitrary key-value pairs)
-    })),
-  };
-}
+import {
+  APP_ENVIRONMENT,
+  IS_DEV,
+  SENTRY_DSN,
+  SENTRY_RELEASE,
+  SENTRY_SMOKE_TEST,
+} from '../utils/config';
 
 /** Check if the current user has opted into analytics. */
 export function isAnalyticsEnabled(): boolean {
   return getCoreStateSnapshot().snapshot.analyticsEnabled;
 }
-
-// ---------------------------------------------------------------------------
-// Bypass flag — when true, beforeSend passes the event through to Sentry
-// ---------------------------------------------------------------------------
-
-let _bypassBeforeSend = false;
-
-// ---------------------------------------------------------------------------
-// Sentry initialisation
-// ---------------------------------------------------------------------------
 
 export function initSentry(): void {
   if (!SENTRY_DSN) return;
@@ -88,133 +35,104 @@ export function initSentry(): void {
   Sentry.init({
     dsn: SENTRY_DSN,
     environment: APP_ENVIRONMENT,
-    // Canonical release tag shared with the core sidecar and source-map
-    // upload (see @sentry/vite-plugin in app/vite.config.ts). Lets events
-    // from all surfaces group under a single Sentry release with
-    // symbolicated stack traces.
+    // Canonical release tag shared with the Tauri shell (see
+    // `app/src-tauri/src/lib.rs::build_sentry_release_tag`) and the Vite
+    // source-map upload (see `@sentry/vite-plugin` in app/vite.config.ts)
+    // so events from every surface group under the same release.
     release: SENTRY_RELEASE,
-    enabled: !IS_DEV, // disable in dev builds
+    enabled: !IS_DEV,
 
-    // -----------------------------------------------------------------------
-    // Privacy: disable EVERYTHING that could leak sensitive state
-    // -----------------------------------------------------------------------
-
-    // No session replay
+    // Privacy: disable EVERYTHING that could leak sensitive state.
     replaysSessionSampleRate: 0,
     replaysOnErrorSampleRate: 0,
-
-    // No performance / tracing
     tracesSampleRate: 0,
-
-    // No breadcrumbs at all (console, clicks, network, etc.)
     defaultIntegrations: false,
     integrations: [
-      // Only keep the bare-minimum integrations for stack traces
       Sentry.functionToStringIntegration(),
       Sentry.linkedErrorsIntegration(),
       Sentry.dedupeIntegration(),
       Sentry.browserApiErrorsIntegration(),
       Sentry.globalHandlersIntegration(),
     ],
-
-    // Strip IP address
     sendDefaultPii: false,
 
-    // -----------------------------------------------------------------------
-    // Intercept every event: sanitize, queue for user opt-in, block auto-send
-    // -----------------------------------------------------------------------
     beforeSend(event) {
-      // Bypass mode: let the event through (used by sendEventToSentry)
-      if (_bypassBeforeSend) {
-        _bypassBeforeSend = false;
-        return event;
-      }
+      // Always allow the smoke-test event through so pipeline validation works
+      // even when the user hasn't opted into analytics yet on first boot.
+      const isSmokeTest = event.message === 'react-sentry-smoke-test';
+      // Drop events when the user hasn't opted into analytics.
+      if (!isSmokeTest && !isAnalyticsEnabled()) return null;
 
-      // --- Sanitize the event ---
-
-      // Strip any breadcrumbs that somehow snuck in
+      // Strip anything that could carry Redux / localStorage / request bodies.
       event.breadcrumbs = [];
-
-      // Strip request data (cookies, headers, body)
       delete event.request;
-
-      // Strip user PII — keep only a stable anonymous ID
-      const userId = getCoreStateSnapshot().snapshot.currentUser?._id;
-      event.user = userId ? { id: userId } : undefined;
-
-      // Strip any extra/contexts that could contain Redux or localStorage data
       delete event.extra;
       event.contexts = {
-        // Keep only OS / browser / device metadata
         os: event.contexts?.os,
         browser: event.contexts?.browser,
         device: event.contexts?.device,
       };
 
-      // --- Build a sanitized snapshot for the user to inspect ---
-      const sanitized: SanitizedSentryEvent = {
-        event_id: event.event_id ?? crypto.randomUUID().replace(/-/g, ''),
-        timestamp: typeof event.timestamp === 'number' ? event.timestamp : Date.now() / 1000,
-        platform: event.platform ?? 'javascript',
-        exception: sanitizeException(event.exception),
-        contexts: event.contexts as SanitizedSentryEvent['contexts'],
-        user: event.user as SanitizedSentryEvent['user'],
-        tags: event.tags as Record<string, string> | undefined,
-        environment: IS_DEV ? 'development' : 'production',
-      };
+      // Tag with surface so events filter cleanly inside `openhuman-react`.
+      event.tags = { ...(event.tags ?? {}), surface: 'react' };
 
-      // Extract human-readable title + message from the exception
-      const firstException = event.exception?.values?.[0];
-      const title = firstException?.type ?? 'Error';
-      const message = firstException?.value ?? 'Unknown error';
+      // Strip PII; keep a stable anonymous user id only.
+      const userId = getCoreStateSnapshot().snapshot.currentUser?._id;
+      event.user = userId ? { id: userId } : undefined;
 
-      // Queue the error for the notification UI
-      enqueueError({
-        id: crypto.randomUUID(),
-        timestamp: Date.now(),
-        source: 'global',
-        title,
-        message,
-        sentryEvent: sanitized,
-      });
+      // Strip frame-level local variables and source context — never send
+      // raw source snippets or live variable values to the dashboard.
+      if (event.exception?.values) {
+        for (const v of event.exception.values) {
+          if (v.stacktrace?.frames) {
+            for (const f of v.stacktrace.frames) {
+              delete f.vars;
+              delete f.context_line;
+              delete f.pre_context;
+              delete f.post_context;
+            }
+          }
+          if (v.mechanism) {
+            delete v.mechanism.data;
+          }
+        }
+      }
 
-      // Return null to prevent Sentry from auto-sending
-      return null;
+      return event;
     },
 
     beforeSendTransaction() {
-      // Block all transactions (performance traces)
+      // Block all transactions (performance traces).
       return null;
     },
 
-    // Ignore common non-actionable errors
+    // Ignore common non-actionable errors.
     ignoreErrors: ['ResizeObserver loop', 'Network request failed', 'Load failed', 'AbortError'],
   });
 
-  // Register the bypass sender so the error queue can actually send events
-  registerSentrySender((sanitizedEvent: SanitizedSentryEvent) => {
-    _bypassBeforeSend = true;
-    Sentry.captureEvent(sanitizedEvent as unknown as Sentry.Event);
-  });
+  // Optional smoke trigger for verifying the pipeline end-to-end. Set
+  // `VITE_SENTRY_SMOKE_TEST=true` for one build (or in `.env.local` for
+  // local verification) and the next initSentry call will fire a test
+  // message before returning. No-op when unset. The smoke event bypasses
+  // the analytics-consent gate in `beforeSend` so it reaches Sentry even
+  // on a fresh install where consent hasn't been granted yet.
+  if (SENTRY_SMOKE_TEST) {
+    Sentry.captureMessage('react-sentry-smoke-test', 'info');
+  }
 }
-
-// ---------------------------------------------------------------------------
-// Consent sync — call when the user toggles analytics on/off
-// ---------------------------------------------------------------------------
 
 /**
  * Re-sync Sentry's enabled state after the user changes their consent.
  * Called from onboarding and settings.
+ *
+ * `beforeSend` reads `isAnalyticsEnabled()` on every event, so toggling
+ * consent takes effect immediately for new errors. Flush pending events
+ * on opt-out so anything already in flight respects the previous state.
  */
 export function syncAnalyticsConsent(enabled: boolean): void {
   const client = Sentry.getClient();
   if (!client) return;
-
-  if (enabled) {
-    // Client is already initialised; events will pass through beforeSend
-    // because isAnalyticsEnabled() will now return true.
-  } else {
-    // Flush any pending events, then future events will be dropped by beforeSend.
+  if (!enabled) {
     void Sentry.flush(2000);
   }
 }

@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import '../../test/mockDefaultSkillStatusHooks';
@@ -31,18 +31,14 @@ describe('Skills page — Notion composio integration', () => {
   it('renders Notion as a disconnected composio integration and opens its connect modal', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
-    expect(screen.getByRole('heading', { name: 'Productivity' })).toBeInTheDocument();
-    const notionTitle = screen.getByText('Notion');
-    const notionCard = notionTitle.closest('div.flex-1')?.parentElement;
-    expect(notionCard).not.toBeNull();
-    expect(notionTitle).toBeInTheDocument();
-    expect(
-      within(notionCard as HTMLElement).getByRole('button', { name: 'Connect' })
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Integrations' })).toBeInTheDocument();
+    const notionTile = screen.getByRole('button', { name: /Notion.*Connect/i });
+    expect(notionTile).toBeInTheDocument();
 
-    fireEvent.click(within(notionCard as HTMLElement).getByRole('button', { name: 'Connect' }));
+    fireEvent.click(notionTile);
 
     expect(await screen.findByRole('heading', { name: 'Connect Notion' })).toBeInTheDocument();
     expect(screen.getByText(/Connect your Notion account\./i)).toBeInTheDocument();
+    expect(screen.getByText(/OpenHuman's own agent permissions/i)).toBeInTheDocument();
   });
 });

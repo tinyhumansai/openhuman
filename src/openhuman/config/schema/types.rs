@@ -29,6 +29,7 @@ pub struct Config {
     #[serde(skip)]
     pub config_path: PathBuf,
     pub api_url: Option<String>,
+    pub api_key: Option<String>,
     pub default_model: Option<String>,
     pub default_temperature: f64,
 
@@ -52,6 +53,13 @@ pub struct Config {
 
     #[serde(default)]
     pub scheduler: SchedulerConfig,
+
+    /// Background-AI scheduler gate — throttles memory-tree digests,
+    /// embeddings, and other LLM-bound background work based on power
+    /// state, CPU pressure, and deployment mode. See
+    /// [`crate::openhuman::scheduler_gate`].
+    #[serde(default)]
+    pub scheduler_gate: SchedulerGateConfig,
 
     #[serde(default)]
     pub agent: AgentConfig,
@@ -81,6 +89,13 @@ pub struct Config {
     #[serde(default)]
     pub memory: MemoryConfig,
 
+    /// Phase 4 memory-tree embedding wiring (#710). Controls whether
+    /// ingest/seal pass new chunks/summaries through an Ollama embedder,
+    /// and whether missing endpoint config is fatal or warns and falls
+    /// back to inert zero vectors.
+    #[serde(default)]
+    pub memory_tree: MemoryTreeConfig,
+
     #[serde(default)]
     pub storage: StorageConfig,
 
@@ -95,6 +110,12 @@ pub struct Config {
 
     #[serde(default)]
     pub http_request: HttpRequestConfig,
+
+    #[serde(default)]
+    pub curl: CurlConfig,
+
+    #[serde(default)]
+    pub gitbooks: GitbooksConfig,
 
     #[serde(default)]
     pub multimodal: MultimodalConfig,
@@ -164,7 +185,7 @@ pub struct Config {
     ///   `channels::runtime::dispatch::resolve_target_agent`). The
     ///   welcome agent inspects the user's setup, delivers a
     ///   personalized greeting, and (when the essentials are in
-    ///   place) calls `complete_onboarding(action="complete")` which
+    ///   place) calls `complete_onboarding` which
     ///   flips this flag to `true`.
     /// * **`true`** — the welcome agent has already run; future chat
     ///   turns route to the orchestrator.
@@ -190,6 +211,23 @@ pub struct Config {
     pub chat_onboarding_completed: bool,
 }
 
+impl Config {
+    /// Resolve the root directory where chunk `.md` files are stored.
+    ///
+    /// Resolution order:
+    /// 1. `memory_tree.content_dir` if `Some`.
+    /// 2. Default: `<workspace_dir>/memory_tree/content/`.
+    ///
+    /// This is the only place in the codebase that should compute the content
+    /// root — all code that needs the path should call this method.
+    pub fn memory_tree_content_root(&self) -> PathBuf {
+        self.memory_tree
+            .content_dir
+            .clone()
+            .unwrap_or_else(|| self.workspace_dir.join("memory_tree").join("content"))
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let openhuman_dir =
@@ -210,6 +248,7 @@ impl Default for Config {
             workspace_dir: openhuman_dir.join("workspace"),
             config_path: openhuman_dir.join("config.toml"),
             api_url: None,
+            api_key: None,
             default_model: Some(DEFAULT_MODEL.to_string()),
             default_temperature: 0.7,
             observability: ObservabilityConfig::default(),
@@ -219,6 +258,7 @@ impl Default for Config {
             autocomplete: AutocompleteConfig::default(),
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
+            scheduler_gate: SchedulerGateConfig::default(),
             agent: AgentConfig::default(),
             context: ContextConfig::default(),
             model_routes: Vec::new(),
@@ -227,11 +267,14 @@ impl Default for Config {
             cron: CronConfig::default(),
             channels_config: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
+            memory_tree: MemoryTreeConfig::default(),
             storage: StorageConfig::default(),
             composio: ComposioConfig::default(),
             secrets: SecretsConfig::default(),
             browser: BrowserConfig::default(),
             http_request: HttpRequestConfig::default(),
+            curl: CurlConfig::default(),
+            gitbooks: GitbooksConfig::default(),
             multimodal: MultimodalConfig::default(),
             web_search: WebSearchConfig::default(),
             proxy: ProxyConfig::default(),

@@ -53,13 +53,35 @@ pub enum AgentProgress {
     },
 
     /// A sub-agent was spawned during tool execution.
-    SubagentSpawned { agent_id: String, task_id: String },
+    SubagentSpawned {
+        agent_id: String,
+        task_id: String,
+        /// Resolved spawn mode — `"typed"` or `"fork"`. The UI uses this
+        /// to distinguish narrow-prompt delegations from prefix-replay
+        /// forks when labelling the live subagent block.
+        mode: String,
+        /// `true` when the spawn was requested with
+        /// `dedicated_thread: true`. The UI links the inline subagent
+        /// row to the eventual worker thread once the run completes.
+        dedicated_thread: bool,
+        /// Character length of the delegated prompt — useful to decide
+        /// whether to render the prompt detail inline or behind a
+        /// "show more" affordance.
+        prompt_chars: usize,
+    },
 
     /// A sub-agent completed successfully.
     SubagentCompleted {
         agent_id: String,
         task_id: String,
         elapsed_ms: u64,
+        /// Number of LLM iterations the sub-agent actually used. The
+        /// UI surfaces this in the parent thread's subagent row so a
+        /// completed delegation reads as "researcher · 3 turns · 4.2s"
+        /// instead of just "done".
+        iterations: u32,
+        /// Character length of the sub-agent's final assistant text.
+        output_chars: usize,
     },
 
     /// A sub-agent failed.
@@ -67,6 +89,47 @@ pub enum AgentProgress {
         agent_id: String,
         task_id: String,
         error: String,
+    },
+
+    /// A sub-agent's inner LLM iteration is starting. Emitted **only
+    /// from inside [`crate::openhuman::agent::harness::subagent_runner`]**
+    /// when the parent context carries an `on_progress` sink — the
+    /// outer parent loop uses [`Self::IterationStarted`] for its own
+    /// rounds. Carries the child's `task_id` so the UI can attribute
+    /// the round to a specific live subagent row.
+    SubagentIterationStarted {
+        agent_id: String,
+        task_id: String,
+        /// 1-based child iteration index.
+        iteration: u32,
+        /// Maximum iterations configured for this child run.
+        max_iterations: u32,
+    },
+
+    /// A sub-agent is about to execute a tool. Distinct from
+    /// [`Self::ToolCallStarted`] so the parent thread can render
+    /// child-tool activity nested under the subagent row instead of
+    /// flattened into the parent's tool timeline.
+    SubagentToolCallStarted {
+        agent_id: String,
+        task_id: String,
+        call_id: String,
+        tool_name: String,
+        /// 1-based child iteration index this call belongs to.
+        iteration: u32,
+    },
+
+    /// A sub-agent's tool execution finished.
+    SubagentToolCallCompleted {
+        agent_id: String,
+        task_id: String,
+        call_id: String,
+        tool_name: String,
+        success: bool,
+        output_chars: usize,
+        elapsed_ms: u64,
+        /// 1-based child iteration index.
+        iteration: u32,
     },
 
     /// A chunk of visible assistant text arrived from the provider

@@ -16,6 +16,44 @@ use std::sync::{Mutex, OnceLock};
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
+/// Read-only environment lookup used by [`Config::apply_env_overrides`]. The
+/// seam lets unit tests exercise the overlay without mutating the process
+/// environment (which is racy under parallel tests and requires a shared
+/// `TEST_ENV_LOCK`).
+///
+/// Production code uses [`ProcessEnv`], which delegates to `std::env`.
+pub(crate) trait EnvLookup {
+    /// Equivalent to `std::env::var(key).ok()`.
+    fn get(&self, key: &str) -> Option<String>;
+
+    /// Equivalent to `std::env::var_os(key).is_some()`. Used to distinguish
+    /// "variable not present" from "variable set to empty" where it matters
+    /// (see `OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES` below).
+    fn contains(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
+
+    /// Looks up the first non-`None` value across `keys`, preserving the
+    /// precedence used by the manual `or_else` chains throughout this
+    /// module (e.g. `OPENHUMAN_FOO` wins over the bare `FOO` alias).
+    fn get_any(&self, keys: &[&str]) -> Option<String> {
+        keys.iter().find_map(|k| self.get(k))
+    }
+}
+
+/// Default [`EnvLookup`] implementation backed by `std::env`.
+pub(crate) struct ProcessEnv;
+
+impl EnvLookup for ProcessEnv {
+    fn get(&self, key: &str) -> Option<String> {
+        std::env::var(key).ok()
+    }
+
+    fn contains(&self, key: &str) -> bool {
+        std::env::var_os(key).is_some()
+    }
+}
+
 fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
     let config_dir = default_config_dir()?;
     Ok((config_dir.clone(), config_dir.join("workspace")))
@@ -226,30 +264,18 @@ impl ConfigResolutionSource {
     }
 }
 
-/// Seam over process environment so config-dir resolution can be unit-tested
-/// without touching (and racing against) `std::env`.
-pub(crate) trait EnvLookup: Send + Sync {
-    fn get(&self, key: &str) -> Option<String>;
-}
-
-/// Production impl that reads from the real process environment.
-pub(crate) struct SystemEnv;
-
-impl EnvLookup for SystemEnv {
-    fn get(&self, key: &str) -> Option<String> {
-        std::env::var(key).ok()
-    }
-}
-
 async fn resolve_runtime_config_dirs(
     default_openhuman_dir: &Path,
     default_workspace_dir: &Path,
 ) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
-    resolve_runtime_config_dirs_with_env(default_openhuman_dir, default_workspace_dir, &SystemEnv)
+    resolve_runtime_config_dirs_with(default_openhuman_dir, default_workspace_dir, &ProcessEnv)
         .await
 }
 
-async fn resolve_runtime_config_dirs_with_env(
+/// Env-injectable variant of [`resolve_runtime_config_dirs`]. Accepts any
+/// [`EnvLookup`] so unit tests can exercise the `OPENHUMAN_WORKSPACE`
+/// override path without mutating the process environment.
+async fn resolve_runtime_config_dirs_with(
     default_openhuman_dir: &Path,
     default_workspace_dir: &Path,
     env: &(dyn EnvLookup + Send + Sync),
@@ -600,13 +626,37 @@ impl Config {
     }
 
     pub fn apply_env_overrides(&mut self) {
-        if let Ok(model) = std::env::var("OPENHUMAN_MODEL").or_else(|_| std::env::var("MODEL")) {
+        self.apply_env_overlay_with(&ProcessEnv);
+
+        // The pure overlay above never mutates process-level state. The
+        // two side effects below remain here so tests driving
+        // `apply_env_overlay_with` directly don't clobber the shared
+        // runtime proxy client cache or mutate `HTTP_PROXY` / etc. on
+        // the running process.
+        if self.proxy.enabled && self.proxy.scope == ProxyScope::Environment {
+            self.proxy.apply_to_process_env();
+        }
+
+        set_runtime_proxy_config(self.proxy.clone());
+    }
+
+    /// Pure-ish env overlay: applies overrides read from `env` to `self`.
+    ///
+    /// "Pure-ish" because it still emits `tracing` logs and calls
+    /// `self.proxy.validate()` (which only reads). Crucially, it does
+    /// **not** write to the process environment nor the
+    /// `set_runtime_proxy_config` global — those stay in the public
+    /// [`Self::apply_env_overrides`] wrapper so unit tests can call this
+    /// with a [`HashMapEnv`] (see tests) without requiring the
+    /// `TEST_ENV_LOCK` or tainting sibling tests.
+    pub(crate) fn apply_env_overlay_with<E: EnvLookup>(&mut self, env: &E) {
+        if let Some(model) = env.get_any(&["OPENHUMAN_MODEL", "MODEL"]) {
             if !model.is_empty() {
                 self.default_model = Some(model);
             }
         }
 
-        if let Ok(workspace) = std::env::var("OPENHUMAN_WORKSPACE") {
+        if let Some(workspace) = env.get("OPENHUMAN_WORKSPACE") {
             if !workspace.is_empty() {
                 let (_, workspace_dir) =
                     resolve_config_dir_for_workspace(&PathBuf::from(workspace));
@@ -614,7 +664,7 @@ impl Config {
             }
         }
 
-        if let Ok(temp_str) = std::env::var("OPENHUMAN_TEMPERATURE") {
+        if let Some(temp_str) = env.get("OPENHUMAN_TEMPERATURE") {
             if let Ok(temp) = temp_str.parse::<f64>() {
                 if (0.0..=2.0).contains(&temp) {
                     self.default_temperature = temp;
@@ -622,9 +672,7 @@ impl Config {
             }
         }
 
-        if let Ok(flag) = std::env::var("OPENHUMAN_REASONING_ENABLED")
-            .or_else(|_| std::env::var("REASONING_ENABLED"))
-        {
+        if let Some(flag) = env.get_any(&["OPENHUMAN_REASONING_ENABLED", "REASONING_ENABLED"]) {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.runtime.reasoning_enabled = Some(true),
@@ -636,15 +684,15 @@ impl Config {
         // `OPENHUMAN_WEB_SEARCH_ENABLED` is intentionally ignored —
         // web search is unconditionally registered in the tool set.
         // Only the result/timeout budget knobs remain environment-configurable.
-        if std::env::var_os("OPENHUMAN_WEB_SEARCH_ENABLED").is_some() {
+        if env.contains("OPENHUMAN_WEB_SEARCH_ENABLED") {
             log::warn!(
                 "[config] OPENHUMAN_WEB_SEARCH_ENABLED is deprecated and ignored — \
                  web search is always registered; provider/API-key overrides were removed."
             );
         }
 
-        if let Ok(max_results) = std::env::var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS")
-            .or_else(|_| std::env::var("WEB_SEARCH_MAX_RESULTS"))
+        if let Some(max_results) =
+            env.get_any(&["OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "WEB_SEARCH_MAX_RESULTS"])
         {
             if let Ok(max_results) = max_results.parse::<usize>() {
                 if (1..=10).contains(&max_results) {
@@ -653,9 +701,10 @@ impl Config {
             }
         }
 
-        if let Ok(timeout_secs) = std::env::var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS")
-            .or_else(|_| std::env::var("WEB_SEARCH_TIMEOUT_SECS"))
-        {
+        if let Some(timeout_secs) = env.get_any(&[
+            "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
+            "WEB_SEARCH_TIMEOUT_SECS",
+        ]) {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
                 if timeout_secs > 0 {
                     self.web_search.timeout_secs = timeout_secs;
@@ -663,8 +712,8 @@ impl Config {
             }
         }
 
-        let explicit_proxy_enabled = std::env::var("OPENHUMAN_PROXY_ENABLED")
-            .ok()
+        let explicit_proxy_enabled = env
+            .get("OPENHUMAN_PROXY_ENABLED")
             .as_deref()
             .and_then(parse_proxy_enabled);
         if let Some(enabled) = explicit_proxy_enabled {
@@ -672,27 +721,19 @@ impl Config {
         }
 
         let mut proxy_url_overridden = false;
-        if let Ok(proxy_url) =
-            std::env::var("OPENHUMAN_HTTP_PROXY").or_else(|_| std::env::var("HTTP_PROXY"))
-        {
+        if let Some(proxy_url) = env.get_any(&["OPENHUMAN_HTTP_PROXY", "HTTP_PROXY"]) {
             self.proxy.http_proxy = normalize_proxy_url_option(Some(&proxy_url));
             proxy_url_overridden = true;
         }
-        if let Ok(proxy_url) =
-            std::env::var("OPENHUMAN_HTTPS_PROXY").or_else(|_| std::env::var("HTTPS_PROXY"))
-        {
+        if let Some(proxy_url) = env.get_any(&["OPENHUMAN_HTTPS_PROXY", "HTTPS_PROXY"]) {
             self.proxy.https_proxy = normalize_proxy_url_option(Some(&proxy_url));
             proxy_url_overridden = true;
         }
-        if let Ok(proxy_url) =
-            std::env::var("OPENHUMAN_ALL_PROXY").or_else(|_| std::env::var("ALL_PROXY"))
-        {
+        if let Some(proxy_url) = env.get_any(&["OPENHUMAN_ALL_PROXY", "ALL_PROXY"]) {
             self.proxy.all_proxy = normalize_proxy_url_option(Some(&proxy_url));
             proxy_url_overridden = true;
         }
-        if let Ok(no_proxy) =
-            std::env::var("OPENHUMAN_NO_PROXY").or_else(|_| std::env::var("NO_PROXY"))
-        {
+        if let Some(no_proxy) = env.get_any(&["OPENHUMAN_NO_PROXY", "NO_PROXY"]) {
             self.proxy.no_proxy = normalize_no_proxy_list(vec![no_proxy]);
         }
 
@@ -703,7 +744,7 @@ impl Config {
             self.proxy.enabled = true;
         }
 
-        if let Ok(scope_raw) = std::env::var("OPENHUMAN_PROXY_SCOPE") {
+        if let Some(scope_raw) = env.get("OPENHUMAN_PROXY_SCOPE") {
             let trimmed = scope_raw.trim();
             if !trimmed.is_empty() {
                 match parse_proxy_scope(trimmed) {
@@ -715,7 +756,7 @@ impl Config {
             }
         }
 
-        if let Ok(services_raw) = std::env::var("OPENHUMAN_PROXY_SERVICES") {
+        if let Some(services_raw) = env.get("OPENHUMAN_PROXY_SERVICES") {
             self.proxy.services = normalize_service_list(vec![services_raw]);
         }
 
@@ -724,13 +765,23 @@ impl Config {
             self.proxy.enabled = false;
         }
 
-        if let Ok(tier_str) = std::env::var("OPENHUMAN_LOCAL_AI_TIER") {
+        if let Some(tier_str) = env.get("OPENHUMAN_LOCAL_AI_TIER") {
             let tier_str = tier_str.trim().to_ascii_lowercase();
             if !tier_str.is_empty() {
                 if let Some(tier) =
                     crate::openhuman::local_ai::presets::ModelTier::from_str_opt(&tier_str)
                 {
-                    if tier != crate::openhuman::local_ai::presets::ModelTier::Custom {
+                    if tier == crate::openhuman::local_ai::presets::ModelTier::Custom {
+                        tracing::warn!(
+                            tier = %tier_str,
+                            "ignoring custom OPENHUMAN_LOCAL_AI_TIER; only built-in presets are supported"
+                        );
+                    } else if !tier.is_mvp_allowed() {
+                        tracing::warn!(
+                            tier = %tier_str,
+                            "ignoring OPENHUMAN_LOCAL_AI_TIER outside the 1B local-model allowlist"
+                        );
+                    } else {
                         crate::openhuman::local_ai::presets::apply_preset_to_config(
                             &mut self.local_ai,
                             tier,
@@ -740,38 +791,38 @@ impl Config {
                 } else {
                     tracing::warn!(
                         tier = %tier_str,
-                        "ignoring invalid OPENHUMAN_LOCAL_AI_TIER (valid: ram_1gb, ram_2_4gb, ram_4_8gb, ram_8_16gb, ram_16_plus_gb)"
+                        "ignoring invalid OPENHUMAN_LOCAL_AI_TIER (valid: ram_2_4gb)"
                     );
                 }
             }
         }
 
         // Node runtime overrides
-        if let Ok(flag) = std::env::var("OPENHUMAN_NODE_ENABLED") {
+        if let Some(flag) = env.get("OPENHUMAN_NODE_ENABLED") {
             if let Some(enabled) = parse_env_bool("OPENHUMAN_NODE_ENABLED", &flag) {
                 self.node.enabled = enabled;
             }
         }
-        if let Ok(version) = std::env::var("OPENHUMAN_NODE_VERSION") {
+        if let Some(version) = env.get("OPENHUMAN_NODE_VERSION") {
             let trimmed = version.trim();
             if !trimmed.is_empty() {
                 self.node.version = trimmed.to_string();
             }
         }
-        if let Ok(dir) = std::env::var("OPENHUMAN_NODE_CACHE_DIR") {
+        if let Some(dir) = env.get("OPENHUMAN_NODE_CACHE_DIR") {
             let trimmed = dir.trim();
             if !trimmed.is_empty() {
                 self.node.cache_dir = trimmed.to_string();
             }
         }
-        if let Ok(flag) = std::env::var("OPENHUMAN_NODE_PREFER_SYSTEM") {
+        if let Some(flag) = env.get("OPENHUMAN_NODE_PREFER_SYSTEM") {
             if let Some(prefer_system) = parse_env_bool("OPENHUMAN_NODE_PREFER_SYSTEM", &flag) {
                 self.node.prefer_system = prefer_system;
             }
         }
 
-        let dsn_value = std::env::var("OPENHUMAN_SENTRY_DSN")
-            .ok()
+        let dsn_value = env
+            .get("OPENHUMAN_SENTRY_DSN")
             .or_else(|| option_env!("OPENHUMAN_SENTRY_DSN").map(|s| s.to_string()));
         if let Some(dsn) = dsn_value {
             let dsn = dsn.trim();
@@ -780,7 +831,7 @@ impl Config {
             }
         }
 
-        if let Ok(flag) = std::env::var("OPENHUMAN_ANALYTICS_ENABLED") {
+        if let Some(flag) = env.get("OPENHUMAN_ANALYTICS_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.observability.analytics_enabled = true,
@@ -790,7 +841,7 @@ impl Config {
         }
 
         // Learning subsystem overrides
-        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_ENABLED") {
+        if let Some(flag) = env.get("OPENHUMAN_LEARNING_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.learning.enabled = true,
@@ -798,7 +849,7 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_REFLECTION_ENABLED") {
+        if let Some(flag) = env.get("OPENHUMAN_LEARNING_REFLECTION_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.learning.reflection_enabled = true,
@@ -806,7 +857,7 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_USER_PROFILE_ENABLED") {
+        if let Some(flag) = env.get("OPENHUMAN_LEARNING_USER_PROFILE_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.learning.user_profile_enabled = true,
@@ -814,7 +865,7 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_TOOL_TRACKING_ENABLED") {
+        if let Some(flag) = env.get("OPENHUMAN_LEARNING_TOOL_TRACKING_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.learning.tool_tracking_enabled = true,
@@ -822,7 +873,7 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(source) = std::env::var("OPENHUMAN_LEARNING_REFLECTION_SOURCE") {
+        if let Some(source) = env.get("OPENHUMAN_LEARNING_REFLECTION_SOURCE") {
             let normalized = source.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "local" => {
@@ -841,19 +892,117 @@ impl Config {
                 }
             }
         }
-        if let Ok(val) = std::env::var("OPENHUMAN_LEARNING_MAX_REFLECTIONS_PER_SESSION") {
+        if let Some(val) = env.get("OPENHUMAN_LEARNING_MAX_REFLECTIONS_PER_SESSION") {
             if let Ok(max) = val.trim().parse::<usize>() {
                 self.learning.max_reflections_per_session = max;
             }
         }
-        if let Ok(val) = std::env::var("OPENHUMAN_LEARNING_MIN_TURN_COMPLEXITY") {
+        if let Some(val) = env.get("OPENHUMAN_LEARNING_MIN_TURN_COMPLEXITY") {
             if let Ok(min) = val.trim().parse::<usize>() {
                 self.learning.min_turn_complexity = min;
             }
         }
 
+        // Phase 4 memory-tree embedding overrides (#710). Setting the env
+        // var to an empty string explicitly clears the default — useful
+        // for CI and other environments that want to opt into the
+        // InertEmbedder fallback without editing config.toml.
+        if let Ok(endpoint) = std::env::var("OPENHUMAN_MEMORY_EMBED_ENDPOINT") {
+            let trimmed = endpoint.trim();
+            self.memory_tree.embedding_endpoint = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(model) = std::env::var("OPENHUMAN_MEMORY_EMBED_MODEL") {
+            let trimmed = model.trim();
+            self.memory_tree.embedding_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(val) = std::env::var("OPENHUMAN_MEMORY_EMBED_TIMEOUT_MS") {
+            if let Ok(timeout_ms) = val.trim().parse::<u64>() {
+                if timeout_ms > 0 {
+                    self.memory_tree.embedding_timeout_ms = Some(timeout_ms);
+                }
+            }
+        }
+        if let Ok(flag) = std::env::var("OPENHUMAN_MEMORY_EMBED_STRICT") {
+            if let Some(strict) = parse_env_bool("OPENHUMAN_MEMORY_EMBED_STRICT", &flag) {
+                self.memory_tree.embedding_strict = strict;
+            }
+        }
+
+        // LLM entity extractor overrides — set endpoint + model to route
+        // ingest scoring through Ollama NER (Phase 2 follow-up). Empty
+        // string explicitly clears (opts out).
+        if let Ok(endpoint) = std::env::var("OPENHUMAN_MEMORY_EXTRACT_ENDPOINT") {
+            let trimmed = endpoint.trim();
+            self.memory_tree.llm_extractor_endpoint = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(model) = std::env::var("OPENHUMAN_MEMORY_EXTRACT_MODEL") {
+            let trimmed = model.trim();
+            self.memory_tree.llm_extractor_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(val) = std::env::var("OPENHUMAN_MEMORY_EXTRACT_TIMEOUT_MS") {
+            if let Ok(ms) = val.trim().parse::<u64>() {
+                if ms > 0 {
+                    self.memory_tree.llm_extractor_timeout_ms = Some(ms);
+                }
+            }
+        }
+
+        // LLM summariser overrides — set endpoint + model to route
+        // bucket-seal summaries through Ollama instead of InertSummariser
+        // (Phase 3a real-summariser hook).
+        if let Ok(endpoint) = std::env::var("OPENHUMAN_MEMORY_SUMMARISE_ENDPOINT") {
+            let trimmed = endpoint.trim();
+            self.memory_tree.llm_summariser_endpoint = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(model) = std::env::var("OPENHUMAN_MEMORY_SUMMARISE_MODEL") {
+            let trimmed = model.trim();
+            self.memory_tree.llm_summariser_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(val) = std::env::var("OPENHUMAN_MEMORY_SUMMARISE_TIMEOUT_MS") {
+            if let Ok(ms) = val.trim().parse::<u64>() {
+                if ms > 0 {
+                    self.memory_tree.llm_summariser_timeout_ms = Some(ms);
+                }
+            }
+        }
+
+        // Phase MD-content: chunk body directory override. Empty string means
+        // "fall back to default", consistent with other memory_tree env vars.
+        if let Ok(dir) = std::env::var("OPENHUMAN_MEMORY_TREE_CONTENT_DIR") {
+            let trimmed = dir.trim();
+            self.memory_tree.content_dir = if trimmed.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(trimmed))
+            };
+        }
+
         // Auto-update overrides
-        if let Ok(flag) = std::env::var("OPENHUMAN_AUTO_UPDATE_ENABLED") {
+        if let Some(flag) = env.get("OPENHUMAN_AUTO_UPDATE_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.update.enabled = true,
@@ -861,14 +1010,14 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(val) = std::env::var("OPENHUMAN_AUTO_UPDATE_INTERVAL_MINUTES") {
+        if let Some(val) = env.get("OPENHUMAN_AUTO_UPDATE_INTERVAL_MINUTES") {
             if let Ok(minutes) = val.trim().parse::<u32>() {
                 self.update.interval_minutes = minutes;
             }
         }
 
         // Dictation overrides
-        if let Ok(flag) = std::env::var("OPENHUMAN_DICTATION_ENABLED") {
+        if let Some(flag) = env.get("OPENHUMAN_DICTATION_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.dictation.enabled = true,
@@ -876,13 +1025,13 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(hotkey) = std::env::var("OPENHUMAN_DICTATION_HOTKEY") {
+        if let Some(hotkey) = env.get("OPENHUMAN_DICTATION_HOTKEY") {
             let hotkey = hotkey.trim();
             if !hotkey.is_empty() {
                 self.dictation.hotkey = hotkey.to_string();
             }
         }
-        if let Ok(mode) = std::env::var("OPENHUMAN_DICTATION_ACTIVATION_MODE") {
+        if let Some(mode) = env.get("OPENHUMAN_DICTATION_ACTIVATION_MODE") {
             let normalized = mode.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "toggle" => {
@@ -901,7 +1050,7 @@ impl Config {
                 }
             }
         }
-        if let Ok(flag) = std::env::var("OPENHUMAN_DICTATION_LLM_REFINEMENT") {
+        if let Some(flag) = env.get("OPENHUMAN_DICTATION_LLM_REFINEMENT") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.dictation.llm_refinement = true,
@@ -909,7 +1058,7 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(flag) = std::env::var("OPENHUMAN_DICTATION_STREAMING") {
+        if let Some(flag) = env.get("OPENHUMAN_DICTATION_STREAMING") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.dictation.streaming = true,
@@ -917,14 +1066,14 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(val) = std::env::var("OPENHUMAN_DICTATION_STREAMING_INTERVAL_MS") {
+        if let Some(val) = env.get("OPENHUMAN_DICTATION_STREAMING_INTERVAL_MS") {
             if let Ok(ms) = val.trim().parse::<u64>() {
                 self.dictation.streaming_interval_ms = ms;
             }
         }
 
         // ── Context management overrides ───────────────────────────────
-        if let Ok(flag) = std::env::var("OPENHUMAN_CONTEXT_ENABLED") {
+        if let Some(flag) = env.get("OPENHUMAN_CONTEXT_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.context.enabled = true,
@@ -932,7 +1081,7 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(flag) = std::env::var("OPENHUMAN_CONTEXT_MICROCOMPACT_ENABLED") {
+        if let Some(flag) = env.get("OPENHUMAN_CONTEXT_MICROCOMPACT_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.context.microcompact_enabled = true,
@@ -940,7 +1089,7 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(flag) = std::env::var("OPENHUMAN_CONTEXT_AUTOCOMPACT_ENABLED") {
+        if let Some(flag) = env.get("OPENHUMAN_CONTEXT_AUTOCOMPACT_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => self.context.autocompact_enabled = true,
@@ -948,12 +1097,12 @@ impl Config {
                 _ => {}
             }
         }
-        if let Ok(val) = std::env::var("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES") {
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES") {
             if let Ok(n) = val.trim().parse::<usize>() {
                 self.context.tool_result_budget_bytes = n;
             }
         }
-        if let Ok(model) = std::env::var("OPENHUMAN_CONTEXT_SUMMARIZER_MODEL") {
+        if let Some(model) = env.get("OPENHUMAN_CONTEXT_SUMMARIZER_MODEL") {
             let model = model.trim();
             if !model.is_empty() {
                 self.context.summarizer_model = Some(model.to_string());
@@ -971,8 +1120,7 @@ impl Config {
         // value would have their env override silently clobbered by the
         // agent-field migration.
         let context_default = crate::openhuman::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;
-        let context_env_set =
-            std::env::var_os("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES").is_some();
+        let context_env_set = env.contains("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES");
         if !context_env_set
             && self.context.tool_result_budget_bytes == context_default
             && self.agent.tool_result_budget_bytes != context_default
@@ -985,12 +1133,6 @@ impl Config {
             );
             self.context.tool_result_budget_bytes = self.agent.tool_result_budget_bytes;
         }
-
-        if self.proxy.enabled && self.proxy.scope == ProxyScope::Environment {
-            self.proxy.apply_to_process_env();
-        }
-
-        set_runtime_proxy_config(self.proxy.clone());
     }
 
     pub async fn save(&self) -> Result<()> {
@@ -1073,358 +1215,5 @@ impl Config {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn read_active_user_returns_none_when_no_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert!(read_active_user_id(tmp.path()).is_none());
-    }
-
-    #[test]
-    fn read_active_user_returns_none_when_empty() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join(ACTIVE_USER_STATE_FILE), "").unwrap();
-        assert!(read_active_user_id(tmp.path()).is_none());
-    }
-
-    #[test]
-    fn read_active_user_returns_id_when_present() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_active_user_id(tmp.path(), "user-789").unwrap();
-        assert_eq!(
-            read_active_user_id(tmp.path()),
-            Some("user-789".to_string())
-        );
-    }
-
-    #[test]
-    fn write_and_clear_active_user_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
-
-        write_active_user_id(tmp.path(), "u-abc").unwrap();
-        assert_eq!(read_active_user_id(tmp.path()), Some("u-abc".to_string()));
-
-        clear_active_user(tmp.path()).unwrap();
-        assert!(read_active_user_id(tmp.path()).is_none());
-    }
-
-    #[test]
-    fn user_openhuman_dir_builds_correct_path() {
-        let root = PathBuf::from("/home/test/.openhuman");
-        let dir = user_openhuman_dir(&root, "user-123");
-        assert_eq!(dir, PathBuf::from("/home/test/.openhuman/users/user-123"));
-    }
-
-    #[tokio::test]
-    async fn resolve_dirs_uses_active_user_when_present() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let default_workspace = root.join("workspace");
-
-        // No active user → falls back to the pre-login user directory so
-        // memory/state/config are still encapsulated under users/.
-        let (oh_dir, ws_dir, source) = resolve_runtime_config_dirs(root, &default_workspace)
-            .await
-            .unwrap();
-        let expected_pre_login_dir = root.join("users").join(PRE_LOGIN_USER_ID);
-        assert_eq!(oh_dir, expected_pre_login_dir);
-        assert_eq!(ws_dir, expected_pre_login_dir.join("workspace"));
-        assert_eq!(source, ConfigResolutionSource::DefaultConfigDir);
-
-        // With active user → scopes to user dir.
-        write_active_user_id(root, "u-test").unwrap();
-        let (oh_dir, ws_dir, source) = resolve_runtime_config_dirs(root, &default_workspace)
-            .await
-            .unwrap();
-        let expected_user_dir = root.join("users").join("u-test");
-        assert_eq!(oh_dir, expected_user_dir);
-        assert_eq!(ws_dir, expected_user_dir.join("workspace"));
-        assert_eq!(source, ConfigResolutionSource::ActiveUser);
-    }
-
-    #[test]
-    fn pre_login_user_dir_is_under_users_tree() {
-        let root = PathBuf::from("/home/test/.openhuman");
-        let dir = pre_login_user_dir(&root);
-        assert_eq!(
-            dir,
-            PathBuf::from("/home/test/.openhuman/users").join(PRE_LOGIN_USER_ID)
-        );
-    }
-
-    #[test]
-    fn default_root_dir_name_uses_staging_suffix_for_staging_env() {
-        let prior = std::env::var(crate::api::config::APP_ENV_VAR).ok();
-
-        std::env::set_var(crate::api::config::APP_ENV_VAR, "staging");
-        assert!(crate::api::config::is_staging_app_env(Some("staging")));
-        assert_eq!(default_root_dir_name(), ".openhuman-staging");
-
-        std::env::set_var(crate::api::config::APP_ENV_VAR, "production");
-        assert_eq!(default_root_dir_name(), ".openhuman");
-
-        match prior {
-            Some(value) => std::env::set_var(crate::api::config::APP_ENV_VAR, value),
-            None => std::env::remove_var(crate::api::config::APP_ENV_VAR),
-        }
-    }
-
-    // ── apply_env_overrides ────────────────────────────────────────
-
-    use crate::openhuman::config::TEST_ENV_LOCK as ENV_LOCK;
-
-    fn clear_env(keys: &[&str]) {
-        for key in keys {
-            unsafe {
-                std::env::remove_var(key);
-            }
-        }
-    }
-
-    #[test]
-    fn apply_env_overrides_picks_up_model() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env(&["OPENHUMAN_MODEL", "MODEL"]);
-        unsafe {
-            std::env::set_var("OPENHUMAN_MODEL", "gpt-5");
-        }
-        let mut cfg = Config::default();
-        cfg.apply_env_overrides();
-        assert_eq!(cfg.default_model.as_deref(), Some("gpt-5"));
-        unsafe {
-            std::env::remove_var("OPENHUMAN_MODEL");
-        }
-    }
-
-    #[test]
-    fn apply_env_overrides_validates_temperature_range() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env(&["OPENHUMAN_TEMPERATURE"]);
-        let mut cfg = Config::default();
-        cfg.default_temperature = 0.5;
-        unsafe {
-            std::env::set_var("OPENHUMAN_TEMPERATURE", "1.2");
-        }
-        cfg.apply_env_overrides();
-        assert!((cfg.default_temperature - 1.2).abs() < f64::EPSILON);
-
-        // Out of range — should be ignored.
-        unsafe {
-            std::env::set_var("OPENHUMAN_TEMPERATURE", "5");
-        }
-        cfg.apply_env_overrides();
-        assert!((cfg.default_temperature - 1.2).abs() < f64::EPSILON);
-
-        // Garbage value — ignored.
-        unsafe {
-            std::env::set_var("OPENHUMAN_TEMPERATURE", "not-a-number");
-        }
-        cfg.apply_env_overrides();
-        assert!((cfg.default_temperature - 1.2).abs() < f64::EPSILON);
-        unsafe {
-            std::env::remove_var("OPENHUMAN_TEMPERATURE");
-        }
-    }
-
-    #[test]
-    fn apply_env_overrides_reasoning_enabled_parses_truthy_falsy() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env(&["OPENHUMAN_REASONING_ENABLED", "REASONING_ENABLED"]);
-        let mut cfg = Config::default();
-        cfg.runtime.reasoning_enabled = None;
-
-        unsafe {
-            std::env::set_var("OPENHUMAN_REASONING_ENABLED", "yes");
-        }
-        cfg.apply_env_overrides();
-        assert_eq!(cfg.runtime.reasoning_enabled, Some(true));
-
-        unsafe {
-            std::env::set_var("OPENHUMAN_REASONING_ENABLED", "off");
-        }
-        cfg.apply_env_overrides();
-        assert_eq!(cfg.runtime.reasoning_enabled, Some(false));
-
-        // Unknown value — leaves field unchanged.
-        unsafe {
-            std::env::set_var("OPENHUMAN_REASONING_ENABLED", "maybe");
-        }
-        cfg.apply_env_overrides();
-        assert_eq!(cfg.runtime.reasoning_enabled, Some(false));
-        unsafe {
-            std::env::remove_var("OPENHUMAN_REASONING_ENABLED");
-        }
-    }
-
-    #[test]
-    fn apply_env_overrides_web_search_limits_only() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env(&[
-            "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-            "WEB_SEARCH_MAX_RESULTS",
-            "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-            "WEB_SEARCH_TIMEOUT_SECS",
-        ]);
-        let mut cfg = Config::default();
-        unsafe {
-            std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "5");
-            std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "20");
-        }
-        cfg.apply_env_overrides();
-        assert_eq!(cfg.web_search.max_results, 5);
-        assert_eq!(cfg.web_search.timeout_secs, 20);
-        clear_env(&[
-            "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-            "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-        ]);
-    }
-
-    #[test]
-    fn apply_env_overrides_web_search_max_results_and_timeout_clamped() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env(&[
-            "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-            "WEB_SEARCH_MAX_RESULTS",
-            "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-            "WEB_SEARCH_TIMEOUT_SECS",
-        ]);
-        let mut cfg = Config::default();
-        cfg.web_search.max_results = 3;
-        cfg.web_search.timeout_secs = 10;
-
-        // Valid values apply.
-        unsafe {
-            std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "5");
-            std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "20");
-        }
-        cfg.apply_env_overrides();
-        assert_eq!(cfg.web_search.max_results, 5);
-        assert_eq!(cfg.web_search.timeout_secs, 20);
-
-        // Out-of-range (>10 for max_results, 0 for timeout) — ignored.
-        unsafe {
-            std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "999");
-            std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "0");
-        }
-        cfg.apply_env_overrides();
-        assert_eq!(
-            cfg.web_search.max_results, 5,
-            "out-of-range must be ignored"
-        );
-        assert_eq!(cfg.web_search.timeout_secs, 20);
-        clear_env(&[
-            "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-            "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-        ]);
-    }
-
-    #[test]
-    fn apply_env_overrides_picks_up_sentry_dsn() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env(&["OPENHUMAN_SENTRY_DSN"]);
-        let mut cfg = Config::default();
-        unsafe {
-            std::env::set_var("OPENHUMAN_SENTRY_DSN", "https://token@sentry.io/1");
-        }
-        cfg.apply_env_overrides();
-        assert_eq!(
-            cfg.observability.sentry_dsn.as_deref(),
-            Some("https://token@sentry.io/1")
-        );
-        clear_env(&["OPENHUMAN_SENTRY_DSN"]);
-    }
-
-    // ── EnvLookup seam for resolve_runtime_config_dirs ─────────────
-
-    #[derive(Default)]
-    struct MapEnv(std::collections::HashMap<String, String>);
-
-    impl MapEnv {
-        fn with(mut self, k: &str, v: &str) -> Self {
-            self.0.insert(k.to_string(), v.to_string());
-            self
-        }
-    }
-
-    impl EnvLookup for MapEnv {
-        fn get(&self, key: &str) -> Option<String> {
-            self.0.get(key).cloned()
-        }
-    }
-
-    #[tokio::test]
-    async fn env_workspace_override_wins_via_seam() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        // Active user would otherwise win — confirm env override takes precedence.
-        write_active_user_id(root, "u-active").unwrap();
-
-        let ws_root = tempfile::tempdir().unwrap();
-        let ws_path = ws_root.path().join("my-workspace");
-        let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", ws_path.to_str().unwrap());
-
-        let default_workspace = root.join("workspace");
-        let (oh_dir, ws_dir, source) =
-            resolve_runtime_config_dirs_with_env(root, &default_workspace, &env)
-                .await
-                .unwrap();
-
-        let (expected_oh, expected_ws) = resolve_config_dir_for_workspace(&ws_path);
-        assert_eq!(source, ConfigResolutionSource::EnvWorkspace);
-        assert_eq!(oh_dir, expected_oh);
-        assert_eq!(ws_dir, expected_ws);
-    }
-
-    #[tokio::test]
-    async fn empty_env_workspace_falls_through_to_active_user() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        write_active_user_id(root, "u-fallthrough").unwrap();
-        let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", "");
-
-        let default_workspace = root.join("workspace");
-        let (oh_dir, ws_dir, source) =
-            resolve_runtime_config_dirs_with_env(root, &default_workspace, &env)
-                .await
-                .unwrap();
-
-        let expected = root.join("users").join("u-fallthrough");
-        assert_eq!(source, ConfigResolutionSource::ActiveUser);
-        assert_eq!(oh_dir, expected);
-        assert_eq!(ws_dir, expected.join("workspace"));
-    }
-
-    #[tokio::test]
-    async fn missing_env_workspace_uses_pre_login_default() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let env = MapEnv::default(); // no OPENHUMAN_WORKSPACE, no active user
-
-        let default_workspace = root.join("workspace");
-        let (oh_dir, ws_dir, source) =
-            resolve_runtime_config_dirs_with_env(root, &default_workspace, &env)
-                .await
-                .unwrap();
-
-        let expected = root.join("users").join(PRE_LOGIN_USER_ID);
-        assert_eq!(source, ConfigResolutionSource::DefaultConfigDir);
-        assert_eq!(oh_dir, expected);
-        assert_eq!(ws_dir, expected.join("workspace"));
-    }
-
-    // ── resolve_config_dir_for_workspace ───────────────────────────
-
-    #[test]
-    fn resolve_config_dir_for_workspace_returns_parent_and_workspace() {
-        let ws = PathBuf::from("/home/test/.openhuman/workspace");
-        let (config_dir, workspace_dir) = resolve_config_dir_for_workspace(&ws);
-        // Config dir is the parent of workspace.
-        assert!(
-            config_dir.ends_with(".openhuman")
-                || config_dir == PathBuf::from("/home/test/.openhuman")
-        );
-        assert!(workspace_dir.ends_with("workspace"));
-    }
-}
+#[path = "load_tests.rs"]
+mod tests;

@@ -7,6 +7,7 @@ mod loader;
 pub mod archivist;
 pub mod code_executor;
 pub mod critic;
+pub mod help;
 pub mod integrations_agent;
 pub mod morning_briefing;
 pub mod orchestrator;

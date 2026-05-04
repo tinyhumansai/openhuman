@@ -5,7 +5,8 @@ use super::super::context::{
 use super::super::runtime::process_channel_message;
 use super::super::{traits, Channel};
 use super::common::{HistoryCaptureProvider, NoopMemory, RecordingChannel};
-use crate::openhuman::memory::{embeddings::NoopEmbedding, Memory, MemoryCategory, UnifiedMemory};
+use crate::openhuman::embeddings::NoopEmbedding;
+use crate::openhuman::memory::{Memory, MemoryCategory, UnifiedMemory};
 use crate::openhuman::providers;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

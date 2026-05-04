@@ -95,6 +95,11 @@ impl SocketManager {
         *self.shared.webhook_router.write() = Some(router);
     }
 
+    /// Get the webhook router, if one has been set.
+    pub fn webhook_router(&self) -> Option<Arc<WebhookRouter>> {
+        self.shared.webhook_router.read().clone()
+    }
+
     /// Get the current socket state (status, ID, error).
     pub fn get_state(&self) -> SocketState {
         SocketState {

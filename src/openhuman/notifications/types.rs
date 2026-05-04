@@ -76,6 +76,7 @@ pub struct IntegrationNotification {
     /// Provider slug: `"gmail"`, `"slack"`, `"whatsapp"`, etc.
     pub provider: String,
     /// Webview account id if the notification came from an embedded account.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
     /// Short subject / title text.
     pub title: String,
@@ -84,16 +85,20 @@ pub struct IntegrationNotification {
     /// Full raw event payload from the recipe for downstream use.
     pub raw_payload: serde_json::Value,
     /// 0.0–1.0 importance score produced by the triage pipeline (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub importance_score: Option<f32>,
     /// Triage action string: `"drop"` / `"acknowledge"` / `"react"` / `"escalate"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub triage_action: Option<String>,
     /// One-sentence justification from the classifier.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub triage_reason: Option<String>,
     /// Lifecycle status.
     pub status: NotificationStatus,
     /// Wall-clock time the notification arrived.
     pub received_at: DateTime<Utc>,
     /// Wall-clock time triage completed.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scored_at: Option<DateTime<Utc>>,
 }
 
@@ -119,6 +124,16 @@ impl Default for NotificationSettings {
             route_to_orchestrator: true,
         }
     }
+}
+
+/// Aggregate statistics for the notification intelligence pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationStats {
+    pub total: i64,
+    pub unread: i64,
+    pub unscored: i64,
+    pub by_provider: std::collections::HashMap<String, i64>,
+    pub by_action: std::collections::HashMap<String, i64>,
 }
 
 /// Payload for the `notification_ingest` RPC endpoint.

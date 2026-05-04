@@ -352,6 +352,9 @@ mod tests {
         // glued the conversation context in front of the raw text when
         // the LLM ran. If the global state raced away from "ready" the
         // call short-circuits to raw — still valid, just the other branch.
+        let _g = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         #[derive(serde::Deserialize)]
         struct Body {
             prompt: String,
@@ -388,6 +391,9 @@ mod tests {
         // "Conversation context:" header regardless of which branch
         // runs — the LLM path uses the raw-text-only prompt, and the
         // short-circuit path never builds a prompt at all.
+        let _g = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         #[derive(serde::Deserialize)]
         struct Body {
             prompt: String,

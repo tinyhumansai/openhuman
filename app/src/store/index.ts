@@ -10,16 +10,21 @@ import {
   REGISTER,
   REHYDRATE,
 } from 'redux-persist';
-import storage from 'redux-persist/lib/storage';
 
 import { IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
 import notificationReducer from './notificationSlice';
-import notificationsReducer from './notificationsSlice';
+import providerSurfacesReducer from './providerSurfaceSlice';
 import socketReducer from './socketSlice';
 import threadReducer from './threadSlice';
+import { userScopedStorage } from './userScopedStorage';
+
+// Persisted slices write through `userScopedStorage` so each user's blob
+// lives at `${userId}:persist:<key>` instead of a single per-device blob
+// that leaks across users on logout/login (#900).
+const storage = userScopedStorage;
 
 const channelConnectionsPersistConfig = {
   key: 'channelConnections',
@@ -47,15 +52,22 @@ const notificationPersistConfig = {
 };
 const persistedNotificationReducer = persistReducer(notificationPersistConfig, notificationReducer);
 
+// Persist only the user's last-viewed thread id so a reload resumes where
+// they were instead of falling through to "create a new thread". The
+// thread list and per-thread message caches are re-fetched from the core
+// on boot, so we deliberately don't persist them.
+const threadPersistConfig = { key: 'thread', storage, whitelist: ['selectedThreadId'] };
+const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer);
+
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
-    thread: threadReducer,
+    thread: persistedThreadReducer,
     chatRuntime: chatRuntimeReducer,
     channelConnections: persistedChannelConnectionsReducer,
     accounts: persistedAccountsReducer,
     notifications: persistedNotificationReducer,
-    integrationNotifications: notificationsReducer,
+    providerSurfaces: providerSurfacesReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({
@@ -71,6 +83,14 @@ export const store = configureStore({
 });
 
 export const persistor = persistStore(store);
+
+// Expose the store on `window` so WDIO E2E specs can read Redux state directly
+// to assert backing-state changes (see app/test/e2e/specs/*.spec.ts). The store
+// holds no secrets that aren't already in the renderer's memory; this only
+// surfaces the existing handle under a stable, namespaced key.
+if (typeof window !== 'undefined') {
+  (window as unknown as { __OPENHUMAN_STORE__?: typeof store }).__OPENHUMAN_STORE__ = store;
+}
 
 export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;

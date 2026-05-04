@@ -8,6 +8,8 @@ export interface TunnelRegistration {
   skill_id: string;
   tunnel_name: string | null;
   backend_tunnel_id: string | null;
+  /** Optional agent definition ID for agent-type tunnels. */
+  agent_id?: string | null;
 }
 
 export interface WebhookActivityEntry {

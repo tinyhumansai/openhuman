@@ -24,6 +24,66 @@ import {
 vi.stubEnv('DEV', true);
 vi.stubEnv('MODE', 'test');
 
+function createStorageMock(): Storage {
+  const store = new Map<string, string>();
+  return {
+    get length() {
+      return store.size;
+    },
+    clear() {
+      store.clear();
+    },
+    getItem(key: string) {
+      return store.has(key) ? store.get(key)! : null;
+    },
+    key(index: number) {
+      return Array.from(store.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      store.delete(key);
+    },
+    setItem(key: string, value: string) {
+      store.set(String(key), String(value));
+    },
+  };
+}
+
+function ensureStorage(name: 'localStorage' | 'sessionStorage') {
+  const current = globalThis[name];
+  if (
+    current &&
+    typeof current.getItem === 'function' &&
+    typeof current.setItem === 'function' &&
+    typeof current.removeItem === 'function' &&
+    typeof current.clear === 'function'
+  ) {
+    return;
+  }
+
+  Object.defineProperty(globalThis, name, {
+    value: createStorageMock(),
+    configurable: true,
+    writable: true,
+  });
+}
+
+ensureStorage('localStorage');
+ensureStorage('sessionStorage');
+
+// Polyfill ResizeObserver for cmdk/Radix components in jsdom
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
+// Polyfill scrollIntoView for cmdk in jsdom
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function () {};
+}
+
 // Mock Tauri APIs (not available in test env)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn(() => false) }));
 
@@ -58,12 +118,16 @@ vi.mock('../utils/tauriCommands', () => ({
 // Mock the config module
 vi.mock('../utils/config', () => ({
   CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
+  CORE_RPC_TIMEOUT_MS: 30_000,
   IS_DEV: true,
+  IS_PROD: false,
   DEV_FORCE_ONBOARDING: false,
   SKILLS_GITHUB_REPO: 'test/skills',
   SENTRY_DSN: undefined,
   BACKEND_URL: 'http://localhost:5005',
   TELEGRAM_BOT_USERNAME: 'openhuman_bot',
+  LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
+  APP_VERSION: '0.0.0-test',
   DEV_JWT_TOKEN: undefined,
 }));
 

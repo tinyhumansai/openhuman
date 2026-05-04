@@ -139,6 +139,7 @@ impl EventHandler for ProactiveMessageSubscriber {
             delta_kind: None,
             tool_call_id: None,
             citations: None,
+            subagent: None,
         });
 
         // 2. If an active external channel is configured, deliver there too.
@@ -309,6 +310,7 @@ mod tests {
 
         sub.handle(&DomainEvent::CronJobTriggered {
             job_id: "j".into(),
+            job_name: "test-job".into(),
             job_type: "agent".into(),
         })
         .await;

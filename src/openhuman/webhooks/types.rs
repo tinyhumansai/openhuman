@@ -64,6 +64,11 @@ pub struct TunnelRegistration {
     /// Backend MongoDB `_id` for CRUD operations.
     #[serde(default)]
     pub backend_tunnel_id: Option<String>,
+    /// Optional agent ID for agent-type tunnels. Set when
+    /// `target_kind == "agent"` to identify which agent definition
+    /// should handle incoming requests on this tunnel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
 }
 
 fn default_webhook_target_kind() -> String {
@@ -356,6 +361,7 @@ mod tests {
                 skill_id: "s".into(),
                 tunnel_name: None,
                 backend_tunnel_id: None,
+                agent_id: None,
             }],
         };
         let back: WebhookDebugRegistrationsResult =

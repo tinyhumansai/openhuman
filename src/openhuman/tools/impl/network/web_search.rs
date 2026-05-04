@@ -123,15 +123,20 @@ impl Tool for WebSearchTool {
             "[web_search] backend parallel search"
         );
 
+        // Body matches `parallelSearchSchema` in backend-2. The legacy
+        // `numResults` / `maxCharactersPerExcerpt` aliases still work, but
+        // current fields are `maxResults` / `maxCharsPerResult`. Also dropping
+        // `timeoutSecs` — the validator does not declare it and Parallel's
+        // per-mode deadlines drive timing on the upstream side.
+        let _ = self.timeout_secs;
         let body = json!({
             "objective": query,
             "searchQueries": [query],
             "mode": "fast",
             "excerpts": {
-                "numResults": self.max_results,
-                "maxCharactersPerExcerpt": 500
-            },
-            "timeoutSecs": self.timeout_secs
+                "maxResults": self.max_results,
+                "maxCharsPerResult": 500
+            }
         });
 
         let resp = client

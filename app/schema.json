@@ -1457,34 +1457,6 @@
       ]
     },
     {
-      "description": "Suggest questions for provided context.",
-      "function": "suggest_questions",
-      "inputs": [
-        {
-          "comment": "Context text.",
-          "name": "context",
-          "required": false,
-          "ty": { "Option": "String" }
-        },
-        {
-          "comment": "Alternative context as lines.",
-          "name": "lines",
-          "required": false,
-          "ty": { "Option": { "Array": "String" } }
-        }
-      ],
-      "method": "openhuman.local_ai_suggest_questions",
-      "namespace": "local_ai",
-      "outputs": [
-        {
-          "comment": "Suggested questions payload.",
-          "name": "suggestions",
-          "required": true,
-          "ty": "Json"
-        }
-      ]
-    },
-    {
       "description": "Summarize text with local AI model.",
       "function": "summarize",
       "inputs": [

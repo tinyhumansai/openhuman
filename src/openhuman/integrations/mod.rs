@@ -8,13 +8,21 @@ pub mod apify;
 pub mod client;
 pub mod google_places;
 pub mod parallel;
+pub mod stock_prices;
 pub mod twilio;
 pub mod types;
 
 pub use apify::{ApifyGetRunResultsTool, ApifyGetRunStatusTool, ApifyRunActorTool};
 pub use client::{build_client, IntegrationClient};
 pub use google_places::{GooglePlacesDetailsTool, GooglePlacesSearchTool};
-pub use parallel::{ParallelExtractTool, ParallelSearchTool};
+pub use parallel::{
+    ParallelChatTool, ParallelDatasetTool, ParallelEnrichTool, ParallelExtractTool,
+    ParallelResearchTool, ParallelSearchTool,
+};
+pub use stock_prices::{
+    StockCommodityTool, StockCryptoSeriesTool, StockExchangeRateTool, StockOptionsTool,
+    StockQuoteTool,
+};
 pub use twilio::TwilioCallTool;
 pub use types::{
     BackendResponse, IntegrationPricing, IntegrationPricingEntry, PricingIntegrations, ToolScope,

@@ -108,7 +108,12 @@ echo "Wrote E2E config.toml with api_url=http://127.0.0.1:${E2E_MOCK_PORT}"
 DIST_JS="$(ls dist/assets/index-*.js 2>/dev/null | head -1)"
 if [ -z "$DIST_JS" ]; then
   echo "ERROR: No frontend bundle found at dist/assets/index-*.js." >&2
-  echo "       Run 'yarn test:e2e:build' to build the app before running E2E tests." >&2
+  echo " Run 'pnpm test:e2e:build' to build the app before running E2E tests." >&2
+  exit 1
+fi
+if ! grep -q "127.0.0.1:${E2E_MOCK_PORT}" "$DIST_JS"; then
+  echo "ERROR: frontend bundle does NOT contain mock server URL (127.0.0.1:${E2E_MOCK_PORT})." >&2
+  echo " Run 'pnpm test:e2e:build' to rebuild with the mock URL." >&2
   exit 1
 fi
 if ! grep -q "127.0.0.1:${E2E_MOCK_PORT}" "$DIST_JS"; then
@@ -181,4 +186,4 @@ else
 fi
 
 echo "Running E2E spec ($SPEC)..."
-npx wdio run test/wdio.conf.ts --spec "$SPEC"
+pnpm exec wdio run test/wdio.conf.ts --spec "$SPEC"

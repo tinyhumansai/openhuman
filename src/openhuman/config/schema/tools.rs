@@ -149,6 +149,75 @@ fn default_http_timeout_secs() -> u64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CurlConfig {
+    /// Subdirectory under `workspace_dir` where downloads land. Inputs
+    /// are resolved relative to this root; absolute paths and `..`
+    /// segments are rejected.
+    #[serde(default = "default_curl_dest_subdir")]
+    pub dest_subdir: String,
+    /// Hard byte ceiling per download. Streaming aborts and the
+    /// partial file is removed if exceeded.
+    #[serde(default = "default_curl_max_download_bytes")]
+    pub max_download_bytes: u64,
+    /// Per-request timeout in seconds.
+    #[serde(default = "default_curl_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_curl_dest_subdir() -> String {
+    "downloads".into()
+}
+
+fn default_curl_max_download_bytes() -> u64 {
+    50 * 1024 * 1024
+}
+
+fn default_curl_timeout_secs() -> u64 {
+    120
+}
+
+impl Default for CurlConfig {
+    fn default() -> Self {
+        Self {
+            dest_subdir: default_curl_dest_subdir(),
+            max_download_bytes: default_curl_max_download_bytes(),
+            timeout_secs: default_curl_timeout_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GitbooksConfig {
+    /// When `true`, register `gitbooks_search` and `gitbooks_get_page`.
+    #[serde(default = "defaults::default_true")]
+    pub enabled: bool,
+    /// MCP endpoint URL for the OpenHuman GitBook docs.
+    #[serde(default = "default_gitbooks_endpoint")]
+    pub endpoint: String,
+    /// Per-request timeout in seconds.
+    #[serde(default = "default_gitbooks_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_gitbooks_endpoint() -> String {
+    "https://tinyhumans.gitbook.io/openhuman/~gitbook/mcp".into()
+}
+
+fn default_gitbooks_timeout_secs() -> u64 {
+    30
+}
+
+impl Default for GitbooksConfig {
+    fn default() -> Self {
+        Self {
+            enabled: defaults::default_true(),
+            endpoint: default_gitbooks_endpoint(),
+            timeout_secs: default_gitbooks_timeout_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WebSearchConfig {
     #[serde(default = "default_web_search_max_results")]
     pub max_results: usize,
@@ -265,4 +334,8 @@ pub struct IntegrationsConfig {
     /// Parallel web search & content extraction integration.
     #[serde(default)]
     pub parallel: IntegrationToggle,
+
+    /// Stock-price / market-data integration (Alpha Vantage on the backend).
+    #[serde(default)]
+    pub stock_prices: IntegrationToggle,
 }

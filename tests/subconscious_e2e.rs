@@ -59,7 +59,7 @@ async fn ingest_doc(
 #[tokio::test]
 #[ignore] // requires running Ollama
 async fn two_tick_e2e_with_real_ollama() {
-    use openhuman_core::openhuman::memory::embeddings::NoopEmbedding;
+    use openhuman_core::openhuman::embeddings::NoopEmbedding;
     use openhuman_core::openhuman::memory::{MemoryClient, UnifiedMemory};
     use openhuman_core::openhuman::subconscious::store;
 

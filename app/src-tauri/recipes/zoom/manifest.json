@@ -1,0 +1,7 @@
+{
+  "id": "zoom",
+  "name": "Zoom",
+  "version": "0.1.0",
+  "serviceURL": "https://zoom.us/",
+  "icon": "icon.svg"
+}

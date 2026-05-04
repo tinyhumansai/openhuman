@@ -7,10 +7,10 @@
 
 use crate::openhuman::config::Config;
 
-pub(crate) const DEFAULT_OLLAMA_MODEL: &str = "gemma3:4b-it-qat";
-pub(crate) const DEFAULT_OLLAMA_VISION_MODEL: &str = "gemma3:4b-it-qat";
+pub(crate) const DEFAULT_OLLAMA_MODEL: &str = "gemma3:1b-it-qat";
+pub(crate) const DEFAULT_OLLAMA_VISION_MODEL: &str = "";
 pub(crate) const DEFAULT_LOW_VISION_MODEL: &str = "moondream:1.8b-v2-q4_K_S";
-pub(crate) const DEFAULT_OLLAMA_EMBED_MODEL: &str = "nomic-embed-text:latest";
+pub(crate) const DEFAULT_OLLAMA_EMBED_MODEL: &str = "all-minilm:latest";
 
 /// Chat models allowed in the current MVP build (2–4 GB tier only).
 /// Any resolved chat model ID not listed here is redirected to `MVP_DEFAULT_CHAT_MODEL`.

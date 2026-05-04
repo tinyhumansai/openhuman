@@ -1,64 +1,48 @@
+---
 name: Type Check
-
 on:
   push:
     branches: [main]
   pull_request:
-
 permissions:
   contents: read
   pull-requests: read
-
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref
+    || github.ref }}
   cancel-in-progress: true
-
 jobs:
   typecheck:
     name: Type Check TypeScript
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
-      - name: Setup Node.js 24.x
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.x
-          cache: "yarn"
-
-      - name: Cache node modules
-        id: yarn-cache
+      - name: Cache pnpm store
         uses: actions/cache@v4
         with:
-          path: node_modules
-          key: ${{ runner.os }}-typecheck-${{ hashFiles('**/yarn.lock') }}
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-typecheck-
-            ${{ runner.os }}-test-
-            ${{ runner.os }}-build-
-
+            pnpm-store-${{ runner.os }}-
       - name: Install dependencies
-        if: steps.yarn-cache.outputs.cache-hit != 'true'
-        run: yarn install --frozen-lockfile
-
+        run: pnpm install --frozen-lockfile
       - name: Type check TypeScript files
-        run: yarn workspace openhuman-app compile
+        run: pnpm --filter openhuman-app compile
         env:
           NODE_ENV: test
-
       - name: Check Prettier formatting
-        run: yarn workspace openhuman-app format:check
+        run: pnpm --filter openhuman-app format:check
         env:
           NODE_ENV: test
-
       - name: Run ESLint
-        run: yarn workspace openhuman-app lint
+        run: pnpm --filter openhuman-app lint
         env:
           NODE_ENV: test
-
   rust-quality:
     name: Rust Quality (fmt + clippy)
     runs-on: ubuntu-22.04
@@ -69,19 +53,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             . -> target
           cache-on-failure: true
-
-      - name: Install cmake (for whisper-rs)
-        run: apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
-
       - name: Check formatting (cargo fmt)
         run: cargo fmt --all -- --check
-
       - name: Run clippy (core crate)
         run: cargo clippy -p openhuman

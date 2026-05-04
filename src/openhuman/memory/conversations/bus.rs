@@ -1,3 +1,7 @@
+//! Event-bus subscriber that mirrors inbound channel messages into the
+//! workspace-backed conversation store, so non-web channels (Slack, Telegram,
+//! etc.) persist alongside UI-driven threads.
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -169,6 +173,7 @@ fn persist_channel_turn(
             id: thread_id.clone(),
             title,
             created_at: created_at.clone(),
+            labels: Some(vec!["work".to_string()]),
         },
     )?;
 

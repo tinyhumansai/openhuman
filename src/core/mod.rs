@@ -8,6 +8,7 @@ use serde::Serialize;
 
 pub mod agent_cli;
 pub mod all;
+pub mod auth;
 pub mod autocomplete_cli_adapter;
 pub mod cli;
 pub mod dispatch;

@@ -1,10 +1,15 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { isWelcomeLocked } from '../lib/coreState/store';
 import { useCoreState } from '../providers/CoreStateProvider';
 import { useAppSelector } from '../store/hooks';
 import { selectUnreadCount } from '../store/notificationSlice';
 import { isAccountsFullscreen } from '../utils/accountsFullscreen';
+import { APP_ENVIRONMENT } from '../utils/config';
+
+/** /human is mascot work-in-progress — only surface it pre-prod. */
+const HUMAN_TAB_ENABLED = APP_ENVIRONMENT !== 'production';
 
 const tabs = [
   {
@@ -18,6 +23,21 @@ const tabs = [
           strokeLinejoin="round"
           strokeWidth={1.8}
           d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a2 2 0 01-2-2v-4a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2z"
+        />
+      </svg>
+    ),
+  },
+  {
+    id: 'human',
+    label: 'Human',
+    path: '/human',
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14c-4 0-7 2.5-7 6h14c0-3.5-3-6-7-6z"
         />
       </svg>
     ),
@@ -52,9 +72,10 @@ const tabs = [
       </svg>
     ),
   },
+  // Memory tab hidden until Intelligence feature is ready (#976)
   {
     id: 'intelligence',
-    label: 'Intelligence',
+    label: 'Memory',
     path: '/intelligence',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -138,6 +159,13 @@ const BottomTabBar = () => {
     return null;
   }
 
+  // Welcome lockdown (#883) — hide the bottom nav entirely while the
+  // chat-based welcome-agent flow is still in progress so the user
+  // cannot navigate away from the welcome conversation.
+  if (isWelcomeLocked(snapshot)) {
+    return null;
+  }
+
   // On /accounts we want as much real estate as possible for the embedded
   // webview — but *only* when a real account (WhatsApp, …) is selected.
   // The Agent entry keeps the tab bar visible so chatting with the agent
@@ -181,36 +209,45 @@ const BottomTabBar = () => {
         onBlur={e => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setRevealed(false);
         }}>
-        <nav className="pointer-events-auto inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
-          {tabs.map(tab => {
-            const active = isActive(tab.path);
-            const showBadge = tab.id === 'notifications' && unreadCount > 0;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => navigate(tab.path)}
-                className={`relative flex items-center gap-2 px-4 py-2 rounded-sm text-sm transition-colors duration-150 cursor-pointer ${
-                  active
-                    ? 'bg-white text-stone-900 font-semibold shadow-sm'
-                    : 'bg-transparent text-stone-500 hover:bg-stone-300/50 hover:text-stone-700'
-                }`}
-                aria-label={
-                  tab.id === 'notifications' && unreadCount > 0
-                    ? `${tab.label} (${unreadCount} unread)`
-                    : tab.label
-                }>
-                <span className="relative inline-flex">
-                  {tab.icon}
-                  {showBadge && (
-                    <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full bg-coral-500 text-[9px] font-bold text-white flex items-center justify-center leading-none">
-                      {unreadCount > 9 ? '9+' : unreadCount}
-                    </span>
-                  )}
-                </span>
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
+        <nav className="pointer-events-auto inline-flex items-center gap-1 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
+          {tabs
+            .filter(tab => tab.id !== 'human' || HUMAN_TAB_ENABLED)
+            .map(tab => {
+              const active = isActive(tab.path);
+              const showBadge = tab.id === 'notifications' && unreadCount > 0;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => navigate(tab.path)}
+                  className={`group relative flex items-center px-2 py-2 rounded-sm text-sm transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
+                    active
+                      ? 'bg-white text-stone-900 font-semibold shadow-sm'
+                      : 'bg-transparent text-stone-500 hover:bg-stone-300/50 hover:text-stone-700'
+                  }`}
+                  aria-label={
+                    tab.id === 'notifications' && unreadCount > 0
+                      ? `${tab.label} (${unreadCount} unread)`
+                      : tab.label
+                  }>
+                  <span className="relative inline-flex flex-shrink-0">
+                    {tab.icon}
+                    {showBadge && (
+                      <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full bg-coral-500 text-[9px] font-bold text-white flex items-center justify-center leading-none">
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className={`overflow-hidden whitespace-nowrap transition-[max-width,margin-left,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                      active
+                        ? 'max-w-[160px] ml-2 opacity-100'
+                        : 'max-w-0 ml-0 opacity-0 group-hover:max-w-[160px] group-hover:ml-2 group-hover:opacity-100 group-focus-visible:max-w-[160px] group-focus-visible:ml-2 group-focus-visible:opacity-100'
+                    }`}>
+                    {tab.label}
+                  </span>
+                </button>
+              );
+            })}
         </nav>
       </div>
     </div>

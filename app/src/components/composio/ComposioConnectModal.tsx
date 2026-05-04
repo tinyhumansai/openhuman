@@ -30,6 +30,7 @@ import {
 } from '../../lib/composio/types';
 import { openUrl } from '../../utils/openUrl';
 import type { ComposioToolkitMeta } from './toolkitMeta';
+import TriggerToggles from './TriggerToggles';
 
 type Phase = 'idle' | 'authorizing' | 'waiting' | 'connected' | 'disconnecting' | 'error';
 
@@ -315,9 +316,6 @@ export default function ComposioConnectModal({
                 <h2 id="composio-setup-title" className="text-base font-semibold text-stone-900">
                   {headerTitle}
                 </h2>
-                <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-md bg-primary-500/15 text-primary-600">
-                  composio
-                </span>
               </div>
               <p className="text-xs text-stone-400 mt-1.5 line-clamp-2">{toolkit.description}</p>
             </div>
@@ -343,9 +341,17 @@ export default function ComposioConnectModal({
           {phase === 'idle' && (
             <>
               <p className="text-sm text-stone-600">
-                Connect your {toolkit.name} account. We will open a browser window where you can
-                grant access, and then this app will detect the connection automatically.
+                Connect your {toolkit.name} account. We&apos;ll open a browser window, you approve
+                access there, and this app will detect the connection automatically.
               </p>
+              <div className="rounded-xl border border-stone-200 bg-stone-50 p-3">
+                <p className="mt-1 text-xs leading-relaxed text-stone-600">
+                  {toolkit.name} can expose{' '}
+                  <span className="font-medium">{toolkit.permissionLabel}</span>. After you connect,
+                  OpenHuman&apos;s own agent permissions are controlled below as read, write, and
+                  admin toggles.
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => void handleConnect()}
@@ -384,25 +390,42 @@ export default function ComposioConnectModal({
             <>
               <div className="flex items-center gap-2 text-sm text-sage-700">
                 <div className="w-2 h-2 rounded-full bg-sage-500" />
-                {toolkit.name} is connected.
+                <div>
+                  {toolkit.name} is connected. &nbsp;
+                  {activeConnection && (
+                    <span className="text-[11px] text-stone-400 font-mono">
+                      (id: {activeConnection.id})
+                    </span>
+                  )}
+                </div>
               </div>
-              {activeConnection && (
-                <p className="text-[11px] text-stone-400 font-mono break-all">
-                  id: {activeConnection.id}
-                </p>
-              )}
               <ScopeToggles
                 scopes={scopes}
                 savingScope={savingScope}
                 onToggle={handleToggleScope}
                 error={scopeError}
               />
-              <button
-                type="button"
-                onClick={() => void handleDisconnect()}
-                className="w-full rounded-xl border border-coral-200 bg-coral-50 text-coral-700 text-sm font-medium py-2.5 hover:bg-coral-100 transition-colors">
-                Disconnect
-              </button>
+              {activeConnection && (
+                <TriggerToggles
+                  toolkitSlug={toolkit.slug}
+                  toolkitName={toolkit.name}
+                  connectionId={activeConnection.id}
+                />
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => void handleDisconnect()}
+                  className="w-full rounded-xl border border-coral-200 bg-coral-50 text-coral-700 text-sm font-medium py-2.5 hover:bg-coral-100 transition-colors">
+                  Disconnect
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
+                  Close
+                </button>
+              </div>
             </>
           )}
 
@@ -468,9 +491,9 @@ function ScopeToggles({ scopes, savingScope, onToggle, error }: ScopeTogglesProp
     <div className="border-t border-stone-100 pt-3 mt-1 space-y-2">
       <div className="flex items-baseline justify-between">
         <h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">
-          Agent permissions
+          Permissions
         </h3>
-        <p className="text-[10px] text-stone-400">Read+Write enabled by default</p>
+        <p className="text-[10px] text-stone-400">Read + Write enabled by default</p>
       </div>
       <ul className="space-y-1.5">
         {SCOPE_ROWS.map(row => {

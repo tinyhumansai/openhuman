@@ -10,3 +10,4 @@ skills
 tsconfig.tsbuildinfo
 yarn.lock
 package-lock.json
+target-test-run

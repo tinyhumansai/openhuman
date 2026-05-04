@@ -129,6 +129,25 @@ interface RawInstallSkillFromUrlResult {
   new_skills: string[];
 }
 
+/**
+ * Result of `openhuman.skills_uninstall`.
+ *
+ * Mirrors the Rust-side `UninstallSkillOutcome`. `removedPath` is the
+ * canonicalised on-disk path that was deleted — surface it in success toasts
+ * so the user can confirm exactly what was removed.
+ */
+export interface UninstallSkillResult {
+  name: string;
+  removedPath: string;
+  scope: SkillScope;
+}
+
+interface RawUninstallSkillResult {
+  name: string;
+  removed_path: string;
+  scope: SkillScope;
+}
+
 interface Envelope<T> {
   data?: T;
 }
@@ -248,6 +267,30 @@ export const skillsApi = {
       normalized.stdout.length,
       normalized.stderr.length
     );
+    return normalized;
+  },
+
+  /**
+   * Remove an installed user-scope SKILL.md skill via `openhuman.skills_uninstall`.
+   *
+   * Only user-scope installs (`~/.openhuman/skills/<name>/`) are supported.
+   * Project-scope and legacy skills are read-only — trying to uninstall one
+   * returns a backend error surfaced as a rejected promise. The Rust side
+   * canonicalises paths and refuses names with separators / traversal
+   * sequences / anything outside the skills root.
+   */
+  uninstallSkill: async (name: string): Promise<UninstallSkillResult> => {
+    log('uninstallSkill: request name=%s', name);
+    const response = await callCoreRpc<Envelope<RawUninstallSkillResult> | RawUninstallSkillResult>(
+      { method: 'openhuman.skills_uninstall', params: { name } }
+    );
+    const raw = unwrapEnvelope(response);
+    const normalized: UninstallSkillResult = {
+      name: raw.name,
+      removedPath: raw.removed_path,
+      scope: raw.scope,
+    };
+    log('uninstallSkill: response name=%s removedPath=%s', normalized.name, normalized.removedPath);
     return normalized;
   },
 };

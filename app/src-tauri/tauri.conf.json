@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenHuman",
-  "version": "0.52.28",
+  "version": "0.53.13",
   "identifier": "com.openhuman.app",
   "build": {
-    "beforeDevCommand": "npm run core:stage && npm run dev",
+    "beforeDevCommand": "pnpm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build:app && npm run core:stage",
+    "beforeBuildCommand": "pnpm run build:app",
     "frontendDist": "../dist"
   },
   "app": {
@@ -14,12 +14,12 @@
       {
         "label": "main",
         "title": "OpenHuman",
-        "width": 800,
-        "height": 720,
-        "visible": true,
+        "width": 1000,
+        "height": 800,
+        "visible": false,
         "decorations": true,
         "resizable": true,
-        "center": true
+        "center": false
       }
     ],
     "security": {
@@ -48,9 +48,18 @@
       "../../src/openhuman/agent/prompts",
       "recipes/**/*"
     ],
-    "externalBin": [
-      "binaries/openhuman-core"
-    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libgtk-3-0",
+          "libwebkit2gtk-4.1-0",
+          "libx11-6",
+          "libgdk-pixbuf-2.0-0",
+          "libglib2.0-0"
+        ],
+        "desktopTemplate": "main.desktop"
+      }
+    },
     "createUpdaterArtifacts": false,
     "macOS": {
       "minimumSystemVersion": "10.15",
@@ -63,7 +72,7 @@
   },
   "plugins": {
     "updater": {
-      "active": false,
+      "active": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc0OTREMjkxREFCNUIzRTEKUldUaHM3WGFrZEtVZEJzZWtMTlc5dGxnT0R2Q3hUTWVaclJWSm9JUFpPcVFUV2RBSG5oNFN6UjQK",
       "endpoints": [
         "https://github.com/tinyhumansai/openhuman/releases/latest/download/latest.json"

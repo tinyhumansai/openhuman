@@ -2,9 +2,9 @@
 //!
 //! The embedded webviews (Slack, Gmail, Discord, …) can fire native OS
 //! notifications via the CEF IPC hook in `webview_accounts`. This domain
-//! owns the on/off switch: OFF by default so v1 ships the plumbing
-//! without producing a toast storm the first time someone opens a busy
-//! Slack tab.
+//! owns the on/off switch. Default is ON so embedded SaaS webviews like
+//! Slack behave like a normal browser session and surface native
+//! notifications immediately after connection.
 //!
 //! State lives in the Tauri shell rather than the core sidecar so the
 //! settings UI can flip it without a JSON-RPC round-trip. Persistence is
@@ -25,10 +25,12 @@ pub struct NotificationSettingsState {
 }
 
 impl NotificationSettingsState {
-    /// Construct the initial state — v1 defaults to **disabled**.
+    /// Construct the initial state. Embedded webview notifications default
+    /// to **enabled** so provider permission grant immediately results in
+    /// visible OS toasts unless the user later opts into DND/muting.
     pub fn new() -> Self {
         Self {
-            enabled: AtomicBool::new(false),
+            enabled: AtomicBool::new(true),
         }
     }
 

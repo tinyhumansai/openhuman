@@ -1,18 +1,18 @@
+---
 name: Build
-
 on:
   push:
     branches: [main]
   pull_request:
-
 permissions:
   contents: read
   pull-requests: read
+  # Required for Sentry to associate commits with releases
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
   cancel-in-progress: true
-
 jobs:
   build:
     name: Build Tauri App
@@ -25,7 +25,6 @@ jobs:
         with:
           fetch-depth: 1
           submodules: recursive
-
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -45,40 +44,27 @@ jobs:
           restore-keys: |
             cef-ubuntu-22.04-
 
-      # Note: the vendored CEF-aware tauri-cli is pre-installed in the
-      # ghcr.io/tinyhumansai/openhuman_ci image (see .github/Dockerfile),
-      # so `cargo tauri build` below resolves to the fork without any
-      # per-run compile step.
-
-      - name: Cache node modules
-        id: yarn-cache
+      # Note: the vendored CEF-aware tauri-cli, Node 24, and pnpm are all
+      # pre-installed in the ghcr.io/tinyhumansai/openhuman_ci image (see
+      # .github/Dockerfile), so `cargo tauri build` below resolves to the
+      # fork without any per-run compile step.
+      - name: Cache pnpm store
         uses: actions/cache@v4
         with:
-          path: node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('**/yarn.lock') }}
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-build-
-
+            pnpm-store-${{ runner.os }}-
       - name: Install dependencies
-        if: steps.yarn-cache.outputs.cache-hit != 'true'
-        run: yarn install --frozen-lockfile
-
-      - name: Install cmake (for whisper-rs)
-        run: apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
-
-      - name: Build sidecar core binary
-        run: cargo build --profile ci --target x86_64-unknown-linux-gnu --bin openhuman-core
-
-      - name: Stage sidecar for Tauri bundler
-        run: |
-          mkdir -p app/src-tauri/binaries
-          cp target/x86_64-unknown-linux-gnu/ci/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
-          chmod +x app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
-
+        run: pnpm install --frozen-lockfile
+      # Core is linked into the Tauri binary as a path dep — no separate
+      # sidecar build / stage step needed.
       - name: Build Tauri app (CEF default)
         working-directory: app
         run: |
-          TAURI_CONFIG_OVERRIDE='{"plugins":{"updater":{"active":false}}}'
+          # Skip tsc in beforeBuildCommand — typechecking runs in the dedicated
+          # `typecheck` workflow, so doing it again here is duplicated CI time.
+          TAURI_CONFIG_OVERRIDE='{"build":{"beforeBuildCommand":"npx vite build"},"plugins":{"updater":{"active":false}}}'
           cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
         env:
           NODE_ENV: production

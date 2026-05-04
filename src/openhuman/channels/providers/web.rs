@@ -7,7 +7,7 @@ use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::socketio::WebChannelEvent;
+use crate::core::socketio::{SubagentProgressDetail, WebChannelEvent};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
@@ -168,6 +168,7 @@ pub async fn start_chat(
                 delta_kind: None,
                 tool_call_id: None,
                 citations: None,
+                subagent: None,
             });
         }
     }
@@ -234,6 +235,7 @@ pub async fn start_chat(
                     delta_kind: None,
                     tool_call_id: None,
                     citations: None,
+                    subagent: None,
                 });
             }
         }
@@ -326,6 +328,7 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
             delta_kind: None,
             tool_call_id: None,
             citations: None,
+            subagent: None,
         });
     }
 
@@ -408,7 +411,17 @@ async fn run_chat_task(
         request_id.to_string(),
     );
 
-    let result = match agent.run_single(message).await {
+    // Make `thread_id` ambient for any outbound provider call inside
+    // the agent loop. The OpenAI-compatible provider reads it via
+    // `thread_context::current_thread_id()` and forwards it on
+    // `/openai/v1/chat/completions` so the backend can group
+    // InferenceLog entries and reuse the KV cache for this thread.
+    let result = match crate::openhuman::providers::thread_context::with_thread_id(
+        thread_id.to_string(),
+        agent.run_single(message),
+    )
+    .await
+    {
         Ok(response) => {
             let citations = agent.take_last_turn_citations();
             Ok(WebChatTaskResult {
@@ -586,6 +599,7 @@ fn spawn_progress_bridge(
                         delta_kind: None,
                         tool_call_id: None,
                         citations: None,
+                        subagent: None,
                     });
                 }
                 AgentProgress::IterationStarted {
@@ -614,6 +628,7 @@ fn spawn_progress_bridge(
                         delta_kind: None,
                         tool_call_id: None,
                         citations: None,
+                        subagent: None,
                     });
                 }
                 AgentProgress::ToolCallStarted {
@@ -660,58 +675,57 @@ fn spawn_progress_bridge(
                         ..Default::default()
                     });
                 }
-                AgentProgress::SubagentSpawned { agent_id, task_id } => {
+                AgentProgress::SubagentSpawned {
+                    agent_id,
+                    task_id,
+                    mode,
+                    dedicated_thread,
+                    prompt_chars,
+                } => {
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_spawned".to_string(),
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        full_response: None,
                         message: Some(format!("Sub-agent '{agent_id}' spawned")),
-                        error_type: None,
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
-                        args: None,
-                        output: None,
-                        success: None,
                         round: Some(round),
-                        reaction_emoji: None,
-                        segment_index: None,
-                        segment_total: None,
-                        delta: None,
-                        delta_kind: None,
-                        tool_call_id: None,
-                        citations: None,
+                        subagent: Some(SubagentProgressDetail {
+                            mode: Some(mode),
+                            dedicated_thread: Some(dedicated_thread),
+                            prompt_chars: Some(prompt_chars as u64),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::SubagentCompleted {
                     agent_id,
                     task_id,
                     elapsed_ms,
+                    iterations,
+                    output_chars,
                 } => {
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_completed".to_string(),
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        full_response: None,
                         message: Some(format!(
                             "Sub-agent '{agent_id}' completed in {elapsed_ms}ms"
                         )),
-                        error_type: None,
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
-                        args: None,
-                        output: None,
                         success: Some(true),
                         round: Some(round),
-                        reaction_emoji: None,
-                        segment_index: None,
-                        segment_total: None,
-                        delta: None,
-                        delta_kind: None,
-                        tool_call_id: None,
-                        citations: None,
+                        subagent: Some(SubagentProgressDetail {
+                            elapsed_ms: Some(elapsed_ms),
+                            iterations: Some(iterations),
+                            output_chars: Some(output_chars as u64),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::SubagentFailed {
@@ -724,22 +738,97 @@ fn spawn_progress_bridge(
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        full_response: None,
                         message: Some(error),
-                        error_type: None,
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
-                        args: None,
-                        output: None,
                         success: Some(false),
                         round: Some(round),
-                        reaction_emoji: None,
-                        segment_index: None,
-                        segment_total: None,
-                        delta: None,
-                        delta_kind: None,
-                        tool_call_id: None,
-                        citations: None,
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentIterationStarted {
+                    agent_id,
+                    task_id,
+                    iteration,
+                    max_iterations,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_iteration_start".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        message: Some(format!(
+                            "Sub-agent '{agent_id}' iteration {iteration}/{max_iterations}"
+                        )),
+                        tool_name: Some(agent_id),
+                        skill_id: Some(task_id),
+                        round: Some(round),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            child_max_iterations: Some(max_iterations),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentToolCallStarted {
+                    agent_id,
+                    task_id,
+                    call_id,
+                    tool_name,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_tool_call".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        tool_name: Some(tool_name),
+                        skill_id: Some(task_id.clone()),
+                        round: Some(round),
+                        tool_call_id: Some(call_id),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            agent_id: Some(agent_id),
+                            task_id: Some(task_id),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentToolCallCompleted {
+                    agent_id,
+                    task_id,
+                    call_id,
+                    tool_name,
+                    success,
+                    output_chars,
+                    elapsed_ms,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_tool_result".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        tool_name: Some(tool_name),
+                        skill_id: Some(task_id.clone()),
+                        success: Some(success),
+                        round: Some(round),
+                        tool_call_id: Some(call_id),
+                        output: Some(
+                            json!({"output_chars": output_chars, "elapsed_ms": elapsed_ms})
+                                .to_string(),
+                        ),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            agent_id: Some(agent_id),
+                            task_id: Some(task_id),
+                            elapsed_ms: Some(elapsed_ms),
+                            output_chars: Some(output_chars as u64),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::TextDelta { delta, iteration } => {
@@ -845,7 +934,7 @@ fn build_session_agent(
     // type in the chat pane. If we routed on that flag the welcome
     // agent could never run from the Tauri desktop app. The chat
     // flag is set only by the welcome agent itself via
-    // `complete_onboarding(action="complete")`, so it stays `false`
+    // `complete_onboarding`, so it stays `false`
     // for the user's actual first chat message regardless of what
     // the React layer did, then flips on the welcome turn so the
     // very next message routes to orchestrator.
@@ -1066,191 +1155,5 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
-        event_session_id_for, inference_budget_exceeded_user_message,
-        is_inference_budget_exceeded_error, json_output, key_for, normalize_model_override,
-        optional_f64, optional_string, required_string, schemas, start_chat,
-        subscribe_web_channel_events,
-    };
-    use crate::core::TypeSchema;
-
-    #[tokio::test]
-    async fn start_chat_validates_required_fields() {
-        let err = start_chat("", "thread", "hello", None, None)
-            .await
-            .expect_err("client id should be required");
-        assert!(err.contains("client_id is required"));
-
-        let err = start_chat("client", "", "hello", None, None)
-            .await
-            .expect_err("thread id should be required");
-        assert!(err.contains("thread_id is required"));
-
-        let err = start_chat("client", "thread", "   ", None, None)
-            .await
-            .expect_err("message should be required");
-        assert!(err.contains("message is required"));
-    }
-
-    #[tokio::test]
-    async fn cancel_chat_validates_required_fields() {
-        let err = cancel_chat("", "thread")
-            .await
-            .expect_err("client id should be required");
-        assert!(err.contains("client_id is required"));
-
-        let err = cancel_chat("client", "")
-            .await
-            .expect_err("thread id should be required");
-        assert!(err.contains("thread_id is required"));
-    }
-
-    #[test]
-    fn detects_backend_budget_exhaustion_error() {
-        assert!(is_inference_budget_exceeded_error(
-            "OpenHuman API error (402 Payment Required): Budget exceeded — add credits to continue."
-        ));
-        assert!(is_inference_budget_exceeded_error(
-            "provider error: budget exceeded, please add credits"
-        ));
-        assert!(!is_inference_budget_exceeded_error(
-            "OpenHuman API error (500): Internal server error"
-        ));
-    }
-
-    #[test]
-    fn budget_exceeded_copy_mentions_top_up() {
-        let message = inference_budget_exceeded_user_message();
-        assert!(message.contains("top up"));
-        assert!(message.contains("credits"));
-    }
-
-    // ── Schema catalog ────────────────────────────────────────────
-
-    #[test]
-    fn web_channel_catalog_has_chat_and_cancel() {
-        let s = all_web_channel_controller_schemas();
-        let c = all_web_channel_registered_controllers();
-        assert_eq!(s.len(), c.len());
-        assert_eq!(s.len(), 2);
-        let fns: Vec<&str> = s.iter().map(|x| x.function).collect();
-        assert!(fns.contains(&"web_chat"));
-        assert!(fns.contains(&"web_cancel"));
-    }
-
-    #[test]
-    fn chat_schema_requires_client_thread_message() {
-        let s = schemas("chat");
-        let required: Vec<&str> = s
-            .inputs
-            .iter()
-            .filter(|f| f.required)
-            .map(|f| f.name)
-            .collect();
-        assert!(required.contains(&"client_id"));
-        assert!(required.contains(&"thread_id"));
-        assert!(required.contains(&"message"));
-        // model_override and temperature must be optional.
-        assert!(s
-            .inputs
-            .iter()
-            .any(|f| f.name == "model_override" && !f.required));
-        assert!(s
-            .inputs
-            .iter()
-            .any(|f| f.name == "temperature" && !f.required));
-    }
-
-    #[test]
-    fn cancel_schema_requires_client_and_thread() {
-        let s = schemas("cancel");
-        let required: Vec<&str> = s
-            .inputs
-            .iter()
-            .filter(|f| f.required)
-            .map(|f| f.name)
-            .collect();
-        assert_eq!(required, vec!["client_id", "thread_id"]);
-    }
-
-    #[test]
-    fn unknown_schema_returns_unknown_fallback() {
-        let s = schemas("no_such_fn");
-        assert_eq!(s.function, "unknown");
-        assert_eq!(s.namespace, "channel");
-        assert_eq!(s.outputs.len(), 1);
-        assert_eq!(s.outputs[0].name, "error");
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────
-
-    #[test]
-    fn key_for_combines_client_id_and_thread_id() {
-        assert_eq!(key_for("c1", "t1"), "c1::t1");
-        assert_eq!(key_for("", ""), "::");
-    }
-
-    #[test]
-    fn event_session_id_for_is_stable() {
-        // Two calls with the same args must produce the same id.
-        let a = event_session_id_for("c1", "t1");
-        let b = event_session_id_for("c1", "t1");
-        assert_eq!(a, b);
-        // Different args → different id.
-        let c = event_session_id_for("c2", "t1");
-        assert_ne!(a, c);
-    }
-
-    #[test]
-    fn normalize_model_override_returns_none_for_empty_or_whitespace() {
-        assert!(normalize_model_override(None).is_none());
-        assert!(normalize_model_override(Some("".into())).is_none());
-        assert!(normalize_model_override(Some("   ".into())).is_none());
-    }
-
-    #[test]
-    fn normalize_model_override_trims_value() {
-        assert_eq!(
-            normalize_model_override(Some("  gpt-4  ".into())),
-            Some("gpt-4".to_string())
-        );
-    }
-
-    // ── Broadcast events ──────────────────────────────────────────
-
-    #[test]
-    fn subscribe_web_channel_events_returns_receiver() {
-        // Just confirm we can subscribe without panic.
-        let _rx = subscribe_web_channel_events();
-    }
-
-    // ── Field builder helpers ─────────────────────────────────────
-
-    #[test]
-    fn required_string_marks_field_required() {
-        let f = required_string("client_id", "c");
-        assert!(f.required);
-        assert!(matches!(f.ty, TypeSchema::String));
-    }
-
-    #[test]
-    fn optional_string_marks_field_optional() {
-        let f = optional_string("model", "c");
-        assert!(!f.required);
-    }
-
-    #[test]
-    fn optional_f64_marks_field_optional() {
-        let f = optional_f64("temperature", "c");
-        assert!(!f.required);
-    }
-
-    #[test]
-    fn json_output_is_required_json_field() {
-        let f = json_output("ack", "c");
-        assert!(f.required);
-        assert!(matches!(f.ty, TypeSchema::Json));
-    }
-}
+#[path = "web_tests.rs"]
+mod tests;

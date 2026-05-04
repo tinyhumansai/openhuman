@@ -1,7 +1,7 @@
 //! Dynamic orchestrator tool generation.
 //!
-//! The orchestrator agent doesn't directly execute work — it routes it to
-//! specialised sub-agents. Rather than exposing a single generic
+//! The orchestrator agent is direct-first and only delegates specialised
+//! work. Rather than exposing a single generic
 //! `spawn_subagent(agent_id, prompt)` mega-tool, we synthesise one named
 //! tool per entry in the orchestrator's `subagents = [...]` TOML field,
 //! so the LLM's function-calling schema contains discoverable, well-named
@@ -99,10 +99,14 @@ pub fn collect_orchestrator_tools(
                     tool_name,
                     target.id
                 );
+                let direct_first_description = format!(
+                    "Use only when direct response/direct tools are insufficient. {}",
+                    target.when_to_use
+                );
                 tools.push(Box::new(ArchetypeDelegationTool {
                     tool_name,
                     agent_id: target.id.clone(),
-                    tool_description: target.when_to_use.clone(),
+                    tool_description: direct_first_description,
                 }));
             }
             SubagentEntry::Skills(wildcard) => {
@@ -128,12 +132,12 @@ pub fn collect_orchestrator_tools(
                     // on brand-new or poorly-populated toolkits.
                     let description = if integration.description.trim().is_empty() {
                         format!(
-                            "Delegate to the integrations_agent with the `{}` integration pre-selected.",
+                            "Use only when direct response/direct tools are insufficient and the task truly requires external integration actions. Delegate to the integrations_agent with the `{}` integration pre-selected.",
                             integration.toolkit
                         )
                     } else {
                         format!(
-                            "Delegate to the integrations_agent using `{}`. {}",
+                            "Use only when direct response/direct tools are insufficient and the task truly requires external integration actions. Delegate to the integrations_agent using `{}`. {}",
                             integration.toolkit, integration.description
                         )
                     };

@@ -191,7 +191,7 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
           {step === 'permissions' && (
             <div className="space-y-3">
               <p className="text-xs text-stone-500 leading-relaxed">
-                Screen Intelligence needs macOS permissions to capture your screen and provide context to your AI assistant.
+                Screen Intelligence needs macOS permissions to capture your screen and provide context to your agent.
               </p>
 
               <div className="space-y-2">
@@ -274,7 +274,7 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
               </div>
 
               <p className="text-xs text-stone-500 leading-relaxed">
-                Enable Screen Intelligence to continuously capture what's on your screen and feed useful context into your AI assistant's memory.
+                Enable Screen Intelligence to continuously capture what's on your screen and feed useful context into your agent's memory.
               </p>
 
               <div className="space-y-2">
@@ -320,7 +320,7 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
               <div>
                 <h3 className="text-sm font-semibold text-stone-900">Screen Intelligence is Enabled</h3>
                 <p className="mt-1 text-xs text-stone-500 leading-relaxed">
-                  Screen Intelligence is now enabled. Start a session from the settings panel to begin capturing screen context for your AI assistant.
+                  Screen Intelligence is now enabled. Start a session from the settings panel to begin capturing screen context for your agent.
                 </p>
               </div>
 

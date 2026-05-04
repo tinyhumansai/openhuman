@@ -1,14 +1,18 @@
 //! JSON-RPC handler functions for the notifications domain.
 //!
-//! Three endpoints:
+//! Notification endpoints:
 //!  - `notification_ingest`   — write a new notification, kick off background triage
 //!  - `notifications_list`    — paginated query with optional provider / min-score filters
 //!  - `notification_mark_read`— mark a single notification as read
+//!  - `notification_dismiss`  — mark a single notification as dismissed
+//!  - `notification_mark_acted` — mark a single notification as acted upon
+//!  - `notification_stats`    — return aggregate pipeline statistics
 
 use chrono::Utc;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::triage::{apply_decision, run_triage, TriggerEnvelope, TriggerSource};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
@@ -28,13 +32,14 @@ use super::types::{
 /// Writes the record immediately, returns the new `id`, then spawns a
 /// background task to run the triage pipeline and back-fill the score.
 pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> {
+    let ingest_started_at = Utc::now();
     let config = config_rpc::load_config_with_timeout().await?;
 
     let req: NotificationIngestRequest = serde_json::from_value(Value::Object(params.clone()))
-        .map_err(|e| format!("[notifications::rpc] invalid ingest params: {e}"))?;
+        .map_err(|e| format!("[notification_intel] invalid ingest params: {e}"))?;
 
     let provider_settings = store::get_settings(&config, &req.provider)
-        .map_err(|e| format!("[notifications::rpc] get_settings failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] get_settings failed: {e}"))?;
     if !provider_settings.enabled {
         let outcome = RpcOutcome::new(
             json!({ "skipped": true, "reason": "provider_disabled" }),
@@ -54,17 +59,26 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
         triage_action: None,
         triage_reason: None,
         status: NotificationStatus::Unread,
-        received_at: Utc::now(),
+        received_at: ingest_started_at,
         scored_at: None,
     };
 
-    store::insert(&config, &notification)
-        .map_err(|e| format!("[notifications::rpc] insert failed: {e}"))?;
+    let inserted = store::insert_if_not_recent(&config, &notification)
+        .map_err(|e| format!("[notification_intel] insert_if_not_recent failed: {e}"))?;
+    if !inserted {
+        tracing::debug!(
+            provider = %req.provider,
+            title_chars = req.title.chars().count(),
+            "[notification_intel] skipping duplicate notification"
+        );
+        let outcome = RpcOutcome::new(json!({ "skipped": true, "reason": "duplicate" }), vec![]);
+        return outcome.into_cli_compatible_json();
+    }
 
     tracing::debug!(
         id = %id,
         provider = %req.provider,
-        "[notifications::rpc] ingested notification, spawning triage"
+        "[notification_intel] ingested notification, spawning triage"
     );
 
     // Spawn background triage — the ingest RPC returns immediately.
@@ -87,7 +101,7 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
                 "body": req.body,
                 "raw": req.raw_payload,
             }),
-            received_at: Utc::now(),
+            received_at: ingest_started_at,
         };
 
         match run_triage(&envelope).await {
@@ -101,7 +115,7 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
                     id = %id_for_triage,
                     action = %action,
                     score = score,
-                    "[notifications::rpc] triage complete"
+                    "[notification_intel] triage complete"
                 );
 
                 if let Err(e) = store::update_triage(
@@ -114,29 +128,84 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
                     tracing::warn!(
                         id = %id_for_triage,
                         error = %e,
-                        "[notifications::rpc] failed to persist triage result"
+                        "[notification_intel] failed to persist triage result"
                     );
+                    return;
                 }
 
-                // Auto-escalate high-importance notifications to the orchestrator.
-                if (action == "escalate" || action == "react")
-                    && score >= provider_settings.importance_threshold
-                    && provider_settings.route_to_orchestrator
-                {
-                    if let Err(e) = apply_decision(triage_run, &envelope).await {
-                        tracing::warn!(
-                            id = %id_for_triage,
-                            error = %e,
-                            "[notifications::rpc] apply_decision failed"
-                        );
+                // Compute triage latency from ingest time.
+                let latency_ms = Utc::now()
+                    .signed_duration_since(ingest_started_at)
+                    .num_milliseconds()
+                    .max(0) as u64;
+
+                let mut routed = false;
+                let route_candidate = action == "escalate" || action == "react";
+                if route_candidate {
+                    // Re-read provider settings right before potential escalation so
+                    // runtime toggles apply even while triage is in-flight.
+                    let latest_settings = match store::get_settings(
+                        &config_for_triage,
+                        &req.provider,
+                    ) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!(
+                                id = %id_for_triage,
+                                provider = %req.provider,
+                                error = %e,
+                                "[notification_intel] failed to refresh provider settings for routing gate"
+                            );
+                            publish_global(DomainEvent::NotificationTriaged {
+                                id: id_for_triage.clone(),
+                                provider: req.provider.clone(),
+                                action: action.clone(),
+                                importance_score: score,
+                                latency_ms,
+                                routed: false,
+                            });
+                            return;
+                        }
+                    };
+
+                    // Auto-escalate high-importance notifications to the orchestrator.
+                    if score >= latest_settings.importance_threshold
+                        && latest_settings.route_to_orchestrator
+                    {
+                        if let Err(e) = apply_decision(triage_run, &envelope).await {
+                            tracing::warn!(
+                                id = %id_for_triage,
+                                error = %e,
+                                "[notification_intel] apply_decision failed"
+                            );
+                        } else {
+                            routed = true;
+                        }
                     }
                 }
+
+                publish_global(DomainEvent::NotificationTriaged {
+                    id: id_for_triage.clone(),
+                    provider: req.provider.clone(),
+                    action: action.clone(),
+                    importance_score: score,
+                    latency_ms,
+                    routed,
+                });
+                tracing::debug!(
+                    id = %id_for_triage,
+                    action = %action,
+                    score = score,
+                    latency_ms = latency_ms,
+                    routed = routed,
+                    "[notification_intel] published NotificationTriaged event"
+                );
             }
             Err(e) => {
                 tracing::warn!(
                     id = %id_for_triage,
                     error = %e,
-                    "[notifications::rpc] triage pipeline failed"
+                    "[notification_intel] triage pipeline failed"
                 );
             }
         }
@@ -177,10 +246,10 @@ pub async fn handle_list(params: Map<String, Value>) -> Result<Value, String> {
         .map(|v| v as f32);
 
     let items = store::list(&config, limit, offset, provider.as_deref(), min_score)
-        .map_err(|e| format!("[notifications::rpc] list failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] list failed: {e}"))?;
 
     let unread = store::unread_count(&config)
-        .map_err(|e| format!("[notifications::rpc] unread_count failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] unread_count failed: {e}"))?;
 
     let outcome = RpcOutcome::new(json!({ "items": items, "unread_count": unread }), vec![]);
     outcome.into_cli_compatible_json()
@@ -197,13 +266,13 @@ pub async fn handle_mark_read(params: Map<String, Value>) -> Result<Value, Strin
     let id = params
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "[notifications::rpc] missing required param 'id'".to_string())?
+        .ok_or_else(|| "[notification_intel] missing required param 'id'".to_string())?
         .to_string();
 
     store::mark_read(&config, &id)
-        .map_err(|e| format!("[notifications::rpc] mark_read failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] mark_read failed: {e}"))?;
 
-    tracing::debug!(id = %id, "[notifications::rpc] marked read");
+    tracing::debug!(id = %id, "[notification_intel] marked read");
 
     let outcome = RpcOutcome::new(json!({ "ok": true }), vec![]);
     outcome.into_cli_compatible_json()
@@ -215,9 +284,9 @@ pub async fn handle_settings_get(params: Map<String, Value>) -> Result<Value, St
     let provider = params
         .get("provider")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "[notifications::rpc] missing required param 'provider'".to_string())?;
+        .ok_or_else(|| "[notification_intel] missing required param 'provider'".to_string())?;
     let settings = store::get_settings(&config, provider)
-        .map_err(|e| format!("[notifications::rpc] settings_get failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] settings_get failed: {e}"))?;
     let outcome = RpcOutcome::new(json!({ "settings": settings }), vec![]);
     outcome.into_cli_compatible_json()
 }
@@ -226,7 +295,7 @@ pub async fn handle_settings_get(params: Map<String, Value>) -> Result<Value, St
 pub async fn handle_settings_set(params: Map<String, Value>) -> Result<Value, String> {
     let config = config_rpc::load_config_with_timeout().await?;
     let req: NotificationSettingsUpsertRequest = serde_json::from_value(Value::Object(params))
-        .map_err(|e| format!("[notifications::rpc] invalid settings_set params: {e}"))?;
+        .map_err(|e| format!("[notification_intel] invalid settings_set params: {e}"))?;
     let clamped = NotificationSettings {
         provider: req.provider,
         enabled: req.enabled,
@@ -234,8 +303,67 @@ pub async fn handle_settings_set(params: Map<String, Value>) -> Result<Value, St
         route_to_orchestrator: req.route_to_orchestrator,
     };
     store::upsert_settings(&config, &clamped)
-        .map_err(|e| format!("[notifications::rpc] settings_set failed: {e}"))?;
+        .map_err(|e| format!("[notification_intel] settings_set failed: {e}"))?;
     let outcome = RpcOutcome::new(json!({ "ok": true, "settings": clamped }), vec![]);
+    outcome.into_cli_compatible_json()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// notification_dismiss
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Mark a single notification as dismissed.
+pub async fn handle_dismiss(params: Map<String, Value>) -> Result<Value, String> {
+    let config = config_rpc::load_config_with_timeout().await?;
+    let id = params
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "[notification_intel] missing required param 'id'".to_string())?
+        .to_string();
+
+    let updated = store::mark_dismissed(&config, &id)
+        .map_err(|e| format!("[notification_intel] mark_dismissed failed: {e}"))?;
+    tracing::debug!(id = %id, updated = updated, "[notification_intel] notification dismissed");
+    let outcome = RpcOutcome::new(json!({ "ok": updated }), vec![]);
+    outcome.into_cli_compatible_json()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// notification_mark_acted
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Mark a single notification as acted upon.
+pub async fn handle_mark_acted(params: Map<String, Value>) -> Result<Value, String> {
+    let config = config_rpc::load_config_with_timeout().await?;
+    let id = params
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "[notification_intel] missing required param 'id'".to_string())?
+        .to_string();
+
+    let updated = store::mark_acted(&config, &id)
+        .map_err(|e| format!("[notification_intel] mark_acted failed: {e}"))?;
+    tracing::debug!(
+        id = %id,
+        updated = updated,
+        "[notification_intel] notification marked acted"
+    );
+    let outcome = RpcOutcome::new(json!({ "ok": updated }), vec![]);
+    outcome.into_cli_compatible_json()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// notification_stats
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Return aggregate pipeline statistics.
+pub async fn handle_stats(_params: Map<String, Value>) -> Result<Value, String> {
+    let config = config_rpc::load_config_with_timeout().await?;
+    tracing::debug!("[notification_intel] stats requested");
+
+    let s = store::stats(&config).map_err(|e| format!("[notification_intel] stats failed: {e}"))?;
+
+    let outcome = RpcOutcome::new(json!(s), vec![]);
     outcome.into_cli_compatible_json()
 }
 

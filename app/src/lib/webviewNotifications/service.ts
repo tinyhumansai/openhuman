@@ -2,12 +2,13 @@ import { isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import debug from 'debug';
 
+import { ingestNotification } from '../../services/notificationService';
 import { store } from '../../store';
 import {
   focusAccountFromNotification,
   noteWebviewNotificationFired,
 } from '../../store/accountsSlice';
-import { notificationReceived } from '../../store/notificationSlice';
+import { addIntegrationNotification } from '../../store/notificationSlice';
 import { WEBVIEW_NOTIFICATION_FIRED_EVENT, type WebviewNotificationFired } from './types';
 
 const log = debug('webview-notifications');
@@ -15,6 +16,12 @@ const errLog = debug('webview-notifications:error');
 
 let started = false;
 let unlisten: UnlistenFn | null = null;
+
+function redactAccountId(accountId: string): string {
+  if (!accountId) return 'redacted';
+  if (accountId.length <= 4) return '***';
+  return `***${accountId.slice(-4)}`;
+}
 
 /**
  * Subscribe to `webview-notification:fired` events from the Tauri shell and
@@ -60,29 +67,56 @@ export function handleNotificationClick(accountId: string): void {
 }
 
 function handleFired(payload: WebviewNotificationFired): void {
-  const { account_id: accountId, provider, title, body, tag } = payload;
+  const { account_id: accountId, provider, title, body } = payload;
+  const redactedAccountId = redactAccountId(accountId);
   log(
     'fired account=%s provider=%s title_chars=%d body_chars=%d',
-    accountId,
+    redactedAccountId,
     provider,
     title.length,
     body.length
   );
   store.dispatch(noteWebviewNotificationFired({ accountId }));
-  const now = Date.now();
-  store.dispatch(
-    notificationReceived({
-      id: `${accountId}:${tag ?? ''}:${now}`,
-      category: 'messages',
-      title,
-      body,
-      timestamp: now,
-      read: false,
-      accountId,
-      provider,
-      deepLink: `/accounts/${accountId}`,
-    })
+
+  // Mirror into the core triage pipeline — fire-and-forget.
+  log(
+    '[notification_intel] forwarding to core ingest provider=%s account=%s',
+    provider,
+    redactedAccountId
   );
+  void ingestNotification({
+    provider,
+    account_id: accountId,
+    title,
+    body,
+    raw_payload: payload as unknown as Record<string, unknown>,
+  })
+    .then(result => {
+      if (!result.skipped) {
+        log('[notification_intel] ingest created id=%s', result.id);
+        store.dispatch(
+          addIntegrationNotification({
+            id: result.id,
+            provider,
+            account_id: accountId,
+            title,
+            body,
+            raw_payload: payload as unknown as Record<string, unknown>,
+            status: 'unread',
+            received_at: new Date().toISOString(),
+            importance_score: undefined,
+            triage_action: undefined,
+            triage_reason: undefined,
+            scored_at: undefined,
+          })
+        );
+      } else {
+        log('[notification_intel] ingest skipped reason=%s', result.reason);
+      }
+    })
+    .catch(err => {
+      errLog('[notification_intel] ingest failed provider=%s: %O', provider, err);
+    });
 }
 
 /** Exposed for tests — resets module singletons between runs. */

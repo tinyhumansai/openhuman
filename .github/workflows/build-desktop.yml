@@ -1,0 +1,618 @@
+---
+# Reusable workflow that owns the desktop build + sign + Sentry-DIF +
+# artifact-upload matrix. Both `release-production.yml` and
+# `release-staging.yml` `uses:` this workflow so the build code lives in
+# exactly one place. Variation between the two flows (release vs debug
+# profile, mac notarization on/off, GH Release vs Actions-artifact
+# uploads, standalone-CLI sidecar build, env labels for telegram /
+# Sentry / API base URL) is driven by inputs below.
+#
+# `secrets: inherit` on the caller side gives this workflow access to
+# the repo's secrets without having to enumerate them; vars are read
+# directly from the `vars` context.
+name: Build Desktop (reusable)
+on:
+  workflow_call:
+    inputs:
+      build_ref:
+        description: Git ref to check out for the build (tag or SHA).
+        type: string
+        required: true
+      tag:
+        description:
+          Tag name used by GH Release uploads (e.g. v1.2.4) and by the staging
+          standalone CLI artifact name (e.g. v1.2.4-staging).
+        type: string
+        required: true
+      version:
+        description: Plain SemVer version (no v prefix), used in SENTRY_RELEASE.
+        type: string
+        required: true
+      sha:
+        description: Full commit SHA the build is pinned to.
+        type: string
+        required: true
+      short_sha:
+        description:
+          12-char prefix of `sha` matching the runtime truncation in config.ts /
+          vite.config.ts / main.rs / app/src-tauri/src/lib.rs.
+        type: string
+        required: true
+      base_url:
+        description: Backend API base URL baked into the bundle.
+        type: string
+        required: true
+      app_env:
+        description: APP_ENVIRONMENT label baked into the bundle (production | staging).
+        type: string
+        required: true
+      build_profile:
+        description: Cargo profile to build (release | debug).
+        type: string
+        required: true
+      telegram_bot_username:
+        description: Telegram bot handle baked into the bundle.
+        type: string
+        required: true
+      with_macos_signing:
+        description:
+          When true, run the sign + notarize + repackage-DMG path for the macOS
+          matrix entries. Default true — both production and staging ship
+          notarized macOS bundles so Gatekeeper accepts the staging build the
+          same way it accepts production. Disable only for fast local-style
+          dry runs that intentionally skip Apple's notary service.
+        type: boolean
+        default: true
+      with_release_upload:
+        description:
+          When true, upload installer assets to the GitHub Release identified by
+          `tag`. When false, upload bundles as Actions artifacts instead.
+        type: boolean
+        default: false
+      release_id:
+        description:
+          Release ID used by the macOS re-upload script. Only consulted when
+          `with_release_upload` and `with_macos_signing` are both true.
+        type: string
+        default: ""
+      build_sidecar:
+        description:
+          When true, build the standalone openhuman-core CLI binary alongside
+          the Tauri shell, stage it for the bundler, upload its DIFs to the
+          core Sentry project, and publish it as an Actions artifact. Staging
+          uses this; production builds do not (the core lives in-process in
+          the Tauri shell since #1061).
+        type: boolean
+        default: false
+      with_updater:
+        description:
+          When true, set `WITH_UPDATER=true` so the Tauri bundler emits the
+          signed `.sig` updater artifacts the auto-updater consumes.
+          Production sets this and assembles `latest.json` in a follow-on
+          job; staging leaves it off because there is no manifest publish
+          step to consume the .sig files — producing them just wastes
+          signing time and pollutes the artifact tree.
+        type: boolean
+        default: true
+jobs:
+  build:
+    name: "Desktop: ${{ matrix.settings.artifact_suffix }}"
+    runs-on: ${{ matrix.settings.platform }}
+    environment: Production
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            target: aarch64-apple-darwin
+            artifact_suffix: aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            target: x86_64-apple-darwin
+            artifact_suffix: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            args: --target x86_64-unknown-linux-gnu --bundles deb
+            target: x86_64-unknown-linux-gnu
+            artifact_suffix: ubuntu
+          - platform: windows-latest
+            args: --target x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-msvc
+            artifact_suffix: windows
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Keep in sync with DEFAULT_TELEGRAM_BOT_USERNAME_* in channels/controllers/ops.rs
+      OPENHUMAN_TELEGRAM_BOT_USERNAME: ${{ inputs.telegram_bot_username }}
+      VITE_TELEGRAM_BOT_USERNAME: ${{ inputs.telegram_bot_username }}
+    steps:
+      - name: Checkout build ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.build_ref }}
+          fetch-depth: 1
+          submodules: recursive
+      - name: Set Xcode version
+        if: matrix.settings.platform == 'macos-latest'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          cache: true
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: Install Rust (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          targets: ${{ matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - name: Install Tauri dependencies (ubuntu only)
+        if: matrix.settings.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            patchelf cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libxi-dev \
+            libevdev-dev libssl-dev libclang-dev \
+            libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+            libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+            libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev
+      - name: Dump missing shared libs (debug)
+        if: matrix.settings.platform == 'ubuntu-22.04'
+        shell: bash
+        env:
+          PROFILE: ${{ inputs.build_profile }}
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+        run: |
+          set +e
+          for BIN in \
+            "app/src-tauri/target/${MATRIX_TARGET}/${PROFILE}/OpenHuman" \
+            "target/${MATRIX_TARGET}/${PROFILE}/OpenHuman"; do
+            if [ -x "$BIN" ]; then
+              echo "ldd $BIN"
+              ldd "$BIN" | grep 'not found' || echo "  all resolved"
+            fi
+          done
+
+      # Skip first 7 lines of Cargo.lock (workspace package version bumps) so the key tracks dependency changes only
+      - name: Cargo.lock fingerprint (deps only)
+        id: cargo-lock-fingerprint
+        shell: bash
+        run: |
+          echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - name: Cache Cargo registry and git sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ steps.cargo-lock-fingerprint.outputs.hash }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      # CEF is the runtime; cef-dll-sys + the vendored tauri-cli auto-download
+      # the ~400MB Chromium distribution on first build. Cache per-OS across
+      # runs. Default path is `dirs::cache_dir()/tauri-cef`.
+      - name: Cache CEF binary distribution (unix)
+        if: matrix.settings.platform != 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/tauri-cef
+            ~/.cache/tauri-cef
+          key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-${{ matrix.settings.target }}-
+      - name: Cache CEF binary distribution (windows)
+        if: matrix.settings.platform == 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/tauri-cef
+          key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-${{ matrix.settings.target }}-
+
+      # Upstream @tauri-apps/cli doesn't bundle CEF framework files into the
+      # produced installer. Only the fork at vendor/tauri-cef does. Build and
+      # install that CLI so `cargo tauri build` invokes the cef-aware bundler.
+      - name: Cache vendored tauri-cli binary (unix)
+        if: matrix.settings.platform != 'windows-latest'
+        id: tauri-cli-cache-unix
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+      - name: Cache vendored tauri-cli binary (windows)
+        if: matrix.settings.platform == 'windows-latest'
+        id: tauri-cli-cache-windows
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+      - name: Install vendored tauri-cli (cef-aware bundler)
+        if:
+          (matrix.settings.platform == 'windows-latest' && steps.tauri-cli-cache-windows.outputs.cache-hit
+          != 'true') || (matrix.settings.platform != 'windows-latest' && steps.tauri-cli-cache-unix.outputs.cache-hit
+          != 'true')
+        shell: bash
+        run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate signing prerequisites
+        # The minisign pubkey is baked into the static tauri.conf.json, not
+        # injected from secrets; only the private key still has to come from
+        # secrets, and only when `with_updater` is true (the bundler signs
+        # `.sig` artifacts then). macOS additionally needs the Apple
+        # notarization secret set when `with_macos_signing` is true.
+        shell: bash
+        env:
+          MATRIX_PLATFORM: ${{ matrix.settings.platform }}
+          WITH_MACOS_SIGNING: ${{ inputs.with_macos_signing }}
+          WITH_UPDATER: ${{ inputs.with_updater }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          # Match the secret name resolution used by the actual sign + notarize
+          # steps below: prefer APPLE_APP_SPECIFIC_PASSWORD, fall back to the
+          # legacy APPLE_PASSWORD. Validating a different secret than we use
+          # would let runs pass the prereq check and then fail mid-notarization.
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD || secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ "$WITH_UPDATER" = "true" ] && [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "Missing TAURI_SIGNING_PRIVATE_KEY (or fallback UPDATER_PRIVATE_KEY) and with_updater=true."
+            exit 1
+          fi
+          if [ "$MATRIX_PLATFORM" = "macos-latest" ] && [ "$WITH_MACOS_SIGNING" = "true" ]; then
+            for var in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              if [ -z "${!var}" ]; then
+                echo "Missing required macOS signing secret: $var"
+                exit 1
+              fi
+            done
+          fi
+
+      - name: Define Tauri configuration overrides
+        # `prepareTauriConfig.js` only reads `WITH_UPDATER` (flips
+        # `bundle.createUpdaterArtifacts` on for the release pipeline) and
+        # `KEYPAIR_ALIAS` (Windows DigiCert sign command). Pubkey + endpoint
+        # come from the static `app/src-tauri/tauri.conf.json`.
+        id: config-overrides
+        uses: actions/github-script@v7
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+          WITH_UPDATER: ${{ inputs.with_updater && 'true' || 'false' }}
+        with:
+          script: |
+            const workspacePath = process.env.GITHUB_WORKSPACE.replace(/\\/g, '/');
+            const prefix = workspacePath.startsWith('/') ? 'file://' : 'file:///';
+            const moduleUrl = `${prefix}${workspacePath}/scripts/prepareTauriConfig.js`;
+            const { default: prepareTauriConfig } = await import(moduleUrl);
+            const config = prepareTauriConfig();
+            core.setOutput('json', JSON.stringify(config));
+
+      # ---- Optional: standalone openhuman-core CLI sidecar ------------------
+      # Only built for staging (`build_sidecar: true`). Production builds the
+      # core in-process inside the Tauri shell since #1061.
+      - name: Resolve core manifest and binary names
+        if: inputs.build_sidecar
+        id: core-paths
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+          PROFILE: ${{ inputs.build_profile }}
+        run: |
+          if [ -f "openhuman_core/Cargo.toml" ]; then
+            CORE_DIR="openhuman_core"
+          elif [ -f "rust-core/Cargo.toml" ]; then
+            CORE_DIR="rust-core"
+          elif [ -f "Cargo.toml" ] && grep -q '^name = "openhuman"' Cargo.toml; then
+            CORE_DIR="."
+          else
+            echo "No core Cargo manifest found (expected root Cargo.toml with openhuman, openhuman_core/Cargo.toml, or rust-core/Cargo.toml)"
+            exit 1
+          fi
+          SIDE_CAR_BASE="$(node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('app/src-tauri/tauri.conf.json','utf8'));const b=(c.bundle&&Array.isArray(c.bundle.externalBin)&&c.bundle.externalBin[0])||'binaries/openhuman-core';process.stdout.write(String(b).split('/').pop());")"
+          CORE_BIN_NAME="${SIDE_CAR_BASE}"
+          echo "core_dir=$CORE_DIR" >> "$GITHUB_OUTPUT"
+          echo "core_manifest=$CORE_DIR/Cargo.toml" >> "$GITHUB_OUTPUT"
+          echo "core_target_dir=target/$MATRIX_TARGET/$PROFILE" >> "$GITHUB_OUTPUT"
+          echo "core_bin_name=$CORE_BIN_NAME" >> "$GITHUB_OUTPUT"
+          echo "sidecar_base=$SIDE_CAR_BASE" >> "$GITHUB_OUTPUT"
+      - name: Build sidecar core binary
+        if: inputs.build_sidecar
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+          CORE_MANIFEST: ${{ steps.core-paths.outputs.core_manifest }}
+          CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
+          OPENHUMAN_APP_ENV: ${{ inputs.app_env }}
+          # Bake the short SHA into the CLI so build_release_tag() in
+          # src/main.rs produces openhuman@<version>+<sha> matching the
+          # Sentry release tag used when uploading the standalone CLI symbols.
+          OPENHUMAN_BUILD_SHA: ${{ inputs.short_sha }}
+          # Bake the core Sentry DSN into the binary via `option_env!` in
+          # src/main.rs. Without this the standalone CLI ships with Sentry
+          # disabled and the symbols uploaded below have nothing to attach
+          # to. Same DSN as `release-packages.yml` uses for the Linux arm64
+          # tarball — there is one openhuman-core Sentry project that all
+          # standalone-CLI surfaces report to.
+          OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_SENTRY_DSN }}
+        run: |
+          if [ -z "${OPENHUMAN_SENTRY_DSN}" ]; then
+            echo "::warning::vars.OPENHUMAN_SENTRY_DSN is empty — the standalone CLI artifact will ship without crash reporting."
+          fi
+          cargo build \
+            --manifest-path "$CORE_MANIFEST" \
+            --target "$MATRIX_TARGET" \
+            --bin "$CORE_BIN_NAME"
+      - name: Stage sidecar for Tauri bundler
+        if: inputs.build_sidecar
+        shell: bash
+        run: |
+          bash scripts/release/stage-sidecar.sh \
+            "${{ matrix.settings.target }}" \
+            "${{ steps.core-paths.outputs.core_target_dir }}" \
+            "${{ steps.core-paths.outputs.core_bin_name }}" \
+            "${{ steps.core-paths.outputs.sidecar_base }}"
+
+      # ---- Tauri build -------------------------------------------------------
+      # Vite is invoked via tauri.conf.json's beforeBuildCommand inside
+      # `cargo tauri build`, so all VITE_* env must be present here for the
+      # bundle to bake them in. macOS signing is intentionally skipped here
+      # and handled by the dedicated re-sign + notarize step further down
+      # (hardened runtime + entitlements are required for notarization).
+      - name: Build and package Tauri app (CEF, vendored CLI)
+        id: tauri-build
+        shell: bash
+        working-directory: app
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+          OPENHUMAN_APP_ENV: ${{ inputs.app_env }}
+          VITE_OPENHUMAN_APP_ENV: ${{ inputs.app_env }}
+          VITE_BACKEND_URL: ${{ inputs.base_url }}
+          # React frontend Sentry DSN — separate Sentry project. Baked by the
+          # Vite plugin via `import.meta.env.VITE_SENTRY_DSN`.
+          VITE_SENTRY_DSN: ${{ vars.OPENHUMAN_REACT_SENTRY_DSN }}
+          # Tauri shell (desktop host) Sentry DSN. Baked into the shell binary
+          # via `option_env!("OPENHUMAN_TAURI_SENTRY_DSN")` at compile time.
+          OPENHUMAN_TAURI_SENTRY_DSN: ${{ vars.OPENHUMAN_TAURI_SENTRY_DSN }}
+          # Bake the build SHA into the Tauri shell so its Sentry release tag
+          # (`openhuman@<version>+<sha>`) matches the React bundle and the
+          # standalone CLI — events across all surfaces group under one release.
+          OPENHUMAN_BUILD_SHA: ${{ inputs.sha }}
+          VITE_DEBUG: ${{ vars.VITE_DEBUG }}
+          VITE_BUILD_SHA: ${{ inputs.sha }}
+          # Use short_sha (12 chars) — matches what config.ts / vite.config.ts
+          # / main.rs / app/src-tauri/src/lib.rs all slice VITE_BUILD_SHA /
+          # OPENHUMAN_BUILD_SHA down to at runtime when emitting events. The
+          # sentry-vite-plugin reads SENTRY_RELEASE raw, so a long-SHA value
+          # here would tag uploads against a different release than events.
+          SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          # SENTRY_PROJECT here is consumed by sentry-vite-plugin during the
+          # Vite build that runs inside `cargo tauri build` — it uploads
+          # frontend source maps to the React Sentry project. Both staging
+          # and production push source maps (the plugin gates on
+          # `SENTRY_AUTH_TOKEN`, which both callers inherit via
+          # `secrets: inherit`); the React project differentiates the two
+          # via the `environment` tag set at runtime in analytics.ts. Rust
+          # DIFs go to the Tauri / core projects in the dedicated steps
+          # below.
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_REACT }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
+          WITH_UPDATER: ${{ inputs.with_updater && 'true' || 'false' }}
+          VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
+          VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
+          TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
+          MATRIX_ARGS: ${{ matrix.settings.args }}
+          PROFILE_FLAG: ${{ inputs.build_profile == 'debug' && '--debug' || '' }}
+        run: |
+          # Inline NODE_OPTIONS so it reaches the vite child spawned by
+          # beforeBuildCommand. Step-level env was observed not to propagate
+          # on macos-arm64 runners, causing OOM at node's ~2GB auto default.
+          NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+
+      # ---- Sentry DIF uploads ------------------------------------------------
+      # Since #1061 the core lives in-process as a library linked into the
+      # Tauri shell binary — there is exactly one Rust process and one
+      # `sentry::init` call (in `app/src-tauri/src/lib.rs::run()`), so all
+      # Rust events from the desktop app route to `openhuman-tauri`. Upload
+      # DIFs to that project so they actually attach to the right events.
+      # Symbols are keyed by debug-ID, so it's safe to run per-matrix-target
+      # without collisions — Sentry merges artifacts across platforms.
+      - name: Upload Tauri shell debug symbols to Sentry (tauri project)
+        if: env.SENTRY_AUTH_TOKEN != ''
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_TAURI }}
+          SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}
+          VERSION: ${{ inputs.version }}
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+          PROFILE: ${{ inputs.build_profile }}
+        run: |
+          set -euo pipefail
+          dif_dir="app/src-tauri/target/${MATRIX_TARGET}/${PROFILE}"
+          if [ -d "$dif_dir" ]; then
+            echo "==> Uploading symbols from $dif_dir to ${SENTRY_PROJECT}"
+            bash scripts/upload_sentry_symbols.sh "$VERSION" "$dif_dir"
+          else
+            echo "==> Skipping $dif_dir (not present)"
+          fi
+
+      # The standalone openhuman-core CLI has its own `sentry::init` in
+      # `src/main.rs` and reports to `openhuman-core`. Only built when the
+      # caller opts into `build_sidecar`; production currently does not.
+      - name: Upload standalone core CLI debug symbols to Sentry (core project)
+        if: inputs.build_sidecar && env.SENTRY_AUTH_TOKEN != ''
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_CORE }}
+          SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}
+          VERSION: ${{ inputs.version }}
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+          PROFILE: ${{ inputs.build_profile }}
+        run: |
+          set -euo pipefail
+          dif_dir="target/${MATRIX_TARGET}/${PROFILE}"
+          if [ -d "$dif_dir" ]; then
+            echo "==> Uploading symbols from $dif_dir to ${SENTRY_PROJECT}"
+            bash scripts/upload_sentry_symbols.sh "$VERSION" "$dif_dir"
+          else
+            echo "==> Skipping $dif_dir (not present)"
+          fi
+
+      # ---- Linux + Windows installer upload ---------------------------------
+      # When uploading to a GH Release: push .deb / .AppImage / .msi / .exe
+      # and their .sig siblings to the release. macOS goes through the
+      # re-sign + notarize path below and uploads separately.
+      - name: Upload non-macOS installers to release
+        if: inputs.with_release_upload && matrix.settings.platform != 'macos-latest'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+          PROFILE: ${{ inputs.build_profile }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          BUNDLE_ROOTS=(
+            "app/src-tauri/target/${MATRIX_TARGET}/${PROFILE}/bundle"
+            "target/${MATRIX_TARGET}/${PROFILE}/bundle"
+          )
+          UPLOAD=()
+          for root in "${BUNDLE_ROOTS[@]}"; do
+            [ -d "$root" ] || continue
+            for f in \
+              "$root"/deb/*.deb \
+              "$root"/appimage/*.AppImage \
+              "$root"/appimage/*.AppImage.sig \
+              "$root"/msi/*.msi \
+              "$root"/msi/*.msi.sig \
+              "$root"/nsis/*-setup.exe \
+              "$root"/nsis/*-setup.exe.sig; do
+              [ -e "$f" ] && UPLOAD+=("$f")
+            done
+          done
+          if [ ${#UPLOAD[@]} -eq 0 ]; then
+            echo "No installer artifacts found for ${MATRIX_TARGET}"
+            exit 1
+          fi
+          echo "Uploading:"
+          printf '  %s\n' "${UPLOAD[@]}"
+          gh release upload "$TAG" "${UPLOAD[@]}" --repo tinyhumansai/openhuman --clobber
+
+      # ---- macOS sign / notarize / repackage --------------------------------
+      - name: Locate macOS .app bundle
+        if: inputs.with_macos_signing && matrix.settings.platform == 'macos-latest'
+        id: locate-app
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+          PROFILE: ${{ inputs.build_profile }}
+        run: |
+          set -euo pipefail
+          APP_PATH=""
+          for candidate in \
+            "app/src-tauri/target/${MATRIX_TARGET}/${PROFILE}/bundle/macos/OpenHuman.app" \
+            "target/${MATRIX_TARGET}/${PROFILE}/bundle/macos/OpenHuman.app"; do
+            if [ -d "$candidate" ]; then
+              APP_PATH="$candidate"
+              break
+            fi
+          done
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH="$(find . -path "*/${PROFILE}/bundle/macos/OpenHuman.app" -type d 2>/dev/null | head -1)"
+          fi
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: Could not find OpenHuman.app bundle anywhere"
+            find . -name 'OpenHuman.app' -type d 2>/dev/null || true
+            exit 1
+          fi
+          BUNDLE_DIR="$(dirname "$(dirname "$APP_PATH")")"
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
+          echo "bundle_dir=$BUNDLE_DIR" >> "$GITHUB_OUTPUT"
+          echo "Found .app at: $APP_PATH"
+          echo "Bundle dir:    $BUNDLE_DIR"
+      - name: Sign and notarize macOS .app
+        if: inputs.with_macos_signing && matrix.settings.platform == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD || secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          bash scripts/release/sign-and-notarize-macos.sh \
+            "${{ steps.locate-app.outputs.app_path }}" \
+            "app/src-tauri/entitlements.sidecar.plist"
+      - name: Re-package DMG after notarization
+        if: inputs.with_macos_signing && matrix.settings.platform == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD || secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          bash scripts/release/repackage-dmg.sh \
+            "${{ steps.locate-app.outputs.app_path }}" \
+            "${{ steps.locate-app.outputs.bundle_dir }}"
+      - name: Re-upload notarized macOS artifacts to release
+        if:
+          inputs.with_macos_signing && inputs.with_release_upload && matrix.settings.platform
+          == 'macos-latest'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+        run: |
+          bash scripts/release/upload-macos-artifacts.sh \
+            "${{ steps.locate-app.outputs.app_path }}" \
+            "${{ steps.locate-app.outputs.bundle_dir }}" \
+            "${{ inputs.version }}" \
+            "${{ matrix.settings.target }}"
+      - name: Verify macOS notarization staple
+        if: inputs.with_macos_signing && matrix.settings.platform == 'macos-latest'
+        shell: bash
+        run: |
+          APP_PATH="${{ steps.locate-app.outputs.app_path }}"
+          echo "Checking staple at: $APP_PATH"
+          xcrun stapler validate "$APP_PATH" || echo "WARNING: Staple validation failed"
+
+      # ---- Actions-artifact uploads (when not pushing to a GH Release) ------
+      - name: Upload desktop bundles as Actions artifact
+        if: "!inputs.with_release_upload"
+        uses: actions/upload-artifact@v4
+        with:
+          name:
+            desktop-bundles-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix
+            }}
+          path: |
+            app/src-tauri/target/${{ matrix.settings.target }}/${{ inputs.build_profile }}/bundle/**
+            target/${{ matrix.settings.target }}/${{ inputs.build_profile }}/bundle/**
+      - name: Upload standalone CLI artifact
+        if: inputs.build_sidecar && !inputs.with_release_upload
+        uses: actions/upload-artifact@v4
+        with:
+          name:
+            standalone-bins-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix
+            }}
+          path: |
+            ${{ steps.core-paths.outputs.core_target_dir }}/${{ steps.core-paths.outputs.core_bin_name }}${{ matrix.settings.platform == 'windows-latest' && '.exe' || '' }}

@@ -81,16 +81,16 @@ The frontend communicates with the **openhuman** Rust core in two ways: **Tauri 
 
 OpenHuman chose Tauri + Rust over Electron for fundamental performance and security reasons:
 
-| Metric                    | OpenHuman (Tauri + Rust)       | Typical Electron App         |
-| ------------------------- | ------------------------------ | ---------------------------- |
-| Binary size               | ~30 MB                         | ~150 MB+                     |
-| Memory per skill context  | ~1-2 MB (QuickJS)              | ~150 MB+ (Chromium renderer) |
-| Cold startup              | Sub-500ms                      | 2-5 seconds                  |
-| Garbage collection pauses | None (Rust ownership model)    | V8 GC pauses                 |
-| Memory safety             | Compile-time guaranteed        | Runtime exceptions           |
-| TLS implementation        | rustls (no OpenSSL dependency) | Chromium's BoringSSL         |
+| Metric                    | OpenHuman (Tauri + Rust)                                 | Typical Electron App         |
+| ------------------------- | -------------------------------------------------------- | ---------------------------- |
+| Binary size               | Feature-dependent (CEF runtime + skills bundle dominate) | ~150 MB+                     |
+| Memory per skill context  | ~1-2 MB (QuickJS)                                        | ~150 MB+ (Chromium renderer) |
+| Cold startup              | Sub-500ms                                                | 2-5 seconds                  |
+| Garbage collection pauses | None (Rust ownership model)                              | V8 GC pauses                 |
+| Memory safety             | Compile-time guaranteed                                  | Runtime exceptions           |
+| TLS implementation        | rustls (no OpenSSL dependency)                           | Chromium's BoringSSL         |
 
-**Why this matters for a crypto platform**: Traders and analysts run OpenHuman alongside resource-intensive tools — charting software, multiple browser tabs, trading terminals. A 30 MB footprint with sub-500ms startup means the app feels native and stays out of the way. Zero GC pauses means real-time price feeds and alerts are never delayed by memory management.
+**Why this matters for a crypto platform**: Traders and analysts run OpenHuman alongside resource-intensive tools — charting software, multiple browser tabs, trading terminals. A native binary with sub-500ms startup means the app feels native and stays out of the way. Zero GC pauses means real-time price feeds and alerts are never delayed by memory management.
 
 The **Tokio async runtime** drives all I/O — WebSocket connections, HTTP requests, file operations, and inter-skill communication — as non-blocking tasks on a thread pool. Thousands of concurrent operations (skill executions, cron jobs, socket events) share a small fixed set of OS threads.
 

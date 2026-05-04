@@ -9,7 +9,7 @@ mod types;
 pub mod scheduler;
 
 pub use ops as rpc;
-pub use ops::{add_once, add_once_at, pause_job, resume_job, update_cron_job};
+pub use ops::{add_once, add_once_at, parse_human_delay, pause_job, resume_job, update_cron_job};
 #[allow(unused_imports)]
 pub use schedule::{
     next_run_for_schedule, normalize_expression, schedule_cron_expression, validate_schedule,
@@ -24,4 +24,6 @@ pub use store::{
     list_jobs, list_runs, record_last_run, record_run, remove_job, reschedule_after_run,
     update_job,
 };
-pub use types::{CronJob, CronJobPatch, CronRun, DeliveryConfig, JobType, Schedule, SessionTarget};
+pub use types::{
+    ActiveHours, CronJob, CronJobPatch, CronRun, DeliveryConfig, JobType, Schedule, SessionTarget,
+};

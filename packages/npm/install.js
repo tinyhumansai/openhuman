@@ -10,7 +10,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const REPO = 'tinyhumansai/openhuman';
 const pkg = require('./package.json');
@@ -125,17 +125,24 @@ async function main() {
   }
   console.log('[openhuman] Checksum verified.');
 
-  // Extract
+  // Extract — use execFileSync (no shell interpolation) so paths with spaces
+  // or shell metacharacters in `tmpTarball` / `binDir` can't be injected.
   if (isWin) {
     // PowerShell is available on Windows runners
-    execSync(
-      `powershell -Command "Expand-Archive -Path '${tmpTarball}' -DestinationPath '${binDir}' -Force"`,
-      { stdio: 'inherit' }
+    execFileSync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `Expand-Archive -Path $env:TC_SRC -DestinationPath $env:TC_DEST -Force`,
+      ],
+      { stdio: 'inherit', env: { ...process.env, TC_SRC: tmpTarball, TC_DEST: binDir } }
     );
     const extracted = path.join(binDir, 'openhuman-core.exe');
     if (fs.existsSync(extracted)) fs.renameSync(extracted, binDest);
   } else {
-    execSync(`tar -xzf "${tmpTarball}" -C "${binDir}"`, { stdio: 'inherit' });
+    execFileSync('tar', ['-xzf', tmpTarball, '-C', binDir], { stdio: 'inherit' });
     const extracted = path.join(binDir, 'openhuman-core');
     if (fs.existsSync(extracted)) {
       fs.renameSync(extracted, binDest);

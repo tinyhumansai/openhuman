@@ -80,6 +80,7 @@ pub fn all_providers() -> Vec<ProviderArc> {
 pub fn init_default_providers() {
     register_provider(Arc::new(super::gmail::GmailProvider::new()));
     register_provider(Arc::new(super::notion::NotionProvider::new()));
+    register_provider(Arc::new(super::slack::SlackProvider::new()));
     tracing::info!(
         count = all_providers().len(),
         "[composio:registry] default providers initialised"

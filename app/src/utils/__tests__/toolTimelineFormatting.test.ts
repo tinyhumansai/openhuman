@@ -16,7 +16,10 @@ describe('formatTimelineEntry', () => {
           argsBuffer: JSON.stringify({ prompt: 'Find the project brief in Notion.' }),
         })
       )
-    ).toEqual({ title: 'Checking your Notion', detail: 'Find the project brief in Notion.' });
+    ).toEqual({
+      title: 'Working in your Notion workspace',
+      detail: 'Find the project brief in Notion.',
+    });
   });
 
   it('formats spawn_subagent for integrations_agent from toolkit args', () => {
@@ -33,7 +36,7 @@ describe('formatTimelineEntry', () => {
         })
       )
     ).toEqual({
-      title: 'Checking your Gmail',
+      title: 'Making requests to your Gmail account',
       detail:
         'Get my 5 most recent emails. Show subject, sender, date, and a short preview for each.',
     });
@@ -48,7 +51,27 @@ describe('formatTimelineEntry', () => {
           detail: 'Search Notion for the latest roadmap.',
         })
       )
-    ).toEqual({ title: 'Checking your Notion', detail: 'Search Notion for the latest roadmap.' });
+    ).toEqual({
+      title: 'Working in your Notion workspace',
+      detail: 'Search Notion for the latest roadmap.',
+    });
+  });
+
+  it('formats delegate_tools_agent with toolkit context from args', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'delegate_tools_agent',
+          argsBuffer: JSON.stringify({
+            toolkit: 'github',
+            prompt: 'List my open pull requests in GitHub.',
+          }),
+        })
+      )
+    ).toEqual({
+      title: 'Making requests to your GitHub account',
+      detail: 'List my open pull requests in GitHub.',
+    });
   });
 
   it('falls back to humanized generic labels for non-integration subagents', () => {

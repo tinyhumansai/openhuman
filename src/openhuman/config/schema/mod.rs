@@ -24,12 +24,13 @@ mod observability;
 mod proxy;
 mod routes;
 mod runtime;
+mod scheduler_gate;
 mod storage_memory;
 mod tools;
 mod update;
 
 pub use accessibility::ScreenIntelligenceConfig;
-pub use agent::{AgentConfig, DelegateAgentConfig};
+pub use agent::{AgentConfig, DelegateAgentConfig, MemoryContextWindow, MemoryWindowLimits};
 pub use autocomplete::AutocompleteConfig;
 pub use autonomy::AutonomyConfig;
 pub use channels::{
@@ -53,13 +54,14 @@ pub use proxy::{
 };
 pub use routes::{EmbeddingRouteConfig, ModelRouteConfig};
 pub use runtime::{DockerRuntimeConfig, ReliabilityConfig, RuntimeConfig, SchedulerConfig};
+pub use scheduler_gate::{SchedulerGateConfig, SchedulerGateMode};
 pub use storage_memory::{
-    MemoryConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
+    MemoryConfig, MemoryTreeConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
 };
 pub use tools::{
-    BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig,
-    HttpRequestConfig, IntegrationToggle, IntegrationsConfig, MultimodalConfig, SecretsConfig,
-    WebSearchConfig,
+    BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
+    GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, MultimodalConfig,
+    SecretsConfig, WebSearchConfig,
 };
 pub use update::UpdateConfig;
 mod voice_server;

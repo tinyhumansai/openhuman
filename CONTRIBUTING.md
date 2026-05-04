@@ -26,7 +26,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (LTS) and [Yarn](https://yarnpkg.com/)
+- [Node.js](https://nodejs.org/) (LTS) and [pnpm](https://pnpmpkg.com/)
 - [Rust](https://rustup.rs/) (for Tauri and the Rust backend)
 - Platform-specific tools for the desktop targets you care about
 
@@ -36,7 +36,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 git clone https://github.com/YOUR_USERNAME/openhuman.git
 cd openhuman
 git submodule update --init --recursive   # pulls openhuman-skills
-yarn install
+pnpm install
 ```
 
 Use your own fork in place of `YOUR_USERNAME` when cloning.
@@ -49,7 +49,7 @@ When the `openhuman-skills` submodule is updated upstream, run:
 
 ```bash
 git submodule update --remote openhuman-skills
-cd openhuman-skills && yarn install && yarn build
+cd openhuman-skills && pnpm install && pnpm build
 cd ..
 git add openhuman-skills
 git commit -m "chore: update openhuman-skills submodule"
@@ -57,10 +57,10 @@ git commit -m "chore: update openhuman-skills submodule"
 
 ### Run the App
 
-- **Web only**: `yarn dev` (Vite dev server, typically port 1420)
-- **Desktop (Tauri)**: `yarn tauri dev` or `yarn dev:app` for enhanced debugging
+- **Web only**: `pnpm dev` (Vite dev server, typically port 1420)
+- **Desktop (Tauri)**: `pnpm tauri dev` or `pnpm dev:app` for enhanced debugging
 
-See the main [README](README.md) and project docs for more commands (e.g., `yarn skills:build`, `yarn skills:watch`).
+See the main [README](README.md) and project docs for more commands (e.g., `pnpm skills:build`, `pnpm skills:watch`).
 
 ### Environment
 
@@ -89,10 +89,10 @@ Use short, descriptive branches, e.g.:
 
 ### Running Checks
 
-- **TypeScript**: `yarn compile` (or `tsc --noEmit`)
-- **Lint**: `yarn lint` (ESLint); fix auto-fixable issues with `yarn lint:fix`
-- **Format**: `yarn format:check`; format with `yarn format` (Prettier)
-- **Tests**: `yarn test` (unit), `yarn test:rust` (Rust), `yarn test:e2e` (E2E when applicable)
+- **TypeScript**: `pnpm compile` (or `tsc --noEmit`)
+- **Lint**: `pnpm lint` (ESLint); fix auto-fixable issues with `pnpm lint:fix`
+- **Format**: `pnpm format:check`; format with `pnpm format` (Prettier)
+- **Tests**: `pnpm test` (unit), `pnpm test:rust` (Rust), `pnpm test:e2e` (E2E when applicable)
 
 Pre-commit/pre-push hooks (Husky) run formatting and linting; fix any failures before submitting.
 
@@ -113,7 +113,7 @@ Maintainers will review and may request changes. Once approved, your PR will be 
 - **Imports**: Use static `import`/`import type` at the top of the file. No dynamic `import()` for app code; use try/catch around Tauri API calls in non-Tauri environments instead.
 - **Code style**: ESLint and Prettier are authoritative. Use type-only imports where appropriate and consolidate imports from the same module.
 - **Telegram IDs**: Use the `big-integer` library; do not rely on native JavaScript numbers for Telegram IDs.
-- **Tauri**: Commands are in Rust under `app/src-tauri`; frontend uses `invoke()` from `@tauri-apps/api/core`. Handle missing `window.__TAURI__` where the app can run outside Tauri. Install JS deps from the repo root (`yarn install`) so the `app` workspace is linked; most scripts are also available as `yarn <script>` from the root.
+- **Tauri**: Commands are in Rust under `app/src-tauri`; frontend uses `invoke()` from `@tauri-apps/api/core`. Use the `isTauri()` helper (from `@tauri-apps/api/core`) or wrap `invoke()` calls in try/catch to handle non-Tauri environments safely—avoid checking `window.__TAURI__` directly at module load time. Install JS deps from the repo root (`pnpm install`) so the `app` workspace is linked; most scripts are also available as `pnpm <script>` from the root.
 - **Socket events**: Behavior exists in both the TypeScript frontend and the Rust backend. Any new socket event or protocol change must be implemented in both places.
 - **Skills**: Follow the V8 runtime and skill manifest rules; respect platform compatibility and the documented bridge/API surface.
 

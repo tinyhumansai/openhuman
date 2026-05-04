@@ -19,6 +19,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("mark_read"),
         schemas("settings_get"),
         schemas("settings_set"),
+        schemas("dismiss"),
+        schemas("mark_acted"),
+        schemas("stats"),
     ]
 }
 
@@ -43,6 +46,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("settings_set"),
             handler: handle_settings_set_wrap,
+        },
+        RegisteredController {
+            schema: schemas("dismiss"),
+            handler: handle_dismiss_wrap,
+        },
+        RegisteredController {
+            schema: schemas("mark_acted"),
+            handler: handle_mark_acted_wrap,
+        },
+        RegisteredController {
+            schema: schemas("stats"),
+            handler: handle_stats_wrap,
         },
     ]
 }
@@ -237,6 +252,79 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
         },
 
+        "dismiss" => ControllerSchema {
+            namespace: "notification",
+            function: "dismiss",
+            description: "Mark a notification as dismissed (user explicitly hid it).",
+            inputs: vec![FieldSchema {
+                name: "id",
+                ty: TypeSchema::String,
+                comment: "UUID of the notification to dismiss.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "ok",
+                ty: TypeSchema::Bool,
+                comment: "True when the update succeeded.",
+                required: true,
+            }],
+        },
+        "mark_acted" => ControllerSchema {
+            namespace: "notification",
+            function: "mark_acted",
+            description: "Mark a notification as acted upon (user took an action from it).",
+            inputs: vec![FieldSchema {
+                name: "id",
+                ty: TypeSchema::String,
+                comment: "UUID of the notification to mark as acted.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "ok",
+                ty: TypeSchema::Bool,
+                comment: "True when the update succeeded.",
+                required: true,
+            }],
+        },
+        "stats" => ControllerSchema {
+            namespace: "notification",
+            function: "stats",
+            description: "Return aggregate statistics for the notification intelligence pipeline.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "total",
+                    ty: TypeSchema::I64,
+                    comment: "Total notification count.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "unread",
+                    ty: TypeSchema::I64,
+                    comment: "Count of unread notifications.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "unscored",
+                    ty: TypeSchema::I64,
+                    comment: "Count of notifications pending triage scoring.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "by_provider",
+                    ty: TypeSchema::Map(Box::new(TypeSchema::I64)),
+                    comment: "Notification counts grouped by provider slug.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "by_action",
+                    ty: TypeSchema::Map(Box::new(TypeSchema::I64)),
+                    comment: "Notification counts grouped by triage action.",
+                    required: true,
+                },
+            ],
+        },
+
         _other => ControllerSchema {
             namespace: "notification",
             function: "unknown",
@@ -281,6 +369,18 @@ fn handle_settings_set_wrap(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::handle_settings_set(params).await })
 }
 
+fn handle_dismiss_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::rpc::handle_dismiss(params).await })
+}
+
+fn handle_mark_acted_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::rpc::handle_mark_acted(params).await })
+}
+
+fn handle_stats_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::rpc::handle_stats(params).await })
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -290,7 +390,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_controller_schemas_covers_three_functions() {
+    fn all_controller_schemas_covers_registered_functions() {
         let names: Vec<_> = all_controller_schemas()
             .into_iter()
             .map(|s| s.function)
@@ -302,7 +402,10 @@ mod tests {
                 "list",
                 "mark_read",
                 "settings_get",
-                "settings_set"
+                "settings_set",
+                "dismiss",
+                "mark_acted",
+                "stats",
             ]
         );
     }
@@ -310,7 +413,7 @@ mod tests {
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 5);
+        assert_eq!(controllers.len(), 8);
         let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
         assert_eq!(
             names,
@@ -319,9 +422,60 @@ mod tests {
                 "list",
                 "mark_read",
                 "settings_get",
-                "settings_set"
+                "settings_set",
+                "dismiss",
+                "mark_acted",
+                "stats",
             ]
         );
+    }
+
+    #[test]
+    fn schemas_dismiss_and_mark_acted_require_id_and_return_ok() {
+        let dismiss = schemas("dismiss");
+        assert_eq!(dismiss.inputs.len(), 1);
+        assert_eq!(dismiss.inputs[0].name, "id");
+        assert_eq!(dismiss.inputs[0].ty, TypeSchema::String);
+        assert!(dismiss.inputs[0].required);
+        assert_eq!(dismiss.outputs.len(), 1);
+        assert_eq!(dismiss.outputs[0].name, "ok");
+        assert_eq!(dismiss.outputs[0].ty, TypeSchema::Bool);
+        assert!(dismiss.outputs[0].required);
+
+        let mark_acted = schemas("mark_acted");
+        assert_eq!(mark_acted.inputs.len(), 1);
+        assert_eq!(mark_acted.inputs[0].name, "id");
+        assert_eq!(mark_acted.inputs[0].ty, TypeSchema::String);
+        assert!(mark_acted.inputs[0].required);
+        assert_eq!(mark_acted.outputs.len(), 1);
+        assert_eq!(mark_acted.outputs[0].name, "ok");
+        assert_eq!(mark_acted.outputs[0].ty, TypeSchema::Bool);
+        assert!(mark_acted.outputs[0].required);
+    }
+
+    #[test]
+    fn schemas_stats_matches_notification_stats_shape() {
+        let stats = schemas("stats");
+        assert!(stats.inputs.is_empty());
+        assert_eq!(stats.outputs.len(), 5);
+
+        let expected = [
+            ("total", TypeSchema::I64),
+            ("unread", TypeSchema::I64),
+            ("unscored", TypeSchema::I64),
+            ("by_provider", TypeSchema::Map(Box::new(TypeSchema::I64))),
+            ("by_action", TypeSchema::Map(Box::new(TypeSchema::I64))),
+        ];
+
+        for (name, ty) in expected {
+            let field = stats
+                .outputs
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap_or_else(|| panic!("missing stats output field `{name}`"));
+            assert_eq!(field.ty, ty, "unexpected type for stats.{name}");
+            assert!(field.required, "stats.{name} should be required");
+        }
     }
 
     #[test]

@@ -16,9 +16,9 @@ This file orients contributors and coding agents. Authoritative narrative archit
 | **`Cargo.toml`** (root) | Core crate; `cargo build --bin openhuman` produces the sidecar the UI stages via `app`’s `core:stage`                                                                                                       |
 | **`docs/`**             | Architecture and module guides (numbered pages under `docs/src/`, `docs/src-tauri/`)                                                                                                                        |
 
-Commands in documentation assume the **repo root** unless noted: `yarn dev` runs the `app` workspace.
+Commands in documentation assume the **repo root** unless noted: `pnpm dev` runs the `app` workspace.
 
-**Skills registry:** Skill sources and the bundler live in **[github.com/tinyhumansai/openhuman-skills](https://github.com/tinyhumansai/openhuman-skills)**. Clone that repository to author or change skills (`yarn install`, `yarn build`). The desktop app’s skills catalog defaults to that GitHub slug; override with `VITE_SKILLS_GITHUB_REPO` (see [`app/src/utils/config.ts`](app/src/utils/config.ts)).
+**Skills registry:** Skill sources and the bundler live in **[github.com/tinyhumansai/openhuman-skills](https://github.com/tinyhumansai/openhuman-skills)**. Clone that repository to author or change skills (`pnpm install`, `pnpm build`). The desktop app’s skills catalog defaults to that GitHub slug; override with `VITE_SKILLS_GITHUB_REPO` (see [`app/src/utils/config.ts`](app/src/utils/config.ts)).
 
 ---
 
@@ -39,27 +39,27 @@ Commands in documentation assume the **repo root** unless noted: `yarn dev` runs
 
 ```bash
 # Frontend + Tauri dev (workspace delegates to app/)
-yarn dev
+pnpm dev
 
 # Desktop with Tauri (loads env via scripts/load-dotenv.sh)
-yarn tauri dev
+pnpm tauri dev
 
 # Production UI build (app workspace)
-yarn build
+pnpm build
 
 # Typecheck / lint / format (app workspace)
-yarn typecheck
-yarn lint
-yarn format
-yarn format:check
+pnpm typecheck
+pnpm lint
+pnpm format
+pnpm format:check
 
 # Stage openhuman core binary next to Tauri resources (required for core RPC)
-cd app && yarn core:stage
+cd app && pnpm core:stage
 
 # Skills — develop in the GitHub registry repo, then build (see tinyhumansai/openhuman-skills).
 # If you keep a local clone path wired in app scripts, you can also run:
-yarn workspace openhuman-app skills:build
-yarn workspace openhuman-app skills:watch
+pnpm workspace openhuman-app skills:build
+pnpm workspace openhuman-app skills:watch
 
 # Rust — core library + CLI (repo root)
 cargo check --manifest-path Cargo.toml
@@ -69,9 +69,41 @@ cargo build --manifest-path Cargo.toml --bin openhuman
 cargo check --manifest-path app/src-tauri/Cargo.toml
 ```
 
-**Tests**: Vitest in `app/` (`yarn test`, `yarn test:coverage`). Rust tests via `cargo test` at repo root as wired in `app/package.json`.
+**Tests**: Vitest in `app/` (`pnpm test`, `pnpm test:coverage`). Rust tests via `cargo test` at repo root as wired in `app/package.json`.
 
 **Quality**: ESLint + Prettier + Husky in the `app` workspace.
+
+### Agent debug runners (`scripts/debug/`)
+
+Use these wrappers instead of invoking Vitest / WDIO / cargo directly when iterating — they keep stdout summary-sized and tee full output to `target/debug-logs/<kind>-<suffix>-<timestamp>.log`. Add `--verbose` to also stream raw output. See [`scripts/debug/README.md`](scripts/debug/README.md).
+
+```bash
+# Vitest
+pnpm debug unit                                    # full suite
+pnpm debug unit src/components/Foo.test.tsx        # one file (positional pattern)
+pnpm debug unit -t "renders empty state"           # filter by test name
+pnpm debug unit Foo -t "renders empty" --verbose
+
+# WDIO E2E (one spec at a time)
+pnpm debug e2e test/e2e/specs/smoke.spec.ts
+pnpm debug e2e test/e2e/specs/cron-jobs-flow.spec.ts cron-jobs --verbose
+
+# cargo tests (delegates to scripts/test-rust-with-mock.sh)
+pnpm debug rust
+pnpm debug rust json_rpc_e2e
+
+# Inspect saved logs
+pnpm debug logs                  # list 50 most recent
+pnpm debug logs last             # print most recent (last 400 lines)
+pnpm debug logs unit             # most recent matching prefix "unit"
+pnpm debug logs last --tail 100
+```
+
+Files: `scripts/debug/{cli,unit,e2e,rust,logs,lib}.sh`. Entry point: `pnpm debug` (`scripts/debug/cli.sh`).
+
+### Coverage requirement (merge gate)
+
+PRs must meet **≥ 80% coverage on changed lines**. Enforced by [`.github/workflows/coverage.yml`](.github/workflows/coverage.yml) via `diff-cover` over merged Vitest + `cargo-llvm-cov` (core + Tauri shell) lcov outputs. Below the threshold the PR will not merge. Run `pnpm test:coverage` and `pnpm test:rust` locally; add tests for new/changed lines (happy path + at least one failure / edge case).
 
 ---
 
@@ -97,8 +129,8 @@ Environment variables are documented in two `.env.example` files:
 - **Run**:
 
 ```bash
-yarn test:unit
-yarn test:coverage
+pnpm test:unit
+pnpm test:coverage
 ```
 
 - **Authoring rules**:
@@ -123,7 +155,7 @@ Key admin endpoints:
 Run manually:
 
 ```bash
-yarn mock:api
+pnpm mock:api
 curl -s http://127.0.0.1:18473/__admin/health
 ```
 
@@ -148,13 +180,13 @@ Two automation backends:
 
 ```bash
 # Build app + stage core sidecar (detects macOS vs Linux automatically)
-yarn test:e2e:build
+pnpm test:e2e:build
 
 # Run one spec
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
 
 # Run all flow specs
-yarn test:e2e:all:flows
+pnpm test:e2e:all:flows
 
 # Docker on macOS (run Linux E2E locally)
 docker compose -f e2e/docker-compose.yml run --rm e2e
@@ -176,14 +208,14 @@ If you need a fixed workspace for debugging, provide one explicitly:
 
 ```bash
 export OPENHUMAN_WORKSPACE="$(mktemp -d)"
-yarn test:e2e:build
+pnpm test:e2e:build
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
 rm -rf "$OPENHUMAN_WORKSPACE"
 ```
 
 - `OPENHUMAN_WORKSPACE` redirects core config + workspace storage away from `~/.openhuman`.
 - Default reset strategy:
-  - Rebuild/stage sidecar once per E2E run (`yarn test:e2e:build`).
+  - Rebuild/stage sidecar once per E2E run (`pnpm test:e2e:build`).
   - Isolate state per test case with a fresh temp workspace (default behavior in `e2e-run-spec.sh`).
 
 ### Rust tests with mock backend
@@ -191,7 +223,7 @@ rm -rf "$OPENHUMAN_WORKSPACE"
 Use the shared mock backend runner so Rust unit/integration tests get deterministic API behavior:
 
 ```bash
-yarn test:rust
+pnpm test:rust
 # or targeted
 bash scripts/test-rust-with-mock.sh --test json_rpc_e2e
 ```
@@ -212,7 +244,7 @@ run_case() {
 - Add/update E2E coverage for user-visible flows and cross-process integration behavior.
 - Keep new tests independent, deterministic, and debuggable from logs alone.
 - When touching core/sidecar behavior, validate both:
-  - `yarn test:unit`
+  - `pnpm test:unit`
   - targeted E2E spec(s) via `app/scripts/e2e-run-spec.sh`
 
 ---
@@ -459,12 +491,12 @@ Follow this order so behavior is **specified**, **proven in Rust**, **proven ove
 2. **Implement in Rust** — Add domain logic under `src/openhuman/<domain>/`, wire **schemas + registered handlers** into the shared registry, and land **unit tests** in the crate (`cargo test -p openhuman`, focused modules) until the feature is correct in isolation.
 3. **JSON-RPC E2E** — Add or extend **integration-style tests** that call the real HTTP JSON-RPC surface (e.g. [`tests/json_rpc_e2e.rs`](tests/json_rpc_e2e.rs), mock backend / [`scripts/test-rust-with-mock.sh`](scripts/test-rust-with-mock.sh) as appropriate) so methods, params, and outcomes match what the UI will call.
 4. **UI in the Tauri app** — Build **React** screens, state, and **`core_rpc_relay` / `coreRpcClient`** usage in `app/`; keep **business rules** in the core, not duplicated in the shell.
-5. **App unit tests** — Cover components, hooks, and clients with **Vitest** (`yarn test` / `yarn test:unit` in `app/`).
-6. **App E2E** — Add **desktop E2E** specs where the feature is user-visible (`yarn test:e2e*`, isolated workspace — see [Testing Guide (Unit + E2E)](#testing-guide-unit--e2e)) so the full stack (UI → Tauri → sidecar) behaves as intended.
+5. **App unit tests** — Cover components, hooks, and clients with **Vitest** (`pnpm test` / `pnpm test:unit` in `app/`).
+6. **App E2E** — Add **desktop E2E** specs where the feature is user-visible (`pnpm test:e2e*`, isolated workspace — see [Testing Guide (Unit + E2E)](#testing-guide-unit--e2e)) so the full stack (UI → Tauri → sidecar) behaves as intended.
 
 **Capability catalog** — When a change adds, removes, renames, relocates, or materially changes a user-facing feature, update **`src/openhuman/about_app/`** in the same work so the runtime capability catalog remains the source of truth for what the app can do.
 
-**Debug logging (throughout)** — Add **lots of development-oriented logging** as you build, not as an afterthought. In **Rust**, use `log` / `tracing` at **`debug`** or **`trace`** on RPC entry and exit, error paths, state transitions, and any branch that is hard to infer from tests alone. In **`app/`**, follow existing patterns (e.g. the **`debug`** npm package with a **namespace** per area) plus **dev-only** detail where useful. Prefer **grep-friendly prefixes** (`[feature]`, domain name, or JSON-RPC method) so terminal output from **sidecar**, **Tauri**, and **WebView** can be correlated during `yarn dev` / `tauri dev`. **Never** log secrets, raw JWTs, API keys, or full PII—redact or omit.
+**Debug logging (throughout)** — Add **lots of development-oriented logging** as you build, not as an afterthought. In **Rust**, use `log` / `tracing` at **`debug`** or **`trace`** on RPC entry and exit, error paths, state transitions, and any branch that is hard to infer from tests alone. In **`app/`**, follow existing patterns (e.g. the **`debug`** npm package with a **namespace** per area) plus **dev-only** detail where useful. Prefer **grep-friendly prefixes** (`[feature]`, domain name, or JSON-RPC method) so terminal output from **sidecar**, **Tauri**, and **WebView** can be correlated during `pnpm dev` / `tauri dev`. **Never** log secrets, raw JWTs, API keys, or full PII—redact or omit.
 
 **Planning rule:** When scoping a feature, define the **E2E scenarios (core RPC + app)** up front. Those scenarios should **cover the full intended scope**—happy paths, failure modes, auth or policy gates, and regressions you care about. If a scenario is not testable end-to-end, the spec is incomplete or the cut is too large; split or add harness support first.
 
@@ -490,6 +522,79 @@ Follow this order so behavior is **specified**, **proven in Rust**, **proven ove
 ---
 
 _Last aligned with monorepo layout (`app/` + root `src/`), QuickJS skills in `openhuman_core`, skills catalog on GitHub (`tinyhumansai/openhuman-skills`), and Tauri shell IPC as of repo state._
+
+---
+
+## Cursor Cloud specific instructions
+
+### Environment overview
+
+Two services run independently for development:
+
+| Service | Start command | Port | Notes |
+|---------|--------------|------|-------|
+| **Vite dev server** | `pnpm dev` (from repo root) | 1420 | React frontend with HMR |
+| **Core JSON-RPC server** | `./target/debug/openhuman-core serve` | 7788 | Rust core, writes bearer token to `~/.openhuman-staging/core.token` |
+
+The app connects to a **remote staging backend** at `https://staging-api.tinyhumans.ai` — there is no local backend to run.
+
+### Running the core server standalone
+
+The core generates a bearer token at startup written to `{workspace_dir}/core.token` (default `~/.openhuman-staging/core.token` when `OPENHUMAN_APP_ENV=staging`). Read that file for authenticated RPC calls:
+
+```bash
+TOKEN=$(cat ~/.openhuman-staging/core.token)
+curl http://localhost:7788/rpc -X POST \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"jsonrpc":"2.0","method":"core.ping","params":{},"id":1}'
+```
+
+Public endpoints (no token needed): `GET /health`, `GET /schema`, `GET /events`.
+
+### Linux build dependencies (non-obvious)
+
+Compiling the Rust core on Linux requires these system packages beyond the basics:
+`libasound2-dev libxi-dev libxtst-dev libxdo-dev libudev-dev libssl-dev clang cmake pkg-config libstdc++-14-dev`
+
+The `libstdc++-14-dev` package is needed because clang selects GCC 14 headers; without it, whisper-rs-sys fails with `fatal error: 'array' file not found`. A symlink may also be needed: `ln -sf /usr/lib/gcc/x86_64-linux-gnu/13/libstdc++.so /usr/lib/x86_64-linux-gnu/libstdc++.so`.
+
+### Quick reference for common dev commands
+
+All commands are documented in `CLAUDE.md` and `AGENTS.md` above. The most-used subset:
+
+- **Lint**: `pnpm lint` (ESLint, 0 errors expected; warnings are acceptable)
+- **Typecheck**: `pnpm typecheck` (`tsc --noEmit`)
+- **Unit tests**: `pnpm test` (Vitest, runs 1000+ tests)
+- **Rust check**: `cargo check --manifest-path Cargo.toml`
+- **Rust tests**: `cargo test --lib` (5600+ tests)
+- **Format check**: `pnpm format:check`
+
+### Running the Tauri desktop app on Linux cloud VMs
+
+The full desktop app can be built and run on headless Linux VMs with:
+
+```bash
+export CEF_PATH="$HOME/Library/Caches/tauri-cef"
+export LD_LIBRARY_PATH="$CEF_PATH/146.0.9/cef_linux_x86_64:$LD_LIBRARY_PATH"
+source scripts/load-dotenv.sh
+cargo tauri dev -- -- --no-sandbox
+```
+
+Key requirements:
+- `--no-sandbox` is required because Chromium refuses to run as root without it.
+- `LD_LIBRARY_PATH` must include the CEF distribution directory so `libcef.so` is found at runtime.
+- The vendored CEF-aware `cargo-tauri` must be installed first via `bash scripts/ensure-tauri-cli.sh`.
+- First build downloads ~300MB CEF binary and compiles ~900 crates; subsequent builds are incremental.
+- GTK/cairo libraries are required: `libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libglib2.0-dev libcairo2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev libatk1.0-dev libdbus-1-dev`.
+- WebGL errors in the log (`ContextResult::kFatalFailure: WebGL1/2 blocklisted`) are normal on GPU-less VMs and do not affect app functionality.
+
+### Gotchas
+
+- `pnpm install` may warn about ignored build scripts (`@sentry/cli`, `esbuild`, etc.). The esbuild binary is correctly installed via its native platform package despite the warning — Vite and Vitest work fine.
+- Git submodules (`app/src-tauri/vendor/tauri-cef`, `app/src-tauri/vendor/tauri-plugin-notification`) must be initialized for Tauri shell compilation. Run `git submodule update --init --recursive` if not already done.
+- `pnpm test:unit` does not exist at the root level; use `pnpm test` instead (which delegates to `vitest run` in the `app` workspace).
+- The Tauri shell `cargo check` requires GTK/desktop system libraries; without them, the pre-push hook's `pnpm rust:check` will fail. Use `--no-verify` on push if GTK libs are missing and the change is unrelated to the Tauri shell.
 
 
 <claude-mem-context>

@@ -31,6 +31,11 @@ vi.mock('../../services/api/threadApi', () => ({
 
 vi.mock('../../hooks/usageRefresh', () => ({ requestUsageRefresh: vi.fn() }));
 
+const mockRefetchSnapshot = vi.fn();
+vi.mock('../../hooks/useRefetchSnapshotOnTurnEnd', () => ({
+  useRefetchSnapshotOnTurnEnd: () => ({ refetch: mockRefetchSnapshot }),
+}));
+
 function renderProvider(): chatService.ChatEventListeners {
   let captured: chatService.ChatEventListeners = {};
   vi.mocked(chatService.subscribeChatEvents).mockImplementation(listeners => {
@@ -97,7 +102,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(timeline[0]?.status).toBe('running');
     });
 
-    it('drops duplicate chat_done events with the same thread/request', () => {
+    it('drops duplicate chat_done events with the same thread/request', async () => {
       const listeners = renderProvider();
 
       const doneEvent: chatService.ChatDoneEvent = {
@@ -107,6 +112,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         rounds_used: 1,
         total_input_tokens: 5,
         total_output_tokens: 7,
+        segment_total: 1,
       };
 
       act(() => {
@@ -119,6 +125,9 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(usage.inputTokens).toBe(5);
       expect(usage.outputTokens).toBe(7);
       expect(usage.turns).toBe(1);
+
+      // Snapshot refetch fired exactly once on the first chat_done — issue #924.
+      expect(mockRefetchSnapshot).toHaveBeenCalledTimes(1);
     });
 
     it('processes tool_call for different rounds as distinct events', () => {
@@ -347,6 +356,147 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       const timeline = store.getState().chatRuntime.toolTimelineByThread['t-err'] ?? [];
       expect(timeline[0]?.status).toBe('error');
       expect(store.getState().chatRuntime.inferenceStatusByThread['t-err']).toBeUndefined();
+    });
+  });
+
+  // Live subagent activity (#1122) — the parent thread surfaces a
+  // subagent's child iterations and tool calls as they happen, then
+  // settles to the final-run statistics on completion. The asserts here
+  // are the contract the ToolTimelineBlock UI relies on; if a refactor
+  // moves the subagent state somewhere else this test is the canary.
+  describe('live subagent activity (#1122)', () => {
+    it('builds a live subagent block from spawned → iteration → tool call → done', () => {
+      const listeners = renderProvider();
+      const threadId = 'tsa';
+
+      act(() => {
+        listeners.onSubagentSpawned?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          tool_name: 'researcher',
+          skill_id: 'sub-1',
+          message: 'spawned',
+          round: 1,
+          subagent: { mode: 'typed', dedicated_thread: false, prompt_chars: 42 },
+        });
+      });
+
+      let timeline = store.getState().chatRuntime.toolTimelineByThread[threadId] ?? [];
+      expect(timeline).toHaveLength(1);
+      expect(timeline[0]?.subagent).toMatchObject({
+        agentId: 'researcher',
+        taskId: 'sub-1',
+        mode: 'typed',
+        dedicatedThread: false,
+        toolCalls: [],
+      });
+
+      act(() => {
+        listeners.onSubagentIterationStart?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 1,
+          tool_name: 'researcher',
+          skill_id: 'sub-1',
+          message: 'iter',
+          subagent: {
+            agent_id: 'researcher',
+            task_id: 'sub-1',
+            child_iteration: 1,
+            child_max_iterations: 5,
+          },
+        });
+        listeners.onSubagentToolCall?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 1,
+          tool_name: 'web_search',
+          skill_id: 'sub-1',
+          tool_call_id: 'cc-1',
+          subagent: { agent_id: 'researcher', task_id: 'sub-1', child_iteration: 1 },
+        });
+        // Duplicate child tool_call must not double-append.
+        listeners.onSubagentToolCall?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 1,
+          tool_name: 'web_search',
+          skill_id: 'sub-1',
+          tool_call_id: 'cc-1',
+          subagent: { agent_id: 'researcher', task_id: 'sub-1', child_iteration: 1 },
+        });
+      });
+
+      timeline = store.getState().chatRuntime.toolTimelineByThread[threadId] ?? [];
+      expect(timeline[0]?.subagent?.childIteration).toBe(1);
+      expect(timeline[0]?.subagent?.childMaxIterations).toBe(5);
+      expect(timeline[0]?.subagent?.toolCalls).toEqual([
+        { callId: 'cc-1', toolName: 'web_search', status: 'running', iteration: 1 },
+      ]);
+
+      act(() => {
+        listeners.onSubagentToolResult?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 1,
+          tool_name: 'web_search',
+          skill_id: 'sub-1',
+          tool_call_id: 'cc-1',
+          success: true,
+          subagent: {
+            agent_id: 'researcher',
+            task_id: 'sub-1',
+            child_iteration: 1,
+            elapsed_ms: 312,
+            output_chars: 1280,
+          },
+        });
+        listeners.onSubagentDone?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          tool_name: 'researcher',
+          skill_id: 'sub-1',
+          message: 'done',
+          success: true,
+          round: 1,
+          subagent: { iterations: 2, elapsed_ms: 4200, output_chars: 980 },
+        });
+      });
+
+      timeline = store.getState().chatRuntime.toolTimelineByThread[threadId] ?? [];
+      expect(timeline[0]?.status).toBe('success');
+      expect(timeline[0]?.subagent?.toolCalls[0]).toMatchObject({
+        status: 'success',
+        elapsedMs: 312,
+        outputChars: 1280,
+      });
+      expect(timeline[0]?.subagent).toMatchObject({
+        iterations: 2,
+        elapsedMs: 4200,
+        outputChars: 980,
+      });
+    });
+
+    it('ignores subagent_tool_call events that arrive before subagent_spawned', () => {
+      const listeners = renderProvider();
+      const threadId = 'tsa-orphan';
+
+      act(() => {
+        listeners.onSubagentToolCall?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 1,
+          tool_name: 'web_search',
+          skill_id: 'sub-missing',
+          tool_call_id: 'cc-1',
+          subagent: { agent_id: 'researcher', task_id: 'sub-missing', child_iteration: 1 },
+        });
+      });
+
+      // No row was created — the orphan child tool call is dropped rather
+      // than synthesising a partial subagent row from incomplete data.
+      const timeline = store.getState().chatRuntime.toolTimelineByThread[threadId] ?? [];
+      expect(timeline).toHaveLength(0);
     });
   });
 });

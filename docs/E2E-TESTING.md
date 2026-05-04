@@ -22,10 +22,10 @@ Desktop E2E tests use **WebDriverIO (WDIO)** to drive the Tauri app via two auto
 cargo install tauri-driver
 
 # Build the E2E app
-yarn workspace openhuman-app test:e2e:build
+pnpm workspace openhuman-app test:e2e:build
 
 # Run all flows
-yarn workspace openhuman-app test:e2e:all:flows
+pnpm workspace openhuman-app test:e2e:all:flows
 
 # Run a single spec
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
@@ -41,10 +41,10 @@ npm install -g appium
 appium driver install mac2
 
 # Build the .app bundle
-yarn workspace openhuman-app test:e2e:build
+pnpm workspace openhuman-app test:e2e:build
 
 # Run all flows
-yarn workspace openhuman-app test:e2e:all:flows
+pnpm workspace openhuman-app test:e2e:all:flows
 ```
 
 ### Docker on macOS (Linux E2E locally)
@@ -57,7 +57,7 @@ docker compose -f e2e/docker-compose.yml run --rm e2e
 
 # Build the app first (if needed)
 docker compose -f e2e/docker-compose.yml run --rm e2e \
-  yarn workspace openhuman-app test:e2e:build
+  pnpm workspace openhuman-app test:e2e:build
 
 # Run a single spec
 docker compose -f e2e/docker-compose.yml run --rm e2e \
@@ -168,11 +168,34 @@ cargo install tauri-driver
 
 ### macOS: Deep links not working in `tauri dev`
 
-Deep links require a `.app` bundle. Use `yarn tauri build --debug --bundles app` instead.
+Deep links require a `.app` bundle. Use `pnpm tauri build --debug --bundles app` instead.
 
 ### Docker: Build is slow on first run
 
 The first Docker build compiles Rust + tauri-driver from source. Subsequent runs use cached layers. Cargo registry and git sources are cached via Docker volumes.
+
+## Spec: Notifications
+
+**File**: `app/test/e2e/specs/notifications.spec.ts`
+
+Tests notification RPC methods via the live core sidecar and the Notifications UI page:
+
+- `notification_ingest` — creates a new notification via core RPC
+- `notification_list` — verifies the ingested notification is returned
+- `notification_mark_read` — marks a notification as read
+- `notification_stats` — checks aggregate statistics shape
+- UI: Notifications page renders the integration notifications section (`[data-testid="integration-notifications-section"]`)
+- UI: Notifications page shows the System Events section (`[data-testid="system-events-section"]`)
+
+**Run**:
+
+```bash
+bash app/scripts/e2e-run-spec.sh test/e2e/specs/notifications.spec.ts notifications
+```
+
+**Platform note**: RPC tests (`notification_ingest`, `notification_list`, `notification_mark_read`, `notification_stats`) run on both Linux (tauri-driver) and macOS (Appium Mac2). UI assertions (Notifications page sections) require Linux / tauri-driver because `browser.execute()` is unavailable on Mac2 — those tests auto-skip when `supportsExecuteScript()` returns `false`.
+
+---
 
 ## Agent-observable artifact flow
 

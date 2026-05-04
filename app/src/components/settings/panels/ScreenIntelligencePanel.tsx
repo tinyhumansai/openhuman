@@ -116,20 +116,22 @@ const ScreenIntelligencePanel = () => {
       />
 
       <div className="max-w-2xl mx-auto w-full p-4 space-y-4">
-        <PermissionsSection
-          screenRecording={status?.permissions.screen_recording ?? 'unknown'}
-          accessibility={status?.permissions.accessibility ?? 'unknown'}
-          inputMonitoring={status?.permissions.input_monitoring ?? 'unknown'}
-          anyPermissionDenied={anyPermissionDenied ?? false}
-          lastRestartSummary={lastRestartSummary}
-          permissionCheckProcessPath={status?.permission_check_process_path}
-          isRequestingPermissions={isRequestingPermissions}
-          isRestartingCore={isRestartingCore}
-          isLoading={isLoading}
-          requestPermission={requestPermission}
-          refreshPermissionsWithRestart={refreshPermissionsWithRestart}
-          refreshStatus={refreshStatus}
-        />
+        {(status?.platform_supported ?? true) && (
+          <PermissionsSection
+            screenRecording={status?.permissions.screen_recording ?? 'unknown'}
+            accessibility={status?.permissions.accessibility ?? 'unknown'}
+            inputMonitoring={status?.permissions.input_monitoring ?? 'unknown'}
+            anyPermissionDenied={anyPermissionDenied ?? false}
+            lastRestartSummary={lastRestartSummary}
+            permissionCheckProcessPath={status?.permission_check_process_path}
+            isRequestingPermissions={isRequestingPermissions}
+            isRestartingCore={isRestartingCore}
+            isLoading={isLoading}
+            requestPermission={requestPermission}
+            refreshPermissionsWithRestart={refreshPermissionsWithRestart}
+            refreshStatus={refreshStatus}
+          />
+        )}
 
         <section className="space-y-3">
           <h3 className="text-sm font-semibold text-stone-900">Screen Awareness</h3>
@@ -224,7 +226,8 @@ const ScreenIntelligencePanel = () => {
 
         {status !== null && !status.platform_supported && (
           <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-700">
-            Screen Awareness is currently supported on macOS only.
+            Screen Awareness desktop capture and permission controls are currently supported on
+            macOS only.
           </div>
         )}
 

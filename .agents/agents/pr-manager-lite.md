@@ -120,10 +120,10 @@ Never `--no-verify`, never amend, never force-push.
 Choose based on diff; default when code changed:
 
 ```bash
-yarn typecheck
-yarn lint
-yarn format
-yarn test:unit
+pnpm typecheck
+pnpm lint
+pnpm format
+pnpm test:unit
 cargo fmt --manifest-path Cargo.toml
 cargo check --manifest-path Cargo.toml
 cargo check --manifest-path app/src-tauri/Cargo.toml

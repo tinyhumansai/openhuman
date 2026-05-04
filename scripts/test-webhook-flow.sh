@@ -13,6 +13,42 @@ fi
 CORE_HOST="${OPENHUMAN_CORE_HOST:-127.0.0.1}"
 CORE_PORT="${OPENHUMAN_CORE_PORT:-7788}"
 CORE_RPC_URL="${CORE_RPC_URL:-http://${CORE_HOST}:${CORE_PORT}/rpc}"
+
+# Resolve the core RPC bearer token.  Resolution order:
+#   1. OPENHUMAN_CORE_TOKEN env var (set by caller or Tauri shell)
+#   2. core.token file in workspace dir (written by standalone `openhuman core run`)
+#   3. Live process environment of the running openhuman-core child (Tauri-managed:
+#      token is injected via env var, never written to disk)
+_resolve_rpc_token() {
+  if [[ -n "${OPENHUMAN_CORE_TOKEN:-}" ]]; then
+    echo "$OPENHUMAN_CORE_TOKEN"
+    return
+  fi
+  local workspace="${OPENHUMAN_WORKSPACE:-$HOME/.openhuman}"
+  local token_file="$workspace/core.token"
+  if [[ -f "$token_file" ]]; then
+    cat "$token_file"
+    return
+  fi
+  # Tauri-managed core: token is in the child process environment, not on disk.
+  # Read it from the running openhuman-core process via ps.
+  local core_pid
+  core_pid="$(pgrep -f 'openhuman-core.*run' 2>/dev/null | head -1)"
+  if [[ -n "$core_pid" ]]; then
+    local tok
+    tok="$(ps eww -p "$core_pid" 2>/dev/null | tr ' ' '\n' | grep '^OPENHUMAN_CORE_TOKEN=' | cut -d= -f2)"
+    if [[ -n "$tok" ]]; then
+      echo "$tok"
+      return
+    fi
+  fi
+  echo "ERROR: core RPC token not found. Options:" >&2
+  echo "  1. Set OPENHUMAN_CORE_TOKEN=<token> before running this script" >&2
+  echo "  2. Start the core standalone: openhuman core run  (writes $token_file)" >&2
+  echo "  3. Open the OpenHuman app (token auto-detected from process env)" >&2
+  exit 1
+}
+RPC_TOKEN="$(_resolve_rpc_token)"
 KEEP_TUNNEL=0
 TUNNEL_NAME="echo-debug-$(date +%s)"
 HOOK_PATH="/echo-test"
@@ -81,7 +117,8 @@ rpc_call() {
   local params="${2:-{}}"
   curl -fsS "$CORE_RPC_URL" \
     -H 'Content-Type: application/json' \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"${method}\",\"params\":${params}}" 
+    -H "Authorization: Bearer $RPC_TOKEN" \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"${method}\",\"params\":${params}}"
 }
 
 json_string() {

@@ -30,10 +30,21 @@ pub(crate) const USER_FILE_MAX_CHARS: usize = 2_000;
 /// asked for ("at least 2000 tokens of user memory") for a single
 /// namespace, and matches what the tree summarizer's `Day` level
 /// already enforces upstream.
+///
+/// **Note**: this constant matches the `Balanced` preset of
+/// [`crate::openhuman::config::schema::agent::MemoryContextWindow`] —
+/// the live agent harness now resolves the per-namespace cap from that
+/// preset (see `AgentConfig::resolved_memory_limits`). The constant is
+/// kept as the documented baseline for prompt-section authors.
+#[allow(dead_code)]
 pub(crate) const USER_MEMORY_PER_NAMESPACE_MAX_CHARS: usize = 8_000;
 
 /// Hard ceiling across all namespaces, so a workspace with 30 namespaces
 /// doesn't burn the entire context window. ~32 000 chars ≈ 8 000 tokens.
+///
+/// **Note**: same Balanced-preset baseline relationship as
+/// `USER_MEMORY_PER_NAMESPACE_MAX_CHARS` — see its rustdoc.
+#[allow(dead_code)]
 pub(crate) const USER_MEMORY_TOTAL_MAX_CHARS: usize = 32_000;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,6 +165,32 @@ pub enum ToolCallFormat {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Authenticated user identity
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Non-secret user identity fields surfaced to the prompt layer so
+/// agents stop asking the user for information the app already has —
+/// see issue #926.
+///
+/// Only **identifying** fields land here; tokens, refresh tokens, and
+/// any opaque credential material are forbidden. The struct is
+/// constructed from the cached `auth_get_me` response in
+/// `app_state::ops::peek_cached_current_user_identity`, which strips
+/// everything but `id` / `email` / `name` before returning.
+#[derive(Debug, Clone, Default)]
+pub struct UserIdentity {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
+impl UserIdentity {
+    pub fn is_empty(&self) -> bool {
+        self.id.is_none() && self.name.is_none() && self.email.is_none()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Prompt context (everything a section needs)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -182,13 +219,11 @@ pub struct PromptContext<'a> {
     /// When `true`, inject `MEMORY.md` (archivist-curated long-term
     /// memory). Capped at [`USER_FILE_MAX_CHARS`] and frozen per session.
     pub include_memory_md: bool,
-    /// Session-scoped snapshot of the curated-memory pair
-    /// (`MEMORY.md` + `USER.md`). When set, [`UserFilesSection`] renders
-    /// from this snapshot instead of reading workspace files, so runtime
-    /// `curated_memory.add/replace/remove` writes are visible on the
-    /// NEXT session while the in-flight prompt bytes stay frozen (KV-
-    /// cache contract). `None` falls back to the workspace-file loader.
-    pub curated_snapshot: Option<&'a crate::openhuman::curated_memory::MemorySnapshot>,
+    /// Authenticated user identity (id/name/email) when available — see
+    /// [`UserIdentity`]. `None` for unauthenticated paths (CLI without a
+    /// session, tests). Pre-fetched by the caller from the
+    /// `auth_get_me` cache so prompt builders never reach the network.
+    pub user_identity: Option<UserIdentity>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

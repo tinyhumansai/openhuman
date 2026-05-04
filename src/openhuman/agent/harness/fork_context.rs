@@ -17,6 +17,7 @@
 //! Both contexts are stashed in `Arc`s so that cloning into the child
 //! costs a refcount bump rather than a full copy.
 
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::config::AgentConfig;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::providers::{ChatMessage, Provider};
@@ -119,12 +120,14 @@ pub struct ParentExecutionContext {
     /// `Some("{grandparent_key}__{parent_key}")`.
     pub session_parent_prefix: Option<String>,
 
-    /// Parent session's curated-memory snapshot. Sub-agents inherit the
-    /// exact same `Arc` so every agent in the delegation tree renders
-    /// byte-identical `MEMORY.md` / `USER.md` blocks within a turn.
-    /// `None` when the parent built without a snapshot (unit tests,
-    /// curated-memory runtime not initialised).
-    pub curated_snapshot: Option<std::sync::Arc<crate::openhuman::curated_memory::MemorySnapshot>>,
+    /// Parent's progress sink. When set, the sub-agent runner emits
+    /// `AgentProgress::Subagent*` lifecycle events through this channel
+    /// so the web-channel bridge can stream live child activity (each
+    /// iteration boundary, child tool call/result) into the parent
+    /// thread's UI. `None` for parent contexts that don't subscribe to
+    /// progress (e.g. CLI direct calls); the runner becomes a no-op for
+    /// child progress in that case.
+    pub on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
 }
 
 tokio::task_local! {

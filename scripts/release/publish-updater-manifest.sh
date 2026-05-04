@@ -95,11 +95,13 @@ read_sig() {
 #   windows : <AppName>_<version>_x64-setup.nsis.zip
 MAC_AARCH64=$(find_asset "^OpenHuman(_| ).*aarch64(-apple-darwin)?\.app\.tar\.gz$")
 MAC_X86_64=$(find_asset  "^OpenHuman(_| ).*(x64|x86_64)(-apple-darwin)?\.app\.tar\.gz$")
+LIN_X86_64=$(find_asset  "^OpenHuman(_| ).*amd64\.AppImage(\.tar\.gz)?$")
 WIN_X86_64=$(find_asset "^OpenHuman(_| ).*x64-setup\.exe$")
 
 echo "[updater] Resolved updater bundles:"
 echo "  darwin-aarch64  = ${MAC_AARCH64:-<missing>}"
 echo "  darwin-x86_64   = ${MAC_X86_64:-<missing>}"
+echo "  linux-x86_64    = ${LIN_X86_64:-<missing>}"
 echo "  windows-x86_64  = ${WIN_X86_64:-<missing>}"
 
 PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
@@ -129,6 +131,7 @@ add_platform() {
 
 add_platform "darwin-aarch64" "$MAC_AARCH64"
 add_platform "darwin-x86_64"  "$MAC_X86_64"
+add_platform "linux-x86_64"   "$LIN_X86_64"
 add_platform "windows-x86_64" "$WIN_X86_64"
 
 # Require at least one platform so we don't publish an empty manifest that

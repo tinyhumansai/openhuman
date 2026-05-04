@@ -9,6 +9,7 @@ const configDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(configDir, '..');
 const repoRoot = path.resolve(projectRoot, '..');
 const tsconfigE2ePath = path.join(projectRoot, 'test', 'tsconfig.e2e.json');
+const testSpecsPath = path.join(projectRoot, 'test', 'e2e', 'specs', '**', '*.spec.ts');
 
 /**
  * Resolve the path to the built Tauri application.
@@ -76,23 +77,26 @@ function getPlatformCapabilities(): Record<string, unknown>[] {
 }
 
 /** Port for the automation driver: tauri-driver (4444) or Appium (4723). */
-const driverPort =
-  process.platform === 'linux'
-    ? parseInt(process.env.TAURI_DRIVER_PORT || '4444', 10)
-    : parseInt(process.env.APPIUM_PORT || '4723', 10);
+const isLinuxDriver = process.platform === 'linux';
+const driverPort = isLinuxDriver
+  ? parseInt(process.env.TAURI_DRIVER_PORT || '4444', 10)
+  : parseInt(process.env.APPIUM_PORT || '4723', 10);
 
 export const config: Options.Testrunner & Record<string, unknown> = {
   runner: 'local',
   hostname: '127.0.0.1',
   port: driverPort,
-  specs: ['./test/e2e/specs/**/*.spec.ts'],
+  specs: [testSpecsPath],
+  rootDir: projectRoot,
   maxInstances: 1, // Tauri apps are single-instance
   capabilities: getPlatformCapabilities(),
   logLevel: 'warn',
   bail: 0,
   waitforTimeout: 10_000,
-  connectionRetryTimeout: 120_000,
-  connectionRetryCount: 3,
+  // Linux tauri-driver can take longer to establish the initial session on
+  // loaded CI runners; keep macOS defaults while giving Linux more headroom.
+  connectionRetryTimeout: isLinuxDriver ? 240_000 : 120_000,
+  connectionRetryCount: isLinuxDriver ? 5 : 3,
   // No appium/tauri-driver service — driver is started externally via scripts.
   framework: 'mocha',
   reporters: ['spec'],

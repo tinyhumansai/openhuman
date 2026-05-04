@@ -66,6 +66,45 @@ export interface ComposioUserScopePref {
   admin: boolean;
 }
 
+// ── Trigger management ─────────────────────────────────────────────
+
+export type ComposioAvailableTriggerScope = 'static' | 'github_repo';
+
+export interface ComposioAvailableTrigger {
+  slug: string;
+  scope: ComposioAvailableTriggerScope;
+  defaultConfig?: Record<string, unknown>;
+  requiredConfigKeys?: string[];
+  repo?: { owner: string; repo: string };
+}
+
+export interface ComposioAvailableTriggersResponse {
+  triggers: ComposioAvailableTrigger[];
+}
+
+export interface ComposioActiveTrigger {
+  id: string;
+  slug: string;
+  toolkit: string;
+  connectionId: string;
+  triggerConfig?: Record<string, unknown>;
+  state?: string;
+}
+
+export interface ComposioActiveTriggersResponse {
+  triggers: ComposioActiveTrigger[];
+}
+
+export interface ComposioEnableTriggerResponse {
+  triggerId: string;
+  slug: string;
+  connectionId: string;
+}
+
+export interface ComposioDisableTriggerResponse {
+  deleted: boolean;
+}
+
 // ── UI helpers ────────────────────────────────────────────────────
 
 /**
