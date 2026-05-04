@@ -19,6 +19,16 @@ import { useOnboardingContext } from '../OnboardingContext';
 
 // ── Module-level mocks ─────────────────────────────────────────────────────
 
+// [#1123] Mock setWalkthroughPending to allow per-test override (e.g. throw),
+// while writing to localStorage by default so existing assertions still pass.
+// Covers the catch block in completeAndExit (OnboardingLayout.tsx:138).
+const mockSetWalkthroughPending = vi.fn(() => {
+  localStorage.setItem('openhuman:walkthrough_pending', 'true');
+});
+vi.mock('../../../components/walkthrough/AppWalkthrough', () => ({
+  setWalkthroughPending: () => mockSetWalkthroughPending(),
+}));
+
 vi.mock('../../../providers/CoreStateProvider', () => ({ useCoreState: vi.fn() }));
 
 vi.mock('../../../services/api/userApi', () => ({
@@ -138,6 +148,8 @@ async function setupLayout() {
 describe('OnboardingLayout — Joyride walkthrough integration (#1123)', () => {
   beforeEach(() => {
     mockCreateNewThreadArg.mockClear();
+    // Reset call history only — restore the default implementation (writes localStorage)
+    mockSetWalkthroughPending.mockClear();
     localStorage.clear();
   });
 
@@ -198,5 +210,22 @@ describe('OnboardingLayout — Joyride walkthrough integration (#1123)', () => {
     });
 
     expect(chatSend).not.toHaveBeenCalled();
+  });
+
+  // Covers the catch branch in completeAndExit (OnboardingLayout.tsx:138):
+  // when setWalkthroughPending throws, navigation still proceeds to /home.
+  it('still navigates to /home when setWalkthroughPending throws', async () => {
+    // Override default impl to throw for this one test invocation
+    mockSetWalkthroughPending.mockImplementationOnce(() => {
+      throw new Error('storage unavailable');
+    });
+    await setupLayout();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('complete-btn'));
+    });
+
+    // Navigation should still proceed even when the flag cannot be written.
+    expect(screen.getByTestId('home-page')).toBeInTheDocument();
   });
 });

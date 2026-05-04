@@ -11,6 +11,7 @@ import threadReducer, {
   loadThreads,
   setActiveThread,
   setSelectedThread,
+  setWelcomeThreadId,
 } from '../threadSlice';
 
 vi.mock('../../services/api/threadApi', () => ({
@@ -73,6 +74,14 @@ describe('threadSlice synchronous reducers', () => {
     expect(state.messages).toEqual([]);
     expect(state.isLoadingThreads).toBe(false);
     expect(state.isLoadingMessages).toBe(false);
+  });
+
+  // [#1123] setWelcomeThreadId is now a true no-op — kept for TS compat but
+  // state.welcomeThreadId must never be mutated by this action.
+  it('setWelcomeThreadId is a no-op — state.welcomeThreadId stays null', () => {
+    const store = createStore();
+    store.dispatch(setWelcomeThreadId());
+    expect(store.getState().thread.welcomeThreadId).toBeNull();
   });
 
   it('setSelectedThread copies cached messages into the visible list', async () => {
