@@ -4,33 +4,58 @@
  */
 import { VISEMES, type VisemeShape } from '../Mascot/visemes';
 
+/**
+ * Lookup keyed by lowercased viseme code so the table tolerates whatever
+ * casing the backend ships (`PP` / `pp`, `aa` / `Aa`, etc). Different TTS
+ * providers — and even different ElevenLabs models — disagree on casing,
+ * and a single-case table silently maps every frame to REST, leaving the
+ * mascot's mouth frozen on the rest-smile path while audio plays.
+ */
 const TABLE: Record<string, VisemeShape> = {
   sil: VISEMES.REST,
+  silence: VISEMES.REST,
   // Bilabials — fully closed
-  PP: VISEMES.M,
+  pp: VISEMES.M,
+  m: VISEMES.M,
+  b: VISEMES.M,
+  p: VISEMES.M,
   // Labiodentals — lower lip tucked
-  FF: VISEMES.F,
+  ff: VISEMES.F,
+  f: VISEMES.F,
+  v: VISEMES.F,
   // Dental, alveolar, velar — slight opening, modest width
-  TH: { openness: 0.25, width: 0.5 },
-  DD: { openness: 0.25, width: 0.5 },
+  th: { openness: 0.25, width: 0.5 },
+  dd: { openness: 0.25, width: 0.5 },
+  d: { openness: 0.25, width: 0.5 },
+  t: { openness: 0.25, width: 0.5 },
+  l: { openness: 0.25, width: 0.5 },
   kk: { openness: 0.3, width: 0.5 },
+  k: { openness: 0.3, width: 0.5 },
+  g: { openness: 0.3, width: 0.5 },
   // Affricates / sibilants — narrow, slight opening
-  CH: { openness: 0.2, width: 0.4 },
-  SS: { openness: 0.18, width: 0.55 },
+  ch: { openness: 0.2, width: 0.4 },
+  ss: { openness: 0.18, width: 0.55 },
+  s: { openness: 0.18, width: 0.55 },
+  z: { openness: 0.18, width: 0.55 },
   // Nasal alveolar
   nn: { openness: 0.2, width: 0.45 },
+  n: { openness: 0.2, width: 0.45 },
   // Liquid r — rounded, mid
-  RR: { openness: 0.35, width: 0.3 },
-  // Vowels
+  rr: { openness: 0.35, width: 0.3 },
+  r: { openness: 0.35, width: 0.3 },
+  // Vowels — accept both 15-set codes (`aa`, `E`, …) and bare letters.
   aa: VISEMES.A,
-  E: VISEMES.E,
-  I: VISEMES.I,
-  O: VISEMES.O,
-  U: VISEMES.U,
+  a: VISEMES.A,
+  e: VISEMES.E,
+  i: VISEMES.I,
+  y: VISEMES.I,
+  o: VISEMES.O,
+  u: VISEMES.U,
+  w: VISEMES.U,
 };
 
 export function oculusVisemeToShape(viseme: string): VisemeShape {
-  return TABLE[viseme] ?? VISEMES.REST;
+  return TABLE[viseme.toLowerCase()] ?? VISEMES.REST;
 }
 
 export interface TimedFrame {

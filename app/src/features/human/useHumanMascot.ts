@@ -5,13 +5,32 @@ import { subscribeChatEvents } from '../../services/chatService';
 import type { MascotFace } from './Mascot';
 import { lerpViseme, VISEMES, type VisemeShape } from './Mascot/visemes';
 import { type PlaybackHandle, playBase64Audio } from './voice/audioPlayer';
-import { proceduralVisemes, synthesizeSpeech, visemesFromAlignment } from './voice/ttsClient';
+import {
+  proceduralVisemes,
+  synthesizeSpeech,
+  visemesFromAlignment,
+  type VisemeFrame,
+} from './voice/ttsClient';
 import { findActiveFrame, oculusVisemeToShape } from './voice/visemeMap';
 
 const mascotLog = debug('human:mascot');
 
 /** ms the mouth holds the target viseme before decaying back to rest. */
 const VISEME_DECAY_MS = 180;
+
+/**
+ * Heuristic — does this timeline contain at least one frame whose code maps
+ * to a non-REST mouth shape? Used to detect the "backend shipped frames in
+ * an unknown vocabulary" regression where the mouth visibly stops moving
+ * because every viseme falls back to REST.
+ */
+function framesProduceMotion(frames: VisemeFrame[]): boolean {
+  for (const f of frames) {
+    const shape = oculusVisemeToShape(f.viseme);
+    if (shape !== VISEMES.REST) return true;
+  }
+  return false;
+}
 
 /**
  * How long to hold a transient acknowledgement face (`happy`, `concerned`)
@@ -207,13 +226,23 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
         throw err;
       }
       if (!isStillCurrent()) return;
-      let frames = tts.visemes ?? [];
+      let frames: VisemeFrame[] = tts.visemes ?? [];
+      let source: 'visemes' | 'alignment' | 'procedural' = 'visemes';
+      if (frames.length > 0 && !framesProduceMotion(frames)) {
+        // Backend shipped frames but every code maps to REST — usually means
+        // the codes are in a vocabulary `oculusVisemeToShape` doesn't know.
+        // Drop them and let the alignment / procedural path take over so the
+        // mouth doesn't sit on the rest-smile path for the whole clip.
+        mascotLog('tts visemes produced no motion — dropping and falling through');
+        frames = [];
+      }
       if (frames.length === 0 && tts.alignment && tts.alignment.length > 0) {
         // Backend didn't ship viseme cues — derive a coarse track from char timings
         // so the mouth still animates in sync with the audio.
         frames = visemesFromAlignment(tts.alignment);
+        source = 'alignment';
         mascotLog('tts derived %d viseme frames from alignment', frames.length);
-      } else {
+      } else if (frames.length > 0) {
         mascotLog('tts got %d viseme frames from backend', frames.length);
       }
       // Start audio first — `playBase64Audio` calls `audio.play()` directly so
@@ -228,22 +257,24 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       if (frames.length === 0) {
         // Last-resort fallback: backend shipped neither viseme cues nor
         // alignment (e.g. the new public `tts-v1` model on the hosted
-        // backend). Wait briefly for metadata so the procedural timeline
-        // can be sized to the real audio duration, then derive frames.
-        await handle.metadataReady;
-        if (!isStillCurrent()) {
-          handle.stop();
-          return;
-        }
+        // backend). Use whatever duration the decoder has reported so far —
+        // `proceduralVisemes` falls back to a text-length estimate when the
+        // metadata hasn't loaded yet, so we don't await it on the critical
+        // path (waiting opens a window where audio plays under a static face).
         const dur = handle.durationMs();
         frames = proceduralVisemes(text, dur);
+        source = 'procedural';
         mascotLog('tts derived %d procedural viseme frames over %dms', frames.length, dur);
       }
       visemeFramesRef.current = frames;
       visemeCursorRef.current = 0;
       playbackRef.current = handle;
       setFace('speaking');
-      mascotLog('tts playback started — driving lipsync from %d frames', frames.length);
+      mascotLog(
+        'tts playback started (%s) — driving lipsync from %d frames',
+        source,
+        frames.length
+      );
       try {
         await handle.ended;
       } catch {

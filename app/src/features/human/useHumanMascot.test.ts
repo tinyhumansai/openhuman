@@ -369,6 +369,39 @@ describe('useHumanMascot TTS playback', () => {
     });
   });
 
+  it('falls back to procedural visemes when backend frames all map to REST', async () => {
+    const fake = makeFakePlayback(2000);
+    proceduralVisemesMock.mockClear();
+    (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      audio_base64: 'AAA=',
+      audio_mime: 'audio/mpeg',
+      // `???` and `unknown` are not in the viseme table — every frame would
+      // map to REST and the mouth would freeze. The hook should detect this
+      // and fall through to the procedural path.
+      visemes: [
+        { viseme: '???', start_ms: 0, end_ms: 100 },
+        { viseme: 'unknown', start_ms: 100, end_ms: 200 },
+      ],
+    });
+    (playBase64Audio as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fake.handle);
+
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: true }));
+    await act(async () => {
+      capturedListeners?.onDone?.(fakeDone('hi'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.face).toBe('speaking');
+    expect(proceduralVisemesMock).toHaveBeenCalledWith('hi', 2000);
+
+    await act(async () => {
+      fake.finishNaturally();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
   it('shows concerned (not happy) when synthesizeSpeech rejects', async () => {
     (synthesizeSpeech as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('voice down'));
 

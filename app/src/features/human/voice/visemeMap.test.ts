@@ -38,6 +38,23 @@ describe('oculusVisemeToShape', () => {
     expect(oculusVisemeToShape('zzz')).toBe(VISEMES.REST);
     expect(oculusVisemeToShape('')).toBe(VISEMES.REST);
   });
+
+  it('looks up codes case-insensitively so backend casing variations still map', () => {
+    expect(oculusVisemeToShape('pp')).toBe(VISEMES.M);
+    expect(oculusVisemeToShape('FF')).toBe(VISEMES.F);
+    expect(oculusVisemeToShape('Aa')).toBe(VISEMES.A);
+    expect(oculusVisemeToShape('e')).toBe(VISEMES.E);
+    expect(oculusVisemeToShape('I')).toBe(VISEMES.I);
+  });
+
+  it('accepts bare-letter aliases (a, e, i, o, u, m, b, p, f, v, ...)', () => {
+    expect(oculusVisemeToShape('a')).toBe(VISEMES.A);
+    expect(oculusVisemeToShape('o')).toBe(VISEMES.O);
+    expect(oculusVisemeToShape('u')).toBe(VISEMES.U);
+    expect(oculusVisemeToShape('m')).toBe(VISEMES.M);
+    expect(oculusVisemeToShape('b')).toBe(VISEMES.M);
+    expect(oculusVisemeToShape('f')).toBe(VISEMES.F);
+  });
 });
 
 describe('findActiveFrame', () => {
