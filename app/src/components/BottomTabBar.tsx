@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-import { isWelcomeLocked } from '../lib/coreState/store';
+// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+// import { isWelcomeLocked } from '../lib/coreState/store';
 import { useCoreState } from '../providers/CoreStateProvider';
 import { useAppSelector } from '../store/hooks';
 import { selectUnreadCount } from '../store/notificationSlice';
@@ -159,12 +160,13 @@ const BottomTabBar = () => {
     return null;
   }
 
+  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
   // Welcome lockdown (#883) — hide the bottom nav entirely while the
   // chat-based welcome-agent flow is still in progress so the user
   // cannot navigate away from the welcome conversation.
-  if (isWelcomeLocked(snapshot)) {
-    return null;
-  }
+  // if (isWelcomeLocked(snapshot)) {
+  //   return null;
+  // }
 
   // On /accounts we want as much real estate as possible for the embedded
   // webview — but *only* when a real account (WhatsApp, …) is selected.
@@ -215,9 +217,18 @@ const BottomTabBar = () => {
             .map(tab => {
               const active = isActive(tab.path);
               const showBadge = tab.id === 'notifications' && unreadCount > 0;
+              // data-walkthrough attributes for the Joyride walkthrough steps.
+              // Maps tab ids to their walkthrough target names (steps 3–6).
+              const walkthroughAttr: Record<string, string> = {
+                chat: 'tab-chat',
+                skills: 'tab-skills',
+                notifications: 'tab-automation',
+                settings: 'tab-settings',
+              };
               return (
                 <button
                   key={tab.id}
+                  data-walkthrough={walkthroughAttr[tab.id]}
                   onClick={() => navigate(tab.path)}
                   className={`group relative flex items-center px-2 py-2 rounded-sm text-sm transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
                     active

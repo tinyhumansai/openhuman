@@ -9,6 +9,7 @@ import {
   UsageLimitBanner,
 } from '../components/home/HomeBanners';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
+import AppWalkthrough from '../components/walkthrough/AppWalkthrough';
 import { useUsageState } from '../hooks/useUsageState';
 import { useUser } from '../hooks/useUser';
 import { useAppSelector } from '../store/hooks';
@@ -145,8 +146,10 @@ const Home = () => {
 
         {showPromoBanner && <PromotionalCreditsBanner promoCredits={promoCredits} />}
 
-        {/* Main card */}
-        <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">
+        {/* Main card — data-walkthrough target for step 1 */}
+        <div
+          data-walkthrough="home-card"
+          className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">
           {/* Header row: logo + version + settings */}
           <div className="flex items-center justify-center mb-4">
             <span className="text-xs text-center text-stone-400">v{APP_VERSION}</span>
@@ -170,8 +173,9 @@ const Home = () => {
               "Connecting" / "Disconnected". */}
           <p className="text-sm text-stone-500 text-center mb-6 leading-relaxed">{statusCopy}</p>
 
-          {/* CTA button */}
+          {/* CTA button — data-walkthrough target for step 2 */}
           <button
+            data-walkthrough="home-cta"
             onClick={handleStartCooking}
             className="w-full py-3 bg-primary-500 hover:bg-primary-600 text-white font-medium rounded-xl transition-colors duration-200">
             Message OpenHuman
@@ -181,6 +185,9 @@ const Home = () => {
         {showEarlyBirdy && <EarlyBirdyBanner onDismiss={handleDismissEarlyBirdy} />}
 
         <DiscordBanner />
+
+        {/* Post-onboarding product walkthrough — renders only when pending */}
+        <AppWalkthrough />
 
         {/* Next steps — compact directory of where to go next */}
         {/* <div className="mt-3 bg-white rounded-2xl shadow-soft border border-stone-200 p-4">

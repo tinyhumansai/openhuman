@@ -596,17 +596,28 @@ pub async fn get_onboarding_completed() -> Result<RpcOutcome<bool>, String> {
 /// real thread session and subsequent user messages continue the same
 /// conversation with full prior context.
 ///
-/// **`chat_onboarding_completed` is NOT flipped here.** That flag is
-/// the exclusive responsibility of the welcome agent: it is set to
-/// `true` only after the user has had a meaningful onboarding
-/// conversation (via `complete_onboarding`). See
-/// [`crate::openhuman::tools::impl::agent::complete_onboarding`] for
-/// the guard criteria.
+/// **[#1123] `chat_onboarding_completed` IS now flipped here** on the
+/// false→true transition. The welcome-agent onboarding flow was replaced
+/// by a Joyride walkthrough in the frontend, so the chat flag no longer
+/// needs the welcome agent to set it via `complete_onboarding`.
 pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, String> {
     tracing::debug!(value, "[onboarding] set_onboarding_completed called");
     let mut config = load_config_with_timeout().await?;
     let was_completed = config.onboarding_completed;
     config.onboarding_completed = value;
+
+    // [#1123] On a false→true transition, also flip chat_onboarding_completed=true
+    // so the UI never enters the old welcome-lock state. The Joyride walkthrough
+    // replaced the welcome-agent flow; chat_onboarding_completed no longer needs
+    // to be driven by the welcome agent calling complete_onboarding.
+    if value && !was_completed {
+        tracing::debug!(
+            "[onboarding] false→true transition: setting chat_onboarding_completed=true \
+             (welcome-agent replaced by Joyride walkthrough — skipping lockdown)"
+        );
+        config.chat_onboarding_completed = true;
+    }
+
     config.save().await.map_err(|e| e.to_string())?;
 
     if value && !was_completed {

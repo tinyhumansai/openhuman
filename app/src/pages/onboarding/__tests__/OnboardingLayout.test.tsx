@@ -1,7 +1,11 @@
 /**
- * Tests for OnboardingLayout — specifically verifies that line 97 (the
- * createNewThread call with the ONBOARDING_WELCOME_THREAD_LABEL) is executed
- * when `completeAndExit` runs successfully.
+ * Tests for OnboardingLayout — verifies that completeAndExit:
+ *  - does NOT create a welcome thread (welcome-agent replaced by Joyride walkthrough)
+ *  - does NOT call chatSend
+ *  - DOES set the walkthrough pending flag in localStorage
+ *  - DOES call setOnboardingCompletedFlag(true)
+ *
+ * [#1123] Old assertions about welcome thread creation were replaced.
  */
 import { configureStore } from '@reduxjs/toolkit';
 import { act, fireEvent, render, screen } from '@testing-library/react';
@@ -9,7 +13,6 @@ import { Provider } from 'react-redux';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ONBOARDING_WELCOME_THREAD_LABEL } from '../../../constants/onboardingChat';
 import socketReducer from '../../../store/socketSlice';
 import threadReducer from '../../../store/threadSlice';
 import { useOnboardingContext } from '../OnboardingContext';
@@ -22,6 +25,7 @@ vi.mock('../../../services/api/userApi', () => ({
   userApi: { onboardingComplete: vi.fn().mockResolvedValue(undefined) },
 }));
 
+// [#1123] chatSend should NOT be called — walkthrough replaced welcome-agent
 vi.mock('../../../services/chatService', () => ({
   chatSend: vi.fn().mockResolvedValue(undefined),
 }));
@@ -30,7 +34,7 @@ vi.mock('../../../utils/toolDefinitions', () => ({ getDefaultEnabledTools: vi.fn
 
 vi.mock('../components/BetaBanner', () => ({ default: () => <div data-testid="beta-banner" /> }));
 
-// ── Spy on threadSlice actions dispatched ──────────────────────────────────
+// ── Spy on threadApi ───────────────────────────────────────────────────────
 
 const mockCreateNewThreadArg = vi.fn();
 
@@ -131,19 +135,22 @@ async function setupLayout() {
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
-describe('OnboardingLayout — createNewThread with onboarding label', () => {
+describe('OnboardingLayout — Joyride walkthrough integration (#1123)', () => {
   beforeEach(() => {
     mockCreateNewThreadArg.mockClear();
+    localStorage.clear();
   });
 
-  it('calls createNewThread with the onboarding welcome label on completeAndExit', async () => {
+  // [#1123] Replaced old test: no welcome thread creation
+  it('does NOT create a welcome thread on completeAndExit', async () => {
     await setupLayout();
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('complete-btn'));
     });
 
-    expect(mockCreateNewThreadArg).toHaveBeenCalledWith([ONBOARDING_WELCOME_THREAD_LABEL]);
+    // [#1123] Welcome thread creation is no longer part of the flow
+    expect(mockCreateNewThreadArg).not.toHaveBeenCalled();
   });
 
   it('calls setOnboardingCompletedFlag(true) during completeAndExit', async () => {
@@ -156,15 +163,28 @@ describe('OnboardingLayout — createNewThread with onboarding label', () => {
     expect(mockSetOnboardingCompletedFlag).toHaveBeenCalledWith(true);
   });
 
-  it('records the welcome thread id in the Redux store after thread creation', async () => {
+  it('sets the walkthrough pending flag in localStorage after completeAndExit', async () => {
+    await setupLayout();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('complete-btn'));
+    });
+
+    // [#1123] Walkthrough pending flag should be set instead of welcome thread
+    expect(localStorage.getItem('openhuman:walkthrough_pending')).toBe('true');
+  });
+
+  // [#1123] Old test — welcome thread in Redux state — replaced:
+  // it('records the welcome thread id in the Redux store after thread creation', ...)
+  // The welcome thread is no longer stored in Redux.
+  it('does NOT set welcomeThreadId in Redux store on completeAndExit', async () => {
     const { store } = await setupLayout();
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('complete-btn'));
     });
 
-    // The dispatch(setWelcomeThreadId(newThread.id)) should have updated state
     const { thread } = store.getState() as { thread: { welcomeThreadId: string | null } };
-    expect(thread.welcomeThreadId).toBe('welcome-thread-id');
+    expect(thread.welcomeThreadId).toBeNull();
   });
 });
