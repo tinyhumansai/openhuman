@@ -69,6 +69,12 @@ describe('DeveloperOptionsPanel — Sentry test row', () => {
       expect(screen.getByText(/Event sent\./i)).toBeInTheDocument();
     });
     expect(screen.getByText(/event-id-xyz/)).toBeInTheDocument();
+
+    // Status updates must announce via an accessible live region — without
+    // role="status" + aria-live, screen readers stay silent on click.
+    const live = screen.getByRole('status');
+    expect(live).toHaveAttribute('aria-live', 'polite');
+    expect(live).toHaveTextContent(/Event sent.*event-id-xyz/);
   });
 
   test('shows "no id" branch when the helper resolves with undefined', async () => {

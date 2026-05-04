@@ -176,19 +176,27 @@ const SentryTestRow = () => {
           {status.kind === 'sending' ? 'Sending…' : 'Send test event'}
         </button>
       </div>
-      {status.kind === 'sent' && (
-        <div className="mt-2 text-xs text-amber-900">
-          Event sent.{' '}
-          {status.eventId ? (
-            <span className="font-mono">id: {status.eventId}</span>
-          ) : (
-            <span>(no id — Sentry disabled in this build)</span>
-          )}
-        </div>
-      )}
-      {status.kind === 'error' && (
-        <div className="mt-2 text-xs text-coral-600">Failed: {status.message}</div>
-      )}
+      {/*
+       * Single live region so screen readers announce the result when
+       * status flips from `sending` to `sent` / `error`. `aria-live=polite`
+       * waits for any in-flight speech to finish; `aria-atomic` makes the
+       * reader re-read the whole region rather than only the diff.
+       */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="mt-2 text-xs">
+        {status.kind === 'sent' && (
+          <span className="text-amber-900">
+            Event sent.{' '}
+            {status.eventId ? (
+              <span className="font-mono">id: {status.eventId}</span>
+            ) : (
+              <span>(no id — Sentry disabled in this build)</span>
+            )}
+          </span>
+        )}
+        {status.kind === 'error' && (
+          <span className="text-coral-600">Failed: {status.message}</span>
+        )}
+      </div>
     </div>
   );
 };

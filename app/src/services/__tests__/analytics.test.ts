@@ -72,6 +72,7 @@ describe('triggerSentryTestEvent', () => {
   test('captures a tagged staging-test exception and flushes', async () => {
     hoisted.getClient.mockReturnValue({});
     hoisted.captureException.mockReturnValue('event-id-abc');
+    hoisted.flush.mockReturnValue(Promise.resolve(true));
     const { triggerSentryTestEvent } = await import('../analytics');
 
     const result = await triggerSentryTestEvent();
@@ -82,12 +83,27 @@ describe('triggerSentryTestEvent', () => {
     const [thrown, ctx] = hoisted.captureException.mock.calls[0];
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).name).toBe('SentryStagingTestError');
-    expect((thrown as Error).message).toMatch(/Manual Sentry test from staging UI/);
+    // Message is constant so Sentry groups every test click into one issue.
+    expect((thrown as Error).message).toBe('Manual Sentry test from staging UI');
     expect(ctx).toMatchObject({
       tags: { test: 'manual-staging', source: 'developer-options-button' },
       level: 'error',
     });
+    // Per-click timing rides on `extra`, not in the message — high cardinality
+    // there would explode tag indexes and break grouping.
+    expect((ctx as { extra: { triggered_at: string } }).extra.triggered_at).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
+    );
     expect(hoisted.flush).toHaveBeenCalledWith(2000);
+  });
+
+  test('throws when flush times out so the UI surfaces an error', async () => {
+    hoisted.getClient.mockReturnValue({});
+    hoisted.captureException.mockReturnValue('event-id-stuck');
+    hoisted.flush.mockReturnValue(Promise.resolve(false));
+    const { triggerSentryTestEvent } = await import('../analytics');
+
+    await expect(triggerSentryTestEvent()).rejects.toThrow(/timed out/i);
   });
 });
 

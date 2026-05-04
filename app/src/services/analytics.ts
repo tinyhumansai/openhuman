@@ -156,16 +156,31 @@ export async function triggerSentryTestEvent(): Promise<string | undefined> {
     return undefined;
   }
 
+  // Constant message so Sentry's default grouping algorithm collapses every
+  // QA click into one issue (with N events) instead of one issue per click.
+  // Per-click timing goes through `extra` so it's still visible on each
+  // event but doesn't influence the fingerprint.
   const stamp = new Date().toISOString();
-  const error = new Error(`Manual Sentry test from staging UI @ ${stamp}`);
+  const error = new Error('Manual Sentry test from staging UI');
   error.name = 'SentryStagingTestError';
 
   const eventId = Sentry.captureException(error, {
     tags: { test: 'manual-staging', source: 'developer-options-button' },
+    extra: { triggered_at: stamp },
     level: 'error',
   });
 
   console.info('[sentry-test] captureException eventId=', eventId);
-  await Sentry.flush(2000);
+  // Surface flush timeouts as failures: a `false` here means the event
+  // queue did not drain within 2s, so the network round-trip to Sentry is
+  // unconfirmed. For a *diagnostic* tool, returning a successful-looking
+  // eventId in that case would be a lie.
+  const flushed = await Sentry.flush(2000);
+  if (!flushed) {
+    throw new Error(
+      'Sentry.flush(2000) timed out — event may not have reached Sentry. ' +
+        'Check network / DSN / Sentry status before retrying.'
+    );
+  }
   return eventId;
 }
