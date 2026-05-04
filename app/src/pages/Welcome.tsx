@@ -320,7 +320,9 @@ const Welcome = () => {
                   </form>
 
                   {emailError ? <p className="mt-2 text-xs text-red-600">{emailError}</p> : null}
-                  {emailSuccess ? <p className="mt-2 text-xs text-green-600">{emailSuccess}</p> : null}
+                  {emailSuccess ? (
+                    <p className="mt-2 text-xs text-green-600">{emailSuccess}</p>
+                  ) : null}
                 </div>
               ) : null}
             </>
