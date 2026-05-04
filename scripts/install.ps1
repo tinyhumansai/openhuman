@@ -29,6 +29,9 @@ function Get-OpenHumanMsiexecInstallArgumentList {
     [Parameter(Mandatory = $true)]
     [string]$MsiPath
   )
+  # Pass -ArgumentList as string[]: each entry is one argv token for msiexec, so spaces in
+  # $MsiPath do not split. Do not wrap $MsiPath in extra literal " characters here — that can
+  # double-escape when Start-Process builds the native command line (see PR #1187 review).
   return @('/i', $MsiPath, '/qn', '/norestart')
 }
 

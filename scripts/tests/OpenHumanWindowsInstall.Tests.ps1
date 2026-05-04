@@ -53,6 +53,9 @@ $args = Get-OpenHumanMsiexecInstallArgumentList -MsiPath $p
 Assert-True ($args.Count -eq 4) 'returns exactly 4 argument tokens'
 Assert-Equal '/i' $args[0] 'first token is /i'
 Assert-Equal $p $args[1] 'second token is MSI path'
+$pSpaces = 'C:\Temp\Test User\OpenHuman_0.0.0_x64_en-US.msi'
+$argsSpaces = Get-OpenHumanMsiexecInstallArgumentList -MsiPath $pSpaces
+Assert-Equal $pSpaces $argsSpaces[1] 'path with spaces remains one second argv token (no split)'
 Assert-Equal '/qn' $args[2] 'third token is /qn'
 Assert-Equal '/norestart' $args[3] 'fourth token is /norestart'
 Assert-True ($args -notcontains 'MSIINSTALLPERUSER') 'must not set MSIINSTALLPERUSER (perMachine MSI)'
