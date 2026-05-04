@@ -5,7 +5,7 @@
 //! having to shell out to `date`. Read-only, no arguments beyond an optional
 //! IANA timezone for a convenience conversion.
 
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use chrono::{Local, SecondsFormat, Utc};
 use chrono_tz::Tz;
@@ -55,7 +55,20 @@ impl Tool for CurrentTimeTool {
         PermissionLevel::ReadOnly
     }
 
+    fn supports_markdown(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_options(args, ToolCallOptions::default())
+            .await
+    }
+
+    async fn execute_with_options(
+        &self,
+        args: serde_json::Value,
+        options: ToolCallOptions,
+    ) -> anyhow::Result<ToolResult> {
         tracing::debug!(args = %args, "[current_time] execute start");
         let now_utc = Utc::now();
         let now_local = Local::now();
@@ -107,7 +120,43 @@ impl Tool for CurrentTimeTool {
         }
 
         tracing::debug!("[current_time] returning payload: {payload}");
-        Ok(ToolResult::success(serde_json::to_string_pretty(&payload)?))
+        let mut result = ToolResult::success(serde_json::to_string_pretty(&payload)?);
+        if options.prefer_markdown {
+            let mut md = String::new();
+            md.push_str(&format!(
+                "- **utc**: {}\n",
+                payload["utc"].as_str().unwrap_or("")
+            ));
+            md.push_str(&format!(
+                "- **local**: {} ({})\n",
+                payload["local"].as_str().unwrap_or(""),
+                payload["local_timezone"].as_str().unwrap_or("")
+            ));
+            md.push_str(&format!(
+                "- **weekday**: {}\n",
+                payload["weekday"].as_str().unwrap_or("")
+            ));
+            md.push_str(&format!(
+                "- **unix_seconds**: {}\n",
+                payload["unix_seconds"].as_i64().unwrap_or(0)
+            ));
+            if let Some(rt) = payload.get("requested_timezone") {
+                md.push_str(&format!(
+                    "- **{}**: {} ({})\n",
+                    rt["name"].as_str().unwrap_or(""),
+                    rt["time"].as_str().unwrap_or(""),
+                    rt["weekday"].as_str().unwrap_or("")
+                ));
+            }
+            if let Some(err) = payload
+                .get("requested_timezone_error")
+                .and_then(|v| v.as_str())
+            {
+                md.push_str(&format!("- **timezone error**: {err}\n"));
+            }
+            result.markdown_formatted = Some(md);
+        }
+        Ok(result)
     }
 }
 

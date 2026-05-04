@@ -1,6 +1,6 @@
 use crate::openhuman::config::Config;
 use crate::openhuman::cron;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
@@ -36,7 +36,20 @@ impl Tool for CronRunTool {
         })
     }
 
+    fn supports_markdown(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_options(args, ToolCallOptions::default())
+            .await
+    }
+
+    async fn execute_with_options(
+        &self,
+        args: serde_json::Value,
+        options: ToolCallOptions,
+    ) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
             return Ok(ToolResult::error(
                 "cron is disabled by config (cron.enabled=false)".to_string(),
@@ -74,17 +87,34 @@ impl Tool for CronRunTool {
         );
         let _ = cron::record_last_run(&self.config, &job.id, finished_at, success, &output);
 
-        let result_output = serde_json::to_string_pretty(&json!({
+        let payload = json!({
             "job_id": job.id,
             "status": status,
             "duration_ms": duration_ms,
             "output": output
-        }))?;
-        if success {
-            Ok(ToolResult::success(result_output))
+        });
+        let result_output = serde_json::to_string_pretty(&payload)?;
+        let md = if options.prefer_markdown {
+            let trimmed = output.trim();
+            let body = if trimmed.is_empty() {
+                String::new()
+            } else {
+                format!("\n\n```\n{trimmed}\n```")
+            };
+            Some(format!(
+                "**job**: `{}` — **status**: {} — **{}ms**{}",
+                job.id, status, duration_ms, body
+            ))
         } else {
-            Ok(ToolResult::error(result_output))
-        }
+            None
+        };
+        let mut tr = if success {
+            ToolResult::success(result_output)
+        } else {
+            ToolResult::error(result_output)
+        };
+        tr.markdown_formatted = md;
+        Ok(tr)
     }
 }
 

@@ -16,7 +16,11 @@ pub struct ToolResult {
     /// `markdownFormatted` field on Composio's backend responses
     /// (see #1165) — markdown is significantly cheaper than JSON in
     /// the model context window.
-    #[serde(default, rename = "markdownFormatted", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "markdownFormatted",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub markdown_formatted: Option<String>,
 }
 
@@ -50,10 +54,7 @@ impl ToolResult {
     /// Construct a successful result that carries both a JSON payload
     /// (for programmatic consumers / debugging) and a markdown rendering
     /// (preferred by the agent loop when `prefer_markdown` is on).
-    pub fn success_with_markdown(
-        data: serde_json::Value,
-        markdown: impl Into<String>,
-    ) -> Self {
+    pub fn success_with_markdown(data: serde_json::Value, markdown: impl Into<String>) -> Self {
         Self {
             content: vec![ToolContent::Json { data }],
             is_error: false,
@@ -217,10 +218,8 @@ mod tests {
 
     #[test]
     fn output_for_llm_prefers_markdown_when_requested() {
-        let r = ToolResult::success_with_markdown(
-            json!({"items": [{"id": 1}, {"id": 2}]}),
-            "- 1\n- 2",
-        );
+        let r =
+            ToolResult::success_with_markdown(json!({"items": [{"id": 1}, {"id": 2}]}), "- 1\n- 2");
         assert_eq!(r.output_for_llm(true), "- 1\n- 2");
         // When prefer_markdown is false, falls back to JSON pretty-print.
         let raw = r.output_for_llm(false);

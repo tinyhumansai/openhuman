@@ -1,6 +1,6 @@
 use crate::openhuman::integrations::parallel::{SearchResponse, SearchResultItem};
 use crate::openhuman::integrations::IntegrationClient;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -73,6 +73,39 @@ impl WebSearchTool {
 
         Ok(lines.join("\n"))
     }
+
+    fn render_results_markdown(&self, results: &[SearchResultItem], query: &str) -> String {
+        if results.is_empty() {
+            return format!("_No results for `{query}`._");
+        }
+        let mut out = format!("# Search results — `{query}`\n");
+        for r in results.iter().take(self.max_results) {
+            let title = if r.title.trim().is_empty() {
+                "Untitled"
+            } else {
+                r.title.trim()
+            };
+            out.push_str(&format!("\n## [{title}]({})\n", r.url.trim()));
+            if let Some(date) = r.publish_date.as_deref() {
+                let date = date.trim();
+                if !date.is_empty() {
+                    out.push_str(&format!("_Published: {date}_\n\n"));
+                }
+            }
+            if let Some(first) = r.excerpts.first() {
+                let excerpt = first.trim();
+                if !excerpt.is_empty() {
+                    let truncated = if let Some((idx, _)) = excerpt.char_indices().nth(500) {
+                        format!("{}…", &excerpt[..idx])
+                    } else {
+                        excerpt.to_string()
+                    };
+                    out.push_str(&format!("> {truncated}\n"));
+                }
+            }
+        }
+        out
+    }
 }
 
 #[async_trait]
@@ -99,6 +132,19 @@ impl Tool for WebSearchTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_options(args, ToolCallOptions::default())
+            .await
+    }
+
+    fn supports_markdown(&self) -> bool {
+        true
+    }
+
+    async fn execute_with_options(
+        &self,
+        args: serde_json::Value,
+        options: ToolCallOptions,
+    ) -> anyhow::Result<ToolResult> {
         let query = args
             .get("query")
             .and_then(|q| q.as_str())
@@ -143,9 +189,11 @@ impl Tool for WebSearchTool {
             .post::<SearchResponse>("/agent-integrations/parallel/search", &body)
             .await?;
 
-        Ok(ToolResult::success(
-            self.parse_parallel_results(&resp.results, query)?,
-        ))
+        let mut result = ToolResult::success(self.parse_parallel_results(&resp.results, query)?);
+        if options.prefer_markdown {
+            result.markdown_formatted = Some(self.render_results_markdown(&resp.results, query));
+        }
+        Ok(result)
     }
 }
 

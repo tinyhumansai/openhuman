@@ -1,7 +1,7 @@
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{self, DeliveryConfig, JobType, Schedule, SessionTarget};
 use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -181,7 +181,20 @@ impl Tool for CronAddTool {
         })
     }
 
+    fn supports_markdown(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_options(args, ToolCallOptions::default())
+            .await
+    }
+
+    async fn execute_with_options(
+        &self,
+        args: serde_json::Value,
+        options: ToolCallOptions,
+    ) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
             return Ok(ToolResult::error(
                 "cron is disabled by config (cron.enabled=false)".to_string(),
@@ -327,14 +340,28 @@ impl Tool for CronAddTool {
         };
 
         match result {
-            Ok(job) => Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
-                "id": job.id,
-                "name": job.name,
-                "job_type": job.job_type,
-                "schedule": job.schedule,
-                "next_run": job.next_run,
-                "enabled": job.enabled
-            }))?)),
+            Ok(job) => {
+                let payload = json!({
+                    "id": job.id,
+                    "name": job.name,
+                    "job_type": job.job_type,
+                    "schedule": job.schedule,
+                    "next_run": job.next_run,
+                    "enabled": job.enabled
+                });
+                let mut tr = ToolResult::success(serde_json::to_string_pretty(&payload)?);
+                if options.prefer_markdown {
+                    let md = format!(
+                        "Created cron job **{}** (`{}`).\n- **next_run**: {}\n- **enabled**: {}",
+                        job.name.as_deref().unwrap_or(&job.id),
+                        job.id,
+                        job.next_run.format("%Y-%m-%d %H:%M:%S UTC"),
+                        job.enabled,
+                    );
+                    tr.markdown_formatted = Some(md);
+                }
+                Ok(tr)
+            }
             Err(e) => Ok(ToolResult::error(e.to_string())),
         }
     }

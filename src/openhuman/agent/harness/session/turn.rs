@@ -31,8 +31,8 @@ use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, Promp
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
 use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage, ProviderDelta};
-use crate::openhuman::tools::Tool;
 use crate::openhuman::tools::traits::ToolCallOptions;
+use crate::openhuman::tools::Tool;
 use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
 use std::hash::{Hash, Hasher};
