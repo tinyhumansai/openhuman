@@ -87,6 +87,33 @@ describe('setWalkthroughPending', () => {
     setWalkthroughPending();
     expect(localStorage.getItem(WALKTHROUGH_PENDING_KEY)).toBe('true');
   });
+
+  it('swallows error when localStorage.setItem throws (SecurityError / quota)', () => {
+    // Temporarily replace localStorage with a broken implementation to trigger
+    // the catch block at line 44 in setWalkthroughPending.
+    const realStorage = globalThis.localStorage;
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        ...realStorage,
+        setItem() {
+          throw new DOMException('QuotaExceededError', 'QuotaExceededError');
+        },
+      },
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      // Should not throw — the error is swallowed inside setWalkthroughPending
+      expect(() => setWalkthroughPending()).not.toThrow();
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: realStorage,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
 });
 
 describe('markWalkthroughComplete', () => {
@@ -95,6 +122,62 @@ describe('markWalkthroughComplete', () => {
     markWalkthroughComplete();
     expect(localStorage.getItem(WALKTHROUGH_KEY)).toBe('true');
     expect(localStorage.getItem(WALKTHROUGH_PENDING_KEY)).toBeNull();
+  });
+
+  it('swallows error when localStorage.setItem throws (SecurityError / quota)', () => {
+    // Temporarily replace localStorage with a broken implementation to trigger
+    // the catch block at line 61 in markWalkthroughComplete.
+    const realStorage = globalThis.localStorage;
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        ...realStorage,
+        setItem() {
+          throw new DOMException('QuotaExceededError', 'QuotaExceededError');
+        },
+      },
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      // Should not throw — the error is swallowed inside markWalkthroughComplete
+      expect(() => markWalkthroughComplete()).not.toThrow();
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: realStorage,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+});
+
+describe('isWalkthroughPending — localStorage unavailable', () => {
+  it('returns false and swallows error when localStorage.getItem throws', () => {
+    // Temporarily replace localStorage with a broken implementation to trigger
+    // the catch block at lines 26-27 in isWalkthroughPending.
+    const realStorage = globalThis.localStorage;
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        ...realStorage,
+        getItem() {
+          throw new DOMException('SecurityError', 'SecurityError');
+        },
+      },
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      // Should return false (the catch branch) and not throw
+      expect(isWalkthroughPending()).toBe(false);
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: realStorage,
+        configurable: true,
+        writable: true,
+      });
+    }
   });
 });
 

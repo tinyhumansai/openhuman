@@ -22,9 +22,7 @@ const WALKTHROUGH_PENDING_KEY = 'openhuman:walkthrough_pending';
 export function isWalkthroughPending(userIsOnboarded = false): boolean {
   try {
     if (localStorage.getItem(WALKTHROUGH_KEY) === 'true') return false;
-    return (
-      localStorage.getItem(WALKTHROUGH_PENDING_KEY) === 'true' || userIsOnboarded
-    );
+    return localStorage.getItem(WALKTHROUGH_PENDING_KEY) === 'true' || userIsOnboarded;
   } catch (e) {
     console.warn('[walkthrough] localStorage unavailable — treating as not pending', e);
     return false;
@@ -107,9 +105,10 @@ const AppWalkthrough = ({ onboarded = false }: { onboarded?: boolean }) => {
       onEvent={handleEvent}
       options={{
         zIndex: 1200,
-        overlayColor: 'rgba(0, 0, 0, 0.35)',
-        // Show back, primary (next/finish), and skip buttons in tooltip
+        overlayColor: 'rgba(0, 0, 0, 0.4)',
         buttons: ['back', 'primary', 'skip'],
+        spotlightBorderRadius: 16,
+        spotlightPadding: 8,
       }}
     />
   );

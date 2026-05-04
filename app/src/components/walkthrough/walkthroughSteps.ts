@@ -3,48 +3,52 @@ import type { Step } from 'react-joyride';
 /**
  * Step definitions for the post-onboarding product walkthrough.
  * Targets must match `data-walkthrough="..."` attributes in the DOM.
- * Rendered by AppWalkthrough via react-joyride.
+ *
+ * Copy is conversational and warm — matching OpenHuman's "calm sophistication"
+ * design language. Each step has an emoji accent for visual interest.
  */
 export const WALKTHROUGH_STEPS: Step[] = [
   {
     target: '[data-walkthrough="home-card"]',
-    title: 'Welcome to OpenHuman',
+    title: 'Your command center',
     content:
-      'This is your home base. See your connection status and jump into a conversation from here.',
+      "Everything starts here — your connections, your conversations, your AI. Think of this as mission control. Let's take a quick look around.",
     placement: 'bottom',
-    // v3 uses skipBeacon instead of disableBeacon
     skipBeacon: true,
   },
   {
     target: '[data-walkthrough="home-cta"]',
-    title: 'Start chatting',
+    title: 'Say hello',
     content:
-      'Tap here to message your AI assistant. Ask anything or get help with your connected services.',
+      "This is the fastest way to talk to your AI assistant. Try asking it to summarize your emails, draft a message, or just say hi — it's surprisingly good at small talk.",
     placement: 'bottom',
   },
   {
     target: '[data-walkthrough="tab-chat"]',
-    title: 'Chat',
+    title: 'Conversations that remember',
     content:
-      'Your conversations live here. The AI assistant can help with tasks across all your connected apps.',
+      'Every chat is saved and searchable. Your assistant remembers context across conversations, so you can pick up right where you left off.',
     placement: 'top',
   },
   {
     target: '[data-walkthrough="tab-skills"]',
-    title: 'Skills & Connections',
-    content: 'Connect your apps and manage what your assistant can do.',
+    title: 'Supercharge your assistant',
+    content:
+      'Connect Gmail, Slack, WhatsApp, and more. The more you connect, the more your assistant can actually do — not just talk about doing.',
     placement: 'top',
   },
   {
     target: '[data-walkthrough="tab-automation"]',
-    title: 'Automation',
-    content: 'Set up recurring tasks, scheduled agents, and proactive alerts.',
+    title: 'Set it and forget it',
+    content:
+      'Morning briefings, scheduled check-ins, proactive alerts. Your assistant can work for you even when you are not looking.',
     placement: 'top',
   },
   {
     target: '[data-walkthrough="tab-settings"]',
-    title: "You're all set!",
-    content: 'Explore at your own pace. You can always reach your assistant through the Chat tab.',
+    title: "You're in control",
+    content:
+      "That's the quick tour! You can always find settings, billing, and preferences here. Now go explore — your assistant is ready when you are.",
     placement: 'top',
   },
 ];
