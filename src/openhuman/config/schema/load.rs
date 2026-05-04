@@ -1001,6 +1001,44 @@ impl Config {
             };
         }
 
+        // Memory-tree chat backend selector: "cloud" (default) routes through
+        // the OpenHuman backend's summarizer model; "local" keeps the legacy
+        // Ollama-direct path. Empty / unset / unknown leaves the existing
+        // value untouched (and we warn on unknown). The embedder is unaffected.
+        if let Ok(raw) = std::env::var("OPENHUMAN_MEMORY_TREE_CHAT_BACKEND") {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                match crate::openhuman::config::ChatBackend::parse(trimmed) {
+                    Ok(b) => {
+                        log::debug!(
+                            "[memory_tree] OPENHUMAN_MEMORY_TREE_CHAT_BACKEND override applied: {}",
+                            b.as_str()
+                        );
+                        self.memory_tree.chat_backend = b;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            value = trimmed,
+                            error = %e,
+                            "ignoring invalid OPENHUMAN_MEMORY_TREE_CHAT_BACKEND (valid: cloud, local)"
+                        );
+                    }
+                }
+            }
+        }
+        // Cloud chat model override (only meaningful when chat_backend = cloud).
+        // Empty string explicitly clears the default — useful for tests that
+        // want to assert the absence of a configured cloud model. Non-empty
+        // strings are stored verbatim.
+        if let Ok(raw) = std::env::var("OPENHUMAN_MEMORY_TREE_CLOUD_CHAT_MODEL") {
+            let trimmed = raw.trim();
+            self.memory_tree.cloud_chat_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+
         // Auto-update overrides
         if let Some(flag) = env.get("OPENHUMAN_AUTO_UPDATE_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();

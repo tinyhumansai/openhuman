@@ -181,19 +181,101 @@ fn into_extracted_entities_drops_extra_duplicate_when_source_only_has_one() {
 }
 
 #[tokio::test]
-async fn extract_soft_fallback_on_unreachable_endpoint() {
-    // Point at an unreachable port so the transport fails. extract()
-    // must NOT return Err — it must return an empty ExtractedEntities
-    // with a warn log.
-    let cfg = LlmExtractorConfig {
-        endpoint: "http://127.0.0.1:1".to_string(),
-        timeout: std::time::Duration::from_millis(100),
-        ..LlmExtractorConfig::default()
-    };
-    let ex = LlmEntityExtractor::new(cfg).unwrap();
+async fn extract_soft_fallback_on_provider_failure() {
+    // Provider always errors. extract() must NOT return Err — it must
+    // return an empty ExtractedEntities with a warn log after retry
+    // exhaustion.
+    use crate::openhuman::memory::tree::chat::{ChatPrompt, ChatProvider};
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    struct FailingProvider;
+    #[async_trait]
+    impl ChatProvider for FailingProvider {
+        fn name(&self) -> &str {
+            "test:failing"
+        }
+        async fn chat_for_json(&self, _p: &ChatPrompt) -> anyhow::Result<String> {
+            Err(anyhow::anyhow!("simulated transport failure"))
+        }
+    }
+
+    let ex = LlmEntityExtractor::new(LlmExtractorConfig::default(), Arc::new(FailingProvider));
     let out = ex.extract("some text").await.unwrap();
     assert!(out.entities.is_empty());
     assert!(out.topics.is_empty());
+    assert!(out.llm_importance.is_none());
+}
+
+#[tokio::test]
+async fn extract_routes_through_chat_provider_and_parses_response() {
+    // Mock provider returns canned NER+importance JSON. Verify the
+    // extractor parses it, recovers spans by string search, and emits the
+    // expected entities + importance signal.
+    use crate::openhuman::memory::tree::chat::{ChatPrompt, ChatProvider};
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct MockProvider {
+        calls: AtomicUsize,
+    }
+    #[async_trait]
+    impl ChatProvider for MockProvider {
+        fn name(&self) -> &str {
+            "test:mock"
+        }
+        async fn chat_for_json(&self, _p: &ChatPrompt) -> anyhow::Result<String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(r#"{
+                "entities": [
+                    {"kind":"person","text":"Alice"},
+                    {"kind":"organization","text":"Anthropic"}
+                ],
+                "importance": 0.8,
+                "importance_reason": "factual"
+            }"#
+            .to_string())
+        }
+    }
+
+    let mock = Arc::new(MockProvider {
+        calls: AtomicUsize::new(0),
+    });
+    let ex = LlmEntityExtractor::new(LlmExtractorConfig::default(), mock.clone());
+    let out = ex.extract("Alice met Anthropic today.").await.unwrap();
+    assert_eq!(mock.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(out.entities.len(), 2);
+    assert_eq!(out.entities[0].text, "Alice");
+    assert_eq!(out.entities[0].kind, EntityKind::Person);
+    assert_eq!(out.entities[1].text, "Anthropic");
+    assert_eq!(out.llm_importance, Some(0.8));
+    assert_eq!(out.llm_importance_reason.as_deref(), Some("factual"));
+}
+
+#[tokio::test]
+async fn extract_returns_empty_on_malformed_provider_response() {
+    // Provider returns garbage. Caller must NOT see an Err — the parse
+    // failure path returns empty entities (retrying the same input would
+    // yield the same garbage, so we don't burn retries).
+    use crate::openhuman::memory::tree::chat::{ChatPrompt, ChatProvider};
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    struct GarbageProvider;
+    #[async_trait]
+    impl ChatProvider for GarbageProvider {
+        fn name(&self) -> &str {
+            "test:garbage"
+        }
+        async fn chat_for_json(&self, _p: &ChatPrompt) -> anyhow::Result<String> {
+            Ok("not json at all".to_string())
+        }
+    }
+
+    let ex = LlmEntityExtractor::new(LlmExtractorConfig::default(), Arc::new(GarbageProvider));
+    let out = ex.extract("text").await.unwrap();
+    assert!(out.entities.is_empty());
     assert!(out.llm_importance.is_none());
 }
 
@@ -295,21 +377,35 @@ fn into_extracted_entities_disallowed_known_kind_falls_back_to_misc() {
 }
 
 #[test]
-fn build_request_uses_configured_model() {
+fn build_prompt_carries_user_text_and_kind_tag() {
+    use crate::openhuman::memory::tree::chat::{ChatPrompt, ChatProvider};
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    struct NoopProvider;
+    #[async_trait]
+    impl ChatProvider for NoopProvider {
+        fn name(&self) -> &str {
+            "test:noop"
+        }
+        async fn chat_for_json(&self, _p: &ChatPrompt) -> anyhow::Result<String> {
+            Ok("{}".into())
+        }
+    }
+
     let cfg = LlmExtractorConfig {
         model: "test-model".into(),
         ..LlmExtractorConfig::default()
     };
-    let ex = LlmEntityExtractor::new(cfg).unwrap();
-    let req = ex.build_request("hello");
-    assert_eq!(req.model, "test-model");
-    assert_eq!(req.format, "json");
-    assert!(!req.stream);
-    assert_eq!(req.options.temperature, 0.0);
-    assert_eq!(req.messages.len(), 2);
-    assert_eq!(req.messages[0].role, "system");
-    assert_eq!(req.messages[1].role, "user");
-    assert!(req.messages[1].content.contains("hello"));
+    let ex = LlmEntityExtractor::new(cfg, Arc::new(NoopProvider));
+    let prompt = ex.build_prompt("hello");
+    assert!(prompt.user.contains("hello"));
+    assert!(prompt.user.contains("Return JSON only"));
+    assert_eq!(prompt.temperature, 0.0);
+    assert_eq!(prompt.kind, "memory_tree::extract");
+    // System prompt should describe the JSON schema.
+    assert!(prompt.system.contains("\"entities\""));
+    assert!(prompt.system.contains("\"importance\""));
 }
 
 #[test]

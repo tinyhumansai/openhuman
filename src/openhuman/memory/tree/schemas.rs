@@ -1,11 +1,14 @@
-//! Controller schemas for the memory tree (Phase 1 / #707).
+//! Controller schemas for the memory tree.
 //!
-//! Registered JSON-RPC methods:
-//! - `openhuman.memory_tree_ingest`      — unified ingest (source_kind + JSON payload)
-//! - `openhuman.memory_tree_list_chunks`
-//! - `openhuman.memory_tree_get_chunk`
+//! Registered JSON-RPC methods include the original Phase 1 surface
+//! (`ingest`, `list_chunks`, `get_chunk`, `trigger_digest`) plus the new
+//! Memory-tab read RPCs added by the cloud-default backend refactor:
+//! `list_sources`, `search`, `recall`, `entity_index_for`,
+//! `top_entities`, `chunk_score`, `delete_chunk`, plus
+//! `get_chat_backend` / `set_chat_backend` for the backend-selector UI.
 //!
-//! Handlers delegate to [`super::rpc`].
+//! Handlers delegate to [`super::rpc`] (write side) or
+//! [`super::read_rpc`] (UI read side).
 
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -13,6 +16,7 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::memory::tree::read_rpc;
 use crate::openhuman::memory::tree::rpc as tree_rpc;
 use crate::rpc::RpcOutcome;
 
@@ -26,6 +30,15 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_chunks"),
         schemas("get_chunk"),
         schemas("trigger_digest"),
+        schemas("list_sources"),
+        schemas("search"),
+        schemas("recall"),
+        schemas("entity_index_for"),
+        schemas("top_entities"),
+        schemas("chunk_score"),
+        schemas("delete_chunk"),
+        schemas("get_chat_backend"),
+        schemas("set_chat_backend"),
     ]
 }
 
@@ -48,6 +61,42 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("trigger_digest"),
             handler: handle_trigger_digest,
+        },
+        RegisteredController {
+            schema: schemas("list_sources"),
+            handler: handle_list_sources,
+        },
+        RegisteredController {
+            schema: schemas("search"),
+            handler: handle_search,
+        },
+        RegisteredController {
+            schema: schemas("recall"),
+            handler: handle_recall,
+        },
+        RegisteredController {
+            schema: schemas("entity_index_for"),
+            handler: handle_entity_index_for,
+        },
+        RegisteredController {
+            schema: schemas("top_entities"),
+            handler: handle_top_entities,
+        },
+        RegisteredController {
+            schema: schemas("chunk_score"),
+            handler: handle_chunk_score,
+        },
+        RegisteredController {
+            schema: schemas("delete_chunk"),
+            handler: handle_delete_chunk,
+        },
+        RegisteredController {
+            schema: schemas("get_chat_backend"),
+            handler: handle_get_chat_backend,
+        },
+        RegisteredController {
+            schema: schemas("set_chat_backend"),
+            handler: handle_set_chat_backend,
         },
     ]
 }
@@ -129,26 +178,26 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: NAMESPACE,
             function: "list_chunks",
             description:
-                "List stored chunks, newest first, optionally filtered by source / owner / time.",
+                "Paginated list of chunks with optional filters by source kind / source id / \
+                 entity ids / time window / keyword. Returns chunks plus total match count for \
+                 pagination.",
             inputs: vec![
                 FieldSchema {
-                    name: "source_kind",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::Enum {
-                        variants: vec!["chat", "email", "document"],
-                    })),
-                    comment: "Restrict to a single source kind.",
+                    name: "source_kinds",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                    comment: "Restrict to one or more source kinds (chat / email / document).",
                     required: false,
                 },
                 FieldSchema {
-                    name: "source_id",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Restrict to a single logical source (channel/thread/doc id).",
+                    name: "source_ids",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                    comment: "Restrict to one or more logical source ids.",
                     required: false,
                 },
                 FieldSchema {
-                    name: "owner",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Restrict to a single owner/account.",
+                    name: "entity_ids",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                    comment: "Restrict to chunks indexed against any of these canonical entity ids.",
                     required: false,
                 },
                 FieldSchema {
@@ -164,18 +213,38 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: false,
                 },
                 FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Substring keyword filter over chunk preview content.",
+                    required: false,
+                },
+                FieldSchema {
                     name: "limit",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-                    comment: "Maximum rows to return (defaults to 100).",
+                    comment: "Maximum rows per page (defaults to 50, capped at 1000).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "offset",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Pagination offset (defaults to 0).",
                     required: false,
                 },
             ],
-            outputs: vec![FieldSchema {
-                name: "chunks",
-                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("Chunk"))),
-                comment: "Matching chunks ordered by timestamp DESC.",
-                required: true,
-            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "chunks",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Ref("Chunk"))),
+                    comment: "Page of matching chunks ordered by timestamp DESC.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "total",
+                    ty: TypeSchema::U64,
+                    comment: "Total number of chunks matching the filter (pre-pagination).",
+                    required: true,
+                },
+            ],
         },
         "get_chunk" => ControllerSchema {
             namespace: NAMESPACE,
@@ -192,6 +261,221 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 ty: TypeSchema::Option(Box::new(TypeSchema::Ref("Chunk"))),
                 comment: "The chunk if found, otherwise null.",
                 required: false,
+            }],
+        },
+        "list_sources" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "list_sources",
+            description:
+                "Distinct (source_kind, source_id) pairs with chunk counts and most-recent timestamps. \
+                 `display_name` is computed from the source_id (un-slug + strip user email when known).",
+            inputs: vec![FieldSchema {
+                name: "user_email_hint",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "When provided, source ids that contain this email get it stripped from \
+                          their display name so the UI shows the other party of an email thread.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "sources",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("Source"))),
+                comment: "All distinct ingest sources, newest activity first.",
+                required: true,
+            }],
+        },
+        "search" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "search",
+            description:
+                "Keyword LIKE-search over chunk bodies. Cheap, deterministic; useful as a \
+                 fallback when semantic recall is unavailable.",
+            inputs: vec![
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Substring to match against chunk content.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "k",
+                    ty: TypeSchema::U64,
+                    comment: "Maximum chunks to return.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "chunks",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("Chunk"))),
+                comment: "Matching chunks ordered by recency.",
+                required: true,
+            }],
+        },
+        "recall" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "recall",
+            description:
+                "Semantic recall — runs the Phase 4 cosine rerank against the query embedding \
+                 and returns leaf chunks (not summaries) for UI display.",
+            inputs: vec![
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Free-text query — embedded once and reranked against summary embeddings.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "k",
+                    ty: TypeSchema::U64,
+                    comment: "Maximum chunks to return.",
+                    required: true,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "chunks",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Ref("Chunk"))),
+                    comment: "Recalled chunks, sorted in the same order as the rerank.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "scores",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                    comment: "Parallel array of similarity scores (one per chunk).",
+                    required: true,
+                },
+            ],
+        },
+        "entity_index_for" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "entity_index_for",
+            description: "Return all canonical entities indexed against a chunk (or summary node) id.",
+            inputs: vec![FieldSchema {
+                name: "chunk_id",
+                ty: TypeSchema::String,
+                comment: "Chunk id (32 hex chars).",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "entities",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("EntityRef"))),
+                comment: "Entities attached to the node, ordered by mention count DESC.",
+                required: true,
+            }],
+        },
+        "top_entities" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "top_entities",
+            description:
+                "Most-frequent canonical entities across the workspace, optionally narrowed by kind.",
+            inputs: vec![
+                FieldSchema {
+                    name: "kind",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Restrict to a single entity_kind (`person`, `email`, `topic`, …).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "limit",
+                    ty: TypeSchema::U64,
+                    comment: "Maximum rows to return.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "entities",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("EntityRef"))),
+                comment: "Top entities, ordered by mention count DESC.",
+                required: true,
+            }],
+        },
+        "chunk_score" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "chunk_score",
+            description:
+                "Score breakdown stored in `mem_tree_score` for one chunk — used by the Memory \
+                 tab's 'why was this kept / dropped' panel.",
+            inputs: vec![FieldSchema {
+                name: "chunk_id",
+                ty: TypeSchema::String,
+                comment: "Chunk id (32 hex chars).",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "breakdown",
+                ty: TypeSchema::Option(Box::new(TypeSchema::Ref("ScoreBreakdown"))),
+                comment: "Per-signal weight + value array, total, threshold, kept flag, llm_consulted flag.",
+                required: false,
+            }],
+        },
+        "delete_chunk" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "delete_chunk",
+            description:
+                "Purge one chunk plus its score row, entity-index rows, and on-disk .md file. \
+                 Idempotent — missing chunk returns deleted=false. Does NOT cascade through \
+                 sealed summaries; UIs warn the user.",
+            inputs: vec![FieldSchema {
+                name: "chunk_id",
+                ty: TypeSchema::String,
+                comment: "Chunk id to remove.",
+                required: true,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "deleted",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the chunk row was found and removed.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "score_rows_removed",
+                    ty: TypeSchema::U64,
+                    comment: "Count of rows removed from `mem_tree_score`.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "entity_index_rows_removed",
+                    ty: TypeSchema::U64,
+                    comment: "Count of rows removed from `mem_tree_entity_index`.",
+                    required: true,
+                },
+            ],
+        },
+        "get_chat_backend" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "get_chat_backend",
+            description: "Read the currently configured chat backend (`cloud` or `local`).",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "current",
+                ty: TypeSchema::Enum {
+                    variants: vec!["cloud", "local"],
+                },
+                comment: "Active backend string.",
+                required: true,
+            }],
+        },
+        "set_chat_backend" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "set_chat_backend",
+            description:
+                "Update the in-memory chat backend selector. Persistence to config.toml is the \
+                 caller's responsibility (use `openhuman.config_set` for that).",
+            inputs: vec![FieldSchema {
+                name: "backend",
+                ty: TypeSchema::Enum {
+                    variants: vec!["cloud", "local"],
+                },
+                comment: "New backend value.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "current",
+                ty: TypeSchema::Enum {
+                    variants: vec!["cloud", "local"],
+                },
+                comment: "The effective backend after the call.",
+                required: true,
             }],
         },
         "trigger_digest" => ControllerSchema {
@@ -260,14 +544,6 @@ fn handle_ingest(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_list_chunks(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        let req = parse_value::<tree_rpc::ListChunksRequest>(Value::Object(params))?;
-        to_json(tree_rpc::list_chunks_rpc(&config, req).await?)
-    })
-}
-
 fn handle_get_chunk(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -281,6 +557,124 @@ fn handle_trigger_digest(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let req = parse_value::<tree_rpc::TriggerDigestRequest>(Value::Object(params))?;
         to_json(tree_rpc::trigger_digest_rpc(&config, req).await?)
+    })
+}
+
+// ── New read RPCs (Memory-tab UI) ────────────────────────────────────────
+
+fn handle_list_chunks(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let filter = parse_value::<read_rpc::ChunkFilter>(Value::Object(params))?;
+        to_json(read_rpc::list_chunks_rpc(&config, filter).await?)
+    })
+}
+
+fn handle_list_sources(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize, Default)]
+        struct Req {
+            #[serde(default)]
+            user_email_hint: Option<String>,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params)).unwrap_or_default();
+        to_json(read_rpc::list_sources_rpc(&config, req.user_email_hint).await?)
+    })
+}
+
+fn handle_search(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            query: String,
+            k: u32,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::search_rpc(&config, req.query, req.k).await?)
+    })
+}
+
+fn handle_recall(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            query: String,
+            k: u32,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::recall_rpc(&config, req.query, req.k).await?)
+    })
+}
+
+fn handle_entity_index_for(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            chunk_id: String,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::entity_index_for_rpc(&config, req.chunk_id).await?)
+    })
+}
+
+fn handle_top_entities(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            #[serde(default)]
+            kind: Option<String>,
+            limit: u32,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::top_entities_rpc(&config, req.kind, req.limit).await?)
+    })
+}
+
+fn handle_chunk_score(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            chunk_id: String,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::chunk_score_rpc(&config, req.chunk_id).await?)
+    })
+}
+
+fn handle_delete_chunk(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            chunk_id: String,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::delete_chunk_rpc(&config, req.chunk_id).await?)
+    })
+}
+
+fn handle_get_chat_backend(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(read_rpc::get_chat_backend_rpc(&config).await?)
+    })
+}
+
+fn handle_set_chat_backend(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            backend: String,
+        }
+        let mut config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::set_chat_backend_rpc(&mut config, req.backend).await?)
     })
 }
 
