@@ -38,8 +38,9 @@ fn render_jobs_markdown(jobs: &[CronJob]) -> String {
         if let Some(prompt) = &job.prompt {
             let trimmed = prompt.trim();
             if !trimmed.is_empty() {
-                let preview = if trimmed.len() > 200 {
-                    format!("{}…", &trimmed[..200])
+                let preview = if trimmed.chars().count() > 200 {
+                    let snippet: String = trimmed.chars().take(200).collect();
+                    format!("{snippet}…")
                 } else {
                     trimmed.to_string()
                 };
