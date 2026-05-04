@@ -1,7 +1,6 @@
 use crate::openhuman::memory::Memory;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 
 use super::harness::memory_context::{WORKING_MEMORY_KEY_PREFIX, WORKING_MEMORY_LIMIT};
 
@@ -110,49 +109,22 @@ impl MemoryLoader for DefaultMemoryLoader {
         memory: &dyn Memory,
         user_message: &str,
     ) -> anyhow::Result<String> {
-        let entries = memory
-            .recall(
-                user_message,
-                self.limit,
-                crate::openhuman::memory::RecallOpts::default(),
-            )
-            .await?;
+        // Primary `[Memory context]` semantic recall used to be injected here,
+        // but it duplicated content the agent can already reach via the
+        // compressed memory tree (eager prefetch) and the on-demand memory
+        // search tool — and worse, the auto-saved `user_msg` entry would come
+        // back as the top "relevant" memory and echo the user's text back at
+        // them. Only the bounded `[User working memory]` block remains: it
+        // surfaces sync-derived profile facts (timezone, preferences) that the
+        // tree digest doesn't always carry, and it is keyed by a fixed
+        // `working.user.*` namespace so it can't catch arbitrary chat content.
         let mut context = String::new();
         let budget = if self.max_context_chars > 0 {
             self.max_context_chars
         } else {
             usize::MAX
         };
-        let mut seen_keys = HashSet::new();
 
-        let header = "[Memory context]\n";
-        for entry in entries {
-            if let Some(score) = entry.score {
-                if score < self.min_relevance_score {
-                    continue;
-                }
-            }
-            let line = format!("- {}: {}\n", entry.key, entry.content);
-            if context.is_empty() {
-                if header.len() >= budget {
-                    return Ok(String::new());
-                }
-                context.push_str(header);
-            }
-            if context.len() + line.len() > budget {
-                tracing::debug!(
-                    budget,
-                    current_len = context.len(),
-                    skipped_line_len = line.len(),
-                    "[memory_loader] context budget reached, skipping remaining entries"
-                );
-                break;
-            }
-            seen_keys.insert(entry.key);
-            context.push_str(&line);
-        }
-
-        // Explicit bounded recall for sync-derived user working memory.
         let working_query = format!("working.user {user_message}");
         let working_entries = memory
             .recall(
@@ -166,7 +138,6 @@ impl MemoryLoader for DefaultMemoryLoader {
         for entry in working_entries
             .into_iter()
             .filter(|entry| entry.key.starts_with(WORKING_MEMORY_KEY_PREFIX))
-            .filter(|entry| !seen_keys.contains(&entry.key))
             .filter(|entry| match entry.score {
                 Some(score) => score >= self.min_relevance_score,
                 None => true,
@@ -175,7 +146,7 @@ impl MemoryLoader for DefaultMemoryLoader {
         {
             if !appended_working_header {
                 let section = "[User working memory]\n";
-                if context.len() + section.len() > budget {
+                if section.len() > budget {
                     break;
                 }
                 context.push_str(section);
