@@ -115,16 +115,58 @@ export async function getMemoryTreeLlm(): Promise<Backend> {
 }
 
 /**
- * Switches the chat backend. Returns the effective value the core agreed
- * on — today the handler accepts the input verbatim, but a future revision
- * may downgrade `local` → `cloud` when the host can't satisfy the local
- * minimums. Persists to `config.toml` so the choice survives restart.
+ * Optional per-role model picks for {@link setMemoryTreeLlm}. Field names
+ * are camelCase here to match TS conventions; the wrapper translates them
+ * to the snake_case wire shape the Rust `SetLlmRequest` expects:
+ *
+ * | TS option         | Rust / wire field   | Targets `memory_tree.*` |
+ * | ----------------- | ------------------- | ----------------------- |
+ * | `cloudModel`      | `cloud_model`       | `cloud_llm_model`       |
+ * | `extractModel`    | `extract_model`     | `llm_extractor_model`   |
+ * | `summariserModel` | `summariser_model`  | `llm_summariser_model`  |
+ *
+ * Each field follows "absent → unchanged, present → overwritten" so a
+ * caller flipping just the backend doesn't have to re-supply every model
+ * id, and a caller persisting just one role doesn't have to re-supply
+ * the others.
+ */
+export interface SetMemoryTreeLlmOptions {
+  cloudModel?: string;
+  extractModel?: string;
+  summariserModel?: string;
+}
+
+/**
+ * Switches the chat backend and (optionally) persists per-role model
+ * choices in the same atomic `config.toml` write. Returns the effective
+ * value the core agreed on — today the handler accepts the input
+ * verbatim, but a future revision may downgrade `local` → `cloud` when
+ * the host can't satisfy the local minimums.
  *
  * Backed by `openhuman.memory_tree_set_llm`.
+ *
+ * Existing one-arg callers — `setMemoryTreeLlm('cloud')` — keep working
+ * unchanged because `options` is optional.
  */
-export async function setMemoryTreeLlm(next: Backend): Promise<{ effective: Backend }> {
-  console.debug('[intelligence-settings-api] setMemoryTreeLlm: entry next=%s', next);
-  const resp = await memoryTreeSetLlm(next);
+export async function setMemoryTreeLlm(
+  next: Backend,
+  options?: SetMemoryTreeLlmOptions
+): Promise<{ effective: Backend }> {
+  console.debug(
+    '[intelligence-settings-api] setMemoryTreeLlm: entry next=%s cloudModel=%s extractModel=%s summariserModel=%s',
+    next,
+    options?.cloudModel ?? '<none>',
+    options?.extractModel ?? '<none>',
+    options?.summariserModel ?? '<none>'
+  );
+  // camelCase → snake_case translation lives here, in one place. The
+  // wrapper layer just forwards the snake_case shape to the wire.
+  const resp = await memoryTreeSetLlm({
+    backend: next,
+    ...(options?.cloudModel !== undefined && { cloud_model: options.cloudModel }),
+    ...(options?.extractModel !== undefined && { extract_model: options.extractModel }),
+    ...(options?.summariserModel !== undefined && { summariser_model: options.summariserModel }),
+  });
   console.debug('[intelligence-settings-api] setMemoryTreeLlm: exit effective=%s', resp.current);
   return { effective: resp.current };
 }

@@ -458,16 +458,43 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "set_llm" => ControllerSchema {
             namespace: NAMESPACE,
             function: "set_llm",
-            description: "Update the LLM backend selector and persist the choice to \
-                 config.toml so it survives sidecar restart.",
-            inputs: vec![FieldSchema {
-                name: "backend",
-                ty: TypeSchema::Enum {
-                    variants: vec!["cloud", "local"],
+            description:
+                "Update the LLM backend selector and (optionally) per-role model choices \
+                 (`cloud_model`, `extract_model`, `summariser_model`) and persist the \
+                 result to config.toml in a single atomic write. Absent model fields \
+                 leave the corresponding config key unchanged so a caller flipping just \
+                 the backend doesn't have to re-supply every model id.",
+            inputs: vec![
+                FieldSchema {
+                    name: "backend",
+                    ty: TypeSchema::Enum {
+                        variants: vec!["cloud", "local"],
+                    },
+                    comment: "New backend value.",
+                    required: true,
                 },
-                comment: "New backend value.",
-                required: true,
-            }],
+                FieldSchema {
+                    name: "cloud_model",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Cloud model id (used when backend=cloud). \
+                              Absent → leave existing memory_tree.cloud_llm_model unchanged.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "extract_model",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Ollama model id for the entity extractor (used when backend=local). \
+                              Absent → leave existing memory_tree.llm_extractor_model unchanged.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "summariser_model",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Ollama model id for the summariser (used when backend=local). \
+                              Absent → leave existing memory_tree.llm_summariser_model unchanged.",
+                    required: false,
+                },
+            ],
             outputs: vec![FieldSchema {
                 name: "current",
                 ty: TypeSchema::Enum {
@@ -667,13 +694,9 @@ fn handle_get_llm(_params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_set_llm(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        #[derive(serde::Deserialize)]
-        struct Req {
-            backend: String,
-        }
         let mut config = config_rpc::load_config_with_timeout().await?;
-        let req = parse_value::<Req>(Value::Object(params))?;
-        to_json(read_rpc::set_llm_rpc(&mut config, req.backend).await?)
+        let req = parse_value::<read_rpc::SetLlmRequest>(Value::Object(params))?;
+        to_json(read_rpc::set_llm_rpc(&mut config, req).await?)
     })
 }
 

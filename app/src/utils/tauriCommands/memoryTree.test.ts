@@ -222,4 +222,39 @@ describe('memoryTreeGetLlm / memoryTreeSetLlm', () => {
     });
     expect(out.current).toBe('local');
   });
+
+  test('set_llm forwards optional per-role model fields verbatim as snake_case', async () => {
+    // The wrapper takes either a bare backend string (legacy) or the full
+    // request object. When the caller passes a request, the snake_case
+    // field names must reach the wire untouched — no camelCase
+    // translation lives in this layer.
+    mockCallCoreRpc.mockResolvedValueOnce({ result: { current: 'local' }, logs: ['stub'] });
+
+    const out = await memoryTreeSetLlm({
+      backend: 'local',
+      extract_model: 'qwen2.5:0.5b',
+      summariser_model: 'gemma3:1b-it-qat',
+    });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.memory_tree_set_llm',
+      params: {
+        backend: 'local',
+        extract_model: 'qwen2.5:0.5b',
+        summariser_model: 'gemma3:1b-it-qat',
+      },
+    });
+    expect(out.current).toBe('local');
+  });
+
+  test('set_llm with cloud_model only flips backend + cloud model', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ result: { current: 'cloud' }, logs: ['stub'] });
+
+    await memoryTreeSetLlm({ backend: 'cloud', cloud_model: 'summarizer-v2' });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.memory_tree_set_llm',
+      params: { backend: 'cloud', cloud_model: 'summarizer-v2' },
+    });
+  });
 });

@@ -151,6 +151,26 @@ export interface LlmResponse {
   current: LlmBackend;
 }
 
+/**
+ * Wire shape for `openhuman.memory_tree_set_llm`.
+ *
+ * `backend` is required and always overwrites `memory_tree.llm_backend`.
+ *
+ * The three model fields are optional; absent means "leave the
+ * corresponding `memory_tree.*_model` config key untouched", present
+ * means "overwrite it". This lets the UI flip the backend without
+ * touching models, or persist a per-role model selection without having
+ * to re-supply every other model id. Field names are snake_case to match
+ * the Rust `SetLlmRequest` struct verbatim — the wrapper does not
+ * translate.
+ */
+export interface SetLlmRequest {
+  backend: LlmBackend;
+  cloud_model?: string;
+  extract_model?: string;
+  summariser_model?: string;
+}
+
 // ── Envelope unwrap helper ────────────────────────────────────────────────
 
 /**
@@ -344,16 +364,35 @@ export async function memoryTreeGetLlm(): Promise<LlmResponse> {
 }
 
 /**
- * Update the LLM backend selector and persist the choice to `config.toml`
- * so it survives sidecar restart. Returns the effective backend after the
- * call (the core may downgrade `local` → `cloud` if the host can't satisfy
- * the local minimums; today the handler accepts the value verbatim).
+ * Update the LLM backend selector — and, optionally, per-role model
+ * choices (`cloud_model`, `extract_model`, `summariser_model`) — and
+ * persist the result to `config.toml` in a single atomic write. Survives
+ * sidecar restart.
+ *
+ * Returns the effective backend after the call (the core may downgrade
+ * `local` → `cloud` if the host can't satisfy the local minimums; today
+ * the handler accepts the value verbatim).
+ *
+ * Accepts either a bare backend string (legacy callers) or the full
+ * {@link SetLlmRequest} object, so call-sites that only flip the mode
+ * stay terse while sites that want to persist model picks pass the
+ * extended shape.
  */
-export async function memoryTreeSetLlm(backend: LlmBackend): Promise<LlmResponse> {
-  console.debug('[memory-tree-rpc] memoryTreeSetLlm: entry backend=%s', backend);
+export async function memoryTreeSetLlm(
+  reqOrBackend: LlmBackend | SetLlmRequest
+): Promise<LlmResponse> {
+  const params: SetLlmRequest =
+    typeof reqOrBackend === 'string' ? { backend: reqOrBackend } : reqOrBackend;
+  console.debug(
+    '[memory-tree-rpc] memoryTreeSetLlm: entry backend=%s cloud_model=%s extract_model=%s summariser_model=%s',
+    params.backend,
+    params.cloud_model ?? '<none>',
+    params.extract_model ?? '<none>',
+    params.summariser_model ?? '<none>'
+  );
   const resp = await callCoreRpc<LlmResponse | ResultEnvelope<LlmResponse>>({
     method: 'openhuman.memory_tree_set_llm',
-    params: { backend },
+    params,
   });
   const out = unwrapResult(resp);
   console.debug('[memory-tree-rpc] memoryTreeSetLlm: exit current=%s', out?.current);

@@ -112,10 +112,14 @@ describe('IntelligenceSettingsTab', () => {
     memoryTreeGetLlm.mockReset();
     memoryTreeSetLlm.mockReset();
     memoryTreeGetLlm.mockImplementation(async () => ({ current: backend }));
-    memoryTreeSetLlm.mockImplementation(async (next: 'cloud' | 'local') => {
-      backend = next;
-      return { current: backend };
-    });
+    // Accept both legacy (bare string) and the new request-object shape so
+    // tests can assert on either call form.
+    memoryTreeSetLlm.mockImplementation(
+      async (req: 'cloud' | 'local' | { backend: 'cloud' | 'local' }) => {
+        backend = typeof req === 'string' ? req : req.backend;
+        return { current: backend };
+      }
+    );
   });
 
   it('renders the four section headings', async () => {
@@ -204,13 +208,18 @@ describe('IntelligenceSettingsTab', () => {
       expect(memoryTreeGetLlm).toHaveBeenCalled();
     });
 
-    // Click Local — setMemoryTreeLlm must be called with 'local'.
+    // Click Local — setMemoryTreeLlm must be called with the request
+    // object form `{ backend: 'local' }`. settingsApi.ts always normalizes
+    // to the request-object shape because the wrapper now accepts both
+    // forms but the API layer translates camelCase options through the
+    // object shape. Model fields are absent so the corresponding
+    // config keys stay untouched.
     const radios = screen.getAllByRole('radio');
     const localCard = radios.find(el => /Advanced/.test(el.textContent ?? ''));
     fireEvent.click(localCard!);
 
     await waitFor(() => {
-      expect(memoryTreeSetLlm).toHaveBeenCalledWith('local');
+      expect(memoryTreeSetLlm).toHaveBeenCalledWith({ backend: 'local' });
     });
 
     // The mocked setter persists state in the closure, so the bootstrap
@@ -218,5 +227,66 @@ describe('IntelligenceSettingsTab', () => {
     // check that the closure flipped.
     const after = await memoryTreeGetLlm();
     expect(after.current).toBe('local');
+  });
+
+  it('persists extract dropdown changes via memoryTreeSetLlm with extract_model', async () => {
+    // Switching the extract LLM dropdown in local mode must call the
+    // RPC with `{ backend: 'local', extract_model: <new id> }` so the
+    // pick is persisted to config.toml. The summariser/cloud fields are
+    // omitted, leaving the corresponding config keys untouched.
+    renderWithProviders(<IntelligenceSettingsTab />);
+
+    // Move into Local mode so ModelAssignment renders.
+    await waitFor(() => {
+      expect(screen.getByText('AI backend')).toBeInTheDocument();
+    });
+    const radios = screen.getAllByRole('radio');
+    const localCard = radios.find(el => /Advanced/.test(el.textContent ?? ''));
+    fireEvent.click(localCard!);
+    await waitFor(() => {
+      expect(screen.getByText('Model assignment')).toBeInTheDocument();
+    });
+
+    // Reset call history so the assertion below is scoped to the
+    // dropdown change, not the earlier backend toggle.
+    memoryTreeSetLlm.mockClear();
+
+    // Pick a different extract model. `llama3.1:8b` is in the curated
+    // catalog with role `extract`, so it appears in the dropdown.
+    const extractSelect = screen.getByLabelText('Extract LLM') as HTMLSelectElement;
+    fireEvent.change(extractSelect, { target: { value: 'llama3.1:8b' } });
+
+    await waitFor(() => {
+      expect(memoryTreeSetLlm).toHaveBeenCalledWith({
+        backend: 'local',
+        extract_model: 'llama3.1:8b',
+      });
+    });
+  });
+
+  it('persists summariser dropdown changes via memoryTreeSetLlm with summariser_model', async () => {
+    renderWithProviders(<IntelligenceSettingsTab />);
+
+    await waitFor(() => {
+      expect(screen.getByText('AI backend')).toBeInTheDocument();
+    });
+    const radios = screen.getAllByRole('radio');
+    const localCard = radios.find(el => /Advanced/.test(el.textContent ?? ''));
+    fireEvent.click(localCard!);
+    await waitFor(() => {
+      expect(screen.getByText('Model assignment')).toBeInTheDocument();
+    });
+
+    memoryTreeSetLlm.mockClear();
+
+    const summariserSelect = screen.getByLabelText('Summariser LLM') as HTMLSelectElement;
+    fireEvent.change(summariserSelect, { target: { value: 'llama3.1:8b' } });
+
+    await waitFor(() => {
+      expect(memoryTreeSetLlm).toHaveBeenCalledWith({
+        backend: 'local',
+        summariser_model: 'llama3.1:8b',
+      });
+    });
   });
 });

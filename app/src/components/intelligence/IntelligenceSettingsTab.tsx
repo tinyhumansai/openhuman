@@ -69,6 +69,34 @@ export default function IntelligenceSettingsTab() {
     }
   }, []);
 
+  // Persist Extract dropdown changes to config.toml in the same atomic
+  // write the backend toggle uses. We pass `backend: 'local'` (the only
+  // mode where ModelAssignment is rendered) plus the single role being
+  // changed — the absent fields keep the other models untouched, so two
+  // dropdown changes back-to-back compose cleanly without fighting over
+  // disk writes. UI state is updated optimistically pre-RPC; if the call
+  // throws we still want the dropdown to reflect the user's pick rather
+  // than snap back, matching BackendChooser's silent-on-success pattern.
+  const handleExtractModelChange = useCallback(async (id: string) => {
+    console.debug('[intelligence-settings] extract model -> %s', id);
+    setExtractModel(id);
+    try {
+      await setMemoryTreeLlm('local', { extractModel: id });
+    } catch (err) {
+      console.error('[intelligence-settings] persist extract model failed', err);
+    }
+  }, []);
+
+  const handleSummariserModelChange = useCallback(async (id: string) => {
+    console.debug('[intelligence-settings] summariser model -> %s', id);
+    setSummariserModel(id);
+    try {
+      await setMemoryTreeLlm('local', { summariserModel: id });
+    } catch (err) {
+      console.error('[intelligence-settings] persist summariser model failed', err);
+    }
+  }, []);
+
   const handleDownload = useCallback(async (model: ModelDescriptor) => {
     const cap = capabilityForModel(model);
     if (!cap) {
@@ -112,8 +140,8 @@ export default function IntelligenceSettingsTab() {
             installedModelIds={installedModels}
             extractModel={extractModel}
             summariserModel={summariserModel}
-            onChangeExtract={setExtractModel}
-            onChangeSummariser={setSummariserModel}
+            onChangeExtract={handleExtractModelChange}
+            onChangeSummariser={handleSummariserModelChange}
           />
         </Section>
       )}
