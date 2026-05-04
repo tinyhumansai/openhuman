@@ -120,6 +120,15 @@ pub struct ParentExecutionContext {
     /// `Some("{grandparent_key}__{parent_key}")`.
     pub session_parent_prefix: Option<String>,
 
+    /// Parent session's curated-memory snapshot. Sub-agents inherit the
+    /// exact same `Arc` so every agent in the delegation tree renders
+    /// byte-identical `MEMORY.md` / `USER.md` blocks within a turn.
+    /// `None` when the parent built without a snapshot (unit tests,
+    /// curated-memory runtime not initialised).
+    pub curated_snapshot: Option<
+        std::sync::Arc<crate::openhuman::agent::prompts::types::CuratedMemoryPromptSnapshot>,
+    >,
+
     /// Parent's progress sink. When set, the sub-agent runner emits
     /// `AgentProgress::Subagent*` lifecycle events through this channel
     /// so the web-channel bridge can stream live child activity (each

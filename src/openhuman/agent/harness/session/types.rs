@@ -140,8 +140,9 @@ pub struct Agent {
     /// `curated_memory.add/replace/remove` land on the NEXT session.
     /// `None` when the curated-memory runtime isn't initialised (unit
     /// tests, older embeds) — the renderer falls back to workspace files.
-    pub(super) curated_snapshot:
-        Option<std::sync::Arc<crate::openhuman::curated_memory::MemorySnapshot>>,
+    pub(super) curated_snapshot: Option<
+        std::sync::Arc<crate::openhuman::agent::prompts::types::CuratedMemoryPromptSnapshot>,
+    >,
     /// Optional payload-summarizer wired in at agent-build time.
     /// Currently set only for the orchestrator session
     /// (see [`super::builder`]). When `Some`, oversized tool results
