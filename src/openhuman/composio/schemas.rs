@@ -38,6 +38,24 @@ struct CreateTriggerParams {
     trigger_config: Option<Value>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct ListAvailableTriggersParams {
+    toolkit: String,
+    connection_id: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ListTriggersParams {
+    toolkit: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct EnableTriggerParams {
+    connection_id: String,
+    slug: String,
+    trigger_config: Option<Value>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("list_toolkits"),
@@ -53,6 +71,10 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_trigger_history"),
         schemas("get_user_scopes"),
         schemas("set_user_scopes"),
+        schemas("list_available_triggers"),
+        schemas("list_triggers"),
+        schemas("enable_trigger"),
+        schemas("disable_trigger"),
     ]
 }
 
@@ -109,6 +131,22 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("set_user_scopes"),
             handler: handle_set_user_scopes,
+        },
+        RegisteredController {
+            schema: schemas("list_available_triggers"),
+            handler: handle_list_available_triggers,
+        },
+        RegisteredController {
+            schema: schemas("list_triggers"),
+            handler: handle_list_triggers,
+        },
+        RegisteredController {
+            schema: schemas("enable_trigger"),
+            handler: handle_enable_trigger,
+        },
+        RegisteredController {
+            schema: schemas("disable_trigger"),
+            handler: handle_disable_trigger,
         },
     ]
 }
@@ -403,6 +441,102 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "list_available_triggers" => ControllerSchema {
+            namespace: "composio",
+            function: "list_available_triggers",
+            description:
+                "List the catalog of triggers the caller can enable for a toolkit. \
+                 For GitHub, fans out into per-repo entries (requires connection_id).",
+            inputs: vec![
+                FieldSchema {
+                    name: "toolkit",
+                    ty: TypeSchema::String,
+                    comment: "Toolkit slug, e.g. 'gmail' or 'github'.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment:
+                        "Optional connection id. Required to enumerate GitHub per-repo entries.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "triggers",
+                ty: TypeSchema::Json,
+                comment:
+                    "Array of {slug, scope, defaultConfig?, requiredConfigKeys?, repo?}.",
+                required: true,
+            }],
+        },
+        "list_triggers" => ControllerSchema {
+            namespace: "composio",
+            function: "list_triggers",
+            description: "List the user's currently enabled Composio triggers.",
+            inputs: vec![FieldSchema {
+                name: "toolkit",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "Optional toolkit slug to filter by.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "triggers",
+                ty: TypeSchema::Json,
+                comment:
+                    "Array of {id, slug, toolkit, connectionId, triggerConfig?, state?}.",
+                required: true,
+            }],
+        },
+        "enable_trigger" => ControllerSchema {
+            namespace: "composio",
+            function: "enable_trigger",
+            description:
+                "Enable a single Composio trigger on a connection the caller owns.",
+            inputs: vec![
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::String,
+                    comment: "Connection id to attach the trigger to.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "slug",
+                    ty: TypeSchema::String,
+                    comment: "Trigger slug, e.g. 'GMAIL_NEW_GMAIL_MESSAGE'.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "trigger_config",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Optional trigger config object.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Payload: {triggerId, slug, connectionId}.",
+                required: true,
+            }],
+        },
+        "disable_trigger" => ControllerSchema {
+            namespace: "composio",
+            function: "disable_trigger",
+            description: "Disable (delete) a Composio trigger owned by the caller.",
+            inputs: vec![FieldSchema {
+                name: "trigger_id",
+                ty: TypeSchema::String,
+                comment: "Identifier of the trigger to delete.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "deleted",
+                ty: TypeSchema::Bool,
+                comment: "True when the backend confirmed deletion.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "composio",
             function: "unknown",
@@ -616,6 +750,64 @@ fn handle_set_user_scopes(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_list_available_triggers(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload: ListAvailableTriggersParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        let toolkit = payload.toolkit.trim();
+        if toolkit.is_empty() {
+            return Err("invalid params: 'toolkit' must not be empty".to_string());
+        }
+        to_json(
+            super::ops::composio_list_available_triggers(&config, toolkit, payload.connection_id)
+                .await?,
+        )
+    })
+}
+
+fn handle_list_triggers(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload: ListTriggersParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        to_json(super::ops::composio_list_triggers(&config, payload.toolkit).await?)
+    })
+}
+
+fn handle_enable_trigger(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload: EnableTriggerParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        let connection_id = payload.connection_id.trim();
+        let slug = payload.slug.trim();
+        if connection_id.is_empty() {
+            return Err("invalid params: 'connection_id' must not be empty".to_string());
+        }
+        if slug.is_empty() {
+            return Err("invalid params: 'slug' must not be empty".to_string());
+        }
+        to_json(
+            super::ops::composio_enable_trigger(
+                &config,
+                connection_id,
+                slug,
+                payload.trigger_config,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_disable_trigger(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let trigger_id = read_required_non_empty(&params, "trigger_id")?;
+        to_json(super::ops::composio_disable_trigger(&config, &trigger_id).await?)
+    })
+}
+
 // ── Param helpers ───────────────────────────────────────────────────
 
 fn read_required<T: DeserializeOwned>(params: &Map<String, Value>, key: &str) -> Result<T, String> {
@@ -655,160 +847,5 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn catalog_counts_match() {
-        let s = all_controller_schemas();
-        let h = all_registered_controllers();
-        assert_eq!(s.len(), h.len());
-        assert!(s.len() >= 9);
-    }
-
-    #[test]
-    fn all_schemas_use_composio_namespace_and_have_descriptions() {
-        for s in all_controller_schemas() {
-            assert_eq!(s.namespace, "composio", "function {}", s.function);
-            assert!(!s.description.is_empty());
-            assert!(
-                !s.outputs.is_empty(),
-                "function {} has no outputs",
-                s.function
-            );
-        }
-    }
-
-    #[test]
-    fn every_known_schema_key_resolves() {
-        let keys = [
-            "list_toolkits",
-            "list_connections",
-            "authorize",
-            "delete_connection",
-            "list_tools",
-            "execute",
-            "get_user_profile",
-            "sync",
-            "list_trigger_history",
-            "get_user_scopes",
-            "set_user_scopes",
-        ];
-        for k in keys {
-            let s = schemas(k);
-            assert_eq!(s.namespace, "composio");
-            assert_ne!(s.function, "unknown", "key `{k}` fell through");
-        }
-    }
-
-    #[test]
-    fn unknown_function_returns_unknown_schema() {
-        let s = schemas("no_such_fn");
-        assert_eq!(s.function, "unknown");
-        assert_eq!(s.inputs.len(), 1);
-        assert_eq!(s.inputs[0].name, "function");
-    }
-
-    #[test]
-    fn authorize_schema_requires_toolkit() {
-        let s = schemas("authorize");
-        let tk = s.inputs.iter().find(|f| f.name == "toolkit").unwrap();
-        assert!(tk.required);
-    }
-
-    #[test]
-    fn execute_schema_requires_tool_and_accepts_optional_arguments() {
-        let s = schemas("execute");
-        assert!(s.inputs.iter().any(|f| f.name == "tool" && f.required));
-        let args = s.inputs.iter().find(|f| f.name == "arguments");
-        assert!(args.is_some());
-        assert!(!args.unwrap().required);
-    }
-
-    #[test]
-    fn sync_schema_requires_connection_id_and_optional_reason() {
-        let s = schemas("sync");
-        assert!(s
-            .inputs
-            .iter()
-            .any(|f| f.name == "connection_id" && f.required));
-        let reason = s.inputs.iter().find(|f| f.name == "reason");
-        assert!(reason.is_some_and(|f| !f.required));
-    }
-
-    // ── read_required / read_required_non_empty / read_optional ────
-
-    #[test]
-    fn read_required_parses_string_value() {
-        let mut m = Map::new();
-        m.insert("toolkit".into(), Value::String("gmail".into()));
-        let v: String = read_required(&m, "toolkit").unwrap();
-        assert_eq!(v, "gmail");
-    }
-
-    #[test]
-    fn read_required_errors_when_missing() {
-        let m = Map::new();
-        let err = read_required::<String>(&m, "toolkit").unwrap_err();
-        assert!(err.contains("missing required param"));
-    }
-
-    #[test]
-    fn read_required_errors_when_wrong_type() {
-        let mut m = Map::new();
-        m.insert("toolkit".into(), json!(42));
-        let err = read_required::<String>(&m, "toolkit").unwrap_err();
-        assert!(err.contains("invalid 'toolkit'"));
-    }
-
-    #[test]
-    fn read_required_non_empty_rejects_blank_and_whitespace() {
-        let mut m = Map::new();
-        m.insert("toolkit".into(), Value::String("".into()));
-        assert!(read_required_non_empty(&m, "toolkit")
-            .unwrap_err()
-            .contains("must not be empty"));
-        m.insert("toolkit".into(), Value::String("   ".into()));
-        assert!(read_required_non_empty(&m, "toolkit")
-            .unwrap_err()
-            .contains("must not be empty"));
-    }
-
-    #[test]
-    fn read_required_non_empty_trims_value() {
-        let mut m = Map::new();
-        m.insert("toolkit".into(), Value::String("  gmail ".into()));
-        assert_eq!(read_required_non_empty(&m, "toolkit").unwrap(), "gmail");
-    }
-
-    #[test]
-    fn read_optional_returns_none_on_missing_or_null() {
-        let mut m = Map::new();
-        assert_eq!(read_optional::<String>(&m, "k").unwrap(), None);
-        m.insert("k".into(), Value::Null);
-        assert_eq!(read_optional::<String>(&m, "k").unwrap(), None);
-    }
-
-    #[test]
-    fn read_optional_parses_typed_value() {
-        let mut m = Map::new();
-        m.insert("toolkits".into(), json!(["gmail", "notion"]));
-        let v: Vec<String> = read_optional(&m, "toolkits").unwrap().unwrap();
-        assert_eq!(v, vec!["gmail".to_string(), "notion".to_string()]);
-    }
-
-    #[test]
-    fn read_optional_errors_on_type_mismatch() {
-        let mut m = Map::new();
-        m.insert("toolkits".into(), Value::String("not-an-array".into()));
-        let err = read_optional::<Vec<String>>(&m, "toolkits").unwrap_err();
-        assert!(err.contains("invalid 'toolkits'"));
-    }
-
-    #[test]
-    fn to_json_wraps_outcome() {
-        let v = to_json(RpcOutcome::single_log(json!({"x": 1}), "note")).unwrap();
-        assert!(v.get("logs").is_some() || v.get("result").is_some() || v.get("x").is_some());
-    }
-}
+#[path = "schemas_tests.rs"]
+mod tests;

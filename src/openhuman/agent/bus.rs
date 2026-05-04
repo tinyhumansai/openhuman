@@ -24,7 +24,8 @@ use crate::openhuman::config::MultimodalConfig;
 use crate::openhuman::providers::{ChatMessage, Provider};
 use crate::openhuman::tools::Tool;
 
-use super::harness::run_tool_call_loop;
+use super::harness::definition::{AgentDefinitionRegistry, SandboxMode};
+use super::harness::{run_tool_call_loop, with_current_sandbox_mode};
 
 /// Method name used to dispatch an agentic turn through the native bus.
 pub const AGENT_RUN_TURN_METHOD: &str = "agent.run_turn";
@@ -171,32 +172,48 @@ pub fn register_agent_handlers() {
                 "[agent::bus] dispatching {AGENT_RUN_TURN_METHOD}"
             );
 
-            let text = run_tool_call_loop(
-                provider.as_ref(),
-                &mut history,
-                tools_registry.as_ref(),
-                &provider_name,
-                &model,
-                temperature,
-                silent,
-                // Approval is not wired into the channel path today; if
-                // CLI migrates to the bus later, extend AgentTurnRequest
-                // with `approval: Option<Arc<ApprovalManager>>` and pass
-                // it through here.
-                None,
-                &channel_name,
-                &multimodal,
-                max_tool_iterations,
-                on_delta,
-                visible_tool_names.as_ref(),
-                &extra_tools,
-                on_progress,
-                // Bus path runs ad-hoc agent turns without an Agent
-                // handle, so we pass None — payload summarization is
-                // wired into the orchestrator session via Agent::turn,
-                // not the bus dispatcher.
-                None,
-            )
+            // Resolve the target agent's declared sandbox mode so any
+            // tool executed inside the loop can read it via the
+            // `CURRENT_AGENT_SANDBOX_MODE` task-local. Falls back to
+            // `SandboxMode::None` when the request doesn't pin an agent
+            // id (legacy "generic unfiltered turn" path) or when the
+            // global registry hasn't been initialised (tests that stub
+            // the bus without bootstrapping definitions).
+            let sandbox_mode = target_agent_id
+                .as_deref()
+                .and_then(|id| AgentDefinitionRegistry::global().and_then(|reg| reg.get(id)))
+                .map(|def| def.sandbox_mode)
+                .unwrap_or(SandboxMode::None);
+
+            let text = with_current_sandbox_mode(sandbox_mode, async {
+                run_tool_call_loop(
+                    provider.as_ref(),
+                    &mut history,
+                    tools_registry.as_ref(),
+                    &provider_name,
+                    &model,
+                    temperature,
+                    silent,
+                    // Approval is not wired into the channel path today; if
+                    // CLI migrates to the bus later, extend AgentTurnRequest
+                    // with `approval: Option<Arc<ApprovalManager>>` and pass
+                    // it through here.
+                    None,
+                    &channel_name,
+                    &multimodal,
+                    max_tool_iterations,
+                    on_delta,
+                    visible_tool_names.as_ref(),
+                    &extra_tools,
+                    on_progress,
+                    // Bus path runs ad-hoc agent turns without an Agent
+                    // handle, so we pass None — payload summarization is
+                    // wired into the orchestrator session via Agent::turn,
+                    // not the bus dispatcher.
+                    None,
+                )
+                .await
+            })
             .await
             .map_err(|e| e.to_string())?;
 

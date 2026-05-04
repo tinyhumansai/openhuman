@@ -7,6 +7,7 @@ import type {
   ChannelConnectionStatus,
   ChannelType,
 } from '../types/channels';
+import { resetUserScopedState } from './resetActions';
 
 const SCHEMA_VERSION = 1;
 
@@ -115,6 +116,9 @@ const channelConnectionsSlice = createSlice({
     resetChannelConnectionsState() {
       return initialState;
     },
+  },
+  extraReducers: builder => {
+    builder.addCase(resetUserScopedState, () => initialState);
   },
 });
 

@@ -48,10 +48,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
     -c rustfmt -c clippy \
     -t x86_64-unknown-linux-gnu
 
-# Node.js 24.x + yarn
+# Node.js 24.x + pnpm (project's package manager — pinned in package.json)
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g yarn
+    && corepack enable \
+    && corepack prepare pnpm@10.10.0 --activate
 
 # Install ALSA, X11, input, and E2E automation dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -88,4 +89,4 @@ COPY e2e/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Verify installs
-RUN rustc --version && cargo --version && node --version && yarn --version && mold --version && sccache --version && which tauri-driver && cargo tauri --version
+RUN rustc --version && cargo --version && node --version && pnpm --version && mold --version && sccache --version && which tauri-driver && cargo tauri --version

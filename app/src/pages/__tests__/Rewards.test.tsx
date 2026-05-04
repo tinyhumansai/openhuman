@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Rewards from '../Rewards';
 
-const { rewardsApi } = vi.hoisted(() => ({ rewardsApi: { getMyRewards: vi.fn() } }));
+const { rewardsApi, openUrl } = vi.hoisted(() => ({
+  rewardsApi: { getMyRewards: vi.fn() },
+  openUrl: vi.fn(),
+}));
 
 vi.mock('../../components/rewards/RewardsReferralsTab', () => ({
   default: () => <div>Referral Rewards Section</div>,
@@ -19,6 +22,7 @@ vi.mock('../../hooks/useUser', () => ({
 }));
 
 vi.mock('../../services/api/rewardsApi', () => ({ rewardsApi }));
+vi.mock('../../utils/openUrl', () => ({ openUrl }));
 
 describe('Rewards page', () => {
   beforeEach(() => {
@@ -235,5 +239,47 @@ describe('Rewards page', () => {
 
     expect(screen.getByText('Rewards Coupon Section')).toBeInTheDocument();
     expect(screen.queryByText('Referral Rewards Section')).not.toBeInTheDocument();
+  });
+
+  it('opens discord invite via shared openUrl helper', async () => {
+    rewardsApi.getMyRewards.mockResolvedValueOnce({
+      discord: {
+        linked: false,
+        discordId: null,
+        inviteUrl: 'https://discord.gg/openhuman',
+        membershipStatus: 'not_linked',
+      },
+      summary: {
+        unlockedCount: 0,
+        totalCount: 0,
+        assignedDiscordRoleCount: 0,
+        plan: 'FREE',
+        hasActiveSubscription: false,
+      },
+      metrics: {
+        currentStreakDays: 0,
+        longestStreakDays: 0,
+        cumulativeTokens: 0,
+        featuresUsedCount: 0,
+        trackedFeaturesCount: 0,
+        lastEvaluatedAt: '2026-04-09T00:00:00.000Z',
+        lastSyncedAt: '2026-04-09T01:00:00.000Z',
+      },
+      achievements: [],
+    });
+
+    render(
+      <MemoryRouter>
+        <Rewards />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Join Discord' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Join Discord' }));
+
+    expect(openUrl).toHaveBeenCalledWith('https://discord.gg/openhuman');
   });
 });

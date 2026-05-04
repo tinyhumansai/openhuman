@@ -12,6 +12,7 @@
 pub mod chat;
 pub mod document;
 pub mod email;
+pub mod email_clean;
 
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +22,9 @@ use crate::openhuman::memory::tree::types::{Metadata, SourceRef};
 /// (a chat batch, an email, a document).
 #[derive(Clone, Debug)]
 pub struct CanonicalisedSource {
+    /// Canonical Markdown blob produced by the adapter.
     pub markdown: String,
+    /// Provenance the chunker will clone onto each emitted [`Chunk`].
     pub metadata: Metadata,
 }
 

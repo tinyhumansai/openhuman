@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ingestNotification } from '../../services/notificationService';
 import { store } from '../../store';
 import { addAccount } from '../../store/accountsSlice';
-import { setNotifications } from '../../store/notificationsSlice';
+import { setIntegrationNotifications } from '../../store/notificationSlice';
 import { __handleFiredForTests, __resetForTests, handleNotificationClick } from './service';
 
 vi.mock('../../services/notificationService', () => ({
@@ -44,7 +44,7 @@ describe('webviewNotifications service', () => {
     __resetForTests();
     ingestNotificationMock.mockReset();
     ingestNotificationMock.mockResolvedValue({ skipped: true, reason: 'test-default' });
-    store.dispatch(setNotifications({ items: [], unread_count: 0 }));
+    store.dispatch(setIntegrationNotifications({ items: [], unread_count: 0 }));
     store.dispatch(addAccount(sampleAccount));
   });
 
@@ -77,29 +77,29 @@ describe('webviewNotifications service', () => {
     ingestNotificationMock.mockResolvedValue({ id: 'notif-1', skipped: false });
     __handleFiredForTests(makeFiredPayload({ title: 'Hello', body: 'World', tag: 'message' }));
 
-    await Promise.resolve();
-
-    const items = store.getState().integrationNotifications.items;
-    expect(items.some(item => item.id === 'notif-1')).toBe(true);
+    await vi.waitFor(() => {
+      const items = store.getState().notifications.integrationItems;
+      expect(items.some(item => item.id === 'notif-1')).toBe(true);
+    });
   });
 
   it('ingest skipped does not add integration notification', async () => {
     ingestNotificationMock.mockResolvedValue({ skipped: true, reason: 'duplicate' });
     __handleFiredForTests(makeFiredPayload({ title: 'Hello', body: 'World', tag: 'message' }));
 
-    await Promise.resolve();
-
-    const items = store.getState().integrationNotifications.items;
-    expect(items).toHaveLength(0);
+    await vi.waitFor(() => {
+      const items = store.getState().notifications.integrationItems;
+      expect(items).toHaveLength(0);
+    });
   });
 
   it('ingest error does not add integration notification', async () => {
     ingestNotificationMock.mockRejectedValue(new Error('network down'));
     __handleFiredForTests(makeFiredPayload({ title: 'Hello', body: 'World', tag: 'message' }));
 
-    await Promise.resolve();
-
-    const items = store.getState().integrationNotifications.items;
-    expect(items).toHaveLength(0);
+    await vi.waitFor(() => {
+      const items = store.getState().notifications.integrationItems;
+      expect(items).toHaveLength(0);
+    });
   });
 });

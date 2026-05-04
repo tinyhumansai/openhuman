@@ -8,7 +8,6 @@
   "scripts": {
     "build": "pnpm --filter openhuman-app build",
     "compile": "pnpm --filter openhuman-app compile",
-    "core:stage": "pnpm --filter openhuman-app core:stage",
     "dev": "pnpm --filter openhuman-app dev",
     "dev:app": "pnpm --filter openhuman-app dev:app",
     "dev:cef": "pnpm --filter openhuman-app dev:cef",
@@ -26,6 +25,8 @@
     "test:rust": "pnpm --filter openhuman-app test:rust",
     "mock:api": "node scripts/mock-api-server.mjs",
     "review": "bash scripts/review/cli.sh",
+    "work": "bash scripts/work/cli.sh",
+    "debug": "bash scripts/debug/cli.sh",
     "rust:check": "pnpm --filter openhuman-app rust:check",
     "typecheck": "pnpm --filter openhuman-app compile"
   },

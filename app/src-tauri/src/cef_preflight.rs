@@ -74,6 +74,15 @@ impl std::error::Error for CefLockError {}
 
 /// Resolves the macOS default CEF cache directory and runs the preflight.
 pub fn check_default_cache() -> Result<(), CefLockError> {
+    if let Some(configured) = std::env::var_os("OPENHUMAN_CEF_CACHE_PATH") {
+        let configured = PathBuf::from(configured);
+        log::debug!(
+            "[cef-preflight] using configured cache_path={}",
+            configured.display()
+        );
+        return check_cef_cache_lock(&configured);
+    }
+
     let home = std::env::var_os("HOME").ok_or(CefLockError::NoHomeDir)?;
     let cache_path = PathBuf::from(home)
         .join("Library/Caches")

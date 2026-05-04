@@ -8,6 +8,8 @@
 //! minimum total count before this signal contributes — otherwise "hi bob"
 //! would score identically to a real message.
 
+/// Below this total-word count the type-token ratio is unreliable, so the
+/// signal returns a neutral 0.5 instead of computing a ratio.
 pub const MIN_TOTAL_WORDS: usize = 5;
 
 /// Score in `[0.0, 1.0]` from the type-token ratio of `text`.

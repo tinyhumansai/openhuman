@@ -1,78 +1,84 @@
 import { fireEvent, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import '../../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../../test/test-utils';
 import SkillsStep from './SkillsStep';
 
-const refreshComposio = vi.fn();
-let composioToolkits: string[] = [];
-let composioConnections = new Map();
-let composioLoading = false;
-let composioError: string | null = null;
-
+const useComposioIntegrationsMock = vi.hoisted(() => vi.fn());
 vi.mock('../../../lib/composio/hooks', () => ({
-  useComposioIntegrations: () => ({
-    toolkits: composioToolkits,
-    connectionByToolkit: composioConnections,
-    loading: composioLoading,
-    error: composioError,
-    refresh: refreshComposio,
-  }),
+  useComposioIntegrations: useComposioIntegrationsMock,
 }));
 
 vi.mock('../../../components/composio/ComposioConnectModal', () => ({
-  default: ({ toolkit, onClose }: { toolkit: { name: string }; onClose: () => void }) => (
-    <div>
-      <h2>Connect {toolkit.name}</h2>
-      <button onClick={onClose}>Close</button>
+  default: ({
+    toolkit,
+    onClose,
+    onChanged,
+  }: {
+    toolkit: { name: string };
+    onClose: () => void;
+    onChanged: () => void;
+  }) => (
+    <div role="dialog">
+      <p>Sign in to {toolkit.name}</p>
+      <button
+        onClick={() => {
+          onChanged();
+          onClose();
+        }}>
+        Mark connected
+      </button>
+      <button onClick={onClose}>Cancel</button>
     </div>
   ),
 }));
 
-describe('Onboarding SkillsStep', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    composioToolkits = [];
-    composioConnections = new Map();
-    composioLoading = false;
-    composioError = null;
+function setComposioState(opts: { connected?: boolean; error?: string | null }): void {
+  const { connected = false, error = null } = opts;
+  const map = new Map();
+  if (connected) {
+    map.set('gmail', { toolkit: 'gmail', status: 'ACTIVE', composioState: 'connected' });
+  }
+  useComposioIntegrationsMock.mockReturnValue({
+    toolkits: ['gmail'],
+    connectionByToolkit: map,
+    loading: false,
+    error,
+    refresh: vi.fn(),
   });
+}
 
-  it('falls back to the curated composio catalog when the backend allowlist is empty', () => {
-    const onNext = vi.fn();
+describe('Onboarding SkillsStep', () => {
+  it('shows the Composio gmail card and skips when nothing is connected', async () => {
+    setComposioState({});
+    const onNext = vi.fn().mockResolvedValue(undefined);
     renderWithProviders(<SkillsStep onNext={onNext} />);
 
     expect(screen.getByText('Gmail')).toBeInTheDocument();
-    expect(screen.getByText('Google Calendar')).toBeInTheDocument();
-    expect(screen.getByText('Google Drive')).toBeInTheDocument();
-    expect(screen.getByText('Notion')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Skip for Now' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip for Now' }));
+    expect(onNext).toHaveBeenCalledWith({ sources: [] });
   });
 
-  it('only surfaces the onboarding subset when the backend returns a larger toolkit allowlist', () => {
-    composioToolkits = ['gmail', 'github', 'slack', 'notion'];
-
+  it('opens the Composio connect modal when the gmail card is clicked', () => {
+    setComposioState({});
     renderWithProviders(<SkillsStep onNext={vi.fn()} />);
 
-    expect(screen.getByText('Gmail')).toBeInTheDocument();
-    expect(screen.getByText('Notion')).toBeInTheDocument();
-    expect(screen.queryByText('GitHub')).not.toBeInTheDocument();
-    expect(screen.queryByText('Slack')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('onboarding-skills-gmail-button'));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('Sign in to Gmail')).toBeInTheDocument();
   });
 
-  it('passes connected composio sources through on continue', async () => {
-    composioToolkits = ['gmail', 'notion'];
-    composioConnections = new Map([
-      ['gmail', { id: 'conn_gmail', toolkit: 'gmail', status: 'ACTIVE' }],
-      ['notion', { id: 'conn_notion', toolkit: 'notion', status: 'ACTIVE' }],
-    ]);
+  it('forwards composio:gmail on continue when gmail is connected', async () => {
+    setComposioState({ connected: true });
     const onNext = vi.fn().mockResolvedValue(undefined);
-
     renderWithProviders(<SkillsStep onNext={onNext} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(screen.getByText('Connected')).toBeInTheDocument();
 
-    expect(onNext).toHaveBeenCalledWith(['composio:gmail', 'composio:notion']);
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(onNext).toHaveBeenCalledWith({ sources: ['composio:gmail'] });
   });
 });

@@ -29,11 +29,44 @@ use super::tool_prep::{
 };
 use super::types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
 use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
+use crate::openhuman::agent::harness::with_current_sandbox_mode;
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::{
     render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
 };
 use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
+
+/// Lazy resolver that lets `integrations_agent` recover when the model
+/// calls a Composio action slug that exists in the bound toolkit's full
+/// catalogue but was filtered out of the up-front fuzzy top-K. On a
+/// match we build the [`ComposioActionTool`] on demand so the call
+/// dispatches normally instead of dead-ending in
+/// `Error: tool '...' is not available`.
+struct LazyToolkitResolver {
+    client: crate::openhuman::composio::ComposioClient,
+    actions: Vec<crate::openhuman::context::prompt::ConnectedIntegrationTool>,
+}
+
+impl LazyToolkitResolver {
+    fn resolve(&self, name: &str) -> Option<Box<dyn Tool>> {
+        let action = self.actions.iter().find(|a| a.name == name)?;
+        Some(Box::new(
+            crate::openhuman::composio::ComposioActionTool::new(
+                self.client.clone(),
+                action.name.clone(),
+                action.description.clone(),
+                action.parameters.clone(),
+            ),
+        ))
+    }
+
+    /// Slugs from the bound toolkit, for inclusion in unknown-tool
+    /// errors so the model can self-correct without burning a turn.
+    fn known_slugs(&self) -> Vec<&str> {
+        self.actions.iter().map(|a| a.name.as_str()).collect()
+    }
+}
 
 /// Run a sub-agent based on its definition and a task prompt.
 ///
@@ -65,12 +98,20 @@ pub async fn run_subagent(
         "[subagent_runner] dispatching"
     );
 
-    let outcome = if definition.uses_fork_context {
-        let fork = current_fork().ok_or(SubagentRunError::NoForkContext)?;
-        run_fork_mode(definition, task_prompt, &options, &parent, &fork, &task_id).await?
-    } else {
-        run_typed_mode(definition, task_prompt, &options, &parent, &task_id).await?
-    };
+    // Install the sub-agent's declared `sandbox_mode` as the active
+    // task-local for every tool invocation inside this run. Tools that
+    // want to gate on it (e.g. `composio_execute` rejecting
+    // Write/Admin slugs under `ReadOnly`) read it via
+    // `current_sandbox_mode()`; tools that don't care just ignore it.
+    let outcome = with_current_sandbox_mode(definition.sandbox_mode, async {
+        if definition.uses_fork_context {
+            let fork = current_fork().ok_or(SubagentRunError::NoForkContext)?;
+            run_fork_mode(definition, task_prompt, &options, &parent, &fork, &task_id).await
+        } else {
+            run_typed_mode(definition, task_prompt, &options, &parent, &task_id).await
+        }
+    })
+    .await?;
 
     tracing::info!(
         agent_id = %definition.id,
@@ -197,6 +238,7 @@ async fn run_typed_mode(
     // are stripped from the parent-filtered indices in this path so
     // the model only sees one way to call each action.
     let mut dynamic_tools: Vec<Box<dyn Tool>> = Vec::new();
+    let mut lazy_resolver: Option<LazyToolkitResolver> = None;
     let is_integrations_agent_with_toolkit =
         definition.id == "integrations_agent" && toolkit_filter.is_some();
 
@@ -336,6 +378,15 @@ async fn run_typed_mode(
                     action_count = dynamic_tools.len(),
                     "[subagent_runner:typed] dynamically registered per-action composio tools"
                 );
+                // Stash the full catalogue so the inner loop can lazily
+                // register actions that the fuzzy top-K dropped — the
+                // model often picks the right slug anyway and the
+                // existing fuzzy filter exists only to keep schemas out
+                // of the system prompt, not to gate execution.
+                lazy_resolver = Some(LazyToolkitResolver {
+                    client: client.clone(),
+                    actions: integration.tools.clone(),
+                });
             } else {
                 tracing::warn!(
                     agent_id = %definition.id,
@@ -530,7 +581,7 @@ async fn run_typed_mode(
         connected_identities_md: crate::openhuman::agent::prompts::render_connected_identities(),
         include_profile: !definition.omit_profile,
         include_memory_md: !definition.omit_memory_md,
-        curated_snapshot: parent.curated_snapshot.as_deref(),
+        user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
     };
 
     let system_prompt = match &definition.system_prompt {
@@ -563,12 +614,25 @@ async fn run_typed_mode(
     // Merge explicit orchestrator context with the parent's auto-loaded
     // memory context, but only when the definition opts into memory
     // inheritance.
+    let now = chrono::Local::now();
+    let now_str = format!(
+        "Current Date & Time: {} ({})",
+        now.format("%Y-%m-%d %H:%M:%S"),
+        now.format("%Z")
+    );
+
     let mut context_parts: Vec<&str> = Vec::new();
     if !definition.omit_memory_context {
         if let Some(ref mem_ctx) = parent.memory_context {
             context_parts.push(mem_ctx);
         }
     }
+
+    // Always include temporal context for typed sub-agents. System prompts
+    // for sub-agents are byte-stable for KV cache reuse, so "now" must
+    // ride in the user message.
+    context_parts.push(&now_str);
+
     if let Some(ref ctx) = options.context {
         context_parts.push(ctx);
     }
@@ -591,9 +655,10 @@ async fn run_typed_mode(
         parent.provider.as_ref(),
         &mut history,
         &parent.all_tools,
-        &dynamic_tools,
+        dynamic_tools,
         &filtered_specs,
-        &allowed_names,
+        allowed_names,
+        lazy_resolver,
         &model,
         temperature,
         definition.max_iterations,
@@ -695,9 +760,10 @@ async fn run_fork_mode(
         parent.provider.as_ref(),
         &mut history,
         &parent.all_tools,
-        &fork_extra_tools,
+        fork_extra_tools,
         fork.tool_specs.as_slice(),
-        &allowed_names,
+        allowed_names,
+        None,
         &model,
         temperature,
         max_iterations,
@@ -746,9 +812,10 @@ async fn run_inner_loop(
     provider: &dyn Provider,
     history: &mut Vec<ChatMessage>,
     parent_tools: &[Box<dyn Tool>],
-    extra_tools: &[Box<dyn Tool>],
+    mut extra_tools: Vec<Box<dyn Tool>>,
     tool_specs: &[ToolSpec],
-    allowed_names: &HashSet<String>,
+    mut allowed_names: HashSet<String>,
+    lazy_resolver: Option<LazyToolkitResolver>,
     model: &str,
     temperature: f64,
     max_iterations: usize,
@@ -902,6 +969,11 @@ async fn run_inner_loop(
         }
     };
 
+    // Per-turn progress sink shared with the parent — `None` for runs
+    // that don't have a subscriber (CLI / triage / tests). Cloned upfront
+    // so the inner loop body doesn't repeatedly re-resolve `parent.on_progress`.
+    let progress_sink = parent.on_progress.clone();
+
     for iteration in 0..max_iterations {
         tracing::debug!(
             task_id = %task_id,
@@ -910,6 +982,17 @@ async fn run_inner_loop(
             history_len = history.len(),
             "[subagent_runner] iteration start"
         );
+
+        if let Some(ref tx) = progress_sink {
+            let _ = tx
+                .send(AgentProgress::SubagentIterationStarted {
+                    agent_id: agent_id.to_string(),
+                    task_id: task_id.to_string(),
+                    iteration: (iteration + 1) as u32,
+                    max_iterations: max_iterations as u32,
+                })
+                .await;
+        }
 
         let resp = provider
             .chat(
@@ -1005,6 +1088,41 @@ async fn run_inner_loop(
         // XmlToolDispatcher's `format_results`.
         let mut text_mode_result_block = String::new();
         for call in &native_calls {
+            let call_started = Instant::now();
+            if let Some(ref tx) = progress_sink {
+                let _ = tx
+                    .send(AgentProgress::SubagentToolCallStarted {
+                        agent_id: agent_id.to_string(),
+                        task_id: task_id.to_string(),
+                        call_id: call.id.clone(),
+                        tool_name: call.name.clone(),
+                        iteration: (iteration + 1) as u32,
+                    })
+                    .await;
+            }
+
+            // Lazy registration: if the call is for an unknown tool but
+            // matches a real action slug in the bound toolkit's full
+            // catalogue, build the [`ComposioActionTool`] on the spot and
+            // admit it to the allowlist for this and subsequent turns.
+            // The fuzzy top-K filter exists to keep schemas out of the
+            // system prompt, not to gate execution — when the model
+            // names the slug correctly we should just dispatch.
+            if !allowed_names.contains(&call.name) {
+                if let Some(resolver) = lazy_resolver.as_ref() {
+                    if let Some(tool) = resolver.resolve(&call.name) {
+                        tracing::info!(
+                            task_id = %task_id,
+                            agent_id = %agent_id,
+                            tool = %call.name,
+                            "[subagent_runner] lazily registered toolkit action outside fuzzy top-K"
+                        );
+                        allowed_names.insert(tool.name().to_string());
+                        extra_tools.push(tool);
+                    }
+                }
+            }
+
             let result_text = if !allowed_names.contains(&call.name) {
                 tracing::warn!(
                     task_id = %task_id,
@@ -1012,9 +1130,17 @@ async fn run_inner_loop(
                     tool = %call.name,
                     "[subagent_runner] tool not in allowlist for this sub-agent"
                 );
+                let mut available: Vec<&str> = allowed_names.iter().map(|s| s.as_str()).collect();
+                if let Some(resolver) = lazy_resolver.as_ref() {
+                    available.extend(resolver.known_slugs());
+                }
+                available.sort_unstable();
+                available.dedup();
                 format!(
-                    "Error: tool '{}' is not available to the {} sub-agent",
-                    call.name, agent_id
+                    "Error: tool '{}' is not available to the {} sub-agent. Available tools: {}",
+                    call.name,
+                    agent_id,
+                    available.join(", ")
                 )
             } else if let Some(tool) = extra_tools
                 .iter()
@@ -1096,12 +1222,12 @@ async fn run_inner_loop(
                 result_text
             };
 
+            let call_success = !result_text.starts_with("Error");
+            let call_output_chars = result_text.chars().count();
+            let call_elapsed_ms = call_started.elapsed().as_millis() as u64;
+
             if force_text_mode {
-                let status = if result_text.starts_with("Error") {
-                    "error"
-                } else {
-                    "ok"
-                };
+                let status = if call_success { "ok" } else { "error" };
                 let _ = std::fmt::Write::write_fmt(
                     &mut text_mode_result_block,
                     format_args!(
@@ -1115,6 +1241,21 @@ async fn run_inner_loop(
                     "content": result_text,
                 });
                 history.push(ChatMessage::tool(tool_msg.to_string()));
+            }
+
+            if let Some(ref tx) = progress_sink {
+                let _ = tx
+                    .send(AgentProgress::SubagentToolCallCompleted {
+                        agent_id: agent_id.to_string(),
+                        task_id: task_id.to_string(),
+                        call_id: call.id.clone(),
+                        tool_name: call.name.clone(),
+                        success: call_success,
+                        output_chars: call_output_chars,
+                        elapsed_ms: call_elapsed_ms,
+                        iteration: (iteration + 1) as u32,
+                    })
+                    .await;
             }
         }
 
@@ -1142,592 +1283,5 @@ fn parse_tool_arguments(arguments: &str) -> serde_json::Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::agent::harness::definition::{ModelSpec, ToolScope};
-
-    fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
-        AgentDefinition {
-            id: "test".into(),
-            when_to_use: "t".into(),
-            display_name: None,
-            system_prompt: PromptSource::Inline("system".into()),
-            omit_identity: true,
-            omit_memory_context: true,
-            omit_safety_preamble: true,
-            omit_skills_catalog: true,
-            omit_profile: true,
-            omit_memory_md: true,
-            model: ModelSpec::Inherit,
-            temperature: 0.4,
-            tools: ToolScope::Named(names.iter().map(|s| s.to_string()).collect()),
-            disallowed_tools: vec![],
-            skill_filter: None,
-            extra_tools: vec![],
-            max_iterations: 5,
-            timeout_secs: None,
-            sandbox_mode: crate::openhuman::agent::harness::definition::SandboxMode::None,
-            background: false,
-            uses_fork_context: false,
-            subagents: vec![],
-            delegate_name: None,
-            source: crate::openhuman::agent::harness::definition::DefinitionSource::Builtin,
-        }
-    }
-
-    /// Local tool used to populate `parent_tools` in tests.
-    struct StubTool {
-        name: &'static str,
-    }
-
-    use crate::openhuman::tools::{PermissionLevel, ToolResult};
-    use async_trait::async_trait;
-
-    #[async_trait]
-    impl Tool for StubTool {
-        fn name(&self) -> &str {
-            self.name
-        }
-        fn description(&self) -> &str {
-            "stub"
-        }
-        fn parameters_schema(&self) -> serde_json::Value {
-            serde_json::json!({"type": "object"})
-        }
-        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-            Ok(ToolResult::success("ok"))
-        }
-        fn permission_level(&self) -> PermissionLevel {
-            PermissionLevel::None
-        }
-    }
-
-    fn stub(name: &'static str) -> Box<dyn Tool> {
-        Box::new(StubTool { name })
-    }
-
-    #[test]
-    fn filter_named_scope_keeps_only_named() {
-        let parent: Vec<Box<dyn Tool>> = vec![stub("alpha"), stub("beta"), stub("gamma")];
-        let def = make_def_named_tools(&["alpha", "gamma"]);
-        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
-        let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
-        assert_eq!(names, vec!["alpha", "gamma"]);
-    }
-
-    #[test]
-    fn filter_wildcard_includes_all_minus_disallowed() {
-        let parent: Vec<Box<dyn Tool>> = vec![stub("alpha"), stub("beta"), stub("gamma")];
-        let mut def = make_def_named_tools(&[]);
-        def.tools = ToolScope::Wildcard;
-        def.disallowed_tools = vec!["beta".into()];
-        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
-        let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
-        assert_eq!(names, vec!["alpha", "gamma"]);
-    }
-
-    #[test]
-    fn filter_skill_filter_restricts_to_prefix() {
-        let parent: Vec<Box<dyn Tool>> = vec![
-            stub("notion__search"),
-            stub("notion__read"),
-            stub("gmail__send"),
-            stub("file_read"),
-        ];
-        let mut def = make_def_named_tools(&[]);
-        def.tools = ToolScope::Wildcard;
-        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, Some("notion"));
-        let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
-        assert_eq!(names, vec!["notion__search", "notion__read"]);
-    }
-
-    #[test]
-    fn filter_skill_filter_combined_with_named_scope() {
-        // Named scope intersects with skill_filter — only tools that
-        // appear in the named list AND match the prefix survive.
-        let parent: Vec<Box<dyn Tool>> = vec![
-            stub("notion__search"),
-            stub("notion__read"),
-            stub("gmail__send"),
-        ];
-        let def = make_def_named_tools(&["notion__search", "gmail__send"]);
-        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, Some("notion"));
-        let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
-        assert_eq!(names, vec!["notion__search"]);
-    }
-
-    #[test]
-    fn subagent_mode_as_str_roundtrip() {
-        assert_eq!(SubagentMode::Typed.as_str(), "typed");
-        assert_eq!(SubagentMode::Fork.as_str(), "fork");
-    }
-
-    // ── End-to-end runner tests with mock provider ────────────────────────
-
-    use crate::openhuman::agent::harness::fork_context::{with_fork_context, with_parent_context};
-    use crate::openhuman::providers::{
-        ChatRequest as PChatRequest, ChatResponse, Provider, ToolCall,
-    };
-    use parking_lot::Mutex;
-    use std::sync::Arc;
-
-    /// Mock provider whose response queue can be inspected by the test
-    /// to verify the bytes that arrive at the model.
-    #[derive(Clone)]
-    struct CapturedRequest {
-        messages: Vec<crate::openhuman::providers::ChatMessage>,
-        tool_count: usize,
-    }
-
-    struct ScriptedProvider {
-        responses: Mutex<Vec<ChatResponse>>,
-        captured: Mutex<Vec<CapturedRequest>>,
-    }
-
-    impl ScriptedProvider {
-        fn new(responses: Vec<ChatResponse>) -> Arc<Self> {
-            Arc::new(Self {
-                responses: Mutex::new(responses),
-                captured: Mutex::new(Vec::new()),
-            })
-        }
-    }
-
-    #[async_trait]
-    impl Provider for ScriptedProvider {
-        async fn chat_with_system(
-            &self,
-            _system_prompt: Option<&str>,
-            _message: &str,
-            _model: &str,
-            _temperature: f64,
-        ) -> anyhow::Result<String> {
-            Ok("noop".into())
-        }
-
-        async fn chat(
-            &self,
-            request: PChatRequest<'_>,
-            _model: &str,
-            _temperature: f64,
-        ) -> anyhow::Result<ChatResponse> {
-            self.captured.lock().push(CapturedRequest {
-                messages: request.messages.to_vec(),
-                tool_count: request.tools.map_or(0, |tools| tools.len()),
-            });
-            let mut q = self.responses.lock();
-            if q.is_empty() {
-                return Ok(ChatResponse {
-                    text: Some(String::new()),
-                    tool_calls: vec![],
-                    usage: None,
-                });
-            }
-            Ok(q.remove(0))
-        }
-
-        fn supports_native_tools(&self) -> bool {
-            true
-        }
-    }
-
-    fn text_response(text: &str) -> ChatResponse {
-        ChatResponse {
-            text: Some(text.into()),
-            tool_calls: vec![],
-            usage: None,
-        }
-    }
-
-    fn tool_response(name: &str, args: &str) -> ChatResponse {
-        ChatResponse {
-            text: Some(String::new()),
-            tool_calls: vec![ToolCall {
-                id: "call-1".into(),
-                name: name.into(),
-                arguments: args.into(),
-            }],
-            usage: None,
-        }
-    }
-
-    /// Build a minimal `ParentExecutionContext` suitable for runner tests.
-    /// Uses a no-op memory backend so we don't have to spin up a real one.
-    fn make_parent(
-        provider: Arc<dyn Provider>,
-        tools: Vec<Box<dyn Tool>>,
-    ) -> ParentExecutionContext {
-        let tool_specs: Vec<crate::openhuman::tools::ToolSpec> =
-            tools.iter().map(|t| t.spec()).collect();
-        ParentExecutionContext {
-            provider,
-            all_tools: Arc::new(tools),
-            all_tool_specs: Arc::new(tool_specs),
-            model_name: "test-model".into(),
-            temperature: 0.5,
-            workspace_dir: std::env::temp_dir(),
-            memory: noop_memory(),
-            agent_config: crate::openhuman::config::AgentConfig::default(),
-            skills: Arc::new(vec![]),
-            memory_context: None,
-            session_id: "test-session".into(),
-            channel: "test".into(),
-            connected_integrations: vec![],
-            composio_client: None,
-            tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
-            session_key: "0_test".into(),
-            session_parent_prefix: None,
-            curated_snapshot: None,
-        }
-    }
-
-    fn noop_memory() -> Arc<dyn crate::openhuman::memory::Memory> {
-        struct NoopMemory;
-        #[async_trait]
-        impl crate::openhuman::memory::Memory for NoopMemory {
-            async fn store(
-                &self,
-                _namespace: &str,
-                _key: &str,
-                _content: &str,
-                _category: crate::openhuman::memory::MemoryCategory,
-                _session_id: Option<&str>,
-            ) -> anyhow::Result<()> {
-                Ok(())
-            }
-            async fn recall(
-                &self,
-                _query: &str,
-                _limit: usize,
-                _opts: crate::openhuman::memory::RecallOpts<'_>,
-            ) -> anyhow::Result<Vec<crate::openhuman::memory::MemoryEntry>> {
-                Ok(vec![])
-            }
-            async fn get(
-                &self,
-                _namespace: &str,
-                _key: &str,
-            ) -> anyhow::Result<Option<crate::openhuman::memory::MemoryEntry>> {
-                Ok(None)
-            }
-            async fn list(
-                &self,
-                _namespace: Option<&str>,
-                _category: Option<&crate::openhuman::memory::MemoryCategory>,
-                _session_id: Option<&str>,
-            ) -> anyhow::Result<Vec<crate::openhuman::memory::MemoryEntry>> {
-                Ok(vec![])
-            }
-            async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
-                Ok(true)
-            }
-            async fn namespace_summaries(
-                &self,
-            ) -> anyhow::Result<Vec<crate::openhuman::memory::NamespaceSummary>> {
-                Ok(vec![])
-            }
-            async fn count(&self) -> anyhow::Result<usize> {
-                Ok(0)
-            }
-            async fn health_check(&self) -> bool {
-                true
-            }
-            fn name(&self) -> &str {
-                "noop"
-            }
-        }
-        Arc::new(NoopMemory)
-    }
-
-    #[tokio::test]
-    async fn typed_mode_returns_text_through_runner() {
-        let provider = ScriptedProvider::new(vec![text_response("X is Y")]);
-        let parent = make_parent(provider.clone(), vec![stub("file_read")]);
-        let def = make_def_named_tools(&[]);
-
-        let outcome = with_parent_context(parent, async {
-            run_subagent(
-                &def,
-                "summarise X",
-                SubagentRunOptions {
-                    skill_filter_override: None,
-                    toolkit_override: None,
-                    context: None,
-                    task_id: Some("t1".into()),
-                },
-            )
-            .await
-        })
-        .await
-        .expect("runner should succeed");
-
-        assert_eq!(outcome.output, "X is Y");
-        assert_eq!(outcome.iterations, 1);
-        assert_eq!(outcome.mode, SubagentMode::Typed);
-        assert_eq!(outcome.task_id, "t1");
-    }
-
-    #[tokio::test]
-    async fn typed_mode_no_memory_context_in_user_message() {
-        // Verifies that sub-agents skip memory loading entirely: the
-        // user message sent to the provider does NOT contain
-        // `[Memory context]`.
-        let provider = ScriptedProvider::new(vec![text_response("ok")]);
-        let parent = make_parent(provider.clone(), vec![stub("file_read")]);
-        let def = make_def_named_tools(&[]);
-
-        let _ = with_parent_context(parent, async {
-            run_subagent(
-                &def,
-                "the actual task prompt",
-                SubagentRunOptions::default(),
-            )
-            .await
-        })
-        .await
-        .unwrap();
-
-        let captured = provider.captured.lock();
-        assert_eq!(captured.len(), 1);
-        let user_msg = captured[0]
-            .messages
-            .iter()
-            .find(|m| m.role == "user")
-            .expect("user message should be present");
-        assert!(
-            !user_msg.content.contains("[Memory context]"),
-            "subagent user message must not include memory recall section, got: {}",
-            user_msg.content
-        );
-        assert!(user_msg.content.contains("the actual task prompt"));
-    }
-
-    #[tokio::test]
-    async fn typed_mode_includes_memory_context_when_definition_allows_it() {
-        let provider = ScriptedProvider::new(vec![text_response("ok")]);
-        let mut parent = make_parent(provider.clone(), vec![stub("file_read")]);
-        parent.memory_context = Some("[Memory context]\n- prior fact: branch X failed\n".into());
-        let mut def = make_def_named_tools(&[]);
-        def.omit_memory_context = false;
-
-        let _ = with_parent_context(parent, async {
-            run_subagent(
-                &def,
-                "the actual task prompt",
-                SubagentRunOptions::default(),
-            )
-            .await
-        })
-        .await
-        .unwrap();
-
-        let captured = provider.captured.lock();
-        let user_msg = captured[0]
-            .messages
-            .iter()
-            .find(|m| m.role == "user")
-            .expect("user message should be present");
-        assert!(user_msg.content.contains("[Memory context]"));
-        assert!(user_msg.content.contains("branch X failed"));
-    }
-
-    #[tokio::test]
-    async fn typed_mode_filters_tools_by_skill_filter() {
-        // Parent has tools spanning notion__*, gmail__*, and a generic
-        // file_read; spawn the runner with skill_filter override "notion"
-        // and assert that only the notion tools end up in the request.
-        let provider = ScriptedProvider::new(vec![text_response("done")]);
-        let parent = make_parent(
-            provider.clone(),
-            vec![
-                stub("notion__search"),
-                stub("notion__read"),
-                stub("gmail__send"),
-                stub("file_read"),
-            ],
-        );
-        // Wildcard scope so skill_filter is the only restrictor.
-        let mut def = make_def_named_tools(&[]);
-        def.tools = ToolScope::Wildcard;
-
-        let _ = with_parent_context(parent, async {
-            run_subagent(
-                &def,
-                "lookup",
-                SubagentRunOptions {
-                    skill_filter_override: Some("notion".into()),
-                    toolkit_override: None,
-                    context: None,
-                    task_id: None,
-                },
-            )
-            .await
-        })
-        .await
-        .unwrap();
-
-        // The narrow system prompt should mention the notion tools by
-        // name and NOT mention gmail/file_read.
-        let captured = provider.captured.lock();
-        let system_msg = captured[0]
-            .messages
-            .iter()
-            .find(|m| m.role == "system")
-            .expect("system message present");
-        assert!(system_msg.content.contains("notion__search"));
-        assert!(system_msg.content.contains("notion__read"));
-        assert!(
-            !system_msg.content.contains("gmail__send"),
-            "skill_filter should have excluded gmail__send"
-        );
-        assert!(
-            !system_msg.content.contains("file_read"),
-            "skill_filter should have excluded file_read"
-        );
-    }
-
-    #[tokio::test]
-    async fn typed_mode_executes_one_tool_then_returns() {
-        // Two-round script: round 1 returns a tool call, round 2 returns
-        // the final text. Verifies the inner tool-call loop wires up the
-        // tool result into history correctly.
-        let provider = ScriptedProvider::new(vec![
-            tool_response("file_read", "{\"path\":\"x\"}"),
-            text_response("the file contents say hello"),
-        ]);
-        let parent = make_parent(provider.clone(), vec![stub("file_read")]);
-        // Allow the runner to call file_read.
-        let def = make_def_named_tools(&["file_read"]);
-
-        let outcome = with_parent_context(parent, async {
-            run_subagent(&def, "read x", SubagentRunOptions::default()).await
-        })
-        .await
-        .expect("runner should succeed");
-
-        assert!(outcome.output.contains("hello"));
-        assert_eq!(outcome.iterations, 2);
-        // Second request should include the role=tool message produced
-        // by the runner from StubTool's "ok" output.
-        let captured = provider.captured.lock();
-        assert_eq!(captured.len(), 2);
-        let second_call_messages = &captured[1].messages;
-        let has_tool_msg = second_call_messages.iter().any(|m| m.role == "tool");
-        assert!(
-            has_tool_msg,
-            "second provider call should include role=tool message"
-        );
-    }
-
-    #[tokio::test]
-    async fn typed_mode_blocks_unallowed_tool_calls() {
-        // Provider tries to call a tool that's not in the allowlist.
-        // Runner should surface an error tool result and the next
-        // iteration should be able to recover.
-        let provider = ScriptedProvider::new(vec![
-            tool_response("forbidden_tool", "{}"),
-            text_response("oops, I'll try something else"),
-        ]);
-        let parent = make_parent(
-            provider.clone(),
-            vec![stub("file_read"), stub("forbidden_tool")],
-        );
-        // Definition only allows file_read.
-        let def = make_def_named_tools(&["file_read"]);
-
-        let outcome = with_parent_context(parent, async {
-            run_subagent(&def, "do thing", SubagentRunOptions::default()).await
-        })
-        .await
-        .expect("runner should succeed");
-
-        assert!(outcome.output.contains("oops"));
-        let captured = provider.captured.lock();
-        let second_call_messages = &captured[1].messages;
-        let tool_msg = second_call_messages
-            .iter()
-            .find(|m| m.role == "tool")
-            .expect("tool result message should be present");
-        assert!(
-            tool_msg.content.contains("not available"),
-            "blocked tool should produce a 'not available' error message"
-        );
-    }
-
-    #[tokio::test]
-    async fn fork_mode_replays_parent_prefix_bytes() {
-        // Construct a fake fork context with a known message prefix.
-        // The runner should replay it byte-for-byte plus a single
-        // appended user message carrying the fork directive.
-        let provider = ScriptedProvider::new(vec![text_response("fork done")]);
-        let parent = make_parent(provider.clone(), vec![stub("file_read"), stub("shell")]);
-
-        let prefix = vec![
-            crate::openhuman::providers::ChatMessage::system("PARENT_SYSTEM_PROMPT_BYTES"),
-            crate::openhuman::providers::ChatMessage::user("first user msg"),
-            crate::openhuman::providers::ChatMessage::assistant("parent assistant"),
-        ];
-
-        let fork = ForkContext {
-            system_prompt: Arc::new("PARENT_SYSTEM_PROMPT_BYTES".into()),
-            tool_specs: Arc::new(vec![parent.all_tool_specs[0].clone()]),
-            message_prefix: Arc::new(prefix.clone()),
-            fork_task_prompt: "ANALYSE THIS BRANCH".into(),
-        };
-
-        let def = crate::openhuman::agent::harness::builtin_definitions::fork_definition();
-
-        let outcome = with_parent_context(parent, async move {
-            with_fork_context(fork, async {
-                run_subagent(
-                    &def,
-                    "ignored — fork uses fork_task_prompt",
-                    SubagentRunOptions::default(),
-                )
-                .await
-            })
-            .await
-        })
-        .await
-        .expect("fork runner should succeed");
-
-        assert_eq!(outcome.mode, SubagentMode::Fork);
-        assert_eq!(outcome.output, "fork done");
-
-        // Verify the request that hit the provider replays the parent
-        // prefix exactly and appends only the fork directive.
-        let captured = provider.captured.lock();
-        let first_call = &captured[0];
-        assert_eq!(first_call.messages.len(), prefix.len() + 1);
-        for (i, msg) in prefix.iter().enumerate() {
-            assert_eq!(first_call.messages[i].role, msg.role);
-            assert_eq!(first_call.messages[i].content, msg.content);
-        }
-        // The appended user message carries the fork directive.
-        let appended = first_call.messages.last().unwrap();
-        assert_eq!(appended.role, "user");
-        assert_eq!(appended.content, "ANALYSE THIS BRANCH");
-        assert_eq!(first_call.tool_count, 1);
-    }
-
-    #[tokio::test]
-    async fn fork_mode_errors_when_no_fork_context() {
-        let provider = ScriptedProvider::new(vec![text_response("unused")]);
-        let parent = make_parent(provider, vec![stub("file_read")]);
-        let def = crate::openhuman::agent::harness::builtin_definitions::fork_definition();
-
-        let result = with_parent_context(parent, async {
-            run_subagent(&def, "x", SubagentRunOptions::default()).await
-        })
-        .await;
-
-        assert!(matches!(result, Err(SubagentRunError::NoForkContext)));
-    }
-
-    #[tokio::test]
-    async fn runner_errors_outside_parent_context() {
-        let def = make_def_named_tools(&[]);
-        let result = run_subagent(&def, "x", SubagentRunOptions::default()).await;
-        assert!(matches!(result, Err(SubagentRunError::NoParentContext)));
-    }
-}
+#[path = "ops_tests.rs"]
+mod tests;

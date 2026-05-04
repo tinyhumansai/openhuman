@@ -12,10 +12,40 @@ import {
   clickText,
   dumpAccessibilityTree,
   textExists,
+  waitForText,
   waitForWebView,
   waitForWindowVisible,
 } from './element-helpers';
 import { supportsExecuteScript } from './platform';
+
+// ---------------------------------------------------------------------------
+// Accounts page helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Open the "Add Account" modal on /accounts.
+ *
+ * The "Add app" affordance is a button whose only labelled descendants are an
+ * SVG plus a tooltip span with `pointer-events: none`. None of the shared
+ * `clickButton`/`clickText` helpers can target it cleanly because the
+ * accessible name lives only on `aria-label`, so this helper reaches for the
+ * explicit selector. Tracking a follow-up `clickByAriaLabel` helper.
+ */
+export async function openAddAccountModal(): Promise<void> {
+  const opened = await browser.execute(() => {
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
+    const addBtn = buttons.find(b => b.getAttribute('aria-label') === 'Add app');
+    if (addBtn) {
+      addBtn.click();
+      return true;
+    }
+    return false;
+  });
+  if (!opened) {
+    throw new Error('Could not locate Add app button on /accounts');
+  }
+  await waitForText('Add account', 5_000);
+}
 
 // ---------------------------------------------------------------------------
 // Generic helpers
@@ -81,6 +111,7 @@ const HASH_TO_SIDEBAR_LABEL = {
   '/skills': 'Skills',
   '/home': 'Home',
   '/conversations': 'Conversations',
+  '/notifications': 'Alerts',
   '/settings': 'Settings',
   '/intelligence': 'Intelligence',
 };
@@ -245,6 +276,10 @@ export async function navigateToIntelligence() {
 
 export async function navigateToConversations() {
   await navigateViaHash('/conversations');
+}
+
+export async function navigateToNotifications() {
+  await navigateViaHash('/notifications');
 }
 
 // ---------------------------------------------------------------------------

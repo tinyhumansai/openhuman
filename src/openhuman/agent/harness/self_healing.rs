@@ -244,9 +244,10 @@ mod tests {
     fn tool_maker_prompt_includes_command() {
         let interceptor = SelfHealingInterceptor::new(Path::new("/workspace"), true);
         let prompt = interceptor.tool_maker_prompt("jq", "parse json output");
-        assert!(prompt.contains("jq"));
-        assert!(prompt.contains("/workspace/polyfills/jq"));
-        assert!(prompt.contains("parse json output"));
+        let normalized = prompt.replace('\\', "/");
+        assert!(normalized.contains("jq"));
+        assert!(normalized.contains("/workspace/polyfills/jq"));
+        assert!(normalized.contains("parse json output"));
     }
 
     #[test]

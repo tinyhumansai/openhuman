@@ -18,14 +18,19 @@ use crate::rpc::RpcOutcome;
 
 const NAMESPACE: &str = "memory_tree";
 
+/// All `memory_tree` controller schemas, used by the registry to advertise
+/// inputs/outputs to CLI + JSON-RPC consumers.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("ingest"),
         schemas("list_chunks"),
         schemas("get_chunk"),
+        schemas("trigger_digest"),
     ]
 }
 
+/// Registered `memory_tree` controllers (schema + handler pairs) wired into
+/// `core::all`.
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
         RegisteredController {
@@ -40,9 +45,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             schema: schemas("get_chunk"),
             handler: handle_get_chunk,
         },
+        RegisteredController {
+            schema: schemas("trigger_digest"),
+            handler: handle_trigger_digest,
+        },
     ]
 }
 
+/// Lookup the [`ControllerSchema`] for a single `memory_tree` function name.
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
         "ingest" => ControllerSchema {
@@ -184,6 +194,44 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: false,
             }],
         },
+        "trigger_digest" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "trigger_digest",
+            description: "Manually enqueue a daily-digest job for the global \
+                tree. Idempotent — re-running for a day that already has a \
+                digest is a no-op (the handler skips). When no date is \
+                supplied, defaults to yesterday in UTC, matching the \
+                scheduler's autonomous behavior.",
+            inputs: vec![FieldSchema {
+                name: "date_iso",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "UTC calendar date as `YYYY-MM-DD`. Optional; \
+                    defaults to yesterday when omitted.",
+                required: false,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "enqueued",
+                    ty: TypeSchema::Bool,
+                    comment: "True when a fresh job row was inserted; false \
+                        when an active job for the same date suppressed it.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "job_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "ID of the newly enqueued job row, when enqueued.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "date_iso",
+                    ty: TypeSchema::String,
+                    comment: "The date the digest will cover, echoed back \
+                        as `YYYY-MM-DD`.",
+                    required: true,
+                },
+            ],
+        },
         _ => ControllerSchema {
             namespace: NAMESPACE,
             function: "unknown",
@@ -225,6 +273,14 @@ fn handle_get_chunk(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let req = parse_value::<tree_rpc::GetChunkRequest>(Value::Object(params))?;
         to_json(tree_rpc::get_chunk_rpc(&config, req).await?)
+    })
+}
+
+fn handle_trigger_digest(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<tree_rpc::TriggerDigestRequest>(Value::Object(params))?;
+        to_json(tree_rpc::trigger_digest_rpc(&config, req).await?)
     })
 }
 

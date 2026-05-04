@@ -41,6 +41,32 @@ export class SocketIOMCPTransportImpl implements SocketIOMCPTransport {
   private setupEventHandlers(): void {
     if (!this.socket) return;
     this.socket.on(`${this.eventPrefix}response`, this.responseHandler);
+    // If the socket drops while a request is in flight, the response will
+    // never arrive and the caller would otherwise block until the 30s
+    // request timeout. Drain pending handlers immediately so callers see
+    // a clear `Socket disconnected` error and can recover / retry.
+    this.socket.on('disconnect', this.disconnectHandler);
+  }
+
+  private disconnectHandler = (reason?: string): void => {
+    this.rejectAllPending(`Socket disconnected${reason ? `: ${reason}` : ''}`);
+  };
+
+  /**
+   * Fail every in-flight request with a synthetic JSON-RPC error so its
+   * promise rejects instead of leaking into the 30s request timeout.
+   * Used on socket `disconnect` and when `updateSocket` replaces the
+   * underlying transport (since old in-flight requests were emitted on the
+   * previous socket and can never receive a response on the new one).
+   */
+  private rejectAllPending(reason: string): void {
+    if (this.requestHandlers.size === 0) return;
+    const handlers = Array.from(this.requestHandlers.entries());
+    this.requestHandlers.clear();
+    mcpWarn('Rejecting pending MCP requests', { count: handlers.length, reason });
+    for (const [id, handler] of handlers) {
+      handler({ jsonrpc: '2.0', id, error: { code: -32000, message: reason } });
+    }
   }
 
   emit(event: string, data: unknown): void {
@@ -104,7 +130,12 @@ export class SocketIOMCPTransportImpl implements SocketIOMCPTransport {
   updateSocket(socket: Socket | null | undefined): void {
     if (this.socket) {
       this.socket.off(`${this.eventPrefix}response`, this.responseHandler);
+      this.socket.off('disconnect', this.disconnectHandler);
     }
+    // Pending handlers were emitted on the old socket; the new socket will
+    // never deliver their responses, so reject them now rather than letting
+    // them hang until the per-request timeout fires.
+    this.rejectAllPending('Socket replaced');
     this.socket = socket ?? undefined;
     this.setupEventHandlers();
   }

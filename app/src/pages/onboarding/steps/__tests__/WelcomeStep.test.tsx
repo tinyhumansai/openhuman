@@ -5,14 +5,13 @@ import { renderWithProviders } from '../../../../test/test-utils';
 import WelcomeStep from '../WelcomeStep';
 
 describe('WelcomeStep', () => {
-  it('renders honest eyebrow + confident display title + subtitle', () => {
+  it('renders display title + subtitle', () => {
     renderWithProviders(<WelcomeStep onNext={() => {}} />);
-    expect(screen.getByText(/OPENHUMAN · LOCAL BY DEFAULT/)).toBeInTheDocument();
     expect(
       screen.getByRole('heading', { level: 1, name: /Hi\. I'm OpenHuman\./ })
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/routes to the cloud when you pick a cloud model/i)
+      screen.getByText(/super-intelligent AI assistant that runs on your computer/i)
     ).toBeInTheDocument();
   });
 

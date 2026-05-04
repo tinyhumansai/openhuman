@@ -28,6 +28,9 @@ pub struct DocumentInput {
     pub source_ref: Option<String>,
 }
 
+/// Canonicalise a single document into a [`CanonicalisedSource`]. Returns
+/// `Ok(None)` if both the title and body are empty — caller treats as nothing
+/// to ingest.
 pub fn canonicalise(
     source_id: &str,
     owner: &str,
@@ -39,7 +42,8 @@ pub fn canonicalise(
     }
 
     let mut md = String::new();
-    md.push_str(&format!("# {} — {}\n\n", doc.provider, doc.title));
+    // No leading `# provider — title` header. Provider / title info
+    // belongs in the MD front-matter (Phase MD-content).
     md.push_str(doc.body.trim());
     md.push('\n');
 
@@ -85,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_title_and_body() {
+    fn renders_body_without_header() {
         let out = canonicalise(
             "d1",
             "alice",
@@ -94,7 +98,11 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert!(out.markdown.starts_with("# notion — Launch plan\n\n"));
+        // No leading `# notion — Launch plan` header — that info belongs in front-matter.
+        assert!(
+            !out.markdown.starts_with("# "),
+            "canonical document MD must NOT start with a `# ` header"
+        );
         assert!(out.markdown.contains("step one"));
         assert!(out.markdown.contains("step two"));
     }

@@ -20,6 +20,8 @@
     "notification:allow-request-permission",
     "notification:allow-notify",
     "opener:default",
-    "allow-core-process"
+    "updater:default",
+    "allow-core-process",
+    "allow-app-update"
   ]
 }

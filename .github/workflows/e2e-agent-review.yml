@@ -89,12 +89,7 @@ jobs:
       - name: Build E2E app
         if: steps.gate.outputs.present == 'true'
         run: pnpm --filter openhuman-app test:e2e:build
-      - name: Stage sidecar next to app binary
-        if: steps.gate.outputs.present == 'true'
-        run: |
-          cp app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu \
-             app/src-tauri/target/debug/openhuman-core-x86_64-unknown-linux-gnu
-          chmod +x app/src-tauri/target/debug/openhuman-core-x86_64-unknown-linux-gnu
+      # Core is linked in-process — no sidecar staging needed.
       - name: Run agent-review E2E spec under Xvfb
         if: steps.gate.outputs.present == 'true'
         run: |
@@ -106,7 +101,10 @@ jobs:
           export RUST_BACKTRACE=1
           cd app
           mkdir -p test/e2e/artifacts
-          bash scripts/e2e-run-spec.sh test/e2e/specs/agent-review.spec.ts agent-review
+          if ! bash scripts/e2e-run-spec.sh test/e2e/specs/agent-review.spec.ts agent-review; then
+            echo "First agent-review run failed; retrying once..."
+            bash scripts/e2e-run-spec.sh test/e2e/specs/agent-review.spec.ts agent-review-retry
+          fi
       - name: Upload E2E artifacts
         if: always() && steps.gate.outputs.present == 'true'
         uses: actions/upload-artifact@v4

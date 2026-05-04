@@ -51,6 +51,7 @@ export const oauthProviderConfigs: OAuthProviderConfig[] = [
     color: 'bg-white border border-gray-200',
     hoverColor: 'hover:bg-gray-50 hover:border-gray-300',
     textColor: 'text-gray-900',
+    showOnWelcome: true,
   },
   {
     id: 'github',
@@ -59,6 +60,7 @@ export const oauthProviderConfigs: OAuthProviderConfig[] = [
     color: 'bg-white border border-gray-200',
     hoverColor: 'hover:bg-gray-50 hover:border-gray-300',
     textColor: 'text-gray-900',
+    showOnWelcome: true,
   },
   {
     id: 'twitter',
@@ -67,6 +69,7 @@ export const oauthProviderConfigs: OAuthProviderConfig[] = [
     color: 'bg-white border border-gray-200',
     hoverColor: 'hover:bg-gray-50 hover:border-gray-300',
     textColor: 'text-gray-900',
+    showOnWelcome: true,
   },
   {
     id: 'discord',
@@ -75,6 +78,7 @@ export const oauthProviderConfigs: OAuthProviderConfig[] = [
     color: 'bg-indigo-600 border border-indigo-500',
     hoverColor: 'hover:bg-indigo-700 hover:border-indigo-600',
     textColor: 'text-white',
+    showOnWelcome: false,
   },
 ];
 

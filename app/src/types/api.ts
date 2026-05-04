@@ -22,6 +22,7 @@ export interface UserSubscription {
 }
 
 export interface IUserUsage {
+  promotionBalanceUsd?: number;
   cycleBudgetUsd: number;
   spentThisCycleUsd: number;
   spentTodayUsd: number;

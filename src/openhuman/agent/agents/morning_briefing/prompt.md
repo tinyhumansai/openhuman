@@ -31,6 +31,6 @@ Prepare a morning briefing that helps the user start their day with clarity. Pul
 ## Rules
 
 - **Never fabricate events, emails, or tasks.** Only include data you actually retrieved from tools or memory.
-- **Respect time zones.** Use the user's local time if known from memory; otherwise default to UTC and note it.
+- **Respect time zones.** The system prompt below carries the user's local date/time and IANA timezone — read it from there. Do **not** ask the user to repeat their timezone; only fall back to UTC and note it if the system context is genuinely missing the field.
 - **No stale data.** If a tool call fails or returns empty, say so — don't fall back to yesterday's data.
 - **Privacy first.** Don't include full email bodies or message contents. Summarize senders and subjects.

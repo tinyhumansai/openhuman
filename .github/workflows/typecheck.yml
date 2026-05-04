@@ -14,20 +14,21 @@ concurrency:
 jobs:
   typecheck:
     name: Type Check TypeScript
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - name: Cache pnpm store
+        uses: actions/cache@v4
         with:
-          cache: true
-      - name: Setup Node.js 24.x
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.x
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Type check TypeScript files
@@ -58,9 +59,6 @@ jobs:
           workspaces: |
             . -> target
           cache-on-failure: true
-      - name: Install cmake (for whisper-rs)
-        run: apt-get update && apt-get install -y --no-install-recommends cmake &&
-          rm -rf /var/lib/apt/lists/*
       - name: Check formatting (cargo fmt)
         run: cargo fmt --all -- --check
       - name: Run clippy (core crate)

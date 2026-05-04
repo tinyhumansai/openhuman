@@ -9,6 +9,10 @@ pub struct LocalAiConfig {
     pub enabled: bool,
     #[serde(default = "default_provider")]
     pub provider: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
     #[serde(default = "default_model_id")]
     pub model_id: String,
     #[serde(default = "default_chat_model_id")]
@@ -41,8 +45,6 @@ pub struct LocalAiConfig {
     pub download_url: Option<String>,
     #[serde(default = "default_autosummary_debounce_ms")]
     pub autosummary_debounce_ms: u64,
-    #[serde(default = "default_max_suggestions")]
-    pub max_suggestions: usize,
     #[serde(default)]
     pub selected_tier: Option<String>,
     /// Explicit MVP opt-in marker. Bootstrap disables local AI unless this is
@@ -73,19 +75,19 @@ fn default_provider() -> String {
 }
 
 fn default_model_id() -> String {
-    "gemma3:4b-it-qat".to_string()
+    "gemma3:1b-it-qat".to_string()
 }
 
 fn default_chat_model_id() -> String {
-    "gemma3:4b-it-qat".to_string()
+    "gemma3:1b-it-qat".to_string()
 }
 
 fn default_vision_model_id() -> String {
-    "gemma3:4b-it-qat".to_string()
+    String::new()
 }
 
 fn default_embedding_model_id() -> String {
-    "nomic-embed-text:latest".to_string()
+    "all-minilm:latest".to_string()
 }
 
 fn default_stt_model_id() -> String {
@@ -145,10 +147,6 @@ fn default_autosummary_debounce_ms() -> u64 {
     2500
 }
 
-fn default_max_suggestions() -> usize {
-    5
-}
-
 fn default_whisper_in_process() -> bool {
     true
 }
@@ -162,6 +160,8 @@ impl Default for LocalAiConfig {
         Self {
             enabled: default_enabled(),
             provider: default_provider(),
+            base_url: None,
+            api_key: None,
             model_id: default_model_id(),
             chat_model_id: default_chat_model_id(),
             vision_model_id: default_vision_model_id(),
@@ -178,7 +178,6 @@ impl Default for LocalAiConfig {
             preload_tts_voice: default_preload_tts_voice(),
             download_url: default_download_url(),
             autosummary_debounce_ms: default_autosummary_debounce_ms(),
-            max_suggestions: default_max_suggestions(),
             selected_tier: None,
             opt_in_confirmed: false,
             ollama_binary_path: None,

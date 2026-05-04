@@ -8,7 +8,7 @@
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::router;
@@ -28,6 +29,12 @@ pub const PORT_ENV: &str = "OPENHUMAN_WEBVIEW_APIS_PORT";
 /// The port the server is bound to. `0` before `start()` resolves it.
 static RESOLVED_PORT: AtomicU16 = AtomicU16::new(0);
 static STARTED: OnceLock<()> = OnceLock::new();
+/// Handle to the accept loop spawned by `start()`. Held so `stop()` can
+/// abort the loop on app shutdown — without this the loop owns the
+/// `TcpListener` and keeps the loopback port bound past tokio runtime
+/// drop, which on macOS contributes to the "abnormal exit" the OS
+/// reports against the app process (issue #920).
+static ACCEPT_LOOP: OnceLock<Mutex<Option<JoinHandle<()>>>> = OnceLock::new();
 
 pub fn resolved_port() -> u16 {
     RESOLVED_PORT.load(Ordering::SeqCst)
@@ -64,7 +71,7 @@ pub async fn start() -> Result<u16, String> {
 
     log::info!("[webview_apis] server listening on {bound}");
 
-    tokio::spawn(async move {
+    let accept_handle = tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((stream, peer)) => {
@@ -84,8 +91,31 @@ pub async fn start() -> Result<u16, String> {
             }
         }
     });
+    let slot = ACCEPT_LOOP.get_or_init(|| Mutex::new(None));
+    if let Ok(mut g) = slot.lock() {
+        *g = Some(accept_handle);
+    }
 
     Ok(port)
+}
+
+/// Abort the accept loop and release the loopback port. Idempotent.
+///
+/// Called from the app's `RunEvent::Exit` shutdown path so the listener
+/// task doesn't outlive the tokio runtime / surrounding `AppHandle` —
+/// see issue #920.
+pub fn stop() {
+    let Some(slot) = ACCEPT_LOOP.get() else {
+        return;
+    };
+    let handle = match slot.lock() {
+        Ok(mut g) => g.take(),
+        Err(_) => return,
+    };
+    if let Some(h) = handle {
+        h.abort();
+        log::info!("[webview_apis] accept loop aborted");
+    }
 }
 
 async fn handle_connection(stream: tokio::net::TcpStream) -> Result<(), String> {

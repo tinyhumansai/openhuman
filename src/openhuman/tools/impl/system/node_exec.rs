@@ -293,6 +293,13 @@ fn resolve_script_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn absolute_sample() -> &'static str {
+        if cfg!(windows) {
+            "C:\\Windows\\System32\\drivers\\etc\\hosts"
+        } else {
+            "/etc/passwd"
+        }
+    }
 
     #[test]
     fn shell_quote_wraps_plain_strings() {
@@ -326,7 +333,7 @@ mod tests {
     #[test]
     fn resolve_script_path_rejects_absolute() {
         let ws = std::path::Path::new("/ws");
-        assert!(resolve_script_path(ws, "/etc/passwd").is_err());
+        assert!(resolve_script_path(ws, absolute_sample()).is_err());
     }
 
     #[test]

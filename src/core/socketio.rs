@@ -72,6 +72,66 @@ pub struct WebChannelEvent {
     /// Optional citations attached to `chat_done` payloads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub citations: Option<serde_json::Value>,
+    /// Sub-agent specific progress detail. Populated on
+    /// `subagent_spawned`, `subagent_completed`, `subagent_iteration_start`,
+    /// `subagent_tool_call`, and `subagent_tool_result` events so the UI
+    /// can attribute child activity to the parent's live subagent row
+    /// without overloading the flat top-level fields. `None` for any
+    /// non-subagent event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<SubagentProgressDetail>,
+}
+
+/// Per-event subagent progress detail attached to `WebChannelEvent`.
+///
+/// Carries the fields the parent thread's UI needs to render a live
+/// subagent block — child iteration counters, mode, child task/agent
+/// ids when distinct from the flat `tool_name` (which already carries
+/// the agent id on top-level subagent events but not on nested
+/// `subagent_tool_*` events where `tool_name` is the *child's* tool),
+/// and final-run statistics on `subagent_completed`.
+///
+/// Every field is optional and skipped from the JSON payload when
+/// absent — this keeps the wire format compact for non-subagent events
+/// (where the whole struct is `None`) and lets new fields land
+/// non-breakingly behind older clients.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SubagentProgressDetail {
+    /// Resolved spawn mode — `"typed"` or `"fork"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// Whether the spawn requested a dedicated worker thread.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dedicated_thread: Option<bool>,
+    /// Character length of the delegation prompt (on `subagent_spawned`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_chars: Option<u64>,
+    /// Sub-agent's child iteration counter (on `subagent_iteration_start`,
+    /// `subagent_tool_call`, `subagent_tool_result`). 1-based.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub child_iteration: Option<u32>,
+    /// Sub-agent's configured iteration cap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub child_max_iterations: Option<u32>,
+    /// Child agent id (on nested `subagent_tool_*` events where the flat
+    /// `tool_name` is the child's tool, not the agent).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Spawn task id (on nested `subagent_tool_*` events).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    /// Elapsed wall-clock for the call/run in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
+    /// Total iterations the sub-agent used (on `subagent_completed`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<u32>,
+    /// Character length of the sub-agent's final assistant text
+    /// (on `subagent_completed`) or the tool result
+    /// (on `subagent_tool_result`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_chars: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

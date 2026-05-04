@@ -40,11 +40,17 @@ mod types;
 pub mod user_scopes;
 
 pub mod catalogs;
+pub mod catalogs_business;
+pub mod catalogs_google;
+pub mod catalogs_messaging;
+pub mod catalogs_productivity;
+pub mod catalogs_social_media;
 pub mod github;
 pub mod gmail;
 pub mod notion;
 pub mod profile;
 pub mod registry;
+pub mod slack;
 pub mod sync_state;
 
 /// Static toolkit → curated catalog map.

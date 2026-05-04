@@ -37,6 +37,14 @@ export interface CoreAppSnapshot {
   sessionToken: string | null;
   currentUser: User | null;
   onboardingCompleted: boolean;
+  /**
+   * Whether the chat-based welcome-agent flow has finished. Mirrors
+   * `Config::chat_onboarding_completed` in the Rust core (see
+   * `src/openhuman/config/schema/types.rs`). Flipped to `true` by the
+   * welcome agent calling `complete_onboarding(action: "complete")`.
+   * Drives the UI "welcome lockdown" — see {@link isWelcomeLocked}.
+   */
+  chatOnboardingCompleted: boolean;
   analyticsEnabled: boolean;
   localState: CoreLocalState;
   runtime: CoreRuntimeSnapshot;
@@ -56,6 +64,7 @@ const emptySnapshot: CoreAppSnapshot = {
   sessionToken: null,
   currentUser: null,
   onboardingCompleted: false,
+  chatOnboardingCompleted: false,
   analyticsEnabled: false,
   localState: { encryptionKey: null, primaryWalletAddress: null, onboardingTasks: null },
   runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
@@ -76,6 +85,29 @@ export function getCoreStateSnapshot(): CoreState {
 
 export function setCoreStateSnapshot(next: CoreState): void {
   currentState = next;
+}
+
+/**
+ * Is the UI currently locked to the welcome-agent conversation? (#883)
+ *
+ * Returns `true` when the authenticated user has completed the React
+ * wizard (`onboardingCompleted`) but the chat-based welcome flow has
+ * not yet finalized (`chatOnboardingCompleted === false`). Consumers
+ * (BottomTabBar, Accounts left rail, Conversations thread sidebar,
+ * AppShell redirect) hide their navigation affordances while this is
+ * `true` so the user cannot escape the welcome conversation until the
+ * welcome agent calls `complete_onboarding(action: "complete")`.
+ *
+ * The auth guard prevents a lock flicker during signed-out first paint
+ * (snapshot briefly reports `onboardingCompleted=false` before the
+ * async refresh completes; the overlay handles that path).
+ */
+export function isWelcomeLocked(snapshot: CoreAppSnapshot): boolean {
+  return (
+    snapshot.auth.isAuthenticated &&
+    snapshot.onboardingCompleted &&
+    !snapshot.chatOnboardingCompleted
+  );
 }
 
 export function patchCoreStateSnapshot(patch: {

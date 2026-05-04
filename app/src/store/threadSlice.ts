@@ -3,32 +3,37 @@ import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { threadApi } from '../services/api/threadApi';
 import type { Thread, ThreadMessage } from '../types/thread';
 import { IS_DEV } from '../utils/config';
-import { isTauri, openhumanLocalAiSuggestQuestions } from '../utils/tauriCommands';
+import { resetUserScopedState } from './resetActions';
 
 interface ThreadState {
   threads: Thread[];
   selectedThreadId: string | null;
   activeThreadId: string | null;
+  /**
+   * Thread created by `OnboardingLayout` to host the proactive welcome
+   * conversation. Tracked so we can delete it once the welcome agent
+   * calls `complete_onboarding` and `chat_onboarding_completed` flips —
+   * the welcome thread is transient onboarding chat, not history we
+   * want to clutter the user's thread list with.
+   */
+  welcomeThreadId: string | null;
   messagesByThreadId: Record<string, ThreadMessage[]>;
   messages: ThreadMessage[];
   isLoadingThreads: boolean;
   isLoadingMessages: boolean;
   messagesError: string | null;
-  suggestedQuestions: Array<{ text: string; confidence: number }>;
-  isLoadingSuggestions: boolean;
 }
 
 const initialState: ThreadState = {
   threads: [],
   selectedThreadId: null,
   activeThreadId: null,
+  welcomeThreadId: null,
   messagesByThreadId: {},
   messages: [],
   isLoadingThreads: false,
   isLoadingMessages: false,
   messagesError: null,
-  suggestedQuestions: [],
-  isLoadingSuggestions: false,
 };
 
 function appendMessageToCache(
@@ -64,9 +69,9 @@ export const loadThreads = createAsyncThunk(
 
 export const createNewThread = createAsyncThunk(
   'thread/createNewThread',
-  async (_, { dispatch, rejectWithValue }) => {
+  async (labels: string[] | undefined, { dispatch, rejectWithValue }) => {
     try {
-      const thread = await threadApi.createNewThread();
+      const thread = await threadApi.createNewThread(labels);
       await dispatch(loadThreads()).unwrap();
       return thread;
     } catch (error) {
@@ -216,6 +221,21 @@ export const persistReaction = createAsyncThunk(
   }
 );
 
+export const updateThreadLabels = createAsyncThunk(
+  'thread/updateThreadLabels',
+  async (payload: { threadId: string; labels: string[] }, { dispatch, rejectWithValue }) => {
+    try {
+      const thread = await threadApi.updateLabels(payload.threadId, payload.labels);
+      await dispatch(loadThreads()).unwrap();
+      return thread;
+    } catch (error) {
+      return rejectWithValue(
+        error instanceof Error ? error.message : 'Failed to update thread labels'
+      );
+    }
+  }
+);
+
 export const purgeThreads = createAsyncThunk(
   'thread/purgeThreads',
   async (_, { dispatch, rejectWithValue }) => {
@@ -225,30 +245,6 @@ export const purgeThreads = createAsyncThunk(
       return result;
     } catch (error) {
       return rejectWithValue(error instanceof Error ? error.message : 'Failed to purge threads');
-    }
-  }
-);
-
-export const fetchSuggestedQuestions = createAsyncThunk(
-  'thread/fetchSuggestedQuestions',
-  async (conversationId: string | undefined, { getState, rejectWithValue }) => {
-    try {
-      const state = getState() as { thread: ThreadState };
-      const tid = conversationId ?? state.thread.selectedThreadId ?? undefined;
-      const msgs = tid ? (state.thread.messagesByThreadId[tid] ?? []) : [];
-
-      if (isTauri()) {
-        const lines = msgs
-          .slice(-24)
-          .map(m => `${m.sender === 'user' ? 'User' : 'Assistant'}: ${m.content}`);
-        const local = await openhumanLocalAiSuggestQuestions(undefined, lines);
-        return local.result;
-      }
-      return [];
-    } catch (error) {
-      return rejectWithValue(
-        error instanceof Error ? error.message : 'Failed to load suggested questions'
-      );
     }
   }
 );
@@ -263,13 +259,11 @@ const threadSlice = createSlice({
       state.selectedThreadId = action.payload;
       state.messages = state.messagesByThreadId[action.payload] ?? [];
       state.messagesError = null;
-      state.suggestedQuestions = [];
     },
     clearSelectedThread: state => {
       state.selectedThreadId = null;
       state.messages = [];
       state.messagesError = null;
-      state.suggestedQuestions = [];
     },
     setActiveThread: (state, action: { payload: string | null }) => {
       state.activeThreadId = action.payload;
@@ -280,6 +274,10 @@ const threadSlice = createSlice({
       state.selectedThreadId = null;
       state.messages = [];
       state.activeThreadId = null;
+      state.welcomeThreadId = null;
+    },
+    setWelcomeThreadId: (state, action: { payload: string | null }) => {
+      state.welcomeThreadId = action.payload;
     },
   },
   extraReducers: builder => {
@@ -337,21 +335,16 @@ const threadSlice = createSlice({
       .addCase(deleteThread.fulfilled, (state, action) => {
         delete state.messagesByThreadId[action.payload.threadId];
       })
-      .addCase(fetchSuggestedQuestions.pending, state => {
-        state.isLoadingSuggestions = true;
-      })
-      .addCase(fetchSuggestedQuestions.fulfilled, (state, action) => {
-        state.isLoadingSuggestions = false;
-        state.suggestedQuestions = action.payload;
-      })
-      .addCase(fetchSuggestedQuestions.rejected, state => {
-        state.isLoadingSuggestions = false;
-        state.suggestedQuestions = [];
-      });
+      .addCase(resetUserScopedState, () => initialState);
   },
 });
 
-export const { setSelectedThread, clearSelectedThread, setActiveThread, clearAllThreads } =
-  threadSlice.actions;
+export const {
+  setSelectedThread,
+  clearSelectedThread,
+  setActiveThread,
+  clearAllThreads,
+  setWelcomeThreadId,
+} = threadSlice.actions;
 
 export default threadSlice.reducer;

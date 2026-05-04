@@ -76,7 +76,7 @@ With this change:
 
 Once the scanner registry is registered:
 
-1. Run the app: `cd app && yarn dev:app`
+1. Run the app: `cd app && pnpm dev:app`
 2. Open the Slack webview — wait for Slack to load fully
 3. Have someone send you a Slack message from another device
 4. Watch the log:
@@ -141,7 +141,7 @@ Once notifications are working reliably, remove:
 The app **must** be started with `dev:app`, not `tauri dev` directly:
 
 ```bash
-cd app && yarn dev:app
+cd app && pnpm dev:app
 ```
 
 `dev:app` sets `CEF_PATH=$HOME/Library/Caches/tauri-cef` and ensures the vendored `cargo-tauri` is installed. Without it, the app panics at startup in `cef::library_loader` with `No such file or directory`.

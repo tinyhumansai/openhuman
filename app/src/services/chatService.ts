@@ -137,6 +137,82 @@ export interface ChatSubagentDoneEvent {
   message: string;
   success: boolean;
   round: number;
+  /** Per-event subagent detail. Mirrors `SubagentProgressDetail` in core. */
+  subagent?: SubagentProgressDetail;
+}
+
+/**
+ * Per-event subagent detail attached to live subagent activity events
+ * (`subagent_spawned`, `subagent_completed`, `subagent_iteration_start`,
+ * `subagent_tool_call`, `subagent_tool_result`).
+ *
+ * Matches the Rust `SubagentProgressDetail` struct in
+ * `src/core/socketio.rs` — every field is optional so older cores that
+ * don't emit it stay parseable.
+ */
+export interface SubagentProgressDetail {
+  mode?: string;
+  dedicated_thread?: boolean;
+  prompt_chars?: number;
+  child_iteration?: number;
+  child_max_iterations?: number;
+  agent_id?: string;
+  task_id?: string;
+  elapsed_ms?: number;
+  iterations?: number;
+  output_chars?: number;
+}
+
+/** Extended payload for `subagent_spawned`. */
+export interface ChatSubagentSpawnedEventV2 extends ChatSubagentSpawnedEvent {
+  subagent?: SubagentProgressDetail;
+}
+
+/**
+ * Emitted at the start of each LLM iteration *inside* a running
+ * sub-agent. Lets the parent thread surface child progress (which round
+ * the subagent is on, its iteration cap) without flattening it into the
+ * parent's own iteration counter.
+ */
+export interface ChatSubagentIterationStartEvent {
+  thread_id: string;
+  request_id: string;
+  /** Parent's iteration index (inherited from the parent context). */
+  round: number;
+  /** Subagent's agent id. Mirrored on the flat `tool_name` field. */
+  tool_name: string;
+  /** Subagent's task id (the spawn id). */
+  skill_id: string;
+  message: string;
+  subagent?: SubagentProgressDetail;
+}
+
+/** Emitted when a sub-agent starts executing one of its own tools. */
+export interface ChatSubagentToolCallEvent {
+  thread_id: string;
+  request_id: string;
+  round: number;
+  /** Child's tool name (e.g. `composio_execute`, `web_search`). */
+  tool_name: string;
+  /** Subagent's task id. */
+  skill_id: string;
+  /** Provider-assigned tool call id. */
+  tool_call_id: string;
+  subagent?: SubagentProgressDetail;
+}
+
+/** Emitted when a sub-agent's tool execution finishes. */
+export interface ChatSubagentToolResultEvent {
+  thread_id: string;
+  request_id: string;
+  round: number;
+  tool_name: string;
+  skill_id: string;
+  tool_call_id: string;
+  success: boolean;
+  /** Stringified JSON `{ output_chars, elapsed_ms }` matching `tool_result`. */
+  output?: string;
+  subagent?: SubagentProgressDetail;
 }
 
 /**
@@ -187,8 +263,11 @@ export interface ChatEventListeners {
   onIterationStart?: (event: ChatIterationStartEvent) => void;
   onToolCall?: (event: ChatToolCallEvent) => void;
   onToolResult?: (event: ChatToolResultEvent) => void;
-  onSubagentSpawned?: (event: ChatSubagentSpawnedEvent) => void;
+  onSubagentSpawned?: (event: ChatSubagentSpawnedEventV2) => void;
   onSubagentDone?: (event: ChatSubagentDoneEvent) => void;
+  onSubagentIterationStart?: (event: ChatSubagentIterationStartEvent) => void;
+  onSubagentToolCall?: (event: ChatSubagentToolCallEvent) => void;
+  onSubagentToolResult?: (event: ChatSubagentToolResultEvent) => void;
   onSegment?: (event: ChatSegmentEvent) => void;
   onTextDelta?: (event: ChatTextDeltaEvent) => void;
   onThinkingDelta?: (event: ChatThinkingDeltaEvent) => void;
@@ -214,6 +293,9 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     subagentSpawned: 'subagent_spawned',
     subagentCompleted: 'subagent_completed',
     subagentFailed: 'subagent_failed',
+    subagentIterationStart: 'subagent_iteration_start',
+    subagentToolCall: 'subagent_tool_call',
+    subagentToolResult: 'subagent_tool_result',
     segment: 'chat_segment',
     textDelta: 'text_delta',
     thinkingDelta: 'thinking_delta',
@@ -333,6 +415,57 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     };
     socket.on(EVENTS.subagentFailed, onFailed);
     handlers.push([EVENTS.subagentFailed, onFailed]);
+  }
+
+  if (listeners.onSubagentIterationStart) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatSubagentIterationStartEvent;
+      chatLog(
+        '%s thread_id=%s task=%s child_round=%s/%s',
+        EVENTS.subagentIterationStart,
+        e.thread_id,
+        e.skill_id,
+        e.subagent?.child_iteration,
+        e.subagent?.child_max_iterations
+      );
+      listeners.onSubagentIterationStart?.(e);
+    };
+    socket.on(EVENTS.subagentIterationStart, cb);
+    handlers.push([EVENTS.subagentIterationStart, cb]);
+  }
+
+  if (listeners.onSubagentToolCall) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatSubagentToolCallEvent;
+      chatLog(
+        '%s thread_id=%s task=%s child_tool=%s call_id=%s',
+        EVENTS.subagentToolCall,
+        e.thread_id,
+        e.skill_id,
+        e.tool_name,
+        e.tool_call_id
+      );
+      listeners.onSubagentToolCall?.(e);
+    };
+    socket.on(EVENTS.subagentToolCall, cb);
+    handlers.push([EVENTS.subagentToolCall, cb]);
+  }
+
+  if (listeners.onSubagentToolResult) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatSubagentToolResultEvent;
+      chatLog(
+        '%s thread_id=%s task=%s child_tool=%s success=%s',
+        EVENTS.subagentToolResult,
+        e.thread_id,
+        e.skill_id,
+        e.tool_name,
+        e.success
+      );
+      listeners.onSubagentToolResult?.(e);
+    };
+    socket.on(EVENTS.subagentToolResult, cb);
+    handlers.push([EVENTS.subagentToolResult, cb]);
   }
 
   if (listeners.onSegment) {

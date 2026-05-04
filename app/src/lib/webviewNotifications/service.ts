@@ -8,8 +8,7 @@ import {
   focusAccountFromNotification,
   noteWebviewNotificationFired,
 } from '../../store/accountsSlice';
-import { notificationReceived } from '../../store/notificationSlice';
-import { addNotification } from '../../store/notificationsSlice';
+import { addIntegrationNotification } from '../../store/notificationSlice';
 import { WEBVIEW_NOTIFICATION_FIRED_EVENT, type WebviewNotificationFired } from './types';
 
 const log = debug('webview-notifications');
@@ -68,7 +67,7 @@ export function handleNotificationClick(accountId: string): void {
 }
 
 function handleFired(payload: WebviewNotificationFired): void {
-  const { account_id: accountId, provider, title, body, tag } = payload;
+  const { account_id: accountId, provider, title, body } = payload;
   const redactedAccountId = redactAccountId(accountId);
   log(
     'fired account=%s provider=%s title_chars=%d body_chars=%d',
@@ -78,20 +77,6 @@ function handleFired(payload: WebviewNotificationFired): void {
     body.length
   );
   store.dispatch(noteWebviewNotificationFired({ accountId }));
-  const now = Date.now();
-  store.dispatch(
-    notificationReceived({
-      id: `${accountId}:${tag ?? ''}:${now}`,
-      category: 'messages',
-      title,
-      body,
-      timestamp: now,
-      read: false,
-      accountId,
-      provider,
-      deepLink: `/accounts/${accountId}`,
-    })
-  );
 
   // Mirror into the core triage pipeline — fire-and-forget.
   log(
@@ -110,7 +95,7 @@ function handleFired(payload: WebviewNotificationFired): void {
       if (!result.skipped) {
         log('[notification_intel] ingest created id=%s', result.id);
         store.dispatch(
-          addNotification({
+          addIntegrationNotification({
             id: result.id,
             provider,
             account_id: accountId,

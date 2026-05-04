@@ -7,7 +7,7 @@ import {
   type NotificationItem,
   notificationReceived,
 } from '../../store/notificationSlice';
-import { showNativeNotification } from './tauriBridge';
+import { ensureNotificationPermission, showNativeNotification } from './tauriBridge';
 
 const log = debug('native-notifications');
 
@@ -52,18 +52,27 @@ function dispatchAndMaybeBanner(
   timestampOverride?: number
 ): void {
   const prefs = store.getState().notifications.preferences;
+  log(
+    '[dispatch] category=%s id=%s enabled=%s focused=%s',
+    category,
+    item.id,
+    prefs[category],
+    windowIsFocused()
+  );
   if (!prefs[category]) {
     log('category %s disabled, skipping', category);
     return;
   }
   const timestamp = timestampOverride && timestampOverride > 0 ? timestampOverride : Date.now();
   const full: NotificationItem = { ...item, category, timestamp, read: false };
+  log('[dispatch] enqueue id=%s title=%s', full.id, full.title);
   store.dispatch(notificationReceived(full));
   // Only fire OS-level banner when the user isn't already looking at the
   // window — otherwise the in-app center is enough and a native toast is
   // redundant noise.
   if (!windowIsFocused()) {
-    void showNativeNotification({ title: full.title, body: full.body, tag: full.id });
+    log('[dispatch] window unfocused, firing native banner id=%s', full.id);
+    void showNativeNotification({ title: full.title, body: full.body });
   }
 }
 
@@ -82,8 +91,15 @@ export function startNativeNotificationsService(): void {
   if (started) return;
   started = true;
 
+  // Request OS notification permission early so native banners can fire.
+  // Fire-and-forget — permission state is logged for diagnostics.
+  void ensureNotificationPermission().then(granted => {
+    log('notification permission ensured: granted=%s', granted);
+  });
+
   chatDoneListener = (...args: unknown[]) => {
     const p = (args[0] ?? {}) as ChatDonePayload;
+    log('[socket] chat_done');
     dispatchAndMaybeBanner('agents', {
       id: `chat_done:${p.thread_id ?? 'unknown'}:${p.request_id ?? Date.now()}`,
       title: 'Agent reply ready',
@@ -94,6 +110,7 @@ export function startNativeNotificationsService(): void {
 
   chatErrorListener = (...args: unknown[]) => {
     const p = (args[0] ?? {}) as ChatErrorPayload;
+    log('[socket] chat_error');
     dispatchAndMaybeBanner('system', {
       id: `chat_error:${p.thread_id ?? 'unknown'}:${p.request_id ?? Date.now()}`,
       title: 'Agent error',
@@ -107,7 +124,11 @@ export function startNativeNotificationsService(): void {
   // bus. See src/openhuman/notifications/bus.rs.
   coreNotificationListener = (...args: unknown[]) => {
     const p = (args[0] ?? {}) as CoreNotificationPayload;
-    if (!p.id || !p.title) return;
+    log('[socket] core_notification id=%s category=%s', p.id, p.category);
+    if (!p.id || !p.title) {
+      log('[socket] core_notification missing id/title dropped');
+      return;
+    }
     const serverTs = p.timestamp_ms && p.timestamp_ms > 0 ? p.timestamp_ms : Date.now();
     dispatchAndMaybeBanner(
       p.category,
@@ -123,6 +144,7 @@ export function startNativeNotificationsService(): void {
 
   disconnectListener = (...args: unknown[]) => {
     const reason = typeof args[0] === 'string' ? args[0] : 'unknown';
+    log('[socket] disconnect reason=%s', reason);
     dispatchAndMaybeBanner('system', {
       id: `socket_disconnect:${Date.now()}`,
       title: 'Connection lost',

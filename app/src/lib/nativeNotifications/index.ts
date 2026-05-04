@@ -1,2 +1,2 @@
 export { startNativeNotificationsService, stopNativeNotificationsService } from './service';
-export { showNativeNotification } from './tauriBridge';
+export { ensureNotificationPermission, showNativeNotification } from './tauriBridge';

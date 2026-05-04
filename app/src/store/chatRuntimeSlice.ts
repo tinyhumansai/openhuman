@@ -1,5 +1,7 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
+import { resetUserScopedState } from './resetActions';
+
 export type ToolTimelineEntryStatus = 'running' | 'success' | 'error';
 
 export interface InferenceStatus {
@@ -8,6 +10,54 @@ export interface InferenceStatus {
   maxIterations: number;
   activeTool?: string;
   activeSubagent?: string;
+}
+
+/**
+ * Per-subagent live activity attached to a `subagent:*` timeline row.
+ *
+ * Carries everything the parent thread's UI needs to render a live
+ * subagent block — child iteration counter, mode, dedicated-thread
+ * flag, final-run statistics, and a flat list of child tool calls
+ * the subagent has executed during its run. Populated incrementally
+ * from the new `subagent_*` socket events; absent on plain (legacy)
+ * subagent rows so older snapshots stay renderable unchanged.
+ */
+export interface SubagentActivity {
+  /** Spawn task id (`sub-…`). Stable for the lifetime of one delegation. */
+  taskId: string;
+  /** Sub-agent definition id (e.g. `researcher`). */
+  agentId: string;
+  /** Resolved spawn mode — `"typed"` or `"fork"`. */
+  mode?: string;
+  /** `true` when the spawn requested a dedicated worker thread. */
+  dedicatedThread?: boolean;
+  /** Sub-agent's current 1-based iteration index (live). */
+  childIteration?: number;
+  /** Sub-agent's iteration cap. */
+  childMaxIterations?: number;
+  /** Total iterations once the sub-agent finishes. */
+  iterations?: number;
+  /** Wall-clock ms once the sub-agent finishes. */
+  elapsedMs?: number;
+  /** Character length of the final assistant text. */
+  outputChars?: number;
+  /** Child tool calls executed inside the sub-agent, in arrival order. */
+  toolCalls: SubagentToolCallEntry[];
+}
+
+/** One child tool call performed by a running sub-agent. */
+export interface SubagentToolCallEntry {
+  /** Provider-assigned tool call id. */
+  callId: string;
+  /** Child's tool name. */
+  toolName: string;
+  status: ToolTimelineEntryStatus;
+  /** 1-based child iteration the call belongs to. */
+  iteration?: number;
+  /** Wall-clock ms the call took (set on completion). */
+  elapsedMs?: number;
+  /** Character length of the tool result (set on completion). */
+  outputChars?: number;
 }
 
 export interface ToolTimelineEntry {
@@ -19,6 +69,13 @@ export interface ToolTimelineEntry {
   displayName?: string;
   detail?: string;
   sourceToolName?: string;
+  /**
+   * Live sub-agent activity for `subagent:*` rows. Built up from the
+   * `subagent_iteration_start` / `subagent_tool_call` /
+   * `subagent_tool_result` socket events. Absent for non-subagent
+   * rows and for legacy snapshots emitted by older cores.
+   */
+  subagent?: SubagentActivity;
 }
 
 export interface StreamingAssistantState {
@@ -132,6 +189,9 @@ const chatRuntimeSlice = createSlice({
     resetSessionTokenUsage: state => {
       state.sessionTokenUsage = { inputTokens: 0, outputTokens: 0, turns: 0, lastUpdated: 0 };
     },
+  },
+  extraReducers: builder => {
+    builder.addCase(resetUserScopedState, () => initialState);
   },
 });
 

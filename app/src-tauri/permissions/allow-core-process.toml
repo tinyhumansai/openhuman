@@ -1,11 +1,26 @@
 [[permission]]
 identifier = "allow-core-process"
-description = "Core RPC URL, sidecar restart, dictation hotkey, and webview-account commands"
+description = "Core RPC URL, sidecar restart, dictation hotkey, webview-account, and gmail-CDP commands"
 
 [permission.commands]
 allow = [
     "core_rpc_url",
+    "core_rpc_token",
     "restart_core_process",
+    # `restart_app` triggers `app.restart()` so CEF re-initializes against
+    # the active user's `users/<id>/cef` profile after an identity flip
+    # (#900). Without this allow entry, the invoke is silently denied by
+    # Tauri capabilities and webviews keep the prior user's third-party
+    # cookies.
+    "restart_app",
+    "schedule_cef_profile_purge",
+    # `get_active_user_id` reads `~/.openhuman/active_user.toml` so the
+    # frontend can prime `userScopedStorage` from the Rust source of truth
+    # BEFORE redux-persist hydrates — the prior `localStorage`-only seed
+    # was bound to the per-user CEF profile dir and went stale across
+    # restart-driven flips, causing a false re-flip and restart loop on
+    # every login. (#900)
+    "get_active_user_id",
     "service_install_direct",
     "service_start_direct",
     "service_stop_direct",
@@ -15,7 +30,9 @@ allow = [
     "unregister_dictation_hotkey",
     "webview_account_open",
     "webview_account_close",
+    "webview_account_purge",
     "webview_account_bounds",
+    "webview_account_reveal",
     "webview_account_hide",
     "webview_account_show",
     "webview_recipe_event",
@@ -23,5 +40,17 @@ allow = [
     "screen_share_begin_session",
     "screen_share_thumbnail",
     "screen_share_finalize_session",
+    # Gmail-CDP surface (see app/src-tauri/src/gmail/). Drives the
+    # logged-in Gmail webview through DOMSnapshot + Input events. Used
+    # by onboarding's LinkedIn-enrichment pipeline today and by future
+    # agent tools.
+    "gmail_list_labels",
+    "gmail_list_messages",
+    "gmail_search",
+    "gmail_get_message",
+    "gmail_send",
+    "gmail_trash",
+    "gmail_add_label",
+    "gmail_find_linkedin_profile_url",
 ]
 deny = []

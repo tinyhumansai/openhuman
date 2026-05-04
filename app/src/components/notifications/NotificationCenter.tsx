@@ -1,13 +1,22 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
-import { fetchNotifications, markNotificationRead } from '../../services/notificationService';
+import { resolveIntegrationRoute } from '../../lib/notificationRouter';
+import {
+  dismissNotification,
+  fetchNotifications,
+  markNotificationActed,
+  markNotificationRead,
+} from '../../services/notificationService';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
-  markRead as markReadAction,
-  setNotifications,
-  setNotificationsError,
-  setNotificationsLoading,
-} from '../../store/notificationsSlice';
+  dismissIntegrationNotification,
+  markIntegrationActed,
+  markIntegrationRead,
+  setIntegrationError,
+  setIntegrationLoading,
+  setIntegrationNotifications,
+} from '../../store/notificationSlice';
 import NotificationCard from './NotificationCard';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,21 +25,29 @@ import NotificationCard from './NotificationCard';
 
 const NotificationCenter = () => {
   const dispatch = useAppDispatch();
-  const { items, loading, error } = useAppSelector(s => s.integrationNotifications);
+  const navigate = useNavigate();
+  const {
+    integrationItems: items,
+    integrationLoading: loading,
+    integrationError: error,
+  } = useAppSelector(s => s.notifications);
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>(undefined);
   // All providers seen across unfiltered loads — kept separate so the filter
   // pill row doesn't collapse when a provider filter is active.
   const [allProviders, setAllProviders] = useState<string[]>([]);
+  const visibleItems = items.filter(
+    n => n.status !== 'dismissed' && (!selectedProvider || n.provider === selectedProvider)
+  );
 
   // Fetch on mount and when provider filter changes.
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      dispatch(setNotificationsLoading(true));
+      dispatch(setIntegrationLoading(true));
       try {
         const result = await fetchNotifications({ provider: selectedProvider, limit: 100 });
         if (!cancelled) {
-          dispatch(setNotifications(result));
+          dispatch(setIntegrationNotifications(result));
           // Accumulate providers only from unfiltered loads so the pill row
           // stays stable when a filter is active.
           if (!selectedProvider) {
@@ -41,9 +58,7 @@ const NotificationCenter = () => {
       } catch (err) {
         if (!cancelled) {
           dispatch(
-            setNotificationsError(
-              err instanceof Error ? err.message : 'Failed to load notifications'
-            )
+            setIntegrationError(err instanceof Error ? err.message : 'Failed to load notifications')
           );
         }
       }
@@ -55,7 +70,7 @@ const NotificationCenter = () => {
   }, [dispatch, selectedProvider]);
 
   const handleMarkRead = async (id: string) => {
-    dispatch(markReadAction(id));
+    dispatch(markIntegrationRead(id));
     try {
       await markNotificationRead(id);
     } catch {
@@ -63,13 +78,36 @@ const NotificationCenter = () => {
     }
   };
 
+  /** Navigate to the resolved route for the notification and mark it as acted. */
+  const handleNavigate = async (id: string) => {
+    const n = items.find(i => i.id === id);
+    if (!n) return;
+    const route = resolveIntegrationRoute(n);
+    dispatch(markIntegrationActed(id));
+    navigate(route);
+    try {
+      await markNotificationActed(id);
+    } catch {
+      // Optimistic update already applied; failure is non-critical.
+    }
+  };
+
+  const handleDismiss = async (id: string) => {
+    dispatch(dismissIntegrationNotification(id));
+    try {
+      await dismissNotification(id);
+    } catch {
+      // Optimistic update applied; failure is silent.
+    }
+  };
+
   // Unread count scoped to the currently displayed (filtered) items.
-  const filteredUnreadCount = items.filter(n => n.status === 'unread').length;
+  const filteredUnreadCount = visibleItems.filter(n => n.status === 'unread').length;
 
   const handleMarkAllRead = async () => {
-    const unreadIds = items.filter(n => n.status === 'unread').map(n => n.id);
+    const unreadIds = visibleItems.filter(n => n.status === 'unread').map(n => n.id);
     for (const id of unreadIds) {
-      dispatch(markReadAction(id));
+      dispatch(markIntegrationRead(id));
       try {
         await markNotificationRead(id);
       } catch {
@@ -142,7 +180,7 @@ const NotificationCenter = () => {
           </div>
         )}
 
-        {!loading && !error && items.length === 0 && (
+        {!loading && !error && visibleItems.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-stone-400">
             <svg
               className="w-10 h-10 mb-3 opacity-40"
@@ -163,14 +201,20 @@ const NotificationCenter = () => {
           </div>
         )}
 
-        {!loading && !error && items.length > 0 && (
+        {!loading && !error && visibleItems.length > 0 && (
           <div className="divide-y-0">
-            {items.map(n => (
+            {visibleItems.map(n => (
               <NotificationCard
                 key={n.id}
                 notification={n}
                 onMarkRead={id => {
                   void handleMarkRead(id);
+                }}
+                onNavigate={id => {
+                  void handleNavigate(id);
+                }}
+                onDismiss={id => {
+                  void handleDismiss(id);
                 }}
               />
             ))}

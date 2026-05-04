@@ -315,6 +315,13 @@ fn resolve_cwd(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn absolute_sample() -> &'static str {
+        if cfg!(windows) {
+            "C:\\Windows\\System32"
+        } else {
+            "/etc"
+        }
+    }
 
     #[test]
     fn is_sane_subcommand_accepts_common_npm_verbs() {
@@ -349,7 +356,7 @@ mod tests {
     #[test]
     fn resolve_cwd_rejects_absolute_and_parent() {
         let ws = std::path::Path::new("/tmp/ws");
-        assert!(resolve_cwd(ws, Some("/etc")).is_err());
+        assert!(resolve_cwd(ws, Some(absolute_sample())).is_err());
         assert!(resolve_cwd(ws, Some("../other")).is_err());
         assert!(resolve_cwd(ws, Some("sub/../../../etc")).is_err());
     }

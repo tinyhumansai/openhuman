@@ -4,10 +4,9 @@
 //! from the same channel becomes one [`CanonicalisedSource`]; the chunker
 //! slices it by token budget downstream.
 //!
-//! Output format:
+//! Output format (no leading `# ...` header — that info lives in front-matter
+//! once Phase MD-content lands; the chunker splits at `## ` boundaries):
 //! ```md
-//! # Chat transcript — {platform} / {channel}
-//!
 //! ## 2026-04-21T10:12:00Z — Alice
 //! Message body here.
 //!
@@ -67,10 +66,9 @@ pub fn canonicalise(
     let last_ts = messages.last().map(|m| m.timestamp).unwrap();
 
     let mut md = String::new();
-    md.push_str(&format!(
-        "# Chat transcript — {} / {}\n\n",
-        batch.platform, batch.channel_label
-    ));
+    // No leading `# Chat transcript — ...` header. Platform / channel info
+    // belongs in the MD front-matter (Phase MD-content). The chunker splits
+    // this output at `## ` boundaries so each message becomes one chunk.
     for msg in &messages {
         md.push_str(&format!(
             "## {} — {}\n{}\n\n",
@@ -150,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn includes_header_and_per_message_sections() {
+    fn includes_per_message_sections_without_header() {
         let b = ChatBatch {
             platform: "slack".into(),
             channel_label: "#eng".into(),
@@ -159,10 +157,15 @@ mod tests {
         let out = canonicalise("slack:#eng", "alice", &[], b)
             .unwrap()
             .unwrap();
-        assert!(out
-            .markdown
-            .starts_with("# Chat transcript — slack / #eng\n\n"));
-        assert!(out.markdown.contains("## "));
+        // No leading `# Chat transcript` header — that info belongs in front-matter.
+        assert!(
+            !out.markdown.starts_with("# "),
+            "canonical chat MD must NOT start with a `# ` header"
+        );
+        assert!(
+            out.markdown.starts_with("## "),
+            "must start with first `## ` message block"
+        );
         assert!(out.markdown.contains("— alice"));
         assert!(out.markdown.contains("hello"));
     }

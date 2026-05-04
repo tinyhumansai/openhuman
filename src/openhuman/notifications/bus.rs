@@ -149,11 +149,17 @@ pub fn event_to_notification(event: &DomainEvent) -> Option<CoreNotificationEven
                 id: format!("notification-triaged:{}:{}:{}", id, action, latency_ms),
                 category: CoreNotificationCategory::Agents,
                 title: format!("High-priority {} notification", provider),
-                body: format!(
-                    "Action: {} (score: {:.0}%). Routed to orchestrator.",
-                    action,
-                    importance_score * 100.0
-                ),
+                body: if action == "escalate" {
+                    format!(
+                        "Action: escalate (score: {:.0}%). Routed to orchestrator.",
+                        importance_score * 100.0
+                    )
+                } else {
+                    format!(
+                        "Action: react (score: {:.0}%). Routed for follow-up.",
+                        importance_score * 100.0
+                    )
+                },
                 deep_link: Some("/notifications".into()),
                 timestamp_ms: ts,
             })
@@ -314,6 +320,21 @@ mod tests {
         assert_eq!(n.category, CoreNotificationCategory::Agents);
         assert!(n.body.contains("escalate"));
         assert!(n.deep_link.as_deref() == Some("/notifications"));
+    }
+
+    #[test]
+    fn notification_triaged_react_uses_follow_up_copy() {
+        let ev = DomainEvent::NotificationTriaged {
+            id: "n2".into(),
+            provider: "discord".into(),
+            action: "react".into(),
+            importance_score: 0.7,
+            latency_ms: 120,
+            routed: true,
+        };
+        let n = event_to_notification(&ev).expect("should produce notification");
+        assert_eq!(n.category, CoreNotificationCategory::Agents);
+        assert!(n.body.contains("Routed for follow-up"));
     }
 
     #[test]

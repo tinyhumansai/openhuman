@@ -11,13 +11,13 @@ describe('WhatLeavesMyComputerSheet', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('lists all five honest leave items when open', () => {
+  it('lists all configured honest leave items when open', () => {
     render(<WhatLeavesMyComputerSheet open={true} onClose={() => {}} />);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     for (const item of WHAT_LEAVES_ITEMS) {
       expect(screen.getByText(item.title)).toBeInTheDocument();
     }
-    expect(WHAT_LEAVES_ITEMS).toHaveLength(5);
+    expect(WHAT_LEAVES_ITEMS).toHaveLength(3);
   });
 
   it('calls onClose when Got it is clicked', () => {

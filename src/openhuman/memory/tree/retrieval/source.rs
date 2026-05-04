@@ -21,12 +21,13 @@ use anyhow::Result;
 use chrono::{Duration, Utc};
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::read as content_read;
 use crate::openhuman::memory::tree::retrieval::types::{
     hit_from_summary, QueryResponse, RetrievalHit,
 };
 use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, cosine_similarity};
-use crate::openhuman::memory::tree::source_tree::store;
-use crate::openhuman::memory::tree::source_tree::types::{SummaryNode, Tree, TreeKind};
+use crate::openhuman::memory::tree::tree_source::store;
+use crate::openhuman::memory::tree::tree_source::types::{SummaryNode, Tree, TreeKind};
 use crate::openhuman::memory::tree::types::SourceKind;
 
 const DEFAULT_LIMIT: usize = 10;
@@ -124,7 +125,19 @@ fn collect_hits_and_nodes(
         // finest-grained summary layer above raw leaves.
         for level in 1..=tree.max_level {
             let level_nodes = store::list_summaries_at_level(config, &tree.id, level)?;
-            for node in level_nodes {
+            for mut node in level_nodes {
+                // Hydrate the full body from disk — `node.content` is a
+                // ≤500-char preview after the MD-on-disk migration. Callers
+                // (including the LLM) must receive the complete summary text.
+                // Non-fatal fallback for pre-MD-migration rows.
+                match content_read::read_summary_body(config, &node.id) {
+                    Ok(body) => node.content = body,
+                    Err(e) => {
+                        log::warn!(
+                            "[retrieval::source] read_summary_body failed — serving preview: {e:#}"
+                        );
+                    }
+                }
                 hits.push(hit_from_summary(&node, &tree.scope));
                 nodes.push((node, tree.scope.clone()));
             }
@@ -293,10 +306,13 @@ fn filter_by_window(hits: Vec<RetrievalHit>, window_days: u32) -> Vec<RetrievalH
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{append_leaf, LeafRef};
-    use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
-    use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
+    use crate::openhuman::memory::tree::content_store;
     use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::tree_source::bucket_seal::{
+        append_leaf, LabelStrategy, LeafRef,
+    };
+    use crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::{DateTime, TimeZone};
     use tempfile::TempDir;
@@ -315,9 +331,11 @@ mod tests {
     async fn seed_source(cfg: &Config, scope: &str, ts: DateTime<Utc>) {
         let tree = get_or_create_source_tree(cfg, scope).unwrap();
         let summariser = InertSummariser::new();
+        let content_root = cfg.memory_tree_content_root();
+        std::fs::create_dir_all(&content_root).unwrap();
         for seq in 0..2u32 {
             let c = Chunk {
-                id: chunk_id(SourceKind::Chat, scope, seq),
+                id: chunk_id(SourceKind::Chat, scope, seq, "test-content"),
                 content: format!("payload-{scope}-{seq}"),
                 metadata: Metadata {
                     source_kind: SourceKind::Chat,
@@ -328,17 +346,32 @@ mod tests {
                     tags: vec!["eng".into()],
                     source_ref: Some(SourceRef::new(format!("slack://{scope}/{seq}"))),
                 },
-                token_count: 6_000,
+                token_count: crate::openhuman::memory::tree::tree_source::types::TOKEN_BUDGET * 6
+                    / 10,
                 seq_in_source: seq,
                 created_at: ts,
+                partial_message: false,
             };
             upsert_chunks(cfg, &[c.clone()]).unwrap();
+            // Stage to disk so `hydrate_leaf_inputs` can read the full body
+            // via `read_chunk_body` during the seal triggered by `append_leaf`,
+            // and `collect_hits_and_nodes` can read summary bodies for the API.
+            let staged = content_store::stage_chunks(&content_root, &[c.clone()]).unwrap();
+            crate::openhuman::memory::tree::store::with_connection(cfg, |conn| {
+                let tx = conn.unchecked_transaction()?;
+                crate::openhuman::memory::tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+                tx.commit()?;
+                Ok(())
+            })
+            .unwrap();
             append_leaf(
                 cfg,
                 &tree,
                 &LeafRef {
                     chunk_id: c.id.clone(),
-                    token_count: 6_000,
+                    token_count: crate::openhuman::memory::tree::tree_source::types::TOKEN_BUDGET
+                        * 6
+                        / 10,
                     timestamp: ts,
                     content: c.content.clone(),
                     entities: vec![],
@@ -346,6 +379,7 @@ mod tests {
                     score: 0.5,
                 },
                 &summariser,
+                &LabelStrategy::Empty,
             )
             .await
             .unwrap();
@@ -493,7 +527,7 @@ mod tests {
     #[tokio::test]
     async fn query_reranks_by_cosine_similarity() {
         use crate::openhuman::memory::tree::score::embed::{pack_embedding, EMBEDDING_DIM};
-        use crate::openhuman::memory::tree::source_tree::store as src_store;
+        use crate::openhuman::memory::tree::tree_source::store as src_store;
 
         let (_tmp, cfg) = test_config();
         let ts = Utc::now();
@@ -516,14 +550,14 @@ mod tests {
         use crate::openhuman::memory::tree::store::with_connection;
         let phoenix_tree = src_store::get_tree_by_scope(
             &cfg,
-            crate::openhuman::memory::tree::source_tree::types::TreeKind::Source,
+            crate::openhuman::memory::tree::tree_source::types::TreeKind::Source,
             "slack:#phoenix",
         )
         .unwrap()
         .unwrap();
         let unrelated_tree = src_store::get_tree_by_scope(
             &cfg,
-            crate::openhuman::memory::tree::source_tree::types::TreeKind::Source,
+            crate::openhuman::memory::tree::tree_source::types::TreeKind::Source,
             "slack:#unrelated",
         )
         .unwrap()
@@ -595,8 +629,8 @@ mod tests {
     #[tokio::test]
     async fn legacy_null_embedding_rows_sort_last() {
         use crate::openhuman::memory::tree::score::embed::{pack_embedding, EMBEDDING_DIM};
-        use crate::openhuman::memory::tree::source_tree::store as src_store;
-        use crate::openhuman::memory::tree::source_tree::types::TreeKind;
+        use crate::openhuman::memory::tree::tree_source::store as src_store;
+        use crate::openhuman::memory::tree::tree_source::types::TreeKind;
 
         let (_tmp, cfg) = test_config();
         let ts = Utc::now();
