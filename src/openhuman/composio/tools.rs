@@ -468,8 +468,9 @@ impl Tool for ComposioListToolsTool {
          `include_unconnected=true` to see every allowlisted toolkit's actions \
          (useful when planning whether to call `composio_authorize` for a new toolkit). \
          Pass an optional `toolkits` array to further filter (e.g. [\"gmail\"]). The \
-         result is a JSON array of OpenAI function-calling tool schemas; use the slug \
-         from `function.name` as the `tool` argument when calling `composio_execute`."
+         result is a JSON object with a `tools` array of OpenAI function-calling \
+         tool schemas; use the slug from each entry's `function.name` as the `tool` \
+         argument when calling `composio_execute`."
     }
     fn parameters_schema(&self) -> Value {
         json!({

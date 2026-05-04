@@ -178,23 +178,30 @@ async fn run_typed_mode(
         } else {
             match crate::openhuman::config::Config::load_or_init().await {
                 Ok(config) => {
+                    // `fetch_connected_integrations` is best-effort and
+                    // returns `Vec` rather than `Result`. An empty Vec
+                    // here is authoritative — it means "the user has no
+                    // ACTIVE composio connections right now" — so we
+                    // adopt it as truth, including the case where the
+                    // user just disconnected their last integration
+                    // mid-thread. Falling back to the frozen parent
+                    // list here would silently re-introduce a toolkit
+                    // the user has revoked.
                     let fresh =
                         crate::openhuman::composio::fetch_connected_integrations(&config).await;
-                    if fresh.is_empty() {
-                        tracing::debug!(
-                            "[subagent_runner] live integrations fetch returned empty — using parent's frozen list"
-                        );
-                        parent.connected_integrations.clone()
-                    } else {
-                        tracing::debug!(
-                            count = fresh.len(),
-                            parent_count = parent.connected_integrations.len(),
-                            "[subagent_runner] refreshed connected_integrations at spawn time"
-                        );
-                        fresh
-                    }
+                    tracing::debug!(
+                        count = fresh.len(),
+                        parent_count = parent.connected_integrations.len(),
+                        "[subagent_runner] refreshed connected_integrations at spawn time"
+                    );
+                    fresh
                 }
                 Err(e) => {
+                    // Real failure — config couldn't be read, so the
+                    // backend client can't be built either. Use the
+                    // parent's frozen list as a best-effort fallback so
+                    // the spawn can still proceed for sessions that
+                    // were established when config was healthy.
                     tracing::debug!(
                         error = %e,
                         "[subagent_runner] config load failed; falling back to parent's frozen integrations list"
