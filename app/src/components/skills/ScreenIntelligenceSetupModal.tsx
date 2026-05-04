@@ -170,6 +170,7 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
             </div>
             <button
               type="button"
+              aria-label="Close"
               onClick={onClose}
               className="w-7 h-7 rounded-lg flex items-center justify-center text-stone-400 hover:text-stone-600 hover:bg-stone-100 transition-colors">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
