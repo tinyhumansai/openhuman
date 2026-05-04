@@ -63,16 +63,19 @@ impl OllamaEmbedder {
             timeout_ms
         };
         let timeout = Duration::from_millis(timeout_ms);
+        // No body-read timeout. Ollama is local — slow responses mean
+        // the model is genuinely processing, not that the network
+        // broke. A body-read timeout here would cancel mid-stream and
+        // force retries against the same slow model. `timeout` is
+        // repurposed as the TCP connect timeout (fast-fail when
+        // Ollama is actually down).
         let client = reqwest::Client::builder()
-            .timeout(timeout)
+            .connect_timeout(timeout)
             .build()
-            // Falling back to the default client keeps `new` infallible;
-            // timeouts will apply per-request via explicit `.timeout()`
-            // calls below.
             .unwrap_or_else(|e| {
                 log::warn!(
                     "[memory_tree::embed::ollama] failed to build client \
-                     with timeout — using default: {e}"
+                     with connect_timeout — using default: {e}"
                 );
                 reqwest::Client::new()
             });
@@ -130,9 +133,11 @@ impl Embedder for OllamaEmbedder {
         };
         let resp = self
             .client
+            // No per-request body-read timeout — see `OllamaEmbedder::new`
+            // for rationale. The Client's `connect_timeout` still applies
+            // and fails fast if Ollama isn't reachable.
             .post(self.embed_url())
             .json(&req)
-            .timeout(self.timeout)
             .send()
             .await
             .with_context(|| {

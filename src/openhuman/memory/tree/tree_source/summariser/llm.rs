@@ -115,8 +115,14 @@ impl LlmSummariser {
     /// Build a summariser around `cfg`. Returns an error only if the HTTP
     /// client fails to construct (timeout / TLS init).
     pub fn new(cfg: LlmSummariserConfig) -> Result<Self> {
+        // No body-read timeout. Ollama is local — slow responses mean
+        // the model is genuinely processing, not that the network
+        // broke. A body-read timeout here would cancel mid-stream and
+        // force retries against the same slow model. `cfg.timeout` is
+        // repurposed as the TCP connect timeout (fast-fail when
+        // Ollama is actually down).
         let http = Client::builder()
-            .timeout(cfg.timeout)
+            .connect_timeout(cfg.timeout)
             .build()
             .map_err(anyhow::Error::from)?;
         Ok(Self {
