@@ -34,8 +34,8 @@ use compatible_parse::{
 use compatible_stream::sse_bytes_to_chunks;
 use compatible_types::{
     ApiChatRequest, ApiChatResponse, ApiUsage, Choice, Function, Message, NativeChatRequest,
-    NativeMessage, OpenHumanMeta, ResponseMessage, ResponsesRequest, StreamChunkResponse,
-    OpenAiStreamOptions, StreamingToolCall, ToolCall,
+    NativeMessage, OpenAiStreamOptions, OpenHumanMeta, ResponseMessage, ResponsesRequest,
+    StreamChunkResponse, StreamingToolCall, ToolCall,
 };
 
 /// A provider that speaks the OpenAI-compatible chat completions API.
