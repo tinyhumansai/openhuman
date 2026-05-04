@@ -1,3 +1,4 @@
+pub mod ingest;
 mod post_process;
 mod provider;
 mod sync;

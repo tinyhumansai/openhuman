@@ -104,6 +104,64 @@ impl ScoringConfig {
             definite_drop_threshold: DEFAULT_DEFINITE_DROP,
         }
     }
+
+    /// Build a [`ScoringConfig`] from the workspace [`Config`]. When
+    /// `memory_tree.llm_extractor_endpoint` and `llm_extractor_model`
+    /// are both set, wires [`extract::LlmEntityExtractor`] as the
+    /// second-pass extractor. Otherwise falls back to
+    /// [`Self::default_regex_only`]. Construction errors in the LLM
+    /// extractor (rare — only client-builder failures) also fall back
+    /// to regex-only with a warn log; scoring never blocks on LLM
+    /// availability.
+    pub fn from_config(config: &crate::openhuman::config::Config) -> Self {
+        let endpoint = config
+            .memory_tree
+            .llm_extractor_endpoint
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let model = config
+            .memory_tree
+            .llm_extractor_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        let (Some(endpoint), Some(model)) = (endpoint, model) else {
+            log::debug!("[memory_tree::score] llm_extractor not configured — using regex-only");
+            return Self::default_regex_only();
+        };
+
+        let timeout_ms = config
+            .memory_tree
+            .llm_extractor_timeout_ms
+            .unwrap_or(15_000);
+
+        let cfg = extract::LlmExtractorConfig {
+            endpoint: endpoint.to_string(),
+            model: model.to_string(),
+            timeout: std::time::Duration::from_millis(timeout_ms),
+            ..extract::LlmExtractorConfig::default()
+        };
+        match extract::LlmEntityExtractor::new(cfg) {
+            Ok(llm) => {
+                log::info!(
+                    "[memory_tree::score] using LlmEntityExtractor endpoint={} model={} timeout_ms={}",
+                    endpoint,
+                    model,
+                    timeout_ms
+                );
+                Self::with_llm_extractor(Arc::new(llm))
+            }
+            Err(err) => {
+                log::warn!(
+                    "[memory_tree::score] LlmEntityExtractor construction failed: {err:#} — \
+                     falling back to regex-only"
+                );
+                Self::default_regex_only()
+            }
+        }
+    }
 }
 
 /// Compute the score for one chunk.
@@ -276,6 +334,22 @@ fn scoring_content_for_chunk(chunk: &Chunk) -> String {
 /// a real bug, not a per-chunk issue to tolerate silently.
 pub async fn score_chunks(chunks: &[Chunk], cfg: &ScoringConfig) -> Result<Vec<ScoreResult>> {
     try_join_all(chunks.iter().map(|chunk| score_chunk(chunk, cfg))).await
+}
+
+/// Cheap-only batch scoring path used by the async queue ingest pipeline.
+///
+/// This preserves the same thresholds and admission gate as [`score_chunks`]
+/// but guarantees no LLM extractor is consulted on the ingest hot path.
+pub async fn score_chunks_fast(chunks: &[Chunk], cfg: &ScoringConfig) -> Result<Vec<ScoreResult>> {
+    let fast_cfg = ScoringConfig {
+        extractor: cfg.extractor.clone(),
+        weights: cfg.weights.clone(),
+        drop_threshold: cfg.drop_threshold,
+        llm_extractor: None,
+        definite_keep_threshold: cfg.definite_keep_threshold,
+        definite_drop_threshold: cfg.definite_drop_threshold,
+    };
+    score_chunks(chunks, &fast_cfg).await
 }
 
 // ── Persistence helpers used by the ingest orchestrator ─────────────────

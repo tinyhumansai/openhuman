@@ -15,7 +15,9 @@
 //! Emits `webview:event` ingest events (for any listening React UI) AND
 //! POSTs `openhuman.memory_doc_ingest` directly to the core so memory is
 //! populated whether or not the main window is open. Messages are grouped
-//! by (channel_id, day) so each day's transcript upserts a single doc.
+//! by `channel_id` (one doc per channel; the transcript carries each
+//! message's date inline so chronology stays readable). Per-day grouping
+//! was specified for #1016 but is deferred — see #1016 follow-ups.
 //!
 //! Only built with the `cef` feature — wry has no remote-debugging port.
 
@@ -65,8 +67,15 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
         // otherwise we'd race an empty store on cold start.
         sleep(Duration::from_secs(10)).await;
 
+        // Account-stable target identifier discovered on the first tick
+        // where the strict `#openhuman-account-<id>` fragment is still
+        // present. Once set, subsequent ticks resolve the page target
+        // by this id first so the relaxed same-origin fallback can
+        // never bind us to a sibling Slack account's page in a
+        // multi-account session (CodeRabbit #3162652711).
+        let mut pinned_target_id: Option<String> = None;
         loop {
-            match scan_once(&account_id, &url_prefix, &fragment).await {
+            match scan_once(&account_id, &url_prefix, &fragment, &mut pinned_target_id).await {
                 Ok(dump) => {
                     let team_id = infer_team_id(&dump);
                     let (messages, users, channels, workspace_name) = extract::harvest(&dump);
@@ -101,22 +110,67 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
 }
 
 /// Single scan cycle: open CDP, attach to the Slack page, walk IDB, detach.
+///
+/// `pinned_target_id` lets the caller persist the CDP `targetId` from the
+/// first strict-fragment match across subsequent ticks. Once set, this
+/// function resolves by id first so multi-account Slack sessions can't
+/// accidentally cross-wire scanner A onto scanner B's page target after
+/// Slack's router strips the `#openhuman-account-<id>` fragment.
 async fn scan_once(
     account_id: &str,
     url_prefix: &str,
     url_fragment: &str,
+    pinned_target_id: &mut Option<String>,
 ) -> Result<idb::IdbDump, String> {
     let browser_ws = browser_ws_url().await?;
     let mut cdp = CdpConn::open(&browser_ws).await?;
 
     let targets_v = cdp.call("Target.getTargets", json!({}), None).await?;
     let targets = parse_targets(&targets_v);
-    let page_target = targets
-        .iter()
-        .find(|t| {
-            t.kind == "page" && t.url.starts_with(url_prefix) && t.url.ends_with(url_fragment)
+    // Slack's client-side router does pushState to `/client/<workspace>/<channel>`
+    // shortly after first load, which strips the `#openhuman-account-<id>` fragment.
+    // The fragment is only reliable on the FIRST scan tick (immediately after
+    // navigation) — by tick 2 it's gone.
+    //
+    // Resolution order:
+    //   1. If we previously locked onto a `targetId` via a strict fragment
+    //      match, prefer that exact id. This pins the scanner to the same
+    //      account-tab even after the fragment is gone.
+    //   2. Strict fragment match (`url_prefix` + `#openhuman-account-<id>`).
+    //      On hit, persist the `targetId` for future ticks.
+    //   3. Relaxed prefix-only match. Per-account `data_directory`
+    //      isolation makes this safe in single-account setups, but in a
+    //      multi-account Slack session it can bind to a sibling account's
+    //      tab — only used as a last resort and never persisted.
+    let page_target = pinned_target_id
+        .as_ref()
+        .and_then(|pid| targets.iter().find(|t| &t.id == pid && t.kind == "page"))
+        .or_else(|| {
+            targets.iter().find(|t| {
+                t.kind == "page" && t.url.starts_with(url_prefix) && t.url.ends_with(url_fragment)
+            })
+        })
+        .or_else(|| {
+            targets
+                .iter()
+                .find(|t| t.kind == "page" && t.url.starts_with(url_prefix))
         })
         .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
+
+    // Persist the target id only when the strict fragment is still present
+    // — that's the only signal that proves this target really belongs to
+    // *this* account. Relaxed matches must never feed back into the pin.
+    if pinned_target_id.is_none()
+        && page_target.url.starts_with(url_prefix)
+        && page_target.url.ends_with(url_fragment)
+    {
+        log::info!(
+            "[sl][{}] pinned to target_id={} (strict fragment match)",
+            account_id,
+            page_target.id
+        );
+        *pinned_target_id = Some(page_target.id.clone());
+    }
 
     let attach = cdp
         .call(
@@ -479,14 +533,14 @@ async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), 
         "params": params,
     });
 
-    let url = std::env::var("OPENHUMAN_CORE_RPC_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".to_string());
+    let url = crate::core_rpc::core_rpc_url_value();
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| format!("http client: {e}"))?;
-    let resp = client
-        .post(&url)
+    let req = crate::core_rpc::apply_auth(client.post(&url))
+        .map_err(|e| format!("prepare {url}: {e}"))?;
+    let resp = req
         .json(&body)
         .send()
         .await
@@ -656,8 +710,11 @@ fn spawn_dom_poll<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix:
         sleep(Duration::from_secs(8)).await;
         let mut last_hash: Option<u64> = None;
         let mut last_unread_by_channel: Option<HashMap<String, u32>> = None;
+        // Same pin-on-strict-match contract as the IDB scanner — see
+        // `scan_once` for rationale.
+        let mut pinned_target_id: Option<String> = None;
         loop {
-            match dom_scan_once(&url_prefix, &fragment).await {
+            match dom_scan_once(&account_id, &url_prefix, &fragment, &mut pinned_target_id).await {
                 Ok(scan) => {
                     let current_unread_by_channel: HashMap<String, u32> = scan
                         .rows
@@ -721,15 +778,91 @@ fn spawn_dom_poll<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix:
 }
 
 async fn dom_scan_once(
+    account_id: &str,
     url_prefix: &str,
     url_fragment: &str,
+    pinned_target_id: &mut Option<String>,
 ) -> Result<dom_snapshot::DomScan, String> {
-    let prefix = url_prefix.to_string();
-    let fragment = url_fragment.to_string();
-    let (mut cdp, session) = crate::cdp::connect_and_attach_matching(move |t| {
-        t.url.starts_with(&prefix) && t.url.ends_with(&fragment)
-    })
-    .await?;
+    // Same pin-on-strict-match contract as `scan_once`. Resolution
+    // order: pinned id → strict fragment → relaxed `/client` fallback.
+    // Pin is only persisted when the strict fragment is still present
+    // so a relaxed match can never feed back into the lock.
+    //
+    // We drive CDP via the canonical `crate::cdp::connect_and_attach_matching`
+    // helper so this stays consistent with the IDB scan path. The
+    // pin/strict/relaxed choice is decided up-front by reading
+    // `Target.getTargets` ourselves; the predicate then fixes that target.
+    use crate::cdp::CdpConn as CanonicalCdpConn;
+
+    let browser_ws = crate::cdp::browser_ws_url().await?;
+    let mut probe = CanonicalCdpConn::open(&browser_ws).await?;
+    let targets_v = probe
+        .call("Target.getTargets", serde_json::json!({}), None)
+        .await?;
+    drop(probe);
+
+    let target_infos = targets_v
+        .get("targetInfos")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    // Reduce to (id, kind, url) tuples so the pin-resolution logic
+    // mirrors `scan_once` line-for-line.
+    let candidates: Vec<(String, String, String)> = target_infos
+        .iter()
+        .filter_map(|t| {
+            Some((
+                t.get("targetId")?.as_str()?.to_string(),
+                t.get("type")?.as_str()?.to_string(),
+                t.get("url")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            ))
+        })
+        .collect();
+
+    let chosen = pinned_target_id
+        .as_ref()
+        .and_then(|pid| {
+            candidates
+                .iter()
+                .find(|(id, kind, _)| id == pid && kind == "page")
+        })
+        .or_else(|| {
+            candidates.iter().find(|(_, kind, url)| {
+                kind == "page" && url.starts_with(url_prefix) && url.ends_with(url_fragment)
+            })
+        })
+        .or_else(|| {
+            // Slack's router strips the fragment after `pushState` to
+            // `/client/...`. Restrict the relaxed fallback to the
+            // `/client` path so we never pick up the marketing page or
+            // a login redirect for a sibling account.
+            candidates.iter().find(|(_, kind, url)| {
+                kind == "page" && url.starts_with(url_prefix) && url.contains("/client")
+            })
+        })
+        .cloned()
+        .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
+
+    let (chosen_id, _, chosen_url) = chosen;
+
+    if pinned_target_id.is_none()
+        && chosen_url.starts_with(url_prefix)
+        && chosen_url.ends_with(url_fragment)
+    {
+        log::info!(
+            "[sl][{}] dom pinned to target_id={} (strict fragment match)",
+            account_id,
+            chosen_id
+        );
+        *pinned_target_id = Some(chosen_id.clone());
+    }
+
+    let chosen_id_for_pred = chosen_id.clone();
+    let (mut cdp, session) =
+        crate::cdp::connect_and_attach_matching(move |t| t.id == chosen_id_for_pred).await?;
     let scan = dom_snapshot::scan(&mut cdp, &session).await;
     crate::cdp::detach_session(&mut cdp, &session).await;
     scan

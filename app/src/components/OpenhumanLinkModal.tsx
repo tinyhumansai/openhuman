@@ -13,11 +13,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
-import { showNativeNotification } from '../lib/nativeNotifications/tauriBridge';
-import { purgeWebviewAccount } from '../services/webviewAccountService';
+import {
+  ensureNotificationPermission,
+  getNotificationPermissionState,
+  type NotificationPermissionState,
+  showNativeNotification,
+} from '../lib/nativeNotifications/tauriBridge';
+import { isTauri, purgeWebviewAccount } from '../services/webviewAccountService';
 import { addAccount, removeAccount } from '../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { type Account, type AccountProvider, PROVIDERS } from '../types/accounts';
+import { BILLING_DASHBOARD_URL } from '../utils/links';
 import { openUrl } from '../utils/openUrl';
 import { ProviderIcon } from './accounts/providerIcons';
 import ChannelSetupModal from './channels/ChannelSetupModal';
@@ -182,19 +188,59 @@ function renderBody(path: string, close: () => void) {
 const NotificationsBody = ({ close }: { close: () => void }) => {
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [permissionState, setPermissionState] = useState<NotificationPermissionState>('unknown');
+
+  useEffect(() => {
+    let mounted = true;
+    void getNotificationPermissionState({ requestIfNeeded: false }).then(next => {
+      if (!mounted) return;
+      setPermissionState(next);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleAllow = async () => {
+    if (status === 'sending') {
+      return;
+    }
+
     setStatus('sending');
     setError(null);
     try {
-      // First send triggers the OS permission prompt on macOS / Windows.
-      // Once granted the notification appears and subsequent calls
-      // succeed silently.
-      await showNativeNotification({
+      if (!isTauri()) {
+        setStatus('error');
+        setError(
+          'Native notifications are only available in the desktop app (run `pnpm dev:app`).'
+        );
+        return;
+      }
+
+      const granted = await ensureNotificationPermission();
+      if (!granted) {
+        const nextState = await getNotificationPermissionState({ requestIfNeeded: false });
+        setPermissionState(nextState);
+        setStatus('error');
+        setError(
+          'Notification permission is off. Enable OpenHuman in System Settings → Notifications, then retry.'
+        );
+        return;
+      }
+      const sendResult = await showNativeNotification({
         title: 'OpenHuman is good to go',
         body: 'You will get pings here when something needs your attention.',
         tag: 'welcome-notification-test',
       });
+      if (!sendResult.delivered) {
+        setStatus('error');
+        setError(
+          sendResult.error ??
+            'OpenHuman could not trigger a system notification. Check OS notification settings and retry.'
+        );
+        return;
+      }
+      setPermissionState('granted');
       setStatus('sent');
     } catch (e) {
       setStatus('error');
@@ -206,20 +252,39 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
     <div className="space-y-4 text-sm text-stone-700">
       <p>
         OpenHuman uses native notifications so it can ping you when something needs your attention,
-        even when the chat window is hidden. Click below to send a test, your OS will ask for
-        permission the first time.
+        even when the chat window is hidden.
       </p>
+      {permissionState === 'denied' && (
+        <div className="rounded-xl border border-coral-200 bg-coral-50 p-3 text-xs text-coral-700">
+          Notifications are currently blocked.
+          <br />
+          1. Open System Settings → Notifications → OpenHuman
+          <br />
+          2. Turn on Allow Notifications
+          <br />
+          3. Return here and tap Retry test notification
+        </div>
+      )}
+      {(permissionState === 'prompt' || permissionState === 'unknown') && (
+        <div className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs text-stone-700">
+          First step: tap Send test notification and allow permission in the macOS prompt.
+        </div>
+      )}
       <button
         type="button"
         onClick={() => void handleAllow()}
         disabled={status === 'sending'}
         className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60">
-        {status === 'sending' ? 'Asking your OS…' : 'Send test notification'}
+        {status === 'sending'
+          ? 'Asking your OS…'
+          : status === 'error'
+            ? 'Retry test notification'
+            : 'Send test notification'}
       </button>
       {status === 'sent' && (
         <p className="text-xs text-sage-700">
-          Sent. If you saw a pop-up in the corner, you're all set. If your OS asked for permission,
-          allow it and then tell the agent it's done.
+          Test notification sent. If you didn’t receive it, go to System Settings → Notifications →
+          OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.
         </p>
       )}
       {status === 'error' && <p className="text-xs text-coral-600">Couldn't send: {error}</p>}
@@ -243,7 +308,7 @@ const BillingBody = ({ close }: { close: () => void }) => {
       <button
         type="button"
         onClick={() => {
-          void openUrl('https://tinyhumans.ai/dashboard').catch(() => {});
+          void openUrl(BILLING_DASHBOARD_URL).catch(() => {});
         }}
         className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
         Open dashboard in browser

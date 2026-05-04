@@ -1,4 +1,5 @@
 use super::*;
+use crate::openhuman::cron::ActiveHours;
 use tempfile::TempDir;
 
 fn test_config(tmp: &TempDir) -> Config {
@@ -18,6 +19,7 @@ fn make_job(config: &Config, expr: &str, tz: Option<&str>, cmd: &str) -> CronJob
         Schedule::Cron {
             expr: expr.into(),
             tz: tz.map(Into::into),
+            active_hours: None,
         },
         cmd,
     )
@@ -102,6 +104,7 @@ fn update_tz_alone_sets_timezone() {
         Schedule::Cron {
             expr: "*/5 * * * *".into(),
             tz: Some("America/Los_Angeles".into()),
+            active_hours: None,
         }
     );
 }
@@ -120,6 +123,48 @@ fn update_expr_alone_preserves_timezone() {
         Schedule::Cron {
             expr: "0 10 * * *".into(),
             tz: Some("UTC".into()),
+            active_hours: None,
+        }
+    );
+}
+
+#[test]
+fn update_expr_and_tz_preserve_active_hours() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let active_hours = ActiveHours {
+        start: "09:00".into(),
+        end: "17:00".into(),
+    };
+    let job = add_shell_job(
+        &config,
+        None,
+        Schedule::Cron {
+            expr: "*/5 * * * *".into(),
+            tz: Some("UTC".into()),
+            active_hours: Some(active_hours.clone()),
+        },
+        "echo test",
+    )
+    .unwrap();
+
+    run_update(
+        &config,
+        &job.id,
+        Some("0 10 * * *"),
+        Some("America/Los_Angeles"),
+        None,
+        None,
+    )
+    .unwrap();
+
+    let updated = get_job(&config, &job.id).unwrap();
+    assert_eq!(
+        updated.schedule,
+        Schedule::Cron {
+            expr: "0 10 * * *".into(),
+            tz: Some("America/Los_Angeles".into()),
+            active_hours: Some(active_hours),
         }
     );
 }

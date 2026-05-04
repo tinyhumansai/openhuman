@@ -44,6 +44,7 @@ fn has_listening_integrations_detects_telegram() {
         allowed_users: vec![],
         stream_mode: StreamMode::Off,
         draft_update_interval_ms: 1000,
+        silent_streaming: true,
         mention_only: false,
     });
     assert!(cfg.has_listening_integrations());

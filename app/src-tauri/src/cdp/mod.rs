@@ -1,22 +1,17 @@
 //! Shared Chrome DevTools Protocol client for the CEF-backed scanners.
 //!
-//! Consolidates the CdpConn / target-discovery / UA-override plumbing that
-//! used to be copy-pasted across `discord_scanner`, `whatsapp_scanner`,
+//! Consolidates the CdpConn / target-discovery / notification-shim plumbing
+//! that used to be copy-pasted across `discord_scanner`, `whatsapp_scanner`,
 //! `slack_scanner`, and `telegram_scanner`. Scanners now call helpers here
 //! instead of maintaining their own WebSocket dispatch.
-//!
-//! All CDP work is CEF-only — wry has no remote-debugging port. This module
-//! is only compiled under `feature = "cef"` (see `lib.rs`).
 
 pub mod conn;
-pub mod emulation;
 pub mod input;
 pub mod session;
 pub mod snapshot;
 pub mod target;
 
 pub use conn::CdpConn;
-pub use emulation::{set_user_agent_override, UaSpec};
 pub use session::{
     placeholder_marker, placeholder_url, spawn_session, target_url_fragment, SpawnedSession,
 };

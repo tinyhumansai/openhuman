@@ -22,20 +22,21 @@ concurrency:
 jobs:
   unit-tests:
     name: Frontend Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - name: Cache pnpm store
+        uses: actions/cache@v4
         with:
-          cache: true
-      - name: Setup Node.js 24.x
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.x
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run tests with coverage
@@ -77,9 +78,6 @@ jobs:
           workspaces: . -> target
           cache-on-failure: true
           key: core
-
-      - name: Install system dependencies (cmake, ALSA, X11)
-        run: apt-get update && apt-get install -y --no-install-recommends cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev && rm -rf /var/lib/apt/lists/*
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -124,19 +122,11 @@ jobs:
           key: cef-ubuntu-22.04-${{ hashFiles('app/src-tauri/Cargo.toml') }}
           restore-keys: |
             cef-ubuntu-22.04-
-      - name: Install system dependencies (cmake, ALSA, X11)
-        run: apt-get update && apt-get install -y --no-install-recommends cmake libasound2-dev
-          libxdo-dev libxtst-dev libx11-dev libevdev-dev && rm -rf /var/lib/apt/lists/*
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
-      - name: Build sidecar core binary
-        run: cargo build --profile ci --target x86_64-unknown-linux-gnu --bin openhuman-core
-      - name: Stage sidecar for Tauri shell tests
-        run: |
-          mkdir -p app/src-tauri/binaries
-          cp target/x86_64-unknown-linux-gnu/ci/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
-          chmod +x app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
+      # Core is linked into the Tauri binary as a path dep, so the shell's
+      # cargo test pulls it in automatically — no separate sidecar build.
       - name: Test Tauri shell (OpenHuman)
         run: cargo test --manifest-path app/src-tauri/Cargo.toml
 

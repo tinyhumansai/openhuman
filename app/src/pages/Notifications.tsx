@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import NotificationCenter from '../components/notifications/NotificationCenter';
+import { resolveSystemRoute } from '../lib/notificationRouter';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
   clearAll,
@@ -38,18 +39,22 @@ const Notifications = () => {
 
   const handleClick = (item: NotificationItem) => {
     if (!item.read) dispatch(markRead({ id: item.id }));
-    if (item.deepLink) navigate(item.deepLink);
+    navigate(resolveSystemRoute(item));
   };
 
   return (
     <div className="p-4 pt-6 space-y-4">
       {/* Integration notifications — from connected accounts, scored by local AI */}
-      <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden min-h-[200px]">
+      <div
+        data-testid="integration-notifications-section"
+        className="max-w-2xl mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden min-h-[200px]">
         <NotificationCenter />
       </div>
 
       {/* Core-bridge notifications — system events */}
-      <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
+      <div
+        data-testid="system-events-section"
+        className="max-w-2xl mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
         <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
           <div>
             <h1 className="text-lg font-semibold text-stone-900">System Events</h1>
@@ -80,7 +85,7 @@ const Notifications = () => {
         ) : (
           <ul className="divide-y divide-stone-100">
             {items.map(item => (
-              <li key={item.id}>
+              <li key={item.id} data-testid="notification-item">
                 <button
                   type="button"
                   onClick={() => handleClick(item)}

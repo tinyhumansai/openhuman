@@ -278,6 +278,7 @@ impl ScheduleTool {
                 Schedule::Cron {
                     expr: expr.to_string(),
                     tz: None,
+                    active_hours: None,
                 }
             } else if let Some(delay_str) = delay {
                 let at = Utc::now() + cron::parse_human_delay(delay_str)?;

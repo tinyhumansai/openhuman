@@ -1,11 +1,81 @@
 use super::*;
 
 #[test]
+fn build_system_prompt_default_omits_topics() {
+    let p = build_system_prompt(false);
+    assert!(!p.contains("\"topics\""));
+    assert!(!p.contains("Topics are"));
+    assert!(p.contains("ALL three top-level fields"));
+    assert!(p.contains("entities, importance"));
+}
+
+#[test]
+fn build_system_prompt_with_flag_includes_topics() {
+    let p = build_system_prompt(true);
+    assert!(p.contains("\"topics\""));
+    assert!(p.contains("Topics are short free-form theme labels"));
+    assert!(p.contains("ALL four top-level fields"));
+    assert!(p.contains("entities, topics, importance"));
+}
+
+#[test]
+fn extraction_output_parses_topics_when_present() {
+    let json = r#"{"entities":[],"topics":["rate limiting","memory tree"],"importance":0.6,"importance_reason":"r"}"#;
+    let parsed: LlmExtractionOutput = serde_json::from_str(json).unwrap();
+    assert_eq!(parsed.topics, vec!["rate limiting", "memory tree"]);
+}
+
+#[test]
+fn extraction_output_tolerates_missing_topics() {
+    // Default extractor (emit_topics=false) — model won't emit topics
+    // and parsing must still succeed.
+    let json = r#"{"entities":[],"importance":0.6,"importance_reason":"r"}"#;
+    let parsed: LlmExtractionOutput = serde_json::from_str(json).unwrap();
+    assert!(parsed.topics.is_empty());
+}
+
+#[test]
 fn parse_kind_normalisation() {
     assert_eq!(parse_kind("Person"), Some(EntityKind::Person));
     assert_eq!(parse_kind("organisation"), Some(EntityKind::Organization));
     assert_eq!(parse_kind(" PRODUCT "), Some(EntityKind::Product));
     assert!(parse_kind("Spaceship").is_none());
+}
+
+#[test]
+fn parse_kind_accepts_new_semantic_kinds_and_synonyms() {
+    // Datetime
+    for s in ["datetime", "date", "time", "timestamp", " DateTime "] {
+        assert_eq!(parse_kind(s), Some(EntityKind::Datetime), "input={s:?}");
+    }
+    // Technology
+    for s in [
+        "technology",
+        "tech",
+        "tool",
+        "framework",
+        "library",
+        "language",
+        "service",
+    ] {
+        assert_eq!(parse_kind(s), Some(EntityKind::Technology), "input={s:?}");
+    }
+    // Artifact
+    for s in [
+        "artifact",
+        "reference",
+        "ref",
+        "pr",
+        "ticket",
+        "file",
+        "commit",
+    ] {
+        assert_eq!(parse_kind(s), Some(EntityKind::Artifact), "input={s:?}");
+    }
+    // Quantity
+    for s in ["quantity", "amount", "metric", "number", "money"] {
+        assert_eq!(parse_kind(s), Some(EntityKind::Quantity), "input={s:?}");
+    }
 }
 
 #[test]
@@ -71,6 +141,7 @@ fn into_extracted_entities_gives_distinct_spans_to_duplicate_mentions() {
                 text: "Alice".into(),
             },
         ],
+        topics: vec![],
         importance: None,
         importance_reason: None,
     };
@@ -100,6 +171,7 @@ fn into_extracted_entities_drops_extra_duplicate_when_source_only_has_one() {
                 text: "Alice".into(),
             },
         ],
+        topics: vec![],
         importance: None,
         importance_reason: None,
     };
@@ -138,6 +210,7 @@ fn into_extracted_entities_drops_hallucinations() {
                 text: "ImaginaryPerson".into(),
             },
         ],
+        topics: vec![],
         importance: Some(0.7),
         importance_reason: Some("substantive".into()),
     };
@@ -154,6 +227,7 @@ fn into_extracted_entities_drops_hallucinations() {
 fn into_extracted_entities_clamps_importance() {
     let out = LlmExtractionOutput {
         entities: vec![],
+        topics: vec![],
         importance: Some(1.5),
         importance_reason: None,
     };
@@ -169,6 +243,7 @@ fn into_extracted_entities_strict_drops_unknown_kinds() {
             kind: "spaceship".into(),
             text: "Enterprise".into(),
         }],
+        topics: vec![],
         importance: None,
         importance_reason: None,
     };
@@ -187,6 +262,7 @@ fn into_extracted_entities_lenient_falls_back_to_misc() {
             kind: "spaceship".into(),
             text: "Enterprise".into(),
         }],
+        topics: vec![],
         importance: None,
         importance_reason: None,
     };
@@ -204,6 +280,7 @@ fn into_extracted_entities_disallowed_known_kind_falls_back_to_misc() {
             kind: "person".into(),
             text: "Alice".into(),
         }],
+        topics: vec![],
         importance: None,
         importance_reason: None,
     };

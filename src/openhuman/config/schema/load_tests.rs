@@ -832,21 +832,41 @@ async fn resolve_runtime_config_dirs_with_empty_env_falls_back_to_default() {
 
 #[test]
 fn apply_env_overrides_commits_side_effects_to_runtime_proxy() {
-    use crate::openhuman::config::schema::proxy::runtime_proxy_config;
+    use crate::openhuman::config::schema::proxy::{runtime_proxy_config, set_runtime_proxy_config};
 
-    // Build a config with a proxy URL via the injectable seam.
+    // Hold the env lock so no other test races on proxy-related env vars.
+    let _g = ENV_LOCK.lock().unwrap();
+    clear_env(&[
+        "OPENHUMAN_PROXY_ENABLED",
+        "OPENHUMAN_HTTP_PROXY",
+        "HTTP_PROXY",
+        "OPENHUMAN_HTTPS_PROXY",
+        "HTTPS_PROXY",
+        "OPENHUMAN_ALL_PROXY",
+        "ALL_PROXY",
+    ]);
+
+    // Snapshot the global runtime proxy config so we can restore it afterwards
+    // and avoid leaking state into other tests.
+    let previous_runtime = runtime_proxy_config();
+
+    // Build a config with proxy fields set directly on the struct.
+    // We cannot pre-configure via apply_env_overlay_with + a HashMapEnv and
+    // then call apply_env_overrides(), because apply_env_overrides() internally
+    // re-runs apply_env_overlay_with(&ProcessEnv) which reads the real process
+    // environment — overwriting anything set via a HashMapEnv beforehand.
+    // Setting fields directly ensures they survive the ProcessEnv overlay
+    // (which only writes fields when the corresponding env var is present).
     let mut cfg = Config::default();
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new()
-            .with("OPENHUMAN_HTTP_PROXY", "http://proxy.test:8080")
-            .with("OPENHUMAN_PROXY_ENABLED", "true"),
-    );
+    cfg.proxy.http_proxy = Some("http://proxy.test:8080".to_string());
+    cfg.proxy.enabled = true;
 
-    // Now call the public wrapper which commits side effects.
+    // apply_env_overrides commits side effects: it calls set_runtime_proxy_config
+    // with the current proxy config after the ProcessEnv overlay.
     cfg.apply_env_overrides();
 
     // `set_runtime_proxy_config` must have been called: the global should
-    // reflect the proxy URL we injected.
+    // reflect the proxy URL we set on cfg.proxy.
     let runtime = runtime_proxy_config();
     assert!(
         runtime.enabled,
@@ -855,6 +875,10 @@ fn apply_env_overrides_commits_side_effects_to_runtime_proxy() {
     assert_eq!(
         runtime.http_proxy.as_deref(),
         Some("http://proxy.test:8080"),
-        "runtime proxy URL must match the env-injected value"
+        "runtime proxy URL must match the value set on cfg.proxy"
     );
+
+    // Restore the global runtime proxy state so this test doesn't bleed into
+    // other tests that inspect runtime_proxy_config().
+    set_runtime_proxy_config(previous_runtime);
 }

@@ -71,7 +71,8 @@ pub async fn agent_chat_simple(
     };
 
     let provider = providers::create_routed_provider_with_options(
-        effective.api_url.as_deref(),
+        config.api_url.as_deref(),
+        config.api_key.as_deref(),
         &effective.reliability,
         &effective.model_routes,
         default_model.as_str(),

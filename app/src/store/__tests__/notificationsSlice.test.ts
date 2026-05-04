@@ -4,6 +4,7 @@ import type { IntegrationNotification } from '../../types/notifications';
 import notificationReducer, {
   addIntegrationNotification,
   dismissIntegrationNotification,
+  markIntegrationActed,
   markIntegrationRead,
   setIntegrationNotifications,
 } from '../notificationSlice';
@@ -77,6 +78,41 @@ describe('notificationSlice — integration notifications', () => {
       const state = notificationReducer(loaded, markIntegrationRead('n-1'));
       expect(state.integrationUnreadCount).toBe(0);
       expect(state.integrationItems[0].status).toBe('read');
+    });
+  });
+
+  describe('markIntegrationActed', () => {
+    it('sets status to acted and decrements unread count for an unread notification', () => {
+      const n = makeNotification({ id: 'n-1', status: 'unread' });
+      const loaded = notificationReducer(
+        initialState,
+        setIntegrationNotifications({ items: [n], unread_count: 1 })
+      );
+      const state = notificationReducer(loaded, markIntegrationActed('n-1'));
+      expect(state.integrationItems[0].status).toBe('acted');
+      expect(state.integrationUnreadCount).toBe(0);
+    });
+
+    it('sets status to acted without changing unread count for a read notification', () => {
+      const n = makeNotification({ id: 'n-1', status: 'read' });
+      const loaded = notificationReducer(
+        initialState,
+        setIntegrationNotifications({ items: [n], unread_count: 0 })
+      );
+      const state = notificationReducer(loaded, markIntegrationActed('n-1'));
+      expect(state.integrationItems[0].status).toBe('acted');
+      expect(state.integrationUnreadCount).toBe(0);
+    });
+
+    it('is a no-op for unknown id', () => {
+      const n = makeNotification({ id: 'n-1', status: 'unread' });
+      const loaded = notificationReducer(
+        initialState,
+        setIntegrationNotifications({ items: [n], unread_count: 1 })
+      );
+      const state = notificationReducer(loaded, markIntegrationActed('does-not-exist'));
+      expect(state.integrationUnreadCount).toBe(1);
+      expect(state.integrationItems[0].status).toBe('unread');
     });
   });
 

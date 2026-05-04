@@ -65,6 +65,30 @@ pub enum DomainEvent {
     },
     /// A memory recall query completed.
     MemoryRecalled { query: String, hit_count: usize },
+    /// A memory sync was requested for a specific channel or all channels.
+    ///
+    /// Published by `openhuman.memory_sync_channel` (channel_id = Some(...)) and
+    /// `openhuman.memory_sync_all` (channel_id = None). No consumers exist yet —
+    /// this variant is a hook for future ingestion subscribers to react to pull
+    /// requests. See `src/openhuman/memory/ops.rs` for the RPC handlers.
+    MemorySyncRequested { channel_id: Option<String> },
+    /// A memory ingestion job started running on the local extraction LLM.
+    /// Ingestion is singleton — this fires once, then a matching
+    /// [`Self::MemoryIngestionCompleted`] follows when the job finishes.
+    MemoryIngestionStarted {
+        document_id: String,
+        title: String,
+        namespace: String,
+        queue_depth: usize,
+    },
+    /// A memory ingestion job finished (successfully or with an error).
+    MemoryIngestionCompleted {
+        document_id: String,
+        namespace: String,
+        success: bool,
+        elapsed_ms: u64,
+        queue_depth: usize,
+    },
 
     // ── Channels ────────────────────────────────────────────────────────
     /// An inbound channel message from the transport layer, ready for processing.
@@ -357,7 +381,11 @@ impl DomainEvent {
             | Self::SubagentCompleted { .. }
             | Self::SubagentFailed { .. } => "agent",
 
-            Self::MemoryStored { .. } | Self::MemoryRecalled { .. } => "memory",
+            Self::MemoryStored { .. }
+            | Self::MemoryRecalled { .. }
+            | Self::MemorySyncRequested { .. }
+            | Self::MemoryIngestionStarted { .. }
+            | Self::MemoryIngestionCompleted { .. } => "memory",
 
             Self::ChannelInboundMessage { .. }
             | Self::ChannelMessageReceived { .. }

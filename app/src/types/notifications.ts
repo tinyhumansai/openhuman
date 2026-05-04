@@ -21,6 +21,8 @@ export interface IntegrationNotification {
   received_at: string;
   /** ISO 8601 timestamp — undefined until triage completes */
   scored_at?: string;
+  /** Optional in-app hash route (e.g. "/chat") set by the core triage pipeline. */
+  deep_link?: string;
 }
 
 export interface NotificationSettings {

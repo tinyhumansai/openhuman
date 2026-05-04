@@ -1,6 +1,6 @@
 id = "tools_agent"
 display_name = "Tools Agent"
-when_to_use = "Generalist specialist for ad-hoc work that uses only built-in OpenHuman tools (shell, file I/O, HTTP, web search, memory). Use when a task does NOT require a managed Composio OAuth integration — for external SaaS, spawn `integrations_agent` with a `toolkit` argument instead."
+when_to_use = "Generalist specialist for heavyweight ad-hoc execution with built-in OpenHuman tools (shell, file I/O, HTTP, web search, memory). Use only when direct orchestrator handling is insufficient and the task needs substantial tool-driven execution, but does NOT require managed Composio OAuth integrations. For external SaaS, spawn `integrations_agent` with a `toolkit` argument instead."
 temperature = 0.4
 max_iterations = 10
 sandbox_mode = "none"

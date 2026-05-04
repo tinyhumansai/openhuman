@@ -149,6 +149,12 @@ async fn read_store(
             break;
         }
         let page = (remaining as i64).min(PAGE_SIZE);
+        // NB: `indexName` is deliberately omitted — passing an empty
+        // string makes this CEF build reject the request with
+        // "Could not get index". The CDP spec says empty string means
+        // "primary key index", but the C++ backend here only accepts an
+        // unset field. Confirmed against CEF 146 (Chrome 146.0.7680.165).
+        // Same fix as `slack_scanner/idb.rs` and `telegram_scanner/idb.rs`.
         let resp = cdp
             .call(
                 "IndexedDB.requestData",
@@ -156,7 +162,6 @@ async fn read_store(
                     "securityOrigin": origin,
                     "databaseName": DATABASE_NAME,
                     "objectStoreName": store,
-                    "indexName": "",
                     "skipCount": skip,
                     "pageSize": page,
                 }),

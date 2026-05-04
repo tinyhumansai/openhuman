@@ -11,6 +11,7 @@ pub mod hallucination;
 pub mod hotkey;
 mod ops;
 mod postprocess;
+pub mod reply_speech;
 mod schemas;
 pub mod server;
 pub mod streaming;

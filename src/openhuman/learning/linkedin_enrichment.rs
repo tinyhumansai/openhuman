@@ -328,7 +328,11 @@ pub async fn summarise_profile_with_llm(config: &Config, raw_md: &str) -> anyhow
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
-    let provider = create_backend_inference_provider(config.api_url.as_deref(), &options)?;
+    let provider = create_backend_inference_provider(
+        config.api_url.as_deref(),
+        config.api_key.as_deref(),
+        &options,
+    )?;
 
     let system = "\
 You are a profile analyst. You will receive a user's LinkedIn profile in Markdown format. \
@@ -346,10 +350,7 @@ Rules:\n\
 - Keep the entire output under 400 words.\n\
 - Do not invent information — only use what is in the input.";
 
-    let model = config
-        .default_model
-        .as_deref()
-        .unwrap_or("neocortex-preview");
+    let model = "summarization-v1";
 
     tracing::debug!(
         model = model,

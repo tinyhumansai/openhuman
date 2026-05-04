@@ -7,6 +7,7 @@ import type {
   AccountStatus,
   IngestedMessage,
 } from '../types/accounts';
+import { resetUserScopedState } from './resetActions';
 
 const MAX_MESSAGES_PER_ACCOUNT = 200;
 const MAX_LOG_LINES_PER_ACCOUNT = 100;
@@ -104,6 +105,9 @@ const accountsSlice = createSlice({
     resetAccountsState() {
       return initialState;
     },
+  },
+  extraReducers: builder => {
+    builder.addCase(resetUserScopedState, () => initialState);
   },
 });
 

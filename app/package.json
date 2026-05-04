@@ -1,14 +1,17 @@
 {
   "name": "openhuman-app",
-  "version": "0.53.0",
+  "version": "0.53.13",
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "dev:web": "vite",
-    "dev:app": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && pnpm core:stage && bash ../scripts/setup-chromium-safe-storage.sh && source ../scripts/load-dotenv.sh && APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev",
+    "dev:app": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && bash ../scripts/setup-chromium-safe-storage.sh && source ../scripts/load-dotenv.sh && APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev",
     "dev:cef": "pnpm dev:app",
-    "dev:wry": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && pnpm core:stage && source ../scripts/load-dotenv.sh && cargo tauri dev --no-default-features --features wry",
-    "core:stage": "node ../scripts/stage-core-sidecar.mjs",
+    "dev:wry": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && source ../scripts/load-dotenv.sh && cargo tauri dev --no-default-features --features wry",
+    "core:stage": "echo '[core:stage] no-op — core is linked in-process; sidecar removed (PR #1061)'",
     "tauri:ensure": "bash ../scripts/ensure-tauri-cli.sh",
     "build": "tsc && vite build",
     "build:app": "tsc && vite build",
@@ -47,8 +50,8 @@
     "rust:clippy": "cargo clippy -p openhuman -- -D warnings",
     "format": "prettier --write . && pnpm rust:format",
     "format:check": "prettier --check . && pnpm rust:format:check",
-    "lint": "eslint . --ext .ts,.tsx",
-    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "lint": "eslint . --ext .ts,.tsx --cache",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix --cache",
     "lint:commands-tokens": "bash -c '! rg -nU \"(bg|text|border|ring|shadow)-(neutral|primary|sage|amber|canvas|stone|slate)\" src/components/commands/'",
     "knip": "knip --config knip.json",
     "knip:production": "knip --config knip.json --production"
@@ -102,7 +105,7 @@
     "@types/redux-logger": "^3.0.13",
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",
-    "@vitejs/plugin-react": "^4.6.0",
+    "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-v8": "^4.0.18",
     "@wdio/appium-service": "^9.24.0",
     "@wdio/cli": "^9.24.0",
@@ -122,8 +125,8 @@
     "prettier": "^3.8.1",
     "tailwindcss": "^3.4.19",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "vite-plugin-node-polyfills": "^0.25.0",
+    "vite": "^8.0.0",
+    "vite-plugin-node-polyfills": "^0.26.0",
     "vitest": "^4.0.18"
   }
 }

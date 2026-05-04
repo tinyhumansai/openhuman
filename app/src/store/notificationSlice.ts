@@ -1,6 +1,7 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
 import type { IntegrationNotification } from '../types/notifications';
+import { resetUserScopedState } from './resetActions';
 
 export type NotificationCategory = 'messages' | 'agents' | 'skills' | 'system';
 
@@ -50,6 +51,13 @@ const notificationSlice = createSlice({
     notificationReceived(state, action: PayloadAction<NotificationItem>) {
       const item = action.payload;
       if (!state.preferences[item.category]) return;
+      const existingIndex = state.items.findIndex(i => i.id === item.id);
+      if (existingIndex >= 0) {
+        // Replace existing entry in place to avoid duplicate rows when
+        // socket reconnects or upstream replays the same event id.
+        state.items[existingIndex] = item;
+        return;
+      }
       state.items.unshift(item);
       if (state.items.length > MAX_ITEMS) {
         state.items.length = MAX_ITEMS;
@@ -94,6 +102,16 @@ const notificationSlice = createSlice({
         state.integrationUnreadCount = Math.max(0, state.integrationUnreadCount - 1);
       }
     },
+    markIntegrationActed(state, action: PayloadAction<string>) {
+      const n = state.integrationItems.find(i => i.id === action.payload);
+      if (n) {
+        const wasUnread = n.status === 'unread';
+        n.status = 'acted';
+        if (wasUnread) {
+          state.integrationUnreadCount = Math.max(0, state.integrationUnreadCount - 1);
+        }
+      }
+    },
     dismissIntegrationNotification(state, action: PayloadAction<string>) {
       const n = state.integrationItems.find(i => i.id === action.payload);
       if (n) {
@@ -114,6 +132,9 @@ const notificationSlice = createSlice({
       }
     },
   },
+  extraReducers: builder => {
+    builder.addCase(resetUserScopedState, () => initialState);
+  },
 });
 
 export const selectUnreadCount = (items: NotificationItem[]): number =>
@@ -129,6 +150,7 @@ export const {
   setIntegrationError,
   setIntegrationNotifications,
   markIntegrationRead,
+  markIntegrationActed,
   dismissIntegrationNotification,
   addIntegrationNotification,
 } = notificationSlice.actions;

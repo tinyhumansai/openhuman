@@ -8,7 +8,7 @@
 //!
 //! Design notes:
 //!
-//!   * One global tick (60s) drives every provider — we don't spawn a
+//!   * One global tick (5min) drives every provider — we don't spawn a
 //!     task per connection, because the number of connections per user
 //!     is small and a single tick keeps the bookkeeping trivial.
 //!   * Per-connection state (last sync timestamp) lives in a
@@ -36,7 +36,14 @@ use super::providers::{get_provider, ProviderContext, SyncReason};
 /// How often the scheduler wakes up to look for due syncs. Independent
 /// from per-provider `sync_interval_secs` — this just bounds how long
 /// past a provider's interval we might fire.
-const TICK_SECONDS: u64 = 60;
+///
+/// 5 min trades a little staleness for noticeably less foreground load:
+/// each tick triggers an HTTP fetch + DB write per due connection, and
+/// for users with several connected providers the old 60s cadence kept
+/// the laptop visibly busy. Per-provider `sync_interval_secs` still
+/// caps the *minimum* delay between actual syncs — this only loosens
+/// the upper bound.
+const TICK_SECONDS: u64 = 300;
 
 /// Process-wide guard so the scheduler is only started once even
 /// when both `start_channels` and `bootstrap_skill_runtime` call into
@@ -221,12 +228,14 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::config::TEST_ENV_LOCK as ENV_LOCK;
+    use tempfile::tempdir;
 
     #[test]
     fn tick_seconds_is_sane_default() {
         // Sanity check: don't accidentally ship a 1-second tick.
         assert!(TICK_SECONDS >= 30);
-        assert!(TICK_SECONDS <= 300);
+        assert!(TICK_SECONDS <= 600);
     }
 
     #[test]
@@ -273,17 +282,29 @@ mod tests {
 
     #[tokio::test]
     async fn run_one_tick_returns_ok_when_no_client() {
-        // With no session stored, `build_composio_client` returns None and
-        // the tick should silently skip (returning Ok). This covers the
-        // early-return path that's otherwise only hit in production.
-        //
-        // Note: this uses the same `load_config_with_timeout()` call path
-        // that real startup uses. If some other test has written a session
-        // profile to disk, this test accepts either outcome (Ok) gracefully.
-        let result = run_one_tick().await;
-        // Either Ok (no client, skipped) or Ok (backend unreachable handled
-        // gracefully). The `Err` branch only fires on config-load failure.
-        let _ = result;
+        // Isolate the workspace/env so config loading doesn't contend with
+        // sibling tests mutating OPENHUMAN_WORKSPACE in parallel.
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let tmp = tempdir().expect("tempdir");
+        unsafe {
+            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+        }
+
+        // With no session stored in the isolated workspace,
+        // `build_composio_client` returns None and the tick should
+        // silently skip (returning Ok). This covers the early-return
+        // path that's otherwise only hit in production.
+        let inner = tokio::time::timeout(Duration::from_secs(5), run_one_tick())
+            .await
+            .expect("run_one_tick should not hang indefinitely during tests");
+        assert!(
+            inner.is_ok(),
+            "run_one_tick should return Ok when no client is available: {inner:?}"
+        );
+
+        unsafe {
+            std::env::remove_var("OPENHUMAN_WORKSPACE");
+        }
     }
 
     #[tokio::test]

@@ -288,6 +288,7 @@ fn sample_thread() -> ConversationThread {
         message_count: 5,
         last_message_at: "2026-01-01T00:00:00Z".into(),
         created_at: "2026-01-01T00:00:00Z".into(),
+        labels: vec!["work".to_string()],
     }
 }
 
@@ -312,6 +313,7 @@ fn thread_to_summary_preserves_all_fields() {
     assert_eq!(summary.message_count, 5);
     assert_eq!(summary.last_message_at, "2026-01-01T00:00:00Z");
     assert_eq!(summary.created_at, "2026-01-01T00:00:00Z");
+    assert_eq!(summary.labels, vec!["work".to_string()]);
 }
 
 #[test]

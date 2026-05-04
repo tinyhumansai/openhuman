@@ -85,7 +85,10 @@ reset_flags
 grep -E '^(onboarding_completed|chat_onboarding_completed)\s*=' "$CONFIG_PATH" | sed 's/^/[test][config-before] /'
 
 log "starting $BIN on port $PORT (log: $LOG_FILE)"
+# Pre-seed the RPC bearer token so the single curl call below can authenticate.
+RPC_TOKEN="$(openssl rand -hex 32 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(32))')"
 RUST_LOG=debug,hyper=info,tungstenite=info,socketioxide=info \
+    OPENHUMAN_CORE_TOKEN="$RPC_TOKEN" \
     "$BIN" run --port "$PORT" > "$LOG_FILE" 2>&1 &
 BIN_PID=$!
 
@@ -146,6 +149,7 @@ fi
 log "POST /rpc openhuman.config_set_onboarding_completed {value:true}"
 RPC_RESP=$(curl -s -X POST "http://127.0.0.1:$PORT/rpc" \
     -H 'content-type: application/json' \
+    -H "Authorization: Bearer $RPC_TOKEN" \
     -d '{"jsonrpc":"2.0","id":1,"method":"openhuman.config_set_onboarding_completed","params":{"value":true}}')
 echo "[test][rpc-response] $RPC_RESP"
 echo "$RPC_RESP" | grep -q '"result"' || fail "RPC did not return a result"

@@ -105,7 +105,8 @@ impl Tool for MemoryRecallTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::{embeddings::NoopEmbedding, MemoryCategory, UnifiedMemory};
+    use crate::openhuman::embeddings::NoopEmbedding;
+    use crate::openhuman::memory::{MemoryCategory, UnifiedMemory};
     use tempfile::TempDir;
 
     fn seeded_mem() -> (TempDir, Arc<dyn Memory>) {

@@ -2,6 +2,11 @@
 
 mod attachments;
 mod channel;
+mod channel_core;
+mod channel_ops;
+mod channel_recv;
+mod channel_send;
+mod channel_types;
 mod text;
 
-pub use channel::TelegramChannel;
+pub use channel_types::TelegramChannel;

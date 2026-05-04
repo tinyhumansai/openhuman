@@ -379,6 +379,11 @@ async fn dictation_ws_handler(ws: WebSocketUpgrade) -> Response {
 ///
 /// Includes routes for health, schema, SSE events, JSON-RPC, and Telegram auth.
 /// Conditionally attaches Socket.IO if enabled.
+///
+/// Middleware order (outermost → innermost):
+/// 1. `cors_middleware`       — handles `OPTIONS` preflight and adds CORS headers
+/// 2. `rpc_auth_middleware`   — validates `Authorization: Bearer <token>` on protected paths
+/// 3. `http_request_log_middleware` — logs non-RPC HTTP requests with timing
 pub fn build_core_http_router(socketio_enabled: bool) -> Router {
     let router = Router::new()
         .route("/", get(root_handler))
@@ -391,6 +396,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/auth/telegram", get(telegram_auth_handler))
         .fallback(not_found_handler)
         .layer(middleware::from_fn(http_request_log_middleware))
+        .layer(middleware::from_fn(crate::core::auth::rpc_auth_middleware))
         .layer(middleware::from_fn(cors_middleware))
         .with_state(AppState {
             core_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -609,6 +615,15 @@ async fn run_server_inner(
     // Ensure all controllers are registered before starting.
     let _ = all::all_registered_controllers();
 
+    // Initialize the per-process RPC bearer token.
+    // Written to {workspace_dir}/core.token so the Tauri shell can read it.
+    let token_dir = crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
+        dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".openhuman")
+    });
+    crate::core::auth::init_rpc_token(&token_dir)?;
+
     let (resolved_port, port_source) = match port {
         Some(p) => (p, "CLI --port"),
         None => (
@@ -824,7 +839,10 @@ async fn run_server_inner(
 ///
 /// Guarded by `std::sync::Once` so repeated calls to `bootstrap_skill_runtime`
 /// are safe and idempotent.
-fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
+fn register_domain_subscribers(
+    workspace_dir: std::path::PathBuf,
+    config: crate::openhuman::config::Config,
+) {
     use std::sync::{Arc, Once};
 
     static REGISTERED: Once = Once::new();
@@ -859,6 +877,12 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
         }
         crate::openhuman::composio::register_composio_trigger_subscriber();
         crate::openhuman::composio::start_periodic_sync();
+        // Initialise the scheduler gate before any background AI workers
+        // start so they observe a real policy on their first iteration
+        // (otherwise they fall back to `Policy::Normal` and miss the
+        // initial throttle decision on battery-powered hosts).
+        crate::openhuman::scheduler_gate::init_global(&config);
+        crate::openhuman::memory::tree::jobs::start(config.clone());
 
         // Restart requests go through a subscriber so every trigger path shares
         // the same respawn logic.
@@ -898,7 +922,7 @@ pub async fn bootstrap_skill_runtime() {
     // Register domain subscribers for cross-module event handling.
     // Uses a Once guard so repeated calls to bootstrap_skill_runtime()
     // cannot double-subscribe.
-    register_domain_subscribers(workspace_dir.clone());
+    register_domain_subscribers(workspace_dir.clone(), cfg.clone());
 
     // --- Sub-agent definition registry bootstrap ---
     // Loads built-in archetype definitions plus any custom TOML files
@@ -911,6 +935,41 @@ pub async fn bootstrap_skill_runtime() {
             "[runtime] AgentDefinitionRegistry::init_global failed: {err} — \
              spawn_subagent will be unavailable until restart"
         );
+    }
+
+    // --- Session storage layout migration -------------------------------
+    // One-shot move from `session_raw/{DDMMYYYY}/` (≤ 0.53.4) to the new
+    // flat `session_raw/{stem}.jsonl` layout, plus DDMMYYYY → YYYY_MM_DD
+    // for the human-readable `sessions/` companions. Idempotent via a
+    // marker file at `state/migrations/session_layout_v1.done`, so this
+    // costs one stat() on every subsequent boot.
+    match crate::openhuman::agent::harness::session::migrate_session_layout_if_needed(
+        &workspace_dir,
+    ) {
+        Ok(outcome) if outcome.already_done => {
+            log::debug!("[runtime] session_layout migration already applied");
+        }
+        Ok(outcome) => {
+            log::info!(
+                "[runtime] session_layout migration applied: jsonl_moved={} md_moved={} pruned_dirs={} warnings={}",
+                outcome.jsonl_moved,
+                outcome.md_moved,
+                outcome.legacy_dirs_pruned,
+                outcome.warnings.len(),
+            );
+            for w in &outcome.warnings {
+                log::warn!("[runtime] session_layout migration warning: {w}");
+            }
+        }
+        Err(err) => {
+            // Don't bring down startup over a transcript-storage migration.
+            // The transcript module's legacy fallback covers the unmigrated
+            // case for one release window.
+            log::warn!(
+                "[runtime] session_layout migration failed: {err} — \
+                 falling back to in-place legacy reads"
+            );
+        }
     }
 
     // --- Socket manager bootstrap ---

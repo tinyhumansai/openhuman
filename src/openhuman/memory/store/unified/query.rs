@@ -1,3 +1,11 @@
+//! Hybrid retrieval over the unified store.
+//!
+//! Combines graph relevance, vector similarity, keyword overlap, episodic
+//! signal, and freshness into a single score per hit. Owns the query planner
+//! (`build_retrieval_plan`), per-document score composition, and the
+//! `query_namespace_hits` / `query_namespace_ranked` / `recall_namespace_*`
+//! entry points used by `MemoryClient`.
+
 use rusqlite::params;
 use std::collections::{HashMap, HashSet};
 
@@ -85,6 +93,9 @@ impl UnifiedMemory {
         Ok(out)
     }
 
+    /// Hybrid retrieval: returns ranked hits across documents and KV records,
+    /// scored by graph relevance + vector similarity + keyword overlap +
+    /// freshness.
     pub async fn query_namespace_hits(
         &self,
         namespace: &str,
@@ -322,6 +333,7 @@ impl UnifiedMemory {
         Ok(hits)
     }
 
+    /// Run a hybrid query and return only the rendered context text.
     pub async fn query_namespace_context(
         &self,
         namespace: &str,
@@ -334,6 +346,8 @@ impl UnifiedMemory {
         Ok(context.context_text)
     }
 
+    /// Run a hybrid query and return both the rendered context text and the
+    /// underlying ranked hits.
     pub async fn query_namespace_context_data(
         &self,
         namespace: &str,
@@ -350,6 +364,8 @@ impl UnifiedMemory {
         })
     }
 
+    /// Query-less recall: rank documents and KV records by priority + graph
+    /// relevance + freshness without a search query.
     pub async fn recall_namespace_memories(
         &self,
         namespace: &str,
@@ -454,6 +470,8 @@ impl UnifiedMemory {
         Ok(hits)
     }
 
+    /// Query-less recall returning only rendered context text. `None` when
+    /// the namespace is empty.
     pub async fn recall_namespace_context(
         &self,
         namespace: &str,
@@ -468,6 +486,7 @@ impl UnifiedMemory {
         Ok(Some(Self::format_context_text(&hits, None)))
     }
 
+    /// Query-less recall returning both rendered text and ranked hits.
     pub async fn recall_namespace_context_data(
         &self,
         namespace: &str,

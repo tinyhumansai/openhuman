@@ -27,6 +27,13 @@ describe('notificationSlice', () => {
     expect(s2.items.map(i => i.id)).toEqual(['b', 'a']);
   });
 
+  it('notificationReceived dedupes by id', () => {
+    let s = reducer(undefined, notificationReceived(makeItem({ id: 'dup', title: 'first' })));
+    s = reducer(s, notificationReceived(makeItem({ id: 'dup', title: 'updated' })));
+    expect(s.items).toHaveLength(1);
+    expect(s.items[0].title).toBe('updated');
+  });
+
   it('drops item when its category preference is off', () => {
     let s = reducer(undefined, setPreference({ category: 'messages', enabled: false }));
     s = reducer(s, notificationReceived(makeItem({ id: 'a', category: 'messages' })));

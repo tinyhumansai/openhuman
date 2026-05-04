@@ -26,9 +26,11 @@ use super::providers::{
     get_provider, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
 };
 use super::types::{
-    ComposioAuthorizeResponse, ComposioConnectionsResponse, ComposioCreateTriggerResponse,
-    ComposioDeleteResponse, ComposioExecuteResponse, ComposioGithubReposResponse,
-    ComposioToolkitsResponse, ComposioToolsResponse, ComposioTriggerHistoryResult,
+    ComposioActiveTriggersResponse, ComposioAuthorizeResponse, ComposioAvailableTriggersResponse,
+    ComposioConnectionsResponse, ComposioCreateTriggerResponse, ComposioDeleteResponse,
+    ComposioDisableTriggerResponse, ComposioEnableTriggerResponse, ComposioExecuteResponse,
+    ComposioGithubReposResponse, ComposioToolkitsResponse, ComposioToolsResponse,
+    ComposioTriggerHistoryResult,
 };
 
 /// Resolve a [`ComposioClient`] from the root config, or return an
@@ -189,11 +191,11 @@ pub async fn composio_execute(
     tracing::debug!(tool = %tool, "[composio] rpc execute");
     let client = resolve_client(config)?;
     let started = std::time::Instant::now();
-    let result = client.execute_tool(tool, arguments.clone()).await;
+    let result = client.execute_tool(tool, arguments).await;
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
     match result {
-        Ok(mut resp) => {
+        Ok(resp) => {
             crate::core::event_bus::publish_global(
                 crate::core::event_bus::DomainEvent::ComposioActionExecuted {
                     tool: tool.to_string(),
@@ -203,34 +205,12 @@ pub async fn composio_execute(
                     elapsed_ms,
                 },
             );
-            // Mirror the agent-tool path (see `tools::ComposioExecuteTool::execute`):
-            // route through the toolkit's native provider so CLI and JSON-RPC
-            // callers see the same envelope the agent sees (e.g. Gmail HTML →
-            // markdown). `raw_html: true` in `arguments` opts out for
-            // `GMAIL_FETCH_EMAILS`.
-            //
-            // Provider registry is populated by `bus::start_composio_bus` on
-            // the server path; the CLI/RPC one-shot path never boots the bus,
-            // so ensure the built-ins are registered before we look up. The
-            // init fn is idempotent.
-            if resp.successful {
-                super::providers::init_default_providers();
-                if let Some(toolkit) = super::providers::toolkit_from_slug(tool) {
-                    if let Some(provider) = super::providers::get_provider(&toolkit) {
-                        tracing::trace!(
-                            toolkit = toolkit.as_str(),
-                            tool = tool,
-                            has_args = arguments.is_some(),
-                            "[composio] post-processing action result"
-                        );
-                        provider.post_process_action_result(
-                            tool,
-                            arguments.as_ref(),
-                            &mut resp.data,
-                        );
-                    }
-                }
-            }
+            // Backend (tinyhumansai/backend#683) now parses all composio
+            // payloads server-side and returns a `markdownFormatted`
+            // string for known tools, so callers should consume that
+            // directly. Core no longer reshapes `resp.data` here. Memory
+            // ingestion paths still call `post_process_action_result`
+            // explicitly when they need the structured slim envelope.
             Ok(RpcOutcome::new(
                 resp,
                 vec![format!("composio: executed {tool} ({elapsed_ms}ms)")],
@@ -291,6 +271,80 @@ pub async fn composio_create_trigger(
         vec![format!(
             "composio: trigger {trigger_id} created for slug {slug}"
         )],
+    ))
+}
+
+// ── Trigger management (catalog + enable/disable) ──────────────────
+
+pub async fn composio_list_available_triggers(
+    config: &Config,
+    toolkit: &str,
+    connection_id: Option<String>,
+) -> OpResult<RpcOutcome<ComposioAvailableTriggersResponse>> {
+    tracing::debug!(toolkit = %toolkit, ?connection_id, "[composio] rpc list_available_triggers");
+    let client = resolve_client(config)?;
+    let resp = client
+        .list_available_triggers(toolkit, connection_id.as_deref())
+        .await
+        .map_err(|e| format!("[composio] list_available_triggers failed: {e:#}"))?;
+    let count = resp.triggers.len();
+    Ok(RpcOutcome::new(
+        resp,
+        vec![format!(
+            "composio: {count} available trigger(s) for toolkit {toolkit}"
+        )],
+    ))
+}
+
+pub async fn composio_list_triggers(
+    config: &Config,
+    toolkit: Option<String>,
+) -> OpResult<RpcOutcome<ComposioActiveTriggersResponse>> {
+    tracing::debug!(?toolkit, "[composio] rpc list_triggers");
+    let client = resolve_client(config)?;
+    let resp = client
+        .list_active_triggers(toolkit.as_deref())
+        .await
+        .map_err(|e| format!("[composio] list_triggers failed: {e:#}"))?;
+    let count = resp.triggers.len();
+    Ok(RpcOutcome::new(
+        resp,
+        vec![format!("composio: {count} active trigger(s) listed")],
+    ))
+}
+
+pub async fn composio_enable_trigger(
+    config: &Config,
+    connection_id: &str,
+    slug: &str,
+    trigger_config: Option<serde_json::Value>,
+) -> OpResult<RpcOutcome<ComposioEnableTriggerResponse>> {
+    tracing::debug!(slug = %slug, connection_id = %connection_id, "[composio] rpc enable_trigger");
+    let client = resolve_client(config)?;
+    let resp = client
+        .enable_trigger(connection_id, slug, trigger_config)
+        .await
+        .map_err(|e| format!("[composio] enable_trigger failed: {e:#}"))?;
+    let trigger_id = resp.trigger_id.clone();
+    Ok(RpcOutcome::new(
+        resp,
+        vec![format!("composio: enabled trigger {slug} → {trigger_id}")],
+    ))
+}
+
+pub async fn composio_disable_trigger(
+    config: &Config,
+    trigger_id: &str,
+) -> OpResult<RpcOutcome<ComposioDisableTriggerResponse>> {
+    tracing::debug!(trigger_id = %trigger_id, "[composio] rpc disable_trigger");
+    let client = resolve_client(config)?;
+    let resp = client
+        .disable_trigger(trigger_id)
+        .await
+        .map_err(|e| format!("[composio] disable_trigger failed: {e:#}"))?;
+    Ok(RpcOutcome::new(
+        resp,
+        vec![format!("composio: disabled trigger {trigger_id}")],
     ))
 }
 

@@ -1,3 +1,10 @@
+//! JSONL-backed thread and message store. Thread metadata lives in
+//! `threads.jsonl` (append-only upsert/delete log); each thread's messages
+//! are appended to a per-thread JSONL file under `threads/<id>.jsonl`.
+//!
+//! All on-disk mutations serialise through a single process-wide mutex so
+//! concurrent RPC handlers don't interleave writes.
+
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
@@ -28,12 +35,14 @@ fn redact_title_for_log(title: &str) -> String {
     )
 }
 
+/// Counts returned by [`purge_threads`] — how much was deleted.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConversationPurgeStats {
     pub thread_count: usize,
     pub message_count: usize,
 }
 
+/// Workspace-rooted handle that reads and writes the JSONL conversation log.
 #[derive(Debug, Clone)]
 pub struct ConversationStore {
     workspace_dir: PathBuf,
@@ -47,6 +56,8 @@ enum ThreadLogEntry {
         title: String,
         created_at: String,
         updated_at: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        labels: Option<Vec<String>>,
     },
     Delete {
         thread_id: String,
@@ -55,10 +66,12 @@ enum ThreadLogEntry {
 }
 
 impl ConversationStore {
+    /// Construct a store rooted at the given workspace directory.
     pub fn new(workspace_dir: PathBuf) -> Self {
         Self { workspace_dir }
     }
 
+    /// Create or update a thread, appending an `Upsert` entry to `threads.jsonl`.
     pub fn ensure_thread(
         &self,
         request: CreateConversationThread,
@@ -74,6 +87,7 @@ impl ConversationStore {
                 title: request.title.clone(),
                 created_at: request.created_at.clone(),
                 updated_at: now,
+                labels: request.labels.clone(),
             },
         )?;
         debug!(
@@ -85,11 +99,13 @@ impl ConversationStore {
             .ok_or_else(|| format!("thread {} missing after ensure", request.id))
     }
 
+    /// List all live threads (folding the upsert/delete log).
     pub fn list_threads(&self) -> Result<Vec<ConversationThread>, String> {
         let _guard = CONVERSATION_STORE_LOCK.lock();
         self.list_threads_unlocked()
     }
 
+    /// Read every persisted message for a thread in append order.
     pub fn get_messages(&self, thread_id: &str) -> Result<Vec<ConversationMessage>, String> {
         let _guard = CONVERSATION_STORE_LOCK.lock();
         if !self.thread_exists_unlocked(thread_id)? {
@@ -98,6 +114,7 @@ impl ConversationStore {
         read_jsonl::<ConversationMessage>(&self.thread_messages_path(thread_id))
     }
 
+    /// Append a message to the thread's JSONL file. Errors if the thread is missing.
     pub fn append_message(
         &self,
         thread_id: &str,
@@ -122,6 +139,7 @@ impl ConversationStore {
         Ok(message)
     }
 
+    /// Rewrite the thread title via a new `Upsert` log entry, preserving labels.
     pub fn update_thread_title(
         &self,
         thread_id: &str,
@@ -141,6 +159,7 @@ impl ConversationStore {
                 title: title.to_string(),
                 created_at: entry.created_at.clone(),
                 updated_at: updated_at.to_string(),
+                labels: Some(entry.labels.clone()),
             },
         )?;
         debug!(
@@ -153,6 +172,39 @@ impl ConversationStore {
             .ok_or_else(|| format!("thread {} missing after title update", thread_id))
     }
 
+    /// Replace the label set on a thread via a new `Upsert` log entry.
+    pub fn update_thread_labels(
+        &self,
+        thread_id: &str,
+        labels: Vec<String>,
+        updated_at: &str,
+    ) -> Result<ConversationThread, String> {
+        let _guard = CONVERSATION_STORE_LOCK.lock();
+        let index = self.thread_index_unlocked()?;
+        let entry = index
+            .get(thread_id)
+            .ok_or_else(|| format!("thread {} does not exist", thread_id))?;
+        let threads_path = self.ensure_root()?.join(THREADS_FILENAME);
+        append_jsonl(
+            &threads_path,
+            &ThreadLogEntry::Upsert {
+                thread_id: thread_id.to_string(),
+                title: entry.title.clone(),
+                created_at: entry.created_at.clone(),
+                updated_at: updated_at.to_string(),
+                labels: Some(labels),
+            },
+        )?;
+        debug!(
+            "{LOG_PREFIX} updated thread labels id={} path={}",
+            thread_id,
+            threads_path.display()
+        );
+        self.thread_summary_unlocked(thread_id)?
+            .ok_or_else(|| format!("thread {} missing after labels update", thread_id))
+    }
+
+    /// Apply a patch to one message and rewrite the thread's JSONL file in place.
     pub fn update_message(
         &self,
         thread_id: &str,
@@ -184,6 +236,8 @@ impl ConversationStore {
         Ok(updated)
     }
 
+    /// Append a `Delete` entry and remove the thread's messages file. Returns
+    /// `false` if the thread did not exist.
     pub fn delete_thread(&self, thread_id: &str, deleted_at: &str) -> Result<bool, String> {
         let _guard = CONVERSATION_STORE_LOCK.lock();
         if !self.thread_exists_unlocked(thread_id)? {
@@ -217,6 +271,7 @@ impl ConversationStore {
         Ok(true)
     }
 
+    /// Wipe the entire conversation directory and re-create an empty layout.
     pub fn purge_threads(&self) -> Result<ConversationPurgeStats, String> {
         let _guard = CONVERSATION_STORE_LOCK.lock();
         let stats = self.purge_stats_unlocked()?;
@@ -297,6 +352,7 @@ impl ConversationStore {
             message_count,
             last_message_at,
             created_at: entry.created_at.clone(),
+            labels: entry.labels.clone(),
         }))
     }
 
@@ -314,17 +370,25 @@ impl ConversationStore {
                     thread_id,
                     title,
                     created_at,
+                    labels,
                     ..
                 } => {
-                    let created_at_value = match index.get(&thread_id) {
-                        Some(existing) => existing.created_at.clone(),
-                        None => created_at,
+                    let (created_at_value, labels_value) = match index.get(&thread_id) {
+                        Some(existing) => (
+                            existing.created_at.clone(),
+                            labels.unwrap_or_else(|| existing.labels.clone()),
+                        ),
+                        None => {
+                            let inferred = labels.unwrap_or_else(|| infer_labels(&thread_id));
+                            (created_at, inferred)
+                        }
                     };
                     index.insert(
                         thread_id,
                         ThreadIndexEntry {
                             title,
                             created_at: created_at_value,
+                            labels: labels_value,
                         },
                     );
                 }
@@ -350,6 +414,17 @@ impl ConversationStore {
 struct ThreadIndexEntry {
     title: String,
     created_at: String,
+    labels: Vec<String>,
+}
+
+fn infer_labels(thread_id: &str) -> Vec<String> {
+    if thread_id == "proactive:morning_briefing" {
+        vec!["briefing".to_string()]
+    } else if thread_id.starts_with("proactive:") {
+        vec!["notification".to_string()]
+    } else {
+        vec!["work".to_string()]
+    }
 }
 
 fn read_jsonl<T>(path: &Path) -> Result<Vec<T>, String>
@@ -431,6 +506,7 @@ where
     Ok(())
 }
 
+/// Free-function shim around [`ConversationStore::ensure_thread`].
 pub fn ensure_thread(
     workspace_dir: PathBuf,
     request: CreateConversationThread,
@@ -438,10 +514,12 @@ pub fn ensure_thread(
     ConversationStore::new(workspace_dir).ensure_thread(request)
 }
 
+/// Free-function shim around [`ConversationStore::list_threads`].
 pub fn list_threads(workspace_dir: PathBuf) -> Result<Vec<ConversationThread>, String> {
     ConversationStore::new(workspace_dir).list_threads()
 }
 
+/// Free-function shim around [`ConversationStore::get_messages`].
 pub fn get_messages(
     workspace_dir: PathBuf,
     thread_id: &str,
@@ -449,6 +527,7 @@ pub fn get_messages(
     ConversationStore::new(workspace_dir).get_messages(thread_id)
 }
 
+/// Free-function shim around [`ConversationStore::append_message`].
 pub fn append_message(
     workspace_dir: PathBuf,
     thread_id: &str,
@@ -457,6 +536,7 @@ pub fn append_message(
     ConversationStore::new(workspace_dir).append_message(thread_id, message)
 }
 
+/// Free-function shim around [`ConversationStore::update_thread_title`].
 pub fn update_thread_title(
     workspace_dir: PathBuf,
     thread_id: &str,
@@ -466,6 +546,17 @@ pub fn update_thread_title(
     ConversationStore::new(workspace_dir).update_thread_title(thread_id, title, updated_at)
 }
 
+/// Free-function shim around [`ConversationStore::update_thread_labels`].
+pub fn update_thread_labels(
+    workspace_dir: PathBuf,
+    thread_id: &str,
+    labels: Vec<String>,
+    updated_at: &str,
+) -> Result<ConversationThread, String> {
+    ConversationStore::new(workspace_dir).update_thread_labels(thread_id, labels, updated_at)
+}
+
+/// Free-function shim around [`ConversationStore::update_message`].
 pub fn update_message(
     workspace_dir: PathBuf,
     thread_id: &str,
@@ -475,10 +566,12 @@ pub fn update_message(
     ConversationStore::new(workspace_dir).update_message(thread_id, message_id, patch)
 }
 
+/// Free-function shim around [`ConversationStore::purge_threads`].
 pub fn purge_threads(workspace_dir: PathBuf) -> Result<ConversationPurgeStats, String> {
     ConversationStore::new(workspace_dir).purge_threads()
 }
 
+/// Free-function shim around [`ConversationStore::delete_thread`].
 pub fn delete_thread(
     workspace_dir: PathBuf,
     thread_id: &str,

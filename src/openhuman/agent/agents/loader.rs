@@ -266,7 +266,7 @@ mod tests {
                         connected_identities_md: String::new(),
                         include_profile: false,
                         include_memory_md: false,
-                        curated_snapshot: None,
+                        user_identity: None,
                     };
                     let body = build(&ctx)
                         .unwrap_or_else(|e| panic!("{} prompt build failed: {e}", def.id));
@@ -330,6 +330,41 @@ mod tests {
         let def = find("critic");
         assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
         assert!(def.omit_safety_preamble);
+    }
+
+    /// Planner runs `composio_execute` so it can ground plans in real
+    /// integration data, but it must stay strictly read-only — issue
+    /// #685. `sandbox_mode = "read_only"` in `planner/agent.toml` is the
+    /// runtime hook that activates the agent-level gate inside
+    /// `ComposioExecuteTool::execute`; this test pins that contract so a
+    /// future TOML edit that drops the sandbox mode can never silently
+    /// turn the planner into a write-capable agent.
+    #[test]
+    fn planner_is_read_only_with_composio_meta_tools() {
+        let def = find("planner");
+        assert_eq!(
+            def.sandbox_mode,
+            SandboxMode::ReadOnly,
+            "planner.sandbox_mode must be read_only — gates Write/Admin composio actions",
+        );
+        match &def.tools {
+            ToolScope::Named(names) => {
+                for required in [
+                    "composio_list_toolkits",
+                    "composio_list_connections",
+                    "composio_list_tools",
+                    "composio_execute",
+                ] {
+                    assert!(
+                        names.iter().any(|n| n == required),
+                        "planner tool list missing `{required}` — composio meta-tools must \
+                         all be present so the planner can inspect integrations under the \
+                         read-only sandbox gate",
+                    );
+                }
+            }
+            other => panic!("planner must use Named tool scope, got {other:?}"),
+        }
     }
 
     #[test]
@@ -487,6 +522,6 @@ mod tests {
         }
         assert!(!def.omit_memory_context);
         assert!(def.omit_identity);
-        assert_eq!(def.max_iterations, 6);
+        assert_eq!(def.max_iterations, 12);
     }
 }

@@ -143,7 +143,7 @@ pub async fn store_session(
     {
         metadata.insert("user_id".to_string(), uid);
     }
-    let user_for_store = user.unwrap_or(settings);
+    let user_for_store = sanitize_stored_session_user(user).unwrap_or(settings);
     metadata.insert("user_json".to_string(), user_for_store.to_string());
 
     // Determine user_id so we can scope the openhuman directory to this user.
@@ -226,6 +226,14 @@ pub async fn store_session(
     logs.push("login-gated services started".to_string());
 
     Ok(RpcOutcome::new(summarize_auth_profile(&profile), logs))
+}
+
+fn sanitize_stored_session_user(user: Option<serde_json::Value>) -> Option<serde_json::Value> {
+    match user {
+        Some(serde_json::Value::Object(map)) if map.is_empty() => None,
+        Some(serde_json::Value::Null) => None,
+        other => other,
+    }
 }
 
 pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {

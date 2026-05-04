@@ -60,6 +60,19 @@ async fn store_session_rejects_empty_or_whitespace_token() {
     assert!(err.contains("token is required"));
 }
 
+#[test]
+fn sanitize_stored_session_user_discards_empty_objects() {
+    assert_eq!(sanitize_stored_session_user(Some(json!({}))), None);
+    assert_eq!(
+        sanitize_stored_session_user(Some(serde_json::Value::Null)),
+        None
+    );
+    assert_eq!(
+        sanitize_stored_session_user(Some(json!({ "firstName": "steven" }))),
+        Some(json!({ "firstName": "steven" }))
+    );
+}
+
 // ── clear_session ──────────────────────────────────────────────
 
 #[tokio::test]

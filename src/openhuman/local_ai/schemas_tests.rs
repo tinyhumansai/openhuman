@@ -161,6 +161,17 @@ async fn handle_presets_returns_presets_list_and_recommended_tier() {
     assert!(v.get("presets").is_some());
     assert!(v.get("recommended_tier").is_some());
     assert!(v.get("device").is_some());
+    let presets = v
+        .get("presets")
+        .and_then(|value| value.as_array())
+        .expect("presets array");
+    assert_eq!(presets.len(), 1, "only the 1B preset should be exposed");
+    assert_eq!(
+        presets[0]
+            .get("chat_model_id")
+            .and_then(|value| value.as_str()),
+        Some("gemma3:1b-it-qat")
+    );
 }
 
 #[tokio::test]
@@ -191,6 +202,21 @@ async fn handle_apply_preset_rejects_custom_tier() {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
     }
     assert!(err.contains("cannot apply 'custom'"));
+}
+
+#[tokio::test]
+async fn handle_apply_preset_rejects_unsupported_large_tier() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let tmp = TempDir::new().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+    let params = Map::from_iter([("tier".to_string(), serde_json::json!("ram_8_16gb"))]);
+    let err = handle_local_ai_apply_preset(params).await.unwrap_err();
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
+    assert!(err.contains("only the 1B local model preset is supported"));
 }
 
 #[tokio::test]

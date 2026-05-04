@@ -1,3 +1,8 @@
+//! Key-value storage backed by the `kv_global` and `kv_namespace` tables.
+//!
+//! Provides global and namespace-scoped get/set/delete/list, plus internal
+//! record loaders used by the retrieval pipeline.
+
 use rusqlite::{params, OptionalExtension};
 use serde_json::json;
 
@@ -6,6 +11,7 @@ use crate::openhuman::memory::store::types::MemoryKvRecord;
 use super::UnifiedMemory;
 
 impl UnifiedMemory {
+    /// Insert or update a global key-value pair.
     pub async fn kv_set_global(&self, key: &str, value: &serde_json::Value) -> Result<(), String> {
         let conn = self.conn.lock();
         conn.execute(
@@ -18,6 +24,7 @@ impl UnifiedMemory {
         Ok(())
     }
 
+    /// Read a global key, returning `None` if absent.
     pub async fn kv_get_global(&self, key: &str) -> Result<Option<serde_json::Value>, String> {
         let conn = self.conn.lock();
         let value: Option<String> = conn
@@ -31,6 +38,7 @@ impl UnifiedMemory {
         Ok(value.and_then(|v| serde_json::from_str(&v).ok()))
     }
 
+    /// Insert or update a namespace-scoped key-value pair.
     pub async fn kv_set_namespace(
         &self,
         namespace: &str,
@@ -48,6 +56,7 @@ impl UnifiedMemory {
         Ok(())
     }
 
+    /// Read a namespace-scoped key, returning `None` if absent.
     pub async fn kv_get_namespace(
         &self,
         namespace: &str,
@@ -65,6 +74,7 @@ impl UnifiedMemory {
         Ok(value.and_then(|v| serde_json::from_str(&v).ok()))
     }
 
+    /// Delete a global key. Returns `true` if a row was removed.
     pub async fn kv_delete_global(&self, key: &str) -> Result<bool, String> {
         let conn = self.conn.lock();
         let changed = conn
@@ -73,6 +83,7 @@ impl UnifiedMemory {
         Ok(changed > 0)
     }
 
+    /// Delete a namespace-scoped key. Returns `true` if a row was removed.
     pub async fn kv_delete_namespace(&self, namespace: &str, key: &str) -> Result<bool, String> {
         let conn = self.conn.lock();
         let changed = conn
@@ -84,6 +95,7 @@ impl UnifiedMemory {
         Ok(changed > 0)
     }
 
+    /// List all keys in a namespace, most recently updated first.
     pub async fn kv_list_namespace(
         &self,
         namespace: &str,

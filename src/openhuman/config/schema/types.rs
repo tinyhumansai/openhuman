@@ -29,6 +29,7 @@ pub struct Config {
     #[serde(skip)]
     pub config_path: PathBuf,
     pub api_url: Option<String>,
+    pub api_key: Option<String>,
     pub default_model: Option<String>,
     pub default_temperature: f64,
 
@@ -52,6 +53,13 @@ pub struct Config {
 
     #[serde(default)]
     pub scheduler: SchedulerConfig,
+
+    /// Background-AI scheduler gate — throttles memory-tree digests,
+    /// embeddings, and other LLM-bound background work based on power
+    /// state, CPU pressure, and deployment mode. See
+    /// [`crate::openhuman::scheduler_gate`].
+    #[serde(default)]
+    pub scheduler_gate: SchedulerGateConfig,
 
     #[serde(default)]
     pub agent: AgentConfig,
@@ -203,6 +211,23 @@ pub struct Config {
     pub chat_onboarding_completed: bool,
 }
 
+impl Config {
+    /// Resolve the root directory where chunk `.md` files are stored.
+    ///
+    /// Resolution order:
+    /// 1. `memory_tree.content_dir` if `Some`.
+    /// 2. Default: `<workspace_dir>/memory_tree/content/`.
+    ///
+    /// This is the only place in the codebase that should compute the content
+    /// root — all code that needs the path should call this method.
+    pub fn memory_tree_content_root(&self) -> PathBuf {
+        self.memory_tree
+            .content_dir
+            .clone()
+            .unwrap_or_else(|| self.workspace_dir.join("memory_tree").join("content"))
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let openhuman_dir =
@@ -223,6 +248,7 @@ impl Default for Config {
             workspace_dir: openhuman_dir.join("workspace"),
             config_path: openhuman_dir.join("config.toml"),
             api_url: None,
+            api_key: None,
             default_model: Some(DEFAULT_MODEL.to_string()),
             default_temperature: 0.7,
             observability: ObservabilityConfig::default(),
@@ -232,6 +258,7 @@ impl Default for Config {
             autocomplete: AutocompleteConfig::default(),
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
+            scheduler_gate: SchedulerGateConfig::default(),
             agent: AgentConfig::default(),
             context: ContextConfig::default(),
             model_routes: Vec::new(),

@@ -771,7 +771,17 @@ impl Config {
                 if let Some(tier) =
                     crate::openhuman::local_ai::presets::ModelTier::from_str_opt(&tier_str)
                 {
-                    if tier != crate::openhuman::local_ai::presets::ModelTier::Custom {
+                    if tier == crate::openhuman::local_ai::presets::ModelTier::Custom {
+                        tracing::warn!(
+                            tier = %tier_str,
+                            "ignoring custom OPENHUMAN_LOCAL_AI_TIER; only built-in presets are supported"
+                        );
+                    } else if !tier.is_mvp_allowed() {
+                        tracing::warn!(
+                            tier = %tier_str,
+                            "ignoring OPENHUMAN_LOCAL_AI_TIER outside the 1B local-model allowlist"
+                        );
+                    } else {
                         crate::openhuman::local_ai::presets::apply_preset_to_config(
                             &mut self.local_ai,
                             tier,
@@ -781,7 +791,7 @@ impl Config {
                 } else {
                     tracing::warn!(
                         tier = %tier_str,
-                        "ignoring invalid OPENHUMAN_LOCAL_AI_TIER (valid: ram_1gb, ram_2_4gb, ram_4_8gb, ram_8_16gb, ram_16_plus_gb)"
+                        "ignoring invalid OPENHUMAN_LOCAL_AI_TIER (valid: ram_2_4gb)"
                     );
                 }
             }
@@ -924,6 +934,71 @@ impl Config {
             if let Some(strict) = parse_env_bool("OPENHUMAN_MEMORY_EMBED_STRICT", &flag) {
                 self.memory_tree.embedding_strict = strict;
             }
+        }
+
+        // LLM entity extractor overrides — set endpoint + model to route
+        // ingest scoring through Ollama NER (Phase 2 follow-up). Empty
+        // string explicitly clears (opts out).
+        if let Ok(endpoint) = std::env::var("OPENHUMAN_MEMORY_EXTRACT_ENDPOINT") {
+            let trimmed = endpoint.trim();
+            self.memory_tree.llm_extractor_endpoint = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(model) = std::env::var("OPENHUMAN_MEMORY_EXTRACT_MODEL") {
+            let trimmed = model.trim();
+            self.memory_tree.llm_extractor_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(val) = std::env::var("OPENHUMAN_MEMORY_EXTRACT_TIMEOUT_MS") {
+            if let Ok(ms) = val.trim().parse::<u64>() {
+                if ms > 0 {
+                    self.memory_tree.llm_extractor_timeout_ms = Some(ms);
+                }
+            }
+        }
+
+        // LLM summariser overrides — set endpoint + model to route
+        // bucket-seal summaries through Ollama instead of InertSummariser
+        // (Phase 3a real-summariser hook).
+        if let Ok(endpoint) = std::env::var("OPENHUMAN_MEMORY_SUMMARISE_ENDPOINT") {
+            let trimmed = endpoint.trim();
+            self.memory_tree.llm_summariser_endpoint = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(model) = std::env::var("OPENHUMAN_MEMORY_SUMMARISE_MODEL") {
+            let trimmed = model.trim();
+            self.memory_tree.llm_summariser_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Ok(val) = std::env::var("OPENHUMAN_MEMORY_SUMMARISE_TIMEOUT_MS") {
+            if let Ok(ms) = val.trim().parse::<u64>() {
+                if ms > 0 {
+                    self.memory_tree.llm_summariser_timeout_ms = Some(ms);
+                }
+            }
+        }
+
+        // Phase MD-content: chunk body directory override. Empty string means
+        // "fall back to default", consistent with other memory_tree env vars.
+        if let Ok(dir) = std::env::var("OPENHUMAN_MEMORY_TREE_CONTENT_DIR") {
+            let trimmed = dir.trim();
+            self.memory_tree.content_dir = if trimmed.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(trimmed))
+            };
         }
 
         // Auto-update overrides

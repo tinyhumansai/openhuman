@@ -22,6 +22,7 @@ use super::{Embedder, EMBEDDING_DIM};
 pub struct InertEmbedder;
 
 impl InertEmbedder {
+    /// Construct an inert embedder. Free — `InertEmbedder` is a ZST.
     pub fn new() -> Self {
         Self
     }

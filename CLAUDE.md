@@ -54,6 +54,38 @@ cargo check --manifest-path app/src-tauri/Cargo.toml
 **Tests**: Vitest in `app/` (`pnpm test:unit`, `pnpm test:coverage`); Rust via `cargo test`.
 **Quality**: ESLint + Prettier + Husky in `app`.
 
+### Agent debug runners (`scripts/debug/`)
+
+Bounded-output wrappers around the project test runners. Stdout stays summary-sized (so it fits in agent context); full output is teed to `target/debug-logs/<kind>-<suffix>-<timestamp>.log`. Add `--verbose` to also stream raw output. Prefer these over invoking Vitest / WDIO / cargo directly when iterating.
+
+```bash
+# Vitest
+pnpm debug unit                                    # full suite
+pnpm debug unit src/components/Foo.test.tsx        # one file (positional pattern)
+pnpm debug unit -t "renders empty state"           # filter by test name
+pnpm debug unit Foo -t "renders empty" --verbose
+
+# WDIO E2E (one spec at a time)
+pnpm debug e2e test/e2e/specs/smoke.spec.ts
+pnpm debug e2e test/e2e/specs/cron-jobs-flow.spec.ts cron-jobs --verbose
+
+# cargo tests (delegates to scripts/test-rust-with-mock.sh)
+pnpm debug rust
+pnpm debug rust json_rpc_e2e
+
+# Inspect saved logs
+pnpm debug logs                  # list 50 most recent
+pnpm debug logs last             # print most recent (last 400 lines)
+pnpm debug logs unit             # most recent matching prefix "unit"
+pnpm debug logs last --tail 100
+```
+
+Files: `scripts/debug/{cli,unit,e2e,rust,logs,lib}.sh` plus `README.md`. Entry point is `pnpm debug` (`scripts/debug/cli.sh`).
+
+### Coverage requirement (merge gate)
+
+PRs must meet **≥ 80% coverage on changed lines**. Enforced by [`.github/workflows/coverage.yml`](.github/workflows/coverage.yml) using `diff-cover` over merged Vitest (`app/coverage/lcov.info`) and `cargo-llvm-cov` (core + Tauri shell) lcov outputs. Below the threshold the PR will not merge — add tests for new/changed lines, not just the happy path.
+
 ---
 
 ## Configuration
@@ -145,7 +177,7 @@ New behavior for these webviews lives in:
 - **CDP from the scanner side** — `Network.*`, `Emulation.*`, `Input.*`, `Page.*` driven by the per-provider `*_scanner/` modules.
 - **Rust-side notification/IPC hooks** — never cross into the renderer.
 
-If a feature truly cannot be built this way (e.g. intercepting a click the page's JS preventDefaults), the correct answer is to **surface the limitation**, not to ship an init script. Legacy injection that already exists for non-migrated providers (`gmail`, `linkedin`, `google-meet` recipe files, `ua_spoof.js`, `runtime.js` bridge) is grandfathered but should shrink, not grow.
+If a feature truly cannot be built this way (e.g. intercepting a click the page's JS preventDefaults), the correct answer is to **surface the limitation**, not to ship an init script. Legacy injection that already exists for non-migrated providers (`gmail`, `linkedin`, `google-meet` recipe files plus the `runtime.js` bridge) is grandfathered but should shrink, not grow.
 
 Watch out for Tauri plugins that inject JS by default. `tauri-plugin-opener` ships `init-iife.js` (a global click listener that calls `plugin:opener|open_url` via HTTP-IPC) unless you build it with `.open_js_links_on_click(false)`. Any new plugin added to `app/src-tauri/src/lib.rs` must be audited for a `js_init_script` call — if found, opt out or configure around it.
 
@@ -212,6 +244,8 @@ Tauri/Rust in the shell is a **delivery vehicle** (windowing, process lifecycle,
 - Issues and PRs on upstream **[tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman)** — not a fork — unless explicitly told otherwise.
 - Issue templates: [`.github/ISSUE_TEMPLATE/feature.md`](.github/ISSUE_TEMPLATE/feature.md), [`.github/ISSUE_TEMPLATE/bug.md`](.github/ISSUE_TEMPLATE/bug.md). PR template: [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). AI-authored text should follow them verbatim.
 - PRs target **`main`**.
+- **Push branches to `origin` (the user's fork — `senamakel/openhuman`), never to `upstream` (`tinyhumansai/openhuman`).** PRs are still opened against `tinyhumansai/openhuman:main`, but with `--head senamakel:<branch>` so the source is the fork. Direct pushes to upstream pollute its branch list and skip code-review boundaries. Treat the `upstream` remote as fetch-only.
+- **When the user asks you to push or open a PR, resolve blockers and push — don't prompt for permission.** If a pre-push hook fails on something unrelated to your changes (e.g. pre-existing breakage on `main` in code you didn't touch), push with `--no-verify` and call it out in the PR body. If the hook fails on your own changes, fix them and push again. Don't ask the user whether to bypass — just do the right thing and tell them what you did.
 
 ---
 

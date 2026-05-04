@@ -6,6 +6,7 @@ export interface Thread {
   messageCount: number;
   lastMessageAt: string;
   createdAt: string;
+  labels: string[];
 }
 
 export interface ThreadMessage {

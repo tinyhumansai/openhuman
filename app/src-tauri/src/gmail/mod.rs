@@ -37,45 +37,25 @@
 //! | `trash`      | stub          |
 //! | `add_label`  | stub          |
 //!
-//! ## CEF-only
+//! ## CEF runtime required
 //!
-//! CDP requires a remote-debugging port, which wry doesn't expose.
-//! Without `--features cef` the helpers return a structured error so
-//! callers see a clear message instead of a missing symbol.
+//! CDP requires a remote-debugging port exposed by the CEF runtime.
 
 pub mod types;
 
-#[cfg(feature = "cef")]
 mod atom;
-#[cfg(feature = "cef")]
 mod cdp_fetch;
-#[cfg(feature = "cef")]
 mod print_view;
-#[cfg(feature = "cef")]
 mod reads;
-#[cfg(feature = "cef")]
 mod session;
-#[cfg(feature = "cef")]
 mod writes;
 
 use types::{Ack, GmailLabel, GmailMessage, GmailSendRequest, SendAck};
 
-#[cfg(not(feature = "cef"))]
-const NO_CEF: &str =
-    "gmail API is unavailable without the cef feature (CDP requires remote debugging)";
-
 // ── Shared helpers (called by both Tauri IPC and the webview_apis bridge) ──
 
 pub async fn cdp_list_labels(account_id: &str) -> Result<Vec<GmailLabel>, String> {
-    #[cfg(feature = "cef")]
-    {
-        reads::list_labels(account_id).await
-    }
-    #[cfg(not(feature = "cef"))]
-    {
-        let _ = account_id;
-        Err(NO_CEF.into())
-    }
+    reads::list_labels(account_id).await
 }
 
 pub async fn cdp_list_messages(
@@ -83,15 +63,7 @@ pub async fn cdp_list_messages(
     limit: u32,
     label: Option<String>,
 ) -> Result<Vec<GmailMessage>, String> {
-    #[cfg(feature = "cef")]
-    {
-        reads::list_messages(account_id, limit, label).await
-    }
-    #[cfg(not(feature = "cef"))]
-    {
-        let _ = (account_id, limit, label);
-        Err(NO_CEF.into())
-    }
+    reads::list_messages(account_id, limit, label).await
 }
 
 pub async fn cdp_search(
@@ -99,51 +71,19 @@ pub async fn cdp_search(
     query: String,
     limit: u32,
 ) -> Result<Vec<GmailMessage>, String> {
-    #[cfg(feature = "cef")]
-    {
-        reads::search(account_id, query, limit).await
-    }
-    #[cfg(not(feature = "cef"))]
-    {
-        let _ = (account_id, query, limit);
-        Err(NO_CEF.into())
-    }
+    reads::search(account_id, query, limit).await
 }
 
 pub async fn cdp_get_message(account_id: &str, message_id: String) -> Result<GmailMessage, String> {
-    #[cfg(feature = "cef")]
-    {
-        reads::get_message(account_id, message_id).await
-    }
-    #[cfg(not(feature = "cef"))]
-    {
-        let _ = (account_id, message_id);
-        Err(NO_CEF.into())
-    }
+    reads::get_message(account_id, message_id).await
 }
 
 pub async fn cdp_send(account_id: &str, request: GmailSendRequest) -> Result<SendAck, String> {
-    #[cfg(feature = "cef")]
-    {
-        writes::send(account_id, request).await
-    }
-    #[cfg(not(feature = "cef"))]
-    {
-        let _ = (account_id, request);
-        Err(NO_CEF.into())
-    }
+    writes::send(account_id, request).await
 }
 
 pub async fn cdp_trash(account_id: &str, message_id: String) -> Result<Ack, String> {
-    #[cfg(feature = "cef")]
-    {
-        writes::trash(account_id, message_id).await
-    }
-    #[cfg(not(feature = "cef"))]
-    {
-        let _ = (account_id, message_id);
-        Err(NO_CEF.into())
-    }
+    writes::trash(account_id, message_id).await
 }
 
 pub async fn cdp_add_label(
@@ -151,15 +91,7 @@ pub async fn cdp_add_label(
     message_id: String,
     label: String,
 ) -> Result<Ack, String> {
-    #[cfg(feature = "cef")]
-    {
-        writes::add_label(account_id, message_id, label).await
-    }
-    #[cfg(not(feature = "cef"))]
-    {
-        let _ = (account_id, message_id, label);
-        Err(NO_CEF.into())
-    }
+    writes::add_label(account_id, message_id, label).await
 }
 
 /// Find the user's own LinkedIn profile URL by searching Gmail for any
@@ -174,15 +106,7 @@ pub async fn cdp_add_label(
 /// Used by the onboarding LinkedIn-enrichment pipeline as a stand-in
 /// for the Composio Gmail OAuth path that no longer ships.
 pub async fn cdp_find_linkedin_profile_url(account_id: &str) -> Result<Option<String>, String> {
-    #[cfg(feature = "cef")]
-    {
-        reads::find_linkedin_profile_url(account_id).await
-    }
-    #[cfg(not(feature = "cef"))]
-    {
-        let _ = account_id;
-        Err(NO_CEF.into())
-    }
+    reads::find_linkedin_profile_url(account_id).await
 }
 
 // ── Tauri commands (frontend path) ──────────────────────────────────────

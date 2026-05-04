@@ -20,9 +20,12 @@ use serde_json::{json, Value};
 use tempfile::tempdir;
 use tokio::time::timeout;
 
+use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_core::core::jsonrpc::build_core_http_router;
 
 static LIVE_E2E_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static LIVE_RPC_AUTH_INIT: OnceLock<()> = OnceLock::new();
+const TEST_RPC_TOKEN: &str = "live-routing-e2e-local-token";
 
 struct EnvVarGuard {
     key: &'static str,
@@ -96,6 +99,7 @@ async fn post_json_rpc(rpc_base: &str, id: i64, method: &str, params: Value) -> 
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{rpc_base}/rpc"))
+        .header("Authorization", format!("Bearer {TEST_RPC_TOKEN}"))
         .json(&json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -115,6 +119,7 @@ async fn read_sse_event_by_types(events_url: &str, target_events: &[&str]) -> Va
     let client = reqwest::Client::new();
     let resp = client
         .get(events_url)
+        .header("Authorization", format!("Bearer {TEST_RPC_TOKEN}"))
         .send()
         .await
         .unwrap_or_else(|e| panic!("open SSE stream failed: {e}"));
@@ -165,6 +170,7 @@ fn assert_no_jsonrpc_error<'a>(v: &'a Value, context: &str) -> &'a Value {
 }
 
 async fn serve_rpc() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+    ensure_test_rpc_auth();
     let app = build_core_http_router(false);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -176,6 +182,18 @@ async fn serve_rpc() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
             .expect("rpc server should run");
     });
     (addr, join)
+}
+
+fn ensure_test_rpc_auth() {
+    LIVE_RPC_AUTH_INIT.get_or_init(|| {
+        // SAFETY: set_var is inside get_or_init so it runs exactly once across
+        // all test threads. Rust 1.81+ requires unsafe for set_var in
+        // multi-threaded contexts; the OnceLock guard limits the mutation to a
+        // single call at init time, before any concurrent env reads occur.
+        unsafe { std::env::set_var(CORE_TOKEN_ENV_VAR, TEST_RPC_TOKEN) };
+        let token_dir = std::env::temp_dir().join("openhuman-live-routing-e2e-auth");
+        init_rpc_token(&token_dir).expect("init rpc auth token for live_routing_e2e");
+    });
 }
 
 #[tokio::test]

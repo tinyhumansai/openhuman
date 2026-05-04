@@ -45,6 +45,17 @@ struct TtsParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ReplySynthesizeParams {
+    text: String,
+    #[serde(default)]
+    voice_id: Option<String>,
+    #[serde(default)]
+    model_id: Option<String>,
+    #[serde(default)]
+    output_format: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum OverlaySttState {
     RecordingStarted,
@@ -72,6 +83,7 @@ pub fn all_voice_controller_schemas() -> Vec<ControllerSchema> {
         voice_schemas("voice_transcribe"),
         voice_schemas("voice_transcribe_bytes"),
         voice_schemas("voice_tts"),
+        voice_schemas("voice_reply_synthesize"),
         voice_schemas("voice_server_start"),
         voice_schemas("voice_server_stop"),
         voice_schemas("voice_server_status"),
@@ -96,6 +108,10 @@ pub fn all_voice_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: voice_schemas("voice_tts"),
             handler: handle_voice_tts,
+        },
+        RegisteredController {
+            schema: voice_schemas("voice_reply_synthesize"),
+            handler: handle_voice_reply_synthesize,
         },
         RegisteredController {
             schema: voice_schemas("voice_server_start"),
@@ -176,6 +192,26 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
                 optional_string("output_path", "Optional output file path."),
             ],
             outputs: vec![json_output("tts", "TTS result with output path.")],
+        },
+        "voice_reply_synthesize" => ControllerSchema {
+            namespace: "voice",
+            function: "reply_synthesize",
+            description:
+                "Synthesize an agent reply via the hosted backend (ElevenLabs) and return \
+                 base64 audio plus an Oculus-15 viseme alignment for mascot lip-sync.",
+            inputs: vec![
+                required_string("text", "Text to synthesize."),
+                optional_string(
+                    "voice_id",
+                    "Override voice id (defaults to backend selection).",
+                ),
+                optional_string("model_id", "Override model id."),
+                optional_string("output_format", "Override audio format (e.g. mp3_44100)."),
+            ],
+            outputs: vec![json_output(
+                "reply",
+                "ReplySpeechResult: { audio_base64, audio_mime, visemes, alignment? }.",
+            )],
         },
         "voice_server_start" => ControllerSchema {
             namespace: "voice",
@@ -288,6 +324,22 @@ fn handle_voice_tts(params: Map<String, Value>) -> ControllerFuture {
         let p = deserialize_params::<TtsParams>(params)?;
         to_json(
             crate::openhuman::voice::voice_tts(&config, &p.text, p.output_path.as_deref()).await?,
+        )
+    })
+}
+
+fn handle_voice_reply_synthesize(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<ReplySynthesizeParams>(params)?;
+        let opts = crate::openhuman::voice::reply_speech::ReplySpeechOptions {
+            voice_id: p.voice_id,
+            model_id: p.model_id,
+            output_format: p.output_format,
+        };
+        to_json(
+            crate::openhuman::voice::reply_speech::synthesize_reply(&config, &p.text, &opts)
+                .await?,
         )
     })
 }

@@ -195,18 +195,12 @@ const Accounts = () => {
   }, [ctxMenu]);
 
   return (
-    <div className="relative flex h-full overflow-hidden">
-      {/* Narrow icon rail — floats when Agent is selected, flush to the
-          edge when an app webview is taking the full pane. Hidden during
-          welcome lockdown (#883) so the user cannot navigate to a
-          connected account or add a new one. */}
+    <div className="relative flex h-full gap-3 overflow-hidden">
+      {/* Narrow icon rail — always rendered as a floating card alongside
+          the main content pane. Hidden during welcome lockdown (#883) so
+          the user cannot navigate to a connected account or add a new one. */}
       {!welcomeLocked && (
-        <aside
-          className={`z-30 flex w-16 flex-none flex-col items-center gap-2 bg-white/60 py-3 backdrop-blur-md transition-all duration-300 ${
-            isAgentSelected
-              ? 'my-3 ml-3 rounded-2xl border border-stone-200/70 shadow-soft'
-              : 'border-r border-stone-200/60'
-          }`}>
+        <aside className="z-30 flex w-16 flex-none flex-col items-center gap-2 bg-white/60 py-3 backdrop-blur-md my-3 ml-3 rounded-2xl border border-stone-200/70 shadow-soft">
           <RailButton active={isAgentSelected} onClick={selectAgent} tooltip="Agent">
             <AgentIcon className="h-9 w-9 rounded-lg" />
           </RailButton>
@@ -262,7 +256,7 @@ const Accounts = () => {
             /> */}
           </div>
         ) : active ? (
-          <div className="flex-1">
+          <div className="flex-1 py-3 pr-3">
             <WebviewHost accountId={active.id} provider={active.provider} />
           </div>
         ) : (

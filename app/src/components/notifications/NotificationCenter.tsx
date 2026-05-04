@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
+import { resolveIntegrationRoute } from '../../lib/notificationRouter';
 import {
   dismissNotification,
   fetchNotifications,
+  markNotificationActed,
   markNotificationRead,
 } from '../../services/notificationService';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
   dismissIntegrationNotification,
+  markIntegrationActed,
   markIntegrationRead,
   setIntegrationError,
   setIntegrationLoading,
@@ -21,6 +25,7 @@ import NotificationCard from './NotificationCard';
 
 const NotificationCenter = () => {
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const {
     integrationItems: items,
     integrationLoading: loading,
@@ -70,6 +75,20 @@ const NotificationCenter = () => {
       await markNotificationRead(id);
     } catch {
       // Optimistic update already applied; log failure silently.
+    }
+  };
+
+  /** Navigate to the resolved route for the notification and mark it as acted. */
+  const handleNavigate = async (id: string) => {
+    const n = items.find(i => i.id === id);
+    if (!n) return;
+    const route = resolveIntegrationRoute(n);
+    dispatch(markIntegrationActed(id));
+    navigate(route);
+    try {
+      await markNotificationActed(id);
+    } catch {
+      // Optimistic update already applied; failure is non-critical.
     }
   };
 
@@ -190,6 +209,9 @@ const NotificationCenter = () => {
                 notification={n}
                 onMarkRead={id => {
                   void handleMarkRead(id);
+                }}
+                onNavigate={id => {
+                  void handleNavigate(id);
                 }}
                 onDismiss={id => {
                   void handleDismiss(id);

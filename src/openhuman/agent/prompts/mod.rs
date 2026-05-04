@@ -228,6 +228,14 @@ pub struct WorkspaceSection;
 pub struct RuntimeSection;
 pub struct DateTimeSection;
 pub struct UserMemorySection;
+/// Renders the authenticated user's non-secret identity fields
+/// (`id` / `name` / `email`) into the system prompt — see issue #926.
+///
+/// Empty when [`PromptContext::user_identity`] is `None` or the
+/// identity has no populated fields. Tokens, refresh tokens, and any
+/// opaque credential material are forbidden — only the three
+/// identifying fields ship.
+pub struct UserIdentitySection;
 
 /// Injects the user-specific, session-frozen workspace files
 /// (`PROFILE.md` + `MEMORY.md`), each capped at [`USER_FILE_MAX_CHARS`].
@@ -491,13 +499,76 @@ impl PromptSection for DateTimeSection {
     }
 
     fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
+        // IANA zone first because it's the unambiguous machine-readable
+        // form (`America/Los_Angeles`) — agents that need to reason about
+        // timezone rules should grep this, not the locale-dependent
+        // `%Z` abbreviation. Falls back to "UTC" when the host can't
+        // resolve a zone (CI, stripped containers).
+        let iana = iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string());
         let now = Local::now();
         Ok(format!(
-            "## Current Date & Time\n\n{} ({})",
+            "## Current Date & Time\n\n{} {} ({}, UTC{})",
             now.format("%Y-%m-%d %H:%M:%S"),
-            now.format("%Z")
+            iana,
+            now.format("%Z"),
+            now.format("%:z"),
         ))
     }
+}
+
+impl PromptSection for UserIdentitySection {
+    fn name(&self) -> &str {
+        "user_identity"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        let identity = match ctx.user_identity.as_ref() {
+            Some(id) if !id.is_empty() => id,
+            _ => return Ok(String::new()),
+        };
+
+        // Render the field list FIRST, then decide whether to ship the
+        // heading. `UserIdentity::is_empty()` only checks `None`-ness —
+        // a struct whose fields are all `Some("")` / whitespace would
+        // otherwise leave the prompt with a `## User` heading + intro
+        // pointing at zero fields, which is exactly the empty-prompt
+        // failure mode we're trying to suppress (#926).
+        let mut fields = String::new();
+        if let Some(name) = identity.name.as_deref().filter(|s| !s.trim().is_empty()) {
+            let _ = writeln!(fields, "- name: {}", sanitize_identity_field(name));
+        }
+        if let Some(email) = identity.email.as_deref().filter(|s| !s.trim().is_empty()) {
+            let _ = writeln!(fields, "- email: {}", sanitize_identity_field(email));
+        }
+        if let Some(id) = identity.id.as_deref().filter(|s| !s.trim().is_empty()) {
+            let _ = writeln!(fields, "- id: {}", sanitize_identity_field(id));
+        }
+        if fields.trim().is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut out = String::from("## User\n\n");
+        out.push_str(
+            "The signed-in user is identified below. Use these fields directly in tool \
+             calls and do not ask the user to repeat them.\n\n",
+        );
+        out.push_str(&fields);
+        Ok(out.trim_end().to_string())
+    }
+}
+
+/// Collapse newlines and runs of whitespace in a user-identity field so
+/// it fits on a single markdown bullet without breaking the prompt
+/// structure. Values come from `auth_get_me` (server-controlled), but
+/// defence-in-depth: a name with embedded newlines could split the
+/// `- name:` bullet and reshape the `## User` block.
+fn sanitize_identity_field(s: &str) -> String {
+    s.chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -569,6 +640,43 @@ pub fn render_datetime(ctx: &PromptContext<'_>) -> Result<String> {
     DateTimeSection.build(ctx)
 }
 
+/// Render the `## User` identity block. Empty when
+/// [`PromptContext::user_identity`] is unset or has no populated
+/// fields. See issue #926.
+pub fn render_user_identity(ctx: &PromptContext<'_>) -> Result<String> {
+    UserIdentitySection.build(ctx)
+}
+
+/// Compose the full ambient-environment block — runtime + user
+/// identity + current date/time, in that order.
+///
+/// Per-agent `prompt.rs` builders call this once near the end of their
+/// assembly so every agent reports the same machine-readable view of
+/// "where am I, who is the user, what time is it" (issue #926).
+/// Datetime is appended last so the time-volatile section sits at the
+/// tail of the prompt and the rest of the prefix stays cache-stable
+/// across turns within the same minute, matching the convention used
+/// by [`SystemPromptBuilder::with_defaults`].
+pub fn render_ambient_environment(ctx: &PromptContext<'_>) -> Result<String> {
+    let mut out = String::with_capacity(512);
+    let runtime = render_runtime(ctx)?;
+    if !runtime.trim().is_empty() {
+        out.push_str(runtime.trim_end());
+        out.push_str("\n\n");
+    }
+    let user = render_user_identity(ctx)?;
+    if !user.trim().is_empty() {
+        out.push_str(user.trim_end());
+        out.push_str("\n\n");
+    }
+    let datetime = render_datetime(ctx)?;
+    if !datetime.trim().is_empty() {
+        out.push_str(datetime.trim_end());
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 /// Build a throwaway `PromptContext` for sections whose `build` only
 /// uses static/immutable inputs (currently just `SafetySection`). Keeps
 /// the `render_safety()` free function from forcing callers to
@@ -596,7 +704,7 @@ fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
-        curated_snapshot: None,
+        user_identity: None,
     }
 }
 

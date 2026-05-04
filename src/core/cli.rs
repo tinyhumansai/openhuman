@@ -63,7 +63,6 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
         "screen-intelligence" => {
             crate::openhuman::screen_intelligence::cli::run_screen_intelligence_command(&args[1..])
         }
-        "voice" | "dictate" => crate::openhuman::voice::cli::run_standalone_subcommand(&args[1..]),
         "text-input" => crate::openhuman::text_input::cli::run_text_input_command(&args[1..]),
         "tree-summarizer" => {
             crate::openhuman::tree_summarizer::cli::run_tree_summarizer_command(&args[1..])
@@ -361,6 +360,10 @@ fn run_namespace_command(
     }
 
     if args.is_empty() || is_help(&args[0]) {
+        // If there's a domain-specific CLI handler for this namespace, use it as the default.
+        if let Some(cli_handler) = all::cli_handler_for_namespace(namespace) {
+            return cli_handler(args);
+        }
         print_namespace_help(namespace, schemas);
         return Ok(());
     }

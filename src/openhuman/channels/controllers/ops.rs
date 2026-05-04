@@ -234,15 +234,21 @@ pub async fn connect_channel(
         let allowed_users_count = allowed_users.len();
 
         let mut persisted = config.clone();
-        let (stream_mode, draft_update_interval_ms, mention_only) =
+        let (stream_mode, draft_update_interval_ms, silent_streaming, mention_only) =
             if let Some(existing) = persisted.channels_config.telegram.as_ref() {
                 (
                     existing.stream_mode,
                     existing.draft_update_interval_ms,
+                    existing.silent_streaming,
                     existing.mention_only,
                 )
             } else {
-                (crate::openhuman::config::StreamMode::default(), 1000, false)
+                (
+                    crate::openhuman::config::StreamMode::default(),
+                    1000,
+                    true,
+                    false,
+                )
             };
 
         persisted.channels_config.telegram = Some(TelegramConfig {
@@ -250,6 +256,7 @@ pub async fn connect_channel(
             allowed_users,
             stream_mode,
             draft_update_interval_ms,
+            silent_streaming,
             mention_only,
         });
 

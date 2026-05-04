@@ -36,7 +36,7 @@ fn default_root_dir_name() -> &'static str {
     }
 }
 
-fn default_root_openhuman_dir() -> Result<PathBuf, String> {
+pub fn default_root_openhuman_dir() -> Result<PathBuf, String> {
     if let Ok(workspace) = std::env::var("OPENHUMAN_WORKSPACE") {
         let trimmed = workspace.trim();
         if !trimmed.is_empty() {
@@ -50,7 +50,7 @@ fn default_root_openhuman_dir() -> Result<PathBuf, String> {
     Ok(home.join(default_root_dir_name()))
 }
 
-fn read_active_user_id(default_openhuman_dir: &Path) -> Option<String> {
+pub fn read_active_user_id(default_openhuman_dir: &Path) -> Option<String> {
     let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
     let contents = std::fs::read_to_string(path).ok()?;
     let state: ActiveUserState = toml::from_str(&contents).ok()?;
@@ -297,6 +297,33 @@ pub fn prepare_process_cache_path() -> Result<PathBuf, String> {
         user_id,
         cache_dir.display()
     );
+
+    // When a real user is active, the pre-login `users/local/cef` bucket is
+    // stale third-party state captured during cold-bootstrap (before
+    // `active_user.toml` existed) — e.g. a Slack/WhatsApp tile added on a
+    // fresh install while the process was still running on the `local`
+    // fallback path. If we don't sweep it, those cookies leak into the
+    // first user's session via webview pre-warm and across users when the
+    // pre-login bucket is reused on subsequent fresh installs. Drop it
+    // synchronously here, before CEF init, so it's safe to delete. (#900)
+    if user_id != PRE_LOGIN_USER_ID {
+        if let Ok(local_cef) = cache_dir_for_user(&default_openhuman_dir, PRE_LOGIN_USER_ID) {
+            if local_cef.exists() {
+                match std::fs::remove_dir_all(&local_cef) {
+                    Ok(()) => log::info!(
+                        "[cef-profile] purged stale pre-login CEF cache path={}",
+                        local_cef.display()
+                    ),
+                    Err(error) => log::warn!(
+                        "[cef-profile] failed to purge stale pre-login CEF cache path={} error={}",
+                        local_cef.display(),
+                        error
+                    ),
+                }
+            }
+        }
+    }
+
     Ok(cache_dir)
 }
 

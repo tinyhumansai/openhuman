@@ -5,6 +5,7 @@ import { HashRouter as Router, useLocation, useNavigate } from 'react-router-dom
 import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
+import AppUpdatePrompt from './components/AppUpdatePrompt';
 import BottomTabBar from './components/BottomTabBar';
 import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
@@ -13,7 +14,7 @@ import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import MeshGradient from './components/MeshGradient';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
-import RouteLoadingScreen from './components/RouteLoadingScreen';
+import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
 import { isWelcomeLocked } from './lib/coreState/store';
 import { startNativeNotificationsService } from './lib/nativeNotifications';
@@ -21,7 +22,6 @@ import { startWebviewNotificationsService } from './lib/webviewNotifications';
 import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
 import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
-import { tagErrorSource } from './services/errorReportQueue';
 import { startWebviewAccountService } from './services/webviewAccountService';
 import { persistor, store } from './store';
 import { useAppDispatch, useAppSelector } from './store/hooks';
@@ -42,12 +42,9 @@ function App() {
     <Sentry.ErrorBoundary
       fallback={({ error, componentStack, resetError }) => (
         <ErrorFallbackScreen error={error} componentStack={componentStack} onReset={resetError} />
-      )}
-      onError={(_error, componentStack, eventId) => {
-        tagErrorSource(eventId, 'react', componentStack);
-      }}>
+      )}>
       <Provider store={store}>
-        <PersistGate loading={<RouteLoadingScreen />} persistor={persistor}>
+        <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
           <CoreStateProvider>
             <SocketProvider>
               <ChatRuntimeProvider>
@@ -57,6 +54,7 @@ function App() {
                       <AppShell />
                       <DictationHotkeyManager />
                       <LocalAIDownloadSnackbar />
+                      <AppUpdatePrompt />
                     </ServiceBlockingGate>
                   </CommandProvider>
                 </Router>

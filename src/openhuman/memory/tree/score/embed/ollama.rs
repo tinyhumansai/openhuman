@@ -88,7 +88,8 @@ impl OllamaEmbedder {
         }
     }
 
-    /// Convenience constructor using all defaults.
+    /// Convenience constructor using all defaults ([`DEFAULT_ENDPOINT`],
+    /// [`DEFAULT_MODEL`], [`DEFAULT_TIMEOUT_MS`]).
     pub fn default_new() -> Self {
         Self::new(String::new(), String::new(), 0)
     }

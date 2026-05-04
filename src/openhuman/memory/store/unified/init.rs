@@ -1,15 +1,28 @@
+//! `UnifiedMemory` constructor + schema bootstrap.
+//!
+//! Creates the workspace directories, opens the SQLite connection in WAL mode,
+//! materialises every table the unified store owns (docs, kv, graph, vector
+//! chunks, episodic FTS5, segments, events, profile), and runs idempotent
+//! legacy-namespace migrations. Also exposes path / namespace helpers shared
+//! by the rest of the unified module.
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
 use rusqlite::Connection;
 
-use crate::openhuman::memory::embeddings::EmbeddingProvider;
+use crate::openhuman::embeddings::EmbeddingProvider;
 use crate::openhuman::memory::store::types::GLOBAL_NAMESPACE;
 
 use super::UnifiedMemory;
 
 impl UnifiedMemory {
+    /// Open (or create) the unified store rooted at `workspace_dir`.
+    ///
+    /// Creates the on-disk layout, runs all `CREATE TABLE` statements, and
+    /// applies idempotent legacy-namespace migrations. Safe to call on every
+    /// boot.
     pub fn new(
         workspace_dir: &Path,
         embedder: Arc<dyn EmbeddingProvider>,
@@ -179,14 +192,17 @@ impl UnifiedMemory {
         })
     }
 
+    /// Root workspace directory holding `memory/` and its subtrees.
     pub fn workspace_dir(&self) -> &Path {
         &self.workspace_dir
     }
 
+    /// Filesystem path of the SQLite database file.
     pub fn db_path(&self) -> &Path {
         &self.db_path
     }
 
+    /// Directory used for vector-related sidecar files.
     pub fn vectors_dir(&self) -> &Path {
         &self.vectors_dir
     }

@@ -151,6 +151,7 @@ pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String
 #[derive(Debug, Clone, Default)]
 pub struct ModelSettingsPatch {
     pub api_url: Option<String>,
+    pub api_key: Option<String>,
     pub default_model: Option<String>,
     pub default_temperature: Option<f64>,
 }
@@ -162,6 +163,12 @@ pub struct MemorySettingsPatch {
     pub embedding_provider: Option<String>,
     pub embedding_model: Option<String>,
     pub embedding_dimensions: Option<usize>,
+    /// Stepped user-facing memory-context window preset (see
+    /// [`crate::openhuman::config::schema::agent::MemoryContextWindow`]).
+    /// Accepts `"minimal" | "balanced" | "extended" | "maximum"`.
+    /// Unknown values are silently ignored so old clients can keep
+    /// posting partial patches.
+    pub memory_window: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -224,6 +231,14 @@ pub async fn apply_model_settings(
             Some(api_url)
         };
     }
+    if let Some(api_key) = update.api_key {
+        let trimmed_key = api_key.trim();
+        config.api_key = if trimmed_key.is_empty() {
+            None
+        } else {
+            Some(trimmed_key.to_string())
+        };
+    }
     if let Some(model) = update.default_model {
         config.default_model = if model.trim().is_empty() {
             None
@@ -264,6 +279,18 @@ pub async fn apply_memory_settings(
     }
     if let Some(dimensions) = update.embedding_dimensions {
         config.memory.embedding_dimensions = dimensions;
+    }
+    if let Some(window_label) = update.memory_window.as_deref() {
+        if let Some(window) =
+            crate::openhuman::config::schema::MemoryContextWindow::from_str_opt(window_label)
+        {
+            config.agent.memory_window = Some(window);
+        } else {
+            tracing::warn!(
+                requested = window_label,
+                "[config] unknown memory_window preset — leaving existing setting unchanged"
+            );
+        }
     }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(config)?;

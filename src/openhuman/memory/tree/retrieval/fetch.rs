@@ -13,6 +13,7 @@
 use anyhow::Result;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::content_store::read as content_read;
 use crate::openhuman::memory::tree::retrieval::types::{hit_from_chunk, RetrievalHit};
 use crate::openhuman::memory::tree::score::store::get_score;
 use crate::openhuman::memory::tree::store::get_chunk;
@@ -66,7 +67,22 @@ pub async fn fetch_leaves(config: &Config, chunk_ids: &[String]) -> Result<Vec<R
             // chunk row. `scope` falls back to the chunk's own source_id so
             // consumers still see provenance (e.g. "slack:#eng").
             let scope = chunk.metadata.source_id.clone();
-            out.push(hit_from_chunk(&chunk, "", &scope, score));
+            // Hydrate the full body from disk before building the hit.
+            // The `content` column in SQLite holds a ≤500-char preview after
+            // the MD-on-disk migration; the retrieval API must return the
+            // complete chunk text so the LLM sees untruncated content.
+            let mut chunk_with_body = chunk;
+            match content_read::read_chunk_body(&config_owned, id) {
+                Ok(body) => chunk_with_body.content = body,
+                Err(e) => {
+                    log::warn!(
+                        "[retrieval::fetch] read_chunk_body failed for chunk — serving preview: {e:#}"
+                    );
+                    // Non-fatal: fall back to the preview already in the struct.
+                    // This handles pre-MD-migration rows gracefully.
+                }
+            }
+            out.push(hit_from_chunk(&chunk_with_body, "", &scope, score));
         }
         Ok(out)
     })
@@ -80,10 +96,25 @@ pub async fn fetch_leaves(config: &Config, chunk_ids: &[String]) -> Result<Vec<R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::memory::tree::content_store;
     use crate::openhuman::memory::tree::store::upsert_chunks;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::{TimeZone, Utc};
     use tempfile::TempDir;
+
+    fn stage_test_chunks(cfg: &Config, chunks: &[Chunk]) {
+        let content_root = cfg.memory_tree_content_root();
+        std::fs::create_dir_all(&content_root).expect("create content_root for test");
+        let staged = content_store::stage_chunks(&content_root, chunks)
+            .expect("stage_chunks for test chunks");
+        crate::openhuman::memory::tree::store::with_connection(cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            crate::openhuman::memory::tree::store::upsert_staged_chunks_tx(&tx, &staged)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .expect("persist staged chunk pointers");
+    }
 
     fn test_config() -> (TempDir, Config) {
         let tmp = TempDir::new().unwrap();
@@ -99,7 +130,7 @@ mod tests {
     fn sample_chunk(source: &str, seq: u32) -> Chunk {
         let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
         Chunk {
-            id: chunk_id(SourceKind::Chat, source, seq),
+            id: chunk_id(SourceKind::Chat, source, seq, "test-content"),
             content: format!("content-{source}-{seq}"),
             metadata: Metadata {
                 source_kind: SourceKind::Chat,
@@ -113,6 +144,7 @@ mod tests {
             token_count: 20,
             seq_in_source: seq,
             created_at: ts,
+            partial_message: false,
         }
     }
 
@@ -129,6 +161,7 @@ mod tests {
         let c1 = sample_chunk("slack:#eng", 0);
         let c2 = sample_chunk("slack:#eng", 1);
         upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
+        stage_test_chunks(&cfg, &[c1.clone(), c2.clone()]);
         let out = fetch_leaves(&cfg, &[c1.id.clone(), c2.id.clone()])
             .await
             .unwrap();
@@ -142,6 +175,7 @@ mod tests {
         let (_tmp, cfg) = test_config();
         let c1 = sample_chunk("slack:#eng", 0);
         upsert_chunks(&cfg, &[c1.clone()]).unwrap();
+        stage_test_chunks(&cfg, &[c1.clone()]);
         let out = fetch_leaves(
             &cfg,
             &[c1.id.clone(), "ghost:nonexistent".into(), c1.id.clone()],
@@ -159,6 +193,7 @@ mod tests {
         for i in 0..(MAX_BATCH + 5) as u32 {
             let c = sample_chunk("slack:#eng", i);
             upsert_chunks(&cfg, &[c.clone()]).unwrap();
+            stage_test_chunks(&cfg, &[c.clone()]);
             ids.push(c.id);
         }
         let out = fetch_leaves(&cfg, &ids).await.unwrap();
@@ -170,6 +205,7 @@ mod tests {
         let (_tmp, cfg) = test_config();
         let c = sample_chunk("slack:#eng", 0);
         upsert_chunks(&cfg, &[c.clone()]).unwrap();
+        stage_test_chunks(&cfg, &[c.clone()]);
         let out = fetch_leaves(&cfg, &[c.id.clone()]).await.unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].source_ref.as_deref(), Some("slack://slack:#eng/0"));

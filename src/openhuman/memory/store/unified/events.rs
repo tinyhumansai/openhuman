@@ -77,6 +77,7 @@ pub enum EventType {
 }
 
 impl EventType {
+    /// Stable lowercase identifier persisted in the `event_log` table.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Fact => "fact",
@@ -88,6 +89,8 @@ impl EventType {
         }
     }
 
+    /// Parse a stored string back to an `EventType`; unknown values fall back
+    /// to `Fact`.
     pub fn parse_or_default(s: &str) -> Self {
         match s {
             "decision" => Self::Decision,

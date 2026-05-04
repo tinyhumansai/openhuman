@@ -1,9 +1,12 @@
+//! Tests for the `documents` module — upsert / list / delete / clear-namespace.
+
 use std::sync::Arc;
 
 use serde_json::json;
 use tempfile::TempDir;
 
-use crate::openhuman::memory::{embeddings::NoopEmbedding, NamespaceDocumentInput, UnifiedMemory};
+use crate::openhuman::embeddings::NoopEmbedding;
+use crate::openhuman::memory::{NamespaceDocumentInput, UnifiedMemory};
 
 fn make_doc_input(
     namespace: &str,

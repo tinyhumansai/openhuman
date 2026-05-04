@@ -1,8 +1,9 @@
 use super::*;
 use crate::openhuman::config::Config;
-use crate::openhuman::cron::{self, DeliveryConfig};
+use crate::openhuman::cron::{self, ActiveHours, DeliveryConfig};
 use crate::openhuman::security::SecurityPolicy;
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{Duration as ChronoDuration, Timelike, Utc};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 async fn test_config(tmp: &TempDir) -> Config {
@@ -24,6 +25,7 @@ fn test_job(command: &str) -> CronJob {
         schedule: crate::openhuman::cron::Schedule::Cron {
             expr: "* * * * *".into(),
             tz: None,
+            active_hours: None,
         },
         command: command.into(),
         prompt: None,
@@ -43,6 +45,7 @@ fn test_job(command: &str) -> CronJob {
     }
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn run_job_command_success() {
     let tmp = TempDir::new().unwrap();
@@ -56,6 +59,7 @@ async fn run_job_command_success() {
     assert!(output.contains("status=exit status: 0"));
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn run_job_command_failure() {
     let tmp = TempDir::new().unwrap();
@@ -75,6 +79,7 @@ async fn run_job_command_failure() {
     assert!(output.contains("status=exit status:"));
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn run_job_command_times_out() {
     let tmp = TempDir::new().unwrap();
@@ -147,6 +152,7 @@ async fn run_job_command_blocks_rate_limited() {
     assert!(output.contains("rate limit exceeded"));
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn execute_job_with_retry_recovers_after_first_failure() {
     let tmp = TempDir::new().unwrap();
@@ -172,6 +178,7 @@ async fn execute_job_with_retry_recovers_after_first_failure() {
     assert!(output.contains("recovered"));
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn execute_job_with_retry_exhausts_attempts() {
     let tmp = TempDir::new().unwrap();
@@ -219,6 +226,62 @@ async fn persist_job_result_records_run_and_reschedules_shell_job() {
     assert_eq!(runs.len(), 1);
     let updated = cron::get_job(&config, &job.id).unwrap();
     assert_eq!(updated.last_status.as_deref(), Some("ok"));
+}
+
+#[tokio::test]
+async fn scheduler_flow_runs_active_hours_job_and_reschedules_inside_window() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let active_minute = Utc::now() + ChronoDuration::minutes(2);
+    let active_hm = format!("{:02}:{:02}", active_minute.hour(), active_minute.minute());
+    let active_hours = ActiveHours {
+        start: active_hm.clone(),
+        end: active_hm.clone(),
+    };
+    let mut job = cron::add_shell_job(
+        &config,
+        Some("active-hours-e2e".into()),
+        Schedule::Cron {
+            expr: "* * * * *".into(),
+            tz: Some("UTC".into()),
+            active_hours: Some(active_hours.clone()),
+        },
+        "echo active-hours-fired",
+    )
+    .unwrap();
+    job.next_run = Utc::now() - ChronoDuration::seconds(1);
+
+    let security = Arc::new(SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+    ));
+    process_due_jobs(&config, &security, vec![job.clone()]).await;
+
+    let stored = cron::get_job(&config, &job.id).unwrap();
+    assert_eq!(stored.last_status.as_deref(), Some("ok"));
+    assert!(stored
+        .last_output
+        .as_deref()
+        .unwrap_or_default()
+        .contains("active-hours-fired"));
+    assert_eq!(
+        stored.schedule,
+        Schedule::Cron {
+            expr: "* * * * *".into(),
+            tz: Some("UTC".into()),
+            active_hours: Some(active_hours),
+        }
+    );
+
+    let next_hm = format!(
+        "{:02}:{:02}",
+        stored.next_run.hour(),
+        stored.next_run.minute()
+    );
+    assert_eq!(next_hm, active_hm);
+    let runs = cron::list_runs(&config, &job.id, 10).unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, "ok");
 }
 
 #[tokio::test]
@@ -353,6 +416,7 @@ fn is_one_shot_auto_delete_false_for_cron_schedule() {
     job.schedule = Schedule::Cron {
         expr: "0 * * * *".into(),
         tz: None,
+        active_hours: None,
     };
     assert!(!is_one_shot_auto_delete(&job));
 }

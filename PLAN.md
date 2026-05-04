@@ -127,7 +127,7 @@ cargo test -p openhuman --test json_rpc_e2e
 ./target/debug/openhuman <domain> <verb> --args...
 ```
 
-Plus `yarn test:rust` for the full mock-backed integration suite before each PR.
+Plus `pnpm test:rust` for the full mock-backed integration suite before each PR.
 
 ## Milestones
 

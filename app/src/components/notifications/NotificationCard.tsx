@@ -50,11 +50,20 @@ function scoreBadgeClass(score: number): string {
 interface Props {
   notification: IntegrationNotification;
   onMarkRead: (id: string) => void;
+  onNavigate?: (id: string) => void;
   onDismiss?: (id: string) => void;
 }
 
-const NotificationCard = ({ notification: n, onMarkRead, onDismiss }: Props) => {
+const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }: Props) => {
   const isUnread = n.status === 'unread';
+
+  const handleBodyClick = () => {
+    if (onNavigate) {
+      onNavigate(n.id);
+    } else if (isUnread) {
+      onMarkRead(n.id);
+    }
+  };
 
   return (
     <div
@@ -70,9 +79,7 @@ const NotificationCard = ({ notification: n, onMarkRead, onDismiss }: Props) => 
         </div>
 
         <button
-          onClick={() => {
-            if (isUnread) onMarkRead(n.id);
-          }}
+          onClick={handleBodyClick}
           className="flex-1 min-w-0 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 rounded-sm">
           {/* Header row: provider badge + timestamp */}
           <div className="flex items-center gap-2 mb-1">

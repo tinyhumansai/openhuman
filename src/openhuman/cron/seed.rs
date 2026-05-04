@@ -104,14 +104,15 @@ fn prune_legacy_welcome(config: &Config, existing: &[crate::openhuman::cron::Cro
     }
 }
 
-/// Daily morning briefing at 7:00 AM UTC.
-///
+/// Daily morning briefing at 7:00 AM in the device-local timezone
+/// (unless a timezone is later set explicitly).
 /// The cron expression `0 7 * * *` fires once per day. Users can later
 /// adjust the schedule or time zone via `cron.update_job`.
 fn seed_morning_briefing(config: &Config) -> Result<()> {
     let schedule = Schedule::Cron {
         expr: "0 7 * * *".to_string(),
         tz: None,
+        active_hours: None,
     };
 
     let prompt = concat!(

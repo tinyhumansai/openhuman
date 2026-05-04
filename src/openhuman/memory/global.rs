@@ -47,7 +47,14 @@ pub fn init(workspace_dir: PathBuf) -> Result<MemoryClientRef, String> {
     Ok(GLOBAL_CLIENT.get().cloned().unwrap_or(client))
 }
 
-/// Initialise using the default `.openhuman/workspace` directory.
+/// Initialise using the default `~/.openhuman/workspace` directory.
+///
+/// **TEST-ONLY.** Production code must call [`init`] with the real workspace
+/// directory at startup wiring. If this function ran first in production it
+/// would pin the singleton to `~/.openhuman/workspace`, causing every
+/// subsequent `init(custom_workspace)` to silently no-op and return the wrong
+/// handle (`OnceLock::set` is one-shot).
+#[cfg(test)]
 pub fn init_default() -> Result<MemoryClientRef, String> {
     let workspace_dir = crate::openhuman::config::default_root_openhuman_dir()
         .map_err(|e| e.to_string())?
@@ -55,16 +62,27 @@ pub fn init_default() -> Result<MemoryClientRef, String> {
     init(workspace_dir)
 }
 
-/// Returns the global memory client, lazily initialising with default paths
-/// if not yet set up.
+/// Returns the global memory client.
 ///
-/// Prefer calling `init()` explicitly at startup so errors surface early.
+/// Returns `Err` if [`init`] has not yet been called. There is **no** lazy
+/// fallback: a fallback would pin the global to `~/.openhuman/workspace` on
+/// the first stray call (test, early RPC, etc.), and `OnceLock::set` is
+/// one-shot, so the real `init(custom_workspace)` would silently no-op
+/// afterwards and every caller would get the wrong workspace.
+///
+/// Callers that can tolerate "not yet ready" should use
+/// [`client_if_ready`] instead.
 pub fn client() -> Result<MemoryClientRef, String> {
-    if let Some(c) = GLOBAL_CLIENT.get() {
-        return Ok(Arc::clone(c));
-    }
-    // Lazy fallback — initialise with defaults.
-    init_default()
+    client_from(&GLOBAL_CLIENT)
+}
+
+/// Implementation backing [`client`] — extracted so unit tests can pass a
+/// freshly-constructed local `OnceLock` and assert the uninitialised-error
+/// contract without racing the process-global singleton.
+fn client_from(slot: &OnceLock<MemoryClientRef>) -> Result<MemoryClientRef, String> {
+    slot.get().cloned().ok_or_else(|| {
+        "memory global accessed before init — call init(workspace) at startup".to_string()
+    })
 }
 
 /// Returns the global client if already initialised, without lazy init.
@@ -107,13 +125,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn client_returns_a_handle_either_via_lazy_init_or_existing() {
-        // Bind TempDir at test scope so its directory outlives any lazy
-        // init — the global client holds the path and can be used later in
-        // this test (and potentially by other tests in the same binary).
+    async fn client_returns_a_handle_after_explicit_init() {
+        // Bind TempDir at test scope so its directory outlives the global
+        // client — the singleton holds the path and may be used later in
+        // this test binary.
         let tmp = TempDir::new().unwrap();
+        // Explicit init: client() no longer lazily initialises.
         let _ = client_if_ready().or_else(|| init(tmp.path().join("ws")).ok());
-        let c = client().expect("global client should be available");
+        let c = client().expect("global client should be available after init");
         let _arc: Arc<MemoryClient> = c;
+    }
+
+    #[tokio::test]
+    async fn client_errs_clearly_when_not_initialised() {
+        // Use a fresh local `OnceLock` rather than the process-global one:
+        // other tests may have already called `init()` on the singleton, so
+        // an `is_none`-gated check on `GLOBAL_CLIENT` would race / silently
+        // skip. `client_from` lets us assert the contract deterministically.
+        let local: OnceLock<MemoryClientRef> = OnceLock::new();
+        match client_from(&local) {
+            Ok(_) => panic!("client_from(empty) must error"),
+            Err(err) => assert!(
+                err.contains("init"),
+                "error should mention init contract, got: {err}"
+            ),
+        }
     }
 }

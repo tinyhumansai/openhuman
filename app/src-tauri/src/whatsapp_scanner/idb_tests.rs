@@ -130,3 +130,23 @@ fn normalize_contact_prefers_name_then_notify() {
         Some(("c@c.us".to_string(), "Notify".to_string()))
     );
 }
+
+#[test]
+fn requestdata_params_omit_index_name() {
+    // Regression guard for Bug 1: passing `indexName: ""` to
+    // `IndexedDB.requestData` makes CEF 146 reject the call with
+    // "Could not get index". The field must be omitted entirely.
+    // Same constraint observed in slack_scanner/idb.rs:210-214 and
+    // telegram_scanner/idb.rs:210.
+    let params = json!({
+        "securityOrigin": "https://web.whatsapp.com",
+        "databaseName": "model-storage",
+        "objectStoreName": "message",
+        "skipCount": 0i64,
+        "pageSize": 500i64,
+    });
+    assert!(
+        params.get("indexName").is_none(),
+        "indexName must be omitted entirely - passing empty string is rejected by CEF 146 with 'Could not get index' (see slack_scanner/idb.rs:210-214)"
+    );
+}

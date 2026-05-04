@@ -1,3 +1,7 @@
+//! Strongly-typed bag of per-signal scores plus the weights used to combine
+//! them. Persisted alongside the total in `mem_tree_score` so a chunk's
+//! admit/drop decision is auditable after the fact.
+
 use serde::{Deserialize, Serialize};
 
 /// Per-signal score breakdown for one chunk. Persisted alongside the total

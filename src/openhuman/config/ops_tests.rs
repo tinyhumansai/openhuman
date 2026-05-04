@@ -220,6 +220,7 @@ async fn apply_model_settings_updates_fields_and_persists_snapshot() {
     let mut cfg = tmp_config(&tmp);
     let patch = ModelSettingsPatch {
         api_url: Some("https://api.example.test".into()),
+        api_key: None,
         default_model: Some("gpt-4o".into()),
         default_temperature: Some(0.25),
     };
@@ -240,6 +241,7 @@ async fn apply_model_settings_empty_strings_clear_optional_fields() {
     cfg.default_model = Some("prev-model".into());
     let patch = ModelSettingsPatch {
         api_url: Some("".into()),
+        api_key: None,
         default_model: Some("".into()),
         default_temperature: None,
     };
@@ -258,6 +260,7 @@ async fn apply_memory_settings_updates_all_provided_fields() {
         embedding_provider: Some("ollama".into()),
         embedding_model: Some("nomic".into()),
         embedding_dimensions: Some(768),
+        memory_window: Some("extended".into()),
     };
     let _ = apply_memory_settings(&mut cfg, patch).await.expect("apply");
     assert_eq!(cfg.memory.backend, "sqlite");
@@ -265,6 +268,45 @@ async fn apply_memory_settings_updates_all_provided_fields() {
     assert_eq!(cfg.memory.embedding_provider, "ollama");
     assert_eq!(cfg.memory.embedding_model, "nomic");
     assert_eq!(cfg.memory.embedding_dimensions, 768);
+    assert_eq!(
+        cfg.agent.memory_window,
+        Some(crate::openhuman::config::schema::MemoryContextWindow::Extended)
+    );
+}
+
+#[tokio::test]
+async fn apply_memory_settings_ignores_unknown_memory_window_label() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.agent.memory_window = Some(crate::openhuman::config::schema::MemoryContextWindow::Balanced);
+    let original = cfg.agent.memory_window;
+    let patch = MemorySettingsPatch {
+        memory_window: Some("ginormous".into()),
+        ..MemorySettingsPatch::default()
+    };
+    let _ = apply_memory_settings(&mut cfg, patch).await.expect("apply");
+    assert_eq!(cfg.agent.memory_window, original);
+}
+
+#[tokio::test]
+async fn apply_memory_settings_round_trips_all_window_labels() {
+    use crate::openhuman::config::schema::MemoryContextWindow;
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let windows: [MemoryContextWindow; 4] = [
+        MemoryContextWindow::Minimal,
+        MemoryContextWindow::Balanced,
+        MemoryContextWindow::Extended,
+        MemoryContextWindow::Maximum,
+    ];
+    for window in windows {
+        let patch = MemorySettingsPatch {
+            memory_window: Some(window.as_str().to_string()),
+            ..MemorySettingsPatch::default()
+        };
+        apply_memory_settings(&mut cfg, patch).await.expect("apply");
+        assert_eq!(cfg.agent.memory_window, Some(window));
+    }
 }
 
 #[tokio::test]

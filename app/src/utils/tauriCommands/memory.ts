@@ -267,3 +267,76 @@ export async function aiWriteMemoryFile(relativePath: string, content: string): 
     params: { relative_path: relativePath, content },
   });
 }
+
+export interface MemorySyncChannelResult {
+  requested: boolean;
+  channel_id: string;
+}
+
+export interface MemorySyncAllResult {
+  requested: boolean;
+}
+
+export interface NamespaceLearnResult {
+  namespace: string;
+  status: 'ok' | 'skipped' | 'error';
+  error?: string;
+}
+
+export interface MemoryLearnAllResult {
+  namespaces_processed: number;
+  results: NamespaceLearnResult[];
+}
+
+/**
+ * Request a memory sync for a specific channel.
+ * Publishes MemorySyncRequested on the core event bus and returns confirmation.
+ * No ingestion runs synchronously — future subscribers will react.
+ */
+export async function memorySyncChannel(channelId: string): Promise<MemorySyncChannelResult> {
+  console.debug('[memory.sync] memorySyncChannel: entry channel_id=%s', channelId);
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  const resp = await callCoreRpc<MemorySyncChannelResult>({
+    method: 'openhuman.memory_sync_channel',
+    params: { channel_id: channelId },
+  });
+  console.debug('[memory.sync] memorySyncChannel: exit result=%o', resp);
+  return resp;
+}
+
+/**
+ * Request a memory sync for all channels.
+ * Publishes MemorySyncRequested { channel_id: None } on the core event bus.
+ */
+export async function memorySyncAll(): Promise<MemorySyncAllResult> {
+  console.debug('[memory.sync] memorySyncAll: entry');
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  const resp = await callCoreRpc<MemorySyncAllResult>({ method: 'openhuman.memory_sync_all' });
+  console.debug('[memory.sync] memorySyncAll: exit result=%o', resp);
+  return resp;
+}
+
+/**
+ * Run the tree summarizer over all memory namespaces (or a subset).
+ * Processes sequentially; a failing namespace is recorded, not fatal.
+ */
+export async function memoryLearnAll(namespaces?: string[]): Promise<MemoryLearnAllResult> {
+  console.debug('[memory.learn] memoryLearnAll: entry namespaces=%o', namespaces);
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  const params: Record<string, unknown> = {};
+  if (namespaces && namespaces.length > 0) {
+    params.namespaces = namespaces;
+  }
+  const resp = await callCoreRpc<MemoryLearnAllResult>({
+    method: 'openhuman.memory_learn_all',
+    params,
+  });
+  console.debug('[memory.learn] memoryLearnAll: exit processed=%d', resp?.namespaces_processed);
+  return resp;
+}

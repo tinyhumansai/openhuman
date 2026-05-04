@@ -171,6 +171,58 @@ impl Agent {
             .await
             .unwrap_or_default();
 
+        // ── Memory-tree eager prefetch (#710 wiring) ──────────────────
+        // The orchestrator session injects a cross-source digest on the
+        // first turn AND every `tree_loader::REFRESH_INTERVAL` (30 min by
+        // default) thereafter, so long-running conversations stay current
+        // with newly-ingested memory. Each injection still rides on the
+        // user message (NOT the system prompt) to keep the KV-cache prefix
+        // stable. Failure is non-fatal — bare `context` is returned on any
+        // error. The timestamp is bumped on every successful `load` (even
+        // when the digest is empty) so an empty workspace doesn't get
+        // re-queried every turn.
+        let now = std::time::Instant::now();
+        let context = if crate::openhuman::agent::tree_loader::should_prefetch(
+            self.last_tree_prefetch_at,
+            now,
+            crate::openhuman::agent::tree_loader::REFRESH_INTERVAL,
+        ) {
+            match crate::openhuman::config::rpc::load_config_with_timeout().await {
+                Ok(cfg) => {
+                    match crate::openhuman::agent::tree_loader::TreeContextLoader::load(&cfg).await
+                    {
+                        Ok(tree_ctx) => {
+                            let was_first = self.last_tree_prefetch_at.is_none();
+                            self.last_tree_prefetch_at = Some(now);
+                            if !tree_ctx.is_empty() {
+                                log::info!(
+                                    "[memory_tree] tree context injected first_turn={} chars={}",
+                                    was_first,
+                                    tree_ctx.chars().count()
+                                );
+                                format!("{context}{tree_ctx}")
+                            } else {
+                                context
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("[memory_tree] tree_loader.load failed (non-fatal): {e}");
+                            context
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[memory_tree] tree_loader skipped — config load failed (non-fatal): {e}"
+                    );
+                    context
+                }
+            }
+        } else {
+            log::trace!("[memory_tree] tree_loader skipped — within refresh interval");
+            context
+        };
+
         let enriched = if context.is_empty() {
             log::info!("[agent] no memory context found — using raw user message");
             self.last_memory_context = None;
@@ -1021,7 +1073,7 @@ impl Agent {
             tool_call_format: self.tool_dispatcher.tool_call_format(),
             session_key: self.session_key.clone(),
             session_parent_prefix: self.session_parent_prefix.clone(),
-            curated_snapshot: self.curated_snapshot.clone(),
+            on_progress: self.on_progress.clone(),
         }
     }
 
@@ -1154,7 +1206,16 @@ impl Agent {
         // long-term context. Done synchronously here because the calls
         // are filesystem reads, not provider/network round-trips, and
         // happen exactly once per session (only on the first turn).
-        let tree_root_summaries = collect_tree_root_summaries(&self.workspace_dir);
+        //
+        // Per-namespace + total caps come from the user-facing memory
+        // window preset on `AgentConfig` so changing the slider in the
+        // UI takes effect on the very next session-start.
+        let limits = self.config.resolved_memory_limits();
+        let tree_root_summaries = collect_tree_root_summaries(
+            &self.workspace_dir,
+            limits.per_namespace_max_chars,
+            limits.total_tree_max_chars,
+        );
 
         LearnedContextData {
             observations: obs_entries
@@ -1259,7 +1320,7 @@ impl Agent {
             ),
             include_profile: !self.omit_profile,
             include_memory_md: !self.omit_memory_md,
-            curated_snapshot: self.curated_snapshot.as_deref(),
+            user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
         };
         // Route through the global context manager so every
         // prompt-building call-site — main agent, sub-agent runner,
@@ -1466,18 +1527,19 @@ impl Agent {
 
 /// Wrapper around
 /// [`crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps`]
-/// that pins the per-namespace and total caps to the constants exposed
-/// from `context::prompt`. The store helper does the actual work — this
-/// indirection just keeps the call site readable and the caps in one
-/// place where the prompt section is defined.
-fn collect_tree_root_summaries(workspace_dir: &std::path::Path) -> Vec<(String, String)> {
-    use crate::openhuman::context::prompt::{
-        USER_MEMORY_PER_NAMESPACE_MAX_CHARS, USER_MEMORY_TOTAL_MAX_CHARS,
-    };
+/// that takes user-resolved per-namespace and total caps. The actual
+/// limits are derived from the active
+/// [`crate::openhuman::config::schema::agent::MemoryContextWindow`]
+/// preset by [`crate::openhuman::config::schema::agent::AgentConfig::resolved_memory_limits`].
+fn collect_tree_root_summaries(
+    workspace_dir: &std::path::Path,
+    per_namespace_cap: usize,
+    total_cap: usize,
+) -> Vec<(String, String)> {
     crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps(
         workspace_dir,
-        USER_MEMORY_PER_NAMESPACE_MAX_CHARS,
-        USER_MEMORY_TOTAL_MAX_CHARS,
+        per_namespace_cap,
+        total_cap,
     )
 }
 

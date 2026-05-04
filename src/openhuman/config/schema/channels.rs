@@ -102,6 +102,10 @@ pub(crate) fn default_draft_update_interval_ms() -> u64 {
     1000
 }
 
+fn default_silent_streaming() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TelegramConfig {
     pub bot_token: String,
@@ -110,6 +114,8 @@ pub struct TelegramConfig {
     pub stream_mode: StreamMode,
     #[serde(default = "default_draft_update_interval_ms")]
     pub draft_update_interval_ms: u64,
+    #[serde(default = "default_silent_streaming")]
+    pub silent_streaming: bool,
     #[serde(default)]
     pub mention_only: bool,
 }
