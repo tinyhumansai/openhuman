@@ -8,8 +8,8 @@ import { type PlaybackHandle, playBase64Audio } from './voice/audioPlayer';
 import {
   proceduralVisemes,
   synthesizeSpeech,
-  visemesFromAlignment,
   type VisemeFrame,
+  visemesFromAlignment,
 } from './voice/ttsClient';
 import { findActiveFrame, oculusVisemeToShape } from './voice/visemeMap';
 
