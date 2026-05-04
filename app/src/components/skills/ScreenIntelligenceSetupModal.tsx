@@ -147,6 +147,53 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
     navigate('/settings/screen-intelligence');
   };
 
+  if (status?.platform_supported === false) {
+    return createPortal(
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        onClick={e => {
+          if (e.target === e.currentTarget) onClose();
+        }}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="si-setup-title"
+          className="w-full max-w-md mx-4 rounded-2xl bg-white shadow-xl overflow-hidden animate-fade-up">
+          <div className="flex items-center justify-between border-b border-stone-100 px-5 py-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-primary-50 flex items-center justify-center text-primary-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 5h18v12H3zM8 21h8m-4-4v4" />
+                </svg>
+              </div>
+              <h2 id="si-setup-title" className="text-sm font-semibold text-stone-900">Screen Intelligence</h2>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-7 h-7 rounded-lg flex items-center justify-center text-stone-400 hover:text-stone-600 hover:bg-stone-100 transition-colors">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div className="px-5 py-6 space-y-4">
+            <p className="text-sm text-stone-600 leading-relaxed">
+              Screen Intelligence is currently available on macOS only.
+            </p>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-2.5 text-sm font-medium text-stone-600 hover:bg-stone-100 transition-colors">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  }
+
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
