@@ -178,7 +178,7 @@ function AppShell() {
       {/* Post-onboarding Joyride walkthrough — mounted here (outside routes) so
           it persists across tab navigations. Joyride targets span Home + BottomTabBar
           tabs so it must stay mounted while the user moves between routes. */}
-      {!onOnboardingRoute && <AppWalkthrough />}
+      {!onOnboardingRoute && <AppWalkthrough onboarded={!!snapshot.onboardingCompleted} />}
     </div>
   );
 }

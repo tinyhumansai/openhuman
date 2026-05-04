@@ -10,17 +10,20 @@ const WALKTHROUGH_KEY = 'openhuman:walkthrough_completed';
 const WALKTHROUGH_PENDING_KEY = 'openhuman:walkthrough_pending';
 
 /**
- * Returns `true` when the walkthrough has been flagged as pending (the user
- * just finished onboarding) AND has not yet been completed or skipped.
+ * Returns `true` when the walkthrough should be shown. This is true when:
+ *  - The walkthrough has not yet been completed or skipped, AND
+ *  - Either the pending flag was explicitly set (fresh onboarding), OR
+ *    the caller indicates the user is already onboarded (migration path
+ *    for existing users who upgrade to the Joyride version).
  *
  * Wrapped in try/catch to gracefully handle SecurityError or quota exceptions
  * (e.g., in private-browsing mode or when storage is full/blocked).
  */
-export function isWalkthroughPending(): boolean {
+export function isWalkthroughPending(userIsOnboarded = false): boolean {
   try {
+    if (localStorage.getItem(WALKTHROUGH_KEY) === 'true') return false;
     return (
-      localStorage.getItem(WALKTHROUGH_PENDING_KEY) === 'true' &&
-      localStorage.getItem(WALKTHROUGH_KEY) !== 'true'
+      localStorage.getItem(WALKTHROUGH_PENDING_KEY) === 'true' || userIsOnboarded
     );
   } catch (e) {
     console.warn('[walkthrough] localStorage unavailable — treating as not pending', e);
@@ -74,10 +77,10 @@ export function markWalkthroughComplete(): void {
  * Mount this inside the Home page so it runs after the tab bar and home card
  * are in the DOM (all `data-walkthrough="*"` targets must exist).
  */
-const AppWalkthrough = () => {
+const AppWalkthrough = ({ onboarded = false }: { onboarded?: boolean }) => {
   // Only start running if the walkthrough is pending on first render.
   // Using a lazy initializer keeps this stable across re-renders.
-  const [run, setRun] = useState<boolean>(() => isWalkthroughPending());
+  const [run, setRun] = useState<boolean>(() => isWalkthroughPending(onboarded));
 
   const handleEvent = (data: EventData) => {
     const { type, status } = data;
