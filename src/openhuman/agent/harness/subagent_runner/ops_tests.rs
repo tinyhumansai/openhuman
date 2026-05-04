@@ -227,6 +227,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
         session_key: "0_test".into(),
         session_parent_prefix: None,
+        curated_snapshot: None,
         on_progress: None,
     }
 }
