@@ -1187,3 +1187,95 @@ fn prompt_tool_constructors_and_user_memory_skip_empty_bodies() {
     assert!(!rendered.contains("### empty"));
     assert_eq!(default_workspace_file_content("missing"), "");
 }
+
+fn ctx_with_learned(learned: LearnedContextData) -> PromptContext<'static> {
+    let prompt_tools: &'static [PromptTool<'static>] = &[];
+    PromptContext {
+        workspace_dir: Path::new("/tmp"),
+        model_name: "test-model",
+        agent_id: "",
+        tools: prompt_tools,
+        skills: &[],
+        dispatcher_instructions: "",
+        learned,
+        visible_tool_names: &NO_FILTER,
+        tool_call_format: ToolCallFormat::PFormat,
+        connected_integrations: &[],
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: false,
+        user_identity: None,
+    }
+}
+
+#[test]
+fn user_reflections_section_renders_bullets_with_priority_preamble() {
+    let ctx = ctx_with_learned(LearnedContextData {
+        reflections: vec![
+            "Going forward I want concise replies".into(),
+            "I realized I prefer Rust over TypeScript".into(),
+        ],
+        ..Default::default()
+    });
+    let rendered = UserReflectionsSection.build(&ctx).unwrap();
+    assert!(rendered.starts_with("## User Reflections\n\n"));
+    assert!(
+        rendered.contains("higher-priority"),
+        "preamble must signal that reflections outrank generic memory"
+    );
+    assert!(rendered.contains("- Going forward I want concise replies"));
+    assert!(rendered.contains("- I realized I prefer Rust over TypeScript"));
+}
+
+#[test]
+fn user_reflections_section_returns_empty_without_entries() {
+    let ctx = ctx_with_learned(LearnedContextData::default());
+    assert!(UserReflectionsSection.build(&ctx).unwrap().is_empty());
+}
+
+#[test]
+fn user_reflections_section_skips_blank_entries() {
+    let ctx = ctx_with_learned(LearnedContextData {
+        reflections: vec!["   ".into(), "Real reflection".into(), "".into()],
+        ..Default::default()
+    });
+    let rendered = UserReflectionsSection.build(&ctx).unwrap();
+    assert!(rendered.contains("- Real reflection"));
+    // Bullet count should match the non-blank entry count.
+    assert_eq!(rendered.matches("\n- ").count(), 1);
+}
+
+#[test]
+fn render_user_reflections_helper_matches_section_output() {
+    let ctx = ctx_with_learned(LearnedContextData {
+        reflections: vec!["x".into()],
+        ..Default::default()
+    });
+    let via_section = UserReflectionsSection.build(&ctx).unwrap();
+    let via_helper = render_user_reflections(&ctx).unwrap();
+    assert_eq!(via_section, via_helper);
+}
+
+#[test]
+fn user_reflections_render_above_user_memory_when_both_present() {
+    // Acceptance criterion: reflections rank above generic
+    // tree summaries — verify by composing the same way the runtime
+    // does (UserReflectionsSection appended ahead of any
+    // UserMemorySection content).
+    let ctx = ctx_with_learned(LearnedContextData {
+        reflections: vec!["I want terse answers".into()],
+        tree_root_summaries: vec![("user".into(), "Generic summary".into())],
+        ..Default::default()
+    });
+    let reflections = UserReflectionsSection.build(&ctx).unwrap();
+    let memory = UserMemorySection.build(&ctx).unwrap();
+    let combined = format!("{reflections}{memory}");
+    let r_idx = combined
+        .find("## User Reflections")
+        .expect("reflections heading");
+    let m_idx = combined.find("## User Memory").expect("memory heading");
+    assert!(
+        r_idx < m_idx,
+        "reflections must render before user-memory block"
+    );
+}

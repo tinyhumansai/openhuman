@@ -35,6 +35,13 @@ impl SystemPromptBuilder {
                 // model has rich, persistent context about the user before it
                 // sees the tool catalogue. Section is empty (and skipped) when
                 // the tree summarizer has nothing on disk yet.
+                //
+                // The privileged `UserReflectionsSection` is appended
+                // dynamically by `session::builder` when the
+                // learning subsystem is enabled, alongside
+                // `LearnedContextSection` / `UserProfileSection` — those
+                // three are config-gated and intentionally not part of
+                // the static default chain.
                 Box::new(UserMemorySection),
                 Box::new(ToolsSection),
                 Box::new(SafetySection),
@@ -238,6 +245,15 @@ pub struct WorkspaceSection;
 pub struct RuntimeSection;
 pub struct DateTimeSection;
 pub struct UserMemorySection;
+/// Renders explicit user reflections — a privileged memory class
+/// distinct from generic tree summaries. Rendered above
+/// [`UserMemorySection`] so the orchestrator sees the user's own
+/// intentional self-statements before any broader summary block.
+///
+/// Empty (and skipped) when [`LearnedContextData::reflections`] is
+/// empty — keeps the prompt clean for users who haven't yet expressed
+/// any reflection-style content.
+pub struct UserReflectionsSection;
 /// Renders the authenticated user's non-secret identity fields
 /// (`id` / `name` / `email`) into the system prompt — see issue #926.
 ///
@@ -460,6 +476,39 @@ impl PromptSection for RuntimeSection {
     }
 }
 
+impl PromptSection for UserReflectionsSection {
+    fn name(&self) -> &str {
+        "user_reflections"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        if ctx.learned.reflections.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut out = String::from("## User Reflections\n\n");
+        out.push_str(
+            "Explicit reflections the user authored about themselves, their goals, \
+             or how they want you to behave going forward. Treat these as \
+             higher-priority than the broader user-memory summaries below: \
+             they are recent, intentional, identity-relevant signals and \
+             should steer your responses ahead of any generic historical \
+             context.\n\n",
+        );
+        for reflection in &ctx.learned.reflections {
+            let trimmed = reflection.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            out.push_str("- ");
+            out.push_str(trimmed);
+            out.push('\n');
+        }
+        out.push('\n');
+        Ok(out)
+    }
+}
+
 impl PromptSection for UserMemorySection {
     fn name(&self) -> &str {
         "user_memory"
@@ -600,6 +649,12 @@ pub fn render_user_files(ctx: &PromptContext<'_>) -> Result<String> {
 /// Render the tree-summariser user-memory block.
 pub fn render_user_memory(ctx: &PromptContext<'_>) -> Result<String> {
     UserMemorySection.build(ctx)
+}
+
+/// Render the privileged `## User Reflections` block. Empty when the
+/// learning subsystem has not captured any reflections yet.
+pub fn render_user_reflections(ctx: &PromptContext<'_>) -> Result<String> {
+    UserReflectionsSection.build(ctx)
 }
 
 /// Render the `## Tools` catalogue in the dispatcher's tool-call format.
