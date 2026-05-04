@@ -69,10 +69,7 @@ export default function IntelligenceSettingsTab() {
     console.debug('[intelligence-settings] memory model -> %s', id);
     setMemoryModel(id);
     try {
-      await setMemoryTreeLlm('local', {
-        extractModel: id,
-        summariserModel: id,
-      });
+      await setMemoryTreeLlm('local', { extractModel: id, summariserModel: id });
     } catch (err) {
       console.error('[intelligence-settings] persist memory model failed', err);
     }

@@ -132,19 +132,14 @@ export function MemoryNavigator({
 
   const toggleEntity = (id: string) => {
     const has = selection.entityIds.includes(id);
-    const next = has
-      ? selection.entityIds.filter(s => s !== id)
-      : [...selection.entityIds, id];
+    const next = has ? selection.entityIds.filter(s => s !== id) : [...selection.entityIds, id];
     console.debug(
       '[ui-flow][memory-navigator] toggleEntity id=%s wasActive=%o next=%o',
       id,
       has,
       next
     );
-    onSelectionChange({
-      ...selection,
-      entityIds: next,
-    });
+    onSelectionChange({ ...selection, entityIds: next });
   };
 
   const renderEntityList = (refs: EntityRef[]) => (
@@ -205,9 +200,7 @@ export function MemoryNavigator({
         <NavSection label="sources" defaultOpen countSummary={String(sources.length)}>
           {sources.length === 0 ? (
             <ul className="mw-list">
-              <li style={{ padding: '6px 16px', fontSize: 12, color: 'var(--ink-whisper)' }}>
-                —
-              </li>
+              <li style={{ padding: '6px 16px', fontSize: 12, color: 'var(--ink-whisper)' }}>—</li>
             </ul>
           ) : (
             (() => {
@@ -227,9 +220,7 @@ export function MemoryNavigator({
                 chat: 'Chat',
                 document: 'Documents',
               };
-              const kinds = Array.from(byKind.entries()).sort(
-                (a, b) => b[1].length - a[1].length
-              );
+              const kinds = Array.from(byKind.entries()).sort((a, b) => b[1].length - a[1].length);
               return (
                 <div>
                   {kinds.map(([kind, kindSources]) => (
@@ -248,10 +239,7 @@ export function MemoryNavigator({
                                 className={`mw-list-item${isActive ? ' is-active' : ''}`}
                                 onClick={() => toggleSource(src.source_id)}
                                 aria-pressed={isActive}>
-                                <span
-                                  className={dotClassFor(src.lifecycle_status)}
-                                  aria-hidden
-                                />
+                                <span className={dotClassFor(src.lifecycle_status)} aria-hidden />
                                 <span className="mw-list-name" title={src.display_name}>
                                   {src.display_name}
                                 </span>

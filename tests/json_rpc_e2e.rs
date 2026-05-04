@@ -1142,15 +1142,6 @@ async fn json_rpc_memory_sync_and_learn() {
     rpc_join.abort();
 }
 
-// TODO(memory-tree-e2e): the assertions below pre-date the chunk schema
-// migration — `seq_in_source`, `metadata.source_ref.value` etc. no longer
-// exist on `ChunkRow`. The previous controller-count assertion masked this
-// because `controllers.len() != expected_methods.len()` failed first. We
-// converted that to `>=` (registry can grow), then the next assertions
-// surfaced the stale schema. Rewriting the body is out of scope for the
-// memory UI / cloud-LLM PR; ignore until the e2e is brought up to the
-// current `ChunkRow` / `ChunkFilter` shape.
-#[ignore]
 #[tokio::test]
 async fn json_rpc_memory_tree_end_to_end() {
     let _env_lock = json_rpc_e2e_env_lock();
@@ -1259,10 +1250,16 @@ async fn json_rpc_memory_tree_end_to_end() {
         .and_then(Value::as_array)
         .expect("chunks array");
     assert_eq!(chunks.len(), 1);
+    // `list_chunks` returns the flat `ChunkRow` projection (id, source_kind,
+    // source_id, source_ref as a flat string, owner, timestamp_ms, …), not
+    // the full `Chunk { metadata: Metadata { source_ref: Option<SourceRef>,
+    // … }, seq_in_source, … }` that `get_chunk` returns. Assert against
+    // the row shape here.
     let chunk = &chunks[0];
-    assert_eq!(chunk.get("seq_in_source"), Some(&json!(0)));
+    assert_eq!(chunk.get("source_kind"), Some(&json!("document")));
+    assert_eq!(chunk.get("source_id"), Some(&json!("notion:launch-plan")));
     assert_eq!(
-        chunk.pointer("/metadata/source_ref/value"),
+        chunk.get("source_ref"),
         Some(&json!("notion://page/launch-plan"))
     );
 
@@ -1278,6 +1275,14 @@ async fn json_rpc_memory_tree_end_to_end() {
     let get_outer = assert_no_jsonrpc_error(&get_chunk, "memory_tree_get_chunk");
     let get_result = get_outer.get("result").unwrap_or(get_outer);
     assert_eq!(get_result.pointer("/chunk/id"), Some(&chunk_ids[0]));
+    // Full-Chunk-shape assertions live here because `get_chunk` returns the
+    // canonical `Chunk` (with nested `metadata` + `seq_in_source`), unlike
+    // `list_chunks`'s `ChunkRow` projection above.
+    assert_eq!(get_result.pointer("/chunk/seq_in_source"), Some(&json!(0)));
+    assert_eq!(
+        get_result.pointer("/chunk/metadata/source_ref/value"),
+        Some(&json!("notion://page/launch-plan"))
+    );
 
     let invalid_ingest = post_json_rpc(
         &rpc_base,

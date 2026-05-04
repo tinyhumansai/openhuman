@@ -298,10 +298,7 @@ export async function memoryTreeChunksForEntity(entityId: string): Promise<strin
     params: { entity_id: entityId },
   });
   const out = unwrapResult(resp);
-  console.debug(
-    '[memory-tree-rpc] memoryTreeChunksForEntity: exit n=%d',
-    out?.length ?? 0
-  );
+  console.debug('[memory-tree-rpc] memoryTreeChunksForEntity: exit n=%d', out?.length ?? 0);
   return out ?? [];
 }
 
