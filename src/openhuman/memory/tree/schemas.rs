@@ -5,7 +5,7 @@
 //! Memory-tab read RPCs added by the cloud-default backend refactor:
 //! `list_sources`, `search`, `recall`, `entity_index_for`,
 //! `top_entities`, `chunk_score`, `delete_chunk`, plus
-//! `get_chat_backend` / `set_chat_backend` for the backend-selector UI.
+//! `get_llm` / `set_llm` for the backend-selector UI.
 //!
 //! Handlers delegate to [`super::rpc`] (write side) or
 //! [`super::read_rpc`] (UI read side).
@@ -37,8 +37,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("top_entities"),
         schemas("chunk_score"),
         schemas("delete_chunk"),
-        schemas("get_chat_backend"),
-        schemas("set_chat_backend"),
+        schemas("get_llm"),
+        schemas("set_llm"),
     ]
 }
 
@@ -91,12 +91,12 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_delete_chunk,
         },
         RegisteredController {
-            schema: schemas("get_chat_backend"),
-            handler: handle_get_chat_backend,
+            schema: schemas("get_llm"),
+            handler: handle_get_llm,
         },
         RegisteredController {
-            schema: schemas("set_chat_backend"),
-            handler: handle_set_chat_backend,
+            schema: schemas("set_llm"),
+            handler: handle_set_llm,
         },
     ]
 }
@@ -441,10 +441,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
-        "get_chat_backend" => ControllerSchema {
+        "get_llm" => ControllerSchema {
             namespace: NAMESPACE,
-            function: "get_chat_backend",
-            description: "Read the currently configured chat backend (`cloud` or `local`).",
+            function: "get_llm",
+            description: "Read the currently configured LLM backend (`cloud` or `local`).",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "current",
@@ -455,12 +455,11 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
-        "set_chat_backend" => ControllerSchema {
+        "set_llm" => ControllerSchema {
             namespace: NAMESPACE,
-            function: "set_chat_backend",
-            description:
-                "Update the in-memory chat backend selector. Persistence to config.toml is the \
-                 caller's responsibility (use `openhuman.config_set` for that).",
+            function: "set_llm",
+            description: "Update the LLM backend selector and persist the choice to \
+                 config.toml so it survives sidecar restart.",
             inputs: vec![FieldSchema {
                 name: "backend",
                 ty: TypeSchema::Enum {
@@ -659,14 +658,14 @@ fn handle_delete_chunk(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_get_chat_backend(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_get_llm(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        to_json(read_rpc::get_chat_backend_rpc(&config).await?)
+        to_json(read_rpc::get_llm_rpc(&config).await?)
     })
 }
 
-fn handle_set_chat_backend(params: Map<String, Value>) -> ControllerFuture {
+fn handle_set_llm(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         #[derive(serde::Deserialize)]
         struct Req {
@@ -674,7 +673,7 @@ fn handle_set_chat_backend(params: Map<String, Value>) -> ControllerFuture {
         }
         let mut config = config_rpc::load_config_with_timeout().await?;
         let req = parse_value::<Req>(Value::Object(params))?;
-        to_json(read_rpc::set_chat_backend_rpc(&mut config, req.backend).await?)
+        to_json(read_rpc::set_llm_rpc(&mut config, req.backend).await?)
     })
 }
 

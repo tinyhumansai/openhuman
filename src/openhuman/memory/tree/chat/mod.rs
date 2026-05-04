@@ -10,8 +10,8 @@
 //!   the `summarizer-v1` model. No local daemon required. Default for new
 //!   installs.
 //! - **Local** — the legacy Ollama-direct path. Opt-in via
-//!   `memory_tree.chat_backend = "local"` in config or
-//!   `OPENHUMAN_MEMORY_TREE_CHAT_BACKEND=local`.
+//!   `memory_tree.llm = "local"` in config or
+//!   `OPENHUMAN_MEMORY_TREE_LLM=local`.
 //!
 //! ## Why a memory-tree-local trait
 //!
@@ -44,7 +44,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::openhuman::config::{ChatBackend, Config, DEFAULT_CLOUD_CHAT_MODEL};
+use crate::openhuman::config::{Config, LlmBackend, DEFAULT_CLOUD_LLM_MODEL};
 
 pub mod cloud;
 pub mod local;
@@ -85,10 +85,10 @@ pub trait ChatProvider: Send + Sync {
     async fn chat_for_json(&self, prompt: &ChatPrompt) -> Result<String>;
 }
 
-/// Build the [`ChatProvider`] dictated by `config.memory_tree.chat_backend`.
+/// Build the [`ChatProvider`] dictated by `config.memory_tree.llm`.
 ///
 /// - `Cloud` (default): wires [`cloud::CloudChatProvider`] against the
-///   OpenHuman backend with `cloud_chat_model` (defaulting to
+///   OpenHuman backend with `cloud_llm_model` (defaulting to
 ///   `summarizer-v1`).
 /// - `Local`: wires [`local::OllamaChatProvider`] against the legacy
 ///   `llm_extractor_endpoint` / `llm_extractor_model` config — the same
@@ -101,13 +101,13 @@ pub fn build_chat_provider(
     config: &Config,
     consumer: ChatConsumer,
 ) -> Result<Arc<dyn ChatProvider>> {
-    match config.memory_tree.chat_backend {
-        ChatBackend::Cloud => {
+    match config.memory_tree.llm {
+        LlmBackend::Cloud => {
             let model = config
                 .memory_tree
-                .cloud_chat_model
+                .cloud_llm_model
                 .clone()
-                .unwrap_or_else(|| DEFAULT_CLOUD_CHAT_MODEL.to_string());
+                .unwrap_or_else(|| DEFAULT_CLOUD_LLM_MODEL.to_string());
             log::debug!(
                 "[memory_tree::chat] building Cloud provider consumer={} model={}",
                 consumer.as_str(),
@@ -118,7 +118,7 @@ pub fn build_chat_provider(
                 model,
             )))
         }
-        ChatBackend::Local => {
+        LlmBackend::Local => {
             let (endpoint, model, timeout_ms) = match consumer {
                 ChatConsumer::Extract => (
                     config.memory_tree.llm_extractor_endpoint.clone(),
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn build_provider_returns_cloud_when_default() {
         let cfg = Config::default();
-        // Default is ChatBackend::Cloud — provider construction must succeed
+        // Default is LlmBackend::Cloud — provider construction must succeed
         // without a configured local Ollama endpoint.
         let provider = build_chat_provider(&cfg, ChatConsumer::Extract).unwrap();
         assert!(provider.name().contains("cloud"));
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn build_provider_returns_local_when_configured() {
         let mut cfg = Config::default();
-        cfg.memory_tree.chat_backend = ChatBackend::Local;
+        cfg.memory_tree.llm = LlmBackend::Local;
         cfg.memory_tree.llm_extractor_endpoint = Some("http://localhost:11434".into());
         cfg.memory_tree.llm_extractor_model = Some("qwen2.5:0.5b".into());
         let provider = build_chat_provider(&cfg, ChatConsumer::Extract).unwrap();

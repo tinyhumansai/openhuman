@@ -68,10 +68,10 @@ pub trait Summariser: Send + Sync {
 /// Build the summariser implementation driven by the workspace's
 /// [`Config`]. The cloud-default refactor changed the resolution rules:
 ///
-/// - `chat_backend = "cloud"` (default): always returns the LLM
-///   summariser routed through the OpenHuman backend's
-///   `cloud_chat_model` (defaulting to `summarizer-v1`).
-/// - `chat_backend = "local"`: returns the LLM summariser only when both
+/// - `llm = "cloud"` (default): always returns the LLM summariser
+///   routed through the OpenHuman backend's `cloud_llm_model`
+///   (defaulting to `summarizer-v1`).
+/// - `llm = "local"`: returns the LLM summariser only when both
 ///   `llm_summariser_endpoint` AND `llm_summariser_model` are set;
 ///   otherwise returns the [`inert::InertSummariser`] fallback.
 ///
@@ -82,21 +82,21 @@ pub trait Summariser: Send + Sync {
 /// by reference to `append_leaf` and `route_leaf_to_topic_trees`
 /// without threading a generic type parameter through every caller.
 pub fn build_summariser(config: &Config) -> Arc<dyn Summariser> {
-    use crate::openhuman::config::{ChatBackend, DEFAULT_CLOUD_CHAT_MODEL};
+    use crate::openhuman::config::{LlmBackend, DEFAULT_CLOUD_LLM_MODEL};
     use crate::openhuman::memory::tree::chat::{build_chat_provider, ChatConsumer};
 
     // Resolve the model identifier to log alongside the provider name.
-    // Returns None (→ inert fallback) only when chat_backend=local and
-    // the legacy llm_summariser_endpoint/_model fields are not both set.
-    let model: Option<String> = match config.memory_tree.chat_backend {
-        ChatBackend::Cloud => Some(
+    // Returns None (→ inert fallback) only when llm=local and the legacy
+    // llm_summariser_endpoint/_model fields are not both set.
+    let model: Option<String> = match config.memory_tree.llm {
+        LlmBackend::Cloud => Some(
             config
                 .memory_tree
-                .cloud_chat_model
+                .cloud_llm_model
                 .clone()
-                .unwrap_or_else(|| DEFAULT_CLOUD_CHAT_MODEL.to_string()),
+                .unwrap_or_else(|| DEFAULT_CLOUD_LLM_MODEL.to_string()),
         ),
-        ChatBackend::Local => {
+        LlmBackend::Local => {
             let endpoint = config
                 .memory_tree
                 .llm_summariser_endpoint
@@ -118,9 +118,9 @@ pub fn build_summariser(config: &Config) -> Arc<dyn Summariser> {
 
     let Some(model) = model else {
         log::debug!(
-            "[tree_source::summariser] llm_summariser not configured for chat_backend={} \
+            "[tree_source::summariser] llm_summariser not configured for llm={} \
              — using InertSummariser",
-            config.memory_tree.chat_backend.as_str()
+            config.memory_tree.llm.as_str()
         );
         return Arc::new(inert::InertSummariser::new());
     };

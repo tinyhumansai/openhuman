@@ -1001,38 +1001,38 @@ impl Config {
             };
         }
 
-        // Memory-tree chat backend selector: "cloud" (default) routes through
+        // Memory-tree LLM backend selector: "cloud" (default) routes through
         // the OpenHuman backend's summarizer model; "local" keeps the legacy
         // Ollama-direct path. Empty / unset / unknown leaves the existing
         // value untouched (and we warn on unknown). The embedder is unaffected.
-        if let Ok(raw) = std::env::var("OPENHUMAN_MEMORY_TREE_CHAT_BACKEND") {
+        if let Ok(raw) = std::env::var("OPENHUMAN_MEMORY_TREE_LLM") {
             let trimmed = raw.trim();
             if !trimmed.is_empty() {
-                match crate::openhuman::config::ChatBackend::parse(trimmed) {
+                match crate::openhuman::config::LlmBackend::parse(trimmed) {
                     Ok(b) => {
                         log::debug!(
-                            "[memory_tree] OPENHUMAN_MEMORY_TREE_CHAT_BACKEND override applied: {}",
+                            "[memory_tree] OPENHUMAN_MEMORY_TREE_LLM override applied: {}",
                             b.as_str()
                         );
-                        self.memory_tree.chat_backend = b;
+                        self.memory_tree.llm = b;
                     }
                     Err(e) => {
                         tracing::warn!(
                             value = trimmed,
                             error = %e,
-                            "ignoring invalid OPENHUMAN_MEMORY_TREE_CHAT_BACKEND (valid: cloud, local)"
+                            "ignoring invalid OPENHUMAN_MEMORY_TREE_LLM (valid: cloud, local)"
                         );
                     }
                 }
             }
         }
-        // Cloud chat model override (only meaningful when chat_backend = cloud).
+        // Cloud LLM model override (only meaningful when llm = cloud).
         // Empty string explicitly clears the default — useful for tests that
         // want to assert the absence of a configured cloud model. Non-empty
         // strings are stored verbatim.
-        if let Ok(raw) = std::env::var("OPENHUMAN_MEMORY_TREE_CLOUD_CHAT_MODEL") {
+        if let Ok(raw) = std::env::var("OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL") {
             let trimmed = raw.trim();
-            self.memory_tree.cloud_chat_model = if trimmed.is_empty() {
+            self.memory_tree.cloud_llm_model = if trimmed.is_empty() {
                 None
             } else {
                 Some(trimmed.to_string())

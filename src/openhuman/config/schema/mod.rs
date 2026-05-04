@@ -56,8 +56,8 @@ pub use routes::{EmbeddingRouteConfig, ModelRouteConfig};
 pub use runtime::{DockerRuntimeConfig, ReliabilityConfig, RuntimeConfig, SchedulerConfig};
 pub use scheduler_gate::{SchedulerGateConfig, SchedulerGateMode};
 pub use storage_memory::{
-    ChatBackend, MemoryConfig, MemoryTreeConfig, StorageConfig, StorageProviderConfig,
-    StorageProviderSection, DEFAULT_CLOUD_CHAT_MODEL,
+    LlmBackend, MemoryConfig, MemoryTreeConfig, StorageConfig, StorageProviderConfig,
+    StorageProviderSection, DEFAULT_CLOUD_LLM_MODEL,
 };
 pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,

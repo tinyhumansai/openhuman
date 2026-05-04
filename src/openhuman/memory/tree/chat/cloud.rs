@@ -2,7 +2,7 @@
 //! `/openai/v1/chat/completions` surface using the existing
 //! [`crate::openhuman::providers::openhuman_backend::OpenHumanBackendProvider`].
 //!
-//! Used when `memory_tree.chat_backend = "cloud"` (the default). The
+//! Used when `memory_tree.llm = "cloud"` (the default). The
 //! request shape is the standard OpenAI-compatible chat-completions
 //! protocol, with `temperature: 0.0` and a `summarizer-v1` (or
 //! caller-configured) model.

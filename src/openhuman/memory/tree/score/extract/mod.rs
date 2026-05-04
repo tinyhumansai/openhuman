@@ -12,7 +12,7 @@ pub mod types;
 
 use std::sync::Arc;
 
-use crate::openhuman::config::{ChatBackend, Config, DEFAULT_CLOUD_CHAT_MODEL};
+use crate::openhuman::config::{Config, LlmBackend, DEFAULT_CLOUD_LLM_MODEL};
 use crate::openhuman::memory::tree::chat::{build_chat_provider, ChatConsumer};
 
 pub use extractor::{CompositeExtractor, EntityExtractor, RegexEntityExtractor};
@@ -23,10 +23,10 @@ pub use types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};
 ///
 /// Composition:
 /// - regex extractor — always on, mechanical, near-zero cost
-/// - LLM extractor with `emit_topics: true` — added when the chat backend
-///   is reachable. For `chat_backend = "cloud"` (default) that's always.
-///   For `chat_backend = "local"` we still require `llm_extractor_endpoint`
-///   + `_model` to be set (otherwise the legacy regex-only path stays).
+/// - LLM extractor with `emit_topics: true` — added when the LLM backend
+///   is reachable. For `llm = "cloud"` (default) that's always. For
+///   `llm = "local"` we still require `llm_extractor_endpoint` +
+///   `_model` to be set (otherwise the legacy regex-only path stays).
 ///
 /// Differs from [`super::ScoringConfig::from_config`] (the chunk-admission
 /// builder) in two ways: returns *just* an extractor (no thresholds /
@@ -38,8 +38,8 @@ pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
     let Some(model) = model else {
         log::debug!(
             "[memory_tree::extract] summary extractor: LLM model not resolvable for \
-             chat_backend={} — using regex-only",
-            config.memory_tree.chat_backend.as_str()
+             llm={} — using regex-only",
+            config.memory_tree.llm.as_str()
         );
         return Arc::new(CompositeExtractor::regex_only());
     };
@@ -76,21 +76,21 @@ pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
 /// Resolve the model identifier the extractor's [`ChatProvider`] should
 /// target, returning `None` when the configured backend can't be served:
 ///
-/// - `Cloud`: always returns the configured `cloud_chat_model` or its
+/// - `Cloud`: always returns the configured `cloud_llm_model` or its
 ///   `summarizer-v1` default.
 /// - `Local`: returns `Some(model)` only when both
 ///   `llm_extractor_endpoint` AND `llm_extractor_model` are set —
 ///   otherwise the legacy regex-only path engages.
 pub(super) fn resolve_extractor_model(config: &Config) -> Option<String> {
-    match config.memory_tree.chat_backend {
-        ChatBackend::Cloud => Some(
+    match config.memory_tree.llm {
+        LlmBackend::Cloud => Some(
             config
                 .memory_tree
-                .cloud_chat_model
+                .cloud_llm_model
                 .clone()
-                .unwrap_or_else(|| DEFAULT_CLOUD_CHAT_MODEL.to_string()),
+                .unwrap_or_else(|| DEFAULT_CLOUD_LLM_MODEL.to_string()),
         ),
-        ChatBackend::Local => {
+        LlmBackend::Local => {
             let endpoint = config
                 .memory_tree
                 .llm_extractor_endpoint

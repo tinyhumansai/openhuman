@@ -825,54 +825,66 @@ pub struct DeleteChunkResponse {
     pub entity_index_rows_removed: u32,
 }
 
-// ── chat_backend get/set ────────────────────────────────────────────────
+// ── llm get/set ─────────────────────────────────────────────────────────
 
-/// Response shape for [`get_chat_backend_rpc`] / [`set_chat_backend_rpc`].
+/// Response shape for [`get_llm_rpc`] / [`set_llm_rpc`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ChatBackendResponse {
+pub struct LlmResponse {
     /// `"cloud"` or `"local"`.
     pub current: String,
 }
 
-/// `memory_tree_get_chat_backend` — read the currently configured backend.
-pub async fn get_chat_backend_rpc(
-    config: &Config,
-) -> Result<RpcOutcome<ChatBackendResponse>, String> {
-    let current = config.memory_tree.chat_backend.as_str().to_string();
+/// `memory_tree_get_llm` — read the currently configured LLM backend.
+pub async fn get_llm_rpc(config: &Config) -> Result<RpcOutcome<LlmResponse>, String> {
+    let current = config.memory_tree.llm.as_str().to_string();
     Ok(RpcOutcome::single_log(
-        ChatBackendResponse {
+        LlmResponse {
             current: current.clone(),
         },
-        format!("memory_tree::read: get_chat_backend current={current}"),
+        format!("memory_tree::read: get_llm current={current}"),
     ))
 }
 
-/// `memory_tree_set_chat_backend` — overwrite the runtime backend
-/// selector. Persists via the existing config writer.
+/// `memory_tree_set_llm` — overwrite the LLM backend selector and persist
+/// the choice to `config.toml`.
 ///
-/// **Read-only Phase A**: this RPC is exposed so the UI can pre-select
-/// the option, but persisting the choice into config.toml is handled by
-/// the standard config_set RPC pipeline. We accept the new value, log the
-/// switch, and return the value the caller asked for. The next ingest /
-/// seal will pick up the new backend on its next call to
-/// `build_chat_provider`.
-pub async fn set_chat_backend_rpc(
+/// Mutates the in-memory [`Config`] passed in (so the caller's running
+/// instance picks up the new value immediately) and writes it to disk via
+/// [`Config::save`], which uses an atomic temp-file + rename so a crash
+/// mid-write can't corrupt the config. The next sidecar restart reads the
+/// persisted value rather than reverting to the default.
+pub async fn set_llm_rpc(
     config: &mut Config,
     backend: String,
-) -> Result<RpcOutcome<ChatBackendResponse>, String> {
-    let parsed = crate::openhuman::config::ChatBackend::parse(&backend)
-        .map_err(|e| format!("set_chat_backend: {e}"))?;
-    config.memory_tree.chat_backend = parsed;
+) -> Result<RpcOutcome<LlmResponse>, String> {
+    let parsed = crate::openhuman::config::LlmBackend::parse(&backend)
+        .map_err(|e| format!("set_llm: {e}"))?;
+    config.memory_tree.llm = parsed;
+
+    // Persist to config.toml so the choice survives sidecar restart. Uses
+    // the same atomic write-temp + rename used by every other config write
+    // path (see Config::save).
+    log::debug!(
+        "[memory_tree::read] persisting memory_tree.llm={} to {}",
+        parsed.as_str(),
+        config.config_path.display()
+    );
+    config
+        .save()
+        .await
+        .map_err(|e| format!("set_llm: persist to config.toml failed: {e}"))?;
+
     let effective = parsed.as_str().to_string();
     log::info!(
-        "[memory_tree::read] chat_backend switched to {} (in-memory only — persist via config_set)",
-        effective
+        "[memory_tree::read] llm switched to {} and persisted to {}",
+        effective,
+        config.config_path.display()
     );
     Ok(RpcOutcome::single_log(
-        ChatBackendResponse {
+        LlmResponse {
             current: effective.clone(),
         },
-        format!("memory_tree::read: set_chat_backend current={effective}"),
+        format!("memory_tree::read: set_llm current={effective}"),
     ))
 }
 
@@ -935,11 +947,15 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut cfg = Config::default();
         cfg.workspace_dir = tmp.path().to_path_buf();
+        // Point config_path inside the tempdir so set_llm_rpc's
+        // Config::save call writes to a disposable location instead of
+        // touching the real user config.
+        cfg.config_path = tmp.path().join("config.toml");
         cfg.memory_tree.embedding_endpoint = None;
         cfg.memory_tree.embedding_model = None;
         cfg.memory_tree.embedding_strict = false;
-        // Default chat_backend is Cloud — but the cloud provider needs a
-        // bearer token to actually fire. Tests that exercise the LLM path
+        // Default llm is Cloud — but the cloud provider needs a bearer
+        // token to actually fire. Tests that exercise the LLM path
         // override either the backend or the extractor. The read RPCs
         // below don't touch the LLM, so this default is fine.
         (tmp, cfg)
@@ -1133,33 +1149,84 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_chat_backend_returns_cloud_by_default() {
+    async fn get_llm_returns_cloud_by_default() {
         let (_tmp, cfg) = test_config();
-        let resp = get_chat_backend_rpc(&cfg).await.unwrap().value;
+        let resp = get_llm_rpc(&cfg).await.unwrap().value;
         assert_eq!(resp.current, "cloud");
     }
 
     #[tokio::test]
-    async fn set_chat_backend_switches_in_memory() {
+    async fn set_llm_switches_in_memory_and_persists_to_config_toml() {
         let (_tmp, mut cfg) = test_config();
-        let resp = set_chat_backend_rpc(&mut cfg, "local".into())
-            .await
-            .unwrap()
-            .value;
+        let config_path = cfg.config_path.clone();
+
+        let resp = set_llm_rpc(&mut cfg, "local".into()).await.unwrap().value;
         assert_eq!(resp.current, "local");
+        // 1. In-memory state updated.
         assert_eq!(
-            cfg.memory_tree.chat_backend,
-            crate::openhuman::config::ChatBackend::Local
+            cfg.memory_tree.llm,
+            crate::openhuman::config::LlmBackend::Local
+        );
+
+        // 2. config.toml on disk updated. The file should exist (Config::save
+        //    always writes — there is no "skip default" branch) and the
+        //    [memory_tree] section should contain `llm = "local"`.
+        assert!(
+            config_path.is_file(),
+            "expected set_llm to create config.toml at {}",
+            config_path.display()
+        );
+        let on_disk =
+            std::fs::read_to_string(&config_path).expect("read config.toml after set_llm");
+        let parsed: toml::Value =
+            toml::from_str(&on_disk).expect("parse config.toml after set_llm");
+        let llm_field = parsed
+            .get("memory_tree")
+            .and_then(|m| m.get("llm"))
+            .and_then(|v| v.as_str())
+            .expect("memory_tree.llm present in persisted config.toml");
+        assert_eq!(llm_field, "local");
+
+        // 3. get_llm_rpc on the same in-memory config reports the new value.
+        let after = get_llm_rpc(&cfg).await.unwrap().value;
+        assert_eq!(after.current, "local");
+    }
+
+    #[tokio::test]
+    async fn set_llm_persists_when_section_does_not_yet_exist() {
+        // First-call scenario: config.toml does not exist yet. set_llm_rpc
+        // must create it (via Config::save) with a `[memory_tree]` section
+        // containing the chosen value.
+        let (_tmp, mut cfg) = test_config();
+        let config_path = cfg.config_path.clone();
+        assert!(
+            !config_path.exists(),
+            "precondition: config.toml should not exist yet"
+        );
+
+        let _ = set_llm_rpc(&mut cfg, "local".into()).await.unwrap().value;
+        assert!(
+            config_path.is_file(),
+            "set_llm must create config.toml on first call"
+        );
+        let on_disk =
+            std::fs::read_to_string(&config_path).expect("read config.toml after first set_llm");
+        let parsed: toml::Value =
+            toml::from_str(&on_disk).expect("parse config.toml after first set_llm");
+        assert_eq!(
+            parsed
+                .get("memory_tree")
+                .and_then(|m| m.get("llm"))
+                .and_then(|v| v.as_str()),
+            Some("local"),
         );
     }
 
     #[tokio::test]
-    async fn set_chat_backend_rejects_unknown() {
+    async fn set_llm_rejects_unknown() {
         let (_tmp, mut cfg) = test_config();
-        let err = set_chat_backend_rpc(&mut cfg, "hybrid".into())
-            .await
-            .unwrap_err();
-        assert!(err.contains("unknown chat_backend"));
+        let err = set_llm_rpc(&mut cfg, "hybrid".into()).await.unwrap_err();
+        assert!(err.contains("unknown llm"));
     }
 
     #[test]
