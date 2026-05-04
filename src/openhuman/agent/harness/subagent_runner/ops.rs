@@ -581,7 +581,7 @@ async fn run_typed_mode(
         connected_identities_md: crate::openhuman::agent::prompts::render_connected_identities(),
         include_profile: !definition.omit_profile,
         include_memory_md: !definition.omit_memory_md,
-        curated_snapshot: None,
+        curated_snapshot: parent.curated_snapshot.clone(),
         user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
     };
 
