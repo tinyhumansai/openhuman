@@ -245,9 +245,17 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
           return;
         }
         if (data.threads.length > 0) {
-          const mostRecent = data.threads[0];
-          dispatch(setSelectedThread(mostRecent.id));
-          void dispatch(loadThreadMessages(mostRecent.id));
+          // Prefer the thread the user was last viewing (persisted across
+          // reloads via redux-persist on the `thread` slice). Only fall
+          // through to "most recent" if that thread no longer exists
+          // server-side (deleted, purged, or different user).
+          const persistedId = threadStateForSelect.selectedThreadId;
+          const resumeId =
+            persistedId && data.threads.some(t => t.id === persistedId)
+              ? persistedId
+              : data.threads[0].id;
+          dispatch(setSelectedThread(resumeId));
+          void dispatch(loadThreadMessages(resumeId));
         } else {
           void handleCreateNewThread();
         }
