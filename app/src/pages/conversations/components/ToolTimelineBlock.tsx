@@ -103,9 +103,7 @@ export function ToolTimelineBlock({ entries }: { entries: ToolTimelineEntry[] })
         // its live activity is visible — even when there is no prompt
         // detail to show. Mirrors the rule that a non-subagent row only
         // expands when it has detail content.
-        const expandable =
-          detailContent != null ||
-          (subagent != null && subagent.toolCalls.length + (subagent.childIteration ?? 0) > 0);
+        const expandable = detailContent != null || subagent != null;
         const shouldAutoExpand = latestRunningEntryId != null && latestRunningEntryId === entry.id;
         const statusTone =
           entry.status === 'running'
