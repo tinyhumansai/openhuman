@@ -315,6 +315,15 @@ fn looks_like_raw_html(s: &str) -> bool {
 /// Recursively search a `parts` array for the first MIME part whose
 /// `mimeType` starts with `prefix` (e.g. `"text/html"`), and return its
 /// base64url-decoded UTF-8 body.
+///
+/// **Skips attachment parts.** A `multipart/mixed` email may contain
+/// the real body (in a nested `multipart/alternative`) plus attached
+/// `.txt` / `.ics` / `.html` files. Each attachment also has a
+/// `text/plain` or `text/html` `mimeType` and a populated `body.data`,
+/// so a naive walk would return the attachment instead of the body.
+/// We treat any part with a non-empty `filename` (top-level or nested
+/// in `body.attachmentId`) as an attachment and skip its body — but
+/// still recurse into its `parts` for symmetry.
 fn find_decoded_part(parts: &Value, prefix: &str) -> Option<String> {
     let arr = parts.as_array()?;
     for part in arr {
@@ -322,7 +331,12 @@ fn find_decoded_part(parts: &Value, prefix: &str) -> Option<String> {
             .get("mimeType")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if mime.starts_with(prefix) {
+        let is_attachment = part
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        if mime.starts_with(prefix) && !is_attachment {
             if let Some(b64) = part.pointer("/body/data").and_then(|v| v.as_str()) {
                 if let Ok(bytes) = URL_SAFE_NO_PAD.decode(b64) {
                     if let Ok(s) = String::from_utf8(bytes) {
