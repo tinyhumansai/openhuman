@@ -184,6 +184,22 @@ impl AutocompleteEngine {
                             .await;
                     match refresh_result {
                         Ok(Ok(Err(err))) => {
+                            // Capture macOS Apple Events automation denial signal.
+                            // osascript writes `... (-1743)` to stderr when the
+                            // calling app lacks an Automation grant for the AE
+                            // target (System Events, in our case). Once observed
+                            // we flip the process-local flag so subsequent
+                            // refresh ticks short-circuit before re-spawning
+                            // osascript — which would re-fire the macOS consent
+                            // popup. The flag clears on
+                            // `start_if_enabled` so user-initiated re-engagement
+                            // (toggling autocomplete after granting via System
+                            // Settings) re-probes naturally on the next tick.
+                            let is_perm_denied = err.contains("(-1743)");
+                            if is_perm_denied {
+                                crate::openhuman::accessibility::mark_system_events_denied();
+                            }
+
                             let (should_notify, should_stop) = {
                                 let mut state = engine.inner.lock().await;
                                 state.phase = "error".to_string();
@@ -211,7 +227,11 @@ impl AutocompleteEngine {
                                 break;
                             }
 
-                            if should_notify {
+                            if should_notify && is_perm_denied {
+                                log::info!(
+                                    "[autocomplete] suppressing overflow badge for Apple Events automation denial; future refresh ticks will short-circuit until autocomplete is restarted: {err}"
+                                );
+                            } else if should_notify {
                                 let app_lower = engine
                                     .inner
                                     .lock()
@@ -1005,6 +1025,13 @@ pub async fn start_if_enabled(app_config: &Config) {
         log::info!("[autocomplete] disabled in config, skipping embedded startup");
         return;
     }
+
+    // Reset the per-process Apple Events automation denial flag at the
+    // top of every explicit (re-)start so a user-initiated re-engagement
+    // — toggling autocomplete off+on after granting via System Settings —
+    // re-probes naturally on the next tick instead of inheriting a
+    // stale denial from a previous session.
+    crate::openhuman::accessibility::clear_automation_denial();
 
     let status = global_engine().status().await;
     if status.running {
