@@ -1673,6 +1673,8 @@ pub fn run() {
             webview_accounts::webview_account_open,
             webview_accounts::webview_account_close,
             webview_accounts::webview_account_purge,
+            webview_accounts::webview_meet_agent_join,
+            webview_accounts::webview_meet_agent_leave,
             webview_accounts::webview_account_bounds,
             webview_accounts::webview_account_reveal,
             webview_accounts::webview_account_hide,

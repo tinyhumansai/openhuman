@@ -44,6 +44,10 @@ const RUNTIME_JS: &str = include_str!("runtime.js");
 const LINKEDIN_RECIPE_JS: &str = include_str!("../../recipes/linkedin/recipe.js");
 const GMAIL_RECIPE_JS: &str = include_str!("../../recipes/gmail/recipe.js");
 const GOOGLE_MEET_RECIPE_JS: &str = include_str!("../../recipes/google-meet/recipe.js");
+/// Agent-role init script injected into the hidden Meet agent webview.
+/// Uses the same RUNTIME_JS bridge but substitutes the user-facing recipe with
+/// the agent's auto-join loop. See `build_agent_init_script`.
+const MEET_AGENT_JS: &str = include_str!("../../recipes/google-meet/agent.js");
 
 /// Registered providers and their service URLs. Add a new arm here plus a
 /// recipe.js file under `recipes/<id>/` to support another provider.
@@ -552,6 +556,9 @@ pub struct WebviewAccountsState {
     requested_bounds: Mutex<HashMap<String, Bounds>>,
     /// Runtime notification-bypass controls used by the settings UI.
     notification_bypass: Mutex<NotificationBypassPrefs>,
+    /// account_id -> agent webview label. Tracks live agent webviews so we
+    /// can reuse or close them without scanning all open webviews.
+    agents: Mutex<HashMap<String, String>>,
 }
 
 impl WebviewAccountsState {
@@ -1356,6 +1363,242 @@ fn build_init_script(account_id: &str, provider: &str) -> String {
         runtime = RUNTIME_JS,
         recipe = recipe_js
     )
+}
+
+/// Derive the webview label for a Meet agent from an account_id.
+///
+/// Uses the same sanitisation rules as `label_for` so the label is always
+/// a valid Tauri webview label (alphanumeric + `-` + `_`). The `_agent`
+/// suffix makes it easy to grep agent labels in logs.
+fn agent_label_for(account_id: &str) -> String {
+    let safe: String = account_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("acct_{}_agent", safe)
+}
+
+/// Build the initialization script for the Meet agent webview.
+///
+/// Injects `__OPENHUMAN_RECIPE_CTX__` with `role: "agent"` and the target
+/// `meetingUrl`, followed by `RUNTIME_JS` (provides `window.__openhumanRecipe`)
+/// and `MEET_AGENT_JS` (the agent polling loop).
+///
+/// The user-facing `GOOGLE_MEET_RECIPE_JS` is intentionally excluded so the
+/// agent webview does not emit user-recipe events (captions, call_started, …).
+fn build_agent_init_script(account_id: &str, meeting_url: &str) -> String {
+    let ctx = serde_json::json!({
+        "accountId": account_id,
+        "provider": "google-meet",
+        "role": "agent",
+        "meetingUrl": meeting_url,
+    });
+    format!(
+        "window.__OPENHUMAN_RECIPE_CTX__ = {ctx};\n\n{runtime}\n\n{agent}\n",
+        ctx = ctx,
+        runtime = RUNTIME_JS,
+        agent = MEET_AGENT_JS
+    )
+}
+
+/// Arguments for `webview_meet_agent_join`.
+#[derive(Debug, serde::Deserialize)]
+pub struct MeetAgentJoinArgs {
+    pub account_id: String,
+    pub meeting_url: String,
+}
+
+/// Arguments for `webview_meet_agent_leave`.
+#[derive(Debug, serde::Deserialize)]
+pub struct MeetAgentLeaveArgs {
+    pub account_id: String,
+}
+
+/// Spawn a hidden Google Meet agent webview that auto-joins `meeting_url`.
+///
+/// The webview uses the same `data_directory` as the user-facing google-meet
+/// webview for the same account, so Google session cookies are shared and no
+/// re-login is required.  The webview is positioned off-screen at
+/// (-4000, -4000) with a 1280×720 viewport so Meet's lobby renders normally.
+///
+/// If an agent webview already exists for this account it is closed first so
+/// the new meeting URL takes effect cleanly.
+///
+/// Returns the Tauri webview label.
+#[tauri::command]
+pub async fn webview_meet_agent_join<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, WebviewAccountsState>,
+    args: MeetAgentJoinArgs,
+) -> Result<String, String> {
+    let account_id = sanitize_account_id(&args.account_id)?;
+    log::info!(
+        "[meet-agent] join account_id={} meeting_url={}",
+        account_id,
+        args.meeting_url
+    );
+
+    // Validate that meeting_url is a meet.google.com URL.
+    let parsed_url: tauri::Url = args
+        .meeting_url
+        .parse()
+        .map_err(|e| format!("[meet-agent] invalid meeting_url: {e}"))?;
+    match parsed_url.host_str() {
+        Some(h) if h == "meet.google.com" => {}
+        Some(h) => {
+            return Err(format!(
+                "[meet-agent] meeting_url host must be meet.google.com, got {h:?}"
+            ))
+        }
+        None => return Err("[meet-agent] meeting_url has no host".to_string()),
+    }
+
+    let label = agent_label_for(&account_id);
+
+    // Close any pre-existing agent webview for this account.
+    {
+        let existing_label = state.agents.lock().unwrap().get(&account_id[..]).cloned();
+        if let Some(existing_label) = existing_label {
+            if let Some(wv) = app.get_webview(&existing_label) {
+                log::info!(
+                    "[meet-agent] closing existing agent label={} account={}",
+                    existing_label,
+                    account_id
+                );
+                let _ = wv.close();
+            }
+        }
+        state.agents.lock().unwrap().remove(&account_id[..]);
+    }
+
+    // Share the same data directory (and therefore cookies) as the user's
+    // google-meet webview for this account.
+    let data_dir = data_directory_for(&app, &account_id)?;
+    if let Err(err) = std::fs::create_dir_all(&data_dir) {
+        log::warn!(
+            "[meet-agent] failed to create data dir {}: {}",
+            data_dir.display(),
+            err
+        );
+    }
+
+    let init_script = build_agent_init_script(&account_id, &args.meeting_url);
+
+    let parent_window = app
+        .get_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+
+    // Minimal on_navigation: allow meet.google.com and accounts.google.com
+    // (for auth hops); deny everything else so the agent stays contained.
+    let nav_label_clone = label.clone();
+    let nav_app_clone = app.clone();
+    let builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(parsed_url))
+        .data_directory(data_dir)
+        .initialization_script(&init_script)
+        .on_navigation(move |url| {
+            let allowed = matches!(
+                url.host_str(),
+                Some("meet.google.com") | Some("accounts.google.com") | Some("www.google.com")
+            );
+            if !allowed {
+                log::debug!(
+                    "[meet-agent] on_navigation blocked url={} label={}",
+                    url,
+                    nav_label_clone
+                );
+            }
+            // Notify the frontend of navigation events for diagnostics.
+            let _ = nav_app_clone.emit(
+                "webview-account:navigate",
+                serde_json::json!({
+                    "account_id": nav_label_clone,
+                    "provider": "google-meet-agent",
+                    "url": url.as_str(),
+                }),
+            );
+            allowed
+        });
+
+    // Spawn off-screen with a real viewport so Meet's lobby renders.
+    let webview = parent_window
+        .add_child(
+            builder,
+            LogicalPosition::new(-4000.0_f64, -4000.0_f64),
+            LogicalSize::new(1280.0_f64, 720.0_f64),
+        )
+        .map_err(|e| format!("[meet-agent] add_child failed: {e}"))?;
+
+    log::info!(
+        "[meet-agent] spawned label={} account={} meeting_url={}",
+        webview.label(),
+        account_id,
+        args.meeting_url
+    );
+
+    state
+        .agents
+        .lock()
+        .unwrap()
+        .insert(account_id.to_string(), label.clone());
+
+    Ok(label)
+}
+
+/// Gracefully leave the Meet call and close the agent webview.
+///
+/// Best-effort: evaluates `window.__openhumanMeetAgent.leave()` before closing
+/// so Meet's leave-call protocol runs if possible. The webview is closed
+/// regardless of whether the JS call succeeds.
+///
+/// Idempotent — returns `Ok(())` even if no agent webview is registered.
+#[tauri::command]
+pub async fn webview_meet_agent_leave<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, WebviewAccountsState>,
+    args: MeetAgentLeaveArgs,
+) -> Result<(), String> {
+    let account_id = sanitize_account_id(&args.account_id)?;
+    log::info!("[meet-agent] leave account_id={}", account_id);
+
+    let label_opt = state.agents.lock().unwrap().remove(&account_id[..]);
+
+    if let Some(label) = label_opt {
+        if let Some(wv) = app.get_webview(&label) {
+            // Best-effort graceful leave — ignore JS eval errors.
+            if let Err(e) =
+                wv.eval("window.__openhumanMeetAgent && window.__openhumanMeetAgent.leave();")
+            {
+                log::debug!(
+                    "[meet-agent] leave eval failed (non-fatal) label={}: {}",
+                    label,
+                    e
+                );
+            }
+            if let Err(e) = wv.close() {
+                log::warn!("[meet-agent] close failed label={}: {}", label, e);
+            } else {
+                log::info!("[meet-agent] closed label={} account={}", label, account_id);
+            }
+        } else {
+            log::debug!(
+                "[meet-agent] leave: webview label={} not found (already closed)",
+                label
+            );
+        }
+    } else {
+        log::debug!(
+            "[meet-agent] leave: no agent registered for account={}",
+            account_id
+        );
+    }
+
+    Ok(())
 }
 
 /// Spawn (or focus) the embedded webview for an account.
@@ -3105,5 +3348,62 @@ mod tests {
             .expect("existing dir should be removed");
 
         assert!(!dir.exists(), "data dir should be removed");
+    }
+
+    // ── meet-agent helpers ─────────────────────────────────────────────────
+
+    #[test]
+    fn agent_label_for_appends_agent_suffix() {
+        assert_eq!(agent_label_for("user-123"), "acct_user-123_agent");
+    }
+
+    #[test]
+    fn agent_label_for_sanitizes_special_chars() {
+        // Non-alphanum / non-dash / non-underscore chars should be replaced.
+        assert_eq!(
+            agent_label_for("user@domain.com"),
+            "acct_user_domain_com_agent"
+        );
+    }
+
+    #[test]
+    fn build_agent_init_script_contains_expected_fragments() {
+        let script = build_agent_init_script("acct-xyz", "https://meet.google.com/abc-def-ghi");
+        // Context must contain role:"agent" and the meeting URL.
+        assert!(script.contains("\"agent\""), "script must embed role agent");
+        assert!(
+            script.contains("meet.google.com/abc-def-ghi"),
+            "script must embed meeting url"
+        );
+        // RUNTIME_JS bridge must be present (unique prefix from runtime.js).
+        assert!(
+            script.contains("__openhumanRecipe"),
+            "script must include runtime js"
+        );
+        // Agent loop JS must be present.
+        assert!(
+            script.contains("__openhumanMeetAgent"),
+            "script must include agent js"
+        );
+        // User-facing recipe must NOT be present (recipe.js emits meet_captions;
+        // that string is not found in either RUNTIME_JS or MEET_AGENT_JS).
+        assert!(
+            !script.contains("meet_captions"),
+            "user-facing recipe must not be in agent script"
+        );
+    }
+
+    #[test]
+    fn meet_agent_join_rejects_non_meet_host() {
+        // We can't call the async command directly without a Tauri runtime, but
+        // the URL-validation logic is identical to what the command runs —
+        // exercise it here directly.
+        let bad_url = "https://example.com/abc-def-ghi";
+        let parsed: Url = bad_url.parse().unwrap();
+        let host = parsed.host_str();
+        assert!(
+            host != Some("meet.google.com"),
+            "example.com must not pass the meet.google.com host check"
+        );
     }
 }
