@@ -83,6 +83,14 @@ impl ScannerRegistry {
         let handle = tauri::async_runtime::spawn(run_scanner(app, account_id));
         *guard = Some(handle);
     }
+
+    /// Abort the long-lived local database scanner during app shutdown.
+    pub fn shutdown(&self) {
+        if let Some(handle) = self.inner.lock().take() {
+            handle.abort();
+            log::info!("[imessage] scanner aborted");
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -466,11 +474,48 @@ impl ScannerRegistry {
         _account_id: String,
     ) {
     }
+
+    pub fn shutdown(&self) {}
 }
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+
+    struct DropNotify(Option<tokio::sync::oneshot::Sender<()>>);
+
+    impl Drop for DropNotify {
+        fn drop(&mut self) {
+            if let Some(tx) = self.0.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn registry_shutdown_aborts_stored_scanner_and_is_repeatable() {
+        let registry = ScannerRegistry::new();
+        let (drop_tx, drop_rx) = tokio::sync::oneshot::channel();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let task = tauri::async_runtime::spawn(async move {
+            let _notify = DropNotify(Some(drop_tx));
+            let _ = started_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        started_rx.await.expect("scanner task should start");
+        *registry.inner.lock() = Some(task);
+
+        registry.shutdown();
+
+        assert!(registry.inner.lock().is_none());
+        tokio::time::timeout(std::time::Duration::from_secs(1), drop_rx)
+            .await
+            .expect("iMessage scanner task should be cancelled promptly")
+            .expect("drop notifier should send on cancellation");
+
+        registry.shutdown();
+        assert!(registry.inner.lock().is_none());
+    }
 
     #[test]
     fn apple_ns_to_unix_converts_apple_epoch_zero() {

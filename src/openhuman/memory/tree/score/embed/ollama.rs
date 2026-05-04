@@ -1,8 +1,9 @@
 //! Ollama-backed embedder for Phase 4 (#710).
 //!
-//! Posts `{model, prompt}` to `{endpoint}/api/embeddings` and expects
+//! Posts `{model, prompt, options: {num_ctx}}` to
+//! `{endpoint}/api/embeddings` and expects
 //! `{"embedding": [f32; EMBEDDING_DIM]}` back. Designed for a local
-//! `ollama serve` hosting `nomic-embed-text`.
+//! `ollama serve` hosting `bge-m3`.
 //!
 //! This is intentionally a tiny HTTP client — no retry, no pool caching,
 //! no streaming. Phase 4 wants the simplest thing that works so we can
@@ -22,8 +23,10 @@ use super::{Embedder, EMBEDDING_DIM};
 /// `local_ai` subsystem and the Ollama defaults.
 pub const DEFAULT_ENDPOINT: &str = "http://localhost:11434";
 
-/// Default embedding model — must output exactly [`EMBEDDING_DIM`] dims.
-pub const DEFAULT_MODEL: &str = "nomic-embed-text";
+/// Default embedding model — must output exactly [`EMBEDDING_DIM`]
+/// (1024) dims. `bge-m3` is a multilingual BERT-family encoder with
+/// native 8192-token context and 1024-dim output.
+pub const DEFAULT_MODEL: &str = "bge-m3";
 
 /// Default request timeout. Ollama's first-use latency is a few hundred
 /// ms on a warm model; 10s absorbs a cold-model load on commodity
@@ -63,16 +66,19 @@ impl OllamaEmbedder {
             timeout_ms
         };
         let timeout = Duration::from_millis(timeout_ms);
+        // No body-read timeout. Ollama is local — slow responses mean
+        // the model is genuinely processing, not that the network
+        // broke. A body-read timeout here would cancel mid-stream and
+        // force retries against the same slow model. `timeout` is
+        // repurposed as the TCP connect timeout (fast-fail when
+        // Ollama is actually down).
         let client = reqwest::Client::builder()
-            .timeout(timeout)
+            .connect_timeout(timeout)
             .build()
-            // Falling back to the default client keeps `new` infallible;
-            // timeouts will apply per-request via explicit `.timeout()`
-            // calls below.
             .unwrap_or_else(|e| {
                 log::warn!(
                     "[memory_tree::embed::ollama] failed to build client \
-                     with timeout — using default: {e}"
+                     with connect_timeout — using default: {e}"
                 );
                 reqwest::Client::new()
             });
@@ -99,10 +105,28 @@ impl OllamaEmbedder {
     }
 }
 
+/// Override Ollama's per-model `num_ctx` default. Ollama loads
+/// embedding models with `num_ctx = 4096` (or whatever default the
+/// model's modelfile carries) unless the request explicitly asks for
+/// more. `bge-m3` natively supports 8192 tokens, and chunker-token
+/// counts undercount BERT-WordPiece tokens by ~1.5-2× for HTML-derived
+/// markdown — so a 1500-chunker-token chunk routinely produces 2500+
+/// real tokens at embed time. Asking for 8192 unconditionally avoids
+/// silent prompt truncation; on models that natively support less,
+/// Ollama clamps `num_ctx` to the model's actual maximum, so this is
+/// safe to over-request.
+const EMBED_NUM_CTX: u32 = 8192;
+
 #[derive(Serialize)]
 struct EmbedRequest<'a> {
     model: &'a str,
     prompt: &'a str,
+    options: EmbedOptions,
+}
+
+#[derive(Serialize)]
+struct EmbedOptions {
+    num_ctx: u32,
 }
 
 #[derive(Deserialize)]
@@ -127,12 +151,17 @@ impl Embedder for OllamaEmbedder {
         let req = EmbedRequest {
             model: &self.model,
             prompt: text,
+            options: EmbedOptions {
+                num_ctx: EMBED_NUM_CTX,
+            },
         };
         let resp = self
             .client
+            // No per-request body-read timeout — see `OllamaEmbedder::new`
+            // for rationale. The Client's `connect_timeout` still applies
+            // and fails fast if Ollama isn't reachable.
             .post(self.embed_url())
             .json(&req)
-            .timeout(self.timeout)
             .send()
             .await
             .with_context(|| {
@@ -223,8 +252,9 @@ mod tests {
             post(move |Json(body): Json<serde_json::Value>| {
                 let v = v_clone.clone();
                 async move {
-                    assert_eq!(body["model"], "nomic-embed-text");
+                    assert_eq!(body["model"], "bge-m3");
                     assert_eq!(body["prompt"], "hello world");
+                    assert_eq!(body["options"]["num_ctx"], 8192);
                     Json(serde_json::json!({ "embedding": v }))
                 }
             }),
@@ -262,7 +292,7 @@ mod tests {
         let e = OllamaEmbedder::new(url, String::new(), 0);
         let err = e.embed("hi").await.unwrap_err().to_string();
         assert!(err.contains("3 dims"), "msg: {err}");
-        assert!(err.contains("expected 768"), "msg: {err}");
+        assert!(err.contains("expected 1024"), "msg: {err}");
     }
 
     #[tokio::test]

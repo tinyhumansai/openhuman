@@ -34,8 +34,8 @@ use compatible_parse::{
 use compatible_stream::sse_bytes_to_chunks;
 use compatible_types::{
     ApiChatRequest, ApiChatResponse, ApiUsage, Choice, Function, Message, NativeChatRequest,
-    NativeMessage, OpenHumanMeta, ResponseMessage, ResponsesRequest, StreamChunkResponse,
-    StreamingToolCall, ToolCall,
+    NativeMessage, OpenAiStreamOptions, OpenHumanMeta, ResponseMessage, ResponsesRequest,
+    StreamChunkResponse, StreamingToolCall, ToolCall,
 };
 
 /// A provider that speaks the OpenAI-compatible chat completions API.
@@ -1394,6 +1394,14 @@ impl Provider for OpenAiCompatibleProvider {
                 tool_choice: tools.as_ref().map(|_| "auto".to_string()),
                 tools: tools.clone(),
                 thread_id: self.outbound_thread_id(),
+                // Ask the server for a final usage chunk so token
+                // accounting (and `openhuman.billing.charged_amount_usd`
+                // for the OpenHuman backend) makes it back from
+                // streaming responses — orchestrator sessions otherwise
+                // lose the `- Charged: $…` line in their transcripts.
+                stream_options: Some(OpenAiStreamOptions {
+                    include_usage: true,
+                }),
             };
             let stream_dump_seq = reserve_dump_seq();
             dump_prompt_if_enabled(&self.name, model, stream_dump_seq, &native_request);
@@ -1428,6 +1436,7 @@ impl Provider for OpenAiCompatibleProvider {
             tool_choice: tools.as_ref().map(|_| "auto".to_string()),
             tools,
             thread_id,
+            stream_options: None,
         };
         let dump_seq = reserve_dump_seq();
         dump_prompt_if_enabled(&self.name, model, dump_seq, &native_request);

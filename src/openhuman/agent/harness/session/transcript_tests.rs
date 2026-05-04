@@ -24,6 +24,7 @@ fn sample_meta() -> TranscriptMeta {
         output_tokens: 1200,
         cached_input_tokens: 3500,
         charged_amount_usd: 0.0045,
+        thread_id: None,
     }
 }
 
@@ -440,5 +441,54 @@ fn latest_in_dir_prefers_jsonl_over_md() {
     assert!(
         latest.to_string_lossy().ends_with(".jsonl"),
         "should prefer .jsonl when both exist at same index"
+    );
+}
+
+/// `thread_id` (the backend-side LLM thread identifier) must be both
+/// emitted in the JSONL `_meta` header and surfaced in the `.md`
+/// companion so a human reading the transcript can correlate it with
+/// `InferenceLog` rows on the backend. Sessions without an ambient
+/// thread (CLI, tests) keep `thread_id = None` and neither field
+/// appears — the absence is intentional, not a missing feature.
+#[test]
+fn thread_id_round_trips_and_appears_in_md_when_present() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("thread.jsonl");
+    let messages = sample_messages();
+    let mut meta = sample_meta();
+    meta.thread_id = Some("thread-xyz-42".into());
+
+    write_transcript(&path, &messages, &meta, None).unwrap();
+
+    // JSONL round-trip preserves the field.
+    let loaded = read_transcript(&path).unwrap();
+    assert_eq!(loaded.meta.thread_id.as_deref(), Some("thread-xyz-42"));
+
+    // Markdown companion exposes it under the header.
+    let md = fs::read_to_string(path.with_extension("md")).unwrap();
+    assert!(
+        md.contains("- Thread: `thread-xyz-42`"),
+        "thread id should be rendered in md header, got:\n{md}"
+    );
+}
+
+#[test]
+fn thread_id_absent_omits_md_line_and_jsonl_field() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("no_thread.jsonl");
+    let messages = sample_messages();
+    let meta = sample_meta(); // thread_id = None
+
+    write_transcript(&path, &messages, &meta, None).unwrap();
+
+    let raw_jsonl = fs::read_to_string(&path).unwrap();
+    assert!(
+        !raw_jsonl.contains("\"thread_id\""),
+        "absent thread_id must be skipped in JSONL so the field doesn't show up as `null`"
+    );
+    let md = fs::read_to_string(path.with_extension("md")).unwrap();
+    assert!(
+        !md.contains("- Thread:"),
+        "no `- Thread:` line should appear when thread_id is None, got:\n{md}"
     );
 }

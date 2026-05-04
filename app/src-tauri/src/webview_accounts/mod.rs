@@ -626,54 +626,94 @@ impl WebviewAccountsState {
     /// and tells the per-account scanner registries to forget the
     /// account so a future open of the same id starts from a clean slate.
     /// All collections are drained — repeat calls are cheap no-ops.
-    pub fn shutdown_all<R: Runtime>(&self, app: &AppHandle<R>) {
+    pub fn shutdown_all<R: Runtime>(&self, app: &AppHandle<R>) -> Vec<String> {
+        teardown_all_account_scanners(app);
         let labels = self.drain_for_shutdown();
+        let mut closed_labels = Vec::with_capacity(labels.len());
         for (acct, label) in labels {
             teardown_account_scanners(app, &acct);
             if let Some(wv) = app.get_webview(&label) {
+                // Track the label as soon as the webview exists so a failed
+                // `close()` still participates in the post-close drain poll
+                // (issue #1120 / CodeRabbit).
+                closed_labels.push(label.clone());
                 if let Err(e) = wv.close() {
                     log::warn!(
                         "[webview-accounts] shutdown close({label}) failed account={acct}: {e}"
                     );
                 }
+            } else {
+                log::debug!(
+                    "[webview-accounts] shutdown label already gone account={} label={}",
+                    acct,
+                    label
+                );
             }
         }
-        log::info!("[webview-accounts] shutdown_all complete");
+        log::info!(
+            "[webview-accounts] shutdown_all complete closed_labels={:?}",
+            closed_labels
+        );
+        closed_labels
+    }
+}
+
+/// Abort every provider scanner task tracked by the per-provider
+/// registries. Used by full-app shutdown before the per-account state is
+/// drained so CDP loops stop even if an account label was already removed
+/// from `WebviewAccountsState`.
+fn teardown_all_account_scanners<R: Runtime>(app: &AppHandle<R>) {
+    let mut total = 0usize;
+    if let Some(registry) =
+        app.try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
+    {
+        total += registry.inner().forget_all();
+    }
+    if let Some(registry) = app.try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
+    {
+        total += registry.inner().forget_all();
+    }
+    if let Some(registry) =
+        app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
+    {
+        total += registry.inner().forget_all();
+    }
+    if let Some(registry) =
+        app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
+    {
+        total += registry.inner().forget_all();
+    }
+    if total > 0 {
+        log::info!(
+            "[webview-accounts] aborted {} provider scanner task(s) for shutdown",
+            total
+        );
     }
 }
 
 /// Tell the per-account scanner registries (whatsapp / slack / discord /
-/// telegram) to forget `account_id`. Each `forget` is fire-and-forget so
-/// the caller doesn't need to be `async`. Shared by `webview_account_close`,
+/// telegram) to forget `account_id`. Shared by `webview_account_close`,
 /// `webview_account_purge`, and `WebviewAccountsState::shutdown_all` so
 /// every exit path goes through the same teardown.
 fn teardown_account_scanners<R: Runtime>(app: &AppHandle<R>, account_id: &str) {
     if let Some(registry) =
         app.try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
     {
-        let registry = registry.inner().clone();
-        let acct = account_id.to_string();
-        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
+        registry.inner().forget(account_id);
     }
     if let Some(registry) = app.try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
     {
-        let registry = registry.inner().clone();
-        let acct = account_id.to_string();
-        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
+        registry.inner().forget(account_id);
     }
     if let Some(registry) =
         app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
     {
-        let registry = registry.inner().clone();
-        let acct = account_id.to_string();
-        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
+        registry.inner().forget(account_id);
     }
     if let Some(registry) =
         app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
     {
-        let registry = registry.inner().clone();
-        let acct = account_id.to_string();
-        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
+        registry.inner().forget(account_id);
     }
 }
 
@@ -1892,12 +1932,11 @@ pub async fn webview_account_open<R: Runtime>(
                 .try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
                 .map(|s| s.inner().clone());
             if let Some(registry) = registry {
-                let app_clone = app.clone();
-                let acct = args.account_id.clone();
-                let prefix = scanner_url_prefix.clone();
-                tokio::spawn(async move {
-                    registry.ensure_scanner(app_clone, acct, prefix).await;
-                });
+                registry.ensure_scanner(
+                    app.clone(),
+                    args.account_id.clone(),
+                    scanner_url_prefix.clone(),
+                );
             } else {
                 log::warn!("[webview-accounts] CDP ScannerRegistry not in app state");
             }
@@ -1907,12 +1946,11 @@ pub async fn webview_account_open<R: Runtime>(
                     .try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
                     .map(|s| s.inner().clone());
                 if let Some(registry) = registry {
-                    let app_clone = app.clone();
-                    let acct = args.account_id.clone();
-                    let prefix = scanner_url_prefix.clone();
-                    tokio::spawn(async move {
-                        registry.ensure_scanner(app_clone, acct, prefix).await;
-                    });
+                    registry.ensure_scanner(
+                        app.clone(),
+                        args.account_id.clone(),
+                        scanner_url_prefix.clone(),
+                    );
                 } else {
                     log::warn!("[webview-accounts] slack ScannerRegistry not in app state");
                 }
@@ -1927,12 +1965,11 @@ pub async fn webview_account_open<R: Runtime>(
                 .try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
                 .map(|s| s.inner().clone());
             if let Some(registry) = registry {
-                let app_clone = app.clone();
-                let acct = args.account_id.clone();
-                let prefix = scanner_url_prefix.clone();
-                tokio::spawn(async move {
-                    registry.ensure_scanner(app_clone, acct, prefix).await;
-                });
+                registry.ensure_scanner(
+                    app.clone(),
+                    args.account_id.clone(),
+                    scanner_url_prefix.clone(),
+                );
             } else {
                 log::warn!("[webview-accounts] telegram ScannerRegistry not in app state");
             }
@@ -1943,12 +1980,11 @@ pub async fn webview_account_open<R: Runtime>(
                 .try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
                 .map(|s| s.inner().clone());
             if let Some(registry) = registry {
-                let app_clone = app.clone();
-                let acct = args.account_id.clone();
-                let prefix = scanner_url_prefix.clone();
-                tokio::spawn(async move {
-                    registry.ensure_scanner(app_clone, acct, prefix).await;
-                });
+                registry.ensure_scanner(
+                    app.clone(),
+                    args.account_id.clone(),
+                    scanner_url_prefix.clone(),
+                );
             } else {
                 log::warn!("[webview-accounts] discord ScannerRegistry not in app state");
             }
@@ -2568,9 +2604,11 @@ mod tests {
         let cdp_task = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(60)).await;
         });
+        let cdp_abort = cdp_task.abort_handle();
         let watchdog_task = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(60)).await;
         });
+        let watchdog_abort = watchdog_task.abort_handle();
 
         state
             .cdp_sessions
@@ -2608,11 +2646,17 @@ mod tests {
         );
 
         let labels = state.drain_for_shutdown();
+        tokio::task::yield_now().await;
 
         assert_eq!(
             labels,
             vec![("acct-1".to_string(), "acct_1".to_string())],
             "shutdown_all should close the acct_* webview returned here"
+        );
+        assert!(cdp_abort.is_finished(), "CDP session task was aborted");
+        assert!(
+            watchdog_abort.is_finished(),
+            "load watchdog task was aborted"
         );
         assert!(state.cdp_sessions.lock().unwrap().is_empty());
         assert!(state.load_watchdogs.lock().unwrap().is_empty());

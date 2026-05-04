@@ -49,8 +49,13 @@ pub struct LlmExtractorConfig {
     pub endpoint: String,
     /// Model identifier as known to the endpoint (e.g. `qwen2.5:0.5b`).
     pub model: String,
-    /// Per-request timeout. The default is generous because the first
-    /// request after a model swap may need to load weights.
+    /// TCP connect timeout. Used only to fail fast when Ollama is
+    /// down; no body-read timeout is applied (see `Self::new` for
+    /// rationale — local Ollama on slow CPU inference can take
+    /// minutes per call, and cancelling mid-stream triggered
+    /// cancellation-path retry storms). The default is generous
+    /// because the first request after a model swap may need to load
+    /// weights.
     pub timeout: Duration,
     /// Which entity kinds the LLM is allowed to emit. Anything outside this
     /// set is mapped to [`EntityKind::Misc`] or dropped depending on
@@ -105,8 +110,18 @@ impl LlmEntityExtractor {
     /// Build the extractor and its inner HTTP client. Fails only when
     /// `reqwest` rejects the timeout configuration.
     pub fn new(cfg: LlmExtractorConfig) -> anyhow::Result<Self> {
+        // No body-read timeout. Ollama is a local process — slow
+        // responses mean the model is genuinely processing under CPU
+        // load (e.g. gemma3:1b on CPU-only inference can take minutes
+        // per call), not that the network broke. A body-read timeout
+        // here would cancel mid-flight generation and force the
+        // existing 3× retry-with-backoff to re-run the same prompt
+        // against the same slow model, which empirically caused retry
+        // storms during high-load ingest. `cfg.timeout` is now the
+        // TCP connect timeout — short enough to fail fast when
+        // Ollama is actually unreachable.
         let http = Client::builder()
-            .timeout(cfg.timeout)
+            .connect_timeout(cfg.timeout)
             .build()
             .map_err(anyhow::Error::from)?;
         Ok(Self { cfg, http })

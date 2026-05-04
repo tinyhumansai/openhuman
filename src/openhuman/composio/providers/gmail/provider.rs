@@ -6,9 +6,9 @@
 //!   2. Check the daily request budget — bail early if exhausted.
 //!   3. Fetch a page of recent messages via `GMAIL_FETCH_EMAILS`, adding
 //!      a date filter when a cursor exists so only newer mail is returned.
-//!   4. Run [`ComposioProvider::post_process_action_result`] (HTML→md,
-//!      normalise, sanitise) on the page so the LLM-facing chunk content
-//!      is cleaned, not raw.
+//!   4. Run [`ComposioProvider::post_process_action_result`] (bounded
+//!      HTML→text, normalise, sanitise) on the page so the LLM-facing chunk
+//!      content is cleaned, not raw.
 //!   5. Filter against `synced_ids` for an early-stop optimisation,
 //!      then ingest the new messages into the memory tree via
 //!      [`super::ingest::ingest_page_into_memory_tree`] — same pipeline

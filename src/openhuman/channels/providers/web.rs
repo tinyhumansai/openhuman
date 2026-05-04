@@ -12,6 +12,9 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
+use crate::openhuman::prompt_injection::{
+    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+};
 use crate::rpc::RpcOutcome;
 
 use super::presentation;
@@ -119,6 +122,18 @@ fn inference_budget_exceeded_user_message() -> &'static str {
     "I don't have any budget available right now. Please top up your credits or choose a plan to continue."
 }
 
+fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
+    match action {
+        PromptEnforcementAction::Allow => "Message accepted.",
+        PromptEnforcementAction::Blocked => {
+            "Your message was blocked by a security policy. Please rephrase and remove instruction-override or secret-exfiltration requests."
+        }
+        PromptEnforcementAction::ReviewBlocked => {
+            "Your message was flagged for security review and was not processed. Please rephrase the request in a direct, task-focused way."
+        }
+    }
+}
+
 pub async fn start_chat(
     client_id: &str,
     thread_id: &str,
@@ -141,6 +156,39 @@ pub async fn start_chat(
     }
 
     let request_id = Uuid::new_v4().to_string();
+    let prompt_decision = enforce_prompt_input(
+        &message,
+        PromptEnforcementContext {
+            source: "channels.providers.web.start_chat",
+            request_id: Some(&request_id),
+            user_id: Some(&client_id),
+            session_id: Some(&thread_id),
+        },
+    );
+    if !matches!(prompt_decision.action, PromptEnforcementAction::Allow) {
+        log::warn!(
+            "[web-channel] prompt rejected client_id={} thread_id={} request_id={} action={} score={:.2} reasons={} hash={} chars={}",
+            client_id,
+            thread_id,
+            request_id,
+            match prompt_decision.action {
+                PromptEnforcementAction::Allow => "allow",
+                PromptEnforcementAction::Blocked => "block",
+                PromptEnforcementAction::ReviewBlocked => "review_blocked",
+            },
+            prompt_decision.score,
+            prompt_decision
+                .reasons
+                .iter()
+                .map(|r| r.code.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            prompt_decision.prompt_hash,
+            prompt_decision.prompt_chars,
+        );
+        return Err(prompt_guard_user_message(prompt_decision.action).to_string());
+    }
+
     let map_key = key_for(&client_id, &thread_id);
 
     {

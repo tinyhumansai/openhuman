@@ -24,9 +24,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
+use parking_lot::Mutex;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Runtime};
-use tokio::sync::Mutex;
+use tokio::task::AbortHandle;
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -87,8 +88,12 @@ pub struct ScanSnapshot {
 ///
 /// Both ticks share the same `webview:event` ingest envelope so downstream
 /// consumers don't need to care which one produced the event.
-pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix: String) {
-    tokio::spawn(async move {
+pub fn spawn_scanner<R: Runtime>(
+    app: AppHandle<R>,
+    account_id: String,
+    url_prefix: String,
+) -> Vec<AbortHandle> {
+    let task = tokio::spawn(async move {
         let fragment = crate::cdp::target_url_fragment(&account_id);
         log::info!(
             "[wa] scanner up account={} url_prefix={} fragment={} fast={:?} full={:?}",
@@ -179,6 +184,7 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
             sleep(FAST_SCAN_INTERVAL).await;
         }
     });
+    vec![task.abort_handle()]
 }
 
 /// Emit an ingest payload carrying only DOM-scraped rows, grouped by
@@ -990,7 +996,7 @@ async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), 
 /// double-spawning.
 #[derive(Default)]
 pub struct ScannerRegistry {
-    started: Mutex<std::collections::HashSet<String>>,
+    started: Mutex<std::collections::HashMap<String, Vec<AbortHandle>>>,
 }
 
 impl ScannerRegistry {
@@ -998,22 +1004,154 @@ impl ScannerRegistry {
         Arc::new(Self::default())
     }
 
-    pub async fn ensure_scanner<R: Runtime>(
-        self: &Arc<Self>,
+    pub fn ensure_scanner<R: Runtime>(
+        &self,
         app: AppHandle<R>,
         account_id: String,
         url_prefix: String,
     ) {
-        let mut g = self.started.lock().await;
-        if !g.insert(account_id.clone()) {
+        let mut g = self.started.lock();
+        if g.contains_key(&account_id) {
             log::debug!("[wa] scanner already running for {}", account_id);
             return;
         }
-        spawn_scanner(app, account_id, url_prefix);
+        let handles = spawn_scanner(app, account_id.clone(), url_prefix);
+        g.insert(account_id, handles);
     }
 
-    pub async fn forget(&self, account_id: &str) {
-        let mut g = self.started.lock().await;
-        g.remove(account_id);
+    pub fn forget(&self, account_id: &str) {
+        let handles = self.started.lock().remove(account_id);
+        if let Some(handles) = handles {
+            let count = handles.len();
+            for handle in handles {
+                handle.abort();
+            }
+            log::info!("[wa] aborted {} scanner task(s) for {}", count, account_id);
+        }
+    }
+
+    pub fn forget_all(&self) -> usize {
+        let entries: Vec<_> = self.started.lock().drain().collect();
+        let task_count = entries.iter().map(|(_, handles)| handles.len()).sum();
+        for (account_id, handles) in entries {
+            for handle in handles {
+                handle.abort();
+            }
+            log::debug!("[wa] aborted scanner tasks for {}", account_id);
+        }
+        if task_count > 0 {
+            log::info!("[wa] aborted {} scanner task(s)", task_count);
+        }
+        task_count
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn insert_pending_tasks(
+        registry: &ScannerRegistry,
+        account_id: &str,
+        count: usize,
+    ) -> Vec<tokio::task::JoinHandle<()>> {
+        let mut tasks = Vec::with_capacity(count);
+        let mut abort_handles = Vec::with_capacity(count);
+        for _ in 0..count {
+            let task = tokio::spawn(async {
+                std::future::pending::<()>().await;
+            });
+            abort_handles.push(task.abort_handle());
+            tasks.push(task);
+        }
+        registry
+            .started
+            .lock()
+            .insert(account_id.to_string(), abort_handles);
+        tasks
+    }
+
+    async fn assert_cancelled(task: tokio::task::JoinHandle<()>) {
+        let err = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("aborted scanner task should finish")
+            .expect_err("scanner task should be cancelled");
+        assert!(err.is_cancelled());
+    }
+
+    async fn assert_all_cancelled(tasks: Vec<tokio::task::JoinHandle<()>>) {
+        for task in tasks {
+            assert_cancelled(task).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn registry_forget_aborts_all_handles_for_account_only() {
+        let registry = ScannerRegistry::default();
+        let account_tasks = insert_pending_tasks(&registry, "acct-1", 2);
+        let survivor_tasks = insert_pending_tasks(&registry, "acct-2", 1);
+
+        registry.forget("acct-1");
+
+        {
+            let guard = registry.started.lock();
+            assert_eq!(guard.len(), 1);
+            assert!(guard.contains_key("acct-2"));
+        }
+        assert_all_cancelled(account_tasks).await;
+        assert!(
+            !survivor_tasks[0].is_finished(),
+            "forget(acct-1) must not abort acct-2"
+        );
+
+        assert_eq!(registry.forget_all(), 1);
+        assert_all_cancelled(survivor_tasks).await;
+    }
+
+    #[tokio::test]
+    async fn registry_forget_missing_account_is_noop() {
+        let registry = ScannerRegistry::default();
+        let mut tasks = insert_pending_tasks(&registry, "acct-1", 1);
+
+        registry.forget("missing");
+
+        {
+            let guard = registry.started.lock();
+            assert_eq!(guard.len(), 1);
+            assert!(guard.contains_key("acct-1"));
+        }
+        assert!(
+            !tasks[0].is_finished(),
+            "forget(missing) must not abort existing scanners"
+        );
+
+        registry.forget("acct-1");
+        assert_cancelled(tasks.pop().expect("task")).await;
+    }
+
+    #[tokio::test]
+    async fn registry_forget_all_aborts_all_tasks_and_reports_handle_count() {
+        let registry = ScannerRegistry::default();
+        let task_a = insert_pending_tasks(&registry, "acct-1", 2);
+        let task_b = insert_pending_tasks(&registry, "acct-2", 3);
+
+        assert_eq!(registry.forget_all(), 5);
+
+        assert!(registry.started.lock().is_empty());
+        assert_all_cancelled(task_a).await;
+        assert_all_cancelled(task_b).await;
+    }
+
+    #[tokio::test]
+    async fn registry_forget_all_is_repeatable_noop_after_drain() {
+        let registry = ScannerRegistry::default();
+        assert_eq!(registry.forget_all(), 0);
+
+        let tasks = insert_pending_tasks(&registry, "acct-1", 1);
+        assert_eq!(registry.forget_all(), 1);
+        assert_eq!(registry.forget_all(), 0);
+
+        assert!(registry.started.lock().is_empty());
+        assert_all_cancelled(tasks).await;
     }
 }

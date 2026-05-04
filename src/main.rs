@@ -24,10 +24,20 @@ fn main() {
     let _ = dotenvy::dotenv();
 
     // Initialize Sentry as the very first operation so the guard outlives everything.
-    // If OPENHUMAN_SENTRY_DSN is unset or empty, sentry::init returns a no-op guard.
+    // Resolves the core Sentry DSN by checking, in order:
+    //   1. `OPENHUMAN_CORE_SENTRY_DSN` at runtime (preferred, namespaced name)
+    //   2. `OPENHUMAN_SENTRY_DSN` at runtime (legacy unprefixed name — kept
+    //      so existing CI vars and contributor `.env` files keep working until
+    //      the GH org-level variable can be renamed)
+    //   3. Each of the same names baked at compile time via `option_env!`
+    // If none resolve to a non-empty value, `sentry::init` returns a no-op guard.
     let _sentry_guard = sentry::init(sentry::ClientOptions {
-        dsn: std::env::var("OPENHUMAN_SENTRY_DSN")
+        dsn: std::env::var("OPENHUMAN_CORE_SENTRY_DSN")
             .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| std::env::var("OPENHUMAN_SENTRY_DSN").ok())
+            .filter(|s| !s.is_empty())
+            .or_else(|| option_env!("OPENHUMAN_CORE_SENTRY_DSN").map(|s| s.to_string()))
             .filter(|s| !s.is_empty())
             .or_else(|| option_env!("OPENHUMAN_SENTRY_DSN").map(|s| s.to_string()))
             .filter(|s| !s.is_empty())

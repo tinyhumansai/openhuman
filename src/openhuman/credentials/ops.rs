@@ -14,8 +14,10 @@ use crate::rpc::RpcOutcome;
 
 use super::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 use crate::openhuman::config::{
-    default_root_openhuman_dir, user_openhuman_dir, write_active_user_id,
+    default_root_openhuman_dir, pre_login_user_dir, read_active_user_id, user_openhuman_dir,
+    write_active_user_id,
 };
+use crate::openhuman::memory::conversations;
 
 /// Start all login-gated background services (local AI, voice, screen
 /// intelligence, autocomplete).  Called both from the initial boot path
@@ -158,6 +160,9 @@ pub async fn store_session(
 
     if let Some(ref uid) = resolved_user_id {
         if let Ok(root_dir) = default_root_openhuman_dir() {
+            // Snapshot before we overwrite `active_user.toml` so we can tell
+            // first activation from signed-out vs an in-place account switch.
+            let previous_active = read_active_user_id(&root_dir);
             let user_dir = user_openhuman_dir(&root_dir, uid);
             if let Err(e) = std::fs::create_dir_all(&user_dir) {
                 tracing::warn!(
@@ -178,6 +183,40 @@ pub async fn store_session(
                     user_dir = %user_dir.display(),
                     "User-scoped directory activated"
                 );
+                // Onboarding and other pre-auth flows write threads under the
+                // `users/local/workspace` tree. After the first successful login
+                // there was no previous `active_user.toml`, wipe that anonymous
+                // conversation store so a fresh account never inherits demo or
+                // scratch threads from the pre-login bucket (#1157).
+                //
+                // This shares `memory::conversations`' process-wide mutex with
+                // `list_threads` / `purge_threads` on any workspace, so purge and
+                // concurrent thread RPC in this process cannot interleave.
+                if previous_active.is_none() {
+                    let pre_ws = pre_login_user_dir(&root_dir).join("workspace");
+                    let pre_ws_log = pre_ws.display().to_string();
+                    match conversations::purge_threads(pre_ws) {
+                        Ok(stats) => {
+                            tracing::info!(
+                                pre_login_workspace = %pre_ws_log,
+                                threads = stats.thread_count,
+                                messages = stats.message_count,
+                                "[credentials] purged pre-login conversation threads after first session activation"
+                            );
+                            logs.push(format!(
+                                "purged pre-login conversation history (threads={}, messages={})",
+                                stats.thread_count, stats.message_count
+                            ));
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                error = %e,
+                                pre_login_workspace = %pre_ws_log,
+                                "[credentials] pre-login conversation purge skipped (non-fatal)"
+                            );
+                        }
+                    }
+                }
             }
         }
     }

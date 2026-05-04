@@ -115,6 +115,11 @@ pub struct ContextManager {
     /// every caller that touches "what's in the model's context window"
     /// reads the same source of truth.
     tool_result_budget_bytes: usize,
+    /// When `true`, the agent loop asks tools to populate
+    /// `ToolResult::markdown_formatted` so the harness can hand the LLM
+    /// markdown instead of JSON — significantly cheaper in the model
+    /// context window. See [`ContextConfig::prefer_markdown_tool_output`].
+    prefer_markdown_tool_output: bool,
 }
 
 impl ContextManager {
@@ -155,7 +160,14 @@ impl ContextManager {
             default_prompt_builder,
             enabled: config.enabled,
             tool_result_budget_bytes: config.tool_result_budget_bytes,
+            prefer_markdown_tool_output: config.prefer_markdown_tool_output,
         }
+    }
+
+    /// Whether the agent loop should ask tools to render their output as
+    /// markdown (when supported) instead of JSON, to save LLM tokens.
+    pub fn prefer_markdown_tool_output(&self) -> bool {
+        self.prefer_markdown_tool_output
     }
 
     /// Byte budget for an individual tool result before the context

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
+import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import PillTabBar from '../components/PillTabBar';
@@ -157,6 +158,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const [selectedLabel, setSelectedLabel] = useState<string>('all');
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
+  const [sendAdvisory, setSendAdvisory] = useState<string | null>(null);
   const socketStatus = useAppSelector(selectSocketStatus);
   const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
   const inferenceStatusByThread = useAppSelector(
@@ -330,7 +332,10 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     if (sendError && inputValue.length > 0) {
       setSendError(null);
     }
-  }, [inputValue, sendError]);
+    if (sendAdvisory && inputValue.length > 0) {
+      setSendAdvisory(null);
+    }
+  }, [inputValue, sendAdvisory, sendError]);
 
   const armSilenceTimer = (threadId: string) => {
     if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
@@ -484,6 +489,13 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
 
     if (handleSlashCommand(trimmed)) return;
 
+    const promptGuard = checkPromptInjection(trimmed);
+    if (promptGuard.verdict === 'review' || promptGuard.verdict === 'block') {
+      setSendAdvisory(promptGuardMessage(promptGuard));
+    } else {
+      setSendAdvisory(null);
+    }
+
     if (isAtLimit) {
       setShowLimitModal(true);
       setSendError(
@@ -547,7 +559,17 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       }
       sendingThreadIdRef.current = null;
       const msg = err instanceof Error ? err.message : String(err);
-      setSendError(chatSendError('cloud_send_failed', msg));
+      if (
+        msg.toLowerCase().includes('blocked by a security policy') ||
+        msg.toLowerCase().includes('flagged for security review')
+      ) {
+        const code = msg.toLowerCase().includes('flagged for security review')
+          ? 'prompt_review'
+          : 'prompt_blocked';
+        setSendError(chatSendError(code, msg));
+      } else {
+        setSendError(chatSendError('cloud_send_failed', msg));
+      }
       dispatch(clearRuntimeForThread({ threadId: sendingThreadId }));
       dispatch(setActiveThread(null));
     }
@@ -1504,6 +1526,19 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                 )}
               </div>
             </>
+          )}
+
+          {sendAdvisory && (
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-amber-700" data-chat-send-advisory>
+                {sendAdvisory}
+              </p>
+              <button
+                onClick={() => setSendAdvisory(null)}
+                className="text-xs text-stone-500 hover:text-stone-700 transition-colors ml-2">
+                Dismiss
+              </button>
+            </div>
           )}
 
           {sendError && (

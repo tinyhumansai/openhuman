@@ -28,9 +28,13 @@ fn fixture() -> Value {
                 "payload": {
                     "headers": [ { "name": "Date", "value": "Fri, 17 Apr 2026 12:00:00 +0000" } ],
                     "parts": [
+                        // Realistic MIME multipart/alternative: text/plain
+                        // mirrors text/html content. Author-provided
+                        // plaintext is what we now prefer for downstream
+                        // ingestion (see extract_markdown_body docstring).
                         {
                             "mimeType": "text/plain",
-                            "body": { "data": b64("Hi plain text") }
+                            "body": { "data": b64("Title\n\nHello world") }
                         },
                         {
                             "mimeType": "text/html",
@@ -163,7 +167,12 @@ fn non_fetch_slug_is_noop() {
 }
 
 #[test]
-fn nested_multipart_html_is_found() {
+fn nested_multipart_prefers_plaintext_over_html() {
+    // When a multipart/alternative ships BOTH text/plain and text/html, the
+    // plaintext part wins. text/plain is the author's intended fallback,
+    // bypasses HTML stripping on the sibling `text/html` part (see
+    // post_process.rs::extract_markdown_body), and is generally
+    // cleaner input for downstream LLM extraction.
     let html = "<p>Deep <b>body</b></p>";
     let mut v = json!({
         "messages": [{
@@ -190,9 +199,62 @@ fn nested_multipart_html_is_found() {
     });
     post_process("GMAIL_FETCH_EMAILS", None, &mut v);
     let md = v["messages"][0]["markdown"].as_str().unwrap();
-    assert!(md.contains("Deep"));
-    assert!(md.contains("body"));
-    assert!(!md.contains("<p>"));
+    assert!(
+        md.contains("plain fallback"),
+        "plaintext should win, got: {md:?}"
+    );
+    // The HTML body should NOT appear — the text/html branch was bypassed.
+    assert!(
+        !md.contains("Deep"),
+        "html should not have been used: {md:?}"
+    );
+    assert!(
+        !md.contains("<p>"),
+        "raw html should never leak through: {md:?}"
+    );
+}
+
+#[test]
+fn nested_multipart_falls_back_to_html_when_no_plaintext() {
+    // For html-only emails (rare — some poorly-built marketing senders),
+    // we run the bounded linear HTML strip (see `html_email_to_markdown`).
+    let html = "<p>Deep <b>body</b></p>";
+    let mut v = json!({
+        "messages": [{
+            "messageId": "m1",
+            "threadId": "t1",
+            "subject": "s",
+            "sender": "a@x.com",
+            "to": "b@y.com",
+            "messageTimestamp": "2026-04-17",
+            "labelIds": [],
+            "messageText": "",
+            "payload": {
+                "parts": [
+                    {
+                        "mimeType": "multipart/alternative",
+                        "parts": [
+                            { "mimeType": "text/html", "body": { "data": b64(html) } }
+                        ]
+                    }
+                ]
+            }
+        }]
+    });
+    post_process("GMAIL_FETCH_EMAILS", None, &mut v);
+    let md = v["messages"][0]["markdown"].as_str().unwrap();
+    assert!(
+        md.contains("Deep"),
+        "HTML strip should preserve text: {md:?}"
+    );
+    assert!(
+        md.contains("body"),
+        "HTML strip should preserve text: {md:?}"
+    );
+    assert!(
+        !md.contains("<p>"),
+        "raw html should not leak through: {md:?}"
+    );
 }
 
 #[test]
@@ -219,6 +281,37 @@ fn large_html_uses_fast_strip_fallback() {
     assert!(
         !md.contains(".x{color:red}"),
         "style blocks must be removed: {md:?}"
+    );
+}
+
+#[test]
+fn oversized_html_is_truncated_before_processing() {
+    let cap = super::MAX_GMAIL_HTML_BODY_BYTES;
+    let filler = "x".repeat(600 * 1024);
+    let html =
+        format!("<html><body><p>HEAD_MARKER</p>{filler}<p>TAIL_NEVER_SEEN</p></body></html>");
+    assert!(html.len() > cap);
+    let md = html_email_to_markdown(&html);
+    assert!(md.contains("HEAD_MARKER"), "{md:?}");
+    assert!(
+        !md.contains("TAIL_NEVER_SEEN"),
+        "tail past cap must not be processed: {md:?}"
+    );
+    assert!(
+        md.contains("[Email HTML body truncated for processing]"),
+        "expected truncation note: {md:?}"
+    );
+}
+
+#[test]
+fn truncated_all_whitespace_html_still_emits_truncation_note() {
+    let cap = super::MAX_GMAIL_HTML_BODY_BYTES;
+    let html = " ".repeat(cap + 10_000);
+    assert!(html.len() > cap);
+    let md = html_email_to_markdown(&html);
+    assert_eq!(
+        md, "[Email HTML body truncated for processing]",
+        "empty body after strip must still signal truncation: {md:?}"
     );
 }
 
@@ -317,21 +410,67 @@ fn html_in_message_text_is_converted() {
 }
 
 #[test]
-fn suspiciously_short_markdown_detects_large_collapse() {
-    assert!(suspiciously_short_markdown(&"x".repeat(4000), "tiny"));
-    assert!(!suspiciously_short_markdown(
-        &"x".repeat(4000),
-        &"y".repeat(400)
-    ));
-}
-
-#[test]
 fn fast_html_strip_handles_long_tags() {
     let long_href = format!(
         "<a href=\"https://example.com/{}\">Click me</a><p>After link</p>",
         "x".repeat(600)
     );
-    let md = fast_html_email_to_markdown(&long_href);
+    let md = html_email_to_markdown(&long_href);
     assert!(md.contains("Click me"));
     assert!(md.contains("After link"));
+}
+
+#[test]
+fn text_plain_attachment_does_not_outrank_html_body() {
+    // multipart/mixed email with:
+    //   - multipart/alternative (real body: text/plain + text/html)
+    //   - text/plain attachment ("notes.txt")
+    //
+    // Without filtering attachments, find_decoded_part(_, "text/plain")
+    // could pick up the attachment's content and return it instead of
+    // the body. This test pins the attachment-skip behaviour.
+    let mut v = json!({
+        "messages": [{
+            "messageId": "m1",
+            "threadId": "t1",
+            "subject": "s",
+            "sender": "a@x.com",
+            "to": "b@y.com",
+            "messageTimestamp": "2026-04-17",
+            "labelIds": [],
+            "messageText": "",
+            "payload": {
+                "parts": [
+                    {
+                        "mimeType": "multipart/alternative",
+                        "parts": [
+                            {
+                                "mimeType": "text/plain",
+                                "body": { "data": b64("real body content") }
+                            },
+                            {
+                                "mimeType": "text/html",
+                                "body": { "data": b64("<p>real body content</p>") }
+                            }
+                        ]
+                    },
+                    {
+                        "mimeType": "text/plain",
+                        "filename": "notes.txt",
+                        "body": { "data": b64("attachment content — not the body") }
+                    }
+                ]
+            }
+        }]
+    });
+    post_process("GMAIL_FETCH_EMAILS", None, &mut v);
+    let md = v["messages"][0]["markdown"].as_str().unwrap();
+    assert!(
+        md.contains("real body content"),
+        "real body should win, got: {md:?}"
+    );
+    assert!(
+        !md.contains("attachment content"),
+        "attachment must not leak into markdown body: {md:?}"
+    );
 }

@@ -12,6 +12,9 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::ParsedToolCall;
 use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::memory::Memory;
+use crate::openhuman::prompt_injection::{
+    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+};
 use crate::openhuman::providers::{self, ConversationMessage, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolSpec};
 use crate::openhuman::util::truncate_with_ellipsis;
@@ -348,6 +351,31 @@ impl Agent {
     /// It wraps the core `turn` logic with telemetry events (`AgentTurnStarted`,
     /// `AgentTurnCompleted`) and error sanitization.
     pub async fn run_single(&mut self, message: &str) -> Result<String> {
+        let guard = enforce_prompt_input(
+            message,
+            PromptEnforcementContext {
+                source: "agent.runtime.run_single",
+                request_id: None,
+                user_id: Some(self.event_channel()),
+                session_id: Some(self.event_session_id()),
+            },
+        );
+        if !matches!(guard.action, PromptEnforcementAction::Allow) {
+            let user_message = match guard.action {
+                PromptEnforcementAction::Allow => "Message accepted.",
+                PromptEnforcementAction::Blocked => "Prompt blocked by security policy.",
+                PromptEnforcementAction::ReviewBlocked => {
+                    "Prompt flagged for security review and was not processed."
+                }
+            };
+            publish_global(DomainEvent::AgentError {
+                session_id: self.event_session_id().to_string(),
+                message: user_message.to_string(),
+                recoverable: true,
+            });
+            return Err(anyhow::anyhow!(user_message));
+        }
+
         let history_snapshot = self.history.clone();
         publish_global(DomainEvent::AgentTurnStarted {
             session_id: self.event_session_id().to_string(),

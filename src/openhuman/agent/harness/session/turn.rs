@@ -31,6 +31,7 @@ use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, Promp
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
 use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage, ProviderDelta};
+use crate::openhuman::tools::traits::ToolCallOptions;
 use crate::openhuman::tools::Tool;
 use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
@@ -893,7 +894,14 @@ impl Agent {
                 false,
             )
         } else if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
-            let exec = tool.execute(call.arguments.clone());
+            // Per-call options: ask the tool for markdown output when the
+            // context manager is configured to prefer it. Tools that
+            // implement `execute_with_options` will populate
+            // `markdown_formatted`; others fall through to the default
+            // implementation which forwards to `execute`.
+            let prefer_markdown = self.context.prefer_markdown_tool_output();
+            let options = ToolCallOptions { prefer_markdown };
+            let exec = tool.execute_with_options(call.arguments.clone(), options);
             let outcome = if let Some(fork_ctx) = fork_context_for_call {
                 harness::with_fork_context(fork_ctx, exec).await
             } else {
@@ -902,7 +910,14 @@ impl Agent {
             match outcome {
                 Ok(r) => {
                     if !r.is_error {
-                        let mut output = r.output();
+                        let mut output = r.output_for_llm(prefer_markdown);
+                        if prefer_markdown && r.markdown_formatted.is_some() {
+                            log::debug!(
+                                "[agent_loop] tool={} returned markdown payload bytes={}",
+                                call.name,
+                                output.len()
+                            );
+                        }
                         // Issue #574 — if a payload summarizer is wired
                         // in (orchestrator session only) and the output
                         // exceeds the configured threshold, hand it to
@@ -945,7 +960,10 @@ impl Agent {
                         }
                         (output, true)
                     } else {
-                        (format!("Error: {}", r.output()), false)
+                        (
+                            format!("Error: {}", r.output_for_llm(prefer_markdown)),
+                            false,
+                        )
                     }
                 }
                 Err(e) => (format!("Error executing {}: {e}", call.name), false),
@@ -1434,6 +1452,7 @@ impl Agent {
             output_tokens,
             cached_input_tokens,
             charged_amount_usd,
+            thread_id: crate::openhuman::providers::thread_context::current_thread_id(),
         };
 
         if let Err(err) = transcript::write_transcript(path, messages, &meta, turn_usage) {
