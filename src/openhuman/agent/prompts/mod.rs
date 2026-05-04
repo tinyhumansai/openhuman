@@ -704,6 +704,7 @@ fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     }
 }
