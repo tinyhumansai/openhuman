@@ -4,8 +4,10 @@
 //!
 //! Used when `memory_tree.llm_backend = "cloud"` (the default). The
 //! request shape is the standard OpenAI-compatible chat-completions
-//! protocol, with `temperature: 0.0` and a `summarizer-v1` (or
+//! protocol, with `temperature: 0.0` and a `summarization-v1` (or
 //! caller-configured) model.
+
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -33,8 +35,22 @@ impl CloudChatProvider {
     /// matching the existing `OpenHumanBackendProvider` contract. That way
     /// a session refresh between memory-tree calls is picked up
     /// transparently.
-    pub fn new(api_url: Option<String>, model: String) -> Self {
-        let opts = ProviderRuntimeOptions::default();
+    ///
+    /// `openhuman_dir` is the directory containing `auth-profiles.json` (i.e.
+    /// the parent of `config.config_path`). Without it the inner provider
+    /// would fall back to `~/.openhuman` and fail with "No backend session"
+    /// on workspaces not located at the home default.
+    pub fn new(
+        api_url: Option<String>,
+        model: String,
+        openhuman_dir: Option<PathBuf>,
+        secrets_encrypt: bool,
+    ) -> Self {
+        let opts = ProviderRuntimeOptions {
+            openhuman_dir,
+            secrets_encrypt,
+            ..ProviderRuntimeOptions::default()
+        };
         let inner = OpenHumanBackendProvider::new(api_url.as_deref(), &opts);
         let display = format!("cloud:{model}");
         Self {
@@ -91,13 +107,13 @@ mod tests {
 
     #[test]
     fn name_includes_model() {
-        let p = CloudChatProvider::new(None, "summarizer-v1".into());
-        assert_eq!(p.name(), "cloud:summarizer-v1");
+        let p = CloudChatProvider::new(None, "summarization-v1".into(), None, true);
+        assert_eq!(p.name(), "cloud:summarization-v1");
     }
 
     #[test]
     fn name_changes_with_model() {
-        let p = CloudChatProvider::new(None, "claude-haiku-4.5".into());
+        let p = CloudChatProvider::new(None, "claude-haiku-4.5".into(), None, true);
         assert!(p.name().contains("claude-haiku-4.5"));
     }
 }

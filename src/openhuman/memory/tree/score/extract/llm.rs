@@ -11,7 +11,7 @@
 //! `qwen2.5:0.5b`) because openhuman already ran Ollama for embeddings.
 //! After the cloud-default refactor, the same prompt now routes through
 //! whichever backend the workspace selected — typically the OpenHuman
-//! backend's `summarizer-v1`. The extractor itself is unchanged below the
+//! backend's `summarization-v1`. The extractor itself is unchanged below the
 //! HTTP layer; only the transport moved.
 //!
 //! ## Span recovery
@@ -43,7 +43,7 @@ use crate::openhuman::memory::tree::chat::{ChatPrompt, ChatProvider};
 #[derive(Clone, Debug)]
 pub struct LlmExtractorConfig {
     /// Model identifier the chat provider should target. For cloud this
-    /// is e.g. `summarizer-v1`; for local Ollama it's the Ollama tag
+    /// is e.g. `summarization-v1`; for local Ollama it's the Ollama tag
     /// (`qwen2.5:0.5b`). Threaded through to [`ChatPrompt`] so the
     /// provider can route to the right model.
     ///

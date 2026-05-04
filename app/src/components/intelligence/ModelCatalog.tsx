@@ -33,6 +33,16 @@ type RowState = 'idle' | 'downloading' | 'error';
  *     stream is wired in `local_ai_downloads_progress` polling — out of
  *     scope for v1)
  */
+// Ollama reports tags as `<name>:<tag>` (e.g. `bge-m3:latest`,
+// `gemma3:1b-it-qat`). The recommended catalog uses bare names for the
+// default-`:latest` case (e.g. `bge-m3`) and full `<name>:<tag>` for
+// non-default tags. Normalize both sides by stripping the `:latest`
+// suffix before comparing — that way `bge-m3` matches `bge-m3:latest`,
+// while `gemma3:1b-it-qat` still requires the explicit tag.
+function normalizeModelId(id: string): string {
+  return id.endsWith(':latest') ? id.slice(0, -':latest'.length) : id;
+}
+
 export default function ModelCatalog({
   installedModelIds,
   activeModelIds,
@@ -40,8 +50,8 @@ export default function ModelCatalog({
   onUse,
   onDelete,
 }: ModelCatalogProps) {
-  const installedSet = new Set(installedModelIds);
-  const activeSet = new Set(activeModelIds);
+  const installedSet = new Set(installedModelIds.map(normalizeModelId));
+  const activeSet = new Set(activeModelIds.map(normalizeModelId));
 
   return (
     <div className="space-y-2">
@@ -49,8 +59,8 @@ export default function ModelCatalog({
         <CatalogRow
           key={model.id}
           model={model}
-          installed={installedSet.has(model.id)}
-          active={activeSet.has(model.id)}
+          installed={installedSet.has(normalizeModelId(model.id))}
+          active={activeSet.has(normalizeModelId(model.id))}
           onDownload={onDownload}
           onUse={onUse}
           onDelete={onDelete}

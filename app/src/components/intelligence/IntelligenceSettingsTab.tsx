@@ -4,18 +4,14 @@ import {
   type Backend,
   capabilityForModel,
   DEFAULT_EXTRACT_MODEL,
-  DEFAULT_SUMMARISER_MODEL,
   downloadAsset,
   fetchInstalledModels,
-  fetchLocalAiStatus,
   getMemoryTreeLlm,
   type ModelDescriptor,
   REQUIRED_EMBEDDER_MODEL,
   setMemoryTreeLlm,
 } from '../../lib/intelligence/settingsApi';
-import type { LocalAiStatus } from '../../utils/tauriCommands';
 import BackendChooser from './BackendChooser';
-import CurrentlyLoaded from './CurrentlyLoaded';
 import ModelAssignment from './ModelAssignment';
 import ModelCatalog from './ModelCatalog';
 
@@ -34,25 +30,21 @@ import ModelCatalog from './ModelCatalog';
 export default function IntelligenceSettingsTab() {
   const [backend, setBackend] = useState<Backend>('cloud');
   const [backendBusy, setBackendBusy] = useState(false);
-  const [extractModel, setExtractModel] = useState<string>(DEFAULT_EXTRACT_MODEL);
-  const [summariserModel, setSummariserModel] = useState<string>(DEFAULT_SUMMARISER_MODEL);
+  // Single Memory LLM that drives both extractor and summariser. Most
+  // users want one model for both; the rare case of mixing them is not
+  // worth the second dropdown's cognitive cost.
+  const [memoryModel, setMemoryModel] = useState<string>(DEFAULT_EXTRACT_MODEL);
   const [installedModels, setInstalledModels] = useState<string[]>([]);
-  const [localAiStatus, setLocalAiStatus] = useState<LocalAiStatus | null>(null);
 
   // One-shot bootstrap — pull current backend and the installed-model list.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       console.debug('[intelligence-settings] bootstrap');
-      const [bk, models, status] = await Promise.all([
-        getMemoryTreeLlm(),
-        fetchInstalledModels(),
-        fetchLocalAiStatus(),
-      ]);
+      const [bk, models] = await Promise.all([getMemoryTreeLlm(), fetchInstalledModels()]);
       if (cancelled) return;
       setBackend(bk);
       setInstalledModels(models.map(m => m.name));
-      setLocalAiStatus(status);
     })();
     return () => {
       cancelled = true;
@@ -69,31 +61,20 @@ export default function IntelligenceSettingsTab() {
     }
   }, []);
 
-  // Persist Extract dropdown changes to config.toml in the same atomic
-  // write the backend toggle uses. We pass `backend: 'local'` (the only
-  // mode where ModelAssignment is rendered) plus the single role being
-  // changed — the absent fields keep the other models untouched, so two
-  // dropdown changes back-to-back compose cleanly without fighting over
-  // disk writes. UI state is updated optimistically pre-RPC; if the call
-  // throws we still want the dropdown to reflect the user's pick rather
-  // than snap back, matching BackendChooser's silent-on-success pattern.
-  const handleExtractModelChange = useCallback(async (id: string) => {
-    console.debug('[intelligence-settings] extract model -> %s', id);
-    setExtractModel(id);
+  // Persist Memory LLM changes to config.toml. Fans out to both
+  // extractor and summariser keys in a single atomic write — the unified
+  // UI is one dropdown, but the underlying schema retains both keys so
+  // power users can still split them via the RPC directly if needed.
+  const handleMemoryModelChange = useCallback(async (id: string) => {
+    console.debug('[intelligence-settings] memory model -> %s', id);
+    setMemoryModel(id);
     try {
-      await setMemoryTreeLlm('local', { extractModel: id });
+      await setMemoryTreeLlm('local', {
+        extractModel: id,
+        summariserModel: id,
+      });
     } catch (err) {
-      console.error('[intelligence-settings] persist extract model failed', err);
-    }
-  }, []);
-
-  const handleSummariserModelChange = useCallback(async (id: string) => {
-    console.debug('[intelligence-settings] summariser model -> %s', id);
-    setSummariserModel(id);
-    try {
-      await setMemoryTreeLlm('local', { summariserModel: id });
-    } catch (err) {
-      console.error('[intelligence-settings] persist summariser model failed', err);
+      console.error('[intelligence-settings] persist memory model failed', err);
     }
   }, []);
 
@@ -110,23 +91,21 @@ export default function IntelligenceSettingsTab() {
     setInstalledModels(refreshed.map(m => m.name));
   }, []);
 
-  const handleUse = useCallback((model: ModelDescriptor) => {
-    if (model.roles.includes('summariser')) {
-      setSummariserModel(model.id);
-      return;
-    }
-    if (model.roles.includes('extract')) {
-      setExtractModel(model.id);
-    }
-  }, []);
+  const handleUse = useCallback(
+    (model: ModelDescriptor) => {
+      if (model.roles.includes('extract') || model.roles.includes('summariser')) {
+        void handleMemoryModelChange(model.id);
+      }
+    },
+    [handleMemoryModelChange]
+  );
 
   const activeModelIds = useMemo<string[]>(() => {
     const ids = new Set<string>();
-    ids.add(extractModel);
-    ids.add(summariserModel);
+    ids.add(memoryModel);
     ids.add(REQUIRED_EMBEDDER_MODEL);
     return [...ids];
-  }, [extractModel, summariserModel]);
+  }, [memoryModel]);
 
   return (
     <div className="space-y-10" data-testid="intelligence-settings-tab">
@@ -134,34 +113,30 @@ export default function IntelligenceSettingsTab() {
         <BackendChooser value={backend} onChange={handleBackendChange} busy={backendBusy} />
       </Section>
 
+      {/* All local-model sections (assignment, catalog, currently-loaded)
+          are gated on local backend. Cloud users get just the backend
+          chooser + the explanatory copy that lives inside it — they don't
+          need to see Ollama-related UI at all. */}
       {backend === 'local' && (
-        <Section title="Model assignment">
-          <ModelAssignment
-            installedModelIds={installedModels}
-            extractModel={extractModel}
-            summariserModel={summariserModel}
-            onChangeExtract={handleExtractModelChange}
-            onChangeSummariser={handleSummariserModelChange}
-          />
-        </Section>
+        <>
+          <Section title="Model assignment">
+            <ModelAssignment
+              installedModelIds={installedModels}
+              memoryModel={memoryModel}
+              onChangeMemory={handleMemoryModelChange}
+            />
+          </Section>
+
+          <Section title="Model catalog">
+            <ModelCatalog
+              installedModelIds={installedModels}
+              activeModelIds={activeModelIds}
+              onDownload={handleDownload}
+              onUse={handleUse}
+            />
+          </Section>
+        </>
       )}
-
-      <Section title="Model catalog">
-        <ModelCatalog
-          installedModelIds={installedModels}
-          activeModelIds={activeModelIds}
-          onDownload={handleDownload}
-          onUse={handleUse}
-        />
-      </Section>
-
-      <Section title="Currently loaded">
-        <CurrentlyLoaded
-          status={localAiStatus}
-          backend={backend}
-          installedModelIds={installedModels}
-        />
-      </Section>
     </div>
   );
 }

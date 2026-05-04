@@ -77,7 +77,7 @@ pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
 /// target, returning `None` when the configured backend can't be served:
 ///
 /// - `Cloud`: always returns the configured `cloud_llm_model` or its
-///   `summarizer-v1` default.
+///   `summarization-v1` default.
 /// - `Local`: returns `Some(model)` only when both
 ///   `llm_extractor_endpoint` AND `llm_extractor_model` are set —
 ///   otherwise the legacy regex-only path engages.

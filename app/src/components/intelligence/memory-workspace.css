@@ -5,17 +5,19 @@
  * (which use the global stone/primary palette) are unaffected.
  */
 .memory-workspace-root {
-  --paper: #faf7f2;
-  --paper-elevated: #ffffff;
-  --paper-recessed: #f4f0e9;
-  --paper-recessed-darker: #ece6d7;
-  --hairline: #e8e2d5;
-  --ink: #1a1f2e;
-  --ink-soft: #4a5468;
-  --ink-whisper: #8c95a8;
+  /* Match the rest of the app's stone palette — dropped the cream tones
+     (#faf7f2 / #f4f0e9) that read yellowish next to the bottom nav bar. */
+  --paper: #fafaf9;             /* stone-50 — base surface */
+  --paper-elevated: #ffffff;    /* white — active/selected/list */
+  --paper-recessed: #f5f5f4;    /* stone-100 — hover */
+  --paper-recessed-darker: #e7e5e4; /* stone-200 — pressed */
+  --hairline: #e7e5e4;          /* stone-200 — borders */
+  --ink: #1c1917;
+  --ink-soft: #44403c;
+  --ink-whisper: #78716c;
   --ocean: #4a83dd;
   --ocean-deep: #2e5baa;
-  --ocean-mist: rgba(74, 131, 221, 0.06);
+  --ocean-mist: rgba(74, 131, 221, 0.08);
   --sage: #7a9b7e;
   --amber: #c8954d;
   --coral: #c26b5c;
@@ -101,32 +103,35 @@
   overflow-x: hidden;
 }
 
-/* Section headings — Cabinet Grotesk lowercase tracked. */
+/* Section headings — Inter uppercase, modern app-rail style. Replaces
+   the Cabinet Grotesk lowercase tracked treatment which read like a
+   magazine masthead in a left-rail context. */
 .mw-section-heading {
-  font-family: 'Cabinet Grotesk', 'Inter', system-ui, sans-serif;
-  font-size: 14px;
-  font-weight: 500;
-  letter-spacing: 0.3em;
-  text-transform: lowercase;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--ink-whisper);
-  padding: 12px 16px 8px;
+  padding: 10px 16px 6px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   cursor: pointer;
   user-select: none;
   background: transparent;
   border: none;
   width: 100%;
   text-align: left;
+  transition: color 120ms ease;
 }
 .mw-section-heading:hover {
   color: var(--ink-soft);
 }
 .mw-section-chev {
   margin-left: auto;
-  font-size: 10px;
-  opacity: 0.6;
+  font-size: 11px;
+  opacity: 0.5;
   transition: transform 120ms ease;
 }
 .mw-section-chev.open {
@@ -138,6 +143,50 @@
 }
 .mw-section:last-child {
   border-bottom: none;
+}
+
+/* Nested sections — sources expanded shows Email/Slack/etc. as
+   sub-collapsibles. Indent + tone-shift the nested level so the
+   hierarchy reads visually. */
+.mw-section .mw-section {
+  border-bottom: 1px solid var(--hairline);
+  border-left: 2px solid var(--hairline);
+  margin: 0 0 0 12px;
+  background: var(--paper-recessed);
+}
+.mw-section .mw-section:last-child {
+  border-bottom: none;
+}
+.mw-section .mw-section .mw-section-heading {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 6px 12px 4px;
+  color: var(--ink-soft);
+}
+.mw-section .mw-section .mw-section-heading:hover {
+  color: var(--ink);
+}
+.mw-section .mw-section .mw-list-item {
+  /* Source rows under a kind heading need a stronger indent so the
+     hierarchy is unambiguous: kind heading at one level, individual
+     senders deeper. Bump left padding so each row sits visibly under
+     the kind's chevron, with a sub-rail line to continue the nesting. */
+  padding: 5px 12px 5px 26px;
+  position: relative;
+}
+.mw-section .mw-section .mw-list-item::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--hairline);
+  opacity: 0.7;
+}
+.mw-section .mw-section .mw-list-item.is-active::before {
+  background: var(--ocean);
+  opacity: 1;
 }
 
 .mw-search-row {
@@ -219,8 +268,9 @@
   background: var(--paper-recessed-darker);
 }
 .mw-list-item.is-active {
-  background: var(--ocean-mist);
+  background: var(--paper-elevated); /* white — matches bottom nav active state */
   border-left-color: var(--ocean);
+  box-shadow: 0 1px 2px rgba(28, 25, 23, 0.04);
 }
 .mw-list-item.is-active .mw-list-name {
   font-weight: 600;
@@ -361,6 +411,18 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.mw-result-kind {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-whisper);
+  padding: 1px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--paper);
+  margin-right: 2px;
 }
 
 /* Chunk detail letter */

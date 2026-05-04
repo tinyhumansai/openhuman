@@ -611,6 +611,48 @@ pub async fn entity_index_for_rpc(
     ))
 }
 
+/// `memory_tree_chunks_for_entity` — return chunk IDs that reference an
+/// entity_id. Inverse of `entity_index_for`. Used by the Memory tab's
+/// People/Topics lenses to filter the chunk list to those mentioning a
+/// selected entity.
+pub async fn chunks_for_entity_rpc(
+    config: &Config,
+    entity_id: String,
+) -> Result<RpcOutcome<Vec<String>>, String> {
+    let cfg = config.clone();
+    let eid = entity_id.clone();
+    let chunk_ids = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+        with_connection(&cfg, |conn| {
+            let mut stmt = conn.prepare(
+                // node_kind values are `leaf` (= chunk node, the actual
+                // chunk_id) and `summary` (= sealed bucket summary).
+                // Memory tab filtering wants the chunk-level rows only.
+                "SELECT DISTINCT node_id
+                   FROM mem_tree_entity_index
+                  WHERE entity_id = ?1 AND node_kind = 'leaf'
+                  ORDER BY timestamp_ms DESC",
+            )?;
+            let rows = stmt
+                .query_map(params![eid], |row| {
+                    let node_id: String = row.get(0)?;
+                    Ok(node_id)
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("collect chunks_for_entity rows")?;
+            Ok(rows)
+        })
+    })
+    .await
+    .map_err(|e| format!("chunks_for_entity join error: {e}"))?
+    .map_err(|e| format!("chunks_for_entity: {e:#}"))?;
+
+    let n = chunk_ids.len();
+    Ok(RpcOutcome::single_log(
+        chunk_ids,
+        format!("memory_tree::read: chunks_for_entity entity_id={entity_id} n={n}"),
+    ))
+}
+
 /// `memory_tree_top_entities` — most-frequent canonical entities,
 /// optionally narrowed to one [`EntityKind`].
 pub async fn top_entities_rpc(

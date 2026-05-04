@@ -78,7 +78,7 @@ impl Default for MemoryConfig {
 /// summariser) should use.
 ///
 /// - `Cloud` (default): route through `providers::router` against the
-///   OpenHuman backend with the `summarizer-v1` model. No local Ollama
+///   OpenHuman backend with the `summarization-v1` model. No local Ollama
 ///   required.
 /// - `Local`: keep using the legacy Ollama-direct path (the
 ///   `llm_extractor_endpoint` / `llm_summariser_endpoint` config). Useful
@@ -128,7 +128,7 @@ fn default_llm_backend() -> LlmBackend {
 /// Default model identifier to use when `llm_backend = "cloud"`. Routed
 /// through the OpenHuman backend; keep in sync with the backend's
 /// summariser model registry.
-pub const DEFAULT_CLOUD_LLM_MODEL: &str = "summarizer-v1";
+pub const DEFAULT_CLOUD_LLM_MODEL: &str = "summarization-v1";
 
 fn default_cloud_llm_model() -> Option<String> {
     Some(DEFAULT_CLOUD_LLM_MODEL.to_string())
@@ -241,7 +241,7 @@ pub struct MemoryTreeConfig {
     /// Model identifier used when `llm_backend = "cloud"`. Routed through the
     /// OpenHuman backend's chat-completions surface.
     ///
-    /// Defaults to [`DEFAULT_CLOUD_LLM_MODEL`] (`summarizer-v1`).
+    /// Defaults to [`DEFAULT_CLOUD_LLM_MODEL`] (`summarization-v1`).
     /// Env override: `OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL`.
     #[serde(default = "default_cloud_llm_model")]
     pub cloud_llm_model: Option<String>,
@@ -352,7 +352,7 @@ mod tests {
             cfg.cloud_llm_model.as_deref(),
             Some(DEFAULT_CLOUD_LLM_MODEL)
         );
-        assert_eq!(DEFAULT_CLOUD_LLM_MODEL, "summarizer-v1");
+        assert_eq!(DEFAULT_CLOUD_LLM_MODEL, "summarization-v1");
     }
 
     #[test]

@@ -132,9 +132,18 @@ export function MemoryNavigator({
 
   const toggleEntity = (id: string) => {
     const has = selection.entityIds.includes(id);
+    const next = has
+      ? selection.entityIds.filter(s => s !== id)
+      : [...selection.entityIds, id];
+    console.debug(
+      '[ui-flow][memory-navigator] toggleEntity id=%s wasActive=%o next=%o',
+      id,
+      has,
+      next
+    );
     onSelectionChange({
       ...selection,
-      entityIds: has ? selection.entityIds.filter(s => s !== id) : [...selection.entityIds, id],
+      entityIds: next,
     });
   };
 
@@ -151,7 +160,7 @@ export function MemoryNavigator({
             <button
               type="button"
               className={`mw-list-item${isActive ? ' is-active' : ''}`}
-              onClick={() => toggleEntity(tag)}
+              onClick={() => toggleEntity(ref.entity_id)}
               aria-pressed={isActive}>
               <span className="mw-dot" aria-hidden />
               <span className="mw-list-name" title={ref.surface}>
@@ -194,29 +203,70 @@ export function MemoryNavigator({
         </NavSection>
 
         <NavSection label="sources" defaultOpen countSummary={String(sources.length)}>
-          <ul className="mw-list">
-            {sources.map(src => {
-              const isActive = selection.sourceIds.includes(src.source_id);
-              return (
-                <li key={src.source_id}>
-                  <button
-                    type="button"
-                    className={`mw-list-item${isActive ? ' is-active' : ''}`}
-                    onClick={() => toggleSource(src.source_id)}
-                    aria-pressed={isActive}>
-                    <span className={dotClassFor(src.lifecycle_status)} aria-hidden />
-                    <span className="mw-list-name" title={src.display_name}>
-                      {src.display_name}
-                    </span>
-                    <span className="mw-list-count">{src.chunk_count}</span>
-                  </button>
-                </li>
+          {sources.length === 0 ? (
+            <ul className="mw-list">
+              <li style={{ padding: '6px 16px', fontSize: 12, color: 'var(--ink-whisper)' }}>
+                —
+              </li>
+            </ul>
+          ) : (
+            (() => {
+              // Group sources by their source_kind ('email', 'slack', 'chat', …)
+              // and render each kind as its own nested collapsible. Lets the
+              // user filter at the kind level (drill into Email vs Slack) and
+              // then by individual sender within each.
+              const byKind = new Map<string, Source[]>();
+              for (const s of sources) {
+                const arr = byKind.get(s.source_kind) ?? [];
+                arr.push(s);
+                byKind.set(s.source_kind, arr);
+              }
+              const kindLabel: Record<string, string> = {
+                email: 'Email',
+                slack: 'Slack',
+                chat: 'Chat',
+                document: 'Documents',
+              };
+              const kinds = Array.from(byKind.entries()).sort(
+                (a, b) => b[1].length - a[1].length
               );
-            })}
-            {sources.length === 0 && (
-              <li style={{ padding: '6px 16px', fontSize: 12, color: 'var(--ink-whisper)' }}>—</li>
-            )}
-          </ul>
+              return (
+                <div>
+                  {kinds.map(([kind, kindSources]) => (
+                    <NavSection
+                      key={kind}
+                      label={kindLabel[kind] ?? kind}
+                      defaultOpen={false}
+                      countSummary={String(kindSources.length)}>
+                      <ul className="mw-list">
+                        {kindSources.map(src => {
+                          const isActive = selection.sourceIds.includes(src.source_id);
+                          return (
+                            <li key={src.source_id}>
+                              <button
+                                type="button"
+                                className={`mw-list-item${isActive ? ' is-active' : ''}`}
+                                onClick={() => toggleSource(src.source_id)}
+                                aria-pressed={isActive}>
+                                <span
+                                  className={dotClassFor(src.lifecycle_status)}
+                                  aria-hidden
+                                />
+                                <span className="mw-list-name" title={src.display_name}>
+                                  {src.display_name}
+                                </span>
+                                <span className="mw-list-count">{src.chunk_count}</span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </NavSection>
+                  ))}
+                </div>
+              );
+            })()
+          )}
         </NavSection>
 
         <NavSection label="people" defaultOpen countSummary={String(topPeople.length)}>

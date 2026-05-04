@@ -34,6 +34,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("search"),
         schemas("recall"),
         schemas("entity_index_for"),
+        schemas("chunks_for_entity"),
         schemas("top_entities"),
         schemas("chunk_score"),
         schemas("delete_chunk"),
@@ -77,6 +78,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("entity_index_for"),
             handler: handle_entity_index_for,
+        },
+        RegisteredController {
+            schema: schemas("chunks_for_entity"),
+            handler: handle_chunks_for_entity,
         },
         RegisteredController {
             schema: schemas("top_entities"),
@@ -362,6 +367,27 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "chunks_for_entity" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "chunks_for_entity",
+            description:
+                "Return chunk IDs that reference an entity_id (inverse of entity_index_for). \
+                 Used by the Memory tab's People/Topics lenses to filter the chunk list.",
+            inputs: vec![FieldSchema {
+                name: "entity_id",
+                ty: TypeSchema::String,
+                comment:
+                    "Canonical entity id (e.g. `person:Steven Enamakel`, \
+                     `email:alice@example.com`).",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "chunk_ids",
+                ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                comment: "Chunk ids that mention the entity, ordered by recency DESC.",
+                required: true,
+            }],
+        },
         "top_entities" => ControllerSchema {
             namespace: NAMESPACE,
             function: "top_entities",
@@ -644,6 +670,18 @@ fn handle_entity_index_for(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let req = parse_value::<Req>(Value::Object(params))?;
         to_json(read_rpc::entity_index_for_rpc(&config, req.chunk_id).await?)
+    })
+}
+
+fn handle_chunks_for_entity(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            entity_id: String,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::chunks_for_entity_rpc(&config, req.entity_id).await?)
     })
 }
 

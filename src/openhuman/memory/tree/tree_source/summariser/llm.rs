@@ -85,7 +85,7 @@ const OVERHEAD_RESERVE_TOKENS: u32 = 512;
 /// happens inside the [`ChatProvider`].
 #[derive(Clone, Debug)]
 pub struct LlmSummariserConfig {
-    /// Model identifier (e.g. `summarizer-v1` for cloud, `qwen2.5:0.5b`
+    /// Model identifier (e.g. `summarization-v1` for cloud, `qwen2.5:0.5b`
     /// or `llama3.1:8b` for local Ollama). Diagnostic / log only.
     pub model: String,
 }

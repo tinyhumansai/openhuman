@@ -624,6 +624,24 @@ async fn run_server_inner(
     });
     crate::core::auth::init_rpc_token(&token_dir)?;
 
+    // Initialize the global MemoryClient so composio providers
+    // (gmail/slack/notion) can persist their sync_state via kv_get/kv_set,
+    // and so any subsystem that calls `memory::global::client_if_ready()`
+    // gets a live handle. Without this, every periodic sync bails with
+    // "[composio:gmail] memory client not ready".
+    {
+        let cfg = crate::openhuman::config::Config::load_or_init()
+            .await
+            .unwrap_or_default();
+        match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
+            Ok(_) => log::info!(
+                "[boot] memory::global initialized (workspace={})",
+                cfg.workspace_dir.display()
+            ),
+            Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
+        }
+    }
+
     let (resolved_port, port_source) = match port {
         Some(p) => (p, "CLI --port"),
         None => (

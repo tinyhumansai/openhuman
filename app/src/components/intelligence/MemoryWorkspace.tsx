@@ -1,15 +1,24 @@
 /**
- * Three-pane memory_tree browser.
+ * Two-pane memory_tree browser with overlay detail.
  *
- *   ┌──────────────┬──────────────────┬─────────────────────────┐
- *   │  NAVIGATOR   │  RESULT LIST     │  CHUNK DETAIL           │
- *   │  280px       │  380px           │  flex                   │
- *   └──────────────┴──────────────────┴─────────────────────────┘
+ *   ┌─────────────┬──────────────────────────────────────┐
+ *   │  NAVIGATOR  │  RESULT LIST                         │  ← default 2-pane
+ *   │  240px      │  flex                                │
+ *   └─────────────┴──────────────────────────────────────┘
  *
- * Replaces the legacy UnifiedMemory-driven workspace. Auto-selects the
- * most recent admitted chunk on mount; renders an empty placeholder when
- * the user has no chunks yet. Talks to the real `openhuman.memory_tree_*`
- * JSON-RPC surface via the `utils/tauriCommands/memoryTree` wrappers.
+ *   ┌──────────────────────────────────────────────────[✕]┐
+ *   │  CHUNK DETAIL (full card width)                     │  ← when chunk selected
+ *   │  Subject · sender · entities · body · score         │
+ *   └─────────────────────────────────────────────────────┘
+ *
+ * ResultList finally gets ~970px to breathe (multi-line rows with
+ * sender, time, entity chips, preview). When a chunk is selected the
+ * detail layer absolute-positions over the 2-pane base so list scroll
+ * state is preserved on close. Esc + close button + (later) backdrop
+ * click all dismiss.
+ *
+ * Talks to the real `openhuman.memory_tree_*` JSON-RPC surface via the
+ * `utils/tauriCommands/memoryTree` wrappers.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -18,6 +27,7 @@ import {
   type Chunk,
   type ChunkFilter,
   type EntityRef,
+  memoryTreeChunksForEntity,
   memoryTreeListChunks,
   memoryTreeListSources,
   memoryTreeTopEntities,
@@ -30,32 +40,8 @@ import { MemoryNavigator, type NavigatorSelection } from './MemoryNavigator';
 import { MemoryResultList } from './MemoryResultList';
 
 interface MemoryWorkspaceProps {
-  // Kept for backward compat with MemoryDataPanel — surfaced toast hook even
-  // though the new browser doesn't trigger any side-effecting flows yet.
-  // Call sites (e.g. settings/MemoryDataPanel) keep passing it; we silence
-  // the unused-prop warning intentionally.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onToast?: (toast: Omit<ToastNotification, 'id'>) => void;
-}
-
-const MEDIA_QUERY = '(max-width: 1100px)';
-
-function useIsCompact(): boolean {
-  const getMatch = () =>
-    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      ? window.matchMedia(MEDIA_QUERY).matches
-      : false;
-  const [isCompact, setIsCompact] = useState<boolean>(getMatch);
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    const mql = window.matchMedia(MEDIA_QUERY);
-    const handler = (e: MediaQueryListEvent) => setIsCompact(e.matches);
-    mql.addEventListener?.('change', handler);
-    return () => {
-      mql.removeEventListener?.('change', handler);
-    };
-  }, []);
-  return isCompact;
 }
 
 export function MemoryWorkspace({ onToast: _onToast }: MemoryWorkspaceProps) {
@@ -64,66 +50,84 @@ export function MemoryWorkspace({ onToast: _onToast }: MemoryWorkspaceProps) {
   const [topPeople, setTopPeople] = useState<EntityRef[]>([]);
   const [topTopics, setTopTopics] = useState<EntityRef[]>([]);
   const [selectedChunkId, setSelectedChunkId] = useState<string | null>(null);
-  const [selection, setSelection] = useState<NavigatorSelection>({ sourceIds: [], entityIds: [] });
+  const [selection, setSelection] = useState<NavigatorSelection>({
+    sourceIds: [],
+    entityIds: [],
+  });
   const [searchQuery, setSearchQuery] = useState('');
-  const [showDetailOnCompact, setShowDetailOnCompact] = useState(false);
 
-  const isCompact = useIsCompact();
-
-  // Initial data load. Fetches the full chunk set + navigator metadata
-  // in parallel — mocks resolve synchronously, real RPCs will fan out.
+  // Initial data load.
   useEffect(() => {
-    console.debug('[ui-flow][memory-workspace] initial load entry');
+    console.debug('[ui-flow][memory-workspace] initial load (2-pane + overlay)');
     let cancelled = false;
     void Promise.all([
       memoryTreeListChunks({ limit: 500 }),
       memoryTreeListSources(),
       memoryTreeTopEntities('person', 12),
-      // Topics: union of technology/product/event types — fetch a wider list
-      // then bucket below.
       memoryTreeTopEntities(undefined, 40),
     ]).then(([chunkResult, srcs, people, anyEntities]) => {
       if (cancelled) return;
       const topicKinds = new Set(['technology', 'product', 'event']);
       const topics = anyEntities.filter(e => topicKinds.has(e.kind)).slice(0, 12);
-
       setAllChunks(chunkResult.chunks);
       setSources(srcs);
       setTopPeople(people);
       setTopTopics(topics);
-
-      // Auto-select most recent admitted chunk (or fall back to most recent).
-      const sorted = [...chunkResult.chunks].sort((a, b) => b.timestamp_ms - a.timestamp_ms);
-      const admitted = sorted.find(c => c.lifecycle_status === 'admitted');
-      const seed = admitted ?? sorted[0];
-      if (seed) {
-        console.debug('[ui-flow][memory-workspace] auto-select seed chunk', seed.id);
-        setSelectedChunkId(seed.id);
-      } else {
-        console.debug('[ui-flow][memory-workspace] no chunks — empty state');
-      }
     });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Filter the full chunk set against the active navigator selection +
-  // search query. We do this client-side because (a) for ~30 mocked
-  // chunks the cost is negligible, and (b) the same shape will work
-  // when the call is upgraded to a backend listChunks(filter) call.
+  // Resolve entity selection → set of chunk ids via the dedicated
+  // `memory_tree_chunks_for_entity` RPC. The chunks' `tags` column only
+  // stores high-level category tags (`["gmail", "ingested"]`), NOT
+  // per-chunk entity refs — those live in `mem_tree_entity_index`.
+  // Calling the inverse-index RPC gives us the real chunk ids that
+  // mention each selected entity. Union across the selection (chunk
+  // mentions ANY of the selected entities is enough — same semantics
+  // as a multi-select OR filter in Mail.app's people sidebar).
+  const [entityChunkIds, setEntityChunkIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    console.debug(
+      '[ui-flow][memory-workspace] entity-effect fire entityIds=%o',
+      selection.entityIds
+    );
+    if (selection.entityIds.length === 0) {
+      setEntityChunkIds(null);
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(selection.entityIds.map(id => memoryTreeChunksForEntity(id))).then(
+      results => {
+        if (cancelled) {
+          console.debug('[ui-flow][memory-workspace] entity-effect cancelled before commit');
+          return;
+        }
+        const union = new Set<string>();
+        for (const ids of results) for (const id of ids) union.add(id);
+        console.debug(
+          '[ui-flow][memory-workspace] entity-effect commit set_size=%d sample=%o',
+          union.size,
+          [...union].slice(0, 3)
+        );
+        setEntityChunkIds(union);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [selection.entityIds]);
+
+  // Apply navigator selection + search.
   const filteredChunks = useMemo<Chunk[]>(() => {
     const filter: ChunkFilter = {
       source_ids: selection.sourceIds.length > 0 ? selection.sourceIds : undefined,
-      entity_ids: selection.entityIds.length > 0 ? selection.entityIds : undefined,
       query: searchQuery.trim() || undefined,
     };
-    return allChunks.filter(c => {
+    const out = allChunks.filter(c => {
       if (filter.source_ids && !filter.source_ids.includes(c.source_id)) return false;
-      if (filter.entity_ids) {
-        const hit = filter.entity_ids.some(id => c.tags.includes(id));
-        if (!hit) return false;
-      }
+      if (entityChunkIds && !entityChunkIds.has(c.id)) return false;
       if (filter.query) {
         const needle = filter.query.toLowerCase();
         const hay = `${c.content_preview ?? ''} ${c.tags.join(' ')}`.toLowerCase();
@@ -131,22 +135,14 @@ export function MemoryWorkspace({ onToast: _onToast }: MemoryWorkspaceProps) {
       }
       return true;
     });
-  }, [allChunks, selection, searchQuery]);
-
-  // Keep the active selection valid as filters change. If the currently
-  // selected chunk was filtered out, fall back to the top of the list.
-  useEffect(() => {
-    if (filteredChunks.length === 0) return;
-    const stillVisible = filteredChunks.some(c => c.id === selectedChunkId);
-    if (!stillVisible) {
-      const sorted = [...filteredChunks].sort((a, b) => b.timestamp_ms - a.timestamp_ms);
-      console.debug(
-        '[ui-flow][memory-workspace] selection invalidated, reseeding to',
-        sorted[0]?.id
-      );
-      setSelectedChunkId(sorted[0]?.id ?? null);
-    }
-  }, [filteredChunks, selectedChunkId]);
+    console.debug(
+      '[ui-flow][memory-workspace] filteredChunks recompute all=%d entitySet=%s out=%d',
+      allChunks.length,
+      entityChunkIds ? `Set(${entityChunkIds.size})` : 'null',
+      out.length
+    );
+    return out;
+  }, [allChunks, selection.sourceIds, entityChunkIds, searchQuery]);
 
   const selectedChunk = useMemo(
     () => allChunks.find(c => c.id === selectedChunkId) ?? null,
@@ -154,75 +150,138 @@ export function MemoryWorkspace({ onToast: _onToast }: MemoryWorkspaceProps) {
   );
 
   const handleSelectChunk = useCallback((id: string) => {
-    console.debug('[ui-flow][memory-workspace] select chunk', id);
+    console.debug('[ui-flow][memory-workspace] open chunk overlay', id);
     setSelectedChunkId(id);
-    setShowDetailOnCompact(true);
+  }, []);
+
+  const handleCloseDetail = useCallback(() => {
+    setSelectedChunkId(null);
   }, []);
 
   const handleSelectionChange = useCallback((next: NavigatorSelection) => {
-    console.debug(
-      '[ui-flow][memory-workspace] navigator selection change',
-      'sources=',
-      next.sourceIds.length,
-      'entities=',
-      next.entityIds.length
-    );
     setSelection(next);
-    setShowDetailOnCompact(false);
   }, []);
 
   const handleSearchChange = useCallback((q: string) => {
     setSearchQuery(q);
-    setShowDetailOnCompact(false);
   }, []);
 
   const handleSelectEntity = useCallback((entity: EntityRef) => {
-    const tag = `${entity.kind}/${entity.surface.replace(/\s+/g, '-')}`;
-    console.debug('[ui-flow][memory-workspace] mentioned-entity click → activate lens', tag);
+    console.debug(
+      '[ui-flow][memory-workspace] entity click → activate lens',
+      entity.entity_id
+    );
     setSelection(prev => {
-      if (prev.entityIds.includes(tag)) return prev;
-      return { ...prev, entityIds: [...prev.entityIds, tag] };
+      if (prev.entityIds.includes(entity.entity_id)) return prev;
+      return { ...prev, entityIds: [...prev.entityIds, entity.entity_id] };
     });
-    setShowDetailOnCompact(false);
+    // Closing detail surfaces the filtered list immediately.
+    setSelectedChunkId(null);
   }, []);
 
-  // Empty-state: brand-new user with zero chunks total.
+  // Esc key dismisses the detail overlay.
+  useEffect(() => {
+    if (!selectedChunkId) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        handleCloseDetail();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [selectedChunkId, handleCloseDetail]);
+
   const isEmpty = allChunks.length === 0;
 
-  const gridClassName = `memory-workspace-grid${
-    isCompact && showDetailOnCompact ? ' mw-show-detail' : ''
-  }`;
+  if (isEmpty) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <MemoryEmptyPlaceholder />
+      </div>
+    );
+  }
 
   return (
-    <section className="memory-workspace-root" data-testid="memory-workspace">
-      <div className={gridClassName}>
+    <section
+      className="memory-workspace-root relative flex"
+      style={{ height: 'calc(100vh - 16rem)' }}
+      data-testid="memory-workspace">
+      {/* 2-pane base */}
+      <aside
+        className="w-60 shrink-0 overflow-y-auto border-r border-stone-100 bg-stone-50/60"
+        aria-label="Memory navigator">
         <MemoryNavigator
           chunks={allChunks}
-          sources={isEmpty ? [] : sources}
-          topPeople={isEmpty ? [] : topPeople}
-          topTopics={isEmpty ? [] : topTopics}
+          sources={sources}
+          topPeople={topPeople}
+          topTopics={topTopics}
           selection={selection}
           onSelectionChange={handleSelectionChange}
           searchQuery={searchQuery}
           onSearchChange={handleSearchChange}
         />
+      </aside>
 
+      <main className="flex-1 overflow-y-auto bg-white" aria-label="Result list">
         <MemoryResultList
           chunks={filteredChunks}
           selectedChunkId={selectedChunkId}
           onSelectChunk={handleSelectChunk}
         />
+      </main>
 
-        {isEmpty || !selectedChunk ? (
-          <article className="mw-pane-detail" data-testid="memory-chunk-detail-empty">
-            <div className="mw-pane-scroll mw-detail-scroll">
-              <MemoryEmptyPlaceholder />
+      {/* Detail overlay — fills the entire workspace card */}
+      {selectedChunk && (
+        <div
+          className="absolute inset-0 z-10 flex flex-col bg-canvas-50/95 backdrop-blur-sm
+                     duration-150 motion-safe:animate-fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Chunk detail">
+          <header
+            className="sticky top-0 z-10 flex items-center justify-between gap-4
+                       border-b border-stone-100 bg-white/90 px-6 py-3 backdrop-blur">
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-mono text-xs text-stone-500">
+                <span className="text-stone-400">{selectedChunk.source_kind}</span>
+                {' · '}
+                {selectedChunk.source_id}
+              </p>
             </div>
-          </article>
-        ) : (
-          <MemoryChunkDetail chunk={selectedChunk} onSelectEntity={handleSelectEntity} />
-        )}
-      </div>
+            <button
+              onClick={handleCloseDetail}
+              aria-label="Close detail (Esc)"
+              title="Close (Esc)"
+              className="rounded-lg p-1.5 text-stone-500 transition-colors
+                         hover:bg-stone-100 hover:text-stone-900
+                         focus:outline-none focus:ring-2 focus:ring-ocean-200">
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true">
+                <path d="M18 6L6 18" />
+                <path d="M6 6l12 12" />
+              </svg>
+            </button>
+          </header>
+
+          <div className="flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-4xl px-8 py-6">
+              <MemoryChunkDetail
+                chunk={selectedChunk}
+                onSelectEntity={handleSelectEntity}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

@@ -2,7 +2,6 @@ import {
   DEFAULT_EXTRACT_MODEL,
   DEFAULT_SUMMARISER_MODEL,
   type ModelDescriptor,
-  type ModelRole,
   RECOMMENDED_MODEL_CATALOG,
   REQUIRED_EMBEDDER_MODEL,
 } from '../../lib/intelligence/settingsApi';
@@ -10,62 +9,52 @@ import {
 interface ModelAssignmentProps {
   /** Names of models that are already installed on the user's machine. */
   installedModelIds: ReadonlyArray<string>;
-  /** Currently chosen extract model. */
-  extractModel: string;
-  /** Currently chosen summariser model. */
-  summariserModel: string;
-  onChangeExtract: (id: string) => void;
-  onChangeSummariser: (id: string) => void;
+  /** Currently chosen memory LLM (used for both extract + summarise). */
+  memoryModel: string;
+  /** Called when the user picks a different memory LLM. The setting fans
+   *  out to both `llm_extractor_model` and `llm_summariser_model` in
+   *  config.toml — most users want one model for both roles, and the
+   *  cognitive load of two dropdowns isn't worth the rare power-user
+   *  case of mixing them. */
+  onChangeMemory: (id: string) => void;
 }
 
 /**
- * Per-role assignment table — three rows: Extract, Summariser, Embedder.
+ * Per-role assignment table — two rows: Memory LLM (covers both extract
+ * and summarise), and Embedder.
  *
  * The embedder row is locked to `bge-m3` for v1 (the spec says we never
- * round-trip embeddings through the cloud). Extract/Summariser dropdowns
- * are populated from the recommended catalog filtered by `roles`, and
- * suffixed with the locally-installed set (so the user can see/select
- * anything they've already pulled even if it isn't on the curated list).
+ * round-trip embeddings through the cloud). The Memory LLM dropdown is
+ * populated from the recommended catalog filtered to models that can
+ * serve both extract AND summarise roles, plus any locally-installed
+ * models the user has pulled outside the curated catalog.
  */
 export default function ModelAssignment({
   installedModelIds,
-  extractModel,
-  summariserModel,
-  onChangeExtract,
-  onChangeSummariser,
+  memoryModel,
+  onChangeMemory,
 }: ModelAssignmentProps) {
-  const extractOptions = optionsFor('extract', installedModelIds);
-  const summariserOptions = optionsFor('summariser', installedModelIds);
+  // Ollama returns tags as `<name>:latest` for default-tag models. The
+  // catalog stores bare names (e.g. `bge-m3`). Strip the `:latest` suffix
+  // on the installed side so the bare-name comparison matches.
+  const normalizedInstalled = installedModelIds.map(id =>
+    id.endsWith(':latest') ? id.slice(0, -':latest'.length) : id
+  );
+  const memoryOptions = memoryLlmOptions(normalizedInstalled);
   const embedderDescriptor = RECOMMENDED_MODEL_CATALOG.find(m => m.id === REQUIRED_EMBEDDER_MODEL);
-  const embedderInstalled = installedModelIds.includes(REQUIRED_EMBEDDER_MODEL);
+  const embedderInstalled = normalizedInstalled.includes(REQUIRED_EMBEDDER_MODEL);
 
   return (
     <div className="border border-stone-200 rounded-2xl overflow-hidden">
       <Row
-        label="Extract LLM"
-        sublabel={describe(extractOptions.find(opt => opt.id === extractModel))}>
+        label="Memory LLM"
+        sublabel={describeMemory(memoryOptions.find(opt => opt.id === memoryModel))}>
         <select
-          value={extractModel}
-          onChange={e => onChangeExtract(e.target.value)}
+          value={memoryModel}
+          onChange={e => onChangeMemory(e.target.value)}
           className="w-full sm:w-64 px-3 py-1.5 text-sm bg-white border border-stone-200 rounded-lg text-stone-900 focus:outline-none focus:border-primary-500/50 transition-colors"
-          aria-label="Extract LLM">
-          {extractOptions.map(opt => (
-            <option key={opt.id} value={opt.id}>
-              {opt.label ?? opt.id}
-            </option>
-          ))}
-        </select>
-      </Row>
-
-      <Row
-        label="Summariser LLM"
-        sublabel={describe(summariserOptions.find(opt => opt.id === summariserModel))}>
-        <select
-          value={summariserModel}
-          onChange={e => onChangeSummariser(e.target.value)}
-          className="w-full sm:w-64 px-3 py-1.5 text-sm bg-white border border-stone-200 rounded-lg text-stone-900 focus:outline-none focus:border-primary-500/50 transition-colors"
-          aria-label="Summariser LLM">
-          {summariserOptions.map(opt => (
+          aria-label="Memory LLM (extract + summarise)">
+          {memoryOptions.map(opt => (
             <option key={opt.id} value={opt.id}>
               {opt.label ?? opt.id}
             </option>
@@ -126,22 +115,24 @@ function Row({ label, sublabel, last, children }: RowProps) {
   );
 }
 
-function describe(model?: ModelDescriptor): string {
-  if (!model) return '—';
+function describeMemory(model?: ModelDescriptor): string {
+  if (!model) return 'used for extract + summarise';
   return `${model.size} · ${model.ramHint} · ${model.category}`;
 }
 
 /**
- * Build the dropdown options for a role. Catalog entries that match the role
- * always come first; locally-installed models that aren't in the catalog
- * (the user pulled them outside the OpenHuman flow) are appended so they're
- * still selectable.
+ * Build the Memory LLM dropdown options. A model qualifies if it can serve
+ * BOTH extract and summarise roles. Catalog entries come first; locally
+ * installed extras (pulled outside the curated catalog) are appended so
+ * they remain selectable.
  */
-function optionsFor(role: ModelRole, installedModelIds: ReadonlyArray<string>): ModelDescriptor[] {
-  const catalog = RECOMMENDED_MODEL_CATALOG.filter(m => m.roles.includes(role));
+function memoryLlmOptions(installedModelIds: ReadonlyArray<string>): ModelDescriptor[] {
+  const catalog = RECOMMENDED_MODEL_CATALOG.filter(
+    m => m.roles.includes('extract') && m.roles.includes('summariser')
+  );
   const known = new Set(catalog.map(m => m.id));
   const extras = installedModelIds
-    .filter(id => !known.has(id))
+    .filter(id => !known.has(id) && id !== REQUIRED_EMBEDDER_MODEL)
     .map<ModelDescriptor>(id => ({
       id,
       size: '—',
@@ -154,6 +145,6 @@ function optionsFor(role: ModelRole, installedModelIds: ReadonlyArray<string>): 
   return [...catalog, ...extras];
 }
 
-// Re-export defaults for callers that want to seed initial state without
-// chasing them through the API module.
+// Re-export defaults so callers can still seed initial state via these
+// constants without chasing them through the API module.
 export { DEFAULT_EXTRACT_MODEL, DEFAULT_SUMMARISER_MODEL, REQUIRED_EMBEDDER_MODEL };

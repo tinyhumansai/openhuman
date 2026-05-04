@@ -14,7 +14,13 @@ use crate::openhuman::memory::tree::jobs::store::{
     claim_next, mark_done, mark_failed, recover_stale_locks, DEFAULT_LOCK_DURATION_MS,
 };
 
-const WORKER_COUNT: usize = 3;
+// Held at 1 to keep concurrent bge-m3 embed calls (8K context, ~1.3 GB
+// resident each) from saturating local RAM. The cloud-chat path itself
+// would be fine at higher concurrency, but every worker also runs a
+// bge-m3 embed step, and 3 concurrent embeds at 8K context have
+// crashed the laptop in practice. See feedback memory
+// `feedback_local_llm_load.md`.
+const WORKER_COUNT: usize = 1;
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 static WORKER_NOTIFY: OnceLock<Arc<Notify>> = OnceLock::new();
@@ -41,7 +47,7 @@ pub fn start(config: Config) {
         let notify = WORKER_NOTIFY
             .get_or_init(|| Arc::new(Notify::new()))
             .clone();
-        let llm_slots = Arc::new(Semaphore::new(3));
+        let llm_slots = Arc::new(Semaphore::new(1));
         if let Err(err) = recover_stale_locks(&config) {
             log::warn!("[memory_tree::jobs] recover_stale_locks failed at startup: {err:#}");
         }

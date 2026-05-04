@@ -284,6 +284,27 @@ export async function memoryTreeEntityIndexFor(chunkId: string): Promise<EntityR
   return out ?? [];
 }
 
+// ── memory_tree_chunks_for_entity ────────────────────────────────────────
+
+/**
+ * Inverse of `memoryTreeEntityIndexFor` — return chunk IDs that reference
+ * the given entity. Used by the Memory tab's People/Topics lenses to
+ * filter the chunk list to those mentioning a selected entity.
+ */
+export async function memoryTreeChunksForEntity(entityId: string): Promise<string[]> {
+  console.debug('[memory-tree-rpc] memoryTreeChunksForEntity: entry entity_id=%s', entityId);
+  const resp = await callCoreRpc<string[] | ResultEnvelope<string[]>>({
+    method: 'openhuman.memory_tree_chunks_for_entity',
+    params: { entity_id: entityId },
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeChunksForEntity: exit n=%d',
+    out?.length ?? 0
+  );
+  return out ?? [];
+}
+
 // ── memory_tree_top_entities ─────────────────────────────────────────────
 
 /**

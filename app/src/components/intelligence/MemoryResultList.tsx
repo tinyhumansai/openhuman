@@ -159,6 +159,8 @@ export function MemoryResultList({
                   <span className="mw-result-content">
                     <span className="mw-result-subject">{chunkSubject(chunk)}</span>
                     <span className="mw-result-meta">
+                      <span className="mw-result-kind">{chunk.source_kind}</span>
+                      {' · '}
                       {chunkSenderLabel(chunk)} · {chunk.token_count} tok
                     </span>
                   </span>

@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import IntelligenceDreamsTab from '../components/intelligence/IntelligenceDreamsTab';
-import IntelligenceMemoryTab from '../components/intelligence/IntelligenceMemoryTab';
 import IntelligenceSettingsTab from '../components/intelligence/IntelligenceSettingsTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
+import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
 import { ToastContainer } from '../components/intelligence/Toast';
 import { filterItems, getItemStats, groupItemsByTime } from '../components/intelligence/utils';
 import PillTabBar from '../components/PillTabBar';
@@ -334,51 +334,17 @@ export default function Intelligence() {
                       </span>
                     </div>
                   )}
-                {activeTab === 'memory' && (
-                  <button
-                    onClick={usingMemoryData ? refreshConscious : handleAnalyzeNow}
-                    disabled={isRunning || itemsLoading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-stone-50 hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed border border-stone-200 rounded-lg text-stone-600 transition-colors">
-                    {isRunning || itemsLoading ? (
-                      <div className="w-3 h-3 border border-stone-400 border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <svg
-                        className="w-3 h-3"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                        />
-                      </svg>
-                    )}
-                    {usingMemoryData ? 'Refresh' : 'Analyze Now'}
-                  </button>
-                )}
+                {/* Analyze Now / Refresh button removed — the new
+                    MemoryWorkspace fetches via memory_tree RPCs that
+                    don't need a manual trigger. The actionable-cards
+                    flow (handleAnalyzeNow) is no longer reachable from
+                    the Memory tab; left in scope only for the legacy
+                    subconscious/dreams tabs that still use it. */}
               </div>
             </div>
 
             {/* Tab content */}
-            {activeTab === 'memory' && (
-              <IntelligenceMemoryTab
-                handleAnalyzeNow={handleAnalyzeNow}
-                handleComplete={handleComplete}
-                handleDismiss={handleDismiss}
-                handleSnooze={handleSnooze}
-                isRunning={isRunning}
-                items={items}
-                itemsLoading={itemsLoading}
-                searchFilter={searchFilter}
-                setSearchFilter={setSearchFilter}
-                setSourceFilter={setSourceFilter}
-                sourceFilter={sourceFilter}
-                timeGroups={timeGroups}
-                usingMemoryData={usingMemoryData}
-              />
-            )}
+            {activeTab === 'memory' && <MemoryWorkspace onToast={addToast} />}
 
             {activeTab === 'subconscious' && (
               <IntelligenceSubconsciousTab

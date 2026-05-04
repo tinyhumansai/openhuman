@@ -7,7 +7,7 @@
 //! [`ChatProvider`] trait so the same call site can be served by either:
 //!
 //! - **Cloud** — `providers::router` against the OpenHuman backend with
-//!   the `summarizer-v1` model. No local daemon required. Default for new
+//!   the `summarization-v1` model. No local daemon required. Default for new
 //!   installs.
 //! - **Local** — the legacy Ollama-direct path. Opt-in via
 //!   `memory_tree.llm_backend = "local"` in config or
@@ -75,7 +75,7 @@ pub struct ChatPrompt {
 /// because the parsing logic is consumer-specific.
 #[async_trait]
 pub trait ChatProvider: Send + Sync {
-    /// Stable, grep-friendly name for logs. e.g. `"cloud:summarizer-v1"`.
+    /// Stable, grep-friendly name for logs. e.g. `"cloud:summarization-v1"`.
     fn name(&self) -> &str;
 
     /// Run one chat completion and return the assistant's content.
@@ -89,7 +89,7 @@ pub trait ChatProvider: Send + Sync {
 ///
 /// - `Cloud` (default): wires [`cloud::CloudChatProvider`] against the
 ///   OpenHuman backend with `cloud_llm_model` (defaulting to
-///   `summarizer-v1`).
+///   `summarization-v1`).
 /// - `Local`: wires [`local::OllamaChatProvider`] against the legacy
 ///   `llm_extractor_endpoint` / `llm_extractor_model` config — the same
 ///   knobs that drove the Ollama-direct path before this refactor.
@@ -108,14 +108,28 @@ pub fn build_chat_provider(
                 .cloud_llm_model
                 .clone()
                 .unwrap_or_else(|| DEFAULT_CLOUD_LLM_MODEL.to_string());
+            // The `auth-profiles.json` lives next to `config.toml`, so the
+            // openhuman_dir is the parent of config_path. Without this the
+            // inner OpenHumanBackendProvider falls back to `~/.openhuman`
+            // and fails with "No backend session" on any workspace not
+            // located at the home default — the bug observed when running
+            // with `OPENHUMAN_WORKSPACE` pointed elsewhere.
+            let openhuman_dir = config
+                .config_path
+                .parent()
+                .map(std::path::PathBuf::from);
             log::debug!(
-                "[memory_tree::chat] building Cloud provider consumer={} model={}",
+                "[memory_tree::chat] building Cloud provider consumer={} model={} \
+                 openhuman_dir={:?}",
                 consumer.as_str(),
-                model
+                model,
+                openhuman_dir
             );
             Ok(Arc::new(cloud::CloudChatProvider::new(
                 config.api_url.clone(),
                 model,
+                openhuman_dir,
+                config.secrets.encrypt,
             )))
         }
         LlmBackend::Local => {

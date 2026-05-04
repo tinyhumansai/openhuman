@@ -110,7 +110,7 @@ impl ScoringConfig {
     ///
     /// - `llm_backend = "cloud"` (default): always wires the LLM extractor
     ///   against the cloud provider, using the configured
-    ///   `cloud_llm_model` (defaulting to `summarizer-v1`).
+    ///   `cloud_llm_model` (defaulting to `summarization-v1`).
     /// - `llm_backend = "local"`: wires the LLM extractor only when both
     ///   `llm_extractor_endpoint` and `llm_extractor_model` are set;
     ///   otherwise falls back to [`Self::default_regex_only`].
