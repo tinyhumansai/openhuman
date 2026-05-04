@@ -236,7 +236,14 @@ async fn store_reflection_persists_all_categories() {
         observations: vec!["Observed failure".into()],
         patterns: vec!["Pattern A".into()],
         user_preferences: vec!["Pref A".into()],
-        user_reflections: vec!["I want shorter answers going forward".into()],
+        // user_reflections are intentionally persisted by
+        // `on_turn_complete` (not `store_reflection`) so they share a
+        // per-turn dedupe set with the heuristic fast-path. This test
+        // therefore only asserts the observation / pattern / preference
+        // contracts owned by `store_reflection`; the reflection
+        // persistence contract is covered by the dedupe + heuristic
+        // tests below.
+        user_reflections: vec!["should not be written by store_reflection".into()],
     })
     .await
     .unwrap();
@@ -246,13 +253,26 @@ async fn store_reflection_persists_all_categories() {
     assert!(keys.iter().any(|key| key == "pat/pattern_a"));
     assert!(keys.iter().any(|key| key == "pref/pref_a"));
     assert!(
-        keys.iter().any(|key| key.starts_with("ref/")),
-        "reflection should be persisted under the dedicated namespace"
+        !keys.iter().any(|key| key.starts_with("ref/")),
+        "store_reflection must not persist user_reflections — that path now lives in on_turn_complete so the dedupe set is shared with the heuristic"
+    );
+}
+
+#[tokio::test]
+async fn persist_reflection_writes_to_dedicated_namespace_and_category() {
+    let memory_impl = Arc::new(MockMemory::default());
+    let memory: Arc<dyn Memory> = memory_impl.clone();
+    let hook = ReflectionHook::new(
+        reflection_config(),
+        Arc::new(Config::default()),
+        memory,
+        None,
     );
 
-    // Verify the persisted entry actually lands in the privileged
-    // namespace + category — that's the contract `fetch_learned_context`
-    // depends on for retrieval.
+    hook.persist_reflection("I want shorter answers going forward")
+        .await
+        .unwrap();
+
     let entries = memory_impl.entries.lock();
     let reflection = entries
         .values()
@@ -264,6 +284,67 @@ async fn store_reflection_persists_all_categories() {
         MemoryCategory::Custom(ref tag) if tag == REFLECTIONS_NAMESPACE
     ));
     assert_eq!(reflection.content, "I want shorter answers going forward");
+}
+
+#[tokio::test]
+async fn on_turn_complete_dedupes_reflections_across_heuristic_and_llm_paths() {
+    use crate::openhuman::providers::Provider;
+    use async_trait::async_trait;
+
+    // Stub provider returning a reflection LLM response whose
+    // `user_reflections` array repeats the same sentence the heuristic
+    // would also lift out of the user message. Only `chat_with_system`
+    // needs implementing — `simple_chat` (the call-site used by
+    // `ReflectionHook::run_reflection` for the cloud path) has a
+    // default trait impl that delegates here.
+    struct StubProvider;
+    #[async_trait]
+    impl Provider for StubProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok(r#"{"observations":[],"patterns":[],"user_preferences":[],
+                "user_reflections":["Going forward I want concise replies"]}"#
+                .into())
+        }
+    }
+
+    let memory_impl = Arc::new(MockMemory::default());
+    let memory: Arc<dyn Memory> = memory_impl.clone();
+    let hook = ReflectionHook::new(
+        reflection_config(),
+        Arc::new(Config::default()),
+        memory,
+        Some(Arc::new(StubProvider)),
+    );
+
+    let turn = TurnContext {
+        // Heuristic captures this sentence; the stub LLM also returns
+        // the same sentence in `user_reflections`. Without per-turn
+        // dedupe both paths would write it.
+        user_message: "Going forward I want concise replies.".into(),
+        assistant_response: "noted".repeat(120),
+        tool_calls: Vec::new(),
+        turn_duration_ms: 50,
+        session_id: Some("dedupe".into()),
+        iteration_count: 1,
+    };
+    hook.on_turn_complete(&turn).await.unwrap();
+
+    let ref_count = memory_impl
+        .entries
+        .lock()
+        .values()
+        .filter(|e| e.key.starts_with("ref/"))
+        .count();
+    assert_eq!(
+        ref_count, 1,
+        "reflection captured by both heuristic and LLM paths must be persisted exactly once"
+    );
 }
 
 #[test]

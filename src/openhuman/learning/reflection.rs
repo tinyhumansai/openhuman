@@ -249,13 +249,10 @@ impl ReflectionHook {
                 .await?;
         }
 
-        // Explicit user reflections — privileged memory class. Stored in a
-        // dedicated namespace so the orchestrator's `fetch_learned_context`
-        // path can retrieve and rank them above generic tree summaries.
-        for reflection in &output.user_reflections {
-            self.persist_reflection(reflection).await?;
-        }
-
+        // Reflection persistence is handled by the caller
+        // (`on_turn_complete`) so the heuristic fast-path and the LLM
+        // path share a single per-turn dedupe set and never write the
+        // same sentence twice.
         Ok(())
     }
 
@@ -285,6 +282,36 @@ impl ReflectionHook {
         );
         Ok(())
     }
+
+    /// Persist a reflection sentence iff its normalised form has not
+    /// already been seen in the current turn. `seen` is the per-turn
+    /// dedupe set shared between the heuristic fast-path and the LLM
+    /// `user_reflections` path, so a sentence captured by both routes
+    /// only lands in memory once.
+    async fn persist_reflection_deduped(
+        &self,
+        reflection: &str,
+        seen: &mut std::collections::HashSet<String>,
+    ) -> anyhow::Result<()> {
+        let normalised = normalise_reflection(reflection);
+        if normalised.is_empty() {
+            return Ok(());
+        }
+        if !seen.insert(normalised) {
+            log::debug!(
+                "[learning] reflection already captured this turn — skipping duplicate write"
+            );
+            return Ok(());
+        }
+        self.persist_reflection(reflection).await
+    }
+}
+
+/// Normalise a reflection sentence for per-turn dedupe comparisons:
+/// trim outer whitespace and lower-case so casing or trailing
+/// punctuation differences do not bypass the duplicate check.
+fn normalise_reflection(s: &str) -> String {
+    s.trim().to_ascii_lowercase()
 }
 
 /// Heuristic detector for explicit reflection cues in a user message.
@@ -355,6 +382,13 @@ impl PostTurnHook for ReflectionHook {
     }
 
     async fn on_turn_complete(&self, ctx: &TurnContext) -> anyhow::Result<()> {
+        // Per-turn dedupe set: shared between the heuristic fast-path
+        // below and the LLM `user_reflections` persistence below, so
+        // the same sentence captured by both routes only lands in
+        // memory once and cannot crowd out unique reflections in the
+        // bounded top-N retrieval window.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         // Fast-path heuristic capture — runs whenever the learning
         // subsystem is on, regardless of turn complexity, so single-turn
         // reflections like "remember that I prefer terse answers" are
@@ -362,7 +396,7 @@ impl PostTurnHook for ReflectionHook {
         // for a reflection-LLM round-trip.
         if self.config.enabled {
             for cue in extract_reflection_cues(&ctx.user_message) {
-                if let Err(e) = self.persist_reflection(&cue).await {
+                if let Err(e) = self.persist_reflection_deduped(&cue, &mut seen).await {
                     log::warn!("[learning] failed to persist heuristic reflection: {e}");
                 }
             }
@@ -394,15 +428,28 @@ impl PostTurnHook for ReflectionHook {
         let output = Self::parse_reflection(&raw);
 
         log::info!(
-            "[learning] reflection complete: observations={} patterns={} prefs={}",
+            "[learning] reflection complete: observations={} patterns={} prefs={} user_reflections={}",
             output.observations.len(),
             output.patterns.len(),
-            output.user_preferences.len()
+            output.user_preferences.len(),
+            output.user_reflections.len(),
         );
 
         if let Err(e) = self.store_reflection(&output).await {
             self.rollback_increment(&session_key);
             return Err(e);
+        }
+
+        // Persist LLM-extracted reflections through the shared dedupe
+        // set so any sentence the heuristic already captured above is
+        // not written twice. Failures here are logged but never roll
+        // back the session counter — observations / patterns /
+        // preferences from the same turn have already been committed
+        // and the throttle quota is correctly accounted for.
+        for reflection in &output.user_reflections {
+            if let Err(e) = self.persist_reflection_deduped(reflection, &mut seen).await {
+                log::warn!("[learning] failed to persist LLM-extracted reflection: {e}");
+            }
         }
 
         Ok(())
