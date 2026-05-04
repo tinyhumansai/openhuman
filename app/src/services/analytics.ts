@@ -60,8 +60,12 @@ export function initSentry(): void {
       // Always allow the smoke-test event through so pipeline validation works
       // even when the user hasn't opted into analytics yet on first boot.
       const isSmokeTest = event.message === 'react-sentry-smoke-test';
+      // Manual staging test events fired from the Developer Options button
+      // (#1072) bypass the consent gate so QA can validate the pipeline
+      // without needing to flip user-facing analytics first.
+      const isManualTest = event.tags?.test === 'manual-staging';
       // Drop events when the user hasn't opted into analytics.
-      if (!isSmokeTest && !isAnalyticsEnabled()) return null;
+      if (!isSmokeTest && !isManualTest && !isAnalyticsEnabled()) return null;
 
       // Strip anything that could carry Redux / localStorage / request bodies.
       event.breadcrumbs = [];
@@ -135,4 +139,33 @@ export function syncAnalyticsConsent(enabled: boolean): void {
   if (!enabled) {
     void Sentry.flush(2000);
   }
+}
+
+/**
+ * Fire a manual diagnostic event for issue #1072: a staging-only "Trigger
+ * Sentry Test" button uses this to validate the React → Sentry pipeline
+ * end-to-end after a config change. Tagged so `beforeSend` lets it through
+ * regardless of analytics consent, and so it's trivial to filter on the
+ * dashboard side. Returns the event id Sentry assigns (or `undefined` if
+ * Sentry is disabled in this build).
+ */
+export async function triggerSentryTestEvent(): Promise<string | undefined> {
+  const client = Sentry.getClient();
+  if (!client) {
+    console.warn('[sentry-test] Sentry client not initialized — DSN missing or dev build');
+    return undefined;
+  }
+
+  const stamp = new Date().toISOString();
+  const error = new Error(`Manual Sentry test from staging UI @ ${stamp}`);
+  error.name = 'SentryStagingTestError';
+
+  const eventId = Sentry.captureException(error, {
+    tags: { test: 'manual-staging', source: 'developer-options-button' },
+    level: 'error',
+  });
+
+  console.info('[sentry-test] captureException eventId=', eventId);
+  await Sentry.flush(2000);
+  return eventId;
 }
