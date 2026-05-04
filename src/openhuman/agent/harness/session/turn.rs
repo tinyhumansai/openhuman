@@ -1251,6 +1251,11 @@ impl Agent {
                 .take(20)
                 .map(|e| sanitize_learned_entry(&e.content))
                 .collect(),
+            // Populated by the dedicated `learning_reflections` fetch
+            // path in a follow-up commit; left empty here so the
+            // privileged-bucket field is constructed safely as soon as
+            // it lands on `LearnedContextData`.
+            reflections: Vec::new(),
             tree_root_summaries,
         }
     }

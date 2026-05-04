@@ -60,6 +60,13 @@ pub struct LearnedContextData {
     pub patterns: Vec<String>,
     /// Learned user profile entries.
     pub user_profile: Vec<String>,
+    /// Explicit user reflections captured from chat — distinct, high-priority
+    /// memory class. These are the user's own intentional self-statements
+    /// ("remember that I…", "going forward…", "I realized…") and are
+    /// privileged above generic [`Self::tree_root_summaries`] when the
+    /// orchestrator assembles its system prompt. Empty when the learning
+    /// subsystem is off or no reflections have been captured yet.
+    pub reflections: Vec<String>,
     /// Pre-fetched root-level summaries from the tree summarizer, one per
     /// namespace that has a root node on disk. Each entry is
     /// `(namespace, body)`. Empty when the tree summarizer hasn't run.
