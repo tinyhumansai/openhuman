@@ -1031,36 +1031,6 @@ fn pending_cef_webview_labels<R: tauri::Runtime>(
         .collect()
 }
 
-fn wait_for_cef_webviews_to_close_sync<R: tauri::Runtime>(app: &AppHandle<R>, labels: &[String]) {
-    if labels.is_empty() {
-        return;
-    }
-    log::info!(
-        "[app] waiting for CEF webview close requests labels={:?}",
-        labels
-    );
-    std::thread::sleep(CEF_CLOSE_FIXED_YIELD);
-    let start = std::time::Instant::now();
-    let mut pending = pending_cef_webview_labels(app, labels);
-    while !pending.is_empty() && start.elapsed() < CEF_CLOSE_POLL_BUDGET {
-        std::thread::sleep(CEF_CLOSE_POLL_INTERVAL);
-        pending = pending_cef_webview_labels(app, labels);
-    }
-    if pending.is_empty() {
-        log::info!(
-            "[app] CEF webview close poll drained labels={:?} elapsed_ms={}",
-            labels,
-            start.elapsed().as_millis()
-        );
-    } else {
-        log::info!(
-            "[app] CEF webview close poll still pending labels={:?} elapsed_ms={} (will continue in runtime shutdown)",
-            pending,
-            start.elapsed().as_millis()
-        );
-    }
-}
-
 async fn wait_for_cef_webviews_to_close_async<R: tauri::Runtime>(
     app: &AppHandle<R>,
     labels: &[String],
@@ -1095,7 +1065,13 @@ async fn wait_for_cef_webviews_to_close_async<R: tauri::Runtime>(
 }
 
 /// Shared early teardown logic before CEF's shutdown to prevent races and zombie processes.
-/// Synchronous version to be called from the main thread (e.g. `RunEvent::ExitRequested` or tray menu events).
+///
+/// Synchronous entry used from `RunEvent::ExitRequested` and tray quit. We intentionally
+/// **do not** poll here with `std::thread::sleep` — that would block the Tauri / CEF main
+/// event loop and prevent close messages from being processed. Close requests are issued
+/// in [`close_early_cef_webviews`]; the exit pump drains them. Use
+/// [`perform_early_teardown_async`] when an async caller can await
+/// [`wait_for_cef_webviews_to_close_async`] without starving the UI loop.
 fn perform_early_teardown_sync(app_handle: &AppHandle<AppRuntime>) {
     log::info!("[app] perform_early_teardown_sync — early teardown");
 
@@ -1113,7 +1089,12 @@ fn perform_early_teardown_sync(app_handle: &AppHandle<AppRuntime>) {
         });
     }
 
-    wait_for_cef_webviews_to_close_sync(app_handle, &closed_labels);
+    if !closed_labels.is_empty() {
+        log::info!(
+            "[app] sync early teardown: close requested for labels={:?} — skipping main-thread poll so the event loop can drain CEF",
+            closed_labels
+        );
+    }
 
     log::info!("[app] perform_early_teardown_sync — early teardown complete");
 }

@@ -633,12 +633,14 @@ impl WebviewAccountsState {
         for (acct, label) in labels {
             teardown_account_scanners(app, &acct);
             if let Some(wv) = app.get_webview(&label) {
+                // Track the label as soon as the webview exists so a failed
+                // `close()` still participates in the post-close drain poll
+                // (issue #1120 / CodeRabbit).
+                closed_labels.push(label.clone());
                 if let Err(e) = wv.close() {
                     log::warn!(
                         "[webview-accounts] shutdown close({label}) failed account={acct}: {e}"
                     );
-                } else {
-                    closed_labels.push(label);
                 }
             } else {
                 log::debug!(
