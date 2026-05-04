@@ -28,6 +28,7 @@ import {
 import { socketService } from '../services/socketService';
 import { store } from '../store';
 import { resetUserScopedState } from '../store/resetActions';
+import { clearAllThreads, loadThreads } from '../store/threadSlice';
 import { getActiveUserId, setActiveUserId } from '../store/userScopedStorage';
 import {
   openhumanUpdateAnalyticsSettings,
@@ -239,6 +240,19 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         teamInvitesById: shouldClearScopedCaches ? {} : previous.teamInvitesById,
       };
     });
+
+    // When the authenticated identity changes without a full restart-driven
+    // flip (e.g. same-process session attach or web where `restartApp` is a
+    // no-op), the thread slice can still hold rows from the pre-login
+    // workspace. Clear and re-list from the core so new signups never render
+    // stale titles from another bucket (#1157). `handleIdentityFlip` already
+    // dispatches `resetUserScopedState`, so skip when `isFlip` is true.
+    if (!isFlip && shouldClearScopedCaches && nextIdentity && !isLogout) {
+      store.dispatch(clearAllThreads());
+      void store.dispatch(loadThreads()).catch(err => {
+        log('post-identity thread reload failed: %O', sanitizeError(err));
+      });
+    }
 
     if (isFlip && nextIdentity) {
       await handleIdentityFlip({ reason: 'identity-flip', nextUserId: nextIdentity }).catch(err => {
