@@ -1204,7 +1204,16 @@ impl Agent {
         // long-term context. Done synchronously here because the calls
         // are filesystem reads, not provider/network round-trips, and
         // happen exactly once per session (only on the first turn).
-        let tree_root_summaries = collect_tree_root_summaries(&self.workspace_dir);
+        //
+        // Per-namespace + total caps come from the user-facing memory
+        // window preset on `AgentConfig` so changing the slider in the
+        // UI takes effect on the very next session-start.
+        let limits = self.config.resolved_memory_limits();
+        let tree_root_summaries = collect_tree_root_summaries(
+            &self.workspace_dir,
+            limits.per_namespace_max_chars,
+            limits.total_tree_max_chars,
+        );
 
         LearnedContextData {
             observations: obs_entries
@@ -1482,18 +1491,19 @@ impl Agent {
 
 /// Wrapper around
 /// [`crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps`]
-/// that pins the per-namespace and total caps to the constants exposed
-/// from `context::prompt`. The store helper does the actual work — this
-/// indirection just keeps the call site readable and the caps in one
-/// place where the prompt section is defined.
-fn collect_tree_root_summaries(workspace_dir: &std::path::Path) -> Vec<(String, String)> {
-    use crate::openhuman::context::prompt::{
-        USER_MEMORY_PER_NAMESPACE_MAX_CHARS, USER_MEMORY_TOTAL_MAX_CHARS,
-    };
+/// that takes user-resolved per-namespace and total caps. The actual
+/// limits are derived from the active
+/// [`crate::openhuman::config::schema::agent::MemoryContextWindow`]
+/// preset by [`crate::openhuman::config::schema::agent::AgentConfig::resolved_memory_limits`].
+fn collect_tree_root_summaries(
+    workspace_dir: &std::path::Path,
+    per_namespace_cap: usize,
+    total_cap: usize,
+) -> Vec<(String, String)> {
     crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps(
         workspace_dir,
-        USER_MEMORY_PER_NAMESPACE_MAX_CHARS,
-        USER_MEMORY_TOTAL_MAX_CHARS,
+        per_namespace_cap,
+        total_cap,
     )
 }
 

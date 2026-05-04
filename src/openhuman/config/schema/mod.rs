@@ -30,7 +30,7 @@ mod tools;
 mod update;
 
 pub use accessibility::ScreenIntelligenceConfig;
-pub use agent::{AgentConfig, DelegateAgentConfig};
+pub use agent::{AgentConfig, DelegateAgentConfig, MemoryContextWindow, MemoryWindowLimits};
 pub use autocomplete::AutocompleteConfig;
 pub use autonomy::AutonomyConfig;
 pub use channels::{
