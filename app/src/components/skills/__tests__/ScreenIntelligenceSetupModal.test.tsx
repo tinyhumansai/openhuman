@@ -104,7 +104,7 @@ describe('ScreenIntelligenceSetupModal', () => {
     render(<ScreenIntelligenceSetupModal onClose={vi.fn()} />);
 
     expect(screen.getByText(/macOS only/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument();
+    expect(screen.getByText('Close', { selector: 'button' })).toBeInTheDocument();
     expect(screen.queryByText('Grant permissions')).not.toBeInTheDocument();
     expect(screen.queryByText('Screen Recording')).not.toBeInTheDocument();
   });
@@ -118,7 +118,7 @@ describe('ScreenIntelligenceSetupModal', () => {
 
     render(<ScreenIntelligenceSetupModal onClose={onClose} />);
 
-    screen.getByRole('button', { name: /close/i }).click();
+    screen.getByText('Close', { selector: 'button' }).click();
 
     expect(onClose).toHaveBeenCalledTimes(1);
   });
