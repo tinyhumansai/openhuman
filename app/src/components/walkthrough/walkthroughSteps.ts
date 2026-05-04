@@ -52,3 +52,4 @@ export const WALKTHROUGH_STEPS: Step[] = [
     placement: 'top',
   },
 ];
+
