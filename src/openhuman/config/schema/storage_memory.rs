@@ -121,11 +121,11 @@ impl Default for LlmBackend {
     }
 }
 
-fn default_llm() -> LlmBackend {
+fn default_llm_backend() -> LlmBackend {
     LlmBackend::default()
 }
 
-/// Default model identifier to use when `llm = "cloud"`. Routed
+/// Default model identifier to use when `llm_backend = "cloud"`. Routed
 /// through the OpenHuman backend; keep in sync with the backend's
 /// summariser model registry.
 pub const DEFAULT_CLOUD_LLM_MODEL: &str = "summarizer-v1";
@@ -155,7 +155,7 @@ fn default_cloud_llm_model() -> Option<String> {
 /// - `OPENHUMAN_MEMORY_SUMMARISE_MODEL`
 /// - `OPENHUMAN_MEMORY_SUMMARISE_TIMEOUT_MS`
 /// - `OPENHUMAN_MEMORY_TREE_CONTENT_DIR` (Phase MD-content)
-/// - `OPENHUMAN_MEMORY_TREE_LLM` (cloud|local)
+/// - `OPENHUMAN_MEMORY_TREE_LLM_BACKEND` (cloud|local)
 /// - `OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MemoryTreeConfig {
@@ -230,15 +230,15 @@ pub struct MemoryTreeConfig {
     /// Backend selector for the memory_tree's LLM calls (extractor +
     /// summariser). Defaults to [`LlmBackend::Cloud`] so a fresh install
     /// works without requiring a local Ollama daemon. Set to
-    /// [`LlmBackend::Local`] (or `OPENHUMAN_MEMORY_TREE_LLM=local`) to
+    /// [`LlmBackend::Local`] (or `OPENHUMAN_MEMORY_TREE_LLM_BACKEND=local`) to
     /// keep the legacy Ollama-direct path.
     ///
     /// The embedder is unaffected by this setting — `OllamaEmbedder` (bge-m3)
     /// stays local-only.
-    #[serde(default = "default_llm")]
-    pub llm: LlmBackend,
+    #[serde(default = "default_llm_backend")]
+    pub llm_backend: LlmBackend,
 
-    /// Model identifier used when `llm = "cloud"`. Routed through the
+    /// Model identifier used when `llm_backend = "cloud"`. Routed through the
     /// OpenHuman backend's chat-completions surface.
     ///
     /// Defaults to [`DEFAULT_CLOUD_LLM_MODEL`] (`summarizer-v1`).
@@ -310,7 +310,7 @@ impl Default for MemoryTreeConfig {
             llm_summariser_model: default_memory_tree_llm_endpoint(),
             llm_summariser_timeout_ms: default_memory_tree_llm_summariser_timeout_ms(),
             content_dir: default_memory_tree_content_dir(),
-            llm: default_llm(),
+            llm_backend: default_llm_backend(),
             cloud_llm_model: default_cloud_llm_model(),
         }
     }
@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn llm_default_is_cloud() {
         assert_eq!(LlmBackend::default(), LlmBackend::Cloud);
-        assert_eq!(MemoryTreeConfig::default().llm, LlmBackend::Cloud);
+        assert_eq!(MemoryTreeConfig::default().llm_backend, LlmBackend::Cloud);
     }
 
     #[test]

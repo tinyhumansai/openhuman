@@ -24,8 +24,8 @@ pub use types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};
 /// Composition:
 /// - regex extractor — always on, mechanical, near-zero cost
 /// - LLM extractor with `emit_topics: true` — added when the LLM backend
-///   is reachable. For `llm = "cloud"` (default) that's always. For
-///   `llm = "local"` we still require `llm_extractor_endpoint` +
+///   is reachable. For `llm_backend = "cloud"` (default) that's always. For
+///   `llm_backend = "local"` we still require `llm_extractor_endpoint` +
 ///   `_model` to be set (otherwise the legacy regex-only path stays).
 ///
 /// Differs from [`super::ScoringConfig::from_config`] (the chunk-admission
@@ -38,8 +38,8 @@ pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
     let Some(model) = model else {
         log::debug!(
             "[memory_tree::extract] summary extractor: LLM model not resolvable for \
-             llm={} — using regex-only",
-            config.memory_tree.llm.as_str()
+             llm_backend={} — using regex-only",
+            config.memory_tree.llm_backend.as_str()
         );
         return Arc::new(CompositeExtractor::regex_only());
     };
@@ -82,7 +82,7 @@ pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
 ///   `llm_extractor_endpoint` AND `llm_extractor_model` are set —
 ///   otherwise the legacy regex-only path engages.
 pub(super) fn resolve_extractor_model(config: &Config) -> Option<String> {
-    match config.memory_tree.llm {
+    match config.memory_tree.llm_backend {
         LlmBackend::Cloud => Some(
             config
                 .memory_tree

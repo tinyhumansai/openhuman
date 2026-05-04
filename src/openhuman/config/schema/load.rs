@@ -1005,28 +1005,28 @@ impl Config {
         // the OpenHuman backend's summarizer model; "local" keeps the legacy
         // Ollama-direct path. Empty / unset / unknown leaves the existing
         // value untouched (and we warn on unknown). The embedder is unaffected.
-        if let Ok(raw) = std::env::var("OPENHUMAN_MEMORY_TREE_LLM") {
+        if let Ok(raw) = std::env::var("OPENHUMAN_MEMORY_TREE_LLM_BACKEND") {
             let trimmed = raw.trim();
             if !trimmed.is_empty() {
                 match crate::openhuman::config::LlmBackend::parse(trimmed) {
                     Ok(b) => {
                         log::debug!(
-                            "[memory_tree] OPENHUMAN_MEMORY_TREE_LLM override applied: {}",
+                            "[memory_tree] OPENHUMAN_MEMORY_TREE_LLM_BACKEND override applied: {}",
                             b.as_str()
                         );
-                        self.memory_tree.llm = b;
+                        self.memory_tree.llm_backend = b;
                     }
                     Err(e) => {
                         tracing::warn!(
                             value = trimmed,
                             error = %e,
-                            "ignoring invalid OPENHUMAN_MEMORY_TREE_LLM (valid: cloud, local)"
+                            "ignoring invalid OPENHUMAN_MEMORY_TREE_LLM_BACKEND (valid: cloud, local)"
                         );
                     }
                 }
             }
         }
-        // Cloud LLM model override (only meaningful when llm = cloud).
+        // Cloud LLM model override (only meaningful when llm_backend = cloud).
         // Empty string explicitly clears the default — useful for tests that
         // want to assert the absence of a configured cloud model. Non-empty
         // strings are stored verbatim.

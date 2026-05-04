@@ -836,7 +836,7 @@ pub struct LlmResponse {
 
 /// `memory_tree_get_llm` — read the currently configured LLM backend.
 pub async fn get_llm_rpc(config: &Config) -> Result<RpcOutcome<LlmResponse>, String> {
-    let current = config.memory_tree.llm.as_str().to_string();
+    let current = config.memory_tree.llm_backend.as_str().to_string();
     Ok(RpcOutcome::single_log(
         LlmResponse {
             current: current.clone(),
@@ -859,13 +859,13 @@ pub async fn set_llm_rpc(
 ) -> Result<RpcOutcome<LlmResponse>, String> {
     let parsed = crate::openhuman::config::LlmBackend::parse(&backend)
         .map_err(|e| format!("set_llm: {e}"))?;
-    config.memory_tree.llm = parsed;
+    config.memory_tree.llm_backend = parsed;
 
     // Persist to config.toml so the choice survives sidecar restart. Uses
     // the same atomic write-temp + rename used by every other config write
     // path (see Config::save).
     log::debug!(
-        "[memory_tree::read] persisting memory_tree.llm={} to {}",
+        "[memory_tree::read] persisting memory_tree.llm_backend={} to {}",
         parsed.as_str(),
         config.config_path.display()
     );
@@ -876,7 +876,7 @@ pub async fn set_llm_rpc(
 
     let effective = parsed.as_str().to_string();
     log::info!(
-        "[memory_tree::read] llm switched to {} and persisted to {}",
+        "[memory_tree::read] llm_backend switched to {} and persisted to {}",
         effective,
         config.config_path.display()
     );
@@ -1164,13 +1164,13 @@ mod tests {
         assert_eq!(resp.current, "local");
         // 1. In-memory state updated.
         assert_eq!(
-            cfg.memory_tree.llm,
+            cfg.memory_tree.llm_backend,
             crate::openhuman::config::LlmBackend::Local
         );
 
         // 2. config.toml on disk updated. The file should exist (Config::save
         //    always writes — there is no "skip default" branch) and the
-        //    [memory_tree] section should contain `llm = "local"`.
+        //    [memory_tree] section should contain `llm_backend = "local"`.
         assert!(
             config_path.is_file(),
             "expected set_llm to create config.toml at {}",
@@ -1182,9 +1182,9 @@ mod tests {
             toml::from_str(&on_disk).expect("parse config.toml after set_llm");
         let llm_field = parsed
             .get("memory_tree")
-            .and_then(|m| m.get("llm"))
+            .and_then(|m| m.get("llm_backend"))
             .and_then(|v| v.as_str())
-            .expect("memory_tree.llm present in persisted config.toml");
+            .expect("memory_tree.llm_backend present in persisted config.toml");
         assert_eq!(llm_field, "local");
 
         // 3. get_llm_rpc on the same in-memory config reports the new value.
@@ -1216,7 +1216,7 @@ mod tests {
         assert_eq!(
             parsed
                 .get("memory_tree")
-                .and_then(|m| m.get("llm"))
+                .and_then(|m| m.get("llm_backend"))
                 .and_then(|v| v.as_str()),
             Some("local"),
         );

@@ -1,4 +1,4 @@
-//! Local Ollama chat provider — the legacy `llm = "local"` path.
+//! Local Ollama chat provider — the legacy `llm_backend = "local"` path.
 //!
 //! Speaks Ollama's `/api/chat` with `format: "json"` and
 //! `temperature: 0.0`. Mirrors what the per-extractor/summariser HTTP client
@@ -66,7 +66,7 @@ impl ChatProvider for OllamaChatProvider {
             return Err(anyhow!(
                 "[memory_tree::chat::local] Ollama endpoint or model not configured \
                  (endpoint_set={}, model_set={}); set memory_tree.llm_*_endpoint / \
-                 _model in config or switch memory_tree.llm to cloud",
+                 _model in config or switch memory_tree.llm_backend to cloud",
                 !self.endpoint.is_empty(),
                 !self.model.is_empty()
             ));

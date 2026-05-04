@@ -68,10 +68,10 @@ pub trait Summariser: Send + Sync {
 /// Build the summariser implementation driven by the workspace's
 /// [`Config`]. The cloud-default refactor changed the resolution rules:
 ///
-/// - `llm = "cloud"` (default): always returns the LLM summariser
+/// - `llm_backend = "cloud"` (default): always returns the LLM summariser
 ///   routed through the OpenHuman backend's `cloud_llm_model`
 ///   (defaulting to `summarizer-v1`).
-/// - `llm = "local"`: returns the LLM summariser only when both
+/// - `llm_backend = "local"`: returns the LLM summariser only when both
 ///   `llm_summariser_endpoint` AND `llm_summariser_model` are set;
 ///   otherwise returns the [`inert::InertSummariser`] fallback.
 ///
@@ -86,9 +86,9 @@ pub fn build_summariser(config: &Config) -> Arc<dyn Summariser> {
     use crate::openhuman::memory::tree::chat::{build_chat_provider, ChatConsumer};
 
     // Resolve the model identifier to log alongside the provider name.
-    // Returns None (→ inert fallback) only when llm=local and the legacy
+    // Returns None (→ inert fallback) only when llm_backend=local and the legacy
     // llm_summariser_endpoint/_model fields are not both set.
-    let model: Option<String> = match config.memory_tree.llm {
+    let model: Option<String> = match config.memory_tree.llm_backend {
         LlmBackend::Cloud => Some(
             config
                 .memory_tree
@@ -118,9 +118,9 @@ pub fn build_summariser(config: &Config) -> Arc<dyn Summariser> {
 
     let Some(model) = model else {
         log::debug!(
-            "[tree_source::summariser] llm_summariser not configured for llm={} \
+            "[tree_source::summariser] llm_summariser not configured for llm_backend={} \
              — using InertSummariser",
-            config.memory_tree.llm.as_str()
+            config.memory_tree.llm_backend.as_str()
         );
         return Arc::new(inert::InertSummariser::new());
     };

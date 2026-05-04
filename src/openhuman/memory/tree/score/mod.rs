@@ -108,10 +108,10 @@ impl ScoringConfig {
     /// Build a [`ScoringConfig`] from the workspace [`Config`]. The
     /// resolution rules match `build_summary_extractor`:
     ///
-    /// - `llm = "cloud"` (default): always wires the LLM extractor
+    /// - `llm_backend = "cloud"` (default): always wires the LLM extractor
     ///   against the cloud provider, using the configured
     ///   `cloud_llm_model` (defaulting to `summarizer-v1`).
-    /// - `llm = "local"`: wires the LLM extractor only when both
+    /// - `llm_backend = "local"`: wires the LLM extractor only when both
     ///   `llm_extractor_endpoint` and `llm_extractor_model` are set;
     ///   otherwise falls back to [`Self::default_regex_only`].
     ///
@@ -125,9 +125,9 @@ impl ScoringConfig {
             Some(m) => m,
             None => {
                 log::debug!(
-                    "[memory_tree::score] llm_extractor not resolvable for llm={} \
+                    "[memory_tree::score] llm_extractor not resolvable for llm_backend={} \
                      — using regex-only",
-                    config.memory_tree.llm.as_str()
+                    config.memory_tree.llm_backend.as_str()
                 );
                 return Self::default_regex_only();
             }

@@ -10,8 +10,8 @@
 //!   the `summarizer-v1` model. No local daemon required. Default for new
 //!   installs.
 //! - **Local** — the legacy Ollama-direct path. Opt-in via
-//!   `memory_tree.llm = "local"` in config or
-//!   `OPENHUMAN_MEMORY_TREE_LLM=local`.
+//!   `memory_tree.llm_backend = "local"` in config or
+//!   `OPENHUMAN_MEMORY_TREE_LLM_BACKEND=local`.
 //!
 //! ## Why a memory-tree-local trait
 //!
@@ -85,7 +85,7 @@ pub trait ChatProvider: Send + Sync {
     async fn chat_for_json(&self, prompt: &ChatPrompt) -> Result<String>;
 }
 
-/// Build the [`ChatProvider`] dictated by `config.memory_tree.llm`.
+/// Build the [`ChatProvider`] dictated by `config.memory_tree.llm_backend`.
 ///
 /// - `Cloud` (default): wires [`cloud::CloudChatProvider`] against the
 ///   OpenHuman backend with `cloud_llm_model` (defaulting to
@@ -101,7 +101,7 @@ pub fn build_chat_provider(
     config: &Config,
     consumer: ChatConsumer,
 ) -> Result<Arc<dyn ChatProvider>> {
-    match config.memory_tree.llm {
+    match config.memory_tree.llm_backend {
         LlmBackend::Cloud => {
             let model = config
                 .memory_tree
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn build_provider_returns_local_when_configured() {
         let mut cfg = Config::default();
-        cfg.memory_tree.llm = LlmBackend::Local;
+        cfg.memory_tree.llm_backend = LlmBackend::Local;
         cfg.memory_tree.llm_extractor_endpoint = Some("http://localhost:11434".into());
         cfg.memory_tree.llm_extractor_model = Some("qwen2.5:0.5b".into());
         let provider = build_chat_provider(&cfg, ChatConsumer::Extract).unwrap();
