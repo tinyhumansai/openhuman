@@ -12,9 +12,10 @@ import { useEffect, useState } from 'react';
 import {
   type Chunk,
   type EntityRef,
-  memoryTreeApi,
+  memoryTreeChunkScore,
+  memoryTreeEntityIndexFor,
   type ScoreBreakdown,
-} from '../../lib/memory/memoryTreeApi';
+} from '../../utils/tauriCommands';
 import { MemoryChunkLetterhead } from './MemoryChunkLetterhead';
 import { MemoryChunkMentioned } from './MemoryChunkMentioned';
 import { MemoryChunkScoreBars } from './MemoryChunkScoreBars';
@@ -58,22 +59,21 @@ export function MemoryChunkDetail({ chunk, onSelectEntity }: MemoryChunkDetailPr
   useEffect(() => {
     let cancelled = false;
     console.debug('[ui-flow][memory-workspace] loading detail for chunk', chunk.id);
-    void Promise.all([
-      memoryTreeApi.entityIndexFor(chunk.id),
-      memoryTreeApi.chunkScore(chunk.id),
-    ]).then(([ents, score]) => {
-      if (cancelled) return;
-      setEntities(ents);
-      setBreakdown(score);
-      console.debug(
-        '[ui-flow][memory-workspace] detail loaded',
-        chunk.id,
-        'entities=',
-        ents.length,
-        'score_total=',
-        score.total
-      );
-    });
+    void Promise.all([memoryTreeEntityIndexFor(chunk.id), memoryTreeChunkScore(chunk.id)]).then(
+      ([ents, score]) => {
+        if (cancelled) return;
+        setEntities(ents);
+        setBreakdown(score);
+        console.debug(
+          '[ui-flow][memory-workspace] detail loaded',
+          chunk.id,
+          'entities=',
+          ents.length,
+          'score_total=',
+          score?.total ?? null
+        );
+      }
+    );
     return () => {
       cancelled = true;
     };

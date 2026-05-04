@@ -2,18 +2,20 @@
  * Settings tab API layer for the Intelligence page.
  *
  * Wraps the existing `local_ai_*` core RPCs (re-exported with cleaner names)
- * and exposes a small set of stub helpers for the new
- * `openhuman.memory_tree_set_chat_backend` RPC that ships in
- * Worktree 1 (`feat/memory-cloud-default-backend`). The stubs here let the UI
- * render and respond interactively before the backend RPC is wired in.
+ * and the canonical `openhuman.memory_tree_get_llm` / `set_llm` JSON-RPC
+ * methods that drive the AI-backend selector. Both come from the shared
+ * `utils/tauriCommands` barrel.
  *
  * Logging convention: `[intelligence-settings-api]` prefix for grep-friendly
  * tracing of the new flow per the project debug-logging rule.
  */
 import {
+  type LlmBackend,
   type LocalAiAssetsStatus,
   type LocalAiDiagnostics,
   type LocalAiStatus,
+  memoryTreeGetLlm,
+  memoryTreeSetLlm,
   openhumanLocalAiAssetsStatus,
   openhumanLocalAiDiagnostics,
   openhumanLocalAiDownloadAsset,
@@ -22,8 +24,12 @@ import {
   type PresetsResponse,
 } from '../../utils/tauriCommands';
 
-/** AI backend the assistant is currently using for chat. */
-export type Backend = 'cloud' | 'local';
+/**
+ * AI backend the assistant is currently using for chat. Re-exports the
+ * canonical `LlmBackend` from the wrapper so both names remain valid as
+ * call-sites migrate.
+ */
+export type Backend = LlmBackend;
 
 /** Static descriptor used by ModelAssignment + ModelCatalog. */
 export interface ModelDescriptor {
@@ -96,36 +102,31 @@ export const DEFAULT_SUMMARISER_MODEL = 'gemma3:1b-it-qat';
 export const REQUIRED_EMBEDDER_MODEL = 'bge-m3';
 
 /**
- * In-memory backend choice — survives the React tree but not a full reload.
- * When the new `memory_tree_set_chat_backend` RPC lands, swap this for a
- * persistent core call.
- */
-let mockBackend: Backend = 'cloud';
-
-/**
- * Returns the current chat backend.
+ * Reads the currently configured chat backend from the core.
  *
- * TODO: wire when Worktree 1 lands — call
- * `openhuman.memory_tree_get_chat_backend` instead of returning the mock.
+ * Backed by `openhuman.memory_tree_get_llm` — the value persists across
+ * sidecar restarts via `config.toml`.
  */
-export async function getChatBackend(): Promise<Backend> {
-  console.debug('[intelligence-settings-api] getChatBackend (mock)', { mockBackend });
-  return mockBackend;
+export async function getMemoryTreeLlm(): Promise<Backend> {
+  console.debug('[intelligence-settings-api] getMemoryTreeLlm: entry');
+  const resp = await memoryTreeGetLlm();
+  console.debug('[intelligence-settings-api] getMemoryTreeLlm: exit current=%s', resp.current);
+  return resp.current;
 }
 
 /**
- * Switches the chat backend. Returns the effective value the core agreed on
- * — for the mock that is just the input, but the real RPC may downgrade
- * `local` → `cloud` if the user's device cannot satisfy the local minimums.
+ * Switches the chat backend. Returns the effective value the core agreed
+ * on — today the handler accepts the input verbatim, but a future revision
+ * may downgrade `local` → `cloud` when the host can't satisfy the local
+ * minimums. Persists to `config.toml` so the choice survives restart.
  *
- * TODO: wire when Worktree 1 lands —
- * `openhuman.memory_tree_set_chat_backend` (mocks any `local_ai_*` work
- * required to spin up the local pipeline).
+ * Backed by `openhuman.memory_tree_set_llm`.
  */
-export async function setChatBackend(next: Backend): Promise<{ effective: Backend }> {
-  console.debug('[intelligence-settings-api] setChatBackend (mock)', { next });
-  mockBackend = next;
-  return { effective: next };
+export async function setMemoryTreeLlm(next: Backend): Promise<{ effective: Backend }> {
+  console.debug('[intelligence-settings-api] setMemoryTreeLlm: entry next=%s', next);
+  const resp = await memoryTreeSetLlm(next);
+  console.debug('[intelligence-settings-api] setMemoryTreeLlm: exit effective=%s', resp.current);
+  return { effective: resp.current };
 }
 
 /** Re-export the existing assets status fetch with a friendlier name. */
@@ -214,12 +215,4 @@ export function formatBytes(bytes: number): string {
   if (gb >= 1) return `${gb.toFixed(1)} GB`;
   const mb = bytes / (1024 * 1024);
   return `${Math.round(mb)} MB`;
-}
-
-/**
- * Test-only — reset the in-memory backend to its default. Exported so unit
- * tests can isolate state across cases without leaking through React.
- */
-export function __resetMockBackendForTests(): void {
-  mockBackend = 'cloud';
 }

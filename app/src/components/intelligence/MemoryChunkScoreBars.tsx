@@ -2,7 +2,7 @@
  * "Why kept" score bars — SVG-rendered (not CSS divs) for crisp pixel
  * alignment regardless of zoom or DPR.
  */
-import type { ScoreBreakdown } from '../../lib/memory/memoryTreeApi';
+import type { ScoreBreakdown } from '../../utils/tauriCommands';
 
 interface MemoryChunkScoreBarsProps {
   breakdown: ScoreBreakdown;

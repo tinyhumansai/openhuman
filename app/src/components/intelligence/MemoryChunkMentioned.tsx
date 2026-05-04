@@ -5,7 +5,7 @@
  * activates the corresponding entity in the Navigator, filtering the
  * result list to chunks tagged with that entity.
  */
-import type { EntityRef } from '../../lib/memory/memoryTreeApi';
+import type { EntityRef } from '../../utils/tauriCommands';
 
 interface MemoryChunkMentionedProps {
   entities: EntityRef[];

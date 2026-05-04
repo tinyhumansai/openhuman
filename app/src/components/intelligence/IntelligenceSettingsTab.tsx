@@ -8,10 +8,10 @@ import {
   downloadAsset,
   fetchInstalledModels,
   fetchLocalAiStatus,
-  getChatBackend,
+  getMemoryTreeLlm,
   type ModelDescriptor,
   REQUIRED_EMBEDDER_MODEL,
-  setChatBackend,
+  setMemoryTreeLlm,
 } from '../../lib/intelligence/settingsApi';
 import type { LocalAiStatus } from '../../utils/tauriCommands';
 import BackendChooser from './BackendChooser';
@@ -45,7 +45,7 @@ export default function IntelligenceSettingsTab() {
     void (async () => {
       console.debug('[intelligence-settings] bootstrap');
       const [bk, models, status] = await Promise.all([
-        getChatBackend(),
+        getMemoryTreeLlm(),
         fetchInstalledModels(),
         fetchLocalAiStatus(),
       ]);
@@ -62,7 +62,7 @@ export default function IntelligenceSettingsTab() {
   const handleBackendChange = useCallback(async (next: Backend) => {
     setBackendBusy(true);
     try {
-      const { effective } = await setChatBackend(next);
+      const { effective } = await setMemoryTreeLlm(next);
       setBackend(effective);
     } finally {
       setBackendBusy(false);

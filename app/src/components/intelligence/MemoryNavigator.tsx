@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 
-import type { Chunk, EntityRef, Source } from '../../lib/memory/memoryTreeApi';
+import type { Chunk, EntityRef, Source } from '../../utils/tauriCommands';
 import { MemoryHeatmap } from './MemoryHeatmap';
 
 export interface NavigatorSelection {
@@ -29,7 +29,7 @@ interface MemoryNavigatorProps {
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-function dotClassFor(status: string): string {
+function dotClassFor(status: string | undefined): string {
   switch (status) {
     case 'admitted':
       return 'mw-dot dot-admitted';

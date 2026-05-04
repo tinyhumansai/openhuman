@@ -1,15 +1,20 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { __resetMockBackendForTests } from '../../../lib/intelligence/settingsApi';
 import { renderWithProviders } from '../../../test/test-utils';
 import IntelligenceSettingsTab from '../IntelligenceSettingsTab';
 
 // The orchestrator hits these RPCs on mount; the global tauriCommands mock
 // in setup.ts only stubs auth/service helpers, so we extend it here with
-// the local-AI surface the Settings tab uses.
+// the local-AI surface the Settings tab uses, plus the new memory_tree
+// LLM-selector RPCs that replaced the dev-time mock backend.
 vi.mock('../../../utils/tauriCommands', () => ({
   isTauri: vi.fn(() => true),
+  // memory_tree LLM selector — the BackendChooser polls these on mount and
+  // again on every backend toggle. We track the value in a closure so the
+  // set→get round-trip behaves like the real persistent core.
+  memoryTreeGetLlm: vi.fn(),
+  memoryTreeSetLlm: vi.fn(),
   openhumanLocalAiAssetsStatus: vi
     .fn()
     .mockResolvedValue({
@@ -93,9 +98,24 @@ vi.mock('../../../utils/tauriCommands', () => ({
     }),
 }));
 
+// Pull mocked references after vi.mock() has hoisted. Cast through unknown
+// because the import here is the typed wrapper module shape.
+const { memoryTreeGetLlm, memoryTreeSetLlm } =
+  (await import('../../../utils/tauriCommands')) as unknown as {
+    memoryTreeGetLlm: Mock;
+    memoryTreeSetLlm: Mock;
+  };
+
 describe('IntelligenceSettingsTab', () => {
   beforeEach(() => {
-    __resetMockBackendForTests();
+    let backend: 'cloud' | 'local' = 'cloud';
+    memoryTreeGetLlm.mockReset();
+    memoryTreeSetLlm.mockReset();
+    memoryTreeGetLlm.mockImplementation(async () => ({ current: backend }));
+    memoryTreeSetLlm.mockImplementation(async (next: 'cloud' | 'local') => {
+      backend = next;
+      return { current: backend };
+    });
   });
 
   it('renders the four section headings', async () => {
@@ -174,5 +194,29 @@ describe('IntelligenceSettingsTab', () => {
     // it's present somewhere under the readout.
     const embedderHits = screen.getAllByText('bge-m3');
     expect(embedderHits.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('reads the backend via memoryTreeGetLlm on mount and persists toggles via memoryTreeSetLlm', async () => {
+    renderWithProviders(<IntelligenceSettingsTab />);
+
+    // Bootstrap: getMemoryTreeLlm must run once on mount.
+    await waitFor(() => {
+      expect(memoryTreeGetLlm).toHaveBeenCalled();
+    });
+
+    // Click Local — setMemoryTreeLlm must be called with 'local'.
+    const radios = screen.getAllByRole('radio');
+    const localCard = radios.find(el => /Advanced/.test(el.textContent ?? ''));
+    fireEvent.click(localCard!);
+
+    await waitFor(() => {
+      expect(memoryTreeSetLlm).toHaveBeenCalledWith('local');
+    });
+
+    // The mocked setter persists state in the closure, so the bootstrap
+    // value of any subsequent get_llm call would now be 'local' — sanity
+    // check that the closure flipped.
+    const after = await memoryTreeGetLlm();
+    expect(after.current).toBe('local');
   });
 });

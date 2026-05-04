@@ -2,7 +2,7 @@
  * Letterhead: the from / to / date frontmatter of a chunk, rendered
  * as correspondence (dl-style with monospace labels in a fixed column).
  */
-import type { Chunk } from '../../lib/memory/memoryTreeApi';
+import type { Chunk } from '../../utils/tauriCommands';
 
 interface LetterheadParts {
   fromName: string;

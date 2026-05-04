@@ -8,19 +8,21 @@
  *
  * Replaces the legacy UnifiedMemory-driven workspace. Auto-selects the
  * most recent admitted chunk on mount; renders an empty placeholder when
- * the user has no chunks yet. Currently backed by mock fixtures gated
- * behind `MEMORY_TREE_USE_MOCK` in `lib/memory/memoryTreeApi.ts`.
+ * the user has no chunks yet. Talks to the real `openhuman.memory_tree_*`
+ * JSON-RPC surface via the `utils/tauriCommands/memoryTree` wrappers.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import type { ToastNotification } from '../../types/intelligence';
 import {
   type Chunk,
   type ChunkFilter,
   type EntityRef,
-  memoryTreeApi,
+  memoryTreeListChunks,
+  memoryTreeListSources,
+  memoryTreeTopEntities,
   type Source,
-} from '../../lib/memory/memoryTreeApi';
-import type { ToastNotification } from '../../types/intelligence';
+} from '../../utils/tauriCommands';
 import './memory-workspace.css';
 import { MemoryChunkDetail } from './MemoryChunkDetail';
 import { MemoryEmptyPlaceholder } from './MemoryEmptyPlaceholder';
@@ -74,12 +76,12 @@ export function MemoryWorkspace({ onToast: _onToast }: MemoryWorkspaceProps) {
     console.debug('[ui-flow][memory-workspace] initial load entry');
     let cancelled = false;
     void Promise.all([
-      memoryTreeApi.listChunks({ limit: 500 }),
-      memoryTreeApi.listSources(),
-      memoryTreeApi.topEntities('person', 12),
+      memoryTreeListChunks({ limit: 500 }),
+      memoryTreeListSources(),
+      memoryTreeTopEntities('person', 12),
       // Topics: union of technology/product/event types — fetch a wider list
       // then bucket below.
-      memoryTreeApi.topEntities(undefined, 40),
+      memoryTreeTopEntities(undefined, 40),
     ]).then(([chunkResult, srcs, people, anyEntities]) => {
       if (cancelled) return;
       const topicKinds = new Set(['technology', 'product', 'event']);

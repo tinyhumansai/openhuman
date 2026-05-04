@@ -12,7 +12,7 @@
  */
 import { useEffect, useMemo, useRef } from 'react';
 
-import type { Chunk } from '../../lib/memory/memoryTreeApi';
+import type { Chunk } from '../../utils/tauriCommands';
 
 interface MemoryResultListProps {
   chunks: Chunk[];
