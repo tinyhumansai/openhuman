@@ -173,9 +173,7 @@ mod imp {
                     }
                     Ok(false) => {}
                     Err(e) => {
-                        return Err(format!(
-                            "cache lookup failed for calendar event: {e}"
-                        ));
+                        return Err(format!("cache lookup failed for calendar event: {e}"));
                     }
                 }
 
@@ -213,9 +211,8 @@ mod imp {
 
                 // Write to local cache before appending; fail closed on error
                 // to prevent duplicate events on the next sync.
-                store::upsert_event(conn, &ev).map_err(|e| {
-                    format!("cache upsert failed for calendar event: {e}")
-                })?;
+                store::upsert_event(conn, &ev)
+                    .map_err(|e| format!("cache upsert failed for calendar event: {e}"))?;
                 out.push(ev);
             }
 
