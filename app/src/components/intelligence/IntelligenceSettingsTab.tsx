@@ -40,11 +40,21 @@ export default function IntelligenceSettingsTab() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      console.debug('[intelligence-settings] bootstrap');
-      const [bk, models] = await Promise.all([getMemoryTreeLlm(), fetchInstalledModels()]);
-      if (cancelled) return;
-      setBackend(bk);
-      setInstalledModels(models.map(m => m.name));
+      try {
+        console.debug('[intelligence-settings] bootstrap');
+        const [bk, models] = await Promise.all([getMemoryTreeLlm(), fetchInstalledModels()]);
+        if (cancelled) return;
+        setBackend(bk);
+        setInstalledModels(models.map(m => m.name));
+      } catch (err) {
+        if (!cancelled) {
+          // Bootstrap failure leaves the tab on its useState defaults
+          // (cloud backend, empty installed list) rather than throwing
+          // an unhandled rejection. The user can still flip the backend
+          // chooser; subsequent reads will retry the RPCs.
+          console.error('[intelligence-settings] bootstrap failed', err);
+        }
+      }
     })();
     return () => {
       cancelled = true;
@@ -56,6 +66,8 @@ export default function IntelligenceSettingsTab() {
     try {
       const { effective } = await setMemoryTreeLlm(next);
       setBackend(effective);
+    } catch (err) {
+      console.error('[intelligence-settings] backend switch failed', err);
     } finally {
       setBackendBusy(false);
     }
@@ -65,15 +77,23 @@ export default function IntelligenceSettingsTab() {
   // extractor and summariser keys in a single atomic write — the unified
   // UI is one dropdown, but the underlying schema retains both keys so
   // power users can still split them via the RPC directly if needed.
-  const handleMemoryModelChange = useCallback(async (id: string) => {
-    console.debug('[intelligence-settings] memory model -> %s', id);
-    setMemoryModel(id);
-    try {
-      await setMemoryTreeLlm('local', { extractModel: id, summariserModel: id });
-    } catch (err) {
-      console.error('[intelligence-settings] persist memory model failed', err);
-    }
-  }, []);
+  const handleMemoryModelChange = useCallback(
+    async (id: string) => {
+      console.debug('[intelligence-settings] memory model -> %s', id);
+      const previous = memoryModel;
+      setMemoryModel(id);
+      try {
+        await setMemoryTreeLlm('local', { extractModel: id, summariserModel: id });
+      } catch (err) {
+        // Persistence failed → roll back the optimistic UI update so the
+        // dropdown reflects the value that's actually saved on disk
+        // rather than the one the user just attempted.
+        setMemoryModel(previous);
+        console.error('[intelligence-settings] persist memory model failed', err);
+      }
+    },
+    [memoryModel]
+  );
 
   const handleDownload = useCallback(async (model: ModelDescriptor) => {
     const cap = capabilityForModel(model);
@@ -81,11 +101,17 @@ export default function IntelligenceSettingsTab() {
       console.debug('[intelligence-settings] no capability for model', { id: model.id });
       return;
     }
-    await downloadAsset(cap);
-    // Refresh installed list after a download attempt; if Ollama hasn't
-    // surfaced the new model yet the next bootstrap tick will catch it.
-    const refreshed = await fetchInstalledModels();
-    setInstalledModels(refreshed.map(m => m.name));
+    try {
+      await downloadAsset(cap);
+    } catch (err) {
+      console.error('[intelligence-settings] model download failed', err);
+    } finally {
+      // Refresh installed list after any download attempt — even on
+      // failure, Ollama may have partially landed assets we should
+      // surface; if it hasn't, the next bootstrap tick will catch up.
+      const refreshed = await fetchInstalledModels();
+      setInstalledModels(refreshed.map(m => m.name));
+    }
   }, []);
 
   const handleUse = useCallback(
