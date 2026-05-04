@@ -60,6 +60,7 @@ fn native_request_emits_thread_id_when_present() {
         tools: None,
         tool_choice: None,
         thread_id: Some("thread-abc".to_string()),
+        stream_options: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -76,11 +77,59 @@ fn native_request_emits_thread_id_when_present() {
         tools: None,
         tool_choice: None,
         thread_id: None,
+        stream_options: None,
     };
     let json_no_thread = serde_json::to_value(&req_no_thread).unwrap();
     assert!(
         json_no_thread.get("thread_id").is_none(),
         "absent thread_id must not be serialized so non-OpenHuman backends don't reject the field"
+    );
+}
+
+/// Streaming responses arrive without `usage` unless the request asks
+/// for `stream_options.include_usage = true` (OpenAI spec). Without it
+/// the OpenHuman backend's `openhuman.billing` block also never lands,
+/// so transcript headers for orchestrator sessions lose the
+/// `- Charged: $…` line. The non-streaming path stays untouched.
+#[test]
+fn streaming_request_sets_stream_options_include_usage() {
+    let req = super::NativeChatRequest {
+        model: "sonnet".to_string(),
+        messages: Vec::new(),
+        temperature: 0.0,
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        json.pointer("/stream_options/include_usage")
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "streaming requests must opt into the final usage chunk"
+    );
+}
+
+#[test]
+fn non_streaming_request_omits_stream_options() {
+    let req = super::NativeChatRequest {
+        model: "sonnet".to_string(),
+        messages: Vec::new(),
+        temperature: 0.0,
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert!(
+        json.get("stream_options").is_none(),
+        "non-streaming requests must not emit stream_options (OpenAI rejects it on stream=false)"
     );
 }
 

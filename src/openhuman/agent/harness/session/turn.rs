@@ -1399,6 +1399,7 @@ impl Agent {
             output_tokens,
             cached_input_tokens,
             charged_amount_usd,
+            thread_id: crate::openhuman::providers::thread_context::current_thread_id(),
         };
 
         if let Err(err) = transcript::write_transcript(path, messages, &meta, turn_usage) {

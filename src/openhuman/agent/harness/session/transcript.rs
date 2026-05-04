@@ -34,7 +34,7 @@
 //!
 //! **Line 1 (meta):**
 //! ```json
-//! {"_meta":{"agent":"code_executor","dispatcher":"native","created":"...","updated":"...","turn_count":3,"input_tokens":5000,"output_tokens":1200,"cached_input_tokens":3500,"charged_amount_usd":0.0045}}
+//! {"_meta":{"agent":"code_executor","dispatcher":"native","created":"...","updated":"...","turn_count":3,"input_tokens":5000,"output_tokens":1200,"cached_input_tokens":3500,"charged_amount_usd":0.0045,"thread_id":"thr_abc123"}}
 //! ```
 //!
 //! **Message lines:**
@@ -93,6 +93,13 @@ pub struct TranscriptMeta {
     pub cached_input_tokens: u64,
     /// Cumulative amount charged in USD.
     pub charged_amount_usd: f64,
+    /// Backend-side LLM thread identifier (the `thread_id` forwarded on
+    /// `/openai/v1/chat/completions` so the OpenHuman backend can group
+    /// `InferenceLog` entries and align KV-cache keys with the same logical
+    /// chat thread the user sees in the UI). `None` for runs that don't
+    /// originate from a thread-scoped channel (e.g. CLI-only sessions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
 }
 
 /// A parsed session transcript: metadata + exact message array.
@@ -122,6 +129,8 @@ struct MetaPayload {
     output_tokens: u64,
     cached_input_tokens: u64,
     charged_amount_usd: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    thread_id: Option<String>,
 }
 
 /// One message line in the JSONL — only `role` and `content` are required.
@@ -176,6 +185,7 @@ pub fn write_transcript(
             output_tokens: meta.output_tokens,
             cached_input_tokens: meta.cached_input_tokens,
             charged_amount_usd: meta.charged_amount_usd,
+            thread_id: meta.thread_id.clone(),
         },
     };
     let meta_json =
@@ -338,6 +348,7 @@ fn read_transcript_jsonl(path: &Path) -> Result<SessionTranscript> {
                 output_tokens: mp.output_tokens,
                 cached_input_tokens: mp.cached_input_tokens,
                 charged_amount_usd: mp.charged_amount_usd,
+                thread_id: mp.thread_id,
             });
             continue;
         }
@@ -502,6 +513,9 @@ fn render_markdown(
     let _ = writeln!(buf, "# Session transcript — {}", meta.agent_name);
     buf.push('\n');
     let _ = writeln!(buf, "- Dispatcher: {}", meta.dispatcher);
+    if let Some(tid) = meta.thread_id.as_deref() {
+        let _ = writeln!(buf, "- Thread: `{tid}`");
+    }
     let _ = writeln!(buf, "- Turns: {}", meta.turn_count);
     if meta.input_tokens > 0 || meta.output_tokens > 0 {
         let cache_pct = if meta.input_tokens > 0 {
@@ -615,6 +629,7 @@ fn parse_legacy_meta(raw: &str) -> Result<TranscriptMeta> {
         charged_amount_usd: get("charged_usd")
             .and_then(|s| s.trim_start_matches('$').parse().ok())
             .unwrap_or(0.0),
+        thread_id: get("thread_id").filter(|s| !s.is_empty()),
     })
 }
 
