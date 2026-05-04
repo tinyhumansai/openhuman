@@ -144,7 +144,8 @@ impl Agent {
     /// initialised (unit tests).
     pub fn curated_snapshot(
         &self,
-    ) -> Option<std::sync::Arc<crate::openhuman::curated_memory::MemorySnapshot>> {
+    ) -> Option<std::sync::Arc<crate::openhuman::agent::prompts::types::CuratedMemoryPromptSnapshot>>
+    {
         self.curated_snapshot.clone()
     }
 
