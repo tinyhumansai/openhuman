@@ -4,254 +4,148 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../../test/test-utils';
 import { MemoryWorkspace } from '../MemoryWorkspace';
 
-// Mock useIntelligenceStats — the hook used by MemoryWorkspace
-vi.mock('../../../hooks/useIntelligenceStats', () => ({
-  useIntelligenceStats: () => ({
-    sessions: { total: 5, totalTokens: 1200 },
-    memoryFiles: 3,
-    entities: { contact: 2, message: 10 },
-    isLoading: false,
-    refetch: vi.fn(),
-  }),
-}));
-
-// Mock channelConnectionsApi so listStatus doesn't hit the network
-vi.mock('../../../services/api/channelConnectionsApi', () => ({
-  channelConnectionsApi: {
-    listStatus: vi.fn().mockResolvedValue([
-      {
-        channel_id: 'telegram-main',
-        auth_mode: 'managed_dm',
-        connected: true,
-        has_credentials: true,
-      },
-      { channel_id: 'discord-bot', auth_mode: 'bot_token', connected: true, has_credentials: true },
-    ]),
-  },
-}));
-
-// Override the global tauriCommands mock from setup.ts with memory-specific stubs
-vi.mock('../../../utils/tauriCommands', () => ({
-  isTauri: vi.fn(() => true),
-  memoryListDocuments: vi.fn().mockResolvedValue({
-    documents: [
-      { documentId: 'doc-1', namespace: 'research', title: 'Paper A' },
-      { documentId: 'doc-2', namespace: 'research', title: 'Paper B' },
-    ],
-  }),
-  memoryListNamespaces: vi.fn().mockResolvedValue(['research', 'conversations']),
-  aiListMemoryFiles: vi.fn().mockResolvedValue(['2026-03-31.md']),
-  aiReadMemoryFile: vi.fn().mockResolvedValue('# Memory\nSome content'),
-  aiWriteMemoryFile: vi.fn().mockResolvedValue(undefined),
-  memoryDeleteDocument: vi.fn().mockResolvedValue(undefined),
-  memoryQueryNamespace: vi.fn().mockResolvedValue({ text: 'query result', entities: [] }),
-  memoryRecallNamespace: vi.fn().mockResolvedValue({ text: 'recall result', entities: [] }),
-  memorySyncAll: vi.fn().mockResolvedValue({ requested: true }),
-  memorySyncChannel: vi.fn().mockResolvedValue({ requested: true, channel_id: 'telegram-main' }),
-  memoryLearnAll: vi.fn().mockResolvedValue({
-    namespaces_processed: 2,
-    results: [
-      { namespace: 'research', status: 'ok' },
-      { namespace: 'conversations', status: 'ok' },
-    ],
-  }),
-  memoryGraphQuery: vi.fn().mockResolvedValue([
-    {
-      namespace: 'research',
-      subject: 'Alice',
-      predicate: 'AUTHORED',
-      object: 'Paper A',
-      attrs: { entity_types: { subject: 'person', object: 'document' } },
-      updatedAt: 1700000000,
-      evidenceCount: 3,
-      orderIndex: null,
-      documentIds: ['doc-1'],
-      chunkIds: ['doc-1#chunk-1'],
-    },
-    {
-      namespace: 'research',
-      subject: 'Bob',
-      predicate: 'REVIEWED',
-      object: 'Paper A',
-      attrs: { entity_types: { subject: 'person', object: 'document' } },
-      updatedAt: 1700000001,
-      evidenceCount: 1,
-      orderIndex: null,
-      documentIds: ['doc-1'],
-      chunkIds: [],
-    },
-  ]),
-}));
-
-describe('MemoryWorkspace', () => {
-  const onToast = vi.fn();
-
-  it('renders the Memory heading', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    expect(screen.getByText('Memory')).toBeInTheDocument();
+describe('MemoryWorkspace — three-pane browser', () => {
+  it('renders the three pane scaffold and the navigator search box', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    expect(screen.getByTestId('memory-workspace')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-navigator')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-result-list')).toBeInTheDocument();
+    expect(screen.getByLabelText('Search memory')).toBeInTheDocument();
   });
 
-  it('displays graph relations after loading', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Alice', { selector: 'span' })).toBeInTheDocument();
-    });
-
-    expect(screen.getByText('AUTHORED', { selector: 'span' })).toBeInTheDocument();
-    expect(screen.getByText('Bob', { selector: 'span' })).toBeInTheDocument();
-    expect(screen.getByText('REVIEWED', { selector: 'span' })).toBeInTheDocument();
-    // "Paper A" appears in both graph relations and documents list,
-    // so just verify at least one instance is present
-    expect(screen.getAllByText('Paper A').length).toBeGreaterThanOrEqual(1);
+  it('renders navigator section headings (recent, sources, people, topics)', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    expect(screen.getByText('recent')).toBeInTheDocument();
+    expect(screen.getByText('sources')).toBeInTheDocument();
+    expect(screen.getByText('people')).toBeInTheDocument();
+    expect(screen.getByText('topics')).toBeInTheDocument();
   });
 
-  it('shows evidence count badge when > 1', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-
+  it('auto-selects the most recent admitted chunk on mount and renders detail', async () => {
+    renderWithProviders(<MemoryWorkspace />);
     await waitFor(() => {
-      expect(screen.getByText('x3')).toBeInTheDocument();
-    });
-
-    // Bob's relation has evidenceCount 1 — should NOT show a badge
-    expect(screen.queryByText('x1')).not.toBeInTheDocument();
-  });
-
-  it('shows Relations stat in the stats bar', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-
-    // The stats bar has a "Relations" label
-    await waitFor(() => {
-      expect(screen.getByText('Relations')).toBeInTheDocument();
+      expect(screen.getByTestId('memory-chunk-detail')).toBeInTheDocument();
+      expect(screen.getByTestId('memory-chunk-letterhead')).toBeInTheDocument();
     });
   });
 
-  it('renders the Memory Graph section', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+  it('renders the result list with TODAY group present at the top', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => {
+      expect(screen.getByText('TODAY')).toBeInTheDocument();
+    });
+  });
+
+  it('renders source rows for known mock sources', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => {
+      // "Steven Enamakel" can appear as both a source row and a person entity;
+      // assert at least one match (use getAllByText which throws on zero).
+      expect(screen.getAllByText('Steven Enamakel').length).toBeGreaterThan(0);
+    });
+    expect(screen.getByText('GitHub notifications')).toBeInTheDocument();
+  });
+
+  it('filters the result list when a navigator source is clicked', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => screen.getByText('GitHub notifications'));
+
+    // Before click — multiple sources surface in the result list
+    const beforeRows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+    expect(beforeRows.length).toBeGreaterThan(1);
+
+    fireEvent.click(screen.getByText('GitHub notifications'));
 
     await waitFor(() => {
-      expect(screen.getByText('Memory Graph')).toBeInTheDocument();
+      const rows = screen
+        .getAllByRole('button')
+        .filter(b => b.dataset.chunkId)
+        .map(b => b.textContent ?? '');
+      // Every visible row should mention GitHub notifications via meta line
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every(r => /github/i.test(r))).toBe(true);
+    });
+  });
+
+  it('typing in the search box narrows the result list', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => screen.getByText('TODAY'));
+
+    const search = screen.getByLabelText('Search memory') as HTMLInputElement;
+    fireEvent.change(search, { target: { value: 'PR #1175' } });
+
+    await waitFor(() => {
+      const visible = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+      expect(visible.length).toBeGreaterThan(0);
+      expect(visible.length).toBeLessThan(5);
+    });
+  });
+
+  it('clicking a result row populates the detail pane with that chunk', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => screen.getByText('TODAY'));
+
+    const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+    expect(rows.length).toBeGreaterThan(1);
+
+    // Pick a different row than the auto-selected one
+    const target = rows[rows.length - 1]!;
+    const targetId = target.dataset.chunkId!;
+    fireEvent.click(target);
+
+    await waitFor(() => {
+      const active = document.querySelector('[data-chunk-id].is-active') as HTMLElement | null;
+      expect(active?.dataset.chunkId).toBe(targetId);
+    });
+  });
+
+  it('renders score bars in the detail pane', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-chunk-scorebars')).toBeInTheDocument();
+    });
+    // There should be 3 SVG bars — source / entities / recency
+    const svgs = screen.getByTestId('memory-chunk-scorebars').querySelectorAll('svg');
+    expect(svgs.length).toBe(3);
+  });
+
+  it('renders mentioned entities and clicking one activates the lens', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => screen.getByTestId('memory-chunk-mentioned'));
+
+    const mentionedRows = screen
+      .getByTestId('memory-chunk-mentioned')
+      .querySelectorAll('button.mw-mentioned-row');
+    expect(mentionedRows.length).toBeGreaterThan(0);
+
+    fireEvent.click(mentionedRows[0]!);
+
+    // After click, the result list is narrowed to chunks tagged with that entity
+    await waitFor(() => {
+      const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+      expect(rows.length).toBeGreaterThan(0);
     });
   });
 });
 
-describe('MemoryWorkspace – no graph relations', () => {
-  const onToast = vi.fn();
+describe('MemoryWorkspace — empty state', () => {
+  it('renders the empty placeholder when there are zero chunks', async () => {
+    const apiMod = await import('../../../lib/memory/memoryTreeApi');
+    const listSpy = vi
+      .spyOn(apiMod.memoryTreeApi, 'listChunks')
+      .mockResolvedValue({ chunks: [], total: 0 });
+    const sourcesSpy = vi.spyOn(apiMod.memoryTreeApi, 'listSources').mockResolvedValue([]);
+    const entSpy = vi.spyOn(apiMod.memoryTreeApi, 'topEntities').mockResolvedValue([]);
 
-  it('shows empty-state message when no relations exist', async () => {
-    // Override only memoryGraphQuery to return empty
-    const tauriMod = await import('../../../utils/tauriCommands');
-    vi.mocked(tauriMod.memoryGraphQuery).mockResolvedValueOnce([]);
-
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-
-    await waitFor(() => {
-      expect(screen.getByText('No memory graph data yet')).toBeInTheDocument();
-    });
-  });
-});
-
-describe('MemoryWorkspace – non-Tauri environment', () => {
-  const onToast = vi.fn();
-
-  it('shows Tauri-required warning when not running in Tauri', async () => {
-    const tauriMod = await import('../../../utils/tauriCommands');
-    vi.mocked(tauriMod.isTauri).mockReturnValue(false);
-
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    renderWithProviders(<MemoryWorkspace />);
 
     await waitFor(() => {
-      expect(
-        screen.getByText('Memory workspace requires the desktop Tauri runtime to load real data.')
-      ).toBeInTheDocument();
+      expect(screen.getByTestId('memory-empty-placeholder')).toBeInTheDocument();
     });
+    expect(screen.getByText('Nothing yet.')).toBeInTheDocument();
 
-    // Restore for other tests
-    vi.mocked(tauriMod.isTauri).mockReturnValue(true);
-  });
-});
-
-describe('MemoryWorkspace – Sync section', () => {
-  const onToast = vi.fn();
-
-  it('renders the Sync collapsible button', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => {
-      expect(screen.getByText('Sync')).toBeInTheDocument();
-    });
-  });
-
-  it('expands and shows Sync all button when toggled', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => {
-      expect(screen.getByText('Sync')).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByText('Sync').closest('button')!);
-    await waitFor(() => {
-      expect(screen.getByText('Sync all')).toBeInTheDocument();
-    });
-  });
-
-  it('calls memorySyncAll when Sync all button clicked', async () => {
-    const tauriMod = await import('../../../utils/tauriCommands');
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => screen.getByText('Sync'));
-    fireEvent.click(screen.getByText('Sync').closest('button')!);
-    await waitFor(() => screen.getByText('Sync all'));
-    fireEvent.click(screen.getByText('Sync all'));
-    await waitFor(() => {
-      expect(vi.mocked(tauriMod.memorySyncAll)).toHaveBeenCalled();
-    });
-  });
-
-  it('calls memorySyncChannel when per-channel Sync button clicked', async () => {
-    const tauriMod = await import('../../../utils/tauriCommands');
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => screen.getByText('Sync'));
-    fireEvent.click(screen.getByText('Sync').closest('button')!);
-    await waitFor(() => screen.getAllByText('Sync').length > 1);
-    // The per-channel sync buttons appear after channels load
-    await waitFor(() => screen.getByText('telegram-main'));
-    const syncBtns = screen.getAllByText('Sync');
-    // Last Sync buttons are per-channel (first is the header)
-    fireEvent.click(syncBtns[syncBtns.length - 1]);
-    await waitFor(() => {
-      expect(vi.mocked(tauriMod.memorySyncChannel)).toHaveBeenCalledWith('discord-bot');
-    });
-  });
-});
-
-describe('MemoryWorkspace – Learn section', () => {
-  const onToast = vi.fn();
-
-  it('renders the Learn collapsible button', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => {
-      expect(screen.getByText('Learn')).toBeInTheDocument();
-    });
-  });
-
-  it('expands and shows Learn all button when toggled', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => screen.getByText('Learn'));
-    fireEvent.click(screen.getByText('Learn').closest('button')!);
-    await waitFor(() => {
-      expect(screen.getByText('Learn all')).toBeInTheDocument();
-    });
-  });
-
-  it('calls memoryLearnAll and shows result summary', async () => {
-    const tauriMod = await import('../../../utils/tauriCommands');
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => screen.getByText('Learn'));
-    fireEvent.click(screen.getByText('Learn').closest('button')!);
-    await waitFor(() => screen.getByText('Learn all'));
-    fireEvent.click(screen.getByText('Learn all'));
-    await waitFor(() => {
-      expect(vi.mocked(tauriMod.memoryLearnAll)).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect(screen.getByText(/2 processed/)).toBeInTheDocument();
-    });
+    listSpy.mockRestore();
+    sourcesSpy.mockRestore();
+    entSpy.mockRestore();
   });
 });
