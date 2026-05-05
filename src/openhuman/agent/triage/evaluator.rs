@@ -245,6 +245,19 @@ pub async fn run_triage_with_resolved(
         used_local = used_local,
         "[triage::evaluator] dispatching {AGENT_RUN_TURN_METHOD}"
     );
+
+    // Gate the LLM round-trip on the scheduler's global single slot
+    // ONLY when the resolved provider is local. Cloud routes already
+    // have their own (forthcoming) rate-limiter and are not the
+    // resource that the gate exists to protect — gating cloud here
+    // would just delay triage for no reason.
+    let _gate_permit = if used_local {
+        log::debug!("[triage::evaluator] local route — acquiring scheduler_gate llm permit");
+        crate::openhuman::scheduler_gate::wait_for_capacity().await
+    } else {
+        None
+    };
+
     let response = match request_native_global::<AgentTurnRequest, AgentTurnResponse>(
         AGENT_RUN_TURN_METHOD,
         request,
