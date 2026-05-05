@@ -59,10 +59,7 @@ impl TurnStateStore {
         // a directory for sync is not supported (Windows). The fsync
         // failure is logged but not fatal.
         if let Err(err) = sync_dir(&dir) {
-            log::warn!(
-                "{LOG_PREFIX} failed to fsync {}: {err}",
-                dir.display()
-            );
+            log::warn!("{LOG_PREFIX} failed to fsync {}: {err}", dir.display());
         }
         debug!(
             "{LOG_PREFIX} wrote snapshot thread={} lifecycle={:?} iter={}/{} timeline={}",

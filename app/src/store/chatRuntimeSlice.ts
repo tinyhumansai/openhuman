@@ -266,9 +266,7 @@ const chatRuntimeSlice = createSlice({
       if (snapshot.lifecycle === 'interrupted') {
         delete state.inferenceStatusByThread[threadId];
         delete state.streamingAssistantByThread[threadId];
-        state.toolTimelineByThread[threadId] = snapshot.toolTimeline.map(
-          toolTimelineFromPersisted
-        );
+        state.toolTimelineByThread[threadId] = snapshot.toolTimeline.map(toolTimelineFromPersisted);
         return;
       }
 

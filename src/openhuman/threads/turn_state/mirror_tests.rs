@@ -106,7 +106,11 @@ fn tool_call_started_reuses_args_delta_placeholder_for_same_call_id() {
         iteration: 1,
     });
     let timeline = &m.snapshot().tool_timeline;
-    assert_eq!(timeline.len(), 1, "placeholder must be reused, not duplicated");
+    assert_eq!(
+        timeline.len(),
+        1,
+        "placeholder must be reused, not duplicated"
+    );
     assert_eq!(timeline[0].id, "tc-7");
     assert_eq!(timeline[0].name, "shell");
     assert_eq!(timeline[0].args_buffer.as_deref(), Some("{\"q\":1"));
@@ -121,7 +125,10 @@ fn tool_call_started_reuses_args_delta_placeholder_for_same_call_id() {
         iteration: 1,
     });
     assert_eq!(m.snapshot().tool_timeline.len(), 1);
-    assert_eq!(m.snapshot().tool_timeline[0].status, ToolTimelineStatus::Success);
+    assert_eq!(
+        m.snapshot().tool_timeline[0].status,
+        ToolTimelineStatus::Success
+    );
 }
 
 #[test]

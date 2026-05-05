@@ -464,9 +464,7 @@ pub async fn threads_purge(
     match turn_state::store::list(dir.clone()) {
         Ok(snapshots) => {
             for snapshot in snapshots {
-                if let Err(err) =
-                    turn_state::store::delete(dir.clone(), &snapshot.thread_id)
-                {
+                if let Err(err) = turn_state::store::delete(dir.clone(), &snapshot.thread_id) {
                     log::warn!(
                         "[threads:ops] failed to clear orphan turn snapshot for {}: {err}",
                         snapshot.thread_id
@@ -474,9 +472,9 @@ pub async fn threads_purge(
                 }
             }
         }
-        Err(err) => log::warn!(
-            "[threads:ops] failed to enumerate turn snapshots during purge: {err}"
-        ),
+        Err(err) => {
+            log::warn!("[threads:ops] failed to enumerate turn snapshots during purge: {err}")
+        }
     }
     Ok(envelope(
         PurgeConversationThreadsResponse {

@@ -177,9 +177,7 @@ describe('chatRuntimeSlice', () => {
       activeTool: 'shell',
       streamingText: 'half-finished reply',
       thinking: 'half-finished thought',
-      toolTimeline: [
-        { id: 'tc-1', name: 'shell', round: 5, status: 'running' },
-      ],
+      toolTimeline: [{ id: 'tc-1', name: 'shell', round: 5, status: 'running' }],
       startedAt: '2026-05-04T10:00:00Z',
       updatedAt: '2026-05-04T10:00:05Z',
     };
