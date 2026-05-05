@@ -150,19 +150,16 @@ beforeEach(() => {
   memoryTreeChunkScore.mockResolvedValue(FIXTURE_SCORE);
 });
 
-// TODO(post-merge): MemoryWorkspace was rewritten from a three-pane shell
-// (Navigator + ResultList + ChunkDetail rendered side-by-side) to a
-// 2-pane base (Navigator + ResultList) plus a full-card overlay for
-// ChunkDetail that opens when a row is clicked. The skipped tests below
-// were written against the old layout (data-testid="memory-chunk-mentioned",
-// score bars rendered in-pane on mount, three-pane scaffold) and don't
-// fit the new flow. They're skipped pending a rewrite that exercises
-// the overlay open/close + Esc-to-dismiss + scroll-state-preservation
-// surface.
 describe('MemoryWorkspace — 2-pane + overlay browser', () => {
-  it.skip('renders the three pane scaffold and the navigator search box', async () => {
+  it('renders the navigator + result list scaffold and the search box', async () => {
     renderWithProviders(<MemoryWorkspace />);
-    expect(screen.getByTestId('memory-workspace')).toBeInTheDocument();
+    // Workspace renders the empty placeholder until the first fixture
+    // round-trip lands — the full 2-pane shell only mounts once allChunks
+    // is populated. Wait for the post-load state, then assert all four
+    // anchors exist together.
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-workspace')).toBeInTheDocument();
+    });
     expect(screen.getByTestId('memory-navigator')).toBeInTheDocument();
     expect(screen.getByTestId('memory-result-list')).toBeInTheDocument();
     expect(screen.getByLabelText('Search memory')).toBeInTheDocument();
@@ -178,110 +175,90 @@ describe('MemoryWorkspace — 2-pane + overlay browser', () => {
     });
   });
 
-  it.skip('renders navigator section headings (recent, sources, people, topics)', async () => {
+  it('renders navigator section headings (recent, sources, people, topics)', async () => {
     renderWithProviders(<MemoryWorkspace />);
-    expect(screen.getByText('recent')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('recent')).toBeInTheDocument();
+    });
     expect(screen.getByText('sources')).toBeInTheDocument();
     expect(screen.getByText('people')).toBeInTheDocument();
     expect(screen.getByText('topics')).toBeInTheDocument();
   });
 
-  it.skip('auto-selects the most recent admitted chunk on mount and renders detail', async () => {
+  it('does NOT auto-open the detail overlay on mount (2-pane is the default rest state)', async () => {
     renderWithProviders(<MemoryWorkspace />);
-    await waitFor(() => {
-      expect(screen.getByTestId('memory-chunk-detail')).toBeInTheDocument();
-      expect(screen.getByTestId('memory-chunk-letterhead')).toBeInTheDocument();
-    });
+    // Wait for fixtures to land so we know the workspace is fully rendered.
+    await waitFor(() => screen.getByTestId('memory-result-list'));
+    // The new layout opens detail only on row click; no overlay until then.
+    expect(screen.queryByTestId('memory-chunk-detail')).toBeNull();
   });
 
-  it.skip('renders the result list with TODAY group present at the top', async () => {
+  it('renders the Sources section count + per-kind nesting after the load resolves', async () => {
     renderWithProviders(<MemoryWorkspace />);
+    // Inside the Sources NavSection, fixtures group into Email (2) + Chat (1).
+    // Each per-kind sub-section is rendered as its own NavSection — closed by
+    // default, but the labels are visible.
     await waitFor(() => {
-      expect(screen.getByText('TODAY')).toBeInTheDocument();
+      expect(screen.getByText('Email')).toBeInTheDocument();
+      expect(screen.getByText('Chat')).toBeInTheDocument();
     });
+    // Person entities (from FIXTURE_PEOPLE) ARE visible by default — the
+    // people NavSection is `defaultOpen`.
+    expect(screen.getAllByText('Steven Enamakel').length).toBeGreaterThan(0);
+    expect(screen.getByText('Maya Patel')).toBeInTheDocument();
   });
 
-  it.skip('renders source rows for fixture sources', async () => {
+  it('typing in the search box narrows the result-list rows', async () => {
     renderWithProviders(<MemoryWorkspace />);
     await waitFor(() => {
-      expect(screen.getAllByText('Steven Enamakel').length).toBeGreaterThan(0);
+      const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+      expect(rows.length).toBe(FIXTURE_CHUNKS.length);
     });
-    expect(screen.getByText('GitHub notifications')).toBeInTheDocument();
-  });
-
-  it.skip('filters the result list when a navigator source is clicked', async () => {
-    renderWithProviders(<MemoryWorkspace />);
-    await waitFor(() => screen.getByText('GitHub notifications'));
-
-    const beforeRows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
-    expect(beforeRows.length).toBeGreaterThan(1);
-
-    fireEvent.click(screen.getByText('GitHub notifications'));
-
-    await waitFor(() => {
-      const rows = screen
-        .getAllByRole('button')
-        .filter(b => b.dataset.chunkId)
-        .map(b => b.textContent ?? '');
-      expect(rows.length).toBeGreaterThan(0);
-      expect(rows.every(r => /github/i.test(r))).toBe(true);
-    });
-  });
-
-  it.skip('typing in the search box narrows the result list', async () => {
-    renderWithProviders(<MemoryWorkspace />);
-    await waitFor(() => screen.getByText('TODAY'));
 
     const search = screen.getByLabelText('Search memory') as HTMLInputElement;
     fireEvent.change(search, { target: { value: 'PR #1175' } });
 
     await waitFor(() => {
       const visible = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
-      expect(visible.length).toBeGreaterThan(0);
-      expect(visible.length).toBeLessThan(FIXTURE_CHUNKS.length);
+      expect(visible.length).toBe(1);
+      expect(visible[0]?.textContent ?? '').toMatch(/PR #1175|github/i);
     });
   });
 
-  it.skip('clicking a result row populates the detail pane with that chunk', async () => {
+  it('opens the detail overlay when a result row is clicked', async () => {
     renderWithProviders(<MemoryWorkspace />);
-    await waitFor(() => screen.getByText('TODAY'));
-
-    const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
-    expect(rows.length).toBeGreaterThan(1);
-
-    const target = rows[rows.length - 1]!;
-    const targetId = target.dataset.chunkId!;
-    fireEvent.click(target);
-
-    await waitFor(() => {
-      const active = document.querySelector('[data-chunk-id].is-active') as HTMLElement | null;
-      expect(active?.dataset.chunkId).toBe(targetId);
-    });
-  });
-
-  it.skip('renders score bars in the detail pane', async () => {
-    renderWithProviders(<MemoryWorkspace />);
-    await waitFor(() => {
-      expect(screen.getByTestId('memory-chunk-scorebars')).toBeInTheDocument();
-    });
-    const svgs = screen.getByTestId('memory-chunk-scorebars').querySelectorAll('svg');
-    expect(svgs.length).toBe(3);
-  });
-
-  it.skip('renders mentioned entities and clicking one activates the lens', async () => {
-    renderWithProviders(<MemoryWorkspace />);
-    await waitFor(() => screen.getByTestId('memory-chunk-mentioned'));
-
-    const mentionedRows = screen
-      .getByTestId('memory-chunk-mentioned')
-      .querySelectorAll('button.mw-mentioned-row');
-    expect(mentionedRows.length).toBeGreaterThan(0);
-
-    fireEvent.click(mentionedRows[0]!);
-
     await waitFor(() => {
       const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
       expect(rows.length).toBeGreaterThan(0);
+    });
+
+    const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+    fireEvent.click(rows[0]!);
+
+    await waitFor(() => {
+      // Detail overlay mounts the ChunkDetail (data-testid="memory-chunk-detail")
+      // along with the letterhead — both show only after a row click in the
+      // 2-pane + overlay layout.
+      expect(screen.getByTestId('memory-chunk-detail')).toBeInTheDocument();
+      expect(screen.getByTestId('memory-chunk-letterhead')).toBeInTheDocument();
+    });
+  });
+
+  it('closes the detail overlay on Escape key', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => {
+      const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+      expect(rows.length).toBeGreaterThan(0);
+    });
+
+    const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+    fireEvent.click(rows[0]!);
+    await waitFor(() => screen.getByTestId('memory-chunk-detail'));
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('memory-chunk-detail')).toBeNull();
     });
   });
 });
