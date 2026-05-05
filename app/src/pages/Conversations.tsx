@@ -47,10 +47,13 @@ import {
 } from '../utils/tauriCommands';
 import { formatTimelineEntry } from '../utils/toolTimelineFormatting';
 import { AgentMessageBubble, BubbleMarkdown } from './conversations/components/AgentMessageBubble';
-import { evaluateComposerSend, handleComposerSlashCommand } from './conversations/composerSendDecision';
 import { CitationChips, type MessageCitation } from './conversations/components/CitationChips';
 import { LimitPill } from './conversations/components/LimitPill';
 import { ToolTimelineBlock } from './conversations/components/ToolTimelineBlock';
+import {
+  evaluateComposerSend,
+  handleComposerSlashCommand,
+} from './conversations/composerSendDecision';
 import {
   type AgentBubblePosition,
   buildAcceptedInlineCompletion,

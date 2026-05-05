@@ -34,9 +34,7 @@ export const handleComposerSlashCommand = (
   return { kind: 'not_handled' };
 };
 
-export const evaluateComposerSend = (
-  args: ComposerSendDecisionArgs
-): ComposerSendDecision => {
+export const evaluateComposerSend = (args: ComposerSendDecisionArgs): ComposerSendDecision => {
   const trimmedText = args.rawText.trim();
 
   if (!trimmedText) {
@@ -59,8 +57,5 @@ export const evaluateComposerSend = (
     return { shouldSend: false, trimmedText, blockReason: 'socket_disconnected' };
   }
 
-  return {
-    shouldSend: true,
-    trimmedText,
-  };
+  return { shouldSend: true, trimmedText };
 };

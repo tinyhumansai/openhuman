@@ -12,11 +12,7 @@ describe('evaluateComposerSend', () => {
       socketStatus: 'connected',
     });
 
-    expect(decision).toEqual({
-      shouldSend: false,
-      trimmedText: '',
-      blockReason: 'empty_input',
-    });
+    expect(decision).toEqual({ shouldSend: false, trimmedText: '', blockReason: 'empty_input' });
   });
 
   it('blocks usage limit', () => {
