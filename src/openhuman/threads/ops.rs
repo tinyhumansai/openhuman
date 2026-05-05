@@ -437,13 +437,17 @@ pub async fn thread_delete(
     // Drop any persisted in-flight turn snapshot for this thread —
     // otherwise `threads_turn_state_list` keeps surfacing it (as
     // `Interrupted` on next restart) for a thread that no longer
-    // exists. Best-effort: a missing snapshot is the common case.
-    if let Err(err) = turn_state::store::delete(dir, &request.thread_id) {
-        log::warn!(
-            "[threads:ops] failed to clear turn snapshot for deleted thread {}: {err}",
+    // exists. Failure here is surfaced as an RPC error so callers
+    // can't observe a thread "deleted" while its snapshot (which
+    // mirrors conversation-derived state) remains on disk; the
+    // thread row itself is already gone at this point so the caller
+    // sees a partial failure they can act on instead of silent drift.
+    turn_state::store::delete(dir, &request.thread_id).map_err(|err| {
+        format!(
+            "thread {} deleted but turn-snapshot cleanup failed: {err}",
             request.thread_id
-        );
-    }
+        )
+    })?;
     web_channel::invalidate_thread_sessions(&request.thread_id).await;
     Ok(envelope(
         DeleteConversationThreadResponse { deleted },
@@ -460,21 +464,19 @@ pub async fn threads_purge(
     let stats = conversations::purge_threads(dir.clone())?;
     // Threads are gone, so any orphan turn snapshots can never be
     // reattached to a live thread. Wipe them in the same call so
-    // `turn_state_list` returns an empty set after a purge.
-    match turn_state::store::list(dir.clone()) {
-        Ok(snapshots) => {
-            for snapshot in snapshots {
-                if let Err(err) = turn_state::store::delete(dir.clone(), &snapshot.thread_id) {
-                    log::warn!(
-                        "[threads:ops] failed to clear orphan turn snapshot for {}: {err}",
-                        snapshot.thread_id
-                    );
-                }
-            }
-        }
-        Err(err) => {
-            log::warn!("[threads:ops] failed to enumerate turn snapshots during purge: {err}")
-        }
+    // `turn_state_list` returns an empty set after a purge. Failures
+    // are surfaced as RPC errors — this is a destructive cleanup
+    // path, callers should not see "purged" while snapshots remain.
+    let snapshots = turn_state::store::list(dir.clone()).map_err(|err| {
+        format!("threads purged but turn-snapshot enumeration failed: {err}")
+    })?;
+    for snapshot in snapshots {
+        turn_state::store::delete(dir.clone(), &snapshot.thread_id).map_err(|err| {
+            format!(
+                "threads purged but turn-snapshot cleanup failed for {}: {err}",
+                snapshot.thread_id
+            )
+        })?;
     }
     Ok(envelope(
         PurgeConversationThreadsResponse {
