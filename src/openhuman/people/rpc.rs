@@ -25,7 +25,10 @@ pub async fn handle_list(store: &PeopleStore, limit: usize) -> Result<RpcOutcome
 
     let mut ranked: Vec<(Value, f32)> = Vec::with_capacity(people.len());
     for p in people {
-        let interactions = interactions_by_person.get(&p.id).cloned().unwrap_or_default();
+        let interactions = interactions_by_person
+            .get(&p.id)
+            .cloned()
+            .unwrap_or_default();
         let s = score(&interactions, now);
         let handles: Vec<Value> = p
             .handles
