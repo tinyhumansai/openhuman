@@ -409,7 +409,7 @@ async fn run_chat_task(
         sessions.remove(&map_key)
     };
 
-    let mut agent = match prior {
+    let (mut agent, was_built_fresh) = match prior {
         Some(entry)
             if entry.model_override == model_override
                 && entry.temperature == temperature
@@ -421,7 +421,7 @@ async fn run_chat_task(
                 client_id,
                 thread_id
             );
-            entry.agent
+            (entry.agent, false)
         }
         Some(prior_entry) => {
             log::info!(
@@ -431,22 +431,74 @@ async fn run_chat_task(
                 client_id,
                 thread_id
             );
+            (
+                build_session_agent(
+                    &config,
+                    client_id,
+                    thread_id,
+                    model_override.clone(),
+                    temperature,
+                )?,
+                true,
+            )
+        }
+        None => (
             build_session_agent(
                 &config,
                 client_id,
                 thread_id,
                 model_override.clone(),
                 temperature,
-            )?
-        }
-        None => build_session_agent(
-            &config,
-            client_id,
-            thread_id,
-            model_override.clone(),
-            temperature,
-        )?,
+            )?,
+            true,
+        ),
     };
+
+    // Cold-boot resume from the conversation JSONL.
+    //
+    // The agent's `try_load_session_transcript` mechanism only fires
+    // when a transcript file matches `agent_definition_name` — it
+    // misses on cold boot if the previous process wrote transcripts
+    // under a different name (the `set_agent_definition_name` /
+    // `session_key` rename bug fixed in this PR). The conversation
+    // JSONL store is the authoritative per-thread message log either
+    // way, so seed from it whenever we just built a fresh agent. The
+    // method is a no-op if the agent already has a cached transcript
+    // or non-empty history, so this is cheap on the warm path too.
+    if was_built_fresh {
+        match crate::openhuman::memory::conversations::get_messages(
+            config.workspace_dir.clone(),
+            thread_id,
+        ) {
+            Ok(prior_messages) if !prior_messages.is_empty() => {
+                let pairs: Vec<(String, String)> = prior_messages
+                    .into_iter()
+                    .map(|m| (m.sender, m.content))
+                    .collect();
+                if let Err(err) = agent.seed_resume_from_messages(pairs, message) {
+                    log::warn!(
+                        "[web-channel] failed to seed agent resume from conversation log \
+                         thread={} err={}",
+                        thread_id,
+                        err
+                    );
+                }
+            }
+            Ok(_) => {
+                log::debug!(
+                    "[web-channel] no prior messages to seed for thread={} — first turn",
+                    thread_id
+                );
+            }
+            Err(err) => {
+                log::warn!(
+                    "[web-channel] failed to read conversation log for resume thread={} err={}",
+                    thread_id,
+                    err
+                );
+            }
+        }
+    }
 
     // Wire up a real-time progress channel so tool calls, iterations,
     // and sub-agent events are emitted to the web channel as they happen
