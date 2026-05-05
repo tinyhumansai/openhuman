@@ -27,6 +27,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 
 use crate::process_kill::{kill_pid_force, kill_pid_term};
 
@@ -51,6 +52,7 @@ pub fn current_rpc_token() -> Option<String> {
 #[derive(Clone)]
 pub struct CoreProcessHandle {
     task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    shutdown_token: Arc<Mutex<CancellationToken>>,
     restart_lock: Arc<Mutex<()>>,
     port: u16,
     /// Bearer token the embedded server validates on every inbound request.
@@ -72,6 +74,7 @@ impl CoreProcessHandle {
         let rpc_token = generate_rpc_token();
         Self {
             task: Arc::new(Mutex::new(None)),
+            shutdown_token: Arc::new(Mutex::new(CancellationToken::new())),
             restart_lock: Arc::new(Mutex::new(())),
             port,
             rpc_token: Arc::new(rpc_token),
@@ -131,6 +134,7 @@ impl CoreProcessHandle {
         }
 
         {
+            let shutdown_token = self.fresh_shutdown_token().await;
             let mut guard = self.task.lock().await;
             if guard.is_none() {
                 let port = self.port;
@@ -141,9 +145,13 @@ impl CoreProcessHandle {
                 std::env::set_var("OPENHUMAN_CORE_TOKEN", self.rpc_token.as_str());
                 log::info!("[core] spawning embedded in-process core server on port {port}");
                 let task = tokio::spawn(async move {
-                    if let Err(e) =
-                        openhuman_core::core::jsonrpc::run_server_embedded(None, Some(port), true)
-                            .await
+                    if let Err(e) = openhuman_core::core::jsonrpc::run_server_embedded(
+                        None,
+                        Some(port),
+                        true,
+                        shutdown_token,
+                    )
+                    .await
                     {
                         log::error!("[core] embedded core server exited with error: {e}");
                     } else {
@@ -332,8 +340,33 @@ impl CoreProcessHandle {
         }
     }
 
+    async fn fresh_shutdown_token(&self) -> CancellationToken {
+        let mut guard = self.shutdown_token.lock().await;
+        if guard.is_cancelled() {
+            log::debug!("[core] resetting embedded core shutdown token for new spawn");
+            *guard = CancellationToken::new();
+        }
+        guard.clone()
+    }
+
+    async fn cancel_shutdown_token(&self, log_context: &str) {
+        let token = self.shutdown_token.lock().await.clone();
+        if token.is_cancelled() {
+            log::debug!("[core] embedded core shutdown token already cancelled{log_context}");
+        } else {
+            log::info!("[core] cancelling embedded core shutdown token{log_context}");
+            token.cancel();
+        }
+    }
+
+    #[cfg(test)]
+    async fn shutdown_token_is_cancelled(&self) -> bool {
+        self.shutdown_token.lock().await.is_cancelled()
+    }
+
     /// Stop the embedded server task. Safe to call when nothing is running.
     pub async fn shutdown(&self) {
+        self.cancel_shutdown_token("").await;
         self.abort_task("").await;
     }
 
@@ -344,6 +377,7 @@ impl CoreProcessHandle {
     /// and non-blocking on the UI thread — `JoinHandle::abort` returns
     /// immediately.
     pub async fn send_terminate_signal(&self) {
+        self.cancel_shutdown_token(" on app shutdown").await;
         self.abort_task(" on app shutdown").await;
     }
 }

@@ -1,9 +1,96 @@
 use serde_json::json;
+use std::ffi::{OsStr, OsString};
+use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 use super::{
     build_http_schema_dump, default_state, escape_html, invoke_method, is_session_expired_error,
     params_to_object, parse_json_params, type_name,
 };
+
+struct EnvVarGuard {
+    key: &'static str,
+    old: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
+        let old = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, old }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.old {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+async fn wait_until_port_accepts(port: u16) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+        {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "server did not start accepting on port {port}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+async fn wait_until_port_released(port: u16) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "server did not release port {port}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[tokio::test]
+async fn shutdown_token_stops_axum_listener_within_timeout() {
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+    let _workspace = EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path().as_os_str());
+    let _disable_channels = EnvVarGuard::set("OPENHUMAN_DISABLE_CHANNEL_LISTENERS", "1");
+    let _token = EnvVarGuard::set("OPENHUMAN_CORE_TOKEN", "test-token-shutdown");
+
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("allocate test port");
+    let port = probe.local_addr().expect("local addr").port();
+    drop(probe);
+
+    let shutdown_token = CancellationToken::new();
+    let server_token = shutdown_token.clone();
+    let server = tokio::spawn(async move {
+        super::run_server_embedded(Some("127.0.0.1"), Some(port), false, server_token).await
+    });
+
+    wait_until_port_accepts(port).await;
+    shutdown_token.cancel();
+
+    let result = tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .expect("embedded server task should stop within timeout")
+        .expect("embedded server task should not panic");
+    result.expect("embedded server should shut down cleanly");
+    wait_until_port_released(port).await;
+}
 
 #[tokio::test]
 async fn invoke_health_snapshot_via_registry() {

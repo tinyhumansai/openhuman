@@ -234,3 +234,19 @@ fn each_handle_has_unique_token() {
         "each handle must have a unique token"
     );
 }
+
+#[test]
+fn send_terminate_signal_cancels_shutdown_token() {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let handle = CoreProcessHandle::new(19005);
+        assert!(!handle.shutdown_token_is_cancelled().await);
+
+        handle.send_terminate_signal().await;
+
+        assert!(
+            handle.shutdown_token_is_cancelled().await,
+            "send_terminate_signal must cancel graceful Axum shutdown before aborting the task"
+        );
+    });
+}
