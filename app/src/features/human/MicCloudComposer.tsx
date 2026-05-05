@@ -2,6 +2,7 @@ import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
 
 import { transcribeCloud } from './voice/sttClient';
+import { encodeBlobToWav } from './voice/wavEncoder';
 
 const composerLog = debug('human:mic-composer');
 
@@ -147,7 +148,13 @@ export function MicCloudComposer({ disabled, onSubmit, onError }: MicCloudCompos
     }
 
     try {
-      const transcript = await transcribeCloud(blob);
+      // Re-encode to 16kHz mono WAV before upload — Opus-in-WebM is rejected
+      // upstream with "Invalid JSON payload", and CEF doesn't reliably ship
+      // MP4/AAC recording. WAV is the lowest common denominator the Whisper
+      // upstream accepts.
+      const wav = await encodeBlobToWav(blob);
+      composerLog('re-encoded to wav bytes=%d', wav.size);
+      const transcript = await transcribeCloud(wav);
       if (!transcript) {
         onError?.('No speech detected. Try again.');
         setState('idle');
