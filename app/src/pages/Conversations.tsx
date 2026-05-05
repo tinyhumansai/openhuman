@@ -59,6 +59,7 @@ import { LimitPill } from './conversations/components/LimitPill';
 import { ToolTimelineBlock } from './conversations/components/ToolTimelineBlock';
 import {
   evaluateComposerSend,
+  getComposerBlockedSendFeedback,
   handleComposerSlashCommand,
 } from './conversations/composerSendDecision';
 import {
@@ -521,18 +522,12 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     }
 
     if (!sendDecision.shouldSend) {
-      if (sendDecision.blockReason === 'usage_limit_reached') {
+      const blockedFeedback = getComposerBlockedSendFeedback(sendDecision.blockReason);
+      if (blockedFeedback?.showLimitModal) {
         setShowLimitModal(true);
-        setSendError(
-          chatSendError('usage_limit_reached', 'Usage limit reached. Upgrade or wait for reset.')
-        );
-      } else if (sendDecision.blockReason === 'socket_disconnected') {
-        setSendError(
-          chatSendError(
-            'socket_disconnected',
-            'Realtime socket is not connected — responses cannot be delivered without a client ID.'
-          )
-        );
+      }
+      if (blockedFeedback) {
+        setSendError(chatSendError(blockedFeedback.error.code, blockedFeedback.error.message));
       }
       return;
     }
@@ -1613,6 +1608,8 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                 {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
               </div>
               <button
+                aria-label="Send message"
+                title="Send message"
                 onClick={() => {
                   void handleSendMessage();
                 }}

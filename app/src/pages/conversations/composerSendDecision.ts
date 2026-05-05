@@ -23,6 +23,11 @@ export interface ComposerSendDecision {
   blockReason?: ComposerSendBlockReason;
 }
 
+export interface ComposerBlockedSendFeedback {
+  showLimitModal: boolean;
+  error: { code: 'usage_limit_reached' | 'socket_disconnected'; message: string };
+}
+
 export const handleComposerSlashCommand = (
   command: string,
   welcomeLocked: boolean
@@ -58,4 +63,31 @@ export const evaluateComposerSend = (args: ComposerSendDecisionArgs): ComposerSe
   }
 
   return { shouldSend: true, trimmedText };
+};
+
+export const getComposerBlockedSendFeedback = (
+  blockReason: ComposerSendBlockReason | undefined
+): ComposerBlockedSendFeedback | null => {
+  if (blockReason === 'usage_limit_reached') {
+    return {
+      showLimitModal: true,
+      error: {
+        code: 'usage_limit_reached',
+        message: 'Usage limit reached. Upgrade or wait for reset.',
+      },
+    };
+  }
+
+  if (blockReason === 'socket_disconnected') {
+    return {
+      showLimitModal: false,
+      error: {
+        code: 'socket_disconnected',
+        message:
+          'Realtime socket is not connected — responses cannot be delivered without a client ID.',
+      },
+    };
+  }
+
+  return null;
 };
