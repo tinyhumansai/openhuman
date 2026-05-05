@@ -1020,6 +1020,143 @@ async fn json_rpc_thread_labels_create_and_update() {
 }
 
 #[tokio::test]
+async fn json_rpc_thread_turn_state_lifecycle() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // Empty workspace → no snapshots.
+    let empty_list = post_json_rpc(
+        &rpc_base,
+        9101,
+        "openhuman.threads_turn_state_list",
+        json!({}),
+    )
+    .await;
+    let outer = assert_no_jsonrpc_error(&empty_list, "turn_state_list (empty)");
+    assert_eq!(
+        outer
+            .get("data")
+            .and_then(|d| d.get("count"))
+            .and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+
+    // Drop a snapshot directly through the store — this is exactly what
+    // the web-channel progress mirror does mid-turn.
+    let workspace_dir = {
+        let cfg = openhuman_core::openhuman::config::Config::load_or_init()
+            .await
+            .expect("load config");
+        cfg.workspace_dir
+    };
+    let mut state = openhuman_core::openhuman::threads::turn_state::TurnState::started(
+        "thread-turn-1",
+        "req-turn-1",
+        25,
+        chrono::Utc::now().to_rfc3339(),
+    );
+    state.lifecycle =
+        openhuman_core::openhuman::threads::turn_state::TurnLifecycle::Streaming;
+    state.iteration = 2;
+    state.streaming_text = "partial".into();
+    openhuman_core::openhuman::threads::turn_state::store::put(workspace_dir.clone(), &state)
+        .expect("seed snapshot");
+
+    // get → present
+    let got = post_json_rpc(
+        &rpc_base,
+        9102,
+        "openhuman.threads_turn_state_get",
+        json!({ "thread_id": "thread-turn-1" }),
+    )
+    .await;
+    let got_outer = assert_no_jsonrpc_error(&got, "turn_state_get (present)");
+    let payload = got_outer
+        .get("data")
+        .and_then(|d| d.get("turnState"))
+        .expect("turnState present");
+    assert_eq!(
+        payload.get("threadId").and_then(serde_json::Value::as_str),
+        Some("thread-turn-1")
+    );
+    assert_eq!(
+        payload.get("lifecycle").and_then(serde_json::Value::as_str),
+        Some("streaming")
+    );
+    assert_eq!(
+        payload.get("iteration").and_then(serde_json::Value::as_u64),
+        Some(2)
+    );
+
+    // list → contains the seeded snapshot
+    let list = post_json_rpc(
+        &rpc_base,
+        9103,
+        "openhuman.threads_turn_state_list",
+        json!({}),
+    )
+    .await;
+    let list_outer = assert_no_jsonrpc_error(&list, "turn_state_list (one)");
+    assert_eq!(
+        list_outer
+            .get("data")
+            .and_then(|d| d.get("count"))
+            .and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+
+    // clear → cleared:true
+    let cleared = post_json_rpc(
+        &rpc_base,
+        9104,
+        "openhuman.threads_turn_state_clear",
+        json!({ "thread_id": "thread-turn-1" }),
+    )
+    .await;
+    let cleared_outer = assert_no_jsonrpc_error(&cleared, "turn_state_clear");
+    assert_eq!(
+        cleared_outer
+            .get("data")
+            .and_then(|d| d.get("cleared"))
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+
+    // subsequent get returns null
+    let got_again = post_json_rpc(
+        &rpc_base,
+        9105,
+        "openhuman.threads_turn_state_get",
+        json!({ "thread_id": "thread-turn-1" }),
+    )
+    .await;
+    let again_outer = assert_no_jsonrpc_error(&got_again, "turn_state_get (after clear)");
+    assert!(again_outer
+        .get("data")
+        .and_then(|d| d.get("turnState"))
+        .map(|v| v.is_null())
+        .unwrap_or(true));
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_memory_sync_and_learn() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");

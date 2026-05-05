@@ -909,6 +909,27 @@ pub async fn bootstrap_skill_runtime() {
     // cannot double-subscribe.
     register_domain_subscribers(workspace_dir.clone(), cfg.clone());
 
+    // --- Turn-state recovery -------------------------------------------
+    // Any per-thread turn snapshots left on disk from a previous process
+    // are stale by definition — there is no live driver to resume them.
+    // Stamp them as `Interrupted` so the UI can offer a retry without
+    // confusing a stale `Streaming` lifecycle for an in-flight turn.
+    {
+        let now = chrono::Utc::now().to_rfc3339();
+        match crate::openhuman::threads::turn_state::store::mark_all_interrupted(
+            workspace_dir.clone(),
+            &now,
+        ) {
+            Ok(0) => {}
+            Ok(count) => log::info!(
+                "[runtime] marked {count} stale turn snapshot(s) as interrupted"
+            ),
+            Err(err) => log::warn!(
+                "[runtime] failed to mark stale turn snapshots interrupted: {err}"
+            ),
+        }
+    }
+
     // --- Sub-agent definition registry bootstrap ---
     // Loads built-in archetype definitions plus any custom TOML files
     // under `<workspace>/agents/*.toml`. Idempotent — safe to call

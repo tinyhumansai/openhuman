@@ -16,6 +16,10 @@ use crate::openhuman::memory::{
     UpsertConversationThreadRequest,
 };
 use crate::openhuman::providers::{self, ProviderRuntimeOptions};
+use crate::openhuman::threads::turn_state::{
+    self, ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateRequest, GetTurnStateResponse,
+    ListTurnStatesResponse,
+};
 use crate::openhuman::threads::title::{
     build_title_prompt, collapse_whitespace, is_auto_generated_thread_title,
     sanitize_generated_title, title_log_fingerprint, THREAD_TITLE_LOG_PREFIX,
@@ -453,6 +457,45 @@ pub async fn threads_purge(
         None,
         None,
     ))
+}
+
+/// Returns the persisted in-flight turn snapshot for a thread, if any.
+pub async fn turn_state_get(
+    request: GetTurnStateRequest,
+) -> Result<RpcOutcome<ApiEnvelope<GetTurnStateResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let turn_state = turn_state::store::get(dir, &request.thread_id)?;
+    let present = turn_state.is_some();
+    Ok(envelope(
+        GetTurnStateResponse { turn_state },
+        Some(counts([("present", usize::from(present))])),
+        None,
+    ))
+}
+
+/// Lists every persisted turn snapshot — used by the UI on cold boot to
+/// surface interrupted turns from a previous process.
+pub async fn turn_state_list(
+    _request: EmptyRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ListTurnStatesResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let turn_states = turn_state::store::list(dir)?;
+    let count = turn_states.len();
+    Ok(envelope(
+        ListTurnStatesResponse { turn_states, count },
+        Some(counts([("num_turn_states", count)])),
+        None,
+    ))
+}
+
+/// Clears the persisted turn snapshot for a thread (e.g. after the user
+/// dismisses an "interrupted" banner).
+pub async fn turn_state_clear(
+    request: ClearTurnStateRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ClearTurnStateResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let cleared = turn_state::store::delete(dir, &request.thread_id)?;
+    Ok(envelope(ClearTurnStateResponse { cleared }, None, None))
 }
 
 #[cfg(test)]

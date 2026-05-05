@@ -15,6 +15,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
 };
+use crate::openhuman::threads::turn_state::{TurnStateMirror, TurnStateStore};
 use crate::rpc::RpcOutcome;
 
 use super::presentation;
@@ -452,11 +453,13 @@ async fn run_chat_task(
     // (instead of retroactively after the loop finishes).
     let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(64);
     agent.set_on_progress(Some(progress_tx));
+    let turn_state_store = TurnStateStore::new(config.workspace_dir.clone());
     spawn_progress_bridge(
         progress_rx,
         client_id.to_string(),
         thread_id.to_string(),
         request_id.to_string(),
+        turn_state_store,
     );
 
     // Make `thread_id` ambient for any outbound provider call inside
@@ -524,6 +527,7 @@ fn spawn_progress_bridge(
     client_id: String,
     thread_id: String,
     request_id: String,
+    turn_state_store: TurnStateStore,
 ) {
     use crate::openhuman::agent::progress::AgentProgress;
 
@@ -536,8 +540,11 @@ fn spawn_progress_bridge(
         );
         let mut round: u32 = 0;
         let mut events_seen: u64 = 0;
+        let mut turn_state =
+            TurnStateMirror::new(turn_state_store, thread_id.clone(), request_id.clone());
         while let Some(event) = rx.recv().await {
             events_seen += 1;
+            turn_state.observe(&event);
             // Per-variant trace so branch decisions are visible in
             // terminal output when correlating progress over Socket.IO.
             // Kept at trace-level for high-volume deltas and debug for
@@ -935,6 +942,7 @@ fn spawn_progress_bridge(
                 }
             }
         }
+        turn_state.finish();
         log::debug!(
             "[web_channel][bridge] exit client_id={} thread_id={} request_id={} round={} events_seen={}",
             client_id,

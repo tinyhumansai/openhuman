@@ -23,6 +23,7 @@ import { store } from '../store';
 import {
   beginInferenceTurn,
   clearRuntimeForThread,
+  fetchAndHydrateTurnState,
   setToolTimelineForThread,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -284,6 +285,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   useEffect(() => {
     if (selectedThreadId) {
       void dispatch(loadThreadMessages(selectedThreadId));
+      void dispatch(fetchAndHydrateTurnState(selectedThreadId));
     }
   }, [selectedThreadId, dispatch]);
 

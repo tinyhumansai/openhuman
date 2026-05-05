@@ -11,6 +11,7 @@ use crate::openhuman::memory::{
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
     UpsertConversationThreadRequest,
 };
+use crate::openhuman::threads::turn_state::{ClearTurnStateRequest, GetTurnStateRequest};
 
 use super::ops;
 
@@ -26,6 +27,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("message_update"),
         schemas("delete"),
         schemas("purge"),
+        schemas("turn_state_get"),
+        schemas("turn_state_list"),
+        schemas("turn_state_clear"),
     ]
 }
 
@@ -70,6 +74,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("purge"),
             handler: handle_purge,
+        },
+        RegisteredController {
+            schema: schemas("turn_state_get"),
+            handler: handle_turn_state_get,
+        },
+        RegisteredController {
+            schema: schemas("turn_state_list"),
+            handler: handle_turn_state_list,
+        },
+        RegisteredController {
+            schema: schemas("turn_state_clear"),
+            handler: handle_turn_state_clear,
         },
     ]
 }
@@ -304,6 +320,53 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "turn_state_get" => ControllerSchema {
+            namespace: "threads",
+            function: "turn_state_get",
+            description: "Fetch the persisted in-flight turn snapshot for a thread, if any.",
+            inputs: vec![FieldSchema {
+                name: "thread_id",
+                ty: TypeSchema::String,
+                comment: "Thread identifier.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Envelope wrapping the turn state (may be null).",
+                required: true,
+            }],
+        },
+        "turn_state_list" => ControllerSchema {
+            namespace: "threads",
+            function: "turn_state_list",
+            description:
+                "List every persisted turn snapshot — used to surface interrupted turns on cold boot.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Envelope with the list of turn snapshots and a count.",
+                required: true,
+            }],
+        },
+        "turn_state_clear" => ControllerSchema {
+            namespace: "threads",
+            function: "turn_state_clear",
+            description: "Delete the persisted turn snapshot for a thread.",
+            inputs: vec![FieldSchema {
+                name: "thread_id",
+                ty: TypeSchema::String,
+                comment: "Thread identifier.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Envelope reporting whether a snapshot was removed.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "threads",
             function: "unknown",
@@ -383,6 +446,24 @@ fn handle_delete(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_purge(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { to_json(ops::threads_purge(EmptyRequest {}).await?) })
+}
+
+fn handle_turn_state_get(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<GetTurnStateRequest>(params)?;
+        to_json(ops::turn_state_get(p).await?)
+    })
+}
+
+fn handle_turn_state_list(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(ops::turn_state_list(EmptyRequest {}).await?) })
+}
+
+fn handle_turn_state_clear(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<ClearTurnStateRequest>(params)?;
+        to_json(ops::turn_state_clear(p).await?)
+    })
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────

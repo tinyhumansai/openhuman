@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import type { PersistedTurnState } from '../../types/turnState';
 import reducer, {
   beginInferenceTurn,
   clearInferenceStatusForThread,
@@ -7,6 +8,7 @@ import reducer, {
   clearStreamingAssistantForThread,
   clearToolTimelineForThread,
   endInferenceTurn,
+  hydrateRuntimeFromSnapshot,
   markInferenceTurnStreaming,
   setInferenceStatusForThread,
   setStreamingAssistantForThread,
@@ -89,6 +91,80 @@ describe('chatRuntimeSlice', () => {
 
     const ended = reducer(streaming, endInferenceTurn({ threadId: 'thread-1' }));
     expect(ended.inferenceTurnLifecycleByThread['thread-1']).toBeUndefined();
+  });
+
+  it('hydrates runtime state from a persisted turn snapshot', () => {
+    const snapshot: PersistedTurnState = {
+      threadId: 'thread-h',
+      requestId: 'req-h',
+      lifecycle: 'streaming',
+      iteration: 3,
+      maxIterations: 25,
+      phase: 'tool_use',
+      activeTool: 'shell',
+      streamingText: 'partial reply',
+      thinking: 'reasoning…',
+      toolTimeline: [
+        {
+          id: 'tc-1',
+          name: 'shell',
+          round: 3,
+          status: 'running',
+          argsBuffer: '{"cmd":"ls"}',
+        },
+      ],
+      startedAt: '2026-05-04T10:00:00Z',
+      updatedAt: '2026-05-04T10:00:05Z',
+    };
+
+    const next = reducer(undefined, hydrateRuntimeFromSnapshot({ snapshot }));
+
+    expect(next.inferenceTurnLifecycleByThread['thread-h']).toBe('streaming');
+    expect(next.inferenceStatusByThread['thread-h']).toEqual({
+      phase: 'tool_use',
+      iteration: 3,
+      maxIterations: 25,
+      activeTool: 'shell',
+      activeSubagent: undefined,
+    });
+    expect(next.streamingAssistantByThread['thread-h']).toEqual({
+      requestId: 'req-h',
+      content: 'partial reply',
+      thinking: 'reasoning…',
+    });
+    expect(next.toolTimelineByThread['thread-h']).toEqual([
+      {
+        id: 'tc-1',
+        name: 'shell',
+        round: 3,
+        status: 'running',
+        argsBuffer: '{"cmd":"ls"}',
+        displayName: undefined,
+        detail: undefined,
+        sourceToolName: undefined,
+        subagent: undefined,
+      },
+    ]);
+  });
+
+  it('hydrating an interrupted snapshot exposes the lifecycle for retry UI', () => {
+    const snapshot: PersistedTurnState = {
+      threadId: 'thread-i',
+      requestId: 'req-i',
+      lifecycle: 'interrupted',
+      iteration: 0,
+      maxIterations: 0,
+      streamingText: '',
+      thinking: '',
+      toolTimeline: [],
+      startedAt: '2026-05-04T10:00:00Z',
+      updatedAt: '2026-05-04T10:00:01Z',
+    };
+    const next = reducer(undefined, hydrateRuntimeFromSnapshot({ snapshot }));
+    expect(next.inferenceTurnLifecycleByThread['thread-i']).toBe('interrupted');
+    expect(next.inferenceStatusByThread['thread-i']).toBeUndefined();
+    expect(next.streamingAssistantByThread['thread-i']).toBeUndefined();
+    expect(next.toolTimelineByThread['thread-i']).toEqual([]);
   });
 
   it('clears all runtime buckets for one thread', () => {
