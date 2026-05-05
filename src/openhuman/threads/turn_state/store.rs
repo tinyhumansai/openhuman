@@ -155,7 +155,10 @@ impl TurnStateStore {
             removed += 1;
         }
         if removed > 0 {
-            debug!("{LOG_PREFIX} cleared {removed} snapshots from {}", dir.display());
+            debug!(
+                "{LOG_PREFIX} cleared {removed} snapshots from {}",
+                dir.display()
+            );
         }
         Ok(removed)
     }
