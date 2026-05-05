@@ -218,11 +218,11 @@ const BottomTabBar = () => {
               const active = isActive(tab.path);
               const showBadge = tab.id === 'notifications' && unreadCount > 0;
               // data-walkthrough attributes for the Joyride walkthrough steps.
-              // Maps tab ids to their walkthrough target names (steps 3–6).
+              // Maps tab ids to their walkthrough target names.
               const walkthroughAttr: Record<string, string> = {
                 chat: 'tab-chat',
                 skills: 'tab-skills',
-                notifications: 'tab-automation',
+                notifications: 'tab-notifications',
                 settings: 'tab-settings',
               };
               return (

@@ -165,7 +165,9 @@ export default function Intelligence() {
         <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6">
           <div>
             {/* Header */}
-            <div className="flex items-center justify-between mb-6">
+            <div
+              className="flex items-center justify-between mb-6"
+              data-walkthrough="intelligence-header">
               <div className="flex items-center gap-3">
                 <h1 className="text-xl font-bold text-stone-900">Intelligence</h1>
                 {/* Header count badge was sourced from `stats.total` which

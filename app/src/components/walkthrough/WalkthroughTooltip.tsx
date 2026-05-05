@@ -1,7 +1,9 @@
 import type { TooltipRenderProps } from 'react-joyride';
 
-/** Emoji accents per step — adds visual personality to each tooltip. */
-const STEP_ICONS = ['🏠', '💬', '🧠', '⚡', '🤖', '🎉'];
+/** Emoji accents per step — adds visual personality to each tooltip.
+ *  9 entries map to: home-card, home-cta, chat, skills, intelligence,
+ *  settings, quick-access tabs, notifications, final. */
+const STEP_ICONS = ['🏠', '💬', '🗨️', '🧩', '🧠', '⚙️', '⚡', '🔔', '🎉'];
 
 /**
  * Premium tooltip for the post-onboarding Joyride walkthrough.

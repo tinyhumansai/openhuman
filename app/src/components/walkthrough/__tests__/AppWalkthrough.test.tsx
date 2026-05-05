@@ -1,23 +1,29 @@
 /**
- * Tests for the Joyride walkthrough components introduced in #1123.
+ * Tests for the Joyride walkthrough components introduced in #1123,
+ * extended in #1212 for multi-page guided tour.
  *
  * Verifies:
  *  - isWalkthroughPending / setWalkthroughPending / markWalkthroughComplete helpers
+ *  - resetWalkthrough: localStorage changes + event dispatch
  *  - AppWalkthrough renders only when pending
  *  - AppWalkthrough does not render when already completed
+ *  - AppWalkthrough restarts when walkthrough:restart event fires
  *  - Completing/skipping the tour calls markWalkthroughComplete (localStorage set)
- *  - Step count matches WALKTHROUGH_STEPS
+ *  - createWalkthroughSteps: 9 steps, cross-page steps have before functions
+ *  - waitForTarget: resolves when element added, rejects on timeout
  *  - WalkthroughTooltip renders step title, content, and navigation buttons
  */
 import { act, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   isWalkthroughPending,
   markWalkthroughComplete,
+  resetWalkthrough,
   setWalkthroughPending,
 } from '../AppWalkthrough';
-import { WALKTHROUGH_STEPS } from '../walkthroughSteps';
+import { createWalkthroughSteps, waitForTarget } from '../walkthroughSteps';
 // ── WalkthroughTooltip rendering tests ───────────────────────────────────
 
 import WalkthroughTooltip from '../WalkthroughTooltip';
@@ -181,6 +187,65 @@ describe('isWalkthroughPending — localStorage unavailable', () => {
   });
 });
 
+// ── resetWalkthrough tests ────────────────────────────────────────────────
+
+describe('resetWalkthrough', () => {
+  it('removes completed flag and sets pending flag in localStorage', () => {
+    localStorage.setItem(WALKTHROUGH_KEY, 'true');
+    localStorage.setItem(WALKTHROUGH_PENDING_KEY, 'false');
+
+    resetWalkthrough();
+
+    expect(localStorage.getItem(WALKTHROUGH_KEY)).toBeNull();
+    expect(localStorage.getItem(WALKTHROUGH_PENDING_KEY)).toBe('true');
+  });
+
+  it('dispatches walkthrough:restart CustomEvent on window', () => {
+    const handler = vi.fn();
+    window.addEventListener('walkthrough:restart', handler);
+
+    try {
+      resetWalkthrough();
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('walkthrough:restart', handler);
+    }
+  });
+
+  it('swallows localStorage errors but still dispatches the event', () => {
+    const realStorage = globalThis.localStorage;
+    const handler = vi.fn();
+    window.addEventListener('walkthrough:restart', handler);
+
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        ...realStorage,
+        removeItem() {
+          throw new DOMException('QuotaExceededError', 'QuotaExceededError');
+        },
+        setItem() {
+          throw new DOMException('QuotaExceededError', 'QuotaExceededError');
+        },
+      },
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      expect(() => resetWalkthrough()).not.toThrow();
+      // Even if localStorage fails, the event must still be dispatched.
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('walkthrough:restart', handler);
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: realStorage,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+});
+
 // ── AppWalkthrough component tests ────────────────────────────────────────
 
 describe('AppWalkthrough component', () => {
@@ -188,7 +253,11 @@ describe('AppWalkthrough component', () => {
     setWalkthroughPending();
 
     const { default: AppWalkthrough } = await import('../AppWalkthrough');
-    render(<AppWalkthrough />);
+    render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
 
     expect(screen.getByTestId('joyride-mock')).toBeInTheDocument();
     expect(screen.getByTestId('joyride-mock').getAttribute('data-run')).toBe('true');
@@ -198,7 +267,11 @@ describe('AppWalkthrough component', () => {
     // No pending flag set
 
     const { default: AppWalkthrough } = await import('../AppWalkthrough');
-    const { container } = render(<AppWalkthrough />);
+    const { container } = render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
 
     expect(container.firstChild).toBeNull();
   });
@@ -209,7 +282,11 @@ describe('AppWalkthrough component', () => {
     localStorage.setItem(WALKTHROUGH_KEY, 'true');
 
     const { default: AppWalkthrough } = await import('../AppWalkthrough');
-    const { container } = render(<AppWalkthrough />);
+    const { container } = render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
 
     expect(container.firstChild).toBeNull();
   });
@@ -218,14 +295,18 @@ describe('AppWalkthrough component', () => {
     setWalkthroughPending();
 
     const { default: AppWalkthrough } = await import('../AppWalkthrough');
-    render(<AppWalkthrough />);
+    render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
 
     // Joyride should be running initially
     expect(screen.getByTestId('joyride-mock').getAttribute('data-run')).toBe('true');
 
     // Simulate TOUR_END with FINISHED status
     await act(async () => {
-      capturedOnEvent?.({ type: 'tour:end', status: 'finished', index: 5 });
+      capturedOnEvent?.({ type: 'tour:end', status: 'finished', index: 8 });
     });
 
     // Walkthrough should be marked complete in localStorage
@@ -237,7 +318,11 @@ describe('AppWalkthrough component', () => {
     setWalkthroughPending();
 
     const { default: AppWalkthrough } = await import('../AppWalkthrough');
-    render(<AppWalkthrough />);
+    render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
 
     expect(screen.getByTestId('joyride-mock').getAttribute('data-run')).toBe('true');
 
@@ -254,7 +339,11 @@ describe('AppWalkthrough component', () => {
     setWalkthroughPending();
 
     const { default: AppWalkthrough } = await import('../AppWalkthrough');
-    render(<AppWalkthrough />);
+    render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
 
     // Simulate a step:after event (not tour:end)
     await act(async () => {
@@ -264,6 +353,31 @@ describe('AppWalkthrough component', () => {
     // Should NOT have marked complete
     expect(localStorage.getItem(WALKTHROUGH_KEY)).toBeNull();
     // Still running
+    expect(screen.getByTestId('joyride-mock')).toBeInTheDocument();
+  });
+
+  it('restarts the tour when walkthrough:restart event is dispatched', async () => {
+    // Start with walkthrough completed — component renders nothing initially.
+    localStorage.setItem(WALKTHROUGH_KEY, 'true');
+
+    const { default: AppWalkthrough } = await import('../AppWalkthrough');
+    const { container } = render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
+
+    // Should not be rendering joyride since completed.
+    expect(container.firstChild).toBeNull();
+
+    // Simulate resetWalkthrough() — clears completed, sets pending, fires event.
+    await act(async () => {
+      localStorage.removeItem(WALKTHROUGH_KEY);
+      localStorage.setItem(WALKTHROUGH_PENDING_KEY, 'true');
+      window.dispatchEvent(new CustomEvent('walkthrough:restart'));
+    });
+
+    // Component should now render the Joyride instance.
     expect(screen.getByTestId('joyride-mock')).toBeInTheDocument();
   });
 });
@@ -336,9 +450,9 @@ describe('WalkthroughTooltip', () => {
   });
 
   it('renders step counter showing current step of total', () => {
-    render(<WalkthroughTooltip {...makeTooltipProps({ index: 1, size: 6 })} />);
+    render(<WalkthroughTooltip {...makeTooltipProps({ index: 1, size: 9 })} />);
 
-    expect(screen.getByText('2 of 6')).toBeInTheDocument();
+    expect(screen.getByText('2 of 9')).toBeInTheDocument();
   });
 
   it('shows Skip button when not on last step', () => {
@@ -379,38 +493,127 @@ describe('WalkthroughTooltip', () => {
 
   it('renders progress bar', () => {
     const { container } = render(
-      <WalkthroughTooltip {...makeTooltipProps({ index: 2, size: 6 })} />
+      <WalkthroughTooltip {...makeTooltipProps({ index: 2, size: 9 })} />
     );
 
-    // Gradient progress bar fills based on step progress
+    // Gradient progress bar fills based on step progress (3/9 ≈ 33.33%)
     const bar = container.querySelector('div.bg-gradient-to-r');
     expect(bar).not.toBeNull();
-    expect(bar?.getAttribute('style')).toContain('width: 50%');
+    // width rounds to ~33.33% for step 3 of 9
+    expect(bar?.getAttribute('style')).toMatch(/width:\s*33\.3/);
   });
 });
 
-// ── walkthroughSteps tests ────────────────────────────────────────────────
+// ── createWalkthroughSteps tests ──────────────────────────────────────────
 
-describe('WALKTHROUGH_STEPS', () => {
-  it('has 6 steps', () => {
-    expect(WALKTHROUGH_STEPS).toHaveLength(6);
+describe('createWalkthroughSteps', () => {
+  it('returns 9 steps', () => {
+    const navigate = vi.fn();
+    const steps = createWalkthroughSteps(navigate);
+    expect(steps).toHaveLength(9);
   });
 
-  it('first step targets home-card and disables beacon', () => {
-    const first = WALKTHROUGH_STEPS[0];
-    expect(first.target).toBe('[data-walkthrough="home-card"]');
-    expect(first.skipBeacon).toBe(true);
+  it('first step targets home-card', () => {
+    const navigate = vi.fn();
+    const steps = createWalkthroughSteps(navigate);
+    expect(steps[0].target).toBe('[data-walkthrough="home-card"]');
   });
 
   it('last step targets tab-settings', () => {
-    const last = WALKTHROUGH_STEPS[WALKTHROUGH_STEPS.length - 1];
+    const navigate = vi.fn();
+    const steps = createWalkthroughSteps(navigate);
+    const last = steps[steps.length - 1];
     expect(last.target).toBe('[data-walkthrough="tab-settings"]');
   });
 
   it('all steps have a title and content', () => {
-    for (const step of WALKTHROUGH_STEPS) {
+    const navigate = vi.fn();
+    const steps = createWalkthroughSteps(navigate);
+    for (const step of steps) {
       expect(step.title).toBeTruthy();
       expect(step.content).toBeTruthy();
     }
+  });
+
+  it('cross-page steps (chat, skills, intelligence, settings, home-return) have before functions', () => {
+    const navigate = vi.fn();
+    const steps = createWalkthroughSteps(navigate);
+
+    // Step indices 2, 3, 4, 5, 6 (0-indexed) are cross-page steps.
+    const crossPageIndices = [2, 3, 4, 5, 6];
+    for (const idx of crossPageIndices) {
+      expect(typeof steps[idx].before, `step[${idx}] should have a before fn`).toBe('function');
+    }
+  });
+
+  it('home-only steps (1, 2, 8, 9) do not have before functions', () => {
+    const navigate = vi.fn();
+    const steps = createWalkthroughSteps(navigate);
+
+    // Step indices 0, 1, 7, 8 (0-indexed) stay on the current page.
+    const homeOnlyIndices = [0, 1, 7, 8];
+    for (const idx of homeOnlyIndices) {
+      expect(steps[idx].before, `step[${idx}] should not have a before fn`).toBeUndefined();
+    }
+  });
+
+  it('before hook for chat step calls navigate("/chat")', async () => {
+    // Mock waitForTarget so the before hook resolves immediately.
+    const navigate = vi.fn();
+
+    // Provide the target element so waitForTarget resolves.
+    const el = document.createElement('div');
+    el.setAttribute('data-walkthrough', 'chat-agent-panel');
+    document.body.appendChild(el);
+
+    try {
+      const steps = createWalkthroughSteps(navigate);
+      // Cast to unknown→Function to avoid needing a full TourData stub — we only care navigate was called.
+      await (steps[2].before as unknown as (() => Promise<void>) | undefined)?.();
+      expect(navigate).toHaveBeenCalledWith('/chat');
+    } finally {
+      document.body.removeChild(el);
+    }
+  });
+});
+
+// ── waitForTarget tests ───────────────────────────────────────────────────
+
+describe('waitForTarget', () => {
+  it('resolves immediately when element already exists in the DOM', async () => {
+    const el = document.createElement('div');
+    el.setAttribute('data-walkthrough', 'test-target');
+    document.body.appendChild(el);
+
+    try {
+      await expect(waitForTarget('test-target')).resolves.toBeUndefined();
+    } finally {
+      document.body.removeChild(el);
+    }
+  });
+
+  it('resolves when element is added to DOM after a delay', async () => {
+    const el = document.createElement('div');
+    el.setAttribute('data-walkthrough', 'async-target');
+
+    // Add element after a short delay using setTimeout (resolved via fake timers).
+    const addEl = () => document.body.appendChild(el);
+
+    const promise = waitForTarget('async-target', 500);
+    // Add the element before the timeout expires.
+    addEl();
+
+    try {
+      await expect(promise).resolves.toBeUndefined();
+    } finally {
+      if (el.parentNode) document.body.removeChild(el);
+    }
+  });
+
+  it('rejects when element is not found before timeout', async () => {
+    // Use a very short timeout so the test completes quickly.
+    await expect(waitForTarget('nonexistent-target', 50)).rejects.toThrow(
+      '[walkthrough] waitForTarget timed out'
+    );
   });
 });

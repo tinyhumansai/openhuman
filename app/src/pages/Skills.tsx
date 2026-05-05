@@ -735,7 +735,7 @@ export default function Skills() {
     <div className="min-h-full">
       <div className="min-h-full flex flex-col">
         <div className="flex-1 flex items-start justify-center p-4 pt-6">
-          <div className="w-full max-w-3xl space-y-4">
+          <div className="w-full max-w-3xl space-y-4" data-walkthrough="skills-grid">
             {/* <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <h1 className="text-base font-semibold text-stone-900">Skills</h1>
