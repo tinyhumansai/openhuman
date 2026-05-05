@@ -444,7 +444,7 @@ async fn wait_for_connection_active(
         match client.list_connections().await {
             Ok(resp) => {
                 if let Some(conn) = resp.connections.into_iter().find(|c| c.id == connection_id) {
-                    if matches!(conn.status.as_str(), "ACTIVE" | "CONNECTED") {
+                    if conn.is_active() {
                         return Ok(conn.status);
                     }
                     last_status = Some(conn.status);

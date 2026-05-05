@@ -442,6 +442,77 @@ async fn fetch_connected_integrations_via_mock_aggregates_tools() {
 }
 
 #[tokio::test]
+async fn fetch_connected_integrations_treats_slack_and_telegram_status_like_ui() {
+    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/toolkits",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"toolkits": [" Slack ", "telegram"]}
+                }))
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"connections": [
+                        {"id":"c-slack","toolkit":" Slack ","status":"connected"},
+                        {"id":"c-telegram","toolkit":"telegram","status":" active "}
+                    ]}
+                }))
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/tools",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"tools": [
+                        {"type":"function","function":{
+                            "name":"SLACK_FETCH_CONVERSATION_HISTORY",
+                            "description":"Read Slack channel history"
+                        }},
+                        {"type":"function","function":{
+                            "name":"TELEGRAM_GET_CHAT_HISTORY",
+                            "description":"Read Telegram chat history"
+                        }},
+                        {"type":"function","function":{
+                            "name":"SLACK_DELETE_CHANNEL",
+                            "description":"Delete a channel"
+                        }}
+                    ]}
+                }))
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+    invalidate_connected_integrations_cache();
+
+    let integrations = fetch_connected_integrations(&config).await;
+
+    let slack = integrations
+        .iter()
+        .find(|i| i.toolkit == "slack")
+        .expect("slack integration should be present");
+    assert!(slack.connected);
+    assert_eq!(slack.tools.len(), 1);
+    assert_eq!(slack.tools[0].name, "SLACK_FETCH_CONVERSATION_HISTORY");
+
+    let telegram = integrations
+        .iter()
+        .find(|i| i.toolkit == "telegram")
+        .expect("telegram integration should be present");
+    assert!(telegram.connected);
+    assert_eq!(telegram.tools.len(), 1);
+    assert_eq!(telegram.tools[0].name, "TELEGRAM_GET_CHAT_HISTORY");
+}
+
+#[tokio::test]
 async fn fetch_connected_integrations_via_mock_returns_empty_with_no_active() {
     let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let app = Router::new().route(

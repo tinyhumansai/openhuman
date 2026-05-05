@@ -29,7 +29,7 @@ use crate::openhuman::agent::harness::definition::{
 };
 use crate::openhuman::context::prompt::ConnectedIntegration;
 
-use super::{ArchetypeDelegationTool, SkillDelegationTool, Tool};
+use super::{ArchetypeDelegationTool, SkillDelegationTool, SpawnWorkerThreadTool, Tool};
 
 /// Synthesise the delegation tool list for an agent based on its
 /// declarative `subagents` field.
@@ -64,6 +64,11 @@ pub fn collect_orchestrator_tools(
     connected_integrations: &[ConnectedIntegration],
 ) -> Vec<Box<dyn Tool>> {
     let mut tools: Vec<Box<dyn Tool>> = Vec::new();
+
+    // Orchestrator-only tool: spawn_worker_thread.
+    if definition.id == "orchestrator" {
+        tools.push(Box::new(SpawnWorkerThreadTool::new()));
+    }
 
     for entry in &definition.subagents {
         match entry {
@@ -278,6 +283,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "spawn_worker_thread",   // orchestrator-only, prepended in collect_orchestrator_tools
                 "research",              // researcher's delegate_name override
                 "delegate_archivist",    // archivist has no delegate_name → default
                 "delegate_gmail",
@@ -308,7 +314,10 @@ mod tests {
         let reg = registry_with_targets();
         let tools = collect_orchestrator_tools(&orch, &reg, &[]);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-        assert_eq!(names, vec!["research", "delegate_archivist"]);
+        assert_eq!(
+            names,
+            vec!["spawn_worker_thread", "research", "delegate_archivist"]
+        );
     }
 
     /// An AgentId entry that points at an id not present in the registry
@@ -324,7 +333,7 @@ mod tests {
         let reg = registry_with_targets();
         let tools = collect_orchestrator_tools(&orch, &reg, &[]);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-        assert_eq!(names, vec!["research"]);
+        assert_eq!(names, vec!["spawn_worker_thread", "research"]);
     }
 
     /// An empty `subagents` list should produce zero tools — regular

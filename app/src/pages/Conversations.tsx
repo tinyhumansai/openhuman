@@ -1061,7 +1061,9 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             lockdown (#883) so the onboarding chat is just the conversation
             with no chrome around it. */}
         {!isSidebar && (
-          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100">
+          <div
+            className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100"
+            data-walkthrough="chat-agent-panel">
             <button
               onClick={() => setShowSidebar(prev => !prev)}
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"

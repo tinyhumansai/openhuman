@@ -46,7 +46,9 @@
 //! ```
 //!
 //! Only `role` and `content` are required. All other fields are optional.
-//! Unknown fields on read are ignored (forward-compat).
+//! UI-visible rows may also carry a stable `id` and `extra_metadata` so
+//! the session transcript can eventually replace the separate thread
+//! message log without losing message-level addressing.
 
 use crate::openhuman::providers::ChatMessage;
 use anyhow::{Context, Result};
@@ -138,8 +140,12 @@ struct MetaPayload {
 /// forward-compatibility.
 #[derive(Serialize, Deserialize)]
 struct MessageLine {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
     role: String,
     content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    extra_metadata: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -203,16 +209,20 @@ pub fn write_transcript(
         // options together so there's no separate unwrap.
         let line = match (last_assistant_idx, last_assistant_turn_usage) {
             (Some(idx), Some(tu)) if idx == i => MessageLine {
+                id: msg.id.clone(),
                 role: msg.role.clone(),
                 content: msg.content.clone(),
+                extra_metadata: msg.extra_metadata.clone(),
                 model: Some(tu.model.clone()),
                 usage: Some(tu.usage.clone()),
                 ts: Some(tu.ts.clone()),
                 _extra: HashMap::new(),
             },
             _ => MessageLine {
+                id: msg.id.clone(),
                 role: msg.role.clone(),
                 content: msg.content.clone(),
+                extra_metadata: msg.extra_metadata.clone(),
                 model: None,
                 usage: None,
                 ts: None,
@@ -357,8 +367,10 @@ fn read_transcript_jsonl(path: &Path) -> Result<SessionTranscript> {
         match serde_json::from_str::<MessageLine>(line) {
             Ok(ml) => {
                 messages.push(ChatMessage {
+                    id: ml.id,
                     role: ml.role,
                     content: ml.content,
+                    extra_metadata: ml.extra_metadata,
                 });
             }
             Err(err) => {
@@ -385,6 +397,48 @@ fn read_transcript_jsonl(path: &Path) -> Result<SessionTranscript> {
     );
 
     Ok(SessionTranscript { meta, messages })
+}
+
+/// Find the newest root `session_raw/*.jsonl` transcript whose metadata
+/// declares `thread_id`.
+///
+/// Root transcripts live directly under `session_raw/` and do not carry
+/// the `__` separator used for sub-agent siblings. This helper is the
+/// bridge PR-2 can use to route UI thread reads to the canonical root
+/// transcript without accidentally folding delegated worker transcripts
+/// into the main chat timeline.
+pub fn find_root_transcript_for_thread(workspace_dir: &Path, thread_id: &str) -> Option<PathBuf> {
+    let thread_id = thread_id.trim();
+    if thread_id.is_empty() {
+        return None;
+    }
+
+    let raw_dir = raw_session_dir(workspace_dir);
+    let entries = fs::read_dir(&raw_dir).ok()?;
+    let mut matches: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().and_then(|s| s.to_str()) == Some("jsonl")
+                && path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|stem| !stem.contains("__"))
+        })
+        .filter(|path| match read_transcript(path) {
+            Ok(transcript) => transcript.meta.thread_id.as_deref() == Some(thread_id),
+            Err(err) => {
+                log::warn!(
+                    "[transcript] skipping unreadable root transcript candidate {}: {err}",
+                    path.display()
+                );
+                false
+            }
+        })
+        .collect();
+
+    matches.sort();
+    matches.pop()
 }
 
 // ── Path resolution ──────────────────────────────────────────────────
@@ -663,8 +717,10 @@ fn parse_legacy_messages(raw: &str) -> Result<Vec<ChatMessage>> {
             };
             let content = &raw[content_start..content_start + content_end_rel];
             messages.push(ChatMessage {
+                id: None,
                 role,
                 content: content.replace(LEGACY_MSG_CLOSE_ESCAPED, LEGACY_MSG_CLOSE),
+                extra_metadata: None,
             });
             search_from = content_start + content_end_rel + LEGACY_MSG_CLOSE.len();
             continue;
@@ -672,8 +728,10 @@ fn parse_legacy_messages(raw: &str) -> Result<Vec<ChatMessage>> {
 
         let content = &raw[content_start..content_start + content_end_rel];
         messages.push(ChatMessage {
+            id: None,
             role,
             content: content.replace(LEGACY_MSG_CLOSE_ESCAPED, LEGACY_MSG_CLOSE),
+            extra_metadata: None,
         });
 
         search_from = content_start + content_end_rel + close_tag.len();

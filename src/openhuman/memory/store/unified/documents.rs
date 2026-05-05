@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
+use crate::openhuman::memory::safety;
 use crate::openhuman::memory::store::types::{NamespaceDocumentInput, StoredMemoryDocument};
 
 use super::UnifiedMemory;
@@ -18,6 +19,29 @@ impl UnifiedMemory {
     /// sidecar, replaces vector chunks, and embeds them with the configured
     /// provider.
     pub async fn upsert_document(&self, input: NamespaceDocumentInput) -> Result<String, String> {
+        if safety::has_likely_secret(&input.namespace) || safety::has_likely_secret(&input.key) {
+            log::warn!(
+                "[memory:safety] document write rejected due to secret-like namespace/key namespace_chars={} key_chars={}",
+                input.namespace.chars().count(),
+                input.key.chars().count()
+            );
+            return Err("document namespace/key cannot contain secrets".to_string());
+        }
+
+        let sanitized = safety::sanitize_document_input(input);
+        let input = sanitized.value;
+        if sanitized.report.changed() {
+            log::warn!(
+                "[memory:safety] document write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
+                input.namespace.chars().count(),
+                input.key.chars().count(),
+                sanitized.report.text_redactions,
+                sanitized.report.key_redactions,
+                sanitized.report.blocked_secret_hits,
+                sanitized.report.depth_redactions
+            );
+        }
+
         let namespace = Self::sanitize_namespace(&input.namespace);
         let key = input.key.trim().to_string();
         if key.is_empty() {
@@ -158,6 +182,29 @@ impl UnifiedMemory {
         &self,
         input: NamespaceDocumentInput,
     ) -> Result<String, String> {
+        if safety::has_likely_secret(&input.namespace) || safety::has_likely_secret(&input.key) {
+            log::warn!(
+                "[memory:safety] metadata-only write rejected due to secret-like namespace/key namespace_chars={} key_chars={}",
+                input.namespace.chars().count(),
+                input.key.chars().count()
+            );
+            return Err("document namespace/key cannot contain secrets".to_string());
+        }
+
+        let sanitized = safety::sanitize_document_input(input);
+        let input = sanitized.value;
+        if sanitized.report.changed() {
+            log::warn!(
+                "[memory:safety] metadata-only write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
+                input.namespace.chars().count(),
+                input.key.chars().count(),
+                sanitized.report.text_redactions,
+                sanitized.report.key_redactions,
+                sanitized.report.blocked_secret_hits,
+                sanitized.report.depth_redactions
+            );
+        }
+
         let namespace = Self::sanitize_namespace(&input.namespace);
         let key = input.key.trim().to_string();
         if key.is_empty() {

@@ -416,8 +416,10 @@ mod tests {
         );
 
         let messages = vec![ChatMessage {
+            id: None,
             role: "user".to_string(),
             content: "use tools".to_string(),
+            extra_metadata: None,
         }];
         let tools = vec![serde_json::json!({
             "type": "function",
@@ -447,8 +449,10 @@ mod tests {
         );
 
         let messages = vec![ChatMessage {
+            id: None,
             role: "user".to_string(),
             content: "reason about this".to_string(),
+            extra_metadata: None,
         }];
         let tools = vec![serde_json::json!({"type": "function", "function": {"name": "test"}})];
 

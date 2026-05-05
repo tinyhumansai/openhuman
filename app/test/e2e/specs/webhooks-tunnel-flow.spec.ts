@@ -202,7 +202,7 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
 
   it('Webhooks page loads (ComposeIO trigger history surface)', async () => {
     await authenticateAndReachShell();
-    await navigateViaHash('/webhooks');
+    await navigateViaHash('/settings/webhooks-triggers');
 
     await browser.waitUntil(
       async () => {
@@ -218,7 +218,7 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
 
     if (supportsExecuteScript()) {
       const hash = await browser.execute(() => window.location.hash);
-      expect(String(hash)).toContain('/webhooks');
+      expect(String(hash)).toContain('/settings/webhooks-triggers');
     }
 
     const visible =

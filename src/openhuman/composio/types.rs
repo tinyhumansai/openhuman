@@ -87,6 +87,25 @@ pub struct ComposioConnection {
     pub created_at: Option<String>,
 }
 
+impl ComposioConnection {
+    /// Return the toolkit slug in the canonical form used by provider
+    /// lookup, prompt injection, and tool-action prefix matching.
+    pub fn normalized_toolkit(&self) -> String {
+        self.toolkit.trim().to_ascii_lowercase()
+    }
+
+    /// Whether this row represents a usable connection.
+    ///
+    /// The web UI already treats status case-insensitively. Keep the
+    /// core-side chat/runtime filters aligned so a backend spelling such
+    /// as `connected` cannot display as connected in Settings while
+    /// disappearing from the agent's integration surface.
+    pub fn is_active(&self) -> bool {
+        let status = self.status.trim();
+        status.eq_ignore_ascii_case("ACTIVE") || status.eq_ignore_ascii_case("CONNECTED")
+    }
+}
+
 /// Response body of `GET /agent-integrations/composio/connections`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ComposioConnectionsResponse {
@@ -354,6 +373,40 @@ pub struct ComposioTriggerHistoryResult {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn connection_is_active_matches_ui_status_normalization() {
+        for status in ["ACTIVE", "CONNECTED", "active", "connected", " connected "] {
+            let conn = ComposioConnection {
+                id: "c1".into(),
+                toolkit: "slack".into(),
+                status: status.into(),
+                created_at: None,
+            };
+            assert!(conn.is_active(), "status {status:?} should be active");
+        }
+
+        for status in ["PENDING", "INITIATED", "FAILED", ""] {
+            let conn = ComposioConnection {
+                id: "c1".into(),
+                toolkit: "slack".into(),
+                status: status.into(),
+                created_at: None,
+            };
+            assert!(!conn.is_active(), "status {status:?} should not be active");
+        }
+    }
+
+    #[test]
+    fn connection_normalizes_toolkit_for_runtime_matching() {
+        let conn = ComposioConnection {
+            id: "c1".into(),
+            toolkit: " Slack ".into(),
+            status: "ACTIVE".into(),
+            created_at: None,
+        };
+        assert_eq!(conn.normalized_toolkit(), "slack");
+    }
 
     #[test]
     fn toolkits_response_defaults_to_empty() {

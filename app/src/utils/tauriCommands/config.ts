@@ -2,6 +2,7 @@
  * Config and settings commands.
  */
 import { callCoreRpc } from '../../services/coreRpcClient';
+import { CORE_RPC_METHODS } from '../../services/rpcMethods';
 import { CommandResponse, isTauri } from './common';
 
 export interface ConfigSnapshot {
@@ -97,7 +98,7 @@ export async function openhumanGetConfig(): Promise<CommandResponse<ConfigSnapsh
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({ method: 'openhuman.get_config' });
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({ method: CORE_RPC_METHODS.configGet });
 }
 
 export async function openhumanUpdateModelSettings(

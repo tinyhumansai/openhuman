@@ -43,3 +43,42 @@ A bare "#123" reference is just a link — it does NOT close the issue.
 
 - Closes:
 - Follow-up PR(s)/TODOs:
+
+---
+
+## AI Authored PR Metadata (required for Codex/Linear PRs)
+
+> Keep this section for AI-authored PRs. For human-only PRs, mark each field `N/A`.
+
+### Linear Issue
+- Key:
+- URL:
+
+### Commit & Branch
+- Branch:
+- Commit SHA:
+
+### Validation Run
+- [ ] `pnpm --filter openhuman-app format:check`
+- [ ] `pnpm typecheck`
+- [ ] Focused tests:
+- [ ] Rust fmt/check (if changed):
+- [ ] Tauri fmt/check (if changed):
+
+### Validation Blocked
+- `command:`
+- `error:`
+- `impact:`
+
+### Behavior Changes
+- Intended behavior change:
+- User-visible effect:
+
+### Parity Contract
+- Legacy behavior preserved:
+- Guard/fallback/dispatch parity checks:
+
+### Duplicate / Superseded PR Handling
+- Duplicate PR(s):
+- Canonical PR:
+- Resolution (closed/superseded/updated):

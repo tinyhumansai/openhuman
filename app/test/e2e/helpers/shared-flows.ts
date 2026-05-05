@@ -113,7 +113,7 @@ const HASH_TO_SIDEBAR_LABEL = {
   '/conversations': 'Conversations',
   '/notifications': 'Alerts',
   '/settings': 'Settings',
-  '/intelligence': 'Intelligence',
+  '/settings/intelligence': 'Intelligence',
 };
 
 export async function navigateViaHash(hash) {
@@ -271,7 +271,7 @@ export async function navigateToSkills() {
 }
 
 export async function navigateToIntelligence() {
-  await navigateViaHash('/intelligence');
+  await navigateViaHash('/settings/intelligence');
 }
 
 export async function navigateToConversations() {

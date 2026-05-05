@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
@@ -12,47 +12,53 @@ describe('ContextGatheringStep', () => {
     callCoreRpc.mockReset();
   });
 
-  it('renders user-driven intro gate with a Skip and privacy link, does NOT auto-run pipeline', () => {
-    renderWithProviders(
-      <ContextGatheringStep connectedSources={[]} onNext={() => Promise.resolve()} />
-    );
-
-    expect(screen.getByTestId('context-gathering-intro')).toBeInTheDocument();
-    expect(
-      screen.getByRole('heading', { level: 1, name: /getting to know you/i })
-    ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Skip for now' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'What leaves my computer?' })).toBeInTheDocument();
-    expect(callCoreRpc).not.toHaveBeenCalled();
-  });
-
-  it('no-Gmail branch: Continue marks all stages skipped without any RPC', async () => {
-    renderWithProviders(
-      <ContextGatheringStep connectedSources={['notion']} onNext={() => Promise.resolve()} />
-    );
-
-    expect(screen.getByText(/haven't connected Gmail/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Continue' })).not.toBeDisabled();
-    });
-    expect(screen.getByText('Context Ready')).toBeInTheDocument();
-    expect(callCoreRpc).not.toHaveBeenCalled();
-  });
-
-  it('Skip for now invokes onNext without starting the pipeline', () => {
+  it('no-Gmail branch: auto-navigates without any RPC', async () => {
+    vi.useFakeTimers();
     const onNext = vi.fn().mockResolvedValue(undefined);
-    renderWithProviders(
-      <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
-    );
+    renderWithProviders(<ContextGatheringStep connectedSources={['notion']} onNext={onNext} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
-    expect(onNext).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      vi.advanceTimersByTime(850);
+    });
+    expect(onNext).toHaveBeenCalled();
     expect(callCoreRpc).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
-  it('runs the full Gmail -> Apify scrape -> save pipeline', async () => {
+  it('shows building animation and auto-starts pipeline on mount', async () => {
+    // Keep the pipeline pending so we can assert the animation state
+    let resolveGmail!: (v: unknown) => void;
+    callCoreRpc.mockImplementation(async (req: { method: string }) => {
+      if (req.method === 'openhuman.tools_composio_execute') {
+        return new Promise(res => {
+          resolveGmail = res;
+        });
+      }
+      throw new Error(`unexpected RPC ${req.method}`);
+    });
+
+    renderWithProviders(
+      <ContextGatheringStep
+        connectedSources={['composio:gmail']}
+        onNext={() => Promise.resolve()}
+      />
+    );
+
+    expect(screen.getByText(/building your profile/i)).toBeInTheDocument();
+    // Stage labels from the old UI should not be visible
+    expect(screen.queryByText(/Processing your Gmail/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Working on your LinkedIn/i)).not.toBeInTheDocument();
+    // Pipeline started automatically — no button click needed
+    expect(callCoreRpc).toHaveBeenCalled();
+
+    // Unblock so no timers leak
+    await act(async () => {
+      resolveGmail({ successful: true, data: { messages: [] } });
+    });
+  });
+
+  it('runs the full Gmail -> Apify scrape -> save pipeline and auto-navigates', async () => {
+    const onNext = vi.fn().mockResolvedValue(undefined);
     callCoreRpc.mockImplementation(async (req: { method: string; params: unknown }) => {
       if (req.method === 'openhuman.tools_composio_execute') {
         return {
@@ -77,17 +83,10 @@ describe('ContextGatheringStep', () => {
     });
 
     renderWithProviders(
-      <ContextGatheringStep
-        connectedSources={['composio:gmail']}
-        onNext={() => Promise.resolve()}
-      />
+      <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: "Let's go!" }));
-
-    await waitFor(() => {
-      expect(screen.getByText('Context Ready')).toBeInTheDocument();
-    });
+    await waitFor(() => expect(onNext).toHaveBeenCalled(), { timeout: 5000 });
 
     const calls = callCoreRpc.mock.calls.map((c: Array<{ method: string }>) => c[0].method);
     expect(calls).toEqual([
@@ -110,31 +109,23 @@ describe('ContextGatheringStep', () => {
     expect(saveCall![0].params.markdown).toContain('Founder at Acme');
   });
 
-  it('skips downstream stages when Gmail finds no LinkedIn URL', async () => {
+  it('skips downstream stages when Gmail finds no LinkedIn URL and auto-navigates', async () => {
+    const onNext = vi.fn().mockResolvedValue(undefined);
     callCoreRpc.mockResolvedValueOnce({
       successful: true,
       data: { messages: [{ messageText: 'Hello, no linkedin link here.' }] },
     });
 
     renderWithProviders(
-      <ContextGatheringStep
-        connectedSources={['composio:gmail']}
-        onNext={() => Promise.resolve()}
-      />
+      <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: "Let's go!" }));
-
-    await waitFor(() => {
-      expect(callCoreRpc).toHaveBeenCalledTimes(1);
-    });
-    await waitFor(() => {
-      expect(screen.getByText('Context Ready')).toBeInTheDocument();
-    });
-    expect(callCoreRpc).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(callCoreRpc).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onNext).toHaveBeenCalled(), { timeout: 5000 });
   });
 
-  it('surfaces a build-profile error when learning_save_profile rejects', async () => {
+  it('shows friendly error message when learning_save_profile rejects', async () => {
+    const onNext = vi.fn().mockResolvedValue(undefined);
     callCoreRpc.mockImplementation(async (req: { method: string; params: unknown }) => {
       if (req.method === 'openhuman.tools_composio_execute') {
         return {
@@ -152,17 +143,19 @@ describe('ContextGatheringStep', () => {
     });
 
     renderWithProviders(
-      <ContextGatheringStep
-        connectedSources={['composio:gmail']}
-        onNext={() => Promise.resolve()}
-      />
+      <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: "Let's go!" }));
-
     await waitFor(() => {
-      expect(screen.getByText('Context Ready')).toBeInTheDocument();
+      expect(
+        screen.getByText(/we couldn't build your full profile right now/i)
+      ).toBeInTheDocument();
     });
-    expect(screen.getByText('disk full')).toBeInTheDocument();
+
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
+    expect(screen.queryByText('disk full')).not.toBeInTheDocument();
+
+    // fireEvent not needed — onNext is available via the button but user can also
+    // just verify the friendly message is shown
   });
 });

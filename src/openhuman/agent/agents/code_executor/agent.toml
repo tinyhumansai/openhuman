@@ -14,4 +14,30 @@ omit_skills_catalog = true
 hint = "coding"
 
 [tools]
-named = ["shell", "file_read", "file_write", "git_operations", "node_exec", "npm_exec", "curl"]
+# Coding-harness primitives from #1208 (grep/glob/list/edit/apply_patch/
+# todowrite/plan_exit/web_fetch/lsp) sit alongside the legacy
+# shell/file_read/file_write surface. The new tools are strictly better
+# for navigation (grep/glob/list vs. ad-hoc shell `find` / `rg`) and
+# precise editing (edit / apply_patch vs. whole-file `file_write`); the
+# old tools stay so the agent can still drop down to a shell when the
+# task genuinely needs it. `lsp` is capability-gated by
+# OPENHUMAN_LSP_ENABLED — listing it here is harmless when the gate is
+# off (the tool is simply not registered).
+named = [
+    "shell",
+    "file_read",
+    "file_write",
+    "git_operations",
+    "node_exec",
+    "npm_exec",
+    "curl",
+    "grep",
+    "glob",
+    "list",
+    "edit",
+    "apply_patch",
+    "todowrite",
+    "plan_exit",
+    "web_fetch",
+    "lsp",
+]

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { type EventData, EVENTS, Joyride, STATUS } from 'react-joyride';
+import { useNavigate } from 'react-router-dom';
 
-import { WALKTHROUGH_STEPS } from './walkthroughSteps';
+import { createWalkthroughSteps } from './walkthroughSteps';
 import WalkthroughTooltip from './WalkthroughTooltip';
 
 // ── localStorage keys ──────────────────────────────────────────────────────
@@ -63,22 +64,60 @@ export function markWalkthroughComplete(): void {
   }
 }
 
+/**
+ * Resets the walkthrough so it will play again on next visit to /home.
+ *
+ * - Removes the completed flag from localStorage.
+ * - Sets the pending flag so `isWalkthroughPending()` returns true.
+ * - Dispatches a `CustomEvent('walkthrough:restart')` on `window` so any
+ *   mounted `AppWalkthrough` instance can react and restart immediately.
+ */
+export function resetWalkthrough(): void {
+  try {
+    localStorage.removeItem(WALKTHROUGH_KEY);
+    localStorage.setItem(WALKTHROUGH_PENDING_KEY, 'true');
+    console.debug('[walkthrough] reset — pending flag set, completed flag removed');
+  } catch (e) {
+    console.warn('[walkthrough] could not reset walkthrough in localStorage', e);
+  }
+  window.dispatchEvent(new CustomEvent('walkthrough:restart'));
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 /**
  * Renders the post-onboarding Joyride walkthrough overlay (react-joyride v3).
  *
- * Only mounts the Joyride instance when `isWalkthroughPending()` is true.
- * On finish or skip (EVENTS.TOUR_END), calls `markWalkthroughComplete()` so
- * it never shows again.
+ * Mounts the Joyride instance when `isWalkthroughPending()` is true or when a
+ * `walkthrough:restart` event is received. On finish or skip (EVENTS.TOUR_END),
+ * calls `markWalkthroughComplete()` so the tour never shows again until reset.
  *
- * Mount this inside the Home page so it runs after the tab bar and home card
- * are in the DOM (all `data-walkthrough="*"` targets must exist).
+ * Mount this inside the Router context so `useNavigate` is available. The
+ * steps include `before` hooks that navigate to other pages before focusing
+ * the target element.
  */
 const AppWalkthrough = ({ onboarded = false }: { onboarded?: boolean }) => {
+  const navigate = useNavigate();
+
   // Only start running if the walkthrough is pending on first render.
   // Using a lazy initializer keeps this stable across re-renders.
   const [run, setRun] = useState<boolean>(() => isWalkthroughPending(onboarded));
+
+  // Memoize steps so they are only recreated when `navigate` identity changes.
+  const steps = useMemo(() => createWalkthroughSteps(navigate), [navigate]);
+
+  // Listen for the `walkthrough:restart` custom event (dispatched by
+  // `resetWalkthrough()`) and restart the tour immediately.
+  useEffect(() => {
+    const handleRestart = () => {
+      console.debug('[walkthrough] restart event received — restarting tour');
+      setRun(true);
+    };
+    window.addEventListener('walkthrough:restart', handleRestart);
+    return () => {
+      window.removeEventListener('walkthrough:restart', handleRestart);
+    };
+  }, []);
 
   const handleEvent = (data: EventData) => {
     const { type, status } = data;
@@ -98,7 +137,7 @@ const AppWalkthrough = ({ onboarded = false }: { onboarded?: boolean }) => {
 
   return (
     <Joyride
-      steps={WALKTHROUGH_STEPS}
+      steps={steps}
       run={run}
       continuous={true}
       tooltipComponent={WalkthroughTooltip}

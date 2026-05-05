@@ -6,6 +6,7 @@ export interface Thread {
   messageCount: number;
   lastMessageAt: string;
   createdAt: string;
+  parentThreadId?: string;
   labels: string[];
 }
 

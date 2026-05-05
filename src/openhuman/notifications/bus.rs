@@ -103,7 +103,7 @@ pub fn event_to_notification(event: &DomainEvent) -> Option<CoreNotificationEven
                         "{skill_id} webhook returned HTTP {status_code} after {elapsed_ms}ms"
                     ),
                 },
-                deep_link: Some("/webhooks".into()),
+                deep_link: Some("/settings/webhooks-triggers".into()),
                 timestamp_ms: ts,
             })
         }

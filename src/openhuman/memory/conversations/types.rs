@@ -16,6 +16,8 @@ pub struct ConversationThread {
     pub message_count: usize,
     pub last_message_at: String,
     pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_thread_id: Option<String>,
     #[serde(default)]
     pub labels: Vec<String>,
 }
@@ -41,6 +43,8 @@ pub struct CreateConversationThread {
     pub id: String,
     pub title: String,
     pub created_at: String,
+    #[serde(default)]
+    pub parent_thread_id: Option<String>,
     #[serde(default)]
     pub labels: Option<Vec<String>>,
 }

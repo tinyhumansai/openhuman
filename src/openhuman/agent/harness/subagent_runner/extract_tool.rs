@@ -441,16 +441,22 @@ fn write_extract_transcript(
 
     let messages = vec![
         ChatMessage {
+            id: None,
             role: "system".into(),
             content: system_prompt.to_string(),
+            extra_metadata: None,
         },
         ChatMessage {
+            id: None,
             role: "user".into(),
             content: user_prompt.to_string(),
+            extra_metadata: None,
         },
         ChatMessage {
+            id: None,
             role: "assistant".into(),
             content: assistant_text,
+            extra_metadata: None,
         },
     ];
 
