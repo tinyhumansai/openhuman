@@ -10,6 +10,7 @@ import PillTabBar from '../components/PillTabBar';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
+import MicCloudComposer from '../features/human/MicCloudComposer';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../constants/onboardingChat';
 import { useStickToBottom } from '../hooks/useStickToBottom';
@@ -86,6 +87,14 @@ interface ConversationsProps {
    * another page (e.g. /accounts).
    */
   variant?: 'page' | 'sidebar';
+  /**
+   * Composer mode. `text` (default) uses the textarea + send button.
+   * `mic-cloud` swaps the entire composer for a single mic button that
+   * captures audio via `MediaRecorder`, transcribes it through the cloud
+   * STT proxy, then routes the transcript through the same send path.
+   * Used by the mascot tab so the only interaction is voice.
+   */
+  composer?: 'text' | 'mic-cloud';
 }
 
 export function isComposerInteractionBlocked(args: {
@@ -122,7 +131,7 @@ export function isComposerInteractionBlocked(args: {
 //   );
 // }
 
-const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
+const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsProps = {}) => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const {
@@ -1584,7 +1593,16 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             </div>
           )}
 
-          {inputMode === 'text' ? (
+          {composer === 'mic-cloud' ? (
+            <MicCloudComposer
+              // Without `!selectedThreadId`, a mic submit before a thread is
+              // ready hits `handleSendMessage`'s early return and the
+              // transcript is silently dropped — the user spoke into the void.
+              disabled={composerInteractionBlocked || !selectedThreadId}
+              onSubmit={text => handleSendMessage(text)}
+              onError={message => setSendError(chatSendError('voice_transcription', message))}
+            />
+          ) : inputMode === 'text' ? (
             <div className="flex items-end gap-3">
               <div className="relative flex flex-1 items-center justify-center rounded-xl border border-stone-200 bg-white transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
                 <div
