@@ -101,8 +101,23 @@ fn focused_text_via_helper() -> Result<FocusedTextContext, String> {
 }
 
 /// Focus query via osascript (fallback when helper is unavailable).
+///
+/// Short-circuits when `automation_state::system_events_denied()` is set
+/// (the autocomplete refresh loop captured `(-1743)` from a prior
+/// osascript invocation). This stops re-firing osascript — and the
+/// macOS Apple Events consent popup — once we've observed the denial
+/// within the current session. The flag clears on
+/// `autocomplete::start_if_enabled` so a user-initiated re-engagement
+/// after granting via System Settings re-probes naturally.
 #[cfg(target_os = "macos")]
 fn focused_text_via_osascript() -> Result<FocusedTextContext, String> {
+    if super::automation_state::system_events_denied() {
+        return Err(
+            "focused_text_via_osascript skipped: System Events automation previously denied (-1743)"
+                .to_string(),
+        );
+    }
+
     let script = r##"
       tell application "System Events"
         set sep to character id 31
@@ -423,6 +438,13 @@ pub fn parse_foreground_output(stdout: &str) -> Option<AppContext> {
 
 #[cfg(target_os = "macos")]
 pub fn foreground_context() -> Option<AppContext> {
+    if super::automation_state::system_events_denied() {
+        log::debug!(
+            "[accessibility] foreground_context skipped: System Events automation previously denied (-1743)"
+        );
+        return None;
+    }
+
     let script = r#"
       tell application "System Events"
         set frontApp to name of first application process whose frontmost is true

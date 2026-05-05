@@ -22,5 +22,15 @@
          (JSON-RPC server, Socket.IO) under the macOS Hardened Runtime. -->
     <key>com.apple.security.network.server</key>
     <true/>
+    <!-- Required for the autocomplete focus query and screen-intelligence
+         foreground-context query to send Apple Events to "System Events"
+         under the Hardened Runtime. Without this entitlement, signed DMG
+         builds have AE calls blocked outright before the macOS consent
+         dialog renders, producing the broken-looking error popup tracked
+         in #985. The companion `NSAppleEventsUsageDescription` in
+         `Info.plist` supplies the user-facing text shown in that
+         consent dialog. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
 </dict>
 </plist>

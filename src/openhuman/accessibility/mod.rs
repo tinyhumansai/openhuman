@@ -5,6 +5,7 @@
 //! Consumer modules (autocomplete, screen_intelligence, voice) call into this module
 //! instead of owning platform-specific code directly.
 
+mod automation_state;
 mod capture;
 mod focus;
 mod globe;
@@ -17,6 +18,9 @@ mod terminal;
 mod text_util;
 mod types;
 
+pub use automation_state::{
+    clear as clear_automation_denial, mark_system_events_denied, system_events_denied,
+};
 pub use capture::{capture_screen_image_ref_for_context, CaptureMode, MAX_SCREENSHOT_BYTES};
 pub use focus::{
     focused_text_context, focused_text_context_verbose, foreground_context,

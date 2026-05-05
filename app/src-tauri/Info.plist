@@ -6,6 +6,8 @@
 	<string>OpenHuman uses the microphone for voice dictation and for voice/video calls and huddles inside embedded apps (Google Meet, Discord, Slack).</string>
 	<key>NSCameraUsageDescription</key>
 	<string>OpenHuman uses the camera for video calls and huddles inside embedded apps (Google Meet, Discord, Slack).</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>OpenHuman uses Apple Events to read the focused text field for inline autocomplete suggestions and to detect the active app for context-aware features. You can manage this in System Settings &gt; Privacy &amp; Security &gt; Automation.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
