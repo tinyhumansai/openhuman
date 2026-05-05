@@ -52,13 +52,6 @@
     user-select: none;
   }
 
-  /* When the native host detects the cursor is over the mascot panel it
-     sets data-flee="1" on <html>; the mascot scales/translates out of the
-     way so the user can see what's underneath. */
-  html[data-window='mascot'][data-flee='1'] .mascot-flee-target {
-    transform: translate(40%, 40%) scale(0.5);
-    opacity: 0;
-  }
 
   @keyframes overlay-bubble-in {
     from {

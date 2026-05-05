@@ -217,43 +217,87 @@ unsafe fn build_panel(mtm: MainThreadMarker, frame: NSRect) -> Retained<NSPanel>
     panel
 }
 
+/// Two right-edge resting spots one mascot-height apart. The mascot
+/// alternates between them when the cursor catches up — small hop, not a
+/// trip across the screen.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    Home,
+    HopUp,
+}
+
+impl Slot {
+    fn other(self) -> Slot {
+        match self {
+            Slot::Home => Slot::HopUp,
+            Slot::HopUp => Slot::Home,
+        }
+    }
+}
+
+fn slot_frame(mtm: MainThreadMarker, slot: Slot) -> NSRect {
+    let screen = NSScreen::mainScreen(mtm)
+        .map(|s| s.frame())
+        .unwrap_or_else(|| NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1440.0, 900.0)));
+    let x = screen.origin.x + screen.size.width - PANEL_SIZE - PANEL_MARGIN;
+    // AppKit origin is bottom-left. `Home` sits at the bottom; `HopUp`
+    // is one full panel-height above it so the mascot completely clears
+    // the cursor's previous position with no visible overlap.
+    let y_home = screen.origin.y + PANEL_MARGIN;
+    let y = match slot {
+        Slot::Home => y_home,
+        Slot::HopUp => y_home + PANEL_SIZE,
+    };
+    NSRect::new(NSPoint::new(x, y), NSSize::new(PANEL_SIZE, PANEL_SIZE))
+}
+
 /// Schedule a repeating Foundation timer on the main run loop that polls
-/// the global cursor position and toggles a `flee` attribute on the
-/// document so the page CSS can animate the mascot out from under the
-/// cursor. We poll because the panel is `ignoresMouseEvents=true` (so it
-/// can't receive `mouseEntered:` / `mouseExited:` events itself), and a
-/// transparent passthrough overlay would defeat the click-through goal.
+/// the global cursor position. When the cursor enters the mascot's panel
+/// frame, the panel hops to the *other* right-edge corner with an
+/// animated `setFrame:display:animate:` move so the user can keep working
+/// without the mascot covering the spot they were trying to click. The
+/// panel is `ignoresMouseEvents=true` regardless, so even mid-animation
+/// the cursor passes straight through.
 unsafe fn spawn_hover_timer(
     panel: Retained<NSPanel>,
-    webview: Retained<WKWebView>,
+    _webview: Retained<WKWebView>,
 ) -> Retained<NSTimer> {
-    // `Rc<Cell<bool>>` is fine — the block fires only on the main run loop,
-    // so single-threaded interior mutability is sufficient.
-    let was_hovering: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    // Fixed reference rect: the mascot's home position. Cursor entering
+    // this rect makes the panel flee to `HopUp`; leaving it brings it
+    // back to `Home`. We compare against the home rect — not the panel's
+    // current frame — so the cursor moving away from the original spot
+    // is always what triggers the return, regardless of where the panel
+    // has currently hopped to.
+    let mtm_for_home = unsafe { MainThreadMarker::new_unchecked() };
+    let home_rect = slot_frame(mtm_for_home, Slot::Home);
+    let current_slot: Rc<Cell<Slot>> = Rc::new(Cell::new(Slot::Home));
 
     let block = RcBlock::new(move |_timer: NonNull<NSTimer>| {
-        let cursor = unsafe { NSEvent::mouseLocation() };
-        let frame = panel.frame();
-        let inside = cursor.x >= frame.origin.x
-            && cursor.x <= frame.origin.x + frame.size.width
-            && cursor.y >= frame.origin.y
-            && cursor.y <= frame.origin.y + frame.size.height;
+        // Safe: this block only fires on the main run loop the timer was
+        // scheduled on, which is the AppKit main thread.
+        let mtm = unsafe { MainThreadMarker::new_unchecked() };
 
-        if inside == was_hovering.get() {
+        let cursor = unsafe { NSEvent::mouseLocation() };
+        let inside_home = cursor.x >= home_rect.origin.x
+            && cursor.x <= home_rect.origin.x + home_rect.size.width
+            && cursor.y >= home_rect.origin.y
+            && cursor.y <= home_rect.origin.y + home_rect.size.height;
+
+        let desired = if inside_home { Slot::HopUp } else { Slot::Home };
+        if desired == current_slot.get() {
             return;
         }
-        was_hovering.set(inside);
-
-        // Toggle `data-flee` on <html> so CSS in the page can react.
-        let js = if inside {
-            "document.documentElement.setAttribute('data-flee','1')"
-        } else {
-            "document.documentElement.removeAttribute('data-flee')"
-        };
-        let js_str = NSString::from_str(js);
-        unsafe {
-            webview.evaluateJavaScript_completionHandler(&js_str, None);
-        }
+        current_slot.set(desired);
+        let target = slot_frame(mtm, desired);
+        log::debug!(
+            "[mascot-native] cursor {} home — moving to slot={}",
+            if inside_home { "entered" } else { "left" },
+            match desired {
+                Slot::Home => "Home",
+                Slot::HopUp => "HopUp",
+            }
+        );
+        panel.setFrame_display_animate(target, true, true);
     });
 
     unsafe {
