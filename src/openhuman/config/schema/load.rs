@@ -992,7 +992,9 @@ impl Config {
 
         // Phase MD-content: chunk body directory override. Empty string means
         // "fall back to default", consistent with other memory_tree env vars.
-        if let Ok(dir) = std::env::var("OPENHUMAN_MEMORY_TREE_CONTENT_DIR") {
+        // Routed through `env.get` so `HashMapEnv`-style test callers see the
+        // override too — same seam as every other branch in this function.
+        if let Some(dir) = env.get("OPENHUMAN_MEMORY_TREE_CONTENT_DIR") {
             let trimmed = dir.trim();
             self.memory_tree.content_dir = if trimmed.is_empty() {
                 None
@@ -1005,7 +1007,7 @@ impl Config {
         // the OpenHuman backend's summarizer model; "local" keeps the legacy
         // Ollama-direct path. Empty / unset / unknown leaves the existing
         // value untouched (and we warn on unknown). The embedder is unaffected.
-        if let Ok(raw) = std::env::var("OPENHUMAN_MEMORY_TREE_LLM_BACKEND") {
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_LLM_BACKEND") {
             let trimmed = raw.trim();
             if !trimmed.is_empty() {
                 match crate::openhuman::config::LlmBackend::parse(trimmed) {
@@ -1030,7 +1032,7 @@ impl Config {
         // Empty string explicitly clears the default — useful for tests that
         // want to assert the absence of a configured cloud model. Non-empty
         // strings are stored verbatim.
-        if let Ok(raw) = std::env::var("OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL") {
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL") {
             let trimmed = raw.trim();
             self.memory_tree.cloud_llm_model = if trimmed.is_empty() {
                 None
