@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * End-to-end: client-side Composio trigger toggles (PR for backend #671).
  *
