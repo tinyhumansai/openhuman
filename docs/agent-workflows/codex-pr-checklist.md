@@ -65,6 +65,8 @@ For behavior extraction and architecture refactors:
 
 ## PR Body Requirements
 
+Use the `## AI Authored PR Metadata (required for Codex/Linear PRs)` section in `.github/PULL_REQUEST_TEMPLATE.md` and fill every field.
+
 Every AI-authored PR must include:
 
 - Linear issue key and URL.
