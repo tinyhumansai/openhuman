@@ -466,6 +466,14 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     });
     const trimmed = sendDecision.trimmedText;
 
+    if (
+      sendDecision.blockReason === 'empty_input' ||
+      sendDecision.blockReason === 'missing_thread' ||
+      sendDecision.blockReason === 'composer_blocked'
+    ) {
+      return;
+    }
+
     if (handleSlashCommand(trimmed)) return;
 
     if (!sendDecision.shouldSend) {
