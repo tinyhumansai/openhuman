@@ -557,20 +557,23 @@ describe('createWalkthroughSteps', () => {
     }
   });
 
-  it('before hook for chat step calls navigate("/chat")', async () => {
-    // Mock waitForTarget so the before hook resolves immediately.
+  it.each([
+    { idx: 2, route: '/chat', target: 'chat-agent-panel' },
+    { idx: 3, route: '/skills', target: 'skills-grid' },
+    { idx: 4, route: '/intelligence', target: 'intelligence-header' },
+    { idx: 5, route: '/settings', target: 'settings-menu' },
+    { idx: 6, route: '/home', target: 'tab-chat' },
+  ])('before hook for step $idx calls navigate("$route")', async ({ idx, route, target }) => {
     const navigate = vi.fn();
 
-    // Provide the target element so waitForTarget resolves.
     const el = document.createElement('div');
-    el.setAttribute('data-walkthrough', 'chat-agent-panel');
+    el.setAttribute('data-walkthrough', target);
     document.body.appendChild(el);
 
     try {
       const steps = createWalkthroughSteps(navigate);
-      // Cast to unknown→Function to avoid needing a full TourData stub — we only care navigate was called.
-      await (steps[2].before as unknown as (() => Promise<void>) | undefined)?.();
-      expect(navigate).toHaveBeenCalledWith('/chat');
+      await (steps[idx].before as unknown as (() => Promise<void>) | undefined)?.();
+      expect(navigate).toHaveBeenCalledWith(route);
     } finally {
       document.body.removeChild(el);
     }
