@@ -89,7 +89,18 @@ fn provider_allowed_hosts(provider: &str) -> &'static [&'static str] {
         "whatsapp" => &["whatsapp.com", "whatsapp.net", "wa.me"],
         "telegram" => &["telegram.org", "t.me"],
         "linkedin" => &["linkedin.com", "licdn.com"],
-        "slack" => &["slack.com", "slack-edge.com", "slackb.com"],
+        "slack" => &[
+            "slack.com",
+            "slack-edge.com",
+            "slackb.com",
+            "accounts.google.com",
+            "accounts.googleusercontent.com",
+            "ssl.gstatic.com",
+            "fonts.gstatic.com",
+            "lh3.googleusercontent.com",
+            "oauth2.googleapis.com",
+            "www.googleapis.com",
+        ],
         "discord" => &[
             "discord.com",
             "discord.gg",
@@ -2699,6 +2710,58 @@ mod tests {
         assert!(hosts.contains(&"zoom.us"), "zoom.us in allowlist");
         assert!(hosts.contains(&"zoomgov.com"), "zoomgov.com in allowlist");
         assert!(hosts.contains(&"zdassets.com"), "zdassets.com in allowlist");
+    }
+
+    #[test]
+    fn slack_allowed_hosts_include_google_oauth() {
+        let hosts = provider_allowed_hosts("slack");
+        for host in [
+            "accounts.google.com",
+            "accounts.googleusercontent.com",
+            "ssl.gstatic.com",
+            "fonts.gstatic.com",
+            "lh3.googleusercontent.com",
+            "oauth2.googleapis.com",
+            "www.googleapis.com",
+        ] {
+            assert!(hosts.contains(&host), "{host} in Slack allowlist");
+        }
+    }
+
+    #[test]
+    fn slack_allowed_hosts_still_internal_for_slack_origins() {
+        assert!(url_is_internal(
+            "slack",
+            &url("https://app.slack.com/client/T123/C456"),
+        ));
+        assert!(url_is_internal(
+            "slack",
+            &url("https://a.slack-edge.com/bv1/app.js"),
+        ));
+        assert!(url_is_internal(
+            "slack",
+            &url("https://wss-primary.slack.com/?ticket=redacted"),
+        ));
+    }
+
+    #[test]
+    fn slack_allowed_hosts_do_not_bare_allow_google() {
+        let hosts = provider_allowed_hosts("slack");
+        assert!(
+            !hosts.contains(&"google.com"),
+            "bare google.com not allowed"
+        );
+        assert!(!hosts.contains(&"googleusercontent.com"));
+        assert!(!hosts.contains(&"gstatic.com"));
+        assert!(!hosts.contains(&"googleapis.com"));
+
+        assert!(url_is_internal(
+            "slack",
+            &url("https://accounts.google.com/v3/signin/identifier"),
+        ));
+        assert!(!url_is_internal("slack", &url("https://google.com/")));
+        assert!(!url_is_internal("slack", &url("https://mail.google.com/")));
+        assert!(!url_is_internal("slack", &url("https://apis.google.com/")));
     }
 
     #[test]
