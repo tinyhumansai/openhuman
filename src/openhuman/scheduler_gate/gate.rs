@@ -135,7 +135,7 @@ pub async fn wait_for_capacity() {
                 tokio::time::sleep(Duration::from_millis(throttled_ms)).await;
                 return;
             }
-            Policy::Paused => {
+            Policy::Paused { .. } => {
                 tokio::time::sleep(Duration::from_millis(paused_ms)).await;
                 // re-evaluate; user may have toggled the gate back on.
             }
