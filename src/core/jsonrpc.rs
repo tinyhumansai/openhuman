@@ -707,6 +707,19 @@ async fn run_server_inner(
     // --- Skill runtime bootstrap -------------------------------------------
     bootstrap_skill_runtime().await;
 
+    // --- Life-capture runtime bootstrap ------------------------------------
+    //
+    // Initialize before `axum::serve` starts accepting connections so the
+    // first life_capture RPC cannot race the runtime OnceCell.
+    if let Ok(config) = crate::openhuman::config::Config::load_or_init().await {
+        bootstrap_life_capture(&config.workspace_dir).await;
+    } else {
+        log::warn!(
+            "[life_capture] config load failed during runtime bootstrap; \
+             life_capture controllers will return 'not initialised'"
+        );
+    }
+
     log::info!(
         "[core] OpenHuman core is ready — listening on http://{bind_addr} (version {})",
         env!("CARGO_PKG_VERSION")
@@ -923,6 +936,62 @@ fn register_domain_subscribers(
             "[event_bus] domain subscribers registered (webhook, channel, health, conversation, composio, restart, proactive, agent)"
         );
     });
+}
+
+/// Open `<workspace>/personal_index.db` and register the life-capture index.
+/// If `OPENAI_API_KEY` / `OPENHUMAN_EMBEDDINGS_KEY` is also set, register the
+/// embedder; otherwise leave it unset so `get_stats` still works while
+/// `search` and `ingest` return the structured "embedder not configured" error.
+async fn bootstrap_life_capture(workspace_dir: &std::path::Path) {
+    use std::sync::Arc;
+
+    let index_path = workspace_dir.join("personal_index.db");
+    let idx = match crate::openhuman::life_capture::index::PersonalIndex::open(&index_path).await {
+        Ok(idx) => Arc::new(idx),
+        Err(e) => {
+            log::warn!(
+                "[life_capture] failed to open personal index at {}: {e}",
+                index_path.display()
+            );
+            return;
+        }
+    };
+    if let Err(e) = crate::openhuman::life_capture::runtime::init_index(Arc::clone(&idx)).await {
+        log::debug!("[life_capture] index init skipped: {e}");
+    } else {
+        log::info!(
+            "[life_capture] index initialised at {}",
+            index_path.display()
+        );
+    }
+
+    let api_key = std::env::var("OPENHUMAN_EMBEDDINGS_KEY")
+        .or_else(|_| std::env::var("OPENAI_API_KEY"))
+        .ok();
+    let Some(api_key) = api_key else {
+        log::info!(
+            "[life_capture] embedder not configured (set OPENAI_API_KEY or \
+             OPENHUMAN_EMBEDDINGS_KEY); life_capture.get_stats remains available"
+        );
+        return;
+    };
+
+    let base_url = std::env::var("OPENHUMAN_EMBEDDINGS_URL")
+        .unwrap_or_else(|_| "https://api.openai.com/v1".into());
+    let model = std::env::var("OPENHUMAN_EMBEDDINGS_MODEL")
+        .unwrap_or_else(|_| "text-embedding-3-small".into());
+    let embedder: Arc<dyn crate::openhuman::life_capture::embedder::Embedder> = Arc::new(
+        crate::openhuman::life_capture::embedder::HostedEmbedder::new(
+            base_url,
+            api_key,
+            model.clone(),
+        ),
+    );
+    if let Err(e) = crate::openhuman::life_capture::runtime::init_embedder(embedder).await {
+        log::debug!("[life_capture] embedder init skipped: {e}");
+    } else {
+        log::info!("[life_capture] embedder initialised — model={model}");
+    }
 }
 
 /// Initializes long-lived socket/event-bus infrastructure.

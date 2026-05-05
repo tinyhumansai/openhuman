@@ -1,0 +1,342 @@
+{
+  "version": 1,
+  "description": "Retrieval eval corpus for life_capture. Items span gmail/calendar/imessage/slack across several themes with intentional decoys. Queries assert top-K containment; optional `relevant` field is reserved for future recall@k/MRR scoring.",
+  "items": [
+    {
+      "ext_id": "phoenix-postmortem-01",
+      "source": "gmail",
+      "ts": "2026-03-14T15:30:00Z",
+      "subject": "Project Phoenix launch postmortem",
+      "text": "Postmortem for the Phoenix launch. Key incidents: deploy rollback at 2am, metrics dashboard outage, alerting noise. Action items assigned to owners with due dates."
+    },
+    {
+      "ext_id": "phoenix-retro-slack-01",
+      "source": "slack",
+      "ts": "2026-03-15T18:05:00Z",
+      "subject": null,
+      "text": "Phoenix retro thread. Action items: tighten canary rollout, add smoke tests before promote, owner rotation for alerting."
+    },
+    {
+      "ext_id": "phoenix-budget-01",
+      "source": "gmail",
+      "ts": "2026-03-09T11:00:00Z",
+      "subject": "Phoenix quarterly budget review",
+      "text": "Phoenix budget review: infra spend trending 12% over forecast due to canary duplication. Proposal attached to resize staging fleet."
+    },
+    {
+      "ext_id": "phoenix-kickoff-cal-01",
+      "source": "calendar",
+      "ts": "2026-01-12T17:00:00Z",
+      "subject": "Phoenix kickoff meeting",
+      "text": "Phoenix kickoff meeting. Agenda: scope, milestones, owners, risks."
+    },
+    {
+      "ext_id": "phoenix-demo-push-imsg-01",
+      "source": "imessage",
+      "ts": "2026-02-20T22:14:00Z",
+      "subject": null,
+      "text": "Can we push the Phoenix demo by a day? Dashboard still flaky and I want one more dry run."
+    },
+    {
+      "ext_id": "phoenix-weather-noise-01",
+      "source": "gmail",
+      "ts": "2026-02-02T08:00:00Z",
+      "subject": "Weekend forecast: Phoenix, Arizona",
+      "text": "Phoenix weather this weekend: 78F sunny Saturday, 82F sunny Sunday. Low humidity. Travel advisory: none."
+    },
+
+    {
+      "ext_id": "tokyo-itinerary-01",
+      "source": "gmail",
+      "ts": "2026-03-01T09:00:00Z",
+      "subject": "Tokyo trip itinerary draft",
+      "text": "Tokyo trip itinerary draft. Day 1 Shibuya and Harajuku, Day 2 Tsukiji and Ginza, Day 3 Hakone day trip, Day 4 Akihabara and Shinjuku."
+    },
+    {
+      "ext_id": "tokyo-hotel-01",
+      "source": "gmail",
+      "ts": "2026-03-02T14:22:00Z",
+      "subject": "Hotel booking confirmation: Park Hyatt Tokyo",
+      "text": "Your hotel booking is confirmed at Park Hyatt Tokyo for 4 nights, check-in March 20. Confirmation number attached."
+    },
+    {
+      "ext_id": "tokyo-flight-01",
+      "source": "gmail",
+      "ts": "2026-03-02T14:45:00Z",
+      "subject": "Flight confirmation UA837 SFO to NRT",
+      "text": "Your flight UA837 from San Francisco SFO to Narita NRT is confirmed for March 20. Seat 24A. Tokyo arrival local time 16:05."
+    },
+    {
+      "ext_id": "tokyo-extend-imsg-01",
+      "source": "imessage",
+      "ts": "2026-03-05T19:40:00Z",
+      "subject": null,
+      "text": "Should we extend Tokyo by two days and skip the Kyoto side trip? Park Hyatt says they have the nights open."
+    },
+    {
+      "ext_id": "tokyo-visa-cal-01",
+      "source": "calendar",
+      "ts": "2026-02-18T10:00:00Z",
+      "subject": "Japan visa appointment",
+      "text": "Japan visa appointment at the consulate. Bring passport, itinerary printout, and hotel booking proof."
+    },
+
+    {
+      "ext_id": "health-labs-01",
+      "source": "gmail",
+      "ts": "2026-02-10T16:00:00Z",
+      "subject": "Lab results available",
+      "text": "Lab results are available. Cholesterol is slightly elevated, LDL 142. Other panels normal. Recommend dietary adjustments and recheck in three months."
+    },
+    {
+      "ext_id": "health-dentist-cal-01",
+      "source": "calendar",
+      "ts": "2026-04-07T10:00:00Z",
+      "subject": "Dentist appointment",
+      "text": "Dentist appointment Tuesday 10am. Cleaning and checkup. Bring insurance card."
+    },
+    {
+      "ext_id": "health-checkup-01",
+      "source": "gmail",
+      "ts": "2026-02-05T09:00:00Z",
+      "subject": "Annual checkup results",
+      "text": "Your annual physical checkup results are in. All vitals normal. Doctor notes include vitamin D recommendation."
+    },
+    {
+      "ext_id": "health-vitamin-imsg-01",
+      "source": "imessage",
+      "ts": "2026-03-18T08:30:00Z",
+      "subject": null,
+      "text": "Started taking vitamin D every morning, feeling a bit better already after two weeks."
+    },
+
+    {
+      "ext_id": "shop-headphones-01",
+      "source": "gmail",
+      "ts": "2026-01-22T11:15:00Z",
+      "subject": "Your order has shipped",
+      "text": "Your order of Sony wireless headphones has shipped. Tracking number inside. Estimated delivery Thursday."
+    },
+    {
+      "ext_id": "shop-amazon-receipt-01",
+      "source": "gmail",
+      "ts": "2026-01-19T20:02:00Z",
+      "subject": "Amazon order confirmation",
+      "text": "Amazon order total 127.43 USD. Items: wireless headphones, USB-C cable, laptop stand."
+    },
+    {
+      "ext_id": "shop-jacket-return-01",
+      "source": "gmail",
+      "ts": "2026-01-25T09:00:00Z",
+      "subject": "Return window closes Friday",
+      "text": "Reminder: the return window for your jacket purchase closes Friday. Start a return from your orders page."
+    },
+
+    {
+      "ext_id": "tech-ssl-cal-01",
+      "source": "calendar",
+      "ts": "2026-04-12T09:00:00Z",
+      "subject": "SSL certificate renewal",
+      "text": "SSL certificate renewal reminder. Certbot run scheduled. Verify post-renewal with openssl s_client."
+    },
+    {
+      "ext_id": "tech-migration-01",
+      "source": "gmail",
+      "ts": "2026-03-22T17:00:00Z",
+      "subject": "Database migration rollback plan",
+      "text": "Database migration rollback plan. Snapshot before alter, dual-write window, feature flag gate, rollback SQL attached."
+    },
+    {
+      "ext_id": "tech-postgres-pool-slack-01",
+      "source": "slack",
+      "ts": "2026-02-25T14:10:00Z",
+      "subject": null,
+      "text": "Postgres connection pool tuning notes. PgBouncer transaction mode, pool size per CPU, prepared statements caveat."
+    },
+    {
+      "ext_id": "tech-auth-pr-slack-01",
+      "source": "slack",
+      "ts": "2026-03-11T19:22:00Z",
+      "subject": null,
+      "text": "PR review: auth refactor. Extracting session issuance into a dedicated service, cleaner token lifecycle, unit tests added."
+    },
+
+    {
+      "ext_id": "social-nobu-imsg-01",
+      "source": "imessage",
+      "ts": "2026-03-07T21:00:00Z",
+      "subject": null,
+      "text": "Dinner at Nobu Saturday at 8pm? Booked a table for four."
+    },
+    {
+      "ext_id": "social-birthday-01",
+      "source": "gmail",
+      "ts": "2026-03-12T13:00:00Z",
+      "subject": "Alex's 30th birthday party",
+      "text": "RSVP for Alex's 30th birthday party. Saturday evening, rooftop venue. Dress code smart casual."
+    },
+    {
+      "ext_id": "social-movie-imsg-01",
+      "source": "imessage",
+      "ts": "2026-03-13T18:45:00Z",
+      "subject": null,
+      "text": "Movie night Friday? Thinking the new Denis Villeneuve film."
+    },
+    {
+      "ext_id": "social-coffee-cal-01",
+      "source": "calendar",
+      "ts": "2026-04-03T15:00:00Z",
+      "subject": "Coffee with Priya",
+      "text": "Coffee with Priya at Blue Bottle. Catch up on career plans and the new company."
+    },
+
+    {
+      "ext_id": "finance-statement-01",
+      "source": "gmail",
+      "ts": "2026-02-03T07:30:00Z",
+      "subject": "January brokerage statement",
+      "text": "Your January brokerage statement is available. Portfolio performance summary and dividend distribution inside."
+    },
+    {
+      "ext_id": "finance-cc-cal-01",
+      "source": "calendar",
+      "ts": "2026-04-18T09:00:00Z",
+      "subject": "Credit card payment due",
+      "text": "Credit card payment due. Autopay is configured but verify balance before statement close."
+    },
+    {
+      "ext_id": "finance-tax-01",
+      "source": "gmail",
+      "ts": "2026-02-14T12:00:00Z",
+      "subject": "Tax documents available from your employer",
+      "text": "Your W-2 and 1095-C tax documents from your employer are available for download in the HR portal."
+    },
+
+    {
+      "ext_id": "noise-airline-miles-01",
+      "source": "gmail",
+      "ts": "2026-01-30T08:00:00Z",
+      "subject": "Your airline miles expire soon",
+      "text": "Loyalty account notice: your airline miles expire in 60 days unless you book or redeem. Flight deals inside."
+    },
+    {
+      "ext_id": "noise-vitamin-c-01",
+      "source": "gmail",
+      "ts": "2026-01-28T10:00:00Z",
+      "subject": "Vitamin C powder bulk discount",
+      "text": "Marketing: vitamin C powder bulk discount this week only. Shipping included on orders over fifty dollars."
+    },
+    {
+      "ext_id": "noise-newsletter-01",
+      "source": "gmail",
+      "ts": "2026-02-11T06:30:00Z",
+      "subject": "Weekly tech digest",
+      "text": "Weekly tech digest: frontend frameworks roundup, database benchmarks, open source releases of note."
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-kw-01",
+      "text": "phoenix postmortem",
+      "kind": "keyword",
+      "k": 5,
+      "must_contain_in_top": 3,
+      "must_contain": ["phoenix-postmortem-01"],
+      "must_not_contain_in_top": 3,
+      "must_not_contain": ["phoenix-weather-noise-01"]
+    },
+    {
+      "id": "q-kw-02",
+      "text": "park hyatt",
+      "kind": "keyword",
+      "k": 5,
+      "must_contain_in_top": 1,
+      "must_contain": ["tokyo-hotel-01"]
+    },
+    {
+      "id": "q-kw-03",
+      "text": "cholesterol",
+      "kind": "keyword",
+      "k": 5,
+      "must_contain_in_top": 1,
+      "must_contain": ["health-labs-01"]
+    },
+    {
+      "id": "q-kw-04",
+      "text": "SSL certificate",
+      "kind": "keyword",
+      "k": 5,
+      "must_contain_in_top": 1,
+      "must_contain": ["tech-ssl-cal-01"]
+    },
+    {
+      "id": "q-sem-01",
+      "text": "tokyo trip planning",
+      "kind": "semantic",
+      "k": 5,
+      "must_contain_in_top": 5,
+      "must_contain": ["tokyo-itinerary-01"]
+    },
+    {
+      "id": "q-sem-02",
+      "text": "dentist appointment cleaning",
+      "kind": "semantic",
+      "k": 5,
+      "must_contain_in_top": 3,
+      "must_contain": ["health-dentist-cal-01"]
+    },
+    {
+      "id": "q-sem-03",
+      "text": "launch retrospective action items",
+      "kind": "semantic",
+      "k": 5,
+      "must_contain_in_top": 5,
+      "must_contain": ["phoenix-retro-slack-01"]
+    },
+    {
+      "id": "q-mix-01",
+      "text": "phoenix quarterly budget",
+      "kind": "mixed",
+      "k": 5,
+      "must_contain_in_top": 2,
+      "must_contain": ["phoenix-budget-01"]
+    },
+    {
+      "id": "q-mix-02",
+      "text": "tokyo flight confirmation",
+      "kind": "mixed",
+      "k": 5,
+      "must_contain_in_top": 2,
+      "must_contain": ["tokyo-flight-01"]
+    },
+    {
+      "id": "q-mix-03",
+      "text": "database migration rollback",
+      "kind": "mixed",
+      "k": 5,
+      "must_contain_in_top": 2,
+      "must_contain": ["tech-migration-01"]
+    },
+    {
+      "id": "q-src-01",
+      "text": "phoenix",
+      "kind": "mixed",
+      "k": 5,
+      "sources": ["calendar"],
+      "pending": true,
+      "pending_reason": "hybrid_search ignores Query.sources/since/until today; runner skips assertions until the implementation branch honors the filter.",
+      "must_contain_in_top": 5,
+      "must_contain": ["phoenix-kickoff-cal-01"],
+      "must_not_contain_in_top": 5,
+      "must_not_contain": ["phoenix-postmortem-01", "phoenix-retro-slack-01", "phoenix-budget-01", "phoenix-demo-push-imsg-01"]
+    },
+    {
+      "id": "q-neg-01",
+      "text": "blood pressure medication",
+      "kind": "mixed",
+      "k": 5,
+      "must_not_contain_in_top": 3,
+      "must_not_contain": ["phoenix-postmortem-01", "tokyo-itinerary-01", "tech-migration-01"]
+    }
+  ]
+}
