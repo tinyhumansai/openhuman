@@ -170,8 +170,38 @@ impl Agent {
     /// file paths. Callers (e.g. the web channel) use this to scope
     /// transcripts per thread so each conversation thread gets its own
     /// transcript namespace instead of sharing one by agent type.
+    ///
+    /// Also rebuilds [`Self::session_key`] so the next call to
+    /// `persist_session_transcript` writes to a path keyed by the new
+    /// name. Without this, persist would keep using the builder-time
+    /// name (e.g. `"orchestrator"`) while
+    /// `find_latest_transcript` searches for the post-rename name (e.g.
+    /// `"orchestrator_thread-6ad6d"`), and resume on cold boot would
+    /// silently miss every prior transcript — the LLM would then run
+    /// each new turn with no conversation history.
     pub fn set_agent_definition_name(&mut self, name: impl Into<String>) {
-        self.agent_definition_name = name.into();
+        let name = name.into();
+        let sanitized: String = name
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        // Preserve the original unix-timestamp prefix from the builder
+        // so sub-agent spawn collisions remain impossible. Falls back
+        // to "0" if the existing key is in an unexpected shape.
+        let prefix = self
+            .session_key
+            .split_once('_')
+            .map(|(p, _)| p)
+            .filter(|p| !p.is_empty())
+            .unwrap_or("0");
+        self.session_key = format!("{prefix}_{sanitized}");
+        self.agent_definition_name = name;
     }
 
     /// Attach a progress event sender for real-time turn updates.
@@ -206,6 +236,78 @@ impl Agent {
     /// Clears the agent's conversation history.
     pub fn clear_history(&mut self) {
         self.history.clear();
+    }
+
+    /// Seed the next turn's LLM context from an authoritative message
+    /// log (e.g. the web channel's per-thread conversation JSONL).
+    ///
+    /// Mirrors what [`Self::try_load_session_transcript`] does on a
+    /// transcript-file hit, but sources from a caller-supplied list so
+    /// resume works even when no transcript file exists for this
+    /// agent name (the typical situation right after the
+    /// `set_agent_definition_name` / `session_key` rename fix landed —
+    /// existing transcripts are written under the old name).
+    ///
+    /// `messages` is `(role, content)` pairs in chronological order.
+    /// Recognised roles: `"user"`, `"agent"` / `"assistant"`. Any
+    /// trailing user message that exactly matches `current_user_message`
+    /// is dropped — the caller is about to pass that text to
+    /// [`Self::run_single`], which will append it to history itself, so
+    /// keeping it here would duplicate it on the wire.
+    ///
+    /// No-ops if the agent already has a history or a cached transcript
+    /// (i.e. the per-process session cache is warm). Intended only for
+    /// cold-boot priming.
+    pub fn seed_resume_from_messages(
+        &mut self,
+        messages: Vec<(String, String)>,
+        current_user_message: &str,
+    ) -> Result<()> {
+        if !self.history.is_empty() || self.cached_transcript_messages.is_some() {
+            return Ok(());
+        }
+        let mut prior = messages;
+        if let Some(last) = prior.last() {
+            if last.0 == "user" && last.1.trim() == current_user_message.trim() {
+                prior.pop();
+            }
+        }
+        if prior.is_empty() {
+            return Ok(());
+        }
+
+        // Build the system prompt fresh — there's no persisted prefix
+        // to preserve here, and learned-context decoration is skipped
+        // intentionally so this fallback path stays synchronous and
+        // doesn't fan out to the memory store on every cold-boot turn.
+        let learned = crate::openhuman::agent::prompts::LearnedContextData::default();
+        let system_prompt = self.build_system_prompt(learned)?;
+
+        let mut cached: Vec<crate::openhuman::providers::ChatMessage> =
+            Vec::with_capacity(prior.len() + 1);
+        cached.push(crate::openhuman::providers::ChatMessage::system(
+            system_prompt,
+        ));
+        for (role, content) in prior {
+            let chat = match role.as_str() {
+                "user" => crate::openhuman::providers::ChatMessage::user(content),
+                "agent" | "assistant" => {
+                    crate::openhuman::providers::ChatMessage::assistant(content)
+                }
+                // Fall back to user role for unknown senders rather than
+                // dropping the message — losing context is worse than
+                // mislabelling a system/tool message.
+                _ => crate::openhuman::providers::ChatMessage::user(content),
+            };
+            cached.push(chat);
+        }
+
+        log::info!(
+            "[agent] seed_resume_from_messages — primed cached transcript with {} prior messages",
+            cached.len() - 1
+        );
+        self.cached_transcript_messages = Some(cached);
+        Ok(())
     }
 
     /// Drain and return memory citations collected for the latest completed turn.

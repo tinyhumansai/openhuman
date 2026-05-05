@@ -1,18 +1,21 @@
 //! Webview APIs bridge — Tauri side (server).
 //!
-//! Exposes the connector APIs that live in the Tauri shell (Gmail,
-//! future: Notion, Slack, …) to the core sidecar over a local
-//! WebSocket on `127.0.0.1`. Core-side handlers in
-//! `src/openhuman/webview_apis/` connect as a client and proxy
-//! JSON-RPC calls (`openhuman.gmail_*`) through this bridge so curl
-//! against the core's RPC port reaches the live webview session.
+//! Exposes the connector APIs that live in the Tauri shell (future:
+//! Notion, Slack, …) to the core sidecar over a local WebSocket on
+//! `127.0.0.1`. Core-side handlers in `src/openhuman/webview_apis/`
+//! connect as a client and proxy JSON-RPC calls through this bridge
+//! so curl against the core's RPC port reaches the live webview
+//! session. The bridge currently has no registered methods; the
+//! Gmail embedded-webview connector that previously lived here has
+//! been retired so the webview-account flow can stay focused on
+//! social / messaging surfaces.
 //!
 //! ## Protocol
 //!
 //! JSON text frames, one envelope per frame:
 //!
 //! ```text
-//! request:   { "kind": "request",  "id": "...", "method": "gmail.list_labels",
+//! request:   { "kind": "request",  "id": "...", "method": "<connector>.<action>",
 //!              "params": { "account_id": "…" } }
 //! response:  { "kind": "response", "id": "...", "ok": true,  "result": <json> }
 //! response:  { "kind": "response", "id": "...", "ok": false, "error": "…" }

@@ -360,6 +360,10 @@ pub enum DomainEvent {
     SystemShutdown { component: String },
     /// A restart of the current core process was requested.
     SystemRestartRequested { source: String, reason: String },
+    /// A graceful shutdown of the current core process was requested.
+    /// Distinct from [`Self::SystemShutdown`] (per-component shutdown
+    /// notification) — this variant asks the running process to exit.
+    SystemShutdownRequested { source: String, reason: String },
     /// A component's health status changed.
     HealthChanged {
         component: String,
@@ -431,6 +435,7 @@ impl DomainEvent {
             Self::SystemStartup { .. }
             | Self::SystemShutdown { .. }
             | Self::SystemRestartRequested { .. }
+            | Self::SystemShutdownRequested { .. }
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. } => "system",
         }

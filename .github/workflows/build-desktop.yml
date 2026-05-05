@@ -341,11 +341,12 @@ jobs:
           # disabled and the symbols uploaded below have nothing to attach
           # to. Same DSN as `release-packages.yml` uses for the Linux arm64
           # tarball — there is one openhuman-core Sentry project that all
-          # standalone-CLI surfaces report to.
-          OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_SENTRY_DSN }}
+          # standalone-CLI surfaces report to. Prefer the namespaced GH
+          # var, fall back to the legacy unprefixed one during transition.
+          OPENHUMAN_CORE_SENTRY_DSN: ${{ vars.OPENHUMAN_CORE_SENTRY_DSN || vars.OPENHUMAN_SENTRY_DSN }}
         run: |
-          if [ -z "${OPENHUMAN_SENTRY_DSN}" ]; then
-            echo "::warning::vars.OPENHUMAN_SENTRY_DSN is empty — the standalone CLI artifact will ship without crash reporting."
+          if [ -z "${OPENHUMAN_CORE_SENTRY_DSN}" ]; then
+            echo "::warning::vars.OPENHUMAN_CORE_SENTRY_DSN (or legacy vars.OPENHUMAN_SENTRY_DSN) is empty — the standalone CLI artifact will ship without crash reporting."
           fi
           cargo build \
             --manifest-path "$CORE_MANIFEST" \

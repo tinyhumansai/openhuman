@@ -680,6 +680,43 @@ fn sync_cache_with_connections(connections: &[super::types::ComposioConnection])
 /// Best-effort: returns an empty vec when the user isn't signed in,
 /// the backend is unreachable, or any step fails.
 pub async fn fetch_connected_integrations(config: &Config) -> Vec<ConnectedIntegration> {
+    match fetch_connected_integrations_status(config).await {
+        FetchConnectedIntegrationsStatus::Authoritative(v) => v,
+        FetchConnectedIntegrationsStatus::Unavailable => Vec::new(),
+    }
+}
+
+/// Discriminated outcome from [`fetch_connected_integrations_status`].
+///
+/// Lets callers distinguish "the backend confirmed the user has zero
+/// active connections right now" from "we couldn't talk to the backend
+/// (no client, transient failure, …) and have no truth to report".
+///
+/// The legacy [`fetch_connected_integrations`] collapses both into an
+/// empty `Vec`, which is fine for prompt-building (they look the same)
+/// but dangerous for spawn-time allowlist gates — using empty as truth
+/// in the unavailable case would silently wipe the user's allowlist
+/// during a transient 5xx.
+#[derive(Debug, Clone)]
+pub enum FetchConnectedIntegrationsStatus {
+    /// Backend was reachable. Vec may legitimately be empty (no
+    /// allowlisted toolkits, or no active connections).
+    Authoritative(Vec<ConnectedIntegration>),
+    /// Backend wasn't reachable (no auth client, transient error). The
+    /// caller should fall back to its prior snapshot rather than treat
+    /// "no connections" as truth.
+    Unavailable,
+}
+
+/// Status-returning variant of [`fetch_connected_integrations`].
+///
+/// Same caching, same cache-invalidation semantics — only the return
+/// shape differs. Cache hits are by definition `Authoritative` because
+/// we only cache the `Some(...)` arm of `_uncached` (i.e. results the
+/// backend confirmed).
+pub async fn fetch_connected_integrations_status(
+    config: &Config,
+) -> FetchConnectedIntegrationsStatus {
     let key = cache_key(config);
 
     // Fast path: return cached result if fresh. Stale entries fall
@@ -695,7 +732,7 @@ pub async fn fetch_connected_integrations(config: &Config) -> Vec<ConnectedInteg
                     key = %key,
                     "[composio][integrations] returning cached result"
                 );
-                return cached.entries.clone();
+                return FetchConnectedIntegrationsStatus::Authoritative(cached.entries.clone());
             }
             tracing::info!(
                 count = cached.entries.len(),
@@ -719,12 +756,12 @@ pub async fn fetch_connected_integrations(config: &Config) -> Vec<ConnectedInteg
                     },
                 );
             }
-            result
+            FetchConnectedIntegrationsStatus::Authoritative(result)
         }
         None => {
             // No auth / client unavailable — do NOT cache so a
             // subsequent call with a different config can retry.
-            Vec::new()
+            FetchConnectedIntegrationsStatus::Unavailable
         }
     }
 }

@@ -821,8 +821,14 @@ impl Config {
             }
         }
 
+        // Prefer the namespaced name. `OPENHUMAN_SENTRY_DSN` is the legacy
+        // unprefixed name kept as a fallback so existing CI vars and local
+        // `.env` files keep working until the GH org-level variable can be
+        // renamed in lock-step.
         let dsn_value = env
-            .get("OPENHUMAN_SENTRY_DSN")
+            .get("OPENHUMAN_CORE_SENTRY_DSN")
+            .or_else(|| env.get("OPENHUMAN_SENTRY_DSN"))
+            .or_else(|| option_env!("OPENHUMAN_CORE_SENTRY_DSN").map(|s| s.to_string()))
             .or_else(|| option_env!("OPENHUMAN_SENTRY_DSN").map(|s| s.to_string()));
         if let Some(dsn) = dsn_value {
             let dsn = dsn.trim();
@@ -992,12 +998,52 @@ impl Config {
 
         // Phase MD-content: chunk body directory override. Empty string means
         // "fall back to default", consistent with other memory_tree env vars.
-        if let Ok(dir) = std::env::var("OPENHUMAN_MEMORY_TREE_CONTENT_DIR") {
+        // Routed through `env.get` so `HashMapEnv`-style test callers see the
+        // override too — same seam as every other branch in this function.
+        if let Some(dir) = env.get("OPENHUMAN_MEMORY_TREE_CONTENT_DIR") {
             let trimmed = dir.trim();
             self.memory_tree.content_dir = if trimmed.is_empty() {
                 None
             } else {
                 Some(std::path::PathBuf::from(trimmed))
+            };
+        }
+
+        // Memory-tree LLM backend selector: "cloud" (default) routes through
+        // the OpenHuman backend's summarizer model; "local" keeps the legacy
+        // Ollama-direct path. Empty / unset / unknown leaves the existing
+        // value untouched (and we warn on unknown). The embedder is unaffected.
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_LLM_BACKEND") {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                match crate::openhuman::config::LlmBackend::parse(trimmed) {
+                    Ok(b) => {
+                        log::debug!(
+                            "[memory_tree] OPENHUMAN_MEMORY_TREE_LLM_BACKEND override applied: {}",
+                            b.as_str()
+                        );
+                        self.memory_tree.llm_backend = b;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            value = trimmed,
+                            error = %e,
+                            "ignoring invalid OPENHUMAN_MEMORY_TREE_LLM_BACKEND (valid: cloud, local)"
+                        );
+                    }
+                }
+            }
+        }
+        // Cloud LLM model override (only meaningful when llm_backend = cloud).
+        // Empty string explicitly clears the default — useful for tests that
+        // want to assert the absence of a configured cloud model. Non-empty
+        // strings are stored verbatim.
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL") {
+            let trimmed = raw.trim();
+            self.memory_tree.cloud_llm_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
             };
         }
 

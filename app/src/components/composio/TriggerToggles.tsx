@@ -6,6 +6,7 @@ import {
   listAvailableTriggers,
   listTriggers,
 } from '../../lib/composio/composioApi';
+import { formatTriggerLabel } from '../../lib/composio/formatters';
 import type { ComposioActiveTrigger, ComposioAvailableTrigger } from '../../lib/composio/types';
 
 /**
@@ -122,7 +123,9 @@ export default function TriggerToggles({
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setRowError(`${existing ? 'Disable' : 'Enable'} failed for ${entry.slug}: ${msg}`);
+        setRowError(
+          `${existing ? 'Disable' : 'Enable'} failed for ${formatTriggerLabel(entry.slug)}: ${msg}`
+        );
       } finally {
         setPendingSignature(null);
       }
@@ -177,13 +180,19 @@ export default function TriggerToggles({
           const label =
             entry.scope === 'github_repo' && entry.repo
               ? `${entry.repo.owner}/${entry.repo.repo}`
-              : entry.slug;
+              : formatTriggerLabel(entry.slug);
           const sub =
             entry.scope === 'github_repo'
-              ? entry.slug
+              ? formatTriggerLabel(entry.slug)
               : requiresConfig
                 ? 'Needs configuration'
                 : '';
+          const action = enabled ? 'Disable' : 'Enable';
+          const triggerName = formatTriggerLabel(entry.slug);
+          const ariaLabel =
+            entry.scope === 'github_repo' && entry.repo
+              ? `${action} ${triggerName} for ${entry.repo.owner}/${entry.repo.repo}`
+              : `${action} ${triggerName}`;
 
           return (
             <li
@@ -198,7 +207,7 @@ export default function TriggerToggles({
                 type="button"
                 role="switch"
                 aria-checked={enabled}
-                aria-label={`${enabled ? 'Disable' : 'Enable'} ${entry.slug}`}
+                aria-label={ariaLabel}
                 disabled={disabled}
                 onClick={() => void handleToggle(entry)}
                 className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50 ${

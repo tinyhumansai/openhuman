@@ -1,6 +1,6 @@
 //! Franz-style embedded webview accounts.
 //!
-//! Hosts third-party web apps (WhatsApp Web, Gmail, …) as a child Tauri
+//! Hosts third-party web apps (WhatsApp Web, Slack, …) as a child Tauri
 //! `Webview` positioned inside the main React window at a rect chosen by the
 //! UI. A small per-provider "recipe" JS file is injected via
 //! `initialization_script` to scrape the DOM and pipe state back to Rust as
@@ -42,7 +42,6 @@ use crate::cdp;
 
 const RUNTIME_JS: &str = include_str!("runtime.js");
 const LINKEDIN_RECIPE_JS: &str = include_str!("../../recipes/linkedin/recipe.js");
-const GMAIL_RECIPE_JS: &str = include_str!("../../recipes/gmail/recipe.js");
 const GOOGLE_MEET_RECIPE_JS: &str = include_str!("../../recipes/google-meet/recipe.js");
 
 /// Registered providers and their service URLs. Add a new arm here plus a
@@ -52,7 +51,6 @@ fn provider_url(provider: &str) -> Option<&'static str> {
         "whatsapp" => Some("https://web.whatsapp.com/"),
         "telegram" => Some("https://web.telegram.org/k/"),
         "linkedin" => Some("https://www.linkedin.com/messaging/"),
-        "gmail" => Some("https://mail.google.com/mail/u/0/"),
         "slack" => Some("https://app.slack.com/client/"),
         "discord" => Some("https://discord.com/channels/@me"),
         "google-meet" => Some("https://meet.google.com/"),
@@ -69,7 +67,6 @@ fn provider_url(provider: &str) -> Option<&'static str> {
 fn provider_recipe_js(provider: &str) -> Option<&'static str> {
     match provider {
         "linkedin" => Some(LINKEDIN_RECIPE_JS),
-        "gmail" => Some(GMAIL_RECIPE_JS),
         "google-meet" => Some(GOOGLE_MEET_RECIPE_JS),
         _ => None,
     }
@@ -84,7 +81,7 @@ fn provider_is_supported(provider: &str) -> bool {
 
 /// Host suffixes the embedded webview is allowed to navigate within. Any
 /// navigation to a host outside this set is cancelled and opened in the
-/// user's default browser instead. Gmail / Meet include Google's auth and
+/// user's default browser instead. Meet includes Google's auth and
 /// static asset hosts so the OAuth redirect loop works; Discord includes
 /// its CDN subdomains for the same reason.
 fn provider_allowed_hosts(provider: &str) -> &'static [&'static str] {
@@ -92,12 +89,6 @@ fn provider_allowed_hosts(provider: &str) -> &'static [&'static str] {
         "whatsapp" => &["whatsapp.com", "whatsapp.net", "wa.me"],
         "telegram" => &["telegram.org", "t.me"],
         "linkedin" => &["linkedin.com", "licdn.com"],
-        "gmail" => &[
-            "google.com",
-            "googleusercontent.com",
-            "gstatic.com",
-            "googleapis.com",
-        ],
         "slack" => &["slack.com", "slack-edge.com", "slackb.com"],
         "discord" => &[
             "discord.com",
@@ -252,41 +243,37 @@ fn is_provider_native_deep_link_scheme(scheme: &str) -> bool {
 /// `true` if a popup request should be denied AND the parent webview
 /// should be navigated to the popup URL instead.
 ///
-/// Used for Google's "Sign in" / "Use another account" flow: clicking
-/// the link issues `window.open("https://accounts.google.com/...")`. We
-/// can't route that to the system browser (the auth cookie would land
-/// in the wrong jar) and we don't want to let CEF spawn an unmanaged
-/// child window (it has no host rect, so it renders blank/black). The
-/// safe option is to deny the popup and replace the parent's URL — the
-/// in-app webview was already at mail.google.com so taking over the
-/// frame to finish auth is exactly what the user expects.
+/// Used for Google's "Sign in" / "Use another account" flow on the
+/// embedded Google Meet webview: clicking the link issues
+/// `window.open("https://accounts.google.com/...")`. We can't route
+/// that to the system browser (the auth cookie would land in the
+/// wrong jar) and we don't want to let CEF spawn an unmanaged child
+/// window (it has no host rect, so it renders blank/black). The safe
+/// option is to deny the popup and replace the parent's URL so the
+/// in-app webview finishes the auth flow inside the embedded session.
 fn popup_should_navigate_parent(provider: &str, url: &Url) -> Option<Url> {
-    match provider {
-        "gmail" | "google-meet" => {
-            if url.scheme() == "about" {
-                return None;
-            }
-            if is_google_auth_popup(url) {
-                return Some(url.clone());
-            }
-            // Gmeet: "Start an instant meeting" / "New meeting" / clicking
-            // a meeting code link calls `window.open(meet.google.com/<roomid>)`
-            // to launch the room. Default popup handling would route the
-            // URL to the user's system browser, leaking the Meet session
-            // out of OpenHuman entirely. Deny the popup and navigate the
-            // embedded parent into the room URL instead — matches the
-            // user's expectation that the meeting stays in-app.
-            if provider == "google-meet" {
-                if let Some(host) = url.host_str() {
-                    if host == "meet.google.com" {
-                        return Some(url.clone());
-                    }
-                }
-            }
-            None
-        }
-        _ => None,
+    if provider != "google-meet" {
+        return None;
     }
+    if url.scheme() == "about" {
+        return None;
+    }
+    if is_google_auth_popup(url) {
+        return Some(url.clone());
+    }
+    // Gmeet: "Start an instant meeting" / "New meeting" / clicking
+    // a meeting code link calls `window.open(meet.google.com/<roomid>)`
+    // to launch the room. Default popup handling would route the
+    // URL to the user's system browser, leaking the Meet session
+    // out of OpenHuman entirely. Deny the popup and navigate the
+    // embedded parent into the room URL instead — matches the
+    // user's expectation that the meeting stays in-app.
+    if let Some(host) = url.host_str() {
+        if host == "meet.google.com" {
+            return Some(url.clone());
+        }
+    }
+    None
 }
 
 fn is_google_auth_popup(url: &Url) -> bool {
@@ -512,7 +499,6 @@ pub fn provider_display_name(provider: &str) -> &'static str {
         "whatsapp" => "WhatsApp",
         "telegram" => "Telegram",
         "linkedin" => "LinkedIn",
-        "gmail" => "Gmail",
         "slack" => "Slack",
         "discord" => "Discord",
         "google-meet" => "Google Meet",
@@ -626,54 +612,94 @@ impl WebviewAccountsState {
     /// and tells the per-account scanner registries to forget the
     /// account so a future open of the same id starts from a clean slate.
     /// All collections are drained — repeat calls are cheap no-ops.
-    pub fn shutdown_all<R: Runtime>(&self, app: &AppHandle<R>) {
+    pub fn shutdown_all<R: Runtime>(&self, app: &AppHandle<R>) -> Vec<String> {
+        teardown_all_account_scanners(app);
         let labels = self.drain_for_shutdown();
+        let mut closed_labels = Vec::with_capacity(labels.len());
         for (acct, label) in labels {
             teardown_account_scanners(app, &acct);
             if let Some(wv) = app.get_webview(&label) {
+                // Track the label as soon as the webview exists so a failed
+                // `close()` still participates in the post-close drain poll
+                // (issue #1120 / CodeRabbit).
+                closed_labels.push(label.clone());
                 if let Err(e) = wv.close() {
                     log::warn!(
                         "[webview-accounts] shutdown close({label}) failed account={acct}: {e}"
                     );
                 }
+            } else {
+                log::debug!(
+                    "[webview-accounts] shutdown label already gone account={} label={}",
+                    acct,
+                    label
+                );
             }
         }
-        log::info!("[webview-accounts] shutdown_all complete");
+        log::info!(
+            "[webview-accounts] shutdown_all complete closed_labels={:?}",
+            closed_labels
+        );
+        closed_labels
+    }
+}
+
+/// Abort every provider scanner task tracked by the per-provider
+/// registries. Used by full-app shutdown before the per-account state is
+/// drained so CDP loops stop even if an account label was already removed
+/// from `WebviewAccountsState`.
+fn teardown_all_account_scanners<R: Runtime>(app: &AppHandle<R>) {
+    let mut total = 0usize;
+    if let Some(registry) =
+        app.try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
+    {
+        total += registry.inner().forget_all();
+    }
+    if let Some(registry) = app.try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
+    {
+        total += registry.inner().forget_all();
+    }
+    if let Some(registry) =
+        app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
+    {
+        total += registry.inner().forget_all();
+    }
+    if let Some(registry) =
+        app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
+    {
+        total += registry.inner().forget_all();
+    }
+    if total > 0 {
+        log::info!(
+            "[webview-accounts] aborted {} provider scanner task(s) for shutdown",
+            total
+        );
     }
 }
 
 /// Tell the per-account scanner registries (whatsapp / slack / discord /
-/// telegram) to forget `account_id`. Each `forget` is fire-and-forget so
-/// the caller doesn't need to be `async`. Shared by `webview_account_close`,
+/// telegram) to forget `account_id`. Shared by `webview_account_close`,
 /// `webview_account_purge`, and `WebviewAccountsState::shutdown_all` so
 /// every exit path goes through the same teardown.
 fn teardown_account_scanners<R: Runtime>(app: &AppHandle<R>, account_id: &str) {
     if let Some(registry) =
         app.try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
     {
-        let registry = registry.inner().clone();
-        let acct = account_id.to_string();
-        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
+        registry.inner().forget(account_id);
     }
     if let Some(registry) = app.try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
     {
-        let registry = registry.inner().clone();
-        let acct = account_id.to_string();
-        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
+        registry.inner().forget(account_id);
     }
     if let Some(registry) =
         app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
     {
-        let registry = registry.inner().clone();
-        let acct = account_id.to_string();
-        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
+        registry.inner().forget(account_id);
     }
     if let Some(registry) =
         app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
     {
-        let registry = registry.inner().clone();
-        let acct = account_id.to_string();
-        tauri::async_runtime::spawn(async move { registry.forget(&acct).await });
+        registry.inner().forget(account_id);
     }
 }
 
@@ -720,7 +746,7 @@ impl From<&NotificationBypassPrefs> for NotificationBypassPrefsPayload {
 /// Matches `openhuman_core::webview_notifications::OPENHUMAN_TITLE_PREFIX`
 /// — kept inline here so the shell crate doesn't take a build-time dep on
 /// the core library. Disambiguates from natively-installed apps (Slack,
-/// Discord, Gmail desktop) firing the same message twice.
+/// Discord, Telegram desktop) firing the same message twice.
 const OPENHUMAN_TITLE_PREFIX: &str = "OpenHuman: ";
 
 fn slack_scanner_enabled() -> bool {
@@ -1340,8 +1366,8 @@ fn data_directory_for<R: Runtime>(app: &AppHandle<R>, account_id: &str) -> Resul
 /// browserscan) — they load with ZERO injected JS; their scraping runs via
 /// CDP, and the per-account CDP session opener (`cdp::session`) injects the
 /// notification-permission shim via `Page.addScriptToEvaluateOnNewDocument`
-/// before the real provider URL loads. The 3 deferred providers (gmail,
-/// linkedin, google-meet) still get the JS recipe bridge.
+/// before the real provider URL loads. The 2 deferred providers
+/// (linkedin, google-meet) still get the JS recipe bridge.
 fn build_init_script(account_id: &str, provider: &str) -> String {
     let Some(recipe_js) = provider_recipe_js(provider) else {
         return String::new();
@@ -1403,7 +1429,7 @@ pub async fn webview_account_open<R: Runtime>(
     // We normally open the webview at a tiny placeholder URL so the CDP
     // session opener can attach and inject the notification-permission
     // shim (see `cdp/session.rs`) BEFORE the real provider URL loads;
-    // without it Slack/Gmail surface in-app "enable notifications"
+    // without it Slack surfaces in-app "enable notifications"
     // banners. For Slack debug sessions we allow opting out via
     // `OPENHUMAN_DISABLE_SLACK_SCANNER=1`, which also skips the long-lived
     // CDP session so external DevTools can attach cleanly.
@@ -1506,8 +1532,9 @@ pub async fn webview_account_open<R: Runtime>(
     builder = builder.on_navigation(move |url| {
         // Notify the frontend on every committed navigation. The
         // `webview-account:load` event is dedup'd per cold open, so it
-        // can't be used to spot post-login redirects (e.g. Gmail's
-        // accounts.google.com → mail.google.com hop). Frontends that
+        // can't be used to spot post-login redirects (e.g. Google
+        // Meet's accounts.google.com → meet.google.com hop). Frontends
+        // that
         // care about live URL transitions — onboarding's auto-detect
         // for "user finished signing in", for instance — listen here.
         if let Err(err) = nav_app.emit(
@@ -1892,12 +1919,11 @@ pub async fn webview_account_open<R: Runtime>(
                 .try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
                 .map(|s| s.inner().clone());
             if let Some(registry) = registry {
-                let app_clone = app.clone();
-                let acct = args.account_id.clone();
-                let prefix = scanner_url_prefix.clone();
-                tokio::spawn(async move {
-                    registry.ensure_scanner(app_clone, acct, prefix).await;
-                });
+                registry.ensure_scanner(
+                    app.clone(),
+                    args.account_id.clone(),
+                    scanner_url_prefix.clone(),
+                );
             } else {
                 log::warn!("[webview-accounts] CDP ScannerRegistry not in app state");
             }
@@ -1907,12 +1933,11 @@ pub async fn webview_account_open<R: Runtime>(
                     .try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
                     .map(|s| s.inner().clone());
                 if let Some(registry) = registry {
-                    let app_clone = app.clone();
-                    let acct = args.account_id.clone();
-                    let prefix = scanner_url_prefix.clone();
-                    tokio::spawn(async move {
-                        registry.ensure_scanner(app_clone, acct, prefix).await;
-                    });
+                    registry.ensure_scanner(
+                        app.clone(),
+                        args.account_id.clone(),
+                        scanner_url_prefix.clone(),
+                    );
                 } else {
                     log::warn!("[webview-accounts] slack ScannerRegistry not in app state");
                 }
@@ -1927,12 +1952,11 @@ pub async fn webview_account_open<R: Runtime>(
                 .try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
                 .map(|s| s.inner().clone());
             if let Some(registry) = registry {
-                let app_clone = app.clone();
-                let acct = args.account_id.clone();
-                let prefix = scanner_url_prefix.clone();
-                tokio::spawn(async move {
-                    registry.ensure_scanner(app_clone, acct, prefix).await;
-                });
+                registry.ensure_scanner(
+                    app.clone(),
+                    args.account_id.clone(),
+                    scanner_url_prefix.clone(),
+                );
             } else {
                 log::warn!("[webview-accounts] telegram ScannerRegistry not in app state");
             }
@@ -1943,12 +1967,11 @@ pub async fn webview_account_open<R: Runtime>(
                 .try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
                 .map(|s| s.inner().clone());
             if let Some(registry) = registry {
-                let app_clone = app.clone();
-                let acct = args.account_id.clone();
-                let prefix = scanner_url_prefix.clone();
-                tokio::spawn(async move {
-                    registry.ensure_scanner(app_clone, acct, prefix).await;
-                });
+                registry.ensure_scanner(
+                    app.clone(),
+                    args.account_id.clone(),
+                    scanner_url_prefix.clone(),
+                );
             } else {
                 log::warn!("[webview-accounts] discord ScannerRegistry not in app state");
             }
@@ -2568,9 +2591,11 @@ mod tests {
         let cdp_task = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(60)).await;
         });
+        let cdp_abort = cdp_task.abort_handle();
         let watchdog_task = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(60)).await;
         });
+        let watchdog_abort = watchdog_task.abort_handle();
 
         state
             .cdp_sessions
@@ -2608,11 +2633,17 @@ mod tests {
         );
 
         let labels = state.drain_for_shutdown();
+        tokio::task::yield_now().await;
 
         assert_eq!(
             labels,
             vec![("acct-1".to_string(), "acct_1".to_string())],
             "shutdown_all should close the acct_* webview returned here"
+        );
+        assert!(cdp_abort.is_finished(), "CDP session task was aborted");
+        assert!(
+            watchdog_abort.is_finished(),
+            "load watchdog task was aborted"
         );
         assert!(state.cdp_sessions.lock().unwrap().is_empty());
         assert!(state.load_watchdogs.lock().unwrap().is_empty());
@@ -2940,46 +2971,16 @@ mod tests {
         ));
     }
 
-    // ── popup_should_navigate_parent: Gmail Google-auth popups ────────
+    // ── popup_should_navigate_parent: Google-auth popups ──────────────
 
     #[test]
-    fn gmail_accounts_popup_navigates_parent() {
-        // Clicking "Sign in" on mail.google.com opens accounts.google.com
-        // in a popup; routing it to the system browser breaks the OAuth
-        // round-trip because the auth response would land in the wrong
-        // cookie jar. Allowing CEF to spawn an unmanaged popup leaves it
-        // blank/black (no host slot, no bounds). Navigate the parent
-        // instead so the auth flow lands in the existing webview.
-        assert_eq!(
-            popup_should_navigate_parent(
-                "gmail",
-                &url("https://accounts.google.com/signin/v2/identifier"),
-            )
-            .map(|u| u.to_string()),
-            Some("https://accounts.google.com/signin/v2/identifier".to_string())
-        );
-    }
-
-    #[test]
-    fn gmail_about_blank_popup_does_not_navigate_parent() {
-        // about:blank popups are non-actionable — there's no URL yet to
-        // navigate the parent to. Fall through to the popup branch.
-        assert!(popup_should_navigate_parent("gmail", &url("about:blank")).is_none());
-    }
-
-    #[test]
-    fn gmail_foreign_host_popup_does_not_navigate_parent() {
-        // External link popups still belong in the system browser.
-        assert!(
-            popup_should_navigate_parent("gmail", &url("https://example.com/share?u=…")).is_none()
-        );
-    }
-
-    #[test]
-    fn gmail_internal_non_auth_popup_does_not_navigate_parent() {
+    fn unsupported_provider_popup_does_not_navigate_parent() {
+        // Only the embedded google-meet webview opts into the
+        // popup-takeover path. Every other provider (and any unknown
+        // string) must fall through to the default popup-handling.
         assert!(popup_should_navigate_parent(
-            "gmail",
-            &url("https://mail.google.com/mail/u/0/#inbox")
+            "linkedin",
+            &url("https://accounts.google.com/signin/v2/identifier"),
         )
         .is_none());
     }
@@ -3044,15 +3045,15 @@ mod tests {
     }
 
     #[test]
-    fn gmail_service_login_popup_navigates_parent() {
+    fn google_meet_service_login_popup_navigates_parent() {
         assert_eq!(
             popup_should_navigate_parent(
-                "gmail",
-                &url("https://accounts.google.com/ServiceLogin?continue=https://mail.google.com"),
+                "google-meet",
+                &url("https://accounts.google.com/ServiceLogin?continue=https://meet.google.com"),
             )
             .map(|u| u.to_string()),
             Some(
-                "https://accounts.google.com/ServiceLogin?continue=https://mail.google.com"
+                "https://accounts.google.com/ServiceLogin?continue=https://meet.google.com"
                     .to_string()
             )
         );

@@ -69,7 +69,7 @@ describe('<TriggerToggles>', () => {
     expect(screen.getByText('Loading…')).toBeInTheDocument();
 
     await waitFor(() =>
-      expect(screen.getByLabelText(/Enable GMAIL_NEW_GMAIL_MESSAGE/)).toBeInTheDocument()
+      expect(screen.getByLabelText(/Enable Gmail New Gmail Message/)).toBeInTheDocument()
     );
     expect(mockListAvailable).toHaveBeenCalledWith('gmail', 'c1');
     expect(mockListTriggers).toHaveBeenCalledWith('gmail');
@@ -111,7 +111,7 @@ describe('<TriggerToggles>', () => {
 
     render(<TriggerToggles toolkitSlug="gmail" toolkitName="Gmail" connectionId="c1" />);
 
-    const sw = await screen.findByLabelText(/Disable GMAIL_NEW_GMAIL_MESSAGE/);
+    const sw = await screen.findByLabelText(/Disable Gmail New Gmail Message/);
     expect(sw).toHaveAttribute('aria-checked', 'true');
   });
 
@@ -127,7 +127,7 @@ describe('<TriggerToggles>', () => {
 
     render(<TriggerToggles toolkitSlug="gmail" toolkitName="Gmail" connectionId="c1" />);
 
-    const sw = await screen.findByLabelText(/Enable GMAIL_NEW_GMAIL_MESSAGE/);
+    const sw = await screen.findByLabelText(/Enable Gmail New Gmail Message/);
     expect(sw).toHaveAttribute('aria-checked', 'false');
   });
 
@@ -139,7 +139,7 @@ describe('<TriggerToggles>', () => {
 
     render(<TriggerToggles toolkitSlug="slack" toolkitName="Slack" connectionId="c1" />);
 
-    const sw = await screen.findByLabelText(/Enable SLACK_NEW_MESSAGE/);
+    const sw = await screen.findByLabelText(/Enable Slack New Message/);
     expect(sw).toBeDisabled();
     expect(screen.getByText('Needs configuration')).toBeInTheDocument();
   });
@@ -159,11 +159,11 @@ describe('<TriggerToggles>', () => {
 
     render(<TriggerToggles toolkitSlug="gmail" toolkitName="Gmail" connectionId="c1" />);
 
-    const sw = await screen.findByLabelText(/Enable GMAIL_NEW_GMAIL_MESSAGE/);
+    const sw = await screen.findByLabelText(/Enable Gmail New Gmail Message/);
     fireEvent.click(sw);
 
     await waitFor(() =>
-      expect(screen.getByLabelText(/Disable GMAIL_NEW_GMAIL_MESSAGE/)).toHaveAttribute(
+      expect(screen.getByLabelText(/Disable Gmail New Gmail Message/)).toHaveAttribute(
         'aria-checked',
         'true'
       )
@@ -192,7 +192,7 @@ describe('<TriggerToggles>', () => {
     render(<TriggerToggles toolkitSlug="github" toolkitName="GitHub" connectionId="c1" />);
 
     expect(await screen.findByText('acme/api')).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText(/Enable GITHUB_PUSH_EVENT/));
+    fireEvent.click(screen.getByLabelText(/Enable GitHub Push Event/));
 
     await waitFor(() => expect(mockEnable).toHaveBeenCalled());
     expect(mockEnable).toHaveBeenCalledWith('c1', 'GITHUB_PUSH_EVENT', {
@@ -214,11 +214,11 @@ describe('<TriggerToggles>', () => {
 
     render(<TriggerToggles toolkitSlug="gmail" toolkitName="Gmail" connectionId="c1" />);
 
-    const sw = await screen.findByLabelText(/Disable GMAIL_NEW_GMAIL_MESSAGE/);
+    const sw = await screen.findByLabelText(/Disable Gmail New Gmail Message/);
     fireEvent.click(sw);
 
     await waitFor(() =>
-      expect(screen.getByLabelText(/Enable GMAIL_NEW_GMAIL_MESSAGE/)).toHaveAttribute(
+      expect(screen.getByLabelText(/Enable Gmail New Gmail Message/)).toHaveAttribute(
         'aria-checked',
         'false'
       )
@@ -235,11 +235,11 @@ describe('<TriggerToggles>', () => {
 
     render(<TriggerToggles toolkitSlug="gmail" toolkitName="Gmail" connectionId="c1" />);
 
-    fireEvent.click(await screen.findByLabelText(/Enable GMAIL_NEW_GMAIL_MESSAGE/));
+    fireEvent.click(await screen.findByLabelText(/Enable Gmail New Gmail Message/));
 
     await waitFor(() =>
       expect(
-        screen.getByText(/Enable failed for GMAIL_NEW_GMAIL_MESSAGE: upstream 500/)
+        screen.getByText(/Enable failed for Gmail New Gmail Message: upstream 500/)
       ).toBeInTheDocument()
     );
   });

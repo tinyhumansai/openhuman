@@ -1,4 +1,4 @@
-//! LLM-backed summariser — Ollama `/api/chat` peer of
+//! LLM-backed summariser — peer of
 //! [`crate::openhuman::memory::tree::score::extract::llm::LlmEntityExtractor`].
 //!
 //! ## Responsibility
@@ -25,19 +25,25 @@
 //! ## Prompt shape
 //!
 //! The system prompt commits the model to returning JSON with the shape
-//! `{ summary }`. We use Ollama's `format: "json"` +
-//! `temperature: 0.0` to maximise determinism — same knobs the entity
-//! extractor already uses with success.
-
-use std::time::Duration;
+//! `{ summary }`. We pass `temperature: 0.0` for maximum determinism —
+//! same knob the entity extractor already uses with success.
+//!
+//! ## Backend transparency
+//!
+//! Originally this summariser owned its own `reqwest::Client` and talked
+//! directly to Ollama. After the cloud-default refactor, it accepts an
+//! `Arc<dyn ChatProvider>` instead — letting a single workspace pick
+//! cloud (default) or local (opt-in) at runtime without changing this
+//! file's prompt or parse logic.
 
 use anyhow::Result;
 use async_trait::async_trait;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use std::sync::Arc;
 
 use super::inert::InertSummariser;
 use super::{Summariser, SummaryContext, SummaryInput, SummaryOutput};
+use crate::openhuman::memory::tree::chat::{ChatPrompt, ChatProvider};
 use crate::openhuman::memory::tree::types::approx_token_count;
 
 /// Hard cap on summariser output length (in approximate tokens).
@@ -59,10 +65,13 @@ use crate::openhuman::memory::tree::types::approx_token_count;
 /// this regardless of what the model produces.
 const MAX_SUMMARY_OUTPUT_TOKENS: u32 = 3_500;
 
-/// Context window we ask Ollama for. Must match the value below in
-/// [`OllamaOptions::num_ctx`] so the per-input clamp computed in
-/// [`LlmSummariser::summarise`] sizes inputs against the same window
-/// the model actually sees.
+/// Context window assumed for the model. Used as the divisor in the
+/// per-input clamp so the joined prompt body stays under this even at
+/// upper-level seals where SUMMARY_FANOUT children each near
+/// MAX_SUMMARY_OUTPUT_TOKENS would otherwise overflow. Conservative —
+/// real cloud models have larger contexts; smaller local models may
+/// truncate, but the post-generation `clamp_to_budget` ensures output
+/// fits the embedder regardless.
 const NUM_CTX_TOKENS: u32 = 16_384;
 
 /// Tokens reserved for the system prompt, JSON wrapper, and tokenizer
@@ -71,34 +80,20 @@ const NUM_CTX_TOKENS: u32 = 16_384;
 /// prompt body + output budget never exceeds `num_ctx`.
 const OVERHEAD_RESERVE_TOKENS: u32 = 512;
 
-/// Configuration for [`LlmSummariser`]. Endpoint + model defaults match
-/// [`crate::openhuman::memory::tree::score::extract::llm::LlmExtractorConfig`]
-/// so a workspace configured for one LLM path also satisfies the other
-/// by default.
+/// Configuration for [`LlmSummariser`]. Threaded down to the chat
+/// provider for diagnostic logging — model selection at the wire level
+/// happens inside the [`ChatProvider`].
 #[derive(Clone, Debug)]
 pub struct LlmSummariserConfig {
-    /// Base URL of the Ollama-compatible endpoint (e.g.
-    /// `http://localhost:11434`). Do NOT include `/api/chat` — the
-    /// summariser appends it.
-    pub endpoint: String,
-    /// Model identifier (e.g. `qwen2.5:0.5b` or `llama3.1:8b`).
+    /// Model identifier (e.g. `summarization-v1` for cloud, `qwen2.5:0.5b`
+    /// or `llama3.1:8b` for local Ollama). Diagnostic / log only.
     pub model: String,
-    /// Per-request timeout. Generous default because first-call weight
-    /// loading can be slow.
-    pub timeout: Duration,
 }
 
 impl Default for LlmSummariserConfig {
     fn default() -> Self {
         Self {
-            endpoint: "http://localhost:11434".to_string(),
             model: "qwen2.5:0.5b".to_string(),
-            // 120s — generous enough for small/medium models (1B-8B
-            // params) summarising the seal cascade's full token
-            // budget on first invocation, when Ollama may also be
-            // loading model weights into VRAM. Large models on CPU
-            // can still time out; bump via config for those.
-            timeout: Duration::from_secs(120),
         }
     }
 }
@@ -107,59 +102,28 @@ impl Default for LlmSummariserConfig {
 /// failure so seal cascades never fail.
 pub struct LlmSummariser {
     cfg: LlmSummariserConfig,
-    http: Client,
+    provider: Arc<dyn ChatProvider>,
     fallback: InertSummariser,
 }
 
 impl LlmSummariser {
-    /// Build a summariser around `cfg`. Returns an error only if the HTTP
-    /// client fails to construct (timeout / TLS init).
-    pub fn new(cfg: LlmSummariserConfig) -> Result<Self> {
-        // No body-read timeout. Ollama is local — slow responses mean
-        // the model is genuinely processing, not that the network
-        // broke. A body-read timeout here would cancel mid-stream and
-        // force retries against the same slow model. `cfg.timeout` is
-        // repurposed as the TCP connect timeout (fast-fail when
-        // Ollama is actually down).
-        let http = Client::builder()
-            .connect_timeout(cfg.timeout)
-            .build()
-            .map_err(anyhow::Error::from)?;
-        Ok(Self {
+    /// Build a summariser with the supplied chat provider. Infallible —
+    /// the caller is responsible for provider construction.
+    pub fn new(cfg: LlmSummariserConfig, provider: Arc<dyn ChatProvider>) -> Self {
+        Self {
             cfg,
-            http,
+            provider,
             fallback: InertSummariser::new(),
-        })
+        }
     }
 
-    fn build_request(&self, prompt_body: &str, budget: u32) -> OllamaChatRequest {
-        OllamaChatRequest {
-            model: self.cfg.model.clone(),
-            messages: vec![
-                OllamaMessage {
-                    role: "system".to_string(),
-                    content: system_prompt(budget),
-                },
-                OllamaMessage {
-                    role: "user".to_string(),
-                    content: prompt_body.to_string(),
-                },
-            ],
-            format: "json".to_string(),
-            stream: false,
-            options: OllamaOptions {
-                temperature: 0.0,
-                // 16k context window. Sized so that the per-input
-                // clamp in `summarise` (NUM_CTX - output_budget -
-                // overhead, divided by `inputs.len()`) keeps the
-                // joined prompt body inside this window even at
-                // upper-level seals where SUMMARY_FANOUT children
-                // each near MAX_SUMMARY_OUTPUT_TOKENS would otherwise
-                // overflow. Keeping `num_ctx` modest also keeps the
-                // kv-cache small enough to fit on consumer GPUs
-                // alongside the model weights.
-                num_ctx: NUM_CTX_TOKENS,
-            },
+    /// Build the chat prompt sent to the provider for a given seal.
+    fn build_prompt(&self, prompt_body: &str, budget: u32) -> ChatPrompt {
+        ChatPrompt {
+            system: system_prompt(budget),
+            user: prompt_body.to_string(),
+            temperature: 0.0,
+            kind: "memory_tree::summarise",
         }
     }
 }
@@ -212,12 +176,12 @@ impl Summariser for LlmSummariser {
             });
         }
 
-        let url = format!("{}/api/chat", self.cfg.endpoint.trim_end_matches('/'));
-        let req = self.build_request(&body, effective_budget);
+        let prompt = self.build_prompt(&body, effective_budget);
 
         log::debug!(
-            "[tree_source::summariser::llm] POST {url} model={} tree_id={} level={} \
+            "[tree_source::summariser::llm] chat provider={} model={} tree_id={} level={} \
              inputs={} budget={}",
+            self.provider.name(),
             self.cfg.model,
             ctx.tree_id,
             ctx.target_level,
@@ -225,38 +189,13 @@ impl Summariser for LlmSummariser {
             ctx.token_budget
         );
 
-        let resp = match self.http.post(&url).json(&req).send().await {
-            Ok(r) => r,
-            Err(e) => {
-                log::warn!(
-                    "[tree_source::summariser::llm] transport failure to {url}: {e} — \
-                     falling back to inert summariser for tree_id={} level={}",
-                    ctx.tree_id,
-                    ctx.target_level
-                );
-                return self.fallback.summarise(inputs, ctx).await;
-            }
-        };
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            log::warn!(
-                "[tree_source::summariser::llm] ollama non-success status {status} \
-                 tree_id={} level={}: {} — falling back to inert",
-                ctx.tree_id,
-                ctx.target_level,
-                truncate_for_log(&body, 200)
-            );
-            return self.fallback.summarise(inputs, ctx).await;
-        }
-
-        let envelope: OllamaChatResponse = match resp.json().await {
+        let raw = match self.provider.chat_for_json(&prompt).await {
             Ok(v) => v,
             Err(e) => {
                 log::warn!(
-                    "[tree_source::summariser::llm] response not Ollama-shaped JSON: {e} — \
-                     falling back to inert for tree_id={} level={}",
+                    "[tree_source::summariser::llm] chat provider={} failed: {e:#} — \
+                     falling back to inert summariser for tree_id={} level={}",
+                    self.provider.name(),
                     ctx.tree_id,
                     ctx.target_level
                 );
@@ -264,13 +203,13 @@ impl Summariser for LlmSummariser {
             }
         };
 
-        let parsed: LlmSummaryOutput = match serde_json::from_str(&envelope.message.content) {
+        let parsed: LlmSummaryOutput = match serde_json::from_str(&raw) {
             Ok(v) => v,
             Err(e) => {
                 log::warn!(
                     "[tree_source::summariser::llm] model returned non-JSON or wrong-shape \
                      body: {e}; content was: {} — falling back to inert",
-                    truncate_for_log(&envelope.message.content, 400)
+                    truncate_for_log(&raw, 400)
                 );
                 return self.fallback.summarise(inputs, ctx).await;
             }
@@ -354,44 +293,6 @@ fn truncate_for_log(s: &str, max_chars: usize) -> String {
     }
     let truncated: String = s.chars().take(max_chars).collect();
     format!("{truncated}…")
-}
-
-// ── Wire types (Ollama API) ──────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-struct OllamaChatRequest {
-    model: String,
-    messages: Vec<OllamaMessage>,
-    format: String,
-    stream: bool,
-    options: OllamaOptions,
-}
-
-#[derive(Debug, Serialize)]
-struct OllamaMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Debug, Serialize)]
-struct OllamaOptions {
-    temperature: f32,
-    /// Override Ollama's default 32k context window — large local
-    /// models inflate kv-cache to >15 GiB at 32k which won't fit on
-    /// consumer GPUs. 16k is plenty for one bucket summary (input is
-    /// bounded by the source-tree's ~10k-token bucket budget) while
-    /// keeping kv-cache reasonable.
-    num_ctx: u32,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaChatResponse {
-    message: OllamaResponseMessage,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaResponseMessage {
-    content: String,
 }
 
 // ── LLM JSON output ──────────────────────────────────────────────────────
@@ -524,59 +425,115 @@ mod tests {
         assert!(out.ends_with('…'));
     }
 
+    /// Mock chat provider that lets us assert prompt shape and stub responses
+    /// in summariser unit tests without hitting the network.
+    struct StubProvider {
+        response: anyhow::Result<String>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl StubProvider {
+        fn ok(text: impl Into<String>) -> Self {
+            Self {
+                response: Ok(text.into()),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+        fn err(msg: &'static str) -> Self {
+            Self {
+                response: Err(anyhow::anyhow!(msg)),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ChatProvider for StubProvider {
+        fn name(&self) -> &str {
+            "test:stub"
+        }
+        async fn chat_for_json(&self, _p: &ChatPrompt) -> anyhow::Result<String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.response
+                .as_ref()
+                .map(|s| s.clone())
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        }
+    }
+
     #[tokio::test]
-    async fn empty_inputs_yield_empty_summary_without_network_call() {
+    async fn empty_inputs_yield_empty_summary_without_provider_call() {
         // All inputs are blank → prompt body is empty → the summariser
-        // short-circuits and returns an empty output. Importantly, this
-        // path must work even if Ollama is unreachable.
-        let cfg = LlmSummariserConfig {
-            endpoint: "http://127.0.0.1:1".to_string(),
-            timeout: Duration::from_millis(50),
-            ..LlmSummariserConfig::default()
-        };
-        let s = LlmSummariser::new(cfg).unwrap();
+        // short-circuits and returns an empty output without invoking the
+        // chat provider.
+        let provider = std::sync::Arc::new(StubProvider::ok("never returned"));
+        let s = LlmSummariser::new(LlmSummariserConfig::default(), provider.clone());
         let inputs = vec![sample_input("a", "   "), sample_input("b", "")];
         let out = s.summarise(&inputs, &test_ctx()).await.unwrap();
         assert!(out.content.is_empty());
         assert_eq!(out.token_count, 0);
+        assert_eq!(
+            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "blank inputs must not call the chat provider"
+        );
     }
 
     #[tokio::test]
-    async fn transport_failure_falls_back_to_inert() {
-        // Unreachable endpoint → transport error → must NOT return Err;
-        // must fall through to InertSummariser's concatenate+truncate
-        // behaviour (content present, entities empty).
-        let cfg = LlmSummariserConfig {
-            endpoint: "http://127.0.0.1:1".to_string(),
-            timeout: Duration::from_millis(100),
-            ..LlmSummariserConfig::default()
-        };
-        let s = LlmSummariser::new(cfg).unwrap();
+    async fn provider_failure_falls_back_to_inert() {
+        // Provider errors → must NOT return Err; must fall through to
+        // InertSummariser's concatenate+truncate behaviour (content
+        // present, entities empty).
+        let provider = std::sync::Arc::new(StubProvider::err("simulated"));
+        let s = LlmSummariser::new(LlmSummariserConfig::default(), provider);
         let inputs = vec![sample_input("a", "alice decided to ship friday")];
         let out = s.summarise(&inputs, &test_ctx()).await.unwrap();
         assert!(out.content.contains("alice decided to ship"));
-        // Inert branch emits empty entities/topics — this is how callers
-        // can distinguish fallback from a real LLM success with no entities.
         assert!(out.entities.is_empty());
         assert!(out.topics.is_empty());
     }
 
+    #[tokio::test]
+    async fn malformed_response_falls_back_to_inert() {
+        // Provider returns garbage → parse fails → fallback to inert.
+        let provider = std::sync::Arc::new(StubProvider::ok("not json"));
+        let s = LlmSummariser::new(LlmSummariserConfig::default(), provider);
+        let inputs = vec![sample_input("a", "alice ships friday")];
+        let out = s.summarise(&inputs, &test_ctx()).await.unwrap();
+        // Inert fallback content includes the original input.
+        assert!(out.content.contains("alice"));
+    }
+
+    #[tokio::test]
+    async fn provider_summary_response_is_used_and_clamped() {
+        // Provider returns valid JSON; summariser parses it and clamps to
+        // the budget.
+        let provider = std::sync::Arc::new(StubProvider::ok(
+            r#"{"summary":"alice decided to ship friday"}"#,
+        ));
+        let s = LlmSummariser::new(LlmSummariserConfig::default(), provider.clone());
+        let inputs = vec![sample_input("a", "alice ships friday")];
+        let out = s.summarise(&inputs, &test_ctx()).await.unwrap();
+        assert!(out.content.contains("alice decided to ship"));
+        assert!(out.token_count > 0);
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
     #[test]
-    fn build_request_uses_configured_model_and_json_format() {
-        let cfg = LlmSummariserConfig {
-            model: "llama3.1:8b".into(),
-            ..LlmSummariserConfig::default()
-        };
-        let s = LlmSummariser::new(cfg).unwrap();
-        let req = s.build_request("body", 2048);
-        assert_eq!(req.model, "llama3.1:8b");
-        assert_eq!(req.format, "json");
-        assert!(!req.stream);
-        assert_eq!(req.options.temperature, 0.0);
-        assert_eq!(req.messages[0].role, "system");
-        assert!(req.messages[0].content.contains("\"summary\""));
-        assert_eq!(req.messages[1].role, "user");
-        assert_eq!(req.messages[1].content, "body");
+    fn build_prompt_carries_body_and_kind_tag() {
+        let provider = std::sync::Arc::new(StubProvider::ok("{}"));
+        let s = LlmSummariser::new(
+            LlmSummariserConfig {
+                model: "llama3.1:8b".into(),
+            },
+            provider,
+        );
+        let prompt = s.build_prompt("body", 2048);
+        assert!(prompt.system.contains("\"summary\""));
+        assert!(!prompt.system.contains("\"entities\""));
+        assert_eq!(prompt.user, "body");
+        assert_eq!(prompt.temperature, 0.0);
+        assert_eq!(prompt.kind, "memory_tree::summarise");
     }
 
     #[test]

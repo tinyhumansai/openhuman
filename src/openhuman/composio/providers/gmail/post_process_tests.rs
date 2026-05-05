@@ -170,8 +170,8 @@ fn non_fetch_slug_is_noop() {
 fn nested_multipart_prefers_plaintext_over_html() {
     // When a multipart/alternative ships BOTH text/plain and text/html, the
     // plaintext part wins. text/plain is the author's intended fallback,
-    // bypasses html2md (which has GB-scale heap peaks on rich HTML — see
-    // post_process.rs::extract_markdown_body docstring), and is generally
+    // bypasses HTML stripping on the sibling `text/html` part (see
+    // post_process.rs::extract_markdown_body), and is generally
     // cleaner input for downstream LLM extraction.
     let html = "<p>Deep <b>body</b></p>";
     let mut v = json!({
@@ -203,7 +203,7 @@ fn nested_multipart_prefers_plaintext_over_html() {
         md.contains("plain fallback"),
         "plaintext should win, got: {md:?}"
     );
-    // The HTML body should NOT appear — html2md was bypassed entirely.
+    // The HTML body should NOT appear — the text/html branch was bypassed.
     assert!(
         !md.contains("Deep"),
         "html should not have been used: {md:?}"
@@ -217,8 +217,7 @@ fn nested_multipart_prefers_plaintext_over_html() {
 #[test]
 fn nested_multipart_falls_back_to_html_when_no_plaintext() {
     // For html-only emails (rare — some poorly-built marketing senders),
-    // we still need html2md → markdown. The 24 KB threshold and noise-block
-    // stripper guard against pathological cases.
+    // we run the bounded linear HTML strip (see `html_email_to_markdown`).
     let html = "<p>Deep <b>body</b></p>";
     let mut v = json!({
         "messages": [{
@@ -244,8 +243,14 @@ fn nested_multipart_falls_back_to_html_when_no_plaintext() {
     });
     post_process("GMAIL_FETCH_EMAILS", None, &mut v);
     let md = v["messages"][0]["markdown"].as_str().unwrap();
-    assert!(md.contains("Deep"), "html2md should have run: {md:?}");
-    assert!(md.contains("body"), "html2md should have run: {md:?}");
+    assert!(
+        md.contains("Deep"),
+        "HTML strip should preserve text: {md:?}"
+    );
+    assert!(
+        md.contains("body"),
+        "HTML strip should preserve text: {md:?}"
+    );
     assert!(
         !md.contains("<p>"),
         "raw html should not leak through: {md:?}"
@@ -276,6 +281,37 @@ fn large_html_uses_fast_strip_fallback() {
     assert!(
         !md.contains(".x{color:red}"),
         "style blocks must be removed: {md:?}"
+    );
+}
+
+#[test]
+fn oversized_html_is_truncated_before_processing() {
+    let cap = super::MAX_GMAIL_HTML_BODY_BYTES;
+    let filler = "x".repeat(600 * 1024);
+    let html =
+        format!("<html><body><p>HEAD_MARKER</p>{filler}<p>TAIL_NEVER_SEEN</p></body></html>");
+    assert!(html.len() > cap);
+    let md = html_email_to_markdown(&html);
+    assert!(md.contains("HEAD_MARKER"), "{md:?}");
+    assert!(
+        !md.contains("TAIL_NEVER_SEEN"),
+        "tail past cap must not be processed: {md:?}"
+    );
+    assert!(
+        md.contains("[Email HTML body truncated for processing]"),
+        "expected truncation note: {md:?}"
+    );
+}
+
+#[test]
+fn truncated_all_whitespace_html_still_emits_truncation_note() {
+    let cap = super::MAX_GMAIL_HTML_BODY_BYTES;
+    let html = " ".repeat(cap + 10_000);
+    assert!(html.len() > cap);
+    let md = html_email_to_markdown(&html);
+    assert_eq!(
+        md, "[Email HTML body truncated for processing]",
+        "empty body after strip must still signal truncation: {md:?}"
     );
 }
 

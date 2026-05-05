@@ -21,6 +21,10 @@ use crate::openhuman::threads::title::{
     sanitize_generated_title, title_log_fingerprint, THREAD_TITLE_LOG_PREFIX,
     THREAD_TITLE_MODEL_HINT, THREAD_TITLE_SYSTEM_PROMPT,
 };
+use crate::openhuman::threads::turn_state::{
+    self, ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateRequest, GetTurnStateResponse,
+    ListTurnStatesResponse,
+};
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -428,9 +432,28 @@ pub async fn thread_delete(
     request: DeleteConversationThreadRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<DeleteConversationThreadResponse>>, String> {
     let dir = workspace_dir().await?;
-    let deleted = conversations::ConversationStore::new(dir)
+    let deleted = conversations::ConversationStore::new(dir.clone())
         .delete_thread(&request.thread_id, &request.deleted_at)?;
+    // Invalidate the in-process web-channel session BEFORE the
+    // turn-state cleanup. The snapshot deletion is fallible and
+    // returns early on error; if invalidation ran after, an active
+    // session for the now-deleted thread could linger and try to
+    // append to a thread index row that no longer exists.
     web_channel::invalidate_thread_sessions(&request.thread_id).await;
+    // Drop any persisted in-flight turn snapshot for this thread —
+    // otherwise `threads_turn_state_list` keeps surfacing it (as
+    // `Interrupted` on next restart) for a thread that no longer
+    // exists. Failure here is surfaced as an RPC error so callers
+    // can't observe a thread "deleted" while its snapshot (which
+    // mirrors conversation-derived state) remains on disk; the
+    // thread row itself is already gone at this point so the caller
+    // sees a partial failure they can act on instead of silent drift.
+    turn_state::store::delete(dir, &request.thread_id).map_err(|err| {
+        format!(
+            "thread {} deleted but turn-snapshot cleanup failed: {err}",
+            request.thread_id
+        )
+    })?;
     Ok(envelope(
         DeleteConversationThreadResponse { deleted },
         None,
@@ -443,7 +466,16 @@ pub async fn threads_purge(
     _request: EmptyRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<PurgeConversationThreadsResponse>>, String> {
     let dir = workspace_dir().await?;
-    let stats = conversations::purge_threads(dir)?;
+    let stats = conversations::purge_threads(dir.clone())?;
+    // Threads are gone, so any orphan turn snapshots can never be
+    // reattached to a live thread. Wipe them in the same call so
+    // `turn_state_list` returns an empty set after a purge. Use the
+    // parse-independent `clear_all` so corrupted / half-written
+    // snapshot files (which `list()` would warn-and-skip) are also
+    // removed — a destructive cleanup must not leave behind anything
+    // it failed to deserialize. Failures surface as RPC errors.
+    turn_state::store::clear_all(dir.clone())
+        .map_err(|err| format!("threads purged but turn-snapshot cleanup failed: {err}"))?;
     Ok(envelope(
         PurgeConversationThreadsResponse {
             messages_deleted: stats.message_count,
@@ -453,6 +485,45 @@ pub async fn threads_purge(
         None,
         None,
     ))
+}
+
+/// Returns the persisted in-flight turn snapshot for a thread, if any.
+pub async fn turn_state_get(
+    request: GetTurnStateRequest,
+) -> Result<RpcOutcome<ApiEnvelope<GetTurnStateResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let turn_state = turn_state::store::get(dir, &request.thread_id)?;
+    let present = turn_state.is_some();
+    Ok(envelope(
+        GetTurnStateResponse { turn_state },
+        Some(counts([("present", usize::from(present))])),
+        None,
+    ))
+}
+
+/// Lists every persisted turn snapshot — used by the UI on cold boot to
+/// surface interrupted turns from a previous process.
+pub async fn turn_state_list(
+    _request: EmptyRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ListTurnStatesResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let turn_states = turn_state::store::list(dir)?;
+    let count = turn_states.len();
+    Ok(envelope(
+        ListTurnStatesResponse { turn_states, count },
+        Some(counts([("num_turn_states", count)])),
+        None,
+    ))
+}
+
+/// Clears the persisted turn snapshot for a thread (e.g. after the user
+/// dismisses an "interrupted" banner).
+pub async fn turn_state_clear(
+    request: ClearTurnStateRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ClearTurnStateResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let cleared = turn_state::store::delete(dir, &request.thread_id)?;
+    Ok(envelope(ClearTurnStateResponse { cleared }, None, None))
 }
 
 #[cfg(test)]

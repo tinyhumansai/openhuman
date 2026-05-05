@@ -1,20 +1,18 @@
 //! LLM-based entity + importance extractor.
 //!
-//! Talks to an Ollama-compatible chat-completions HTTP endpoint, asks for
-//! NER + an importance rating in one structured-JSON response, and parses
-//! the result into [`ExtractedEntities`].
+//! Builds a (system, user) prompt asking for NER + an importance rating
+//! in one structured-JSON response, hands the prompt to a
+//! [`ChatProvider`], and parses the result into [`ExtractedEntities`].
 //!
 //! ## Why this lives here
 //!
 //! Phase 2 ships a regex extractor only. Semantic NER (Person/Org/Loc/…)
-//! requires a model. We use a small local LLM (Ollama default:
-//! `qwen2.5:0.5b`) for two reasons:
-//!
-//! 1. **Reuse** — openhuman already runs Ollama for embeddings; no new
-//!    deps, no native ONNX runtime to ship.
-//! 2. **Free importance signal** — extending the NER prompt with one extra
-//!    JSON field (`importance`) gives us an LLM-rated quality score per
-//!    chunk for the cost of one prompt instead of two LLM calls.
+//! requires a model. Originally we used a small local LLM (Ollama default:
+//! `qwen2.5:0.5b`) because openhuman already ran Ollama for embeddings.
+//! After the cloud-default refactor, the same prompt now routes through
+//! whichever backend the workspace selected — typically the OpenHuman
+//! backend's `summarization-v1`. The extractor itself is unchanged below the
+//! HTTP layer; only the transport moved.
 //!
 //! ## Span recovery
 //!
@@ -25,38 +23,33 @@
 //!
 //! ## Soft fallback
 //!
-//! If the HTTP call fails (Ollama not running, model not pulled, timeout),
-//! we log a warn and return [`ExtractedEntities::default()`]. The
+//! If the chat call fails (provider unavailable, malformed JSON, …), we
+//! log a warn and return [`ExtractedEntities::default()`]. The
 //! [`super::CompositeExtractor`] already tolerates errors from individual
 //! extractors; ingestion never blocks on LLM availability.
 
-use std::time::Duration;
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use super::types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};
 use super::EntityExtractor;
+use crate::openhuman::memory::tree::chat::{ChatPrompt, ChatProvider};
 
 // ── Configuration ────────────────────────────────────────────────────────
 
 /// Configuration for [`LlmEntityExtractor`].
 #[derive(Clone, Debug)]
 pub struct LlmExtractorConfig {
-    /// Base URL of the Ollama-compatible endpoint (e.g. `http://localhost:11434`).
-    /// Do NOT include `/api/chat` — the extractor appends it.
-    pub endpoint: String,
-    /// Model identifier as known to the endpoint (e.g. `qwen2.5:0.5b`).
+    /// Model identifier the chat provider should target. For cloud this
+    /// is e.g. `summarization-v1`; for local Ollama it's the Ollama tag
+    /// (`qwen2.5:0.5b`). Threaded through to [`ChatPrompt`] so the
+    /// provider can route to the right model.
+    ///
+    /// Stored on the extractor for diagnostic logging only — the actual
+    /// model selection happens inside the [`ChatProvider`].
     pub model: String,
-    /// TCP connect timeout. Used only to fail fast when Ollama is
-    /// down; no body-read timeout is applied (see `Self::new` for
-    /// rationale — local Ollama on slow CPU inference can take
-    /// minutes per call, and cancelling mid-stream triggered
-    /// cancellation-path retry storms). The default is generous
-    /// because the first request after a model swap may need to load
-    /// weights.
-    pub timeout: Duration,
     /// Which entity kinds the LLM is allowed to emit. Anything outside this
     /// set is mapped to [`EntityKind::Misc`] or dropped depending on
     /// `strict_kinds`.
@@ -78,9 +71,7 @@ pub struct LlmExtractorConfig {
 impl Default for LlmExtractorConfig {
     fn default() -> Self {
         Self {
-            endpoint: "http://localhost:11434".to_string(),
             model: "qwen2.5:0.5b".to_string(),
-            timeout: Duration::from_secs(15),
             allowed_kinds: vec![
                 EntityKind::Person,
                 EntityKind::Organization,
@@ -101,49 +92,32 @@ impl Default for LlmExtractorConfig {
 // ── Extractor ────────────────────────────────────────────────────────────
 
 /// LLM-backed entity + importance extractor.
+///
+/// Holds an `Arc<dyn ChatProvider>` rather than a per-instance HTTP
+/// client. The provider abstraction lets a single workspace choose
+/// cloud vs local at runtime (see
+/// [`crate::openhuman::memory::tree::chat::build_chat_provider`]). Tests
+/// can mock the provider to assert the prompt / parse behaviour without
+/// a real Ollama or backend.
 pub struct LlmEntityExtractor {
     cfg: LlmExtractorConfig,
-    http: Client,
+    provider: Arc<dyn ChatProvider>,
 }
 
 impl LlmEntityExtractor {
-    /// Build the extractor and its inner HTTP client. Fails only when
-    /// `reqwest` rejects the timeout configuration.
-    pub fn new(cfg: LlmExtractorConfig) -> anyhow::Result<Self> {
-        // No body-read timeout. Ollama is a local process — slow
-        // responses mean the model is genuinely processing under CPU
-        // load (e.g. gemma3:1b on CPU-only inference can take minutes
-        // per call), not that the network broke. A body-read timeout
-        // here would cancel mid-flight generation and force the
-        // existing 3× retry-with-backoff to re-run the same prompt
-        // against the same slow model, which empirically caused retry
-        // storms during high-load ingest. `cfg.timeout` is now the
-        // TCP connect timeout — short enough to fail fast when
-        // Ollama is actually unreachable.
-        let http = Client::builder()
-            .connect_timeout(cfg.timeout)
-            .build()
-            .map_err(anyhow::Error::from)?;
-        Ok(Self { cfg, http })
+    /// Build the extractor with the supplied chat provider. Infallible —
+    /// the caller is responsible for provider construction.
+    pub fn new(cfg: LlmExtractorConfig, provider: Arc<dyn ChatProvider>) -> Self {
+        Self { cfg, provider }
     }
 
-    /// Build the Ollama `/api/chat` request body.
-    fn build_request(&self, text: &str) -> OllamaChatRequest {
-        OllamaChatRequest {
-            model: self.cfg.model.clone(),
-            messages: vec![
-                OllamaMessage {
-                    role: "system".to_string(),
-                    content: build_system_prompt(self.cfg.emit_topics),
-                },
-                OllamaMessage {
-                    role: "user".to_string(),
-                    content: format!("Text:\n{text}\n\nReturn JSON only."),
-                },
-            ],
-            format: "json".to_string(),
-            stream: false,
-            options: OllamaOptions { temperature: 0.0 },
+    /// Build the chat prompt sent to the provider for `text`.
+    fn build_prompt(&self, text: &str) -> ChatPrompt {
+        ChatPrompt {
+            system: build_system_prompt(self.cfg.emit_topics),
+            user: format!("Text:\n{text}\n\nReturn JSON only."),
+            temperature: 0.0,
+            kind: "memory_tree::extract",
         }
     }
 }
@@ -198,64 +172,47 @@ impl EntityExtractor for LlmEntityExtractor {
 }
 
 impl LlmEntityExtractor {
-    /// Internal: one attempt at calling Ollama.
+    /// Internal: one attempt at calling the chat provider.
     ///
     /// Returns:
-    /// - `Some(extracted)` — call completed (HTTP returned). Includes the
-    ///   "HTTP non-success" and "malformed JSON" cases, which return
-    ///   `Some(empty)` because retrying the same input won't help.
-    /// - `None` — transport-level failure (DNS, connect refused, timeout
-    ///   before any HTTP response). Caller may retry.
+    /// - `Some(extracted)` — call completed (provider returned content).
+    ///   Includes the "malformed JSON" case which returns `Some(empty)`
+    ///   because retrying the same input won't help.
+    /// - `None` — transport-level / provider-level failure where retrying
+    ///   might help (e.g. unreachable backend, transient HTTP 5xx). Caller
+    ///   may retry.
     async fn try_extract(&self, text: &str) -> Option<ExtractedEntities> {
-        let url = format!("{}/api/chat", self.cfg.endpoint.trim_end_matches('/'));
-        let body = self.build_request(text);
+        let prompt = self.build_prompt(text);
         log::debug!(
-            "[memory_tree::extract::llm] POST {url} model={} text_chars={}",
+            "[memory_tree::extract::llm] chat provider={} model={} text_chars={}",
+            self.provider.name(),
             self.cfg.model,
             text.chars().count()
         );
 
-        let resp = match self.http.post(&url).json(&body).send().await {
-            Ok(r) => r,
-            Err(e) => {
-                log::warn!("[memory_tree::extract::llm] transport failure to {url}: {e}");
-                return None;
-            }
-        };
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            log::warn!(
-                "[memory_tree::extract::llm] ollama non-success status {status}: {} — \
-                 returning empty extraction",
-                truncate_for_log(&body, 200)
-            );
-            return Some(ExtractedEntities::default());
-        }
-
-        let envelope: OllamaChatResponse = match resp.json().await {
+        let raw = match self.provider.chat_for_json(&prompt).await {
             Ok(v) => v,
             Err(e) => {
                 log::warn!(
-                    "[memory_tree::extract::llm] response body not Ollama-shaped JSON: {e} — \
-                     returning empty extraction"
+                    "[memory_tree::extract::llm] chat provider={} failed: {e:#}",
+                    self.provider.name()
                 );
-                return Some(ExtractedEntities::default());
+                return None;
             }
         };
         log::debug!(
-            "[memory_tree::extract::llm] response chars={}",
-            envelope.message.content.len()
+            "[memory_tree::extract::llm] response chars={} provider={}",
+            raw.len(),
+            self.provider.name()
         );
 
-        let parsed: LlmExtractionOutput = match serde_json::from_str(&envelope.message.content) {
+        let parsed: LlmExtractionOutput = match serde_json::from_str(&raw) {
             Ok(v) => v,
             Err(e) => {
                 log::warn!(
                     "[memory_tree::extract::llm] LLM returned non-JSON or wrong-shape \
                      response: {e}; content was: {} — returning empty extraction",
-                    truncate_for_log(&envelope.message.content, 400)
+                    truncate_for_log(&raw, 400)
                 );
                 return Some(ExtractedEntities::default());
             }
@@ -347,38 +304,6 @@ Importance guide:
   <0.3  reactions, acknowledgments, bots, trivial exchanges
 "
     )
-}
-
-// ── Wire types (Ollama API) ──────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-struct OllamaChatRequest {
-    model: String,
-    messages: Vec<OllamaMessage>,
-    format: String,
-    stream: bool,
-    options: OllamaOptions,
-}
-
-#[derive(Debug, Serialize)]
-struct OllamaMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Debug, Serialize)]
-struct OllamaOptions {
-    temperature: f32,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaChatResponse {
-    message: OllamaResponseMessage,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaResponseMessage {
-    content: String,
 }
 
 // ── LLM JSON output ──────────────────────────────────────────────────────

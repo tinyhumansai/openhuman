@@ -16,7 +16,9 @@ import MeshGradient from './components/MeshGradient';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
-import { isWelcomeLocked } from './lib/coreState/store';
+import AppWalkthrough from './components/walkthrough/AppWalkthrough';
+// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+// import { isWelcomeLocked } from './lib/coreState/store';
 import { startNativeNotificationsService } from './lib/nativeNotifications';
 import { startWebviewNotificationsService } from './lib/webviewNotifications';
 import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
@@ -24,8 +26,10 @@ import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
 import { startWebviewAccountService } from './services/webviewAccountService';
 import { persistor, store } from './store';
-import { useAppDispatch, useAppSelector } from './store/hooks';
-import { clearSelectedThread, deleteThread, setWelcomeThreadId } from './store/threadSlice';
+// [#1123] useAppDispatch commented out — welcome-agent onboarding replaced by Joyride walkthrough
+import { useAppSelector } from './store/hooks';
+// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+// import { clearSelectedThread, deleteThread, setWelcomeThreadId } from './store/threadSlice';
 import { isAccountsFullscreen } from './utils/accountsFullscreen';
 import { DEV_FORCE_ONBOARDING } from './utils/config';
 
@@ -77,7 +81,8 @@ function AppShell() {
   // bottom padding. Any other selected "app" (e.g. WhatsApp) takes the
   // full viewport so the embedded webview goes edge-to-edge.
   const fullscreen = isAccountsFullscreen(location.pathname, activeAccountId);
-  const welcomeLocked = isWelcomeLocked(snapshot);
+  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+  // const welcomeLocked = isWelcomeLocked(snapshot);
   const onOnboardingRoute = location.pathname.startsWith('/onboarding');
   const onboardingPending =
     !!snapshot.sessionToken && (DEV_FORCE_ONBOARDING || !snapshot.onboardingCompleted);
@@ -107,51 +112,53 @@ function AppShell() {
     navigate,
   ]);
 
+  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
   // After the welcome agent calls `complete_onboarding` and
   // `chat_onboarding_completed` flips false→true, discard the transient
   // welcome thread we created in `OnboardingLayout`. The next user
   // message will route to the orchestrator and create its own thread.
-  const dispatch = useAppDispatch();
-  const welcomeThreadId = useAppSelector(state => state.thread.welcomeThreadId);
-  const chatOnboardingCompleted = snapshot.chatOnboardingCompleted;
-  useEffect(() => {
-    if (!chatOnboardingCompleted || !welcomeThreadId) return;
-    let cancelled = false;
-    console.debug(
-      `[welcome-cleanup] chat_onboarding_completed=true — deleting welcome thread ${welcomeThreadId}`
-    );
-    // Await the delete before dropping the local id so a backend failure
-    // leaves `welcomeThreadId` set for retry on the next render. Without
-    // the await, a 500 from `threads.delete` would leave a stale row in
-    // the user's thread list while the renderer thinks it's gone.
-    (async () => {
-      try {
-        await dispatch(deleteThread(welcomeThreadId)).unwrap();
-        if (cancelled) return;
-        dispatch(clearSelectedThread());
-        dispatch(setWelcomeThreadId(null));
-      } catch (err) {
-        console.warn('[welcome-cleanup] deleteThread failed; will retry on next render', err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [chatOnboardingCompleted, welcomeThreadId, dispatch]);
-
+  // const dispatch = useAppDispatch();
+  // const welcomeThreadId = useAppSelector(state => state.thread.welcomeThreadId);
+  // const chatOnboardingCompleted = snapshot.chatOnboardingCompleted;
+  // useEffect(() => {
+  //   if (!chatOnboardingCompleted || !welcomeThreadId) return;
+  //   let cancelled = false;
+  //   console.debug(
+  //     `[welcome-cleanup] chat_onboarding_completed=true — deleting welcome thread ${welcomeThreadId}`
+  //   );
+  //   // Await the delete before dropping the local id so a backend failure
+  //   // leaves `welcomeThreadId` set for retry on the next render. Without
+  //   // the await, a 500 from `threads.delete` would leave a stale row in
+  //   // the user's thread list while the renderer thinks it's gone.
+  //   (async () => {
+  //     try {
+  //       await dispatch(deleteThread(welcomeThreadId)).unwrap();
+  //       if (cancelled) return;
+  //       dispatch(clearSelectedThread());
+  //       dispatch(setWelcomeThreadId(null));
+  //     } catch (err) {
+  //       console.warn('[welcome-cleanup] deleteThread failed; will retry on next render', err);
+  //     }
+  //   })();
+  //   return () => {
+  //     cancelled = true;
+  //   };
+  // }, [chatOnboardingCompleted, welcomeThreadId, dispatch]);
+  //
+  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
   // Welcome lockdown (#883) — force any route other than `/chat` back to
   // `/chat` while the welcome-agent conversation is still in progress.
   // Skipped while onboarding is still pending (the onboarding gate above
   // owns the route during that phase).
-  useEffect(() => {
-    if (!welcomeLocked || isBootstrapping) return;
-    if (onboardingPending) return;
-    if (location.pathname === '/chat') return;
-    console.debug(
-      `[welcome-lock] redirecting ${location.pathname} -> /chat (chat onboarding incomplete)`
-    );
-    navigate('/chat', { replace: true });
-  }, [welcomeLocked, isBootstrapping, onboardingPending, location.pathname, navigate]);
+  // useEffect(() => {
+  //   if (!welcomeLocked || isBootstrapping) return;
+  //   if (onboardingPending) return;
+  //   if (location.pathname === '/chat') return;
+  //   console.debug(
+  //     `[welcome-lock] redirecting ${location.pathname} -> /chat (chat onboarding incomplete)`
+  //   );
+  //   navigate('/chat', { replace: true });
+  // }, [welcomeLocked, isBootstrapping, onboardingPending, location.pathname, navigate]);
 
   return (
     <div className="relative h-screen flex flex-col overflow-hidden">
@@ -159,7 +166,8 @@ function AppShell() {
       <div className="app-dotted-canvas relative z-10 flex-1 flex flex-col overflow-hidden">
         <div
           className={`flex-1 overflow-y-auto ${
-            fullscreen || welcomeLocked || onOnboardingRoute ? '' : 'pb-16'
+            // [#1123] welcomeLocked removed — welcome-agent onboarding replaced by Joyride walkthrough
+            fullscreen || onOnboardingRoute ? '' : 'pb-16'
           }`}>
           <GlobalUpsellBanner />
           <AppRoutes />
@@ -167,6 +175,12 @@ function AppShell() {
         {!onOnboardingRoute && <BottomTabBar />}
       </div>
       <OpenhumanLinkModal />
+      {/* Post-onboarding Joyride walkthrough — mounted here (outside routes) so
+          it persists across tab navigations. Joyride targets span Home + BottomTabBar
+          tabs so it must stay mounted while the user moves between routes. */}
+      {!isBootstrapping && !onOnboardingRoute && (
+        <AppWalkthrough onboarded={!!snapshot.onboardingCompleted} />
+      )}
     </div>
   );
 }

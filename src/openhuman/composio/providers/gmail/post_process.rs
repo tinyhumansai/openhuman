@@ -12,7 +12,9 @@
 //!
 //! Feeding all of that back to the LLM burns context on presentational
 //! markup. By default this module rewrites the payload into a slim
-//! envelope per message:
+//! envelope per message. HTML bodies are converted with a bounded
+//! linear stripper (never `html2md`), because nested-table HTML can
+//! trigger catastrophic allocator growth in third-party parsers.
 //!
 //! ```json
 //! {
@@ -129,8 +131,8 @@ fn reshape_fetch_emails(data: &mut Value) {
 /// Map one raw Composio message object to its slim counterpart.
 ///
 /// Preference order for the body:
-///   1. A `text/html` MIME part's base64url-decoded body → html2md.
-///   2. A `text/plain` MIME part's base64url-decoded body.
+///   1. A `text/plain` MIME part's base64url-decoded body (preferred).
+///   2. A `text/html` MIME part's base64url-decoded body → bounded HTML strip.
 ///   3. The top-level `messageText` (Composio's decoded plain text).
 ///   4. Empty string.
 fn reshape_message(raw: Value) -> Value {
@@ -192,14 +194,13 @@ fn pick_header(msg: &Map<String, Value>, name: &str) -> Option<Value> {
 ///
 /// Preference order:
 ///   1. `text/plain` — author-provided plaintext fallback. Standard MIME
-///      multipart/alternative. Bypasses html2md entirely. For LLM
-///      extraction + retrieval embedding, plaintext is generally the
-///      better input: less noise (no tracking URLs, inline CSS, table
-///      formatting artifacts), zero conversion cost, no allocator
-///      pressure from `html2md`'s pathological walk over nested HTML
-///      tables (verified GB-scale heap peaks via dhat-rs profiling).
-///   2. `text/html` → html2md — only used when the email shipped no
-///      plaintext part (rare; some HTML-only marketing senders).
+///      multipart/alternative. For LLM extraction + retrieval embedding,
+///      plaintext is generally the better input: less noise (no tracking
+///      URLs, inline CSS, table formatting artifacts), zero conversion cost,
+///      and no pathological nested-table allocator blowups seen with legacy
+///      HTML-to-markdown crates (dhat-rs profiling on real inboxes).
+///   2. `text/html` → fast linear strip (see [`html_email_to_markdown`]) —
+///      only when the email shipped no plaintext part (rare).
 ///   3. Top-level `messageText` (Composio convenience field) — html or
 ///      plaintext depending on what the source had.
 fn extract_markdown_body(msg: &Map<String, Value>) -> String {
@@ -252,13 +253,45 @@ fn extract_markdown_body(msg: &Map<String, Value>) -> String {
 /// For multipart emails, `extract_markdown_body` prefers `text/plain`
 /// before this function is reached, so this path only runs for
 /// HTML-only emails (rare).
+// UTF-8 cap: multi‑MB HTML MIME would otherwise amplify memory in strip passes.
+pub(super) const MAX_GMAIL_HTML_BODY_BYTES: usize = 512 * 1024;
+
+fn truncate_utf8_to_bytes(s: &str, max_bytes: usize) -> (&str, bool) {
+    if s.len() <= max_bytes {
+        return (s, false);
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&s[..end], true)
+}
+
 fn html_email_to_markdown(html: &str) -> String {
+    let input_bytes = html.len();
+    if input_bytes > MAX_GMAIL_HTML_BODY_BYTES {
+        tracing::warn!(
+            original_bytes = input_bytes,
+            max_bytes = MAX_GMAIL_HTML_BODY_BYTES,
+            "[composio:gmail][post-process] HTML body truncated before strip (size cap)"
+        );
+    }
+    let (html, truncated) = truncate_utf8_to_bytes(html, MAX_GMAIL_HTML_BODY_BYTES);
+
     let cleaned = strip_html_noise_blocks(html);
     let cleaned = cleaned.trim();
     if cleaned.is_empty() {
-        return String::new();
+        return if truncated {
+            "[Email HTML body truncated for processing]".to_string()
+        } else {
+            String::new()
+        };
     }
-    normalize_markdownish_text(&fast_html_to_text(cleaned))
+    let mut out = normalize_markdownish_text(&fast_html_to_text(cleaned));
+    if truncated {
+        out.push_str("\n\n[Email HTML body truncated for processing]");
+    }
+    out
 }
 
 fn strip_html_noise_blocks(html: &str) -> String {

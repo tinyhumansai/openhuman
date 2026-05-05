@@ -66,64 +66,83 @@ pub trait Summariser: Send + Sync {
 }
 
 /// Build the summariser implementation driven by the workspace's
-/// [`Config`]. When `memory_tree.llm_summariser_endpoint` and
-/// `llm_summariser_model` are both set, return the Ollama-backed
-/// [`llm::LlmSummariser`] (which itself soft-falls-back to inert on
-/// transport failure). Otherwise return [`inert::InertSummariser`].
+/// [`Config`]. The cloud-default refactor changed the resolution rules:
+///
+/// - `llm_backend = "cloud"` (default): always returns the LLM summariser
+///   routed through the OpenHuman backend's `cloud_llm_model`
+///   (defaulting to `summarization-v1`).
+/// - `llm_backend = "local"`: returns the LLM summariser only when both
+///   `llm_summariser_endpoint` AND `llm_summariser_model` are set;
+///   otherwise returns the [`inert::InertSummariser`] fallback.
+///
+/// In all cases the LLM summariser itself soft-falls-back to inert per
+/// seal on transport failure, so seal cascades never abort.
 ///
 /// Returned as `Arc<dyn Summariser>` so the ingest pipeline can pass it
 /// by reference to `append_leaf` and `route_leaf_to_topic_trees`
 /// without threading a generic type parameter through every caller.
 pub fn build_summariser(config: &Config) -> Arc<dyn Summariser> {
-    let endpoint = config
-        .memory_tree
-        .llm_summariser_endpoint
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    let model = config
-        .memory_tree
-        .llm_summariser_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+    use crate::openhuman::config::{LlmBackend, DEFAULT_CLOUD_LLM_MODEL};
+    use crate::openhuman::memory::tree::chat::{build_chat_provider, ChatConsumer};
 
-    let (Some(endpoint), Some(model)) = (endpoint, model) else {
+    // Resolve the model identifier to log alongside the provider name.
+    // Returns None (→ inert fallback) only when llm_backend=local and the legacy
+    // llm_summariser_endpoint/_model fields are not both set.
+    let model: Option<String> = match config.memory_tree.llm_backend {
+        LlmBackend::Cloud => Some(
+            config
+                .memory_tree
+                .cloud_llm_model
+                .clone()
+                .unwrap_or_else(|| DEFAULT_CLOUD_LLM_MODEL.to_string()),
+        ),
+        LlmBackend::Local => {
+            let endpoint = config
+                .memory_tree
+                .llm_summariser_endpoint
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let m = config
+                .memory_tree
+                .llm_summariser_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            match (endpoint, m) {
+                (Some(_), Some(m)) => Some(m.to_string()),
+                _ => None,
+            }
+        }
+    };
+
+    let Some(model) = model else {
         log::debug!(
-            "[tree_source::summariser] llm_summariser not configured — using InertSummariser"
+            "[tree_source::summariser] llm_summariser not configured for llm_backend={} \
+             — using InertSummariser",
+            config.memory_tree.llm_backend.as_str()
         );
         return Arc::new(inert::InertSummariser::new());
     };
 
-    // 120s default — matches `LlmSummariserConfig::default()`. Lets a
-    // small/medium local model finish the seal-budget summary on a
-    // cold-loaded weight cache without spurious timeouts.
-    let timeout_ms = config
-        .memory_tree
-        .llm_summariser_timeout_ms
-        .unwrap_or(120_000);
-
-    let cfg = llm::LlmSummariserConfig {
-        endpoint: endpoint.to_string(),
-        model: model.to_string(),
-        timeout: std::time::Duration::from_millis(timeout_ms),
-    };
-    match llm::LlmSummariser::new(cfg) {
-        Ok(s) => {
-            log::info!(
-                "[tree_source::summariser] using LlmSummariser endpoint={} model={} timeout_ms={}",
-                endpoint,
-                model,
-                timeout_ms
-            );
-            Arc::new(s)
-        }
+    let provider = match build_chat_provider(config, ChatConsumer::Summarise) {
+        Ok(p) => p,
         Err(err) => {
             log::warn!(
-                "[tree_source::summariser] LlmSummariser construction failed: {err:#} — \
+                "[tree_source::summariser] build_chat_provider failed: {err:#} — \
                  falling back to InertSummariser"
             );
-            Arc::new(inert::InertSummariser::new())
+            return Arc::new(inert::InertSummariser::new());
         }
-    }
+    };
+
+    log::info!(
+        "[tree_source::summariser] using LlmSummariser provider={} model={}",
+        provider.name(),
+        model
+    );
+    Arc::new(llm::LlmSummariser::new(
+        llm::LlmSummariserConfig { model },
+        provider,
+    ))
 }

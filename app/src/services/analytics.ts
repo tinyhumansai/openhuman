@@ -60,8 +60,17 @@ export function initSentry(): void {
       // Always allow the smoke-test event through so pipeline validation works
       // even when the user hasn't opted into analytics yet on first boot.
       const isSmokeTest = event.message === 'react-sentry-smoke-test';
+      // Manual staging test events fired from the Developer Options button
+      // (#1072) bypass the consent gate so QA can validate the pipeline
+      // without needing to flip user-facing analytics first. The bypass is
+      // *also* gated on APP_ENVIRONMENT so a stray `manual-staging` tag in
+      // production (whether accidental or malicious) cannot exfiltrate an
+      // event past the consent gate — the only legitimate caller in this
+      // codebase is `triggerSentryTestEvent` and it itself refuses to fire
+      // outside staging.
+      const isManualTest = APP_ENVIRONMENT === 'staging' && event.tags?.test === 'manual-staging';
       // Drop events when the user hasn't opted into analytics.
-      if (!isSmokeTest && !isAnalyticsEnabled()) return null;
+      if (!isSmokeTest && !isManualTest && !isAnalyticsEnabled()) return null;
 
       // Strip anything that could carry Redux / localStorage / request bodies.
       event.breadcrumbs = [];
@@ -135,4 +144,60 @@ export function syncAnalyticsConsent(enabled: boolean): void {
   if (!enabled) {
     void Sentry.flush(2000);
   }
+}
+
+/**
+ * Fire a manual diagnostic event for issue #1072: a staging-only "Trigger
+ * Sentry Test" button uses this to validate the React → Sentry pipeline
+ * end-to-end after a config change. Tagged so `beforeSend` lets it through
+ * regardless of analytics consent, and so it's trivial to filter on the
+ * dashboard side. Returns the event id Sentry assigns (or `undefined` if
+ * Sentry is disabled in this build).
+ */
+export async function triggerSentryTestEvent(): Promise<string | undefined> {
+  // Fail-fast outside staging. The UI button is only rendered when
+  // `APP_ENVIRONMENT === 'staging'`, but this guard exists as defense in
+  // depth so a programmatic caller (a stray import, a future refactor)
+  // cannot fire diagnostic events from production. `beforeSend` already
+  // re-checks the same gate before applying the consent bypass.
+  if (APP_ENVIRONMENT !== 'staging') {
+    console.warn(
+      `[sentry-test] refusing to fire test event outside staging (APP_ENVIRONMENT=${APP_ENVIRONMENT})`
+    );
+    return undefined;
+  }
+
+  const client = Sentry.getClient();
+  if (!client) {
+    console.warn('[sentry-test] Sentry client not initialized — DSN missing or dev build');
+    return undefined;
+  }
+
+  // Constant message so Sentry's default grouping algorithm collapses every
+  // QA click into one issue (with N events) instead of one issue per click.
+  // Per-click timing goes through `extra` so it's still visible on each
+  // event but doesn't influence the fingerprint.
+  const stamp = new Date().toISOString();
+  const error = new Error('Manual Sentry test from staging UI');
+  error.name = 'SentryStagingTestError';
+
+  const eventId = Sentry.captureException(error, {
+    tags: { test: 'manual-staging', source: 'developer-options-button' },
+    extra: { triggered_at: stamp },
+    level: 'error',
+  });
+
+  console.info('[sentry-test] captureException eventId=', eventId);
+  // Surface flush timeouts as failures: a `false` here means the event
+  // queue did not drain within 2s, so the network round-trip to Sentry is
+  // unconfirmed. For a *diagnostic* tool, returning a successful-looking
+  // eventId in that case would be a lie.
+  const flushed = await Sentry.flush(2000);
+  if (!flushed) {
+    throw new Error(
+      'Sentry.flush(2000) timed out — event may not have reached Sentry. ' +
+        'Check network / DSN / Sentry status before retrying.'
+    );
+  }
+  return eventId;
 }

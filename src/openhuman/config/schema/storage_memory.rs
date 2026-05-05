@@ -74,6 +74,66 @@ impl Default for MemoryConfig {
     }
 }
 
+/// Which inference backend the memory_tree's LLM calls (extractor +
+/// summariser) should use.
+///
+/// - `Cloud` (default): route through `providers::router` against the
+///   OpenHuman backend with the `summarization-v1` model. No local Ollama
+///   required.
+/// - `Local`: keep using the legacy Ollama-direct path (the
+///   `llm_extractor_endpoint` / `llm_summariser_endpoint` config). Useful
+///   for offline development and CI smoke tests.
+///
+/// Embedder selection is unchanged — `OllamaEmbedder` (bge-m3) stays
+/// local-only and isn't governed by this enum.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmBackend {
+    /// Route through the OpenHuman backend (default).
+    Cloud,
+    /// Use the local Ollama path configured via `llm_extractor_*` /
+    /// `llm_summariser_*`.
+    Local,
+}
+
+impl LlmBackend {
+    /// Stable wire string for env vars / RPCs / logs.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cloud => "cloud",
+            Self::Local => "local",
+        }
+    }
+
+    /// Inverse of [`Self::as_str`]; case-insensitive parse.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "cloud" => Ok(Self::Cloud),
+            "local" => Ok(Self::Local),
+            other => Err(format!("unknown llm (expected cloud|local): {other}")),
+        }
+    }
+}
+
+impl Default for LlmBackend {
+    fn default() -> Self {
+        Self::Cloud
+    }
+}
+
+fn default_llm_backend() -> LlmBackend {
+    LlmBackend::default()
+}
+
+/// Default model identifier to use when `llm_backend = "cloud"`. Routed
+/// through the OpenHuman backend; keep in sync with the backend's
+/// summariser model registry.
+pub const DEFAULT_CLOUD_LLM_MODEL: &str = "summarization-v1";
+
+fn default_cloud_llm_model() -> Option<String> {
+    Some(DEFAULT_CLOUD_LLM_MODEL.to_string())
+}
+
 /// Phase 4 memory-tree configuration — embedding provider wiring for the
 /// hierarchical memory (#710).
 ///
@@ -95,6 +155,8 @@ impl Default for MemoryConfig {
 /// - `OPENHUMAN_MEMORY_SUMMARISE_MODEL`
 /// - `OPENHUMAN_MEMORY_SUMMARISE_TIMEOUT_MS`
 /// - `OPENHUMAN_MEMORY_TREE_CONTENT_DIR` (Phase MD-content)
+/// - `OPENHUMAN_MEMORY_TREE_LLM_BACKEND` (cloud|local)
+/// - `OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MemoryTreeConfig {
     /// Ollama endpoint for the embedder (e.g. `http://localhost:11434`).
@@ -164,6 +226,25 @@ pub struct MemoryTreeConfig {
     /// back to default, consistent with other memory_tree env vars).
     #[serde(default = "default_memory_tree_content_dir")]
     pub content_dir: Option<PathBuf>,
+
+    /// Backend selector for the memory_tree's LLM calls (extractor +
+    /// summariser). Defaults to [`LlmBackend::Cloud`] so a fresh install
+    /// works without requiring a local Ollama daemon. Set to
+    /// [`LlmBackend::Local`] (or `OPENHUMAN_MEMORY_TREE_LLM_BACKEND=local`) to
+    /// keep the legacy Ollama-direct path.
+    ///
+    /// The embedder is unaffected by this setting — `OllamaEmbedder` (bge-m3)
+    /// stays local-only.
+    #[serde(default = "default_llm_backend")]
+    pub llm_backend: LlmBackend,
+
+    /// Model identifier used when `llm_backend = "cloud"`. Routed through the
+    /// OpenHuman backend's chat-completions surface.
+    ///
+    /// Defaults to [`DEFAULT_CLOUD_LLM_MODEL`] (`summarization-v1`).
+    /// Env override: `OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL`.
+    #[serde(default = "default_cloud_llm_model")]
+    pub cloud_llm_model: Option<String>,
 }
 
 /// Returns `None` so that existing installs that never opted into Phase 4
@@ -229,6 +310,8 @@ impl Default for MemoryTreeConfig {
             llm_summariser_model: default_memory_tree_llm_endpoint(),
             llm_summariser_timeout_ms: default_memory_tree_llm_summariser_timeout_ms(),
             content_dir: default_memory_tree_content_dir(),
+            llm_backend: default_llm_backend(),
+            cloud_llm_model: default_cloud_llm_model(),
         }
     }
 }
@@ -236,6 +319,41 @@ impl Default for MemoryTreeConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn llm_default_is_cloud() {
+        assert_eq!(LlmBackend::default(), LlmBackend::Cloud);
+        assert_eq!(MemoryTreeConfig::default().llm_backend, LlmBackend::Cloud);
+    }
+
+    #[test]
+    fn llm_round_trip() {
+        for v in [LlmBackend::Cloud, LlmBackend::Local] {
+            assert_eq!(LlmBackend::parse(v.as_str()).unwrap(), v);
+        }
+    }
+
+    #[test]
+    fn llm_parse_is_case_insensitive() {
+        assert_eq!(LlmBackend::parse("CLOUD").unwrap(), LlmBackend::Cloud);
+        assert_eq!(LlmBackend::parse(" Local ").unwrap(), LlmBackend::Local);
+    }
+
+    #[test]
+    fn llm_parse_rejects_unknown() {
+        assert!(LlmBackend::parse("hybrid").is_err());
+        assert!(LlmBackend::parse("").is_err());
+    }
+
+    #[test]
+    fn cloud_llm_model_default_is_summarizer_v1() {
+        let cfg = MemoryTreeConfig::default();
+        assert_eq!(
+            cfg.cloud_llm_model.as_deref(),
+            Some(DEFAULT_CLOUD_LLM_MODEL)
+        );
+        assert_eq!(DEFAULT_CLOUD_LLM_MODEL, "summarization-v1");
+    }
 
     #[test]
     fn memory_tree_config_default_content_dir_is_none() {

@@ -684,3 +684,148 @@ async fn system_prompt_and_model_are_byte_stable_across_turns() {
         );
     }
 }
+
+/// Regression test for the per-thread transcript resume bug.
+///
+/// `set_agent_definition_name` is called by the web channel after
+/// `Agent::from_config_for_agent("orchestrator")` returns, to scope
+/// transcripts per thread (e.g. `"orchestrator_thread-6ad6d"`). Prior
+/// to the fix this only updated `agent_definition_name` and left
+/// `session_key` pointing at the builder-time name. Persist would
+/// then write `session_raw/<ts>_orchestrator.jsonl` while resume
+/// searched for `session_raw/<ts>_orchestrator_thread-6ad6d.jsonl`,
+/// so every cold-boot turn ran against an empty transcript and the
+/// LLM had no conversation history.
+///
+/// This test pins the contract: after `set_agent_definition_name`,
+/// `session_key`'s suffix matches the new (sanitised) name so the
+/// next persist+resume pair land on the same file.
+#[test]
+fn set_agent_definition_name_rewrites_session_key_suffix() {
+    let agent_first = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    let original_key = agent_first.session_key().to_string();
+    assert!(
+        original_key.ends_with("_orchestrator"),
+        "builder should seed session_key suffix from agent_definition_name; got {original_key}"
+    );
+
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    let prefix = agent
+        .session_key()
+        .split_once('_')
+        .map(|(p, _)| p.to_string())
+        .expect("session_key must have a `<ts>_<suffix>` shape");
+
+    agent.set_agent_definition_name("orchestrator_thread-6ad6d");
+
+    assert_eq!(agent.agent_definition_name(), "orchestrator_thread-6ad6d");
+    assert_eq!(
+        agent.session_key(),
+        format!("{prefix}_orchestrator_thread-6ad6d"),
+        "session_key suffix must track agent_definition_name so transcript persist + \
+         resume agree on the file path"
+    );
+}
+
+/// `set_agent_definition_name` must sanitise non-allowed characters in
+/// the new name (matching the builder's policy) so `session_key`
+/// never contains anything that would escape the `session_raw/`
+/// directory or break filename parsing on disk.
+#[test]
+fn set_agent_definition_name_sanitises_unsafe_characters() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.set_agent_definition_name("orch/../../etc/passwd thread-6ad6d");
+    assert!(
+        !agent.session_key().contains('/'),
+        "session_key must never contain path separators; got {}",
+        agent.session_key()
+    );
+    assert!(
+        !agent.session_key().contains(' '),
+        "session_key must never contain whitespace; got {}",
+        agent.session_key()
+    );
+}
+
+/// Cold-boot resume from the conversation JSONL works even when no
+/// matching transcript file exists. The web channel calls
+/// `seed_resume_from_messages` on the cache-miss path so the agent
+/// sees prior conversation context immediately, instead of having to
+/// wait for a transcript to be persisted under the new
+/// thread-scoped name.
+#[test]
+fn seed_resume_from_messages_primes_cached_transcript() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    let prior = vec![
+        ("user".to_string(), "what is btc price".to_string()),
+        ("agent".to_string(), "$80,000".to_string()),
+        // Trailing user message that the caller is about to pass to
+        // run_single — must be deduped from the cached prefix.
+        ("user".to_string(), "what did i just ask".to_string()),
+    ];
+    agent
+        .seed_resume_from_messages(prior, "what did i just ask")
+        .expect("seed");
+
+    let cached = agent
+        .cached_transcript_messages
+        .as_ref()
+        .expect("cache populated");
+    // [system, user(btc), agent(80k)] — trailing user was deduped.
+    assert_eq!(cached.len(), 3);
+    assert_eq!(cached[0].role, "system");
+    assert_eq!(cached[1].role, "user");
+    assert_eq!(cached[1].content, "what is btc price");
+    assert_eq!(cached[2].role, "assistant");
+    assert_eq!(cached[2].content, "$80,000");
+}
+
+/// `seed_resume_from_messages` must not stomp the existing context if
+/// the agent has already been warmed (in-process session cache hit).
+/// Otherwise the cache-miss branch in the web channel would erase
+/// real progress whenever the caller defensively invoked seeding.
+#[test]
+fn seed_resume_from_messages_is_noop_on_warm_agent() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.cached_transcript_messages = Some(vec![
+        crate::openhuman::providers::ChatMessage::system("warm prefix"),
+        crate::openhuman::providers::ChatMessage::user("hi"),
+    ]);
+    agent
+        .seed_resume_from_messages(vec![("user".into(), "different".into())], "different")
+        .expect("seed");
+    let cached = agent
+        .cached_transcript_messages
+        .as_ref()
+        .expect("still populated");
+    assert_eq!(cached.len(), 2);
+    assert_eq!(cached[0].content, "warm prefix");
+}
+
+/// Trailing user message that does NOT match the current incoming
+/// message must be preserved — the dedup heuristic only fires on
+/// exact match because the conversation JSONL is the source of truth
+/// and may legitimately contain back-to-back user messages (e.g. the
+/// thread-7242c case where an interrupted turn left the prior user
+/// message un-replied).
+#[test]
+fn seed_resume_from_messages_preserves_unmatched_trailing_user() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    let prior = vec![
+        ("user".to_string(), "earlier question".to_string()),
+        ("agent".to_string(), "earlier answer".to_string()),
+        ("user".to_string(), "stranded follow-up".to_string()),
+    ];
+    agent
+        .seed_resume_from_messages(prior, "completely different new turn")
+        .expect("seed");
+    let cached = agent
+        .cached_transcript_messages
+        .as_ref()
+        .expect("cache populated");
+    // [system, user, agent, user] — trailing kept because it doesn't
+    // match the current turn's user input.
+    assert_eq!(cached.len(), 4);
+    assert_eq!(cached[3].role, "user");
+    assert_eq!(cached[3].content, "stranded follow-up");
+}

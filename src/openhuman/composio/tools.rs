@@ -26,7 +26,9 @@ use serde_json::{json, Value};
 
 use crate::openhuman::agent::harness::current_sandbox_mode;
 use crate::openhuman::agent::harness::definition::SandboxMode;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
+use crate::openhuman::tools::traits::{
+    PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
+};
 
 use super::client::ComposioClient;
 use super::providers::{
@@ -106,6 +108,23 @@ async fn evaluate_tool_visibility(slug: &str) -> ToolDecision {
     }
 }
 
+/// Drop tools whose toolkit is not in `connected` (case-insensitive).
+/// Returns the number of dropped tools so callers can log it.
+/// `toolkit_from_slug` already lowercases its result, so the comparison
+/// is direct against entries the caller has already lowercased.
+fn retain_connected_tools(
+    resp: &mut super::types::ComposioToolsResponse,
+    connected: &std::collections::HashSet<String>,
+) -> usize {
+    let before = resp.tools.len();
+    resp.tools.retain(|t| {
+        toolkit_from_slug(&t.function.name)
+            .map(|tk| connected.contains(&tk))
+            .unwrap_or(false)
+    });
+    before - resp.tools.len()
+}
+
 /// Filter a freshly-fetched [`super::types::ComposioToolsResponse`] in
 /// place: drop tools that aren't curated for their toolkit and tools
 /// whose scope is disabled in the user's pref.
@@ -138,6 +157,99 @@ async fn filter_list_tools_response(resp: &mut super::types::ComposioToolsRespon
             "[composio][scopes] composio_list_tools filtered"
         );
     }
+}
+
+/// One-line description: collapse whitespace + truncate.
+fn one_line(desc: &str, max_chars: usize) -> String {
+    let collapsed: String = desc.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= max_chars {
+        collapsed
+    } else {
+        let snippet: String = collapsed.chars().take(max_chars).collect();
+        format!("{snippet}…")
+    }
+}
+
+/// Pull required + optional top-level argument names from a JSON Schema
+/// `parameters` object. Returns `(required, optional)` — both empty when
+/// the schema is missing or doesn't follow the expected shape.
+fn split_arg_names(parameters: Option<&Value>) -> (Vec<String>, Vec<String>) {
+    let Some(params) = parameters.and_then(Value::as_object) else {
+        return (Vec::new(), Vec::new());
+    };
+    let required: Vec<String> = params
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut optional: Vec<String> = params
+        .get("properties")
+        .and_then(Value::as_object)
+        .map(|props| props.keys().cloned().collect())
+        .unwrap_or_default();
+    optional.retain(|k| !required.contains(k));
+    (required, optional)
+}
+
+/// Compact markdown rendering of `composio_list_tools` output.
+///
+/// Drops the full JSON parameter schemas (the main token cost) and keeps
+/// only what the agent needs to pick a slug and call `composio_execute`:
+/// the slug, a one-line description, and the names of required +
+/// optional top-level arguments. Tools are grouped by toolkit prefix.
+fn render_tools_markdown(resp: &super::types::ComposioToolsResponse) -> String {
+    use std::collections::BTreeMap;
+    use std::fmt::Write as _;
+
+    if resp.tools.is_empty() {
+        return "_No composio tools available._".to_string();
+    }
+
+    // Group by toolkit slug (lowercase prefix). Use BTreeMap for stable
+    // ordering so the agent sees the same shape across calls.
+    let mut by_toolkit: BTreeMap<String, Vec<&super::types::ComposioToolSchema>> = BTreeMap::new();
+    for t in &resp.tools {
+        let toolkit = toolkit_from_slug(&t.function.name).unwrap_or_else(|| "other".to_string());
+        by_toolkit.entry(toolkit).or_default().push(t);
+    }
+
+    let mut out = format!(
+        "# Composio tools ({} actions across {} toolkit{})\n\n\
+         Call `composio_execute` with `tool=<SLUG>` and an `arguments` object \
+         matching the listed parameters.\n",
+        resp.tools.len(),
+        by_toolkit.len(),
+        if by_toolkit.len() == 1 { "" } else { "s" },
+    );
+
+    for (toolkit, tools) in &by_toolkit {
+        let _ = writeln!(out, "\n## {toolkit}");
+        for t in tools {
+            let desc = t
+                .function
+                .description
+                .as_deref()
+                .map(|d| one_line(d, 160))
+                .unwrap_or_default();
+            let (required, optional) = split_arg_names(t.function.parameters.as_ref());
+            let _ = write!(out, "- `{}`", t.function.name);
+            if !desc.is_empty() {
+                let _ = write!(out, " — {desc}");
+            }
+            if !required.is_empty() {
+                let _ = write!(out, " **req:** {}", required.join(", "));
+            }
+            if !optional.is_empty() {
+                let _ = write!(out, " **opt:** {}", optional.join(", "));
+            }
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// Format a user-facing error message for a scope-blocked execution.
@@ -351,10 +463,14 @@ impl Tool for ComposioListToolsTool {
         "composio_list_tools"
     }
     fn description(&self) -> &str {
-        "List Composio action tools available through the backend. Pass an optional \
-         `toolkits` array to filter (e.g. [\"gmail\"]). The result is a JSON array of \
-         OpenAI function-calling tool schemas; use the slug from `function.name` as the \
-         `tool` argument when calling `composio_execute`."
+        "List Composio action tools available through the backend. By default only \
+         actions for toolkits the user has actively connected are returned — pass \
+         `include_unconnected=true` to see every allowlisted toolkit's actions \
+         (useful when planning whether to call `composio_authorize` for a new toolkit). \
+         Pass an optional `toolkits` array to further filter (e.g. [\"gmail\"]). The \
+         result is a JSON object with a `tools` array of OpenAI function-calling \
+         tool schemas; use the slug from each entry's `function.name` as the `tool` \
+         argument when calling `composio_execute`."
     }
     fn parameters_schema(&self) -> Value {
         json!({
@@ -364,6 +480,12 @@ impl Tool for ComposioListToolsTool {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Optional list of toolkit slugs to filter by."
+                },
+                "include_unconnected": {
+                    "type": "boolean",
+                    "description": "When true, include actions from toolkits the user \
+                                    has not connected yet. Defaults to false (only \
+                                    connected toolkits)."
                 }
             },
             "additionalProperties": false
@@ -376,23 +498,89 @@ impl Tool for ComposioListToolsTool {
         ToolCategory::Skill
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_options(args, ToolCallOptions::default())
+            .await
+    }
+
+    async fn execute_with_options(
+        &self,
+        args: Value,
+        options: ToolCallOptions,
+    ) -> anyhow::Result<ToolResult> {
         let toolkits = args.get("toolkits").and_then(|v| v.as_array()).map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
                 .collect::<Vec<_>>()
         });
-        tracing::debug!(?toolkits, "[composio] tool list_tools.execute");
+        let include_unconnected = args
+            .get("include_unconnected")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        tracing::debug!(
+            ?toolkits,
+            include_unconnected,
+            prefer_markdown = options.prefer_markdown,
+            "[composio] tool list_tools.execute"
+        );
         match self.client.list_tools(toolkits.as_deref()).await {
             Ok(mut resp) => {
                 filter_list_tools_response(&mut resp).await;
-                Ok(ToolResult::success(
+
+                if !include_unconnected {
+                    // Restrict to toolkits with an ACTIVE / CONNECTED
+                    // account. Mirrors the same status allowlist used by
+                    // composio_list_connections so this view and the
+                    // prompt's Delegation Guide stay in sync.
+                    match self.client.list_connections().await {
+                        Ok(conns) => {
+                            let connected: std::collections::HashSet<String> = conns
+                                .connections
+                                .iter()
+                                .filter(|c| {
+                                    let s = c.status.trim();
+                                    s.eq_ignore_ascii_case("ACTIVE")
+                                        || s.eq_ignore_ascii_case("CONNECTED")
+                                })
+                                .map(|c| c.toolkit.trim().to_ascii_lowercase())
+                                .filter(|t| !t.is_empty())
+                                .collect();
+                            let dropped = retain_connected_tools(&mut resp, &connected);
+                            tracing::debug!(
+                                connected_toolkits = connected.len(),
+                                dropped,
+                                kept = resp.tools.len(),
+                                "[composio] list_tools restricted to connected toolkits"
+                            );
+                        }
+                        Err(e) => {
+                            // Soft-fail: surface the issue to the agent
+                            // so it can retry with include_unconnected
+                            // rather than silently returning [].
+                            return Ok(ToolResult::error(format!(
+                                "composio_list_tools failed to fetch connections \
+                                 (needed to filter to connected toolkits — pass \
+                                 include_unconnected=true to skip this check): {e}"
+                            )));
+                        }
+                    }
+                }
+
+                let mut result = ToolResult::success(
                     serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
-                ))
+                );
+                if options.prefer_markdown {
+                    result.markdown_formatted = Some(render_tools_markdown(&resp));
+                }
+                Ok(result)
             }
             Err(e) => Ok(ToolResult::error(format!(
                 "composio_list_tools failed: {e}"
             ))),
         }
+    }
+
+    fn supports_markdown(&self) -> bool {
+        true
     }
 }
 

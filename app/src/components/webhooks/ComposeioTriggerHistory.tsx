@@ -1,3 +1,4 @@
+import { formatTriggerLabel } from '../../lib/composio/formatters';
 import type { ComposioTriggerHistoryEntry } from '../../utils/tauriCommands';
 
 interface ComposeioTriggerHistoryProps {
@@ -52,7 +53,7 @@ export default function ComposeioTriggerHistory({ entries }: ComposeioTriggerHis
                 {entry.toolkit}
               </span>
               <span className="rounded-full bg-sage-50 px-2.5 py-1 text-xs font-medium text-sage-700">
-                {entry.trigger}
+                {formatTriggerLabel(entry.trigger)}
               </span>
               <span className="text-xs text-stone-500">
                 {formatTimestamp(entry.received_at_ms)}

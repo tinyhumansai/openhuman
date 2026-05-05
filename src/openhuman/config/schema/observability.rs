@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ObservabilityConfig {
-    /// Sentry DSN for error reporting. Overridden by `OPENHUMAN_SENTRY_DSN` env var.
+    /// Sentry DSN for error reporting. Overridden by the
+    /// `OPENHUMAN_CORE_SENTRY_DSN` env var (or its legacy alias
+    /// `OPENHUMAN_SENTRY_DSN`).
     #[serde(default)]
     pub sentry_dsn: Option<String>,
 

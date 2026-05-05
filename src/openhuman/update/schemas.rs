@@ -5,11 +5,20 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::rpc::RpcOutcome;
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
-    vec![schemas("check"), schemas("apply")]
+    vec![
+        schemas("version"),
+        schemas("check"),
+        schemas("apply"),
+        schemas("run"),
+    ]
 }
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
+        RegisteredController {
+            schema: schemas("version"),
+            handler: handle_version,
+        },
         RegisteredController {
             schema: schemas("check"),
             handler: handle_check,
@@ -18,11 +27,40 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             schema: schemas("apply"),
             handler: handle_apply,
         },
+        RegisteredController {
+            schema: schemas("run"),
+            handler: handle_run,
+        },
     ]
 }
 
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
+        "version" => ControllerSchema {
+            namespace: "update",
+            function: "version",
+            description: "Report the running core binary's version + target triple.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "version_info",
+                ty: TypeSchema::Json,
+                comment: "Current version and platform target triple.",
+                required: true,
+            }],
+        },
+        "run" => ControllerSchema {
+            namespace: "update",
+            function: "run",
+            description: "Orchestrated update: check GitHub, stage a newer binary if available, \
+                 then publish a self-restart. The process exits shortly after returning.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "run_result",
+                ty: TypeSchema::Json,
+                comment: "Summary of what the orchestrator did (checked / applied / restarted).",
+                required: true,
+            }],
+        },
         "check" => ControllerSchema {
             namespace: "update",
             function: "check",
@@ -83,8 +121,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
+fn handle_version(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(crate::openhuman::update::rpc::update_version().await) })
+}
+
 fn handle_check(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(crate::openhuman::update::rpc::update_check().await) })
+}
+
+fn handle_run(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(crate::openhuman::update::rpc::update_run().await) })
 }
 
 fn handle_apply(params: Map<String, Value>) -> ControllerFuture {
@@ -120,13 +166,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_returns_two() {
-        assert_eq!(all_controller_schemas().len(), 2);
+    fn all_schemas_returns_four() {
+        assert_eq!(all_controller_schemas().len(), 4);
     }
 
     #[test]
-    fn all_controllers_returns_two() {
-        assert_eq!(all_registered_controllers().len(), 2);
+    fn all_controllers_returns_four() {
+        assert_eq!(all_registered_controllers().len(), 4);
+    }
+
+    #[test]
+    fn version_schema_has_no_inputs() {
+        let s = schemas("version");
+        assert_eq!(s.namespace, "update");
+        assert_eq!(s.function, "version");
+        assert!(s.inputs.is_empty());
+        assert!(!s.outputs.is_empty());
+    }
+
+    #[test]
+    fn run_schema_has_no_inputs() {
+        let s = schemas("run");
+        assert_eq!(s.namespace, "update");
+        assert_eq!(s.function, "run");
+        assert!(s.inputs.is_empty());
+        assert!(!s.outputs.is_empty());
     }
 
     #[test]

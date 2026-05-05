@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "OpenHuman"
-version = "0.53.13"
+version = "0.53.16"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -24,6 +24,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "objc2-user-notifications",
+ "objc2-web-kit",
  "openhuman",
  "parking_lot",
  "rand 0.9.2",
@@ -45,6 +46,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.24.0",
  "toml 0.8.2",
+ "url",
 ]
 
 [[package]]
@@ -4454,7 +4456,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.53.13"
+version = "0.53.16"
 dependencies = [
  "aes-gcm",
  "anyhow",

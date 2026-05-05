@@ -16,20 +16,24 @@ function makeSnapshot(overrides: Partial<CoreAppSnapshot> = {}): CoreAppSnapshot
   };
 }
 
+// [#1123] isWelcomeLocked now always returns false — welcome-agent onboarding
+// replaced by Joyride walkthrough. Tests updated to reflect the new behavior.
 describe('isWelcomeLocked', () => {
-  it('locks when authenticated user finished the wizard but chat onboarding is still false', () => {
-    expect(isWelcomeLocked(makeSnapshot())).toBe(true);
+  it('[#1123] always returns false — welcome lockdown replaced by Joyride walkthrough', () => {
+    // Previously returned true when onboardingCompleted=true and chatOnboardingCompleted=false.
+    // Now always returns false since the welcome-lock UI was removed.
+    expect(isWelcomeLocked(makeSnapshot())).toBe(false);
   });
 
-  it('unlocks once chat onboarding completes', () => {
+  it('returns false once chat onboarding completes', () => {
     expect(isWelcomeLocked(makeSnapshot({ chatOnboardingCompleted: true }))).toBe(false);
   });
 
-  it('stays unlocked while the wizard is still up — the /onboarding route owns that gate', () => {
+  it('returns false while the wizard is still up', () => {
     expect(isWelcomeLocked(makeSnapshot({ onboardingCompleted: false }))).toBe(false);
   });
 
-  it('stays unlocked when signed out so the signed-out first paint does not flicker', () => {
+  it('returns false when signed out', () => {
     expect(
       isWelcomeLocked(
         makeSnapshot({

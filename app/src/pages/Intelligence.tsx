@@ -1,55 +1,45 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import IntelligenceDreamsTab from '../components/intelligence/IntelligenceDreamsTab';
-import IntelligenceMemoryTab from '../components/intelligence/IntelligenceMemoryTab';
+import IntelligenceSettingsTab from '../components/intelligence/IntelligenceSettingsTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
+import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
 import { ToastContainer } from '../components/intelligence/Toast';
-import { filterItems, getItemStats, groupItemsByTime } from '../components/intelligence/utils';
 import PillTabBar from '../components/PillTabBar';
 import { useConsciousItems } from '../hooks/useConsciousItems';
-import {
-  useSnoozeActionableItem,
-  useUpdateActionableItem,
-} from '../hooks/useIntelligenceApiFallback';
 import {
   useIntelligenceSocket,
   useIntelligenceSocketManager,
 } from '../hooks/useIntelligenceSocket';
 import { useIntelligenceStats } from '../hooks/useIntelligenceStats';
 import { useMemoryIngestionStatus } from '../hooks/useMemoryIngestionStatus';
-import { useScreenIntelligenceItems } from '../hooks/useScreenIntelligenceItems';
 import { useSubconscious } from '../hooks/useSubconscious';
 import type {
-  ActionableItem,
-  ActionableItemSource,
-  ActionableItemStatus,
   ConfirmationModal as ConfirmationModalType,
   ToastNotification,
 } from '../types/intelligence';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'dreams';
+type IntelligenceTab = 'memory' | 'subconscious' | 'dreams' | 'settings';
 
 export default function Intelligence() {
   const { aiStatus } = useIntelligenceStats();
   const { status: ingestionStatus } = useMemoryIngestionStatus();
 
   const [activeTab, setActiveTab] = useState<IntelligenceTab>('memory');
-  const [sourceFilter, setSourceFilter] = useState<ActionableItemSource | 'all'>('all');
-  const [priorityFilter] = useState<'critical' | 'important' | 'normal' | 'all'>('all');
-  const [searchFilter, setSearchFilter] = useState('');
 
-  // Conscious memory items (real data from the background analysis loop)
-  const {
-    items: consciousItems,
-    loading: consciousLoading,
-    isRunning,
-    refresh: refreshConscious,
-    triggerAnalysis,
-  } = useConsciousItems();
+  // `useConsciousItems` is kept solely for the `isRunning` signal that
+  // drives the system-status pill in the Memory-tab header. The items
+  // themselves used to feed the actionable-cards count badge (now hidden,
+  // and the rendering surface — IntelligenceMemoryTab — is gone). When
+  // the status pill is rewired to a memory_tree-native source, drop this
+  // hook entirely.
+  const { isRunning } = useConsciousItems();
 
-  const { mutateAsync: updateItemStatus } = useUpdateActionableItem();
-  const { mutateAsync: snoozeItem } = useSnoozeActionableItem();
+  // useUpdateActionableItem / useSnoozeActionableItem hooks were the
+  // mutations behind handleComplete / Dismiss / Snooze. Removed along
+  // with those handlers since the Memory tab no longer renders the
+  // actionable-card surface.
 
   // Subconscious engine data
   const {
@@ -92,17 +82,6 @@ export default function Intelligence() {
     setToasts(prev => prev.filter(toast => toast.id !== id));
   }, []);
 
-  const { items: screenIntelligenceItems, loading: screenIntelligenceLoading } =
-    useScreenIntelligenceItems();
-
-  const usingMemoryData = consciousItems.length > 0 || screenIntelligenceItems.length > 0;
-  const items: ActionableItem[] = useMemo(
-    () => [...consciousItems, ...screenIntelligenceItems],
-    [consciousItems, screenIntelligenceItems]
-  );
-
-  const itemsLoading = consciousLoading || screenIntelligenceLoading;
-
   // Initialize socket connection
   useEffect(() => {
     if (!socketConnected) {
@@ -110,131 +89,18 @@ export default function Intelligence() {
     }
   }, [socketConnected, socketManager]);
 
-  // Filter and group items
-  const filteredItems = useMemo(() => {
-    const activeItems = items.filter(item => item.status === 'active');
-    return filterItems(activeItems, {
-      source: sourceFilter,
-      priority: priorityFilter,
-      searchTerm: searchFilter,
-    });
-  }, [items, priorityFilter, searchFilter, sourceFilter]);
-
-  const timeGroups = useMemo(() => groupItemsByTime(filteredItems), [filteredItems]);
-  const stats = useMemo(() => getItemStats(filteredItems), [filteredItems]);
-
-  // Item action handlers
-  const handleUpdateItemStatus = useCallback(
-    async (itemId: string, status: ActionableItemStatus) => {
-      try {
-        await updateItemStatus({ itemId, status });
-
-        let message = '';
-        switch (status) {
-          case 'completed':
-            message = 'Task marked as completed';
-            break;
-          case 'dismissed':
-            message = 'Task dismissed';
-            break;
-          case 'active':
-            message = 'Task reactivated';
-            break;
-          default:
-            message = 'Status updated';
-        }
-
-        addToast({ type: 'success', title: 'Status Updated', message });
-      } catch (error) {
-        console.error('Failed to update item status:', error);
-        addToast({
-          type: 'error',
-          title: 'Update Failed',
-          message: error instanceof Error ? error.message : 'Failed to update item status',
-        });
-      }
-    },
-    [updateItemStatus, addToast]
-  );
-
-  const handleComplete = useCallback(
-    async (item: ActionableItem) => {
-      await handleUpdateItemStatus(item.id, 'completed');
-    },
-    [handleUpdateItemStatus]
-  );
-
-  const handleDismiss = useCallback(
-    (item: ActionableItem) => {
-      setConfirmationModal({
-        isOpen: true,
-        title: 'Dismiss item?',
-        message: `Are you sure you want to dismiss "${item.title}"?`,
-        confirmText: 'Dismiss',
-        cancelText: 'Cancel',
-        destructive: item.priority === 'critical',
-        showDontShowAgain: !item.requiresConfirmation,
-        onConfirm: async () => {
-          try {
-            await handleUpdateItemStatus(item.id, 'dismissed');
-            addToast({
-              type: 'info',
-              title: 'Dismissed',
-              message: item.title.length > 40 ? `${item.title.substring(0, 40)}...` : item.title,
-              action: { label: 'Undo', handler: () => handleUpdateItemStatus(item.id, 'active') },
-            });
-          } catch (error) {
-            console.error('Failed to dismiss item:', error);
-          }
-        },
-        onCancel: () => {},
-      });
-    },
-    [handleUpdateItemStatus, addToast]
-  );
-
-  const handleSnooze = useCallback(
-    async (item: ActionableItem, duration: number) => {
-      try {
-        const snoozeUntil = new Date(Date.now() + duration);
-        await snoozeItem({ itemId: item.id, snoozeUntil });
-        const hours = Math.round(duration / (1000 * 60 * 60));
-        addToast({
-          type: 'info',
-          title: 'Snoozed',
-          message: `Reminded in ${hours === 1 ? '1 hour' : `${hours} hours`}`,
-        });
-      } catch (error) {
-        console.error('Failed to snooze item:', error);
-        addToast({
-          type: 'error',
-          title: 'Snooze Failed',
-          message: 'Failed to snooze item. Please try again.',
-        });
-      }
-    },
-    [snoozeItem, addToast]
-  );
-
-  const handleAnalyzeNow = useCallback(async () => {
-    await triggerAnalysis();
-    addToast({
-      type: 'info',
-      title: 'Analysis Started',
-      message: 'Analyzing your connected skills for actionable items…',
-    });
-  }, [triggerAnalysis, addToast]);
-
-  // System status
+  // System status — `itemsLoading` (the actionable-items + screen-items
+  // loading flag) used to feed the "loading" branch here, but both feeds
+  // are gone now. `isRunning` from useConsciousItems still surfaces the
+  // background analysis loop signal until that pill is rewired to
+  // memory_tree.
   const systemStatus = isRunning
     ? 'loading'
     : socketConnected && aiStatus === 'ready'
       ? 'ready'
-      : itemsLoading
-        ? 'loading'
-        : !socketConnected
-          ? 'disconnected'
-          : aiStatus;
+      : !socketConnected
+        ? 'disconnected'
+        : aiStatus;
 
   const systemStatusLabel = isRunning
     ? 'Analyzing…'
@@ -265,6 +131,7 @@ export default function Intelligence() {
     { id: 'memory', label: 'Memory' },
     { id: 'subconscious', label: 'Subconscious' },
     { id: 'dreams', label: 'Dreams', comingSoon: true },
+    { id: 'settings', label: 'Settings' },
   ];
 
   return (
@@ -301,11 +168,14 @@ export default function Intelligence() {
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
                 <h1 className="text-xl font-bold text-stone-900">Intelligence</h1>
-                {activeTab === 'memory' && stats.total > 0 && (
-                  <div className="text-xs bg-stone-100 text-stone-900 px-2 py-1 rounded-full">
-                    {stats.total}
-                  </div>
-                )}
+                {/* Header count badge was sourced from `stats.total` which
+                    in turn came from the legacy actionable-items pipeline
+                    (`filterItems(items, ...)`). The Memory tab now mounts
+                    `MemoryWorkspace`, which renders chunks from
+                    `memory_tree` and has nothing to do with that pipeline,
+                    so the badge would have shown a count that no longer
+                    matches anything visible. Hidden until a memory_tree
+                    -native count signal is exposed. */}
               </div>
               <div className="flex items-center gap-3">
                 {activeTab === 'memory' && (
@@ -332,51 +202,17 @@ export default function Intelligence() {
                       </span>
                     </div>
                   )}
-                {activeTab === 'memory' && (
-                  <button
-                    onClick={usingMemoryData ? refreshConscious : handleAnalyzeNow}
-                    disabled={isRunning || itemsLoading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-stone-50 hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed border border-stone-200 rounded-lg text-stone-600 transition-colors">
-                    {isRunning || itemsLoading ? (
-                      <div className="w-3 h-3 border border-stone-400 border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <svg
-                        className="w-3 h-3"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                        />
-                      </svg>
-                    )}
-                    {usingMemoryData ? 'Refresh' : 'Analyze Now'}
-                  </button>
-                )}
+                {/* Analyze Now / Refresh button removed — the new
+                    MemoryWorkspace fetches via memory_tree RPCs that
+                    don't need a manual trigger. The actionable-cards
+                    flow (handleAnalyzeNow) is no longer reachable from
+                    the Memory tab; left in scope only for the legacy
+                    subconscious/dreams tabs that still use it. */}
               </div>
             </div>
 
             {/* Tab content */}
-            {activeTab === 'memory' && (
-              <IntelligenceMemoryTab
-                handleAnalyzeNow={handleAnalyzeNow}
-                handleComplete={handleComplete}
-                handleDismiss={handleDismiss}
-                handleSnooze={handleSnooze}
-                isRunning={isRunning}
-                items={items}
-                itemsLoading={itemsLoading}
-                searchFilter={searchFilter}
-                setSearchFilter={setSearchFilter}
-                setSourceFilter={setSourceFilter}
-                sourceFilter={sourceFilter}
-                timeGroups={timeGroups}
-                usingMemoryData={usingMemoryData}
-              />
-            )}
+            {activeTab === 'memory' && <MemoryWorkspace onToast={addToast} />}
 
             {activeTab === 'subconscious' && (
               <IntelligenceSubconsciousTab
@@ -400,6 +236,8 @@ export default function Intelligence() {
             )}
 
             {activeTab === 'dreams' && <IntelligenceDreamsTab />}
+
+            {activeTab === 'settings' && <IntelligenceSettingsTab />}
           </div>
         </div>
       </div>

@@ -153,9 +153,13 @@ describe('CoreStateProvider — identity flip cleanup (#900)', () => {
     setActiveSpy.mockRestore();
   });
 
-  it('seed matches next user (no restart) but identity hydrates null→B: clears threads and reloads (#1157)', async () => {
+  it('seed matches next user (no restart) but identity hydrates null→B: resets thread caches (preserving selection) and reloads (#1157, #1168)', async () => {
     userScopedStorage.setActiveUserId('B');
     fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'B', sessionToken: 'tokB' }));
+    // Seed a persisted selection that should survive the boot-time reset so
+    // the user resumes their last-viewed thread instead of falling through
+    // to "most recent".
+    store.dispatch(threadSlice.setSelectedThread('thr-persisted'));
     const dispatchSpy = vi.spyOn(store, 'dispatch');
     const loadThreadsSpy = vi.spyOn(threadSlice, 'loadThreads');
 
@@ -173,10 +177,22 @@ describe('CoreStateProvider — identity flip cleanup (#900)', () => {
     expect(
       dispatchSpy.mock.calls.some(([action]) => {
         if (!action || typeof action !== 'object' || !('type' in action)) return false;
-        return (action as { type: string }).type === threadSlice.clearAllThreads().type;
+        return (
+          (action as { type: string }).type ===
+          threadSlice.resetThreadCachesPreservingSelection().type
+        );
       })
     ).toBe(true);
+    // The legacy `clearAllThreads` (which nulls selectedThreadId) must NOT
+    // be dispatched on this boot path — that was the #1168 regression.
+    expect(
+      dispatchSpy.mock.calls.some(([action]) => {
+        if (!action || typeof action !== 'object' || !('type' in action)) return false;
+        return (action as { type: string }).type === threadSlice.clearAllThreads().type;
+      })
+    ).toBe(false);
     expect(loadThreadsSpy).toHaveBeenCalled();
+    expect(store.getState().thread.selectedThreadId).toBe('thr-persisted');
 
     dispatchSpy.mockRestore();
     loadThreadsSpy.mockRestore();

@@ -7,6 +7,7 @@ pub mod daemon_host;
 pub mod ops;
 mod restart;
 mod schemas;
+mod shutdown;
 
 mod common;
 #[cfg(target_os = "linux")]
@@ -26,3 +27,4 @@ pub use schemas::{
     all_controller_schemas as all_service_controller_schemas,
     all_registered_controllers as all_service_registered_controllers,
 };
+pub use shutdown::ShutdownStatus;

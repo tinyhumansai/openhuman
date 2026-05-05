@@ -16,6 +16,11 @@ export interface ComposioConnection {
   status: string;
   /** ISO timestamp (backend passthrough). */
   createdAt?: string;
+
+  /** Optional friendly identity fields populated by later backend versions. */
+  accountEmail?: string;
+  workspace?: string;
+  username?: string;
 }
 
 export interface ComposioConnectionsResponse {

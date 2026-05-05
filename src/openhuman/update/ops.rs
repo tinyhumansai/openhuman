@@ -5,7 +5,177 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::openhuman::update;
+use crate::openhuman::update::types::{UpdateRunResult, VersionInfo};
 use crate::rpc::RpcOutcome;
+
+/// Report the running core binary's version + target triple.
+///
+/// Cheap, no-network — the frontend uses this to decide whether to
+/// invoke the heavier `update.check` or `update.run` RPCs.
+pub async fn update_version() -> RpcOutcome<Value> {
+    let info = VersionInfo {
+        version: update::current_version().to_string(),
+        target_triple: update::platform_triple().to_string(),
+        asset_prefix: format!("openhuman-core-{}", update::platform_triple()),
+    };
+    log::debug!(
+        "[update:rpc] update_version → {} ({})",
+        info.version,
+        info.target_triple
+    );
+    let value = serde_json::to_value(&info)
+        .unwrap_or_else(|e| serde_json::json!({ "error": format!("serialization failed: {e}") }));
+    RpcOutcome::single_log(value, "update_version completed")
+}
+
+/// Orchestrated update flow: check → apply (if newer) → restart.
+///
+/// Returns an `UpdateRunResult` describing what happened. When an
+/// update was applied the function publishes a restart request before
+/// returning, so the caller will see `restart_requested: true` and the
+/// core process will exit shortly afterwards.
+pub async fn update_run() -> RpcOutcome<Value> {
+    log::info!("[update:rpc] update_run invoked");
+
+    let info = match update::check_available().await {
+        Ok(i) => i,
+        Err(e) => {
+            log::error!("[update:rpc] update_run check failed: {e}");
+            return RpcOutcome::single_log(
+                serde_json::json!({
+                    "error": e,
+                    "applied": false,
+                    "restart_requested": false,
+                }),
+                format!("update_run: check failed: {e}"),
+            );
+        }
+    };
+
+    if !info.update_available {
+        let result = UpdateRunResult {
+            current_version: info.current_version.clone(),
+            latest_version: info.latest_version.clone(),
+            update_available: false,
+            applied: false,
+            staged_path: None,
+            restart_requested: false,
+            message: format!("already on latest ({})", info.current_version),
+        };
+        log::info!(
+            "[update:rpc] update_run: already up to date ({})",
+            info.current_version
+        );
+        return RpcOutcome::single_log(
+            serde_json::to_value(&result).unwrap_or(Value::Null),
+            "update_run: already up to date",
+        );
+    }
+
+    let (Some(download_url), Some(asset_name)) = (info.download_url, info.asset_name) else {
+        log::warn!(
+            "[update:rpc] update_run: latest release has no asset for this platform (target={})",
+            update::platform_triple()
+        );
+        let result = UpdateRunResult {
+            current_version: info.current_version,
+            latest_version: info.latest_version,
+            update_available: true,
+            applied: false,
+            staged_path: None,
+            restart_requested: false,
+            message: format!(
+                "latest release has no asset for target {}",
+                update::platform_triple()
+            ),
+        };
+        return RpcOutcome::single_log(
+            serde_json::to_value(&result).unwrap_or(Value::Null),
+            "update_run: missing platform asset",
+        );
+    };
+
+    // Defensive re-validation — the URL/asset came from GitHub but we
+    // still gate them through the same checks `update.apply` uses, so
+    // this orchestrator can't accidentally bypass the safety net.
+    if let Err(e) = validate_download_url(&download_url) {
+        log::error!("[update:rpc] update_run rejected download URL: {e}");
+        return RpcOutcome::single_log(
+            serde_json::json!({ "error": e, "applied": false, "restart_requested": false }),
+            format!("update_run rejected: {e}"),
+        );
+    }
+    if let Err(e) = validate_asset_name(&asset_name) {
+        log::error!("[update:rpc] update_run rejected asset name: {e}");
+        return RpcOutcome::single_log(
+            serde_json::json!({ "error": e, "applied": false, "restart_requested": false }),
+            format!("update_run rejected: {e}"),
+        );
+    }
+
+    let applied = match update::download_and_stage(&download_url, &asset_name, None).await {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("[update:rpc] update_run apply failed: {e}");
+            let result = UpdateRunResult {
+                current_version: info.current_version,
+                latest_version: info.latest_version,
+                update_available: true,
+                applied: false,
+                staged_path: None,
+                restart_requested: false,
+                message: format!("download/stage failed: {e}"),
+            };
+            return RpcOutcome::single_log(
+                serde_json::to_value(&result).unwrap_or(Value::Null),
+                format!("update_run: apply failed: {e}"),
+            );
+        }
+    };
+
+    // Stage succeeded — request a self-restart so the Tauri shell can
+    // pick up the freshly-staged binary on its next supervised launch.
+    let restart_requested = match crate::openhuman::service::rpc::service_restart(
+        Some("update.run".to_string()),
+        Some(format!("update to {}", info.latest_version)),
+    )
+    .await
+    {
+        Ok(_) => true,
+        Err(e) => {
+            log::warn!("[update:rpc] update_run staged update but restart publish failed: {e}");
+            false
+        }
+    };
+
+    let result = UpdateRunResult {
+        current_version: info.current_version,
+        latest_version: info.latest_version,
+        update_available: true,
+        applied: true,
+        staged_path: Some(applied.staged_path.clone()),
+        restart_requested,
+        message: if restart_requested {
+            format!(
+                "staged {} — restart requested",
+                applied.staged_path.as_str()
+            )
+        } else {
+            format!(
+                "staged {} — restart publish failed; caller must restart manually",
+                applied.staged_path.as_str()
+            )
+        },
+    };
+    log::info!(
+        "[update:rpc] update_run completed applied=true restart_requested={}",
+        restart_requested
+    );
+    RpcOutcome::single_log(
+        serde_json::to_value(&result).unwrap_or(Value::Null),
+        "update_run completed",
+    )
+}
 
 /// Check GitHub Releases for a newer version of the core binary.
 pub async fn update_check() -> RpcOutcome<Value> {

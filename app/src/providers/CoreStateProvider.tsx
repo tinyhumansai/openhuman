@@ -28,7 +28,7 @@ import {
 import { socketService } from '../services/socketService';
 import { store } from '../store';
 import { resetUserScopedState } from '../store/resetActions';
-import { clearAllThreads, loadThreads } from '../store/threadSlice';
+import { loadThreads, resetThreadCachesPreservingSelection } from '../store/threadSlice';
 import { getActiveUserId, setActiveUserId } from '../store/userScopedStorage';
 import {
   openhumanUpdateAnalyticsSettings,
@@ -257,7 +257,12 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       !isLogout
     ) {
       const threadReloadRequestId = requestId;
-      store.dispatch(clearAllThreads());
+      // Reset the in-memory thread caches (rows from a pre-auth bucket — see
+      // #1157) but preserve the redux-persisted `selectedThreadId` so a
+      // reload of an already-authed user resumes the user's last-viewed
+      // thread (#1168). The Conversations mount effect falls back to "most
+      // recent" if the persisted id is no longer in the reloaded list.
+      store.dispatch(resetThreadCachesPreservingSelection());
       void store
         .dispatch(loadThreads())
         .unwrap()

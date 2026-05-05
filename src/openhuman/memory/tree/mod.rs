@@ -23,10 +23,12 @@
 //! top of these chunks without modifying the Phase 1 surface.
 
 pub mod canonicalize;
+pub mod chat;
 pub mod chunker;
 pub mod content_store;
 pub mod ingest;
 pub mod jobs;
+pub mod read_rpc;
 pub mod retrieval;
 pub mod rpc;
 pub mod schemas;

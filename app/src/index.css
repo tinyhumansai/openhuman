@@ -43,7 +43,10 @@
 
   html[data-window='overlay'],
   html[data-window='overlay'] body,
-  html[data-window='overlay'] #root {
+  html[data-window='overlay'] #root,
+  html[data-window='mascot'],
+  html[data-window='mascot'] body,
+  html[data-window='mascot'] #root {
     background: transparent;
     overflow: hidden;
     user-select: none;

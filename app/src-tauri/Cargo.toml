@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.53.13"
+version = "0.53.16"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -69,6 +69,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "process", "sync", "time
 #   JSON-RPC frames from the core sidecar so core-side handlers can
 #   reach the live-webview connectors via CDP.
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }
+url = "2"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -124,7 +125,10 @@ mac-notification-sys = "0.6"
 rusqlite = { version = "0.37", features = ["bundled"] }
 objc2-user-notifications = "0.3.2"
 block2 = "0.6.2"
-objc2-foundation = "0.3.2"
+objc2-foundation = { version = "0.3.2", features = ["NSTimer", "block2"] }
+# Native WKWebView host for the floating mascot window — bypasses CEF
+# (which can't render transparent windowed-mode browsers).
+objc2-web-kit = { version = "0.3.2", features = ["block2"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = { version = "4", default-features = false, features = ["dbus"] }
