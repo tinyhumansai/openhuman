@@ -30,6 +30,10 @@ export interface MicCloudComposerProps {
   onSubmit: (text: string) => Promise<void> | void;
   /** Surfaced when the mic flow fails so the parent can show a banner. */
   onError?: (message: string) => void;
+  /** ISO 639-1 language hint forwarded to Scribe. Defaults to `'en'` —
+   *  passing a hint is meaningfully more accurate than auto-detect on
+   *  short utterances. Set to empty string to let Scribe auto-detect. */
+  language?: string;
 }
 
 type RecordingState = 'idle' | 'recording' | 'transcribing';
@@ -43,7 +47,12 @@ type RecordingState = 'idle' | 'recording' | 'transcribing';
  * Single button, single decision: tap once to start recording, tap again to
  * stop and send. No textarea — that's the whole point of the mascot tab.
  */
-export function MicCloudComposer({ disabled, onSubmit, onError }: MicCloudComposerProps) {
+export function MicCloudComposer({
+  disabled,
+  onSubmit,
+  onError,
+  language = 'en',
+}: MicCloudComposerProps) {
   const [state, setState] = useState<RecordingState>('idle');
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -85,7 +94,21 @@ export function MicCloudComposer({ disabled, onSubmit, onError }: MicCloudCompos
 
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Audio constraints tuned for STT accuracy:
+      //   - mono: Scribe processes a single channel, stereo just doubles upload
+      //   - 48kHz: matches Opus's native rate, no resample artifacts
+      //   - {echo,noise,gain}: huge accuracy win on real-world mic input
+      //     (untreated room noise + low-volume speech is the #1 reason
+      //     transcription drops words in our flow)
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 48000,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       composerLog('getUserMedia rejected: %s', msg);
@@ -94,9 +117,14 @@ export function MicCloudComposer({ disabled, onSubmit, onError }: MicCloudCompos
     }
 
     const mime = pickRecorderMime();
+    // 128kbps Opus is well above the threshold where Scribe's accuracy
+    // plateaus; MediaRecorder's default for voice can be as low as 32kbps,
+    // which audibly muddies consonants.
+    const recorderOptions: MediaRecorderOptions = { audioBitsPerSecond: 128_000 };
+    if (mime) recorderOptions.mimeType = mime;
     let recorder: MediaRecorder;
     try {
-      recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      recorder = new MediaRecorder(stream, recorderOptions);
     } catch (err) {
       stream.getTracks().forEach(t => t.stop());
       const msg = err instanceof Error ? err.message : String(err);
@@ -173,9 +201,15 @@ export function MicCloudComposer({ disabled, onSubmit, onError }: MicCloudCompos
    */
   async function transcribeWithFallback(blob: Blob): Promise<string> {
     const startedAt = performance.now();
+    const opts = language ? { language } : undefined;
     try {
-      composerLog('transcribe attempt=native bytes=%d mime=%s', blob.size, blob.type);
-      const text = await transcribeCloud(blob);
+      composerLog(
+        'transcribe attempt=native bytes=%d mime=%s lang=%s',
+        blob.size,
+        blob.type,
+        language || 'auto'
+      );
+      const text = await transcribeCloud(blob, opts);
       composerLog('transcribe ok attempt=native ms=%d', Math.round(performance.now() - startedAt));
       return text;
     } catch (err) {
@@ -188,7 +222,7 @@ export function MicCloudComposer({ disabled, onSubmit, onError }: MicCloudCompos
         wav.size,
         Math.round(performance.now() - reEncodeStart)
       );
-      const text = await transcribeCloud(wav);
+      const text = await transcribeCloud(wav, opts);
       composerLog(
         'transcribe ok attempt=wav-fallback total_ms=%d',
         Math.round(performance.now() - startedAt)
