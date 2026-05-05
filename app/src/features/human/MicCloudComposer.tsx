@@ -148,13 +148,7 @@ export function MicCloudComposer({ disabled, onSubmit, onError }: MicCloudCompos
     }
 
     try {
-      // Re-encode to 16kHz mono WAV before upload — Opus-in-WebM is rejected
-      // upstream with "Invalid JSON payload", and CEF doesn't reliably ship
-      // MP4/AAC recording. WAV is the lowest common denominator the Whisper
-      // upstream accepts.
-      const wav = await encodeBlobToWav(blob);
-      composerLog('re-encoded to wav bytes=%d', wav.size);
-      const transcript = await transcribeCloud(wav);
+      const transcript = await transcribeWithFallback(blob);
       if (!transcript) {
         onError?.('No speech detected. Try again.');
         setState('idle');
@@ -167,6 +161,39 @@ export function MicCloudComposer({ disabled, onSubmit, onError }: MicCloudCompos
       onError?.(`Voice transcription failed: ${msg}`);
     } finally {
       setState('idle');
+    }
+  }
+
+  /**
+   * Send the recorder's native blob first (Opus-in-WebM ~3KB/sec) — Scribe
+   * accepts it natively and it uploads ~30x faster than the 16kHz mono WAV
+   * we used to transcode (~32KB/sec). If that ever fails (older STT
+   * provider behind a feature flag, codec mismatch, …), retry once with a
+   * re-encoded WAV so we don't regress correctness for the speed win.
+   */
+  async function transcribeWithFallback(blob: Blob): Promise<string> {
+    const startedAt = performance.now();
+    try {
+      composerLog('transcribe attempt=native bytes=%d mime=%s', blob.size, blob.type);
+      const text = await transcribeCloud(blob);
+      composerLog('transcribe ok attempt=native ms=%d', Math.round(performance.now() - startedAt));
+      return text;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      composerLog('transcribe failed attempt=native — falling back to wav: %s', msg);
+      const reEncodeStart = performance.now();
+      const wav = await encodeBlobToWav(blob);
+      composerLog(
+        'wav fallback bytes=%d encode_ms=%d',
+        wav.size,
+        Math.round(performance.now() - reEncodeStart)
+      );
+      const text = await transcribeCloud(wav);
+      composerLog(
+        'transcribe ok attempt=wav-fallback total_ms=%d',
+        Math.round(performance.now() - startedAt)
+      );
+      return text;
     }
   }
 

@@ -123,6 +123,7 @@ pub async fn transcribe_cloud(
         model
     );
 
+    let upload_started = std::time::Instant::now();
     let response = client
         .raw_client()
         .post(url.clone())
@@ -134,6 +135,13 @@ pub async fn transcribe_cloud(
 
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
+    let upload_ms = upload_started.elapsed().as_millis();
+    debug!(
+        "{LOG_PREFIX} backend responded status={} upload_round_trip_ms={} body_bytes={}",
+        status,
+        upload_ms,
+        body.len()
+    );
     if !status.is_success() {
         return Err(format!(
             "POST /openai/v1/audio/transcriptions failed ({status}): {body}"

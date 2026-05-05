@@ -35,7 +35,10 @@ export async function transcribeCloud(
   if (!blob || blob.size === 0) {
     throw new Error('audio blob is empty');
   }
+  const encodeStart = performance.now();
   const audio_base64 = await blobToBase64(blob);
+  const encodeMs = Math.round(performance.now() - encodeStart);
+
   const params: Record<string, unknown> = { audio_base64 };
   // MediaRecorder mime types include codec parameters (e.g. `audio/webm;codecs=opus`)
   // — the backend's allow-list expects the bare type, so strip the suffix.
@@ -45,14 +48,21 @@ export async function transcribeCloud(
   if (opts.model) params.model = opts.model;
   if (opts.language) params.language = opts.language;
 
-  sttLog('transcribe bytes=%d mime=%s', blob.size, mime);
+  sttLog(
+    'transcribe bytes=%d mime=%s base64_ms=%d (b64_size=%d)',
+    blob.size,
+    mime,
+    encodeMs,
+    audio_base64.length
+  );
 
+  const rpcStart = performance.now();
   const result = await callCoreRpc<CloudTranscribeResult>({
     method: 'openhuman.voice_cloud_transcribe',
     params,
   });
   const text = result?.text?.trim() ?? '';
-  sttLog('transcribed chars=%d', text.length);
+  sttLog('transcribed chars=%d rpc_ms=%d', text.length, Math.round(performance.now() - rpcStart));
   return text;
 }
 
