@@ -259,8 +259,8 @@ fn provider_supports_google_sso(provider: &str) -> bool {
 /// `true` if a popup request should be denied AND the parent webview
 /// should be navigated to the popup URL instead.
 ///
-/// Used for Google's "Sign in" / "Use another account" flow on the
-/// embedded Google Meet webview: clicking the link issues
+/// Used for Google's "Sign in" / "Use another account" flow on embedded
+/// providers that support Google SSO: clicking the link issues
 /// `window.open("https://accounts.google.com/...")`. We can't route
 /// that to the system browser (the auth cookie would land in the
 /// wrong jar) and we don't want to let CEF spawn an unmanaged child
@@ -268,7 +268,7 @@ fn provider_supports_google_sso(provider: &str) -> bool {
 /// option is to deny the popup and replace the parent's URL so the
 /// in-app webview finishes the auth flow inside the embedded session.
 fn popup_should_navigate_parent(provider: &str, url: &Url) -> Option<Url> {
-    if provider != "google-meet" {
+    if !provider_supports_google_sso(provider) {
         return None;
     }
     if url.scheme() == "about" {
@@ -284,9 +284,11 @@ fn popup_should_navigate_parent(provider: &str, url: &Url) -> Option<Url> {
     // out of OpenHuman entirely. Deny the popup and navigate the
     // embedded parent into the room URL instead — matches the
     // user's expectation that the meeting stays in-app.
-    if let Some(host) = url.host_str() {
-        if host == "meet.google.com" {
-            return Some(url.clone());
+    if provider == "google-meet" {
+        if let Some(host) = url.host_str() {
+            if host == "meet.google.com" {
+                return Some(url.clone());
+            }
         }
     }
     None
@@ -2991,9 +2993,9 @@ mod tests {
 
     #[test]
     fn unsupported_provider_popup_does_not_navigate_parent() {
-        // Only the embedded google-meet webview opts into the
-        // popup-takeover path. Every other provider (and any unknown
-        // string) must fall through to the default popup-handling.
+        // Only providers that explicitly support Google SSO opt into
+        // the popup-takeover path. Every other provider (and any unknown
+        // string) must fall through to the default popup handling.
         assert!(popup_should_navigate_parent(
             "linkedin",
             &url("https://accounts.google.com/signin/v2/identifier"),
@@ -3008,6 +3010,46 @@ mod tests {
             &url("https://accounts.google.com/signin/v2/identifier"),
         )
         .is_some());
+    }
+
+    #[test]
+    fn slack_google_signin_popup_navigates_parent() {
+        assert_eq!(
+            popup_should_navigate_parent(
+                "slack",
+                &url("https://accounts.google.com/v3/signin/identifier"),
+            )
+            .map(|u| u.to_string()),
+            Some("https://accounts.google.com/v3/signin/identifier".to_string())
+        );
+    }
+
+    #[test]
+    fn slack_about_blank_popup_does_not_navigate_parent() {
+        assert!(popup_should_navigate_parent("slack", &url("about:blank")).is_none());
+    }
+
+    #[test]
+    fn slack_same_origin_popup_does_not_navigate_parent() {
+        assert!(popup_should_navigate_parent(
+            "slack",
+            &url("https://app.slack.com/client/T123/C456"),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn slack_unrelated_popup_does_not_navigate_parent() {
+        assert!(popup_should_navigate_parent("slack", &url("https://example.com/blog"),).is_none());
+    }
+
+    #[test]
+    fn slack_meet_google_com_popup_does_not_navigate_parent() {
+        assert!(popup_should_navigate_parent(
+            "slack",
+            &url("https://meet.google.com/abc-defg-hij"),
+        )
+        .is_none());
     }
 
     #[test]
