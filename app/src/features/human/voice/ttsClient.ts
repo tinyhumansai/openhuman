@@ -1,6 +1,7 @@
 import debug from 'debug';
 
 import { callCoreRpc } from '../../../services/coreRpcClient';
+import { MASCOT_VOICE_ID } from '../../../utils/config';
 
 const ttsLog = debug('human:tts');
 
@@ -45,11 +46,18 @@ export interface TtsOptions {
  * issues and keeps auth in one place.
  */
 export async function synthesizeSpeech(text: string, opts: TtsOptions = {}): Promise<TtsResponse> {
-  const params: Record<string, unknown> = { text };
-  if (opts.voiceId) params.voice_id = opts.voiceId;
+  const voiceId = opts.voiceId ?? MASCOT_VOICE_ID;
+  const spoken = prepareForSpeech(text);
+  const params: Record<string, unknown> = { text: spoken };
+  if (voiceId) params.voice_id = voiceId;
   if (opts.modelId) params.model_id = opts.modelId;
   if (opts.outputFormat) params.output_format = opts.outputFormat;
-  ttsLog('synthesize chars=%d voice=%s', text.length, opts.voiceId ?? 'default');
+  ttsLog(
+    'synthesize chars=%d (raw=%d) voice=%s',
+    spoken.length,
+    text.length,
+    voiceId ?? 'default'
+  );
 
   const result = await callCoreRpc<TtsResponse>({
     method: 'openhuman.voice_reply_synthesize',
@@ -101,6 +109,50 @@ export function visemesFromAlignment(alignment: AlignmentFrame[]): VisemeFrame[]
     });
   }
   return out;
+}
+
+/**
+ * Reshape an assistant message into something the TTS engine can read with
+ * natural cadence. The agent's reply is markdown — raw `**bold**`, headings,
+ * code fences, link syntax, and `\n\n` paragraph breaks all confuse
+ * ElevenLabs' prosody model and collapse the pauses between sentences. We
+ * strip the formatting and translate paragraph boundaries into an explicit
+ * `...` pause, which ElevenLabs honors as a beat between thoughts.
+ *
+ * Exported for tests so the mapping can be pinned without going through the
+ * full RPC stack.
+ */
+export function prepareForSpeech(raw: string): string {
+  let s = raw ?? '';
+  // Drop fenced code blocks entirely — reading symbols out loud is painful and
+  // they almost never carry the intent of the reply.
+  s = s.replace(/```[\s\S]*?```/g, ' ');
+  // Inline code → keep the contents, drop the backticks.
+  s = s.replace(/`([^`]+)`/g, '$1');
+  // Markdown links `[label](url)` → just the label.
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1');
+  // Bare URLs read terribly — replace with a short stand-in.
+  s = s.replace(/https?:\/\/\S+/g, 'a link');
+  // Headings, blockquotes, list bullets at line start.
+  s = s.replace(/^\s{0,3}#{1,6}\s+/gm, '');
+  s = s.replace(/^\s{0,3}>\s?/gm, '');
+  s = s.replace(/^\s*[-*+]\s+/gm, '');
+  s = s.replace(/^\s*\d+\.\s+/gm, '');
+  // Emphasis markers — keep the words, drop the wrappers.
+  s = s.replace(/(\*\*|__)(.*?)\1/g, '$2');
+  s = s.replace(/(\*|_)(.*?)\1/g, '$2');
+  // Convert paragraph breaks into an explicit ellipsis pause before we collapse
+  // whitespace, otherwise the double newline becomes a single space.
+  s = s.replace(/\n{2,}/g, ' ... ');
+  // Single newlines inside a paragraph are just soft wraps in markdown.
+  s = s.replace(/\n+/g, ' ');
+  // Ensure a sentence terminator at the very end so the voice doesn't trail
+  // upward like an unfinished thought.
+  s = s.trim();
+  if (s.length > 0 && !/[.!?…]$/.test(s)) s += '.';
+  // Collapse any runs of whitespace introduced by the substitutions above.
+  s = s.replace(/[ \t]{2,}/g, ' ');
+  return s;
 }
 
 function alignmentLetterToCode(chunk: string): string {

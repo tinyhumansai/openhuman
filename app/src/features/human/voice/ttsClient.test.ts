@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { callCoreRpc } from '../../../services/coreRpcClient';
-import { proceduralVisemes, synthesizeSpeech, visemesFromAlignment } from './ttsClient';
+import {
+  prepareForSpeech,
+  proceduralVisemes,
+  synthesizeSpeech,
+  visemesFromAlignment,
+} from './ttsClient';
 
 vi.mock('../../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 
@@ -16,19 +21,19 @@ describe('synthesizeSpeech (core RPC)', () => {
     const r = await synthesizeSpeech('hello', { voiceId: 'v1', modelId: 'm1' });
     expect(mock).toHaveBeenCalledWith({
       method: 'openhuman.voice_reply_synthesize',
-      params: { text: 'hello', voice_id: 'v1', model_id: 'm1' },
+      params: { text: 'hello.', voice_id: 'v1', model_id: 'm1' },
     });
     expect(r.audio_base64).toBe('AAA=');
     expect(r.visemes).toHaveLength(1);
   });
 
-  it('omits options that were not provided', async () => {
+  it('falls back to the configured mascot voice when no voiceId is given', async () => {
     const mock = callCoreRpc as ReturnType<typeof vi.fn>;
     mock.mockResolvedValueOnce({ audio_base64: 'BBB=', audio_mime: 'audio/mpeg', visemes: [] });
     await synthesizeSpeech('hi');
     expect(mock).toHaveBeenCalledWith({
       method: 'openhuman.voice_reply_synthesize',
-      params: { text: 'hi' },
+      params: { text: 'hi.', voice_id: 'ljX1ZrXuDIIRVcmiVSyR' },
     });
   });
 
@@ -36,6 +41,48 @@ describe('synthesizeSpeech (core RPC)', () => {
     const mock = callCoreRpc as ReturnType<typeof vi.fn>;
     mock.mockRejectedValueOnce(new Error('voice unavailable'));
     await expect(synthesizeSpeech('hi')).rejects.toThrow('voice unavailable');
+  });
+});
+
+describe('prepareForSpeech', () => {
+  it('inserts an ellipsis pause between paragraphs so the voice beats between thoughts', () => {
+    expect(prepareForSpeech('First thought.\n\nSecond thought.')).toBe(
+      'First thought. ... Second thought.'
+    );
+  });
+
+  it('strips markdown emphasis, headings, lists, and quotes', () => {
+    const md = '# Title\n\n- one\n- two\n\n**bold** and _italic_ and `code`.';
+    const out = prepareForSpeech(md);
+    expect(out).not.toMatch(/[#*_`-]/);
+    expect(out).toContain('bold and italic and code.');
+    expect(out).toContain('one');
+    expect(out).toContain('two');
+  });
+
+  it('drops fenced code blocks and replaces bare URLs with a stand-in', () => {
+    const md = 'See ```js\nconst x = 1;\n``` and visit https://example.com for more.';
+    const out = prepareForSpeech(md);
+    expect(out).not.toContain('const x');
+    expect(out).not.toContain('https://');
+    expect(out).toContain('a link');
+  });
+
+  it('keeps the label of a markdown link and discards the URL', () => {
+    expect(prepareForSpeech('See [the docs](https://example.com).')).toBe('See the docs.');
+  });
+
+  it('appends a terminator when the message ends mid-thought', () => {
+    expect(prepareForSpeech('hello there')).toBe('hello there.');
+    // Already terminated → leave it.
+    expect(prepareForSpeech('hello there!')).toBe('hello there!');
+    expect(prepareForSpeech('hello there?')).toBe('hello there?');
+  });
+
+  it('treats a single newline as a soft wrap, not a pause', () => {
+    expect(prepareForSpeech('one line\nstill the same sentence.')).toBe(
+      'one line still the same sentence.'
+    );
   });
 });
 

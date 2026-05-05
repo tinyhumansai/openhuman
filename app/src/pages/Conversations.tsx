@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
+import MicCloudComposer from '../features/human/MicCloudComposer';
 import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
@@ -86,6 +87,14 @@ interface ConversationsProps {
    * another page (e.g. /accounts).
    */
   variant?: 'page' | 'sidebar';
+  /**
+   * Composer mode. `text` (default) uses the textarea + send button.
+   * `mic-cloud` swaps the entire composer for a single mic button that
+   * captures audio via `MediaRecorder`, transcribes it through the cloud
+   * STT proxy, then routes the transcript through the same send path.
+   * Used by the mascot tab so the only interaction is voice.
+   */
+  composer?: 'text' | 'mic-cloud';
 }
 
 export function isComposerInteractionBlocked(args: {
@@ -122,7 +131,10 @@ export function isComposerInteractionBlocked(args: {
 //   );
 // }
 
-const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
+const Conversations = ({
+  variant = 'page',
+  composer = 'text',
+}: ConversationsProps = {}) => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const {
@@ -1582,7 +1594,13 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             </div>
           )}
 
-          {inputMode === 'text' ? (
+          {composer === 'mic-cloud' ? (
+            <MicCloudComposer
+              disabled={composerInteractionBlocked}
+              onSubmit={text => handleSendMessage(text)}
+              onError={message => setSendError(chatSendError('voice_transcription', message))}
+            />
+          ) : inputMode === 'text' ? (
             <div className="flex items-end gap-3">
               <div className="relative flex flex-1 items-center justify-center rounded-xl border border-stone-200 bg-white transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
                 <div

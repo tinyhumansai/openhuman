@@ -183,6 +183,22 @@ impl BackendOAuthClient {
         Ok(Self { client, base })
     }
 
+    /// Borrow the underlying `reqwest::Client` for callers that need to
+    /// drive a non-JSON request shape (e.g. `multipart/form-data` uploads
+    /// for cloud STT) without re-implementing TLS/proxy plumbing.
+    pub fn raw_client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Resolve a backend-relative path against the configured base URL.
+    /// Mirrors what `authed_json` does internally so callers using
+    /// `raw_client()` don't have to assemble URLs by hand.
+    pub fn url_for(&self, path: &str) -> Result<Url> {
+        self.base
+            .join(path.trim_start_matches('/'))
+            .with_context(|| format!("build URL for {path}"))
+    }
+
     /// Returns the URL for initiating a login flow for a specific provider.
     pub fn login_url(&self, provider: &str) -> Result<Url> {
         let p = provider.trim().trim_matches('/');

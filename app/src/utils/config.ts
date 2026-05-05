@@ -139,3 +139,11 @@ export const LATEST_APP_DOWNLOAD_URL =
  * Sentry pipeline end-to-end. Has no effect in normal builds.
  */
 export const SENTRY_SMOKE_TEST = import.meta.env.VITE_SENTRY_SMOKE_TEST === 'true';
+
+/**
+ * ElevenLabs voice ID used for the mascot's reply speech. Picked to sound
+ * like a friendly cartoon character rather than a human narrator. Override
+ * with `VITE_MASCOT_VOICE_ID` to A/B alternative voices without a code change.
+ */
+export const MASCOT_VOICE_ID =
+  (import.meta.env.VITE_MASCOT_VOICE_ID as string | undefined)?.trim() || 'ljX1ZrXuDIIRVcmiVSyR';
