@@ -1,3 +1,5 @@
+//! Tests for the `segments` module — boundary detection and segment lifecycle.
+
 use super::*;
 
 fn setup_db() -> Arc<Mutex<Connection>> {

@@ -1,3 +1,7 @@
+//! Worker pool: claims jobs from `mem_tree_jobs`, dispatches them through
+//! [`handlers::handle_job`], and settles the row. A small global semaphore
+//! caps concurrent LLM-bound work; non-LLM jobs run unrestricted.
+
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -10,12 +14,20 @@ use crate::openhuman::memory::tree::jobs::store::{
     claim_next, mark_done, mark_failed, recover_stale_locks, DEFAULT_LOCK_DURATION_MS,
 };
 
-const WORKER_COUNT: usize = 3;
+// Held at 1 to keep concurrent bge-m3 embed calls (8K context, ~1.3 GB
+// resident each) from saturating local RAM. The cloud-chat path itself
+// would be fine at higher concurrency, but every worker also runs a
+// bge-m3 embed step, and 3 concurrent embeds at 8K context have
+// crashed the laptop in practice. See feedback memory
+// `feedback_local_llm_load.md`.
+const WORKER_COUNT: usize = 1;
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 static WORKER_NOTIFY: OnceLock<Arc<Notify>> = OnceLock::new();
 static STARTED: std::sync::Once = std::sync::Once::new();
 
+/// Notify any idle workers so they re-poll immediately instead of waiting
+/// out [`POLL_INTERVAL`]. Cheap no-op before [`start`] has run.
 pub fn wake_workers() {
     if let Some(notify) = WORKER_NOTIFY.get() {
         notify.notify_waiters();
@@ -35,7 +47,7 @@ pub fn start(config: Config) {
         let notify = WORKER_NOTIFY
             .get_or_init(|| Arc::new(Notify::new()))
             .clone();
-        let llm_slots = Arc::new(Semaphore::new(3));
+        let llm_slots = Arc::new(Semaphore::new(1));
         if let Err(err) = recover_stale_locks(&config) {
             log::warn!("[memory_tree::jobs] recover_stale_locks failed at startup: {err:#}");
         }
@@ -67,12 +79,28 @@ pub fn start(config: Config) {
     });
 }
 
+/// Claim and run a single job. Returns `true` when work was processed,
+/// `false` when no eligible row was available. Test entry point — the
+/// production worker loop calls [`run_once_with_semaphore`] directly.
 pub async fn run_once(config: &Config) -> Result<bool> {
     let llm_slots = Arc::new(Semaphore::new(1));
     run_once_with_semaphore(config, llm_slots).await
 }
 
 async fn run_once_with_semaphore(config: &Config, llm_slots: Arc<Semaphore>) -> Result<bool> {
+    // Cooperative throttle BEFORE `claim_next()`. Holding the DB claim
+    // across an awaited `wait_for_capacity()` would let `Paused` mode
+    // sit on the row past `DEFAULT_LOCK_DURATION_MS`, after which
+    // `recover_stale_locks()` would requeue it for another worker to
+    // pick up — duplicating side effects. Throttling here means
+    // non-LLM jobs (AppendBuffer/FlushStale) also experience the same
+    // gate delay, but that's fine: in Throttled mode the host is
+    // already overloaded and a 30s breather between any DB-write batch
+    // is welcome; in Paused mode the user has explicitly asked us to
+    // stand down. Returns immediately in Aggressive/Normal so plugged-in
+    // desktops with headroom pay zero cost.
+    crate::openhuman::scheduler_gate::wait_for_capacity().await;
+
     let Some(job) = claim_next(config, DEFAULT_LOCK_DURATION_MS)? else {
         return Ok(false);
     };

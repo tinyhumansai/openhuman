@@ -9,13 +9,16 @@ interface ThreadState {
   threads: Thread[];
   selectedThreadId: string | null;
   activeThreadId: string | null;
-  /**
-   * Thread created by `OnboardingLayout` to host the proactive welcome
-   * conversation. Tracked so we can delete it once the welcome agent
-   * calls `complete_onboarding` and `chat_onboarding_completed` flips —
-   * the welcome thread is transient onboarding chat, not history we
-   * want to clutter the user's thread list with.
-   */
+  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+  // /**
+  //  * Thread created by `OnboardingLayout` to host the proactive welcome
+  //  * conversation. Tracked so we can delete it once the welcome agent
+  //  * calls `complete_onboarding` and `chat_onboarding_completed` flips —
+  //  * the welcome thread is transient onboarding chat, not history we
+  //  * want to clutter the user's thread list with.
+  //  */
+  // welcomeThreadId: string | null;
+  /** @deprecated [#1123] — welcome-agent replaced by Joyride walkthrough; kept for TS compat */
   welcomeThreadId: string | null;
   messagesByThreadId: Record<string, ThreadMessage[]>;
   messages: ThreadMessage[];
@@ -276,8 +279,24 @@ const threadSlice = createSlice({
       state.activeThreadId = null;
       state.welcomeThreadId = null;
     },
-    setWelcomeThreadId: (state, action: { payload: string | null }) => {
-      state.welcomeThreadId = action.payload;
+    // Like `clearAllThreads` but keeps `selectedThreadId`. Used on the
+    // post-bootstrap identity-observation path (#1168 + #1157): we need to
+    // drop pre-auth in-memory thread rows but the persisted last-viewed
+    // thread id is still valid for the reloaded user, so preserving it lets
+    // the Conversations effect resume that thread instead of falling
+    // through to "most recent".
+    resetThreadCachesPreservingSelection: state => {
+      state.threads = [];
+      state.messagesByThreadId = {};
+      state.messages = [];
+      state.activeThreadId = null;
+      state.welcomeThreadId = null;
+    },
+    // [#1123] True no-op — welcome-agent onboarding replaced by Joyride walkthrough.
+    // Kept to avoid breaking existing imports; state.welcomeThreadId is never
+    // mutated because the welcome-agent flow no longer runs.
+    setWelcomeThreadId: () => {
+      // intentional no-op
     },
   },
   extraReducers: builder => {
@@ -344,6 +363,7 @@ export const {
   clearSelectedThread,
   setActiveThread,
   clearAllThreads,
+  resetThreadCachesPreservingSelection,
   setWelcomeThreadId,
 } = threadSlice.actions;
 

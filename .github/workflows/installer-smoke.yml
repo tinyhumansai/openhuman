@@ -23,13 +23,17 @@ jobs:
       - name: Run installer dry-run
         run: bash scripts/install.sh --dry-run --verbose
 
-  # smoke-windows:
-  #   name: Smoke install.ps1 (windows-latest)
-  #   runs-on: windows-latest
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
+  smoke-windows:
+    name: install.ps1 tests + dry-run (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  #     - name: Run installer dry-run
-  #       shell: pwsh
-  #       run: ./scripts/install.ps1 -DryRun
+      - name: Unit tests (MSI args / asset selection)
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/tests/OpenHumanWindowsInstall.Tests.ps1
+
+      - name: Run installer dry-run
+        shell: pwsh
+        run: ./scripts/install.ps1 -DryRun

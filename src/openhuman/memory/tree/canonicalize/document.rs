@@ -28,6 +28,9 @@ pub struct DocumentInput {
     pub source_ref: Option<String>,
 }
 
+/// Canonicalise a single document into a [`CanonicalisedSource`]. Returns
+/// `Ok(None)` if both the title and body are empty — caller treats as nothing
+/// to ingest.
 pub fn canonicalise(
     source_id: &str,
     owner: &str,

@@ -30,10 +30,21 @@ pub(crate) const USER_FILE_MAX_CHARS: usize = 2_000;
 /// asked for ("at least 2000 tokens of user memory") for a single
 /// namespace, and matches what the tree summarizer's `Day` level
 /// already enforces upstream.
+///
+/// **Note**: this constant matches the `Balanced` preset of
+/// [`crate::openhuman::config::schema::agent::MemoryContextWindow`] —
+/// the live agent harness now resolves the per-namespace cap from that
+/// preset (see `AgentConfig::resolved_memory_limits`). The constant is
+/// kept as the documented baseline for prompt-section authors.
+#[allow(dead_code)]
 pub(crate) const USER_MEMORY_PER_NAMESPACE_MAX_CHARS: usize = 8_000;
 
 /// Hard ceiling across all namespaces, so a workspace with 30 namespaces
 /// doesn't burn the entire context window. ~32 000 chars ≈ 8 000 tokens.
+///
+/// **Note**: same Balanced-preset baseline relationship as
+/// `USER_MEMORY_PER_NAMESPACE_MAX_CHARS` — see its rustdoc.
+#[allow(dead_code)]
 pub(crate) const USER_MEMORY_TOTAL_MAX_CHARS: usize = 32_000;
 
 // ─────────────────────────────────────────────────────────────────────────────

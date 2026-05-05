@@ -18,6 +18,7 @@ pub use schemas::{
     all_registered_controllers as all_tools_registered_controllers,
 };
 pub use traits::{
-    PermissionLevel, Tool, ToolCategory, ToolContent, ToolResult, ToolScope, ToolSpec,
+    PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolContent, ToolResult, ToolScope,
+    ToolSpec,
 };
 pub(crate) use user_filter::filter_tools_by_user_preference;

@@ -57,6 +57,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "conversation.prompt_injection_guard",
+        name: "Prompt Injection Guard",
+        domain: "conversation",
+        category: CapabilityCategory::Conversation,
+        description: "Detect and block prompt-injection attempts before agent/model execution.",
+        how_to: "Conversations > Message composer",
+        status: CapabilityStatus::Stable,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "conversation.send_voice",
         name: "Send Voice Messages",
         domain: "conversation",

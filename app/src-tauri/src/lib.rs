@@ -7,12 +7,12 @@ mod cef_preflight;
 mod cef_profile;
 mod core_process;
 mod core_rpc;
-mod core_update;
 mod dictation_hotkeys;
 mod discord_scanner;
-mod gmail;
 mod gmessages_scanner;
 mod imessage_scanner;
+#[cfg(target_os = "macos")]
+mod mascot_native_window;
 mod notification_settings;
 mod screen_capture;
 mod slack_scanner;
@@ -179,113 +179,31 @@ fn configure_overlay_window_macos(window: &WebviewWindow<AppRuntime>) {
     }
 }
 
-/// Resolve the core binary, preferring the staged sidecar.
-fn resolve_core_bin() -> Result<std::path::PathBuf, String> {
-    if let Some(bin) = core_process::default_core_bin() {
-        return Ok(bin);
-    }
-    std::env::current_exe().map_err(|e| format!("cannot resolve executable: {e}"))
-}
-
-/// Run the core binary with the given CLI args and return its stdout.
-async fn run_core_cli(args: Vec<String>) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        let bin = resolve_core_bin()?;
-        let is_self = {
-            let current = std::env::current_exe().ok();
-            current
-                .as_ref()
-                .and_then(|c| std::fs::canonicalize(c).ok())
-                .zip(std::fs::canonicalize(&bin).ok())
-                .map_or(false, |(a, b)| a == b)
-        };
-
-        let mut cmd = std::process::Command::new(&bin);
-        if is_self {
-            cmd.arg("core");
-        }
-        cmd.args(&args);
-
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        log::info!(
-            "[service-direct] running {:?} {}{}",
-            bin,
-            if is_self { "core " } else { "" },
-            args.join(" ")
-        );
-
-        let output = cmd
-            .output()
-            .map_err(|e| format!("failed to execute core binary: {e}"))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!(
-                "core binary exited with {}: {}",
-                output.status,
-                stderr.trim()
-            ));
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    })
-    .await
-    .map_err(|e| format!("task join error: {e}"))?
-}
-
-#[tauri::command]
-async fn service_install_direct() -> Result<String, String> {
-    run_core_cli(vec!["service".into(), "install".into()]).await
-}
-
-#[tauri::command]
-async fn service_start_direct() -> Result<String, String> {
-    run_core_cli(vec!["service".into(), "start".into()]).await
-}
-
-#[tauri::command]
-async fn service_stop_direct() -> Result<String, String> {
-    run_core_cli(vec!["service".into(), "stop".into()]).await
-}
-
-#[tauri::command]
-async fn service_status_direct() -> Result<String, String> {
-    run_core_cli(vec!["service".into(), "status".into()]).await
-}
-
-#[tauri::command]
-async fn service_uninstall_direct() -> Result<String, String> {
-    run_core_cli(vec!["service".into(), "uninstall".into()]).await
-}
-
-/// Check if the core sidecar is outdated and whether a newer version is available on GitHub.
-/// Returns version info, compatibility status, and update availability.
+/// Core update is handled by the Tauri shell auto-updater (`tauri-plugin-updater`)
+/// since the core ships in-process with the app. This command is kept as a
+/// no-op stub so the frontend's `checkCoreUpdate` keeps working without errors;
+/// it always reports the running version as up-to-date.
 #[tauri::command]
 async fn check_core_update(
-    state: tauri::State<'_, core_process::CoreProcessHandle>,
+    _state: tauri::State<'_, core_process::CoreProcessHandle>,
 ) -> Result<serde_json::Value, String> {
-    let rpc_url = state.inner().rpc_url();
-    let rpc_token = state.inner().rpc_token().to_string();
-    let info = core_update::check_full(&rpc_url, &rpc_token).await?;
-    serde_json::to_value(&info).map_err(|e| format!("serialize error: {e}"))
+    let version = env!("CARGO_PKG_VERSION");
+    Ok(serde_json::json!({
+        "running_version": version,
+        "minimum_version": version,
+        "outdated": false,
+        "latest_version": version,
+        "update_available": false,
+    }))
 }
 
-/// Trigger a full core update: download latest from GitHub, stage, kill old, restart.
-/// Uses `force=true` so it updates to the latest release even if the running core
-/// meets the minimum version requirement.
+/// Stub kept for frontend compatibility — use `apply_app_update` instead.
 #[tauri::command]
 async fn apply_core_update(
-    state: tauri::State<'_, core_process::CoreProcessHandle>,
-    app: tauri::AppHandle<AppRuntime>,
+    _state: tauri::State<'_, core_process::CoreProcessHandle>,
+    _app: tauri::AppHandle<AppRuntime>,
 ) -> Result<(), String> {
-    log::info!("[core-update] manual apply_core_update invoked from frontend");
-    core_update::check_and_update_core(state.inner().clone(), Some(app), true).await
+    Err("core ships in-process; use the Tauri shell updater (apply_app_update) instead".into())
 }
 
 #[tauri::command]
@@ -312,7 +230,14 @@ async fn restart_app(app: tauri::AppHandle<AppRuntime>) -> Result<(), String> {
             log::warn!("[app] hide main window before restart failed: {err}");
         }
     }
+
+    log::info!("[app] restart_app — starting early teardown before restart");
+    perform_early_teardown_async(&app).await;
+    log::info!("[app] restart_app — early teardown complete, restarting");
+
     app.restart();
+    // restart() does not return, but we must satisfy the signature
+    Ok(())
 }
 
 /// Read the authoritative active user id from `active_user.toml` so the
@@ -469,12 +394,202 @@ async fn apply_app_update(
 
     if let Err(e) = download_result {
         log::error!("[app-update] download/install failed: {e}");
+        // Same recovery as `install_app_update`: the .app wasn't swapped,
+        // so revive the in-process core we shut down above.
+        if let Err(start_err) = state.inner().ensure_running().await {
+            log::error!("[app-update] failed to restart core after apply error: {start_err}");
+        }
         let _ = app.emit("app-update:status", "error");
         return Err(format!("download_and_install failed: {e}"));
     }
 
     log::info!("[app-update] install complete — relaunching");
     let _ = app.emit("app-update:status", "restarting");
+
+    log::info!("[app-update] starting early teardown before restart");
+    perform_early_teardown_async(&app).await;
+
+    // Note: app.restart() never returns. Anything after this is unreachable.
+    app.restart();
+}
+
+/// Holds an `Update` handle plus its downloaded bytes between the
+/// `download_app_update` (background) and `install_app_update` (user
+/// confirmed restart) commands. Sized at ~100MB on macOS for the .app
+/// bundle, which is fine to keep in RAM until the user is ready.
+struct PendingAppUpdate {
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
+    version: String,
+}
+
+/// Tauri-managed state slot for the in-flight pending update. `None` means
+/// "no update has been downloaded since launch"; `Some(_)` means the bytes
+/// are ready and `install_app_update` can finalize without re-downloading.
+#[derive(Default)]
+struct PendingAppUpdateState(tokio::sync::Mutex<Option<PendingAppUpdate>>);
+
+/// Result returned to the frontend after a download attempt.
+#[derive(Debug, Clone, serde::Serialize)]
+struct AppUpdateDownloadResult {
+    /// True when an update was found and the bytes are now staged.
+    ready: bool,
+    /// Version of the staged update (if any).
+    version: Option<String>,
+    /// Release notes for the staged update.
+    body: Option<String>,
+}
+
+/// Probe the updater endpoint and, if a newer build is advertised, download
+/// the bundle bytes into memory but do NOT install. The frontend can then
+/// surface a "Restart to apply" prompt at a moment that's safe for the user
+/// (no in-flight conversation, etc.) before calling `install_app_update`.
+///
+/// Emits the same `app-update:status` and `app-update:progress` events as
+/// `apply_app_update`, so the React state machine can drive a single UI off
+/// either path. Status sequence: `checking` → `downloading` → `ready_to_install`,
+/// or `up_to_date` / `error`.
+#[tauri::command]
+async fn download_app_update(
+    app: tauri::AppHandle<AppRuntime>,
+    state: tauri::State<'_, PendingAppUpdateState>,
+) -> Result<AppUpdateDownloadResult, String> {
+    use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
+
+    log::info!("[app-update] download_app_update invoked from frontend");
+
+    let updater = app
+        .updater()
+        .map_err(|e| format!("updater plugin not initialized: {e}"))?;
+
+    let _ = app.emit("app-update:status", "checking");
+
+    let update = match updater.check().await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            log::info!("[app-update] no update available");
+            let _ = app.emit("app-update:status", "up_to_date");
+            return Ok(AppUpdateDownloadResult {
+                ready: false,
+                version: None,
+                body: None,
+            });
+        }
+        Err(e) => {
+            log::warn!("[app-update] check failed: {e}");
+            let _ = app.emit("app-update:status", "error");
+            return Err(format!("update check failed: {e}"));
+        }
+    };
+
+    let new_version = update.version.clone();
+    let body = update.body.clone();
+    log::info!("[app-update] downloading {} (background)", new_version);
+    let _ = app.emit("app-update:status", "downloading");
+
+    let progress_app = app.clone();
+    let download_result = update
+        .download(
+            move |chunk_length, content_length| {
+                let payload = serde_json::json!({
+                    "chunk": chunk_length,
+                    "total": content_length,
+                });
+                let _ = progress_app.emit("app-update:progress", payload);
+            },
+            || {
+                log::info!("[app-update] download complete — staging for install");
+            },
+        )
+        .await;
+
+    let bytes = match download_result {
+        Ok(b) => b,
+        Err(e) => {
+            log::error!("[app-update] download failed: {e}");
+            let _ = app.emit("app-update:status", "error");
+            return Err(format!("download failed: {e}"));
+        }
+    };
+
+    let mut slot = state.0.lock().await;
+    *slot = Some(PendingAppUpdate {
+        update,
+        bytes,
+        version: new_version.clone(),
+    });
+    drop(slot);
+
+    log::info!(
+        "[app-update] staged {} — awaiting user-initiated install",
+        new_version
+    );
+    let _ = app.emit("app-update:status", "ready_to_install");
+
+    Ok(AppUpdateDownloadResult {
+        ready: true,
+        version: Some(new_version),
+        body,
+    })
+}
+
+/// Install the previously-downloaded update bytes (staged by
+/// `download_app_update`), then relaunch. Errors with `no pending update`
+/// if `download_app_update` hasn't run yet — the frontend should fall back
+/// to a fresh `apply_app_update` in that case.
+///
+/// Acquires the core restart lock + shuts the in-process core server down
+/// before install, same as `apply_app_update`, so the macOS .app bundle
+/// replacement does not race against a live core holding file handles.
+#[tauri::command]
+async fn install_app_update(
+    core_state: tauri::State<'_, core_process::CoreProcessHandle>,
+    pending: tauri::State<'_, PendingAppUpdateState>,
+    app: tauri::AppHandle<AppRuntime>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    log::info!("[app-update] install_app_update invoked from frontend");
+
+    let staged = {
+        let mut slot = pending.0.lock().await;
+        slot.take()
+    };
+    let staged = match staged {
+        Some(s) => s,
+        None => {
+            log::warn!("[app-update] install requested but no staged update");
+            let _ = app.emit("app-update:status", "error");
+            return Err("no pending update — call download_app_update first".into());
+        }
+    };
+
+    log::info!("[app-update] installing staged version {}", staged.version);
+
+    let _guard = core_state.inner().restart_lock().await;
+    log::debug!("[app-update] acquired core restart lock");
+    core_state.inner().shutdown().await;
+
+    let _ = app.emit("app-update:status", "installing");
+    if let Err(e) = staged.update.install(staged.bytes) {
+        log::error!("[app-update] install failed: {e}");
+        // The .app on disk wasn't replaced, so we keep running the
+        // pre-install build — bring the core back up before returning
+        // so the user can keep working instead of being silently offline.
+        if let Err(start_err) = core_state.inner().ensure_running().await {
+            log::error!("[app-update] failed to restart core after install error: {start_err}");
+        }
+        let _ = app.emit("app-update:status", "error");
+        return Err(format!("install failed: {e}"));
+    }
+
+    log::info!("[app-update] install complete — relaunching");
+    let _ = app.emit("app-update:status", "restarting");
+
+    log::info!("[app-update] starting early teardown before restart");
+    perform_early_teardown_async(&app).await;
+
     // Note: app.restart() never returns. Anything after this is unreachable.
     app.restart();
 }
@@ -606,6 +721,52 @@ fn is_daemon_mode() -> bool {
 fn activate_main_window(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::debug!("[window] activate_main_window called from overlay");
     show_main_window(&app)
+}
+
+/// Show the floating mascot. macOS: native NSPanel + WKWebView (so the
+/// window is actually transparent — vendored tauri-cef can't render
+/// transparent windowed-mode browsers). Loads the Vite dev URL in
+/// development and the bundled `index.html` in production. Other OSes:
+/// not yet wired up.
+#[tauri::command]
+fn mascot_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
+    log::info!("[mascot-window] show requested");
+    #[cfg(target_os = "macos")]
+    {
+        return mascot_native_window::show(&app);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("floating mascot window is macOS-only for now".into())
+    }
+}
+
+/// Hide the floating mascot.
+#[tauri::command]
+fn mascot_window_hide(app: AppHandle<AppRuntime>) -> Result<(), String> {
+    log::info!("[mascot-window] hide requested");
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        mascot_native_window::hide();
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn mascot_native_window_is_open() -> bool {
+    mascot_native_window::is_open()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mascot_native_window_is_open() -> bool {
+    false
 }
 
 /// Tauri command: fire a native OS notification from the frontend. Used by
@@ -766,6 +927,22 @@ fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let quit_item = MenuItem::with_id(app, "tray_quit", "Quit", true, None::<&str>)?;
+    // The floating mascot has a native NSPanel + WKWebView host, so the
+    // tray entry only does anything on macOS. Don't surface a menu item
+    // on Windows that's guaranteed to error — gate it to the platform
+    // where `mascot_window_show` actually works.
+    #[cfg(target_os = "macos")]
+    let menu = {
+        let mascot_item = MenuItem::with_id(
+            app,
+            "tray_toggle_mascot",
+            "Toggle floating mascot",
+            true,
+            None::<&str>,
+        )?;
+        Menu::with_items(app, &[&show_item, &mascot_item, &quit_item])?
+    };
+    #[cfg(not(target_os = "macos"))]
     let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
     let icon = app
@@ -783,9 +960,19 @@ fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
                     log::error!("[tray] failed to show main window from menu: {err}");
                 }
             }
+            "tray_toggle_mascot" => {
+                log::info!("[tray] action=toggle_mascot source=menu");
+                if mascot_native_window_is_open() {
+                    if let Err(err) = mascot_window_hide(app.clone()) {
+                        log::error!("[tray] failed to hide mascot window: {err}");
+                    }
+                } else if let Err(err) = mascot_window_show(app.clone()) {
+                    log::error!("[tray] failed to show mascot window: {err}");
+                }
+            }
             "tray_quit" => {
                 log::info!("[tray] action=quit source=menu");
-                app.exit(0);
+                shutdown_app_sync(app, 0);
             }
             _ => {}
         })
@@ -849,6 +1036,136 @@ fn teardown_cef_prewarm<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), Str
     wv.close().map_err(|e| e.to_string())?;
     log::info!("[cef-prewarm] teardown ok");
     Ok(())
+}
+
+const CEF_CLOSE_FIXED_YIELD: std::time::Duration = std::time::Duration::from_millis(20);
+const CEF_CLOSE_POLL_BUDGET: std::time::Duration = std::time::Duration::from_millis(300);
+const CEF_CLOSE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+
+fn close_early_cef_webviews<R: tauri::Runtime>(app: &AppHandle<R>) -> Vec<String> {
+    let mut closed_labels = Vec::new();
+    if teardown_cef_prewarm(app).is_ok() {
+        closed_labels.push(CEF_PREWARM_LABEL.to_string());
+    }
+    if let Some(state) = app.try_state::<webview_accounts::WebviewAccountsState>() {
+        closed_labels.extend(state.shutdown_all(app));
+    }
+    closed_labels
+}
+
+fn shutdown_imessage_scanner<R: tauri::Runtime>(app: &AppHandle<R>) {
+    if let Some(registry) = app.try_state::<std::sync::Arc<imessage_scanner::ScannerRegistry>>() {
+        registry.inner().shutdown();
+    }
+}
+
+fn pending_cef_webview_labels<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    labels: &[String],
+) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    labels
+        .iter()
+        .filter(|label| seen.insert((*label).clone()))
+        .filter(|label| app.get_webview(label.as_str()).is_some())
+        .cloned()
+        .collect()
+}
+
+async fn wait_for_cef_webviews_to_close_async<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    labels: &[String],
+) {
+    if labels.is_empty() {
+        return;
+    }
+    log::info!(
+        "[app] waiting for CEF webview close requests labels={:?}",
+        labels
+    );
+    tokio::time::sleep(CEF_CLOSE_FIXED_YIELD).await;
+    let start = std::time::Instant::now();
+    let mut pending = pending_cef_webview_labels(app, labels);
+    while !pending.is_empty() && start.elapsed() < CEF_CLOSE_POLL_BUDGET {
+        tokio::time::sleep(CEF_CLOSE_POLL_INTERVAL).await;
+        pending = pending_cef_webview_labels(app, labels);
+    }
+    if pending.is_empty() {
+        log::info!(
+            "[app] CEF webview close poll drained labels={:?} elapsed_ms={}",
+            labels,
+            start.elapsed().as_millis()
+        );
+    } else {
+        log::info!(
+            "[app] CEF webview close poll still pending labels={:?} elapsed_ms={} (will continue in runtime shutdown)",
+            pending,
+            start.elapsed().as_millis()
+        );
+    }
+}
+
+/// Shared early teardown logic before CEF's shutdown to prevent races and zombie processes.
+///
+/// Synchronous entry used from `RunEvent::ExitRequested` and tray quit. We intentionally
+/// **do not** poll here with `std::thread::sleep` — that would block the Tauri / CEF main
+/// event loop and prevent close messages from being processed. Close requests are issued
+/// in [`close_early_cef_webviews`]; the exit pump drains them. Use
+/// [`perform_early_teardown_async`] when an async caller can await
+/// [`wait_for_cef_webviews_to_close_async`] without starving the UI loop.
+fn perform_early_teardown_sync(app_handle: &AppHandle<AppRuntime>) {
+    log::info!("[app] perform_early_teardown_sync — early teardown");
+
+    let closed_labels = close_early_cef_webviews(app_handle);
+    shutdown_imessage_scanner(app_handle);
+
+    webview_apis::server::stop();
+
+    if let Some(core) = app_handle.try_state::<core_process::CoreProcessHandle>() {
+        let core = core.inner().clone();
+        // Aborts the embedded server task. Synchronous and safe on
+        // the UI thread — `JoinHandle::abort` returns immediately.
+        tauri::async_runtime::block_on(async move {
+            core.send_terminate_signal().await;
+        });
+    }
+
+    if !closed_labels.is_empty() {
+        log::info!(
+            "[app] sync early teardown: close requested for labels={:?} — skipping main-thread poll so the event loop can drain CEF",
+            closed_labels
+        );
+    }
+
+    log::info!("[app] perform_early_teardown_sync — early teardown complete");
+}
+
+/// Shared early teardown logic before CEF's shutdown to prevent races and zombie processes.
+/// Asynchronous version to be called from async Tauri commands (e.g. `restart_app`, updates).
+async fn perform_early_teardown_async(app_handle: &AppHandle<AppRuntime>) {
+    log::info!("[app] perform_early_teardown_async — early teardown");
+
+    let closed_labels = close_early_cef_webviews(app_handle);
+    shutdown_imessage_scanner(app_handle);
+
+    webview_apis::server::stop();
+
+    if let Some(core) = app_handle.try_state::<core_process::CoreProcessHandle>() {
+        let core = core.inner().clone();
+        core.send_terminate_signal().await;
+    }
+
+    wait_for_cef_webviews_to_close_async(app_handle, &closed_labels).await;
+
+    log::info!("[app] perform_early_teardown_async — early teardown complete");
+}
+
+/// Explicitly winds down CEF and Tauri before an app.exit(0)
+fn shutdown_app_sync(app_handle: &AppHandle<AppRuntime>, exit_code: i32) {
+    log::info!("[app] shutdown_app_sync — starting early teardown");
+    perform_early_teardown_sync(app_handle);
+    log::info!("[app] shutdown_app_sync — early teardown complete, exiting");
+    app_handle.exit(exit_code);
 }
 
 pub fn run() {
@@ -1023,7 +1340,8 @@ pub fn run() {
             std::sync::Mutex::new(Vec::new()),
         ))
         .manage(webview_accounts::WebviewAccountsState::default())
-        .manage(notification_settings::NotificationSettingsState::new());
+        .manage(notification_settings::NotificationSettingsState::new())
+        .manage(PendingAppUpdateState::default());
     let builder = builder.manage(std::sync::Arc::new(imessage_scanner::ScannerRegistry::new()));
     let builder = builder.manage(std::sync::Arc::new(
         gmessages_scanner::ScannerRegistry::new(),
@@ -1068,22 +1386,14 @@ pub fn run() {
                 return Err("webview_apis bridge failed to start — aborting setup".into());
             }
 
-            let core_run_mode = core_process::default_core_run_mode(daemon_mode);
-            let core_bin = if matches!(core_run_mode, core_process::CoreRunMode::ChildProcess) {
-                core_process::default_core_bin()
-            } else {
-                None
-            };
-            let core_handle = core_process::CoreProcessHandle::new(
-                core_process::default_core_port(),
-                core_bin,
-                core_run_mode,
-            );
+            let _ = daemon_mode;
+            let core_handle =
+                core_process::CoreProcessHandle::new(core_process::default_core_port());
             std::env::set_var("OPENHUMAN_CORE_RPC_URL", core_handle.rpc_url());
 
             // Expose the shared CEF cookies SQLite path to the core sidecar
             // so `check_onboarding_status` can detect which webview
-            // providers (gmail, whatsapp, slack, …) already have a live
+            // providers (whatsapp, slack, telegram, …) already have a live
             // session cookie. Best-effort — if we can't resolve the path
             // the core treats every provider as logged_out.
             if let Some(cache_dir) = cef_profile::configured_cache_path_from_env() {
@@ -1101,25 +1411,12 @@ pub fn run() {
             }
 
             app.manage(core_handle.clone());
-            let app_handle_for_update = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(err) = core_handle.ensure_running().await {
-                    log::error!("[core] failed to start core process: {err}");
+                    log::error!("[core] failed to start embedded core: {err}");
                     return;
                 }
-                log::info!("[core] core process ready");
-
-                // Check if the running core is outdated and auto-update if needed.
-                let update_handle = core_handle.clone();
-                if let Err(err) = core_update::check_and_update_core(
-                    update_handle,
-                    Some(app_handle_for_update),
-                    false,
-                )
-                .await
-                {
-                    log::warn!("[core-update] auto-update check failed (non-fatal): {err}");
-                }
+                log::info!("[core] embedded core ready");
             });
 
             // Restore last-known window position+size before showing the
@@ -1394,63 +1691,6 @@ pub fn run() {
                     });
                 }
             }
-            // OPENHUMAN_DEV_AUTO_GMAIL=<account-id> opens the Gmail account
-            // webview at startup so the webview_apis bridge has a live CDP
-            // target to attach to. Pair with:
-            //   curl -sS http://127.0.0.1:7788/rpc \
-            //     -H 'Content-Type: application/json' \
-            //     -d '{"jsonrpc":"2.0","id":1,"method":"openhuman.webview_apis_gmail_list_labels","params":{"account_id":"<account-id>"}}'
-            if let Ok(account_id) = std::env::var("OPENHUMAN_DEV_AUTO_GMAIL") {
-                let account_id = account_id.trim().to_string();
-                if !account_id.is_empty() {
-                    let app_handle = app.handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        let state = app_handle.state::<webview_accounts::WebviewAccountsState>();
-                        // Size the Gmail child webview to the parent window
-                        // so the inbox is usable without manual resizing.
-                        let (w, h) = app_handle
-                            .get_webview_window("main")
-                            .and_then(|main| {
-                                let scale = main.scale_factor().unwrap_or(1.0);
-                                main.inner_size()
-                                    .ok()
-                                    .map(|s| ((s.width as f64) / scale, (s.height as f64) / scale))
-                            })
-                            .unwrap_or((1100.0, 780.0));
-                        let args = webview_accounts::OpenArgs {
-                            account_id: account_id.clone(),
-                            provider: "gmail".to_string(),
-                            url: None,
-                            bounds: Some(webview_accounts::Bounds {
-                                x: 0.0,
-                                y: 0.0,
-                                width: w,
-                                height: h,
-                            }),
-                        };
-                        match webview_accounts::webview_account_open(
-                            app_handle.clone(),
-                            state,
-                            args,
-                        )
-                        .await
-                        {
-                            Ok(label) => log::info!(
-                                "[dev-auto-gmail] spawned label={} account={}",
-                                label,
-                                account_id
-                            ),
-                            Err(e) => log::error!(
-                                "[dev-auto-gmail] failed: {} (account={})",
-                                e,
-                                account_id
-                            ),
-                        }
-                    });
-                }
-            }
-
             #[cfg(target_os = "macos")]
             {
                 use std::sync::Arc;
@@ -1476,15 +1716,12 @@ pub fn run() {
             apply_core_update,
             check_app_update,
             apply_app_update,
+            download_app_update,
+            install_app_update,
             restart_core_process,
             restart_app,
             get_active_user_id,
             schedule_cef_profile_purge,
-            service_install_direct,
-            service_start_direct,
-            service_stop_direct,
-            service_status_direct,
-            service_uninstall_direct,
             register_dictation_hotkey,
             unregister_dictation_hotkey,
             webview_accounts::webview_account_open,
@@ -1506,18 +1743,12 @@ pub fn run() {
             screen_capture::screen_share_begin_session,
             screen_capture::screen_share_thumbnail,
             screen_capture::screen_share_finalize_session,
-            gmail::gmail_list_labels,
-            gmail::gmail_list_messages,
-            gmail::gmail_search,
-            gmail::gmail_get_message,
-            gmail::gmail_send,
-            gmail::gmail_trash,
-            gmail::gmail_add_label,
-            gmail::gmail_find_linkedin_profile_url,
             notification_permission_state,
             notification_permission_request,
             activate_main_window,
-            show_native_notification
+            show_native_notification,
+            mascot_window_show,
+            mascot_window_hide
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1569,45 +1800,67 @@ pub fn run() {
                 //      do not wait — that would block the main thread
                 //      and starve CEF's UI loop. The kernel reaps the
                 //      child after Tauri exits.
-                log::info!("[app] RunEvent::ExitRequested — early teardown");
-
-                let _ = teardown_cef_prewarm(app_handle);
-
-                if let Some(state) =
-                    app_handle.try_state::<webview_accounts::WebviewAccountsState>()
-                {
-                    state.shutdown_all(app_handle);
-                }
-
-                webview_apis::server::stop();
-
-                if let Some(core) = app_handle.try_state::<core_process::CoreProcessHandle>() {
-                    let core = core.inner().clone();
-                    tauri::async_runtime::block_on(async move {
-                        core.send_terminate_signal().await;
-                    });
-                }
-
-                log::info!("[app] RunEvent::ExitRequested — early teardown complete");
+                perform_early_teardown_sync(app_handle);
             }
             RunEvent::Exit => {
-                log::info!("[app] RunEvent::Exit");
+                log::info!("[app] RunEvent::Exit — cef::shutdown follows");
             }
             _ => {}
         });
+
+    // Belt-and-suspenders sweep: after Tauri's event loop returns the
+    // vendored runtime has already called `cef::shutdown()`. In normal
+    // operation every CEF helper (GPU / Network / Utility / Renderer) is
+    // gone by now. If anything is still alive — e.g. a renderer that was
+    // mid-spawn when the user quit — it would otherwise be re-parented to
+    // launchd on macOS / init on Linux and survive the GUI exit. SIGTERM
+    // its children before this process actually exits.
+    //
+    // We don't `wait()` on them: the kernel will reap them as our exit
+    // unwinds, and any helper that ignores SIGTERM is a CEF bug we'd
+    // rather see in Activity Monitor than silently SIGKILL.
+    sweep_orphan_children();
+}
+
+/// Send SIGTERM to every direct child of the current process. No-op on
+/// non-Unix platforms (Windows job objects already kill CEF helpers when
+/// the parent exits).
+fn sweep_orphan_children() {
+    #[cfg(unix)]
+    {
+        let pid = std::process::id();
+        match std::process::Command::new("pkill")
+            .args(["-TERM", "-P", &pid.to_string()])
+            .status()
+        {
+            Ok(status) => {
+                // pkill exits 0 if it killed at least one process, 1 if no
+                // matches (the healthy case after cef::shutdown), 2/3 on
+                // error. Both 0 and 1 are expected; log 0 loudly so we
+                // notice when the safety net actually catches something.
+                match status.code() {
+                    Some(0) => log::warn!(
+                        "[app] sweep: SIGTERM'd leftover child processes after cef::shutdown"
+                    ),
+                    Some(1) => log::info!("[app] sweep: no leftover children (clean exit)"),
+                    other => log::warn!("[app] sweep: pkill exited with {:?}", other),
+                }
+            }
+            Err(e) => log::warn!("[app] sweep: failed to invoke pkill: {e}"),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        log::debug!("[app] sweep: skipped on non-unix platform");
+    }
 }
 
 pub fn run_core_from_args(args: &[String]) -> Result<(), String> {
-    let core_bin = crate::core_process::default_core_bin()
-        .ok_or_else(|| "openhuman-core binary not found".to_string())?;
-    let status = std::process::Command::new(core_bin)
-        .args(args)
-        .status()
-        .map_err(|e| format!("failed to execute core binary: {e}"))?;
-    if !status.success() {
-        return Err(format!("core binary exited with status {status}"));
-    }
-    Ok(())
+    // Core lives in-process: dispatch directly through the linked `openhuman_core`
+    // library instead of shelling out to a separate binary. The Tauri main()
+    // routes `OpenHuman core <args>` here so users can still drive the core CLI
+    // from the bundled app.
+    openhuman_core::run_core_from_args(args).map_err(|e| format!("{e:#}"))
 }
 
 // ---------------------------------------------------------------------------

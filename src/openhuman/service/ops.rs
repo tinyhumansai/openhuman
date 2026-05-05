@@ -37,6 +37,14 @@ pub async fn service_restart(
     service::restart::service_restart(source, reason).await
 }
 
+/// Requests an asynchronous graceful shutdown of the core process.
+pub async fn service_shutdown(
+    source: Option<String>,
+    reason: Option<String>,
+) -> Result<RpcOutcome<service::ShutdownStatus>, String> {
+    service::shutdown::service_shutdown(source, reason).await
+}
+
 /// Uninstalls the OpenHuman daemon system service.
 pub async fn service_uninstall(config: &Config) -> Result<RpcOutcome<ServiceStatus>, String> {
     let status = service::uninstall(config).map_err(|e| e.to_string())?;

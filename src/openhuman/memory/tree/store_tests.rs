@@ -1,3 +1,6 @@
+//! Unit tests for [`super`] — chunk upsert / list / lifecycle / embedding /
+//! content-pointer accessors against a tempdir-backed SQLite store.
+
 use super::*;
 use crate::openhuman::memory::tree::types::chunk_id;
 use chrono::TimeZone;

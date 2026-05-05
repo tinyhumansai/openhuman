@@ -72,6 +72,23 @@ pub enum DomainEvent {
     /// this variant is a hook for future ingestion subscribers to react to pull
     /// requests. See `src/openhuman/memory/ops.rs` for the RPC handlers.
     MemorySyncRequested { channel_id: Option<String> },
+    /// A memory ingestion job started running on the local extraction LLM.
+    /// Ingestion is singleton — this fires once, then a matching
+    /// [`Self::MemoryIngestionCompleted`] follows when the job finishes.
+    MemoryIngestionStarted {
+        document_id: String,
+        title: String,
+        namespace: String,
+        queue_depth: usize,
+    },
+    /// A memory ingestion job finished (successfully or with an error).
+    MemoryIngestionCompleted {
+        document_id: String,
+        namespace: String,
+        success: bool,
+        elapsed_ms: u64,
+        queue_depth: usize,
+    },
 
     // ── Channels ────────────────────────────────────────────────────────
     /// An inbound channel message from the transport layer, ready for processing.
@@ -343,6 +360,10 @@ pub enum DomainEvent {
     SystemShutdown { component: String },
     /// A restart of the current core process was requested.
     SystemRestartRequested { source: String, reason: String },
+    /// A graceful shutdown of the current core process was requested.
+    /// Distinct from [`Self::SystemShutdown`] (per-component shutdown
+    /// notification) — this variant asks the running process to exit.
+    SystemShutdownRequested { source: String, reason: String },
     /// A component's health status changed.
     HealthChanged {
         component: String,
@@ -366,7 +387,9 @@ impl DomainEvent {
 
             Self::MemoryStored { .. }
             | Self::MemoryRecalled { .. }
-            | Self::MemorySyncRequested { .. } => "memory",
+            | Self::MemorySyncRequested { .. }
+            | Self::MemoryIngestionStarted { .. }
+            | Self::MemoryIngestionCompleted { .. } => "memory",
 
             Self::ChannelInboundMessage { .. }
             | Self::ChannelMessageReceived { .. }
@@ -412,6 +435,7 @@ impl DomainEvent {
             Self::SystemStartup { .. }
             | Self::SystemShutdown { .. }
             | Self::SystemRestartRequested { .. }
+            | Self::SystemShutdownRequested { .. }
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. } => "system",
         }

@@ -38,6 +38,32 @@ pub(crate) struct NativeChatRequest {
     pub(crate) tools: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_choice: Option<String>,
+    /// OpenHuman backend extension: stable conversation identifier so the
+    /// server can group `InferenceLog` entries and align KV-cache keys
+    /// with the same logical chat thread the user sees in the UI. Skipped
+    /// when serialising for vanilla OpenAI-compatible providers that
+    /// don't recognise it (most reject only unknown *required* fields,
+    /// but emitting it here is gated on the ambient task-local being
+    /// set — see `crate::openhuman::providers::thread_context`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) thread_id: Option<String>,
+    /// OpenAI streaming `stream_options`. Set to `{"include_usage": true}`
+    /// on streaming requests so the server emits a final usage chunk
+    /// (carrying token counts and `openhuman.billing.charged_amount_usd`
+    /// when the OpenHuman backend is in front). Without this, streaming
+    /// responses arrive with `usage = None`, transcript headers lose the
+    /// `- Charged: $…` line, and per-message cost annotations vanish for
+    /// streamed sessions (typically the orchestrator).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) stream_options: Option<OpenAiStreamOptions>,
+}
+
+/// OpenAI-spec `stream_options` payload (sent on the wire). Distinct from
+/// `crate::openhuman::providers::traits::StreamOptions`, which is the
+/// caller-side knob set on `ChatRequest` to toggle agent streaming.
+#[derive(Debug, Serialize)]
+pub(crate) struct OpenAiStreamOptions {
+    pub(crate) include_usage: bool,
 }
 
 #[derive(Debug, Serialize)]

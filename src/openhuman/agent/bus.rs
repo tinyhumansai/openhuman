@@ -21,6 +21,9 @@ use tokio::sync::mpsc;
 use crate::core::event_bus::register_native_global;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::config::MultimodalConfig;
+use crate::openhuman::prompt_injection::{
+    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+};
 use crate::openhuman::providers::{ChatMessage, Provider};
 use crate::openhuman::tools::Tool;
 
@@ -171,6 +174,52 @@ pub fn register_agent_handlers() {
                 progress_subscribed = on_progress.is_some(),
                 "[agent::bus] dispatching {AGENT_RUN_TURN_METHOD}"
             );
+
+            if let Some(user_prompt) = history
+                .iter()
+                .rev()
+                .find(|msg| msg.role.eq_ignore_ascii_case("user"))
+                .map(|msg| msg.content.as_str())
+            {
+                let decision = enforce_prompt_input(
+                    user_prompt,
+                    PromptEnforcementContext {
+                        source: "agent.bus.run_turn",
+                        request_id: None,
+                        user_id: Some(channel_name.as_str()),
+                        session_id: target_agent_id.as_deref(),
+                    },
+                );
+                if !matches!(decision.action, PromptEnforcementAction::Allow) {
+                    tracing::warn!(
+                        channel = %channel_name,
+                        target_agent = target_agent_id.as_deref().unwrap_or("<unset>"),
+                        action = match decision.action {
+                            PromptEnforcementAction::Allow => "allow",
+                            PromptEnforcementAction::Blocked => "block",
+                            PromptEnforcementAction::ReviewBlocked => "review_blocked",
+                        },
+                        score = decision.score,
+                        reasons = %decision
+                            .reasons
+                            .iter()
+                            .map(|r| r.code.as_str())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                        prompt_hash = %decision.prompt_hash,
+                        prompt_chars = decision.prompt_chars,
+                        "[agent::bus] prompt rejected before run_tool_call_loop"
+                    );
+                    let msg = match decision.action {
+                        PromptEnforcementAction::Allow => "Message accepted.",
+                        PromptEnforcementAction::Blocked => "Prompt blocked by security policy.",
+                        PromptEnforcementAction::ReviewBlocked => {
+                            "Prompt flagged for security review and was not processed."
+                        }
+                    };
+                    return Err(msg.to_string());
+                }
+            }
 
             // Resolve the target agent's declared sandbox mode so any
             // tool executed inside the loop can read it via the

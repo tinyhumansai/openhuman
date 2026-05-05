@@ -12,8 +12,8 @@ pub mod types;
 
 use std::sync::Arc;
 
-use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::util::redact::redact_endpoint;
+use crate::openhuman::config::{Config, LlmBackend, DEFAULT_CLOUD_LLM_MODEL};
+use crate::openhuman::memory::tree::chat::{build_chat_provider, ChatConsumer};
 
 pub use extractor::{CompositeExtractor, EntityExtractor, RegexEntityExtractor};
 pub use llm::{LlmEntityExtractor, LlmExtractorConfig};
@@ -23,8 +23,10 @@ pub use types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};
 ///
 /// Composition:
 /// - regex extractor — always on, mechanical, near-zero cost
-/// - LLM extractor with `emit_topics: true` — added when
-///   `memory_tree.llm_extractor_endpoint` and `..._model` are both set
+/// - LLM extractor with `emit_topics: true` — added when the LLM backend
+///   is reachable. For `llm_backend = "cloud"` (default) that's always. For
+///   `llm_backend = "local"` we still require `llm_extractor_endpoint` +
+///   `_model` to be set (otherwise the legacy regex-only path stays).
 ///
 /// Differs from [`super::ScoringConfig::from_config`] (the chunk-admission
 /// builder) in two ways: returns *just* an extractor (no thresholds /
@@ -32,61 +34,79 @@ pub use types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};
 /// `emit_topics` on so summaries surface thematic labels alongside
 /// entities. Leaf-side scoring is unchanged.
 pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
-    let endpoint = config
-        .memory_tree
-        .llm_extractor_endpoint
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    let model = config
-        .memory_tree
-        .llm_extractor_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-
-    let (Some(endpoint), Some(model)) = (endpoint, model) else {
+    let model = resolve_extractor_model(config);
+    let Some(model) = model else {
         log::debug!(
-            "[memory_tree::extract] summary extractor: LLM not configured — using regex-only"
+            "[memory_tree::extract] summary extractor: LLM model not resolvable for \
+             llm_backend={} — using regex-only",
+            config.memory_tree.llm_backend.as_str()
         );
         return Arc::new(CompositeExtractor::regex_only());
     };
 
-    let timeout_ms = config
-        .memory_tree
-        .llm_extractor_timeout_ms
-        .unwrap_or(15_000);
-
     let cfg = LlmExtractorConfig {
-        endpoint: endpoint.to_string(),
-        model: model.to_string(),
-        timeout: std::time::Duration::from_millis(timeout_ms),
+        model: model.clone(),
         emit_topics: true,
         ..LlmExtractorConfig::default()
     };
 
-    match LlmEntityExtractor::new(cfg) {
-        Ok(llm) => {
-            // Drop to debug (diagnostic, not always-on) and redact the endpoint
-            // so embedded credentials (e.g. api keys in URL) don't leak.
-            log::debug!(
-                "[memory_tree::extract] summary extractor: regex + LLM endpoint={} model={} \
-                 timeout_ms={} emit_topics=true",
-                redact_endpoint(endpoint),
-                model,
-                timeout_ms
-            );
-            Arc::new(CompositeExtractor::new(vec![
-                Box::new(RegexEntityExtractor),
-                Box::new(llm),
-            ]))
-        }
+    let provider = match build_chat_provider(config, ChatConsumer::Extract) {
+        Ok(p) => p,
         Err(err) => {
             log::warn!(
-                "[memory_tree::extract] summary extractor: LlmEntityExtractor construction \
-                 failed: {err:#} — falling back to regex-only"
+                "[memory_tree::extract] summary extractor: build_chat_provider failed: \
+                 {err:#} — falling back to regex-only"
             );
-            Arc::new(CompositeExtractor::regex_only())
+            return Arc::new(CompositeExtractor::regex_only());
+        }
+    };
+
+    log::debug!(
+        "[memory_tree::extract] summary extractor: regex + LLM provider={} model={} \
+         emit_topics=true",
+        provider.name(),
+        model
+    );
+    Arc::new(CompositeExtractor::new(vec![
+        Box::new(RegexEntityExtractor),
+        Box::new(LlmEntityExtractor::new(cfg, provider)),
+    ]))
+}
+
+/// Resolve the model identifier the extractor's [`ChatProvider`] should
+/// target, returning `None` when the configured backend can't be served:
+///
+/// - `Cloud`: always returns the configured `cloud_llm_model` or its
+///   `summarization-v1` default.
+/// - `Local`: returns `Some(model)` only when both
+///   `llm_extractor_endpoint` AND `llm_extractor_model` are set —
+///   otherwise the legacy regex-only path engages.
+pub(super) fn resolve_extractor_model(config: &Config) -> Option<String> {
+    match config.memory_tree.llm_backend {
+        LlmBackend::Cloud => Some(
+            config
+                .memory_tree
+                .cloud_llm_model
+                .clone()
+                .unwrap_or_else(|| DEFAULT_CLOUD_LLM_MODEL.to_string()),
+        ),
+        LlmBackend::Local => {
+            let endpoint = config
+                .memory_tree
+                .llm_extractor_endpoint
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let model = config
+                .memory_tree
+                .llm_extractor_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            match (endpoint, model) {
+                (Some(_), Some(m)) => Some(m.to_string()),
+                _ => None,
+            }
         }
     }
 }

@@ -565,9 +565,11 @@ pub struct WriteMemoryFileResponse {
     pub bytes_written: usize,
 }
 
-/// Default directory for memory operations.
+/// Default directory for memory operations. Empty string means the memory
+/// root itself (`<workspace>/memory`); the file-based memory RPCs resolve all
+/// relative paths under that directory.
 fn default_memory_relative_dir() -> String {
-    "memory".to_string()
+    String::new()
 }
 
 #[cfg(test)]

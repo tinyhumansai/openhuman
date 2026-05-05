@@ -94,6 +94,16 @@ pub struct ContextConfig {
     /// summarization on long sessions.
     #[serde(default)]
     pub summarizer_model: Option<String>,
+
+    /// When `true`, the agent loop asks tools to render their results as
+    /// markdown instead of JSON before they enter LLM context. Tools that
+    /// support it populate `ToolResult::markdown_formatted`; the harness
+    /// prefers that field over the JSON fallback. Markdown is materially
+    /// cheaper than JSON in tokens, especially on tool-heavy loops.
+    /// Default: `true` — opt out per-deployment via config or env if a
+    /// downstream consumer expects strict JSON tool output.
+    #[serde(default = "default_true")]
+    pub prefer_markdown_tool_output: bool,
 }
 
 fn default_enabled() -> bool {
@@ -136,6 +146,7 @@ impl Default for ContextConfig {
             summarizer_max_payload_tokens: default_summarizer_max_payload_tokens(),
             session_memory: SessionMemoryConfig::default(),
             summarizer_model: None,
+            prefer_markdown_tool_output: default_true(),
         }
     }
 }

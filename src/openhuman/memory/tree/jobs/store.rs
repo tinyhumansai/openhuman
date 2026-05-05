@@ -103,6 +103,9 @@ pub fn claim_next(config: &Config, lock_duration_ms: i64) -> Result<Option<Job>>
 
         let row = conn
             .query_row(
+                // Drain forward, don't widen. Most-downstream kinds run
+                // first so a slow LLM-bound `extract_chunk` can't starve
+                // the routing/seal/digest pipeline behind it.
                 "UPDATE mem_tree_jobs
                     SET status = 'running',
                         attempts = attempts + 1,
@@ -113,7 +116,16 @@ pub fn claim_next(config: &Config, lock_duration_ms: i64) -> Result<Option<Job>>
                       SELECT id FROM mem_tree_jobs
                        WHERE status = 'ready'
                          AND available_at_ms <= ?1
-                       ORDER BY available_at_ms ASC
+                       ORDER BY
+                         CASE kind
+                           WHEN 'digest_daily'  THEN 0
+                           WHEN 'seal'          THEN 1
+                           WHEN 'flush_stale'   THEN 2
+                           WHEN 'topic_route'   THEN 3
+                           WHEN 'append_buffer' THEN 4
+                           ELSE 5
+                         END ASC,
+                         available_at_ms ASC
                        LIMIT 1
                   )
               RETURNING id, kind, payload_json, dedupe_key, status, attempts,

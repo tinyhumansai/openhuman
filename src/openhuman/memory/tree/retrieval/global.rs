@@ -1,7 +1,7 @@
 //! `memory_tree_query_global` — window-scoped recap from the global digest
 //! (Phase 4 / #710).
 //!
-//! Thin wrapper on [`global_tree::recap::recap`]. The recap function does
+//! Thin wrapper on [`tree_global::recap::recap`]. The recap function does
 //! the heavy lifting (level selection + time-range filter); we convert its
 //! output into the uniform [`RetrievalHit`] shape.
 //!
@@ -13,10 +13,10 @@ use anyhow::Result;
 use chrono::Duration;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::global_tree::recap::{recap, RecapOutput};
-use crate::openhuman::memory::tree::global_tree::registry::get_or_create_global_tree;
 use crate::openhuman::memory::tree::retrieval::types::{NodeKind, QueryResponse, RetrievalHit};
-use crate::openhuman::memory::tree::source_tree::types::TreeKind;
+use crate::openhuman::memory::tree::tree_global::recap::{recap, RecapOutput};
+use crate::openhuman::memory::tree::tree_global::registry::get_or_create_global_tree;
+use crate::openhuman::memory::tree::tree_source::types::TreeKind;
 
 /// Return the global digest for the given window in days. Always returns a
 /// [`QueryResponse`]; the response is empty if the global tree has no
@@ -88,13 +88,13 @@ fn recap_to_hits(recap: RecapOutput, tree_id: &str, tree_scope: &str) -> Vec<Ret
 mod tests {
     use super::*;
     use crate::openhuman::memory::tree::content_store;
-    use crate::openhuman::memory::tree::global_tree::digest::{end_of_day_digest, DigestOutcome};
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::tree_global::digest::{end_of_day_digest, DigestOutcome};
+    use crate::openhuman::memory::tree::tree_source::bucket_seal::{
         append_leaf, LabelStrategy, LeafRef,
     };
-    use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
-    use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
-    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::{DateTime, Utc};
     use tempfile::TempDir;

@@ -4,7 +4,6 @@ export type AccountProvider =
   | 'whatsapp'
   | 'telegram'
   | 'linkedin'
-  | 'gmail'
   | 'slack'
   | 'discord'
   | 'google-meet'
@@ -78,12 +77,6 @@ const BASE_PROVIDERS: ProviderDescriptor[] = [
     label: 'LinkedIn',
     description: 'LinkedIn messaging — DMs and conversations.',
     serviceUrl: 'https://www.linkedin.com/messaging/',
-  },
-  {
-    id: 'gmail',
-    label: 'Gmail',
-    description: 'Your Gmail inbox. Google may require sign-in a couple of times.',
-    serviceUrl: 'https://mail.google.com/mail/u/0/',
   },
   {
     id: 'slack',

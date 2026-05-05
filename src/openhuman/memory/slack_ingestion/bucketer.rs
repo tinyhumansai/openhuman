@@ -9,7 +9,7 @@
 //! ## Why closed-bucket-only?
 //!
 //! Each ingested chunk becomes a *leaf* in the source tree via
-//! `append_leaf` (see `memory::tree::source_tree::bucket_seal`). Leaves
+//! `append_leaf` (see `memory::tree::tree_source::bucket_seal`). Leaves
 //! participate in a token-budget seal cascade — once appended, they
 //! cannot be cleanly retracted from already-sealed summary nodes
 //! upstream. So we only ingest a bucket once, *after* it has closed

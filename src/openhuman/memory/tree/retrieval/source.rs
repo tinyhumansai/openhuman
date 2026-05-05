@@ -26,8 +26,8 @@ use crate::openhuman::memory::tree::retrieval::types::{
     hit_from_summary, QueryResponse, RetrievalHit,
 };
 use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, cosine_similarity};
-use crate::openhuman::memory::tree::source_tree::store;
-use crate::openhuman::memory::tree::source_tree::types::{SummaryNode, Tree, TreeKind};
+use crate::openhuman::memory::tree::tree_source::store;
+use crate::openhuman::memory::tree::tree_source::types::{SummaryNode, Tree, TreeKind};
 use crate::openhuman::memory::tree::types::SourceKind;
 
 const DEFAULT_LIMIT: usize = 10;
@@ -307,12 +307,12 @@ fn filter_by_window(hits: Vec<RetrievalHit>, window_days: u32) -> Vec<RetrievalH
 mod tests {
     use super::*;
     use crate::openhuman::memory::tree::content_store;
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::tree_source::bucket_seal::{
         append_leaf, LabelStrategy, LeafRef,
     };
-    use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
-    use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
-    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::{DateTime, TimeZone};
     use tempfile::TempDir;
@@ -346,7 +346,7 @@ mod tests {
                     tags: vec!["eng".into()],
                     source_ref: Some(SourceRef::new(format!("slack://{scope}/{seq}"))),
                 },
-                token_count: crate::openhuman::memory::tree::source_tree::types::TOKEN_BUDGET * 6
+                token_count: crate::openhuman::memory::tree::tree_source::types::TOKEN_BUDGET * 6
                     / 10,
                 seq_in_source: seq,
                 created_at: ts,
@@ -369,7 +369,7 @@ mod tests {
                 &tree,
                 &LeafRef {
                     chunk_id: c.id.clone(),
-                    token_count: crate::openhuman::memory::tree::source_tree::types::TOKEN_BUDGET
+                    token_count: crate::openhuman::memory::tree::tree_source::types::TOKEN_BUDGET
                         * 6
                         / 10,
                     timestamp: ts,
@@ -527,7 +527,7 @@ mod tests {
     #[tokio::test]
     async fn query_reranks_by_cosine_similarity() {
         use crate::openhuman::memory::tree::score::embed::{pack_embedding, EMBEDDING_DIM};
-        use crate::openhuman::memory::tree::source_tree::store as src_store;
+        use crate::openhuman::memory::tree::tree_source::store as src_store;
 
         let (_tmp, cfg) = test_config();
         let ts = Utc::now();
@@ -550,14 +550,14 @@ mod tests {
         use crate::openhuman::memory::tree::store::with_connection;
         let phoenix_tree = src_store::get_tree_by_scope(
             &cfg,
-            crate::openhuman::memory::tree::source_tree::types::TreeKind::Source,
+            crate::openhuman::memory::tree::tree_source::types::TreeKind::Source,
             "slack:#phoenix",
         )
         .unwrap()
         .unwrap();
         let unrelated_tree = src_store::get_tree_by_scope(
             &cfg,
-            crate::openhuman::memory::tree::source_tree::types::TreeKind::Source,
+            crate::openhuman::memory::tree::tree_source::types::TreeKind::Source,
             "slack:#unrelated",
         )
         .unwrap()
@@ -629,8 +629,8 @@ mod tests {
     #[tokio::test]
     async fn legacy_null_embedding_rows_sort_last() {
         use crate::openhuman::memory::tree::score::embed::{pack_embedding, EMBEDDING_DIM};
-        use crate::openhuman::memory::tree::source_tree::store as src_store;
-        use crate::openhuman::memory::tree::source_tree::types::TreeKind;
+        use crate::openhuman::memory::tree::tree_source::store as src_store;
+        use crate::openhuman::memory::tree::tree_source::types::TreeKind;
 
         let (_tmp, cfg) = test_config();
         let ts = Utc::now();

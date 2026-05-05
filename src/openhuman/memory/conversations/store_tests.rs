@@ -1,3 +1,6 @@
+//! Unit tests for the JSONL-backed [`ConversationStore`], exercising thread
+//! upsert, message append, label/title updates, deletion and purge semantics.
+
 use tempfile::TempDir;
 
 use super::*;

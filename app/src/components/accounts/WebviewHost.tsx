@@ -23,7 +23,6 @@ const PROVIDER_COPY: Record<AccountProvider, string> = {
   whatsapp: 'WhatsApp',
   telegram: 'Telegram',
   linkedin: 'LinkedIn',
-  gmail: 'Gmail',
   slack: 'Slack',
   discord: 'Discord',
   'google-meet': 'Google Meet',

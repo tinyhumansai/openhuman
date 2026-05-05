@@ -17,6 +17,7 @@
 //! Both contexts are stashed in `Arc`s so that cloning into the child
 //! costs a refcount bump rather than a full copy.
 
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::config::AgentConfig;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::providers::{ChatMessage, Provider};
@@ -118,6 +119,15 @@ pub struct ParentExecutionContext {
     /// `Some(parent.session_key)`. A grand-child observes
     /// `Some("{grandparent_key}__{parent_key}")`.
     pub session_parent_prefix: Option<String>,
+
+    /// Parent's progress sink. When set, the sub-agent runner emits
+    /// `AgentProgress::Subagent*` lifecycle events through this channel
+    /// so the web-channel bridge can stream live child activity (each
+    /// iteration boundary, child tool call/result) into the parent
+    /// thread's UI. `None` for parent contexts that don't subscribe to
+    /// progress (e.g. CLI direct calls); the runner becomes a no-op for
+    /// child progress in that case.
+    pub on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
 }
 
 tokio::task_local! {

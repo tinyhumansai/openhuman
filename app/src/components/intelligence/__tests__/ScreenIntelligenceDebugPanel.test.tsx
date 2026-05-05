@@ -117,6 +117,20 @@ describe('ScreenIntelligenceDebugPanel', () => {
     );
   });
 
+  it('shows "Platform not supported" and hides permission dots when platform_supported is false', () => {
+    const state: ScreenIntelligenceState = {
+      ...baseState,
+      status: { ...baseState.status!, platform_supported: false },
+    };
+
+    render(<ScreenIntelligenceDebugPanel state={state} />);
+
+    expect(screen.getByText('Platform not supported')).toBeInTheDocument();
+    expect(screen.queryByText('Screen')).not.toBeInTheDocument();
+    expect(screen.queryByText('Accessibility')).not.toBeInTheDocument();
+    expect(screen.queryByText('Input')).not.toBeInTheDocument();
+  });
+
   it('renders capture failures without breaking the diagnostics panel', async () => {
     const state: ScreenIntelligenceState = {
       ...baseState,

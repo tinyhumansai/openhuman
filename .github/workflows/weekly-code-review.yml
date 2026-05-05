@@ -25,7 +25,9 @@ concurrency:
 jobs:
   weekly-review:
     name: Aggregate weekly signals
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     timeout-minutes: 30
     steps:
       - name: Checkout repository
@@ -33,26 +35,24 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Enable Corepack (for pnpm)
-        run: corepack enable
-
-      - name: Setup Node.js 24.x
-        uses: actions/setup-node@v4
+      - name: Cache pnpm store
+        uses: actions/cache@v4
         with:
-          node-version: 24.x
-          cache: "pnpm"
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.93.0
 
       - name: Cache cargo-audit binary
         id: cache-cargo-audit
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/bin/cargo-audit
+          # Image sets CARGO_HOME=/usr/local/cargo, so cargo install drops the
+          # binary there — not in $HOME/.cargo/bin.
+          path: /usr/local/cargo/bin/cargo-audit
           key: cargo-audit-${{ runner.os }}-v1
 
       - name: Install cargo-audit

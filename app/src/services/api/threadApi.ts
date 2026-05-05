@@ -8,6 +8,12 @@ import type {
   ThreadMessagesData,
   ThreadsListData,
 } from '../../types/thread';
+import type {
+  ClearTurnStateResponse,
+  GetTurnStateResponse,
+  ListTurnStatesResponse,
+  PersistedTurnState,
+} from '../../types/turnState';
 import { callCoreRpc } from '../coreRpcClient';
 
 interface Envelope<T> {
@@ -101,6 +107,32 @@ export const threadApi = {
       method: 'openhuman.threads_purge',
     });
     return unwrapEnvelope(response);
+  },
+
+  getTurnState: async (threadId: string): Promise<PersistedTurnState | null> => {
+    const response = await callCoreRpc<{ data?: GetTurnStateResponse }>({
+      method: 'openhuman.threads_turn_state_get',
+      params: { thread_id: threadId },
+    });
+    const data = unwrapEnvelope(response);
+    return data?.turnState ?? null;
+  },
+
+  listTurnStates: async (): Promise<PersistedTurnState[]> => {
+    const response = await callCoreRpc<{ data?: ListTurnStatesResponse }>({
+      method: 'openhuman.threads_turn_state_list',
+    });
+    const data = unwrapEnvelope(response);
+    return data?.turnStates ?? [];
+  },
+
+  clearTurnState: async (threadId: string): Promise<boolean> => {
+    const response = await callCoreRpc<{ data?: ClearTurnStateResponse }>({
+      method: 'openhuman.threads_turn_state_clear',
+      params: { thread_id: threadId },
+    });
+    const data = unwrapEnvelope(response);
+    return Boolean(data?.cleared);
   },
 
   updateLabels: async (threadId: string, labels: string[]): Promise<Thread> => {

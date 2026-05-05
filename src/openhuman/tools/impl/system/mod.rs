@@ -1,5 +1,6 @@
 mod current_time;
 mod insert_sql_record;
+mod lsp;
 mod node_exec;
 mod npm_exec;
 mod proxy_config;
@@ -11,6 +12,7 @@ mod workspace_state;
 
 pub use current_time::CurrentTimeTool;
 pub use insert_sql_record::InsertSqlRecordTool;
+pub use lsp::{lsp_capability_enabled, LspTool, LSP_ENABLED_ENV};
 pub use node_exec::NodeExecTool;
 pub use npm_exec::NpmExecTool;
 pub use proxy_config::ProxyConfigTool;

@@ -187,6 +187,7 @@ fn handle_composio_execute(params: Map<String, Value>) -> ControllerFuture {
             "data": resp.data,
             "error": resp.error,
             "cost_usd": resp.cost_usd,
+            "markdown_formatted": resp.markdown_formatted,
         });
         let log = vec![format!(
             "tools.composio_execute: action={action} successful={}",

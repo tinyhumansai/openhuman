@@ -14,7 +14,7 @@
 //!   append_buffer   → push to L0 → enqueue seal if gate met → enqueue topic_route
 //!   seal            → seal one level → enqueue parent seal if cascading
 //!   topic_route     → match topics → enqueue per-topic append_buffer
-//!   digest_daily    → call global_tree::digest::end_of_day_digest
+//!   digest_daily    → call tree_global::digest::end_of_day_digest
 //!   flush_stale     → enqueue seals for time-stale buffers
 //!
 //! scheduler (1 task) ──► daily wall-clock tick:

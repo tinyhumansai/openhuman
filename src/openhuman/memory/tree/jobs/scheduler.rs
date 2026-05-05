@@ -1,3 +1,8 @@
+//! Wall-clock scheduler that wakes once a day shortly after UTC midnight to
+//! enqueue the global [`JobKind::DigestDaily`] for yesterday and a
+//! [`JobKind::FlushStale`] for today. Also exposes manual-trigger helpers
+//! for catch-up and testing.
+
 use std::time::Duration;
 
 use anyhow::Result;

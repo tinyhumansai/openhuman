@@ -1,13 +1,5 @@
 import { FaLinkedin } from 'react-icons/fa';
-import {
-  SiDiscord,
-  SiGmail,
-  SiGooglemeet,
-  SiSlack,
-  SiTelegram,
-  SiWhatsapp,
-  SiZoom,
-} from 'react-icons/si';
+import { SiDiscord, SiGooglemeet, SiSlack, SiTelegram, SiWhatsapp, SiZoom } from 'react-icons/si';
 import { TbRobot } from 'react-icons/tb';
 
 import type { AccountProvider } from '../../types/accounts';
@@ -21,7 +13,6 @@ const PROVIDER_COLOR: Record<AccountProvider, string> = {
   whatsapp: '#25D366',
   telegram: '#229ED9',
   linkedin: '#0A66C2',
-  gmail: '#EA4335',
   slack: '#4A154B',
   discord: '#5865F2',
   'google-meet': '#00897B',
@@ -49,8 +40,6 @@ export const ProviderIcon = ({
       return <SiTelegram className={className} style={style} />;
     case 'linkedin':
       return <FaLinkedin className={className} style={style} />;
-    case 'gmail':
-      return <SiGmail className={className} style={style} />;
     case 'slack':
       return <SiSlack className={className} style={style} />;
     case 'discord':

@@ -70,16 +70,20 @@ ensure_sentry_cli() {
 
     log_info "Installing sentry-cli..."
 
-    # Detect OS and architecture
+    # Detect OS and architecture. The release-asset suffix matches what
+    # `getsentry/sentry-cli` actually publishes — OS segment is
+    # title-cased (Linux/Darwin/Windows), not lowercase. Lowercase 404s
+    # silently and we end up writing GitHub's HTML error page to a file
+    # the script then tries to execute ("Not: command not found").
     local os_arch
     case "$(uname -s)" in
         Linux*)
             case "$(uname -m)" in
                 x86_64|amd64)
-                    os_arch="linux-x86_64"
+                    os_arch="Linux-x86_64"
                     ;;
                 aarch64|arm64)
-                    os_arch="linux-aarch64"
+                    os_arch="Linux-aarch64"
                     ;;
                 *)
                     log_error "Unsupported architecture: $(uname -m)"
@@ -88,21 +92,13 @@ ensure_sentry_cli() {
             esac
             ;;
         Darwin*)
-            case "$(uname -m)" in
-                x86_64|amd64)
-                    os_arch="macos-x86_64"
-                    ;;
-                arm64)
-                    os_arch="macos-arm64"
-                    ;;
-                *)
-                    log_error "Unsupported architecture on macOS: $(uname -m)"
-                    exit 1
-                    ;;
-            esac
+            # The mac build is published as a universal binary, not
+            # per-arch, so both Intel and Apple Silicon use the same
+            # asset — there is no Darwin-x86_64 / Darwin-arm64.
+            os_arch="Darwin-universal"
             ;;
         MINGW*|CYGWIN*|MSYS*)
-            os_arch="windows-x86_64"
+            os_arch="Windows-x86_64.exe"
             ;;
         *)
             log_error "Unsupported operating system: $(uname -s)"
@@ -110,29 +106,57 @@ ensure_sentry_cli() {
             ;;
     esac
 
-    local version="2.34.2"
+    # `2.34.2` was never a real release of getsentry/sentry-cli (we presumably
+    # confused it with python-sentry-sdk versions — sentry-python ships those
+    # numbers, sentry-cli's 2.x series is gone from the releases page). Pin
+    # to 3.4.1, the latest stable that matches the `--log-level=warn` flag
+    # the upload step uses (2.x called it `--log-level=warning`). Override
+    # via SENTRY_CLI_VERSION if a future bump is needed.
+    local version="${SENTRY_CLI_VERSION:-3.4.1}"
     local download_url="https://github.com/getsentry/sentry-cli/releases/download/${version}/sentry-cli-${os_arch}"
 
-    # Create temporary directory for installation
+    # Create temporary directory for installation. Cleanup is inline at the
+    # success path + each early-exit branch below — we deliberately do NOT
+    # use a trap. Bash traps are globally scoped (not function-scoped), so
+    # `trap '... $tmp_dir ...' RETURN` defined here fires on EVERY
+    # subsequent function return (including main's at end-of-script) by
+    # which point `local tmp_dir` is gone and `set -u` errors with
+    # "tmp_dir: unbound variable". An EXIT trap has the same problem.
     local tmp_dir
-    tmp_dir=$(mktemp -d)
-    # Use single quotes to prevent early expansion (ShellCheck SC2064)
-    trap 'rm -rf $tmp_dir' EXIT
+    tmp_dir="$(mktemp -d)"
 
-    # Download and install
+    # Download and install. `--fail` / `--fail-with-body` is critical:
+    # without it, curl returns 0 on a 404 and writes the error HTML to
+    # the destination file. Same for wget without `--content-on-error`.
     log_info "Downloading sentry-cli ${version} for ${os_arch}..."
     if command -v curl &> /dev/null; then
-        curl -sSL "${download_url}" -o "${tmp_dir}/sentry-cli" || {
-            log_error "Failed to download sentry-cli"
+        curl --fail --silent --show-error --location "${download_url}" -o "${tmp_dir}/sentry-cli" || {
+            log_error "Failed to download sentry-cli from ${download_url}"
+            rm -rf "$tmp_dir"
             exit 1
         }
     elif command -v wget &> /dev/null; then
-        wget -q "${download_url}" -O "${tmp_dir}/sentry-cli" || {
-            log_error "Failed to download sentry-cli"
+        wget --quiet --show-progress=off "${download_url}" -O "${tmp_dir}/sentry-cli" || {
+            log_error "Failed to download sentry-cli from ${download_url}"
+            rm -rf "$tmp_dir"
             exit 1
         }
     else
         log_error "Neither curl nor wget found. Cannot download sentry-cli."
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+
+    # Validate the downloaded file is actually an executable, not an HTML
+    # error page that slipped through (defence-in-depth alongside --fail).
+    if [[ ! -s "${tmp_dir}/sentry-cli" ]]; then
+        log_error "sentry-cli download is empty"
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+    if head -c 4 "${tmp_dir}/sentry-cli" | grep -q '^<'; then
+        log_error "sentry-cli download looks like HTML (got an error page from ${download_url})"
+        rm -rf "$tmp_dir"
         exit 1
     fi
 
@@ -151,9 +175,14 @@ ensure_sentry_cli() {
             log_info "sentry-cli installed to /usr/local/bin/sentry-cli"
         else
             log_error "Cannot write to ${install_dir} or /usr/local/bin. Please install sentry-cli manually."
+            rm -rf "$tmp_dir"
             exit 1
         fi
     fi
+
+    # `mv` already emptied tmp_dir of the binary; rmdir the now-empty
+    # directory so we don't leak it on every CI run.
+    rm -rf "$tmp_dir"
 
     # Update PATH hash for current session (won't persist without shell restart)
     hash -r
@@ -199,7 +228,10 @@ upload_symbols() {
         "--org" "${SENTRY_ORG}"
         "--project" "${SENTRY_PROJECT}"
         "--include-sources"
-        "--log-level=warning"
+        # sentry-cli 3.x renamed `warning` → `warn`. Use the short form;
+        # `warning` is rejected as `invalid value '...' for '--log-level'`
+        # on 3.x and the script silently skips uploads.
+        "--log-level=warn"
     )
 
     # Find and upload all debug symbol files

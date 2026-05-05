@@ -1,3 +1,6 @@
+//! Cross-signal helpers: signal computation entry point and the two
+//! weighted-combine variants (full and cheap-only) used by `score_chunk`.
+
 use super::{interaction, metadata_weight, source_weight, token_count, unique_words};
 use super::{ScoreSignals, SignalWeights};
 use crate::openhuman::memory::tree::score::extract::ExtractedEntities;

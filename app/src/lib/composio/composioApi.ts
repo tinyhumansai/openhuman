@@ -12,9 +12,13 @@
  */
 import { callCoreRpc } from '../../services/coreRpcClient';
 import type {
+  ComposioActiveTriggersResponse,
   ComposioAuthorizeResponse,
+  ComposioAvailableTriggersResponse,
   ComposioConnectionsResponse,
   ComposioDeleteResponse,
+  ComposioDisableTriggerResponse,
+  ComposioEnableTriggerResponse,
   ComposioExecuteResponse,
   ComposioToolkitsResponse,
   ComposioToolsResponse,
@@ -151,4 +155,60 @@ export async function execute(
     params: { tool, arguments: args ?? {} },
   });
   return unwrapCliEnvelope<ComposioExecuteResponse>(raw);
+}
+
+// ── Trigger management ────────────────────────────────────────────
+
+/**
+ * List the catalog of triggers the user could enable for a toolkit.
+ * For GitHub, the backend fans out into per-repo entries — pass the
+ * GitHub `connectionId` (or the user's first GitHub connection is
+ * picked by the backend).
+ */
+export async function listAvailableTriggers(
+  toolkit: string,
+  connectionId?: string
+): Promise<ComposioAvailableTriggersResponse> {
+  const params: Record<string, unknown> = { toolkit };
+  if (connectionId) params.connection_id = connectionId;
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.composio_list_available_triggers',
+    params,
+  });
+  return unwrapCliEnvelope<ComposioAvailableTriggersResponse>(raw);
+}
+
+/**
+ * List the user's currently enabled Composio triggers.
+ */
+export async function listTriggers(toolkit?: string): Promise<ComposioActiveTriggersResponse> {
+  const params: Record<string, unknown> = {};
+  if (toolkit) params.toolkit = toolkit;
+  const raw = await callCoreRpc<unknown>({ method: 'openhuman.composio_list_triggers', params });
+  return unwrapCliEnvelope<ComposioActiveTriggersResponse>(raw);
+}
+
+/**
+ * Enable a single trigger on a connection the caller owns.
+ */
+export async function enableTrigger(
+  connectionId: string,
+  slug: string,
+  triggerConfig?: Record<string, unknown>
+): Promise<ComposioEnableTriggerResponse> {
+  const params: Record<string, unknown> = { connection_id: connectionId, slug };
+  if (triggerConfig !== undefined) params.trigger_config = triggerConfig;
+  const raw = await callCoreRpc<unknown>({ method: 'openhuman.composio_enable_trigger', params });
+  return unwrapCliEnvelope<ComposioEnableTriggerResponse>(raw);
+}
+
+/**
+ * Disable (delete) a trigger owned by the caller.
+ */
+export async function disableTrigger(triggerId: string): Promise<ComposioDisableTriggerResponse> {
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.composio_disable_trigger',
+    params: { trigger_id: triggerId },
+  });
+  return unwrapCliEnvelope<ComposioDisableTriggerResponse>(raw);
 }

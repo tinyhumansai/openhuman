@@ -195,8 +195,8 @@ export default function VoiceSetupModal({ onClose, skillStatus }: Props) {
 
               <div>
                 <h3 className="text-sm font-semibold text-stone-900">Voice Intelligence is Active</h3>
-                <p className="mt-1 text-xs text-stone-500 leading-relaxed">
-                  Press <span className="font-mono font-medium">{serverStatus?.hotkey ?? 'Fn'}</span> to start dictating. Your voice will be transcribed and sent to your AI assistant.
+                <p className="text-center mt-1 text-xs text-stone-500 leading-relaxed">
+                  Press <span className="font-mono font-medium">{serverStatus?.hotkey ?? 'Fn'}</span> to start dictating. Your voice will be transcribed and sent to your agent.
                 </p>
               </div>
 
