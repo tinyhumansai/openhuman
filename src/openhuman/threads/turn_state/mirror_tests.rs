@@ -83,6 +83,48 @@ fn args_delta_arriving_before_start_creates_placeholder() {
 }
 
 #[test]
+fn tool_call_started_reuses_args_delta_placeholder_for_same_call_id() {
+    let (_d, mut m) = fresh("t");
+    m.observe(&AgentProgress::IterationStarted {
+        iteration: 1,
+        max_iterations: 25,
+    });
+    // Args delta arrives first, before ToolCallStarted.
+    m.observe(&AgentProgress::ToolCallArgsDelta {
+        call_id: "tc-7".into(),
+        tool_name: String::new(),
+        delta: "{\"q\":1".into(),
+        iteration: 1,
+    });
+    assert_eq!(m.snapshot().tool_timeline.len(), 1);
+
+    // Start lands — must mutate the placeholder, not append a duplicate.
+    m.observe(&AgentProgress::ToolCallStarted {
+        call_id: "tc-7".into(),
+        tool_name: "shell".into(),
+        arguments: serde_json::json!({}),
+        iteration: 1,
+    });
+    let timeline = &m.snapshot().tool_timeline;
+    assert_eq!(timeline.len(), 1, "placeholder must be reused, not duplicated");
+    assert_eq!(timeline[0].id, "tc-7");
+    assert_eq!(timeline[0].name, "shell");
+    assert_eq!(timeline[0].args_buffer.as_deref(), Some("{\"q\":1"));
+
+    // Completion still resolves the same row.
+    m.observe(&AgentProgress::ToolCallCompleted {
+        call_id: "tc-7".into(),
+        tool_name: "shell".into(),
+        success: true,
+        output_chars: 1,
+        elapsed_ms: 5,
+        iteration: 1,
+    });
+    assert_eq!(m.snapshot().tool_timeline.len(), 1);
+    assert_eq!(m.snapshot().tool_timeline[0].status, ToolTimelineStatus::Success);
+}
+
+#[test]
 fn text_delta_appends_streaming_text_without_flushing() {
     let (_d, mut m) = fresh("t");
     assert!(!m.observe(&AgentProgress::TextDelta {

@@ -85,17 +85,34 @@ impl TurnStateMirror {
                 self.state.lifecycle = TurnLifecycle::Streaming;
                 self.state.phase = Some(TurnPhase::ToolUse);
                 self.state.active_tool = Some(tool_name.clone());
-                self.state.tool_timeline.push(ToolTimelineEntry {
-                    id: call_id.clone(),
-                    name: tool_name.clone(),
-                    round: *iteration,
-                    status: ToolTimelineStatus::Running,
-                    args_buffer: None,
-                    display_name: None,
-                    detail: None,
-                    source_tool_name: None,
-                    subagent: None,
-                });
+                // `ToolCallArgsDelta` may have already created a
+                // synthetic placeholder for this `call_id` before the
+                // start event arrived. Reuse it (filling in `name` /
+                // `round`) so the timeline doesn't end up with two
+                // rows for one tool call.
+                if let Some(existing) = self
+                    .state
+                    .tool_timeline
+                    .iter_mut()
+                    .rev()
+                    .find(|e| e.id == *call_id)
+                {
+                    existing.name = tool_name.clone();
+                    existing.round = *iteration;
+                    existing.status = ToolTimelineStatus::Running;
+                } else {
+                    self.state.tool_timeline.push(ToolTimelineEntry {
+                        id: call_id.clone(),
+                        name: tool_name.clone(),
+                        round: *iteration,
+                        status: ToolTimelineStatus::Running,
+                        args_buffer: None,
+                        display_name: None,
+                        detail: None,
+                        source_tool_name: None,
+                        subagent: None,
+                    });
+                }
                 self.flush();
                 true
             }

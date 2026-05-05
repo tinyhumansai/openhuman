@@ -161,6 +161,37 @@ describe('chatRuntimeSlice', () => {
     expect(next.toolTimelineByThread['thread-i']).toEqual([]);
   });
 
+  it('interrupted snapshot must NOT resurrect inferenceStatus / streamingAssistant from stale fields', () => {
+    // Defensive: an interrupted snapshot can carry the iteration /
+    // streaming buffer that was active at the moment the previous
+    // process died. Hydrating those into the live-progress buckets
+    // would render a fake "live" inference UI for a turn nothing is
+    // driving. Lifecycle alone is the truth — buckets stay clear.
+    const snapshot: PersistedTurnState = {
+      threadId: 'thread-stale',
+      requestId: 'req-stale',
+      lifecycle: 'interrupted',
+      iteration: 5,
+      maxIterations: 25,
+      phase: 'tool_use',
+      activeTool: 'shell',
+      streamingText: 'half-finished reply',
+      thinking: 'half-finished thought',
+      toolTimeline: [
+        { id: 'tc-1', name: 'shell', round: 5, status: 'running' },
+      ],
+      startedAt: '2026-05-04T10:00:00Z',
+      updatedAt: '2026-05-04T10:00:05Z',
+    };
+    const next = reducer(undefined, hydrateRuntimeFromSnapshot({ snapshot }));
+    expect(next.inferenceTurnLifecycleByThread['thread-stale']).toBe('interrupted');
+    expect(next.inferenceStatusByThread['thread-stale']).toBeUndefined();
+    expect(next.streamingAssistantByThread['thread-stale']).toBeUndefined();
+    // Tool timeline IS preserved — the UI surfaces it as a frozen
+    // record next to the retry banner.
+    expect(next.toolTimelineByThread['thread-stale']).toHaveLength(1);
+  });
+
   it('clears all runtime buckets for one thread', () => {
     const populated = reducer(
       reducer(

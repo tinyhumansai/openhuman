@@ -432,8 +432,18 @@ pub async fn thread_delete(
     request: DeleteConversationThreadRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<DeleteConversationThreadResponse>>, String> {
     let dir = workspace_dir().await?;
-    let deleted = conversations::ConversationStore::new(dir)
+    let deleted = conversations::ConversationStore::new(dir.clone())
         .delete_thread(&request.thread_id, &request.deleted_at)?;
+    // Drop any persisted in-flight turn snapshot for this thread —
+    // otherwise `threads_turn_state_list` keeps surfacing it (as
+    // `Interrupted` on next restart) for a thread that no longer
+    // exists. Best-effort: a missing snapshot is the common case.
+    if let Err(err) = turn_state::store::delete(dir, &request.thread_id) {
+        log::warn!(
+            "[threads:ops] failed to clear turn snapshot for deleted thread {}: {err}",
+            request.thread_id
+        );
+    }
     web_channel::invalidate_thread_sessions(&request.thread_id).await;
     Ok(envelope(
         DeleteConversationThreadResponse { deleted },
@@ -447,7 +457,27 @@ pub async fn threads_purge(
     _request: EmptyRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<PurgeConversationThreadsResponse>>, String> {
     let dir = workspace_dir().await?;
-    let stats = conversations::purge_threads(dir)?;
+    let stats = conversations::purge_threads(dir.clone())?;
+    // Threads are gone, so any orphan turn snapshots can never be
+    // reattached to a live thread. Wipe them in the same call so
+    // `turn_state_list` returns an empty set after a purge.
+    match turn_state::store::list(dir.clone()) {
+        Ok(snapshots) => {
+            for snapshot in snapshots {
+                if let Err(err) =
+                    turn_state::store::delete(dir.clone(), &snapshot.thread_id)
+                {
+                    log::warn!(
+                        "[threads:ops] failed to clear orphan turn snapshot for {}: {err}",
+                        snapshot.thread_id
+                    );
+                }
+            }
+        }
+        Err(err) => log::warn!(
+            "[threads:ops] failed to enumerate turn snapshots during purge: {err}"
+        ),
+    }
     Ok(envelope(
         PurgeConversationThreadsResponse {
             messages_deleted: stats.message_count,

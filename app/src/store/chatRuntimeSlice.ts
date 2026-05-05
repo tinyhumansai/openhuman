@@ -259,6 +259,19 @@ const chatRuntimeSlice = createSlice({
 
       state.inferenceTurnLifecycleByThread[threadId] = snapshot.lifecycle;
 
+      // Interrupted turns have no live driver — surface only the
+      // lifecycle so the UI renders a retry affordance instead of
+      // resurrecting a fake "live" inference status / streaming buffer
+      // from snapshot fields that may be stale.
+      if (snapshot.lifecycle === 'interrupted') {
+        delete state.inferenceStatusByThread[threadId];
+        delete state.streamingAssistantByThread[threadId];
+        state.toolTimelineByThread[threadId] = snapshot.toolTimeline.map(
+          toolTimelineFromPersisted
+        );
+        return;
+      }
+
       if (snapshot.iteration > 0 && snapshot.maxIterations > 0) {
         state.inferenceStatusByThread[threadId] = {
           phase: snapshot.phase ?? 'thinking',

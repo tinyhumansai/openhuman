@@ -52,6 +52,18 @@ impl TurnStateStore {
             .map_err(|e| format!("fsync turn-state tempfile: {e}"))?;
         tmp.persist(&path)
             .map_err(|e| format!("persist turn-state file {}: {e}", path.display()))?;
+        // Sync the directory entry created by the rename — without
+        // this a crash or power loss between persist() and the next
+        // fs flush can drop the snapshot, defeating the cold-boot
+        // recovery guarantee. Best-effort on platforms where opening
+        // a directory for sync is not supported (Windows). The fsync
+        // failure is logged but not fatal.
+        if let Err(err) = sync_dir(&dir) {
+            log::warn!(
+                "{LOG_PREFIX} failed to fsync {}: {err}",
+                dir.display()
+            );
+        }
         debug!(
             "{LOG_PREFIX} wrote snapshot thread={} lifecycle={:?} iter={}/{} timeline={}",
             state.thread_id,
@@ -160,6 +172,20 @@ impl TurnStateStore {
             SNAPSHOT_EXTENSION
         ))
     }
+}
+
+/// Best-effort `fsync` of a directory entry. On Unix, opens the
+/// directory for read and calls `sync_all` on the file handle. On
+/// Windows this is a no-op — directory fsync is not exposed by the
+/// platform and the rename's durability is provided by NTFS journaling.
+#[cfg(unix)]
+fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    File::open(dir)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_dir(_dir: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 fn read_snapshot(path: &Path) -> Result<TurnState, String> {
