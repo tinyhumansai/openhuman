@@ -15,6 +15,7 @@ mod imessage_scanner;
 mod mascot_native_window;
 mod native_notifications;
 mod notification_settings;
+mod process_kill;
 mod screen_capture;
 mod slack_scanner;
 mod telegram_scanner;
