@@ -1216,6 +1216,7 @@ fn ctx_with_learned(learned: LearnedContextData) -> PromptContext<'static> {
         include_profile: false,
         include_memory_md: false,
         user_identity: None,
+        curated_snapshot: None,
     }
 }
 
