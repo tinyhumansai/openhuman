@@ -124,6 +124,42 @@ impl TurnStateStore {
         Ok(snapshots)
     }
 
+    /// Remove every snapshot file in the turn-state directory,
+    /// regardless of whether the contents are readable. Used by
+    /// `threads_purge` to guarantee no stale or corrupted snapshot
+    /// survives a destructive cleanup — `list()` only returns parseable
+    /// snapshots, so iterating list+delete would silently leave
+    /// half-written or schema-skewed files behind.
+    ///
+    /// Returns the count of files removed. Failures on individual
+    /// entries propagate as the first error encountered (the rest of
+    /// the directory is not touched once an error occurs, so a retry
+    /// can pick up where this left off).
+    pub fn clear_all(&self) -> Result<usize, String> {
+        let _guard = TURN_STATE_LOCK.lock();
+        let dir = self.dir();
+        if !dir.exists() {
+            return Ok(0);
+        }
+        let mut removed = 0usize;
+        for entry in
+            fs::read_dir(&dir).map_err(|e| format!("read turn-state dir {}: {e}", dir.display()))?
+        {
+            let entry = entry.map_err(|e| format!("read turn-state entry: {e}"))?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some(SNAPSHOT_EXTENSION) {
+                continue;
+            }
+            fs::remove_file(&path)
+                .map_err(|e| format!("remove turn-state file {}: {e}", path.display()))?;
+            removed += 1;
+        }
+        if removed > 0 {
+            debug!("{LOG_PREFIX} cleared {removed} snapshots from {}", dir.display());
+        }
+        Ok(removed)
+    }
+
     /// Mark every persisted snapshot as `Interrupted`. Intended to be
     /// invoked from the web-channel provider on startup so the UI can
     /// distinguish stale turns left behind by a previous process from
@@ -211,6 +247,10 @@ pub fn delete(workspace_dir: PathBuf, thread_id: &str) -> Result<bool, String> {
 
 pub fn list(workspace_dir: PathBuf) -> Result<Vec<TurnState>, String> {
     TurnStateStore::new(workspace_dir).list()
+}
+
+pub fn clear_all(workspace_dir: PathBuf) -> Result<usize, String> {
+    TurnStateStore::new(workspace_dir).clear_all()
 }
 
 pub fn mark_all_interrupted(workspace_dir: PathBuf, now_rfc3339: &str) -> Result<usize, String> {

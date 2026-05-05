@@ -105,6 +105,40 @@ fn mark_all_interrupted_promotes_lifecycle_and_clears_active_fields() {
 }
 
 #[test]
+fn clear_all_removes_corrupted_snapshots_too() {
+    use std::io::Write as _;
+    let dir = tempdir().expect("tempdir");
+    let store = TurnStateStore::new(dir.path().to_path_buf());
+    store.put(&sample_state("a")).expect("put a");
+    store.put(&sample_state("b")).expect("put b");
+
+    // Drop a corrupted JSON file alongside — `list()` would skip it,
+    // but a destructive purge must still remove it.
+    let corrupt_path = dir
+        .path()
+        .join("memory")
+        .join("conversations")
+        .join("turn_states")
+        .join("deadbeef.json");
+    let mut f = std::fs::File::create(&corrupt_path).expect("create corrupt");
+    f.write_all(b"{ not valid json").expect("write corrupt");
+    drop(f);
+    assert!(corrupt_path.exists());
+
+    let removed = store.clear_all().expect("clear_all");
+    assert_eq!(removed, 3, "all three snapshots must be removed");
+    assert!(!corrupt_path.exists(), "corrupted snapshot must be cleared");
+    assert!(store.list().expect("list").is_empty());
+}
+
+#[test]
+fn clear_all_on_missing_dir_returns_zero() {
+    let dir = tempdir().expect("tempdir");
+    let store = TurnStateStore::new(dir.path().to_path_buf());
+    assert_eq!(store.clear_all().expect("clear"), 0);
+}
+
+#[test]
 fn put_overwrites_previous_snapshot() {
     let dir = tempdir().expect("tempdir");
     let store = TurnStateStore::new(dir.path().to_path_buf());

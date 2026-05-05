@@ -469,19 +469,13 @@ pub async fn threads_purge(
     let stats = conversations::purge_threads(dir.clone())?;
     // Threads are gone, so any orphan turn snapshots can never be
     // reattached to a live thread. Wipe them in the same call so
-    // `turn_state_list` returns an empty set after a purge. Failures
-    // are surfaced as RPC errors — this is a destructive cleanup
-    // path, callers should not see "purged" while snapshots remain.
-    let snapshots = turn_state::store::list(dir.clone())
-        .map_err(|err| format!("threads purged but turn-snapshot enumeration failed: {err}"))?;
-    for snapshot in snapshots {
-        turn_state::store::delete(dir.clone(), &snapshot.thread_id).map_err(|err| {
-            format!(
-                "threads purged but turn-snapshot cleanup failed for {}: {err}",
-                snapshot.thread_id
-            )
-        })?;
-    }
+    // `turn_state_list` returns an empty set after a purge. Use the
+    // parse-independent `clear_all` so corrupted / half-written
+    // snapshot files (which `list()` would warn-and-skip) are also
+    // removed — a destructive cleanup must not leave behind anything
+    // it failed to deserialize. Failures surface as RPC errors.
+    turn_state::store::clear_all(dir.clone())
+        .map_err(|err| format!("threads purged but turn-snapshot cleanup failed: {err}"))?;
     Ok(envelope(
         PurgeConversationThreadsResponse {
             messages_deleted: stats.message_count,
