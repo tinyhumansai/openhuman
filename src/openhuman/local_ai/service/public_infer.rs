@@ -286,6 +286,36 @@ impl LocalAiService {
             .await
     }
 
+    /// Latency-sensitive sibling of [`Self::inference`] that **bypasses
+    /// the scheduler gate's LLM permit**.
+    ///
+    /// Used by user-arrival paths where the user is staring at the
+    /// output (push-to-talk dictation cleanup, in particular). If we
+    /// queue these behind a long-running memory backfill, the user
+    /// experiences a frozen UI; better to race the call against
+    /// background work and accept the contention than to silently
+    /// degrade interactivity.
+    ///
+    /// Sibling to [`Self::inline_complete_interactive`] for autocomplete.
+    /// Every other entry point (`inference`, `prompt`, `summarize`,
+    /// `inline_complete`, `vision_prompt`, `embed`, `chat_with_history`)
+    /// remains gated.
+    pub(crate) async fn inference_interactive(
+        &self,
+        config: &Config,
+        system: &str,
+        prompt: &str,
+        max_tokens: Option<u32>,
+        no_think: bool,
+    ) -> Result<String, String> {
+        log::trace!("[local_ai] inference_interactive bypasses scheduler_gate permit");
+        self.inference_with_temperature_internal(
+            config, system, prompt, max_tokens, no_think, 0.2, /* allow_empty = */ false,
+            /* gated = */ false,
+        )
+        .await
+    }
+
     pub(crate) async fn inference_with_temperature(
         &self,
         config: &Config,

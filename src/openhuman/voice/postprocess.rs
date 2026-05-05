@@ -112,7 +112,14 @@ pub async fn cleanup_transcription(
 
     // Hard timeout — dictation must feel instant. If the LLM doesn't
     // respond within 3 seconds, fall back to the raw Whisper text.
-    let inference_fut = service.inference(config, CLEANUP_SYSTEM_PROMPT, &prompt, Some(512), true);
+    //
+    // Voice cleanup is a user-arrival path (mic press → STT → cleanup
+    // shown to user). It bypasses the scheduler_gate permit via
+    // `inference_interactive` so a long-running memory backfill does
+    // not push the cleanup past the 3s timeout. Mirrors the autocomplete
+    // bypass pattern (`inline_complete_interactive`).
+    let inference_fut =
+        service.inference_interactive(config, CLEANUP_SYSTEM_PROMPT, &prompt, Some(512), true);
     let result: Result<String, String> =
         match tokio::time::timeout(std::time::Duration::from_secs(3), inference_fut).await {
             Ok(r) => r,
