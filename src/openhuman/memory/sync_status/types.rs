@@ -78,6 +78,12 @@ pub struct MemorySyncStatus {
     pub freshness: FreshnessLabel,
 }
 
+/// Wire shape of `openhuman.memory_sync_status_list`.
+#[derive(Clone, Debug, Serialize)]
+pub struct StatusListResponse {
+    pub statuses: Vec<MemorySyncStatus>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

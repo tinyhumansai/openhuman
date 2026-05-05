@@ -51,18 +51,14 @@ export async function memorySyncStatusList(): Promise<MemorySyncStatus[]> {
   log('memory_sync_status_list: calling core RPC');
   let resp: StatusListResponse;
   try {
-    resp = await callCoreRpc<StatusListResponse>({
-      method: 'openhuman.memory_sync_status_list',
-    });
+    resp = await callCoreRpc<StatusListResponse>({ method: 'openhuman.memory_sync_status_list' });
   } catch (err) {
     errLog('memory_sync_status_list: RPC failed: %O', err);
     throw err;
   }
   if (!resp || !Array.isArray(resp.statuses)) {
     errLog('memory_sync_status_list: malformed response (missing statuses[]): %O', resp);
-    throw new Error(
-      'Invalid response from openhuman.memory_sync_status_list: missing statuses[]',
-    );
+    throw new Error('Invalid response from openhuman.memory_sync_status_list: missing statuses[]');
   }
   log('memory_sync_status_list: received %d row(s)', resp.statuses.length);
   return resp.statuses;

@@ -24,12 +24,11 @@
 //! deliberately, since they shouldn't pollute the active wave's
 //! progress signal.
 
-use serde_json::{json, Map, Value};
-
-use crate::openhuman::config::ops::load_config_with_timeout;
+use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::store::with_connection;
+use crate::rpc::RpcOutcome;
 
-use super::types::{FreshnessLabel, MemorySyncStatus};
+use super::types::{FreshnessLabel, MemorySyncStatus, StatusListResponse};
 
 /// Sliding window used to identify a "current sync wave". Chunks
 /// within this many ms of `MAX(created_at_ms)` for a provider count
@@ -39,11 +38,10 @@ const WAVE_WINDOW_MS: i64 = 10 * 60 * 1000;
 /// `openhuman.memory_sync_status_list` — one row per provider that
 /// has chunks, with lifetime + active-wave counters and a freshness
 /// label.
-pub async fn handle_status_list(_params: Map<String, Value>) -> Result<Value, String> {
+pub async fn status_list_rpc(config: &Config) -> Result<RpcOutcome<StatusListResponse>, String> {
     tracing::debug!("[memory_sync_status][rpc] status_list");
 
-    let config = load_config_with_timeout().await?;
-
+    let config = config.clone();
     let statuses: Vec<MemorySyncStatus> = tokio::task::spawn_blocking(move || {
         with_connection(&config, |conn| -> anyhow::Result<Vec<MemorySyncStatus>> {
             // Provider parsed from `source_id` prefix (substring before
@@ -122,9 +120,10 @@ pub async fn handle_status_list(_params: Map<String, Value>) -> Result<Value, St
     .map_err(|e| format!("spawn_blocking join failed: {e}"))?
     .map_err(|e| format!("memory_tree DB access failed: {e:#}"))?;
 
-    tracing::debug!(
-        rows = statuses.len(),
-        "[memory_sync_status][rpc] status_list returning"
+    let log = format!(
+        "[memory_sync_status][rpc] status_list returning {} row(s)",
+        statuses.len()
     );
-    Ok(json!({ "statuses": statuses }))
+    tracing::debug!("{log}");
+    Ok(RpcOutcome::single_log(StatusListResponse { statuses }, log))
 }
