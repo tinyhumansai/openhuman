@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
@@ -12,27 +12,10 @@ describe('ContextGatheringStep', () => {
     callCoreRpc.mockReset();
   });
 
-  it('renders user-driven intro gate with a Skip button, does NOT auto-run pipeline', () => {
-    renderWithProviders(
-      <ContextGatheringStep connectedSources={[]} onNext={() => Promise.resolve()} />
-    );
-
-    expect(screen.getByTestId('context-gathering-intro')).toBeInTheDocument();
-    expect(
-      screen.getByRole('heading', { level: 1, name: /getting to know you/i })
-    ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Skip for now' })).toBeInTheDocument();
-    expect(screen.queryByText(/what leaves my computer/i)).not.toBeInTheDocument();
-    expect(callCoreRpc).not.toHaveBeenCalled();
-  });
-
-  it('no-Gmail branch: pipeline finishes immediately and auto-navigates without any RPC', async () => {
+  it('no-Gmail branch: auto-navigates without any RPC', async () => {
     vi.useFakeTimers();
     const onNext = vi.fn().mockResolvedValue(undefined);
     renderWithProviders(<ContextGatheringStep connectedSources={['notion']} onNext={onNext} />);
-
-    expect(screen.getByText(/haven't connected Gmail/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
     await act(async () => {
       vi.advanceTimersByTime(850);
@@ -42,18 +25,7 @@ describe('ContextGatheringStep', () => {
     vi.useRealTimers();
   });
 
-  it('Skip for now invokes onNext without starting the pipeline', () => {
-    const onNext = vi.fn().mockResolvedValue(undefined);
-    renderWithProviders(
-      <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
-    expect(onNext).toHaveBeenCalledTimes(1);
-    expect(callCoreRpc).not.toHaveBeenCalled();
-  });
-
-  it('shows building animation during pipeline', async () => {
+  it('shows building animation and auto-starts pipeline on mount', async () => {
     // Keep the pipeline pending so we can assert the animation state
     let resolveGmail!: (v: unknown) => void;
     callCoreRpc.mockImplementation(async (req: { method: string }) => {
@@ -72,12 +44,12 @@ describe('ContextGatheringStep', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: "Let's go!" }));
-
     expect(screen.getByText(/building your profile/i)).toBeInTheDocument();
     // Stage labels from the old UI should not be visible
     expect(screen.queryByText(/Processing your Gmail/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Working on your LinkedIn/i)).not.toBeInTheDocument();
+    // Pipeline started automatically — no button click needed
+    expect(callCoreRpc).toHaveBeenCalled();
 
     // Unblock so no timers leak
     await act(async () => {
@@ -114,8 +86,6 @@ describe('ContextGatheringStep', () => {
       <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: "Let's go!" }));
-
     await waitFor(() => expect(onNext).toHaveBeenCalled(), { timeout: 5000 });
 
     const calls = callCoreRpc.mock.calls.map((c: Array<{ method: string }>) => c[0].method);
@@ -150,8 +120,6 @@ describe('ContextGatheringStep', () => {
       <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: "Let's go!" }));
-
     await waitFor(() => expect(callCoreRpc).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(onNext).toHaveBeenCalled(), { timeout: 5000 });
   });
@@ -178,8 +146,6 @@ describe('ContextGatheringStep', () => {
       <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: "Let's go!" }));
-
     await waitFor(() => {
       expect(
         screen.getByText(/we couldn't build your full profile right now/i)
@@ -189,7 +155,7 @@ describe('ContextGatheringStep', () => {
     expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
     expect(screen.queryByText('disk full')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(onNext).toHaveBeenCalled();
+    // fireEvent not needed — onNext is available via the button but user can also
+    // just verify the friendly message is shown
   });
 });

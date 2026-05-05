@@ -15,7 +15,6 @@
  */
 import { useEffect, useRef, useState } from 'react';
 
-import Button from '../../../components/ui/Button';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 
@@ -153,7 +152,6 @@ const ContextGatheringStep = ({
     Object.fromEntries(STAGES.map(s => [s.id, 'pending' as StageStatus]))
   );
   const [finished, setFinished] = useState(false);
-  const [started, setStarted] = useState(false);
   const [hasError, setHasError] = useState(false);
   const ranRef = useRef(false);
 
@@ -162,6 +160,21 @@ const ContextGatheringStep = ({
   const setStage = (id: Stage['id'], status: StageStatus) => {
     stageStatusesRef.current = { ...stageStatusesRef.current, [id]: status };
   };
+
+  // Auto-start pipeline on mount
+  useEffect(() => {
+    if (ranRef.current) return;
+    ranRef.current = true;
+
+    if (!hasGmail) {
+      for (const s of STAGES) setStage(s.id, 'skipped');
+      setFinished(true);
+      return;
+    }
+
+    void runPipeline();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-navigate on successful completion
   useEffect(() => {
@@ -175,20 +188,6 @@ const ContextGatheringStep = ({
       return () => clearTimeout(t);
     }
   }, [finished, hasError, onNext]);
-
-  const handleStart = () => {
-    if (ranRef.current) return;
-    ranRef.current = true;
-    setStarted(true);
-
-    if (!hasGmail) {
-      for (const s of STAGES) setStage(s.id, 'skipped');
-      setFinished(true);
-      return;
-    }
-
-    void runPipeline();
-  };
 
   async function runPipeline() {
     console.debug('[onboarding:context] runPipeline started');
@@ -244,38 +243,6 @@ const ContextGatheringStep = ({
     }
 
     setFinished(true);
-  }
-
-  if (!started) {
-    return (
-      <div
-        className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up"
-        data-testid="context-gathering-intro">
-        <div className="text-center mb-5">
-          <h1 className="text-xl font-bold mb-2 text-stone-900">Getting To Know You</h1>
-          <p className="text-stone-500 text-sm leading-relaxed max-w-sm mx-auto">
-            I'm going to build a short profile about you so the first conversation is warm.
-          </p>
-        </div>
-        <div className="rounded-xl border border-stone-100 bg-stone-50 p-4 mb-5 text-sm text-stone-600 leading-relaxed">
-          {hasGmail ? (
-            <>
-              Using your <span className="font-medium text-stone-900">connected Gmail</span> we will
-              build a short profile about you. Everything happens in your device itself for maximum
-              privacy.
-            </>
-          ) : (
-            <>You haven't connected Gmail. Nothing to read. You can skip this step.</>
-          )}
-        </div>
-        <OnboardingNextButton label={hasGmail ? "Let's go!" : 'Continue'} onClick={handleStart} />
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <Button variant="ghost" size="sm" onClick={() => void onNext()}>
-            Skip for now
-          </Button>
-        </div>
-      </div>
-    );
   }
 
   if (finished && hasError) {
