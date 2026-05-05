@@ -12,6 +12,7 @@ mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+mod native_notifications;
 mod notification_settings;
 mod screen_capture;
 mod slack_scanner;
@@ -799,128 +800,6 @@ fn mascot_native_window_is_open() -> bool {
 #[cfg(not(target_os = "macos"))]
 fn mascot_native_window_is_open() -> bool {
     false
-}
-
-/// Tauri command: fire a native OS notification from the frontend. Used by
-/// the in-app notification center to banner events (agent completions,
-/// connection drops, etc.) when the window is not focused.
-#[tauri::command]
-fn show_native_notification(
-    app: AppHandle<AppRuntime>,
-    title: String,
-    body: String,
-    tag: Option<String>,
-) -> Result<(), String> {
-    use tauri_plugin_notification::NotificationExt;
-    let permission_state = app
-        .notification()
-        .permission_state()
-        .map(|s| format!("{s:?}"))
-        .unwrap_or_else(|e| format!("err({e})"));
-    log::debug!(
-        "[notify] show_native_notification title_chars={} body_chars={} tag={:?} permission={permission_state}",
-        title.len(),
-        body.len(),
-        tag
-    );
-    let mut builder = app.notification().builder().title(&title);
-    if !body.is_empty() {
-        builder = builder.body(&body);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder.sound("default");
-    }
-    builder
-        .show()
-        .map_err(|e| format!("notification show failed: {e}"))
-}
-
-#[cfg(target_os = "macos")]
-fn macos_notification_permission_state_inner() -> Result<String, String> {
-    use std::ptr::NonNull;
-    use std::sync::mpsc;
-
-    use block2::RcBlock;
-    use objc2_user_notifications::{
-        UNAuthorizationStatus, UNNotificationSettings, UNUserNotificationCenter,
-    };
-
-    let center = UNUserNotificationCenter::currentNotificationCenter();
-    let (tx, rx) = mpsc::channel::<String>();
-    let completion = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
-        let status = unsafe { settings.as_ref().authorizationStatus() };
-        let state = if status == UNAuthorizationStatus::Authorized {
-            "granted"
-        } else if status == UNAuthorizationStatus::Denied {
-            "denied"
-        } else if status == UNAuthorizationStatus::NotDetermined {
-            "not_determined"
-        } else if status == UNAuthorizationStatus::Provisional {
-            "provisional"
-        } else if status == UNAuthorizationStatus::Ephemeral {
-            "ephemeral"
-        } else {
-            "unknown"
-        };
-        let _ = tx.send(state.to_string());
-    });
-    center.getNotificationSettingsWithCompletionHandler(&completion);
-    rx.recv_timeout(std::time::Duration::from_secs(2))
-        .map_err(|_| "timed out waiting for macOS notification settings".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn macos_notification_permission_request_inner() -> Result<String, String> {
-    use block2::RcBlock;
-    use objc2::runtime::Bool;
-    use objc2_foundation::NSError;
-    use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
-    use std::sync::mpsc;
-
-    let center = UNUserNotificationCenter::currentNotificationCenter();
-    let (tx, rx) = mpsc::channel::<bool>();
-    let options = UNAuthorizationOptions::Alert
-        | UNAuthorizationOptions::Badge
-        | UNAuthorizationOptions::Sound;
-    let completion = RcBlock::new(move |granted: Bool, _error: *mut NSError| {
-        let _ = tx.send(granted.as_bool());
-    });
-    center.requestAuthorizationWithOptions_completionHandler(options, &completion);
-    let granted = rx
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .map_err(|_| "timed out waiting for macOS permission prompt result".to_string())?;
-    if granted {
-        Ok("granted".to_string())
-    } else {
-        // If the user denies or notifications are disabled for the app,
-        // macOS reports `false` here.
-        Ok("denied".to_string())
-    }
-}
-
-#[tauri::command]
-fn notification_permission_state() -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    {
-        return macos_notification_permission_state_inner();
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok("granted".to_string())
-    }
-}
-
-#[tauri::command]
-fn notification_permission_request() -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    {
-        return macos_notification_permission_request_inner();
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok("granted".to_string())
-    }
 }
 
 fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
@@ -1773,10 +1652,10 @@ pub fn run() {
             screen_capture::screen_share_begin_session,
             screen_capture::screen_share_thumbnail,
             screen_capture::screen_share_finalize_session,
-            notification_permission_state,
-            notification_permission_request,
+            native_notifications::notification_permission_state,
+            native_notifications::notification_permission_request,
             activate_main_window,
-            show_native_notification,
+            native_notifications::show_native_notification,
             mascot_window_show,
             mascot_window_hide
         ])
