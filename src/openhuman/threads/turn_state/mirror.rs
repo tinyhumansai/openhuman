@@ -100,9 +100,7 @@ impl TurnStateMirror {
                 true
             }
             AgentProgress::ToolCallCompleted {
-                call_id,
-                success,
-                ..
+                call_id, success, ..
             } => {
                 if let Some(entry) = self
                     .state

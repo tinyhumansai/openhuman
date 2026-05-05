@@ -1070,8 +1070,7 @@ async fn json_rpc_thread_turn_state_lifecycle() {
         25,
         chrono::Utc::now().to_rfc3339(),
     );
-    state.lifecycle =
-        openhuman_core::openhuman::threads::turn_state::TurnLifecycle::Streaming;
+    state.lifecycle = openhuman_core::openhuman::threads::turn_state::TurnLifecycle::Streaming;
     state.iteration = 2;
     state.streaming_text = "partial".into();
     openhuman_core::openhuman::threads::turn_state::store::put(workspace_dir.clone(), &state)

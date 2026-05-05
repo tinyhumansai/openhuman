@@ -921,12 +921,12 @@ pub async fn bootstrap_skill_runtime() {
             &now,
         ) {
             Ok(0) => {}
-            Ok(count) => log::info!(
-                "[runtime] marked {count} stale turn snapshot(s) as interrupted"
-            ),
-            Err(err) => log::warn!(
-                "[runtime] failed to mark stale turn snapshots interrupted: {err}"
-            ),
+            Ok(count) => {
+                log::info!("[runtime] marked {count} stale turn snapshot(s) as interrupted")
+            }
+            Err(err) => {
+                log::warn!("[runtime] failed to mark stale turn snapshots interrupted: {err}")
+            }
         }
     }
 

@@ -105,13 +105,7 @@ describe('chatRuntimeSlice', () => {
       streamingText: 'partial reply',
       thinking: 'reasoning…',
       toolTimeline: [
-        {
-          id: 'tc-1',
-          name: 'shell',
-          round: 3,
-          status: 'running',
-          argsBuffer: '{"cmd":"ls"}',
-        },
+        { id: 'tc-1', name: 'shell', round: 3, status: 'running', argsBuffer: '{"cmd":"ls"}' },
       ],
       startedAt: '2026-05-04T10:00:00Z',
       updatedAt: '2026-05-04T10:00:05Z',

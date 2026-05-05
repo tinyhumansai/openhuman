@@ -16,14 +16,14 @@ use crate::openhuman::memory::{
     UpsertConversationThreadRequest,
 };
 use crate::openhuman::providers::{self, ProviderRuntimeOptions};
-use crate::openhuman::threads::turn_state::{
-    self, ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateRequest, GetTurnStateResponse,
-    ListTurnStatesResponse,
-};
 use crate::openhuman::threads::title::{
     build_title_prompt, collapse_whitespace, is_auto_generated_thread_title,
     sanitize_generated_title, title_log_fingerprint, THREAD_TITLE_LOG_PREFIX,
     THREAD_TITLE_MODEL_HINT, THREAD_TITLE_SYSTEM_PROMPT,
+};
+use crate::openhuman::threads::turn_state::{
+    self, ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateRequest, GetTurnStateResponse,
+    ListTurnStatesResponse,
 };
 use crate::rpc::RpcOutcome;
 use serde::Serialize;

@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::openhuman::threads::turn_state::types::{
-    TurnLifecycle, TurnState, ToolTimelineEntry, ToolTimelineStatus,
+    ToolTimelineEntry, ToolTimelineStatus, TurnLifecycle, TurnState,
 };
 use tempfile::tempdir;
 

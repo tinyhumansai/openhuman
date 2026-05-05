@@ -761,10 +761,7 @@ fn seed_resume_from_messages_primes_cached_transcript() {
         ("agent".to_string(), "$80,000".to_string()),
         // Trailing user message that the caller is about to pass to
         // run_single — must be deduped from the cached prefix.
-        (
-            "user".to_string(),
-            "what did i just ask".to_string(),
-        ),
+        ("user".to_string(), "what did i just ask".to_string()),
     ];
     agent
         .seed_resume_from_messages(prior, "what did i just ask")
@@ -795,10 +792,7 @@ fn seed_resume_from_messages_is_noop_on_warm_agent() {
         crate::openhuman::providers::ChatMessage::user("hi"),
     ]);
     agent
-        .seed_resume_from_messages(
-            vec![("user".into(), "different".into())],
-            "different",
-        )
+        .seed_resume_from_messages(vec![("user".into(), "different".into())], "different")
         .expect("seed");
     let cached = agent
         .cached_transcript_messages

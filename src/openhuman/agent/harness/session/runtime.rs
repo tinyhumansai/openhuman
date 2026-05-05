@@ -285,7 +285,9 @@ impl Agent {
 
         let mut cached: Vec<crate::openhuman::providers::ChatMessage> =
             Vec::with_capacity(prior.len() + 1);
-        cached.push(crate::openhuman::providers::ChatMessage::system(system_prompt));
+        cached.push(crate::openhuman::providers::ChatMessage::system(
+            system_prompt,
+        ));
         for (role, content) in prior {
             let chat = match role.as_str() {
                 "user" => crate::openhuman::providers::ChatMessage::user(content),

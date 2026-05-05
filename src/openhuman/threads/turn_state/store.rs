@@ -43,8 +43,8 @@ impl TurnStateStore {
         let path = self.snapshot_path(&state.thread_id);
         let mut tmp = NamedTempFile::new_in(&dir)
             .map_err(|e| format!("create turn-state tempfile in {}: {e}", dir.display()))?;
-        let bytes = serde_json::to_vec_pretty(state)
-            .map_err(|e| format!("serialize turn state: {e}"))?;
+        let bytes =
+            serde_json::to_vec_pretty(state).map_err(|e| format!("serialize turn state: {e}"))?;
         tmp.write_all(&bytes)
             .map_err(|e| format!("write turn-state tempfile: {e}"))?;
         tmp.as_file()
@@ -96,11 +96,10 @@ impl TurnStateStore {
             return Ok(Vec::new());
         }
         let mut snapshots = Vec::new();
-        for entry in fs::read_dir(&dir)
-            .map_err(|e| format!("read turn-state dir {}: {e}", dir.display()))?
+        for entry in
+            fs::read_dir(&dir).map_err(|e| format!("read turn-state dir {}: {e}", dir.display()))?
         {
-            let entry =
-                entry.map_err(|e| format!("read turn-state entry: {e}"))?;
+            let entry = entry.map_err(|e| format!("read turn-state entry: {e}"))?;
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some(SNAPSHOT_EXTENSION) {
                 continue;
@@ -135,9 +134,7 @@ impl TurnStateStore {
             count += 1;
         }
         if count > 0 {
-            debug!(
-                "{LOG_PREFIX} marked {count} snapshots as interrupted on startup"
-            );
+            debug!("{LOG_PREFIX} marked {count} snapshots as interrupted on startup");
         }
         Ok(count)
     }
@@ -171,8 +168,7 @@ fn read_snapshot(path: &Path) -> Result<TurnState, String> {
     let mut buf = String::new();
     file.read_to_string(&mut buf)
         .map_err(|e| format!("read turn-state {}: {e}", path.display()))?;
-    serde_json::from_str(&buf)
-        .map_err(|e| format!("parse turn-state {}: {e}", path.display()))
+    serde_json::from_str(&buf).map_err(|e| format!("parse turn-state {}: {e}", path.display()))
 }
 
 // Free-function wrappers mirroring `memory::conversations::store` so callers
@@ -194,10 +190,7 @@ pub fn list(workspace_dir: PathBuf) -> Result<Vec<TurnState>, String> {
     TurnStateStore::new(workspace_dir).list()
 }
 
-pub fn mark_all_interrupted(
-    workspace_dir: PathBuf,
-    now_rfc3339: &str,
-) -> Result<usize, String> {
+pub fn mark_all_interrupted(workspace_dir: PathBuf, now_rfc3339: &str) -> Result<usize, String> {
     TurnStateStore::new(workspace_dir).mark_all_interrupted(now_rfc3339)
 }
 

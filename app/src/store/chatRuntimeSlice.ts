@@ -8,7 +8,6 @@ import type {
   PersistedToolTimelineEntry,
   PersistedTurnState,
 } from '../types/turnState';
-
 import { resetUserScopedState } from './resetActions';
 
 const turnStateLog = debug('chatRuntime.turnState');
@@ -139,9 +138,7 @@ const initialState: ChatRuntimeState = {
   sessionTokenUsage: { inputTokens: 0, outputTokens: 0, turns: 0, lastUpdated: 0 },
 };
 
-function subagentToolCallFromPersisted(
-  call: PersistedSubagentToolCall
-): SubagentToolCallEntry {
+function subagentToolCallFromPersisted(call: PersistedSubagentToolCall): SubagentToolCallEntry {
   return {
     callId: call.callId,
     toolName: call.toolName,
@@ -326,8 +323,13 @@ export const fetchAndHydrateTurnState = createAsyncThunk(
     try {
       const snapshot = await threadApi.getTurnState(threadId);
       if (snapshot) {
-        turnStateLog('hydrated thread=%s lifecycle=%s iter=%d/%d',
-          threadId, snapshot.lifecycle, snapshot.iteration, snapshot.maxIterations);
+        turnStateLog(
+          'hydrated thread=%s lifecycle=%s iter=%d/%d',
+          threadId,
+          snapshot.lifecycle,
+          snapshot.iteration,
+          snapshot.maxIterations
+        );
         dispatch(hydrateRuntimeFromSnapshot({ snapshot }));
       } else {
         turnStateLog('no snapshot thread=%s', threadId);
