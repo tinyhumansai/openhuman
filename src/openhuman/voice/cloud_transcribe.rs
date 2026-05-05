@@ -138,7 +138,10 @@ pub async fn transcribe_cloud(
         .map_err(|e| format!("backend transcription request failed: {e}"))?;
 
     let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("read transcription response failed: {e}"))?;
     let upload_ms = upload_started.elapsed().as_millis();
     debug!(
         "{LOG_PREFIX} backend responded status={} upload_round_trip_ms={} body_bytes={}",
@@ -154,10 +157,13 @@ pub async fn transcribe_cloud(
 
     let parsed: serde_json::Value = serde_json::from_str(&body)
         .map_err(|e| format!("parse transcription response failed: {e}; body={body}"))?;
+    // A 200 with no string `text` field is a backend contract break — surface
+    // it as an error rather than swallowing it as a successful empty
+    // transcription, which would look to the caller like "no speech detected".
     let text = parsed
         .get("text")
         .and_then(|v| v.as_str())
-        .unwrap_or("")
+        .ok_or_else(|| format!("transcription response missing string `text`: {body}"))?
         .trim()
         .to_string();
 

@@ -1595,7 +1595,10 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
 
           {composer === 'mic-cloud' ? (
             <MicCloudComposer
-              disabled={composerInteractionBlocked}
+              // Without `!selectedThreadId`, a mic submit before a thread is
+              // ready hits `handleSendMessage`'s early return and the
+              // transcript is silently dropped — the user spoke into the void.
+              disabled={composerInteractionBlocked || !selectedThreadId}
               onSubmit={text => handleSendMessage(text)}
               onError={message => setSendError(chatSendError('voice_transcription', message))}
             />

@@ -61,6 +61,10 @@ export function MicCloudComposer({
   // don't fire setState/onSubmit on a dead component — without this, the
   // user navigating away mid-recording can dispatch an unintended message.
   const disposedRef = useRef(false);
+  // Guards against rapid re-taps during the `getUserMedia` permission prompt.
+  // Without this, two awaited `getUserMedia` calls can resolve back-to-back
+  // and leave one of the granted streams orphaned (mic indicator stuck on).
+  const startInFlightRef = useRef(false);
 
   // If the component unmounts mid-record, release the mic so the OS indicator
   // doesn't get stuck on.
@@ -95,11 +99,12 @@ export function MicCloudComposer({
   }
 
   async function startRecording() {
-    if (state !== 'idle' || disabled) return;
+    if (state !== 'idle' || disabled || startInFlightRef.current) return;
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       onError?.('Microphone access is not available in this runtime.');
       return;
     }
+    startInFlightRef.current = true;
 
     let stream: MediaStream;
     try {
@@ -119,9 +124,18 @@ export function MicCloudComposer({
         },
       });
     } catch (err) {
+      startInFlightRef.current = false;
       const msg = err instanceof Error ? err.message : String(err);
       composerLog('getUserMedia rejected: %s', msg);
       onError?.(`Microphone permission denied: ${msg}`);
+      return;
+    }
+
+    // Component unmounted while waiting for permission — release the granted
+    // stream instead of leaking it (mic indicator would otherwise stay on).
+    if (disposedRef.current) {
+      startInFlightRef.current = false;
+      stream.getTracks().forEach(t => t.stop());
       return;
     }
 
@@ -136,6 +150,7 @@ export function MicCloudComposer({
       recorder = new MediaRecorder(stream, recorderOptions);
     } catch (err) {
       stream.getTracks().forEach(t => t.stop());
+      startInFlightRef.current = false;
       const msg = err instanceof Error ? err.message : String(err);
       onError?.(`Failed to start recorder: ${msg}`);
       return;
@@ -153,6 +168,7 @@ export function MicCloudComposer({
     recorderRef.current = recorder;
     recorder.start();
     setState('recording');
+    startInFlightRef.current = false;
     composerLog('recording started mime=%s', recorder.mimeType || '(default)');
   }
 
