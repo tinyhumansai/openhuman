@@ -54,4 +54,42 @@ describe('transcribeCloud', () => {
     const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
     expect(await transcribeCloud(blob)).toBe('spacey');
   });
+
+  // Per-mime extension heuristic — the upstream STT provider sniffs the file
+  // extension when the container isn't unambiguous, so each branch matters.
+  it.each([
+    ['audio/webm', 'audio.webm'],
+    ['video/webm', 'audio.webm'],
+    ['audio/ogg', 'audio.ogg'],
+    ['audio/mpeg', 'audio.mp3'],
+    ['audio/wav', 'audio.wav'],
+    ['audio/x-wav', 'audio.wav'],
+    ['audio/mp4', 'audio.m4a'],
+    ['audio/x-m4a', 'audio.m4a'],
+    ['audio/flac', 'audio.flac'],
+    ['application/octet-stream', 'audio.webm'],
+  ])('derives file_name for mime %s -> %s', async (mime, expected) => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockResolvedValueOnce({ text: 'ok' });
+    const blob = new Blob([new Uint8Array([1])], { type: mime });
+    await transcribeCloud(blob);
+    const params = mock.mock.calls[0][0].params as Record<string, unknown>;
+    expect(params.file_name).toBe(expected);
+  });
+
+  it('honors an explicit fileName override', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockResolvedValueOnce({ text: 'ok' });
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    await transcribeCloud(blob, { fileName: 'custom-clip.webm', mimeType: 'audio/webm' });
+    const params = mock.mock.calls[0][0].params as Record<string, unknown>;
+    expect(params.file_name).toBe('custom-clip.webm');
+  });
+
+  it('returns empty string when backend response has no text field', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockResolvedValueOnce({});
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    expect(await transcribeCloud(blob)).toBe('');
+  });
 });
