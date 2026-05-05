@@ -102,6 +102,11 @@ impl Tool for LspTool {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Mutex;
+
+    /// Serialize env-var mutation across tests in this module so they
+    /// don't race each other under Rust's default parallel runner.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn lsp_name_and_schema() {
@@ -130,8 +135,7 @@ mod tests {
 
     #[test]
     fn lsp_capability_gate_off_by_default() {
-        // Env may already be set in the test process by other tests; this
-        // is a contract test about the parser, not about CI environment.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var(LSP_ENABLED_ENV).ok();
         std::env::remove_var(LSP_ENABLED_ENV);
         assert!(!lsp_capability_enabled());
@@ -142,6 +146,7 @@ mod tests {
 
     #[test]
     fn lsp_capability_gate_accepts_truthy_values() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var(LSP_ENABLED_ENV).ok();
         for v in ["1", "true", "TRUE", "yes", "on"] {
             std::env::set_var(LSP_ENABLED_ENV, v);

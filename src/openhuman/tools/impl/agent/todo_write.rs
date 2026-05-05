@@ -45,6 +45,16 @@ impl TodoStore {
     }
 }
 
+/// Process-global todo store. Returning the same `Arc` across calls
+/// keeps todo state alive across registry rebuilds (the agent loop
+/// can request a fresh tool registry without losing the running
+/// todo list). Per-session scoping is a follow-up.
+pub fn global_todo_store() -> Arc<TodoStore> {
+    use once_cell::sync::OnceCell;
+    static STORE: OnceCell<Arc<TodoStore>> = OnceCell::new();
+    STORE.get_or_init(|| Arc::new(TodoStore::new())).clone()
+}
+
 pub struct TodoWriteTool {
     store: Arc<TodoStore>,
 }

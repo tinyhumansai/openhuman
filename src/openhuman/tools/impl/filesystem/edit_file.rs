@@ -103,6 +103,19 @@ impl Tool for EditFileTool {
         }
 
         let full = self.security.workspace_dir.join(path);
+
+        // Symlink check must happen on the *unresolved* path —
+        // `canonicalize` resolves symlinks, so checking after that point
+        // would always see the link's final target.
+        if let Ok(meta) = tokio::fs::symlink_metadata(&full).await {
+            if meta.file_type().is_symlink() {
+                return Ok(ToolResult::error(format!(
+                    "Refusing to edit through symlink: {}",
+                    full.display()
+                )));
+            }
+        }
+
         let resolved = match tokio::fs::canonicalize(&full).await {
             Ok(p) => p,
             Err(e) => return Ok(ToolResult::error(format!("Failed to resolve path: {e}"))),
@@ -114,13 +127,7 @@ impl Tool for EditFileTool {
             )));
         }
 
-        if let Ok(meta) = tokio::fs::symlink_metadata(&resolved).await {
-            if meta.file_type().is_symlink() {
-                return Ok(ToolResult::error(format!(
-                    "Refusing to edit through symlink: {}",
-                    resolved.display()
-                )));
-            }
+        if let Ok(meta) = tokio::fs::metadata(&resolved).await {
             if meta.len() > MAX_FILE_BYTES {
                 return Ok(ToolResult::error(format!(
                     "File too large: {} bytes (limit: {MAX_FILE_BYTES} bytes)",

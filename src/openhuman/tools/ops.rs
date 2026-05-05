@@ -120,7 +120,7 @@ pub fn all_tools_with_runtime(
         // `plan_exit` marker that hands a plan-mode pass off to a
         // build-mode pass. The plan→build mode switch itself is a
         // follow-up; the tool emits a stable marker today.
-        Box::new(TodoWriteTool::new(Arc::new(TodoStore::new()))),
+        Box::new(TodoWriteTool::new(global_todo_store())),
         Box::new(PlanExitTool::new()),
         Box::new(CheckOnboardingStatusTool::new()),
         Box::new(CompleteOnboardingTool::new()),

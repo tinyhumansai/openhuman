@@ -140,6 +140,19 @@ impl Tool for ApplyPatchTool {
         for edit in &parsed {
             if !buffers.contains_key(&edit.path) {
                 let full = self.security.workspace_dir.join(&edit.path);
+
+                // Symlink check must happen on the *unresolved* path —
+                // canonicalize resolves symlinks, so a check after that
+                // point would never see the link.
+                if let Ok(meta) = tokio::fs::symlink_metadata(&full).await {
+                    if meta.file_type().is_symlink() {
+                        return Ok(ToolResult::error(format!(
+                            "edit[{}]: refusing to edit through symlink",
+                            edit.index
+                        )));
+                    }
+                }
+
                 let resolved = match tokio::fs::canonicalize(&full).await {
                     Ok(p) => p,
                     Err(e) => {
@@ -155,13 +168,7 @@ impl Tool for ApplyPatchTool {
                         edit.index
                     )));
                 }
-                if let Ok(meta) = tokio::fs::symlink_metadata(&resolved).await {
-                    if meta.file_type().is_symlink() {
-                        return Ok(ToolResult::error(format!(
-                            "edit[{}]: refusing to edit through symlink",
-                            edit.index
-                        )));
-                    }
+                if let Ok(meta) = tokio::fs::metadata(&resolved).await {
                     if meta.len() > MAX_FILE_BYTES {
                         return Ok(ToolResult::error(format!(
                             "edit[{}]: file too large ({} bytes)",
@@ -183,6 +190,7 @@ impl Tool for ApplyPatchTool {
                     edit.path.clone(),
                     FileBuffer {
                         resolved,
+                        original: contents.clone(),
                         contents,
                         edit_count: 0,
                     },
@@ -211,15 +219,25 @@ impl Tool for ApplyPatchTool {
             buf.edit_count += count;
         }
 
-        // All edits validated — write each file once.
+        // Best-effort atomic write across files. We cannot get true
+        // multi-file atomicity without filesystem-level transactions,
+        // but if the i-th write fails we attempt to restore originals
+        // for the i-1 already-written files from the in-memory snapshot.
         let mut summary: Vec<String> = Vec::new();
+        let mut written: Vec<&FileBuffer> = Vec::new();
         for (path, buf) in &buffers {
             if let Err(e) = tokio::fs::write(&buf.resolved, &buf.contents).await {
+                let restore_errors = restore_originals(&written).await;
+                let suffix = if restore_errors.is_empty() {
+                    "; previously-written files restored from snapshot".to_string()
+                } else {
+                    format!("; restore failed for: {}", restore_errors.join(", "))
+                };
                 return Ok(ToolResult::error(format!(
-                    "Failed to write {}: {e} (some files may have been modified before this error)",
-                    path
+                    "Failed to write {path}: {e}{suffix}"
                 )));
             }
+            written.push(buf);
             summary.push(format!("{path}: {} replacement(s)", buf.edit_count));
         }
         summary.sort();
@@ -232,6 +250,16 @@ impl Tool for ApplyPatchTool {
     }
 }
 
+async fn restore_originals(written: &[&FileBuffer]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for buf in written {
+        if let Err(e) = tokio::fs::write(&buf.resolved, &buf.original).await {
+            errors.push(format!("{}: {e}", buf.resolved.display()));
+        }
+    }
+    errors
+}
+
 struct ParsedEdit {
     index: usize,
     path: String,
@@ -242,6 +270,9 @@ struct ParsedEdit {
 
 struct FileBuffer {
     resolved: PathBuf,
+    /// Snapshot of the file's contents as we first read them.
+    /// Used to restore on a partial-write failure.
+    original: String,
     contents: String,
     edit_count: usize,
 }

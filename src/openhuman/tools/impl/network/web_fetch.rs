@@ -98,8 +98,13 @@ impl Tool for WebFetchTool {
             Err(e) => return Ok(ToolResult::error(format!("URL rejected: {e}"))),
         };
 
+        // Disable automatic redirect following: reqwest follows up to 10
+        // redirects by default, and a redirect target may be on a host
+        // outside the allowed-domains list. We surface 3xx responses to
+        // the caller so they can decide whether to refetch the new URL.
         let client = match reqwest::Client::builder()
             .timeout(Duration::from_secs(self.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
         {
             Ok(c) => c,
@@ -112,10 +117,25 @@ impl Tool for WebFetchTool {
         };
         let status = resp.status();
         let final_url = resp.url().to_string();
+        let location = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
         let body = match resp.text().await {
             Ok(b) => b,
             Err(e) => return Ok(ToolResult::error(format!("Failed to read body: {e}"))),
         };
+
+        if let Some(loc) = &location {
+            if status.is_redirection() {
+                return Ok(ToolResult::success(format!(
+                    "status={} url={} location={loc}\n[redirect not followed — re-call web_fetch with the location URL if it's an allowed domain]",
+                    status.as_u16(),
+                    final_url
+                )));
+            }
+        }
 
         let (snippet, truncated) = if body.len() > max_bytes {
             let mut cut = max_bytes;

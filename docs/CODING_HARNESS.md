@@ -33,9 +33,9 @@ Tracking issue: [#1205](https://github.com/tinyhumansai/openhuman/issues/1205).
 | | `http_request`, `curl` (richer HTTP) | ReadOnly | `tools/impl/network/` |
 | **Code intel** | `lsp` *(capability-gated)* | ReadOnly | `tools/impl/system/lsp.rs` |
 
-Names in parentheses are the canonical coding-harness names from issue
-#1205. The Rust struct and registration name match the column on the
-left; the alias in parentheses is the conceptual role.
+Names in parentheses are the canonical coding-harness names from issue #1205.
+The Rust struct and registration name match the column on the left; the
+alias in parentheses is the conceptual role.
 
 ## What each tool does
 

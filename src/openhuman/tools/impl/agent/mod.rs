@@ -20,4 +20,4 @@ pub use delegate::DelegateTool;
 pub use plan_exit::{PlanExitTool, PLAN_EXIT_MARKER};
 pub use skill_delegation::SkillDelegationTool;
 pub use spawn_subagent::SpawnSubagentTool;
-pub use todo_write::{TodoItem, TodoStatus, TodoStore, TodoWriteTool};
+pub use todo_write::{global_todo_store, TodoItem, TodoStatus, TodoStore, TodoWriteTool};

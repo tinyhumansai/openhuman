@@ -87,17 +87,27 @@ impl Tool for ListFilesTool {
         };
 
         let mut entries: Vec<(String, String)> = Vec::new();
-        while let Ok(Some(entry)) = read.next_entry().await {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let kind = match entry.file_type().await {
-                Ok(t) if t.is_symlink() => "link",
-                Ok(t) if t.is_dir() => "dir",
-                Ok(_) => "file",
-                Err(_) => "unknown",
-            };
-            entries.push((kind.to_string(), name));
-            if entries.len() >= MAX_ENTRIES {
-                break;
+        loop {
+            match read.next_entry().await {
+                Ok(Some(entry)) => {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let kind = match entry.file_type().await {
+                        Ok(t) if t.is_symlink() => "link",
+                        Ok(t) if t.is_dir() => "dir",
+                        Ok(_) => "file",
+                        Err(_) => "unknown",
+                    };
+                    entries.push((kind.to_string(), name));
+                    if entries.len() >= MAX_ENTRIES {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    return Ok(ToolResult::error(format!(
+                        "Failed to enumerate directory: {e}"
+                    )))
+                }
             }
         }
 
