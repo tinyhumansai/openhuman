@@ -25,7 +25,18 @@ export type MascotProps = z.infer<typeof mascotSchema>;
  * Use distinct `idPrefix` values if two instances appear in the same SVG tree
  * so filter/gradient IDs don't collide.
  */
-export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string }> = ({
+type ThinkingTiming = {
+  /** Seconds at which the idle→thinking ramp begins. Default 1.0. */
+  thinkInStartSec?: number;
+  /** Seconds at which the idle→thinking ramp completes. Default 2.0. */
+  thinkInEndSec?: number;
+  /** Seconds at which the thinking→idle ramp begins. If unset, the pose holds. */
+  thinkOutStartSec?: number;
+  /** Seconds at which the thinking→idle ramp completes. Required if thinkOutStartSec is set. */
+  thinkOutEndSec?: number;
+};
+
+export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & ThinkingTiming> = ({
   arm = "wave",
   face = "normal",
   talking = false,
@@ -35,6 +46,10 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string }> = ({
   recordingColor = "#ff3b30",
   loadingColor = "#ffffff",
   idPrefix = "mascot",
+  thinkInStartSec = 1.0,
+  thinkInEndSec = 2.0,
+  thinkOutStartSec,
+  thinkOutEndSec,
 }) => {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
@@ -120,16 +135,30 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string }> = ({
     };
   };
   // Thinking animation — arm raises, head tilts, eyes shift up, mouth changes.
-  const thinkStartFrame = thinking ? Math.round(fps * 1.0) : 99999;
-  const thinkFullFrame  = thinking ? Math.round(fps * 2.0) : 99999;
-  const thinkProgress = thinking
+  // Ramp up from `thinkInStartSec` → `thinkInEndSec`. If thinkOutStartSec/EndSec
+  // are provided, ramp back down so the pose returns to idle (loop-friendly).
+  const thinkStartFrame = thinking ? Math.round(fps * thinkInStartSec) : 99999;
+  const thinkFullFrame  = thinking ? Math.round(fps * thinkInEndSec)   : 99999;
+  const hasOutRamp = thinking && thinkOutStartSec !== undefined && thinkOutEndSec !== undefined;
+  const thinkOutStartFrame = hasOutRamp ? Math.round(fps * (thinkOutStartSec as number)) : 99999;
+  const thinkOutEndFrame   = hasOutRamp ? Math.round(fps * (thinkOutEndSec as number))   : 99999;
+  const thinkInProgress = thinking
     ? interpolate(frame, [thinkStartFrame, thinkFullFrame], [0, 1], {
         extrapolateLeft: "clamp",
         extrapolateRight: "clamp",
         easing: Easing.inOut(Easing.cubic),
       })
     : 0;
-  const isThinking = thinking && thinkProgress >= 1;
+  const thinkOutProgress = hasOutRamp
+    ? interpolate(frame, [thinkOutStartFrame, thinkOutEndFrame], [0, 1], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+        easing: Easing.inOut(Easing.cubic),
+      })
+    : 0;
+  const thinkProgress = Math.max(0, thinkInProgress - thinkOutProgress);
+  // "Fully in pose" — only true while held between in-ramp end and out-ramp start.
+  const isThinking = thinking && thinkInProgress >= 1 && thinkOutProgress <= 0;
 
   // LEFT arm raises toward body/chin for thinking pose (matches reference: arm on viewer's left side).
   // Normal left arm droops at ~127° from +x axis; rotating −128° brings it to ~−1°

@@ -61,6 +61,8 @@
     "@noble/secp256k1": "^3.0.0",
     "@radix-ui/react-dialog": "^1.1.15",
     "@reduxjs/toolkit": "^2.11.2",
+    "@remotion/player": "4.0.454",
+    "@remotion/zod-types": "4.0.454",
     "@scure/bip32": "^2.0.1",
     "@scure/bip39": "^2.0.1",
     "@sentry/react": "^10.38.0",
@@ -84,9 +86,11 @@
     "react-router-dom": "^7.13.0",
     "redux-logger": "^3.0.6",
     "redux-persist": "^6.0.0",
+    "remotion": "4.0.454",
     "socket.io-client": "^4.8.3",
     "three": "^0.183.2",
-    "util": "^0.12.5"
+    "util": "^0.12.5",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
