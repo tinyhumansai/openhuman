@@ -5,6 +5,7 @@ import { dispatchLocalAiMethod } from '../lib/ai/localCoreAiMemory';
 import { CORE_RPC_TIMEOUT_MS, CORE_RPC_URL } from '../utils/config';
 import { getStoredRpcUrl } from '../utils/configPersistence';
 import { sanitizeError } from '../utils/sanitize';
+import { normalizeRpcMethod } from './rpcMethods';
 
 interface CoreRpcRelayRequest {
   method: string;
@@ -31,20 +32,6 @@ interface JsonRpcResponse<T> {
   result?: T;
   error?: JsonRpcError;
 }
-
-const LEGACY_METHOD_ALIASES: Record<string, string> = {
-  'openhuman.get_config': 'openhuman.config_get',
-  'openhuman.get_runtime_flags': 'openhuman.config_get_runtime_flags',
-  'openhuman.set_browser_allow_all': 'openhuman.config_set_browser_allow_all',
-  'openhuman.update_browser_settings': 'openhuman.config_update_browser_settings',
-  'openhuman.update_memory_settings': 'openhuman.config_update_memory_settings',
-  'openhuman.update_model_settings': 'openhuman.config_update_model_settings',
-  'openhuman.update_runtime_settings': 'openhuman.config_update_runtime_settings',
-  'openhuman.update_screen_intelligence_settings':
-    'openhuman.config_update_screen_intelligence_settings',
-  'openhuman.workspace_onboarding_flag_exists': 'openhuman.config_workspace_onboarding_flag_exists',
-  'openhuman.workspace_onboarding_flag_set': 'openhuman.config_workspace_onboarding_flag_set',
-};
 
 let nextJsonRpcId = 1;
 let resolvedCoreRpcUrl: string | null = null;
@@ -83,22 +70,6 @@ function coreRpcErrorMessage(err: unknown): string {
     }
   }
   return 'Unknown core RPC error';
-}
-
-function normalizeLegacyMethod(method: string): string {
-  if (method in LEGACY_METHOD_ALIASES) {
-    return LEGACY_METHOD_ALIASES[method];
-  }
-
-  if (method.startsWith('openhuman.auth.')) {
-    return `openhuman.auth_${method.slice('openhuman.auth.'.length).split('.').join('_')}`;
-  }
-
-  if (method.startsWith('openhuman.accessibility_')) {
-    return method.replace('openhuman.accessibility_', 'openhuman.screen_intelligence_');
-  }
-
-  return method;
 }
 
 export async function getCoreRpcUrl(): Promise<string> {
@@ -216,7 +187,7 @@ export async function callCoreRpc<T>({
     return dispatchLocalAiMethod(method, (params ?? {}) as Record<string, unknown>) as T;
   }
 
-  const normalizedMethod = normalizeLegacyMethod(method);
+  const normalizedMethod = normalizeRpcMethod(method);
   const payload: JsonRpcRequestBody = {
     jsonrpc: '2.0',
     id: nextJsonRpcId++,
