@@ -96,7 +96,20 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
       },
     },
 
-    // ── Step 5 — /intelligence ────────────────────────────────────────────
+    // ── Step 5 — /skills (channels) ─────────────────────────────────────
+    {
+      target: '[data-walkthrough="skills-channels"]',
+      title: 'Chat where you already are',
+      content:
+        'WhatsApp, Telegram, Slack, Discord — connect your messaging apps so your assistant can reach you anywhere.',
+      placement: 'bottom',
+      skipBeacon: true,
+      before: async () => {
+        await waitForTarget('skills-channels');
+      },
+    },
+
+    // ── Step 6 — /intelligence ────────────────────────────────────────────
     {
       target: '[data-walkthrough="intelligence-header"]',
       title: "Your assistant's brain",

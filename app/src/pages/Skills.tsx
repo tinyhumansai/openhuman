@@ -784,7 +784,9 @@ export default function Skills() {
                 {channelsGroup && (
                   <div className="rounded-2xl border border-stone-200 bg-white p-3 shadow-soft animate-fade-up">
                     <div className="px-1 pb-3 pt-1">
-                      <h2 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+                      <h2
+                        className="flex items-center gap-2 text-sm font-semibold text-stone-900"
+                        data-walkthrough="skills-channels">
                         <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-stone-100">
                           <SkillCategoryIcon
                             category="Channels"

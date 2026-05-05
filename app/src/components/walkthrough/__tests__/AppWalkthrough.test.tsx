@@ -507,10 +507,10 @@ describe('WalkthroughTooltip', () => {
 // ── createWalkthroughSteps tests ──────────────────────────────────────────
 
 describe('createWalkthroughSteps', () => {
-  it('returns 9 steps', () => {
+  it('returns 10 steps', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
-    expect(steps).toHaveLength(9);
+    expect(steps).toHaveLength(10);
   });
 
   it('first step targets home-card', () => {
@@ -535,23 +535,23 @@ describe('createWalkthroughSteps', () => {
     }
   });
 
-  it('cross-page steps (chat, skills, intelligence, settings, home-return) have before functions', () => {
+  it('cross-page steps have before functions', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
 
-    // Step indices 2, 3, 4, 5, 6 (0-indexed) are cross-page steps.
-    const crossPageIndices = [2, 3, 4, 5, 6];
+    // Steps: 2=chat, 3=integrations, 4=channels, 5=intelligence, 6=settings, 7=home-return
+    const crossPageIndices = [2, 3, 4, 5, 6, 7];
     for (const idx of crossPageIndices) {
       expect(typeof steps[idx].before, `step[${idx}] should have a before fn`).toBe('function');
     }
   });
 
-  it('home-only steps (1, 2, 8, 9) do not have before functions', () => {
+  it('home-only steps do not have before functions', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
 
-    // Step indices 0, 1, 7, 8 (0-indexed) stay on the current page.
-    const homeOnlyIndices = [0, 1, 7, 8];
+    // Steps: 0=home-card, 1=home-cta, 8=tab-notifications, 9=tab-settings
+    const homeOnlyIndices = [0, 1, 8, 9];
     for (const idx of homeOnlyIndices) {
       expect(steps[idx].before, `step[${idx}] should not have a before fn`).toBeUndefined();
     }
@@ -560,9 +560,10 @@ describe('createWalkthroughSteps', () => {
   it.each([
     { idx: 2, route: '/chat', target: 'chat-agent-panel' },
     { idx: 3, route: '/skills', target: 'skills-grid' },
-    { idx: 4, route: '/intelligence', target: 'intelligence-header' },
-    { idx: 5, route: '/settings', target: 'settings-menu' },
-    { idx: 6, route: '/home', target: 'tab-chat' },
+    { idx: 4, route: null, target: 'skills-channels' },
+    { idx: 5, route: '/intelligence', target: 'intelligence-header' },
+    { idx: 6, route: '/settings', target: 'settings-menu' },
+    { idx: 7, route: '/home', target: 'tab-chat' },
   ])('before hook for step $idx calls navigate("$route")', async ({ idx, route, target }) => {
     const navigate = vi.fn();
 
@@ -573,7 +574,9 @@ describe('createWalkthroughSteps', () => {
     try {
       const steps = createWalkthroughSteps(navigate);
       await (steps[idx].before as unknown as (() => Promise<void>) | undefined)?.();
-      expect(navigate).toHaveBeenCalledWith(route);
+      if (route) {
+        expect(navigate).toHaveBeenCalledWith(route);
+      }
     } finally {
       document.body.removeChild(el);
     }
