@@ -47,7 +47,12 @@ export interface TtsOptions {
  */
 export async function synthesizeSpeech(text: string, opts: TtsOptions = {}): Promise<TtsResponse> {
   const voiceId = opts.voiceId ?? MASCOT_VOICE_ID;
-  const spoken = prepareForSpeech(text);
+  // `prepareForSpeech` collapses to '' on replies that are pure code/markdown
+  // formatting. The core RPC rejects empty text, which would propagate as a
+  // visible error for what was effectively a no-op reply. Fall back to the
+  // raw trimmed text, then to a single ellipsis (so the mascot just exhales)
+  // before letting an empty payload reach the upstream.
+  const spoken = prepareForSpeech(text) || text.trim() || '...';
   const params: Record<string, unknown> = { text: spoken };
   if (voiceId) params.voice_id = voiceId;
   if (opts.modelId) params.model_id = opts.modelId;

@@ -57,11 +57,20 @@ export function MicCloudComposer({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  // Tracks unmount so async callbacks (recorder.onstop, finalizeRecording)
+  // don't fire setState/onSubmit on a dead component — without this, the
+  // user navigating away mid-recording can dispatch an unintended message.
+  const disposedRef = useRef(false);
 
   // If the component unmounts mid-record, release the mic so the OS indicator
   // doesn't get stuck on.
   useEffect(() => {
+    disposedRef.current = false;
     return () => {
+      disposedRef.current = true;
+      // Detach onstop first — `recorder.stop()` below is what would fire it,
+      // and we don't want finalizeRecording running post-unmount.
+      if (recorderRef.current) recorderRef.current.onstop = null;
       stopStream();
       try {
         recorderRef.current?.stop();
@@ -154,11 +163,27 @@ export function MicCloudComposer({
     try {
       recorder.stop();
     } catch (err) {
+      // If `stop()` throws, `onstop` never fires → finalizeRecording never
+      // resets `state`, leaving the UI stuck on "Transcribing…". Recover here.
       composerLog('recorder.stop threw: %s', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      onError?.(`Failed to stop recording: ${msg}`);
+      stopStream();
+      recorderRef.current = null;
+      setState('idle');
     }
   }
 
   async function finalizeRecording() {
+    // Component was torn down mid-recording — clean up resources without
+    // touching React state (which would log a warning) or `onSubmit`
+    // (which would dispatch a message to a thread the user has left).
+    if (disposedRef.current) {
+      stopStream();
+      recorderRef.current = null;
+      chunksRef.current = [];
+      return;
+    }
     const recorder = recorderRef.current;
     recorderRef.current = null;
     stopStream();
