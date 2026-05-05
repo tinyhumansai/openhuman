@@ -108,6 +108,35 @@ pub fn sanitize_generated_title(raw: &str) -> Option<String> {
     Some(collapsed.chars().take(80).collect())
 }
 
+/// Derives a stable display title directly from the first useful user message.
+///
+/// This is the no-provider fallback used while a conversation only has user
+/// context, or when model-based title generation is unavailable. It keeps the
+/// title meaningful without repeatedly renaming the thread later.
+pub fn title_from_user_message(message: &str) -> Option<String> {
+    let collapsed = collapse_whitespace(message);
+    let stripped = collapsed
+        .trim_matches(|c: char| matches!(c, '"' | '\'' | '`'))
+        .trim()
+        .trim_start_matches(|c: char| matches!(c, '/' | '@' | '#'))
+        .trim();
+    if stripped.is_empty() {
+        return None;
+    }
+
+    let first_sentence = stripped
+        .split(['.', '!', '?', '\n'])
+        .find(|part| !part.trim().is_empty())
+        .unwrap_or(stripped)
+        .trim();
+    let words = first_sentence
+        .split_whitespace()
+        .take(8)
+        .collect::<Vec<_>>()
+        .join(" ");
+    sanitize_generated_title(&words)
+}
+
 /// Builds the user-visible prompt passed to the title-generation model.
 pub fn build_title_prompt(user_message: &str, assistant_message: &str) -> String {
     format!(
@@ -288,6 +317,31 @@ mod tests {
         let long: String = std::iter::repeat('✨').take(90).collect();
         let out = sanitize_generated_title(&long).unwrap();
         assert_eq!(out.chars().count(), 80);
+    }
+
+    // ── title_from_user_message ──────────────────────────────────
+
+    #[test]
+    fn title_from_user_message_uses_first_specific_words() {
+        assert_eq!(
+            title_from_user_message("Can you retrieve my latest 5 emails and summarize them?")
+                .unwrap(),
+            "Can you retrieve my latest 5 emails and"
+        );
+    }
+
+    #[test]
+    fn title_from_user_message_removes_command_prefix_and_punctuation() {
+        assert_eq!(
+            title_from_user_message("/briefing Morning update, please. Then check email").unwrap(),
+            "briefing Morning update, please"
+        );
+    }
+
+    #[test]
+    fn title_from_user_message_returns_none_for_empty_context() {
+        assert!(title_from_user_message("   \n\t  ").is_none());
+        assert!(title_from_user_message("///").is_none());
     }
 
     // ── build_title_prompt ────────────────────────────────────────

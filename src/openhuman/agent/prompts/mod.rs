@@ -35,6 +35,13 @@ impl SystemPromptBuilder {
                 // model has rich, persistent context about the user before it
                 // sees the tool catalogue. Section is empty (and skipped) when
                 // the tree summarizer has nothing on disk yet.
+                //
+                // The privileged `UserReflectionsSection` is appended
+                // dynamically by `session::builder` when the
+                // learning subsystem is enabled, alongside
+                // `LearnedContextSection` / `UserProfileSection` — those
+                // three are config-gated and intentionally not part of
+                // the static default chain.
                 Box::new(UserMemorySection),
                 Box::new(ToolsSection),
                 Box::new(SafetySection),
@@ -140,6 +147,29 @@ impl SystemPromptBuilder {
         self
     }
 
+    /// Insert `section` immediately before the first existing section
+    /// whose [`PromptSection::name`] matches `target_name`. When no
+    /// matching section is present (most dynamic / sub-agent builders
+    /// do not include `user_memory`, for example), the new section is
+    /// appended at the end instead.
+    ///
+    /// Used by the session builder to guarantee that the privileged
+    /// reflection block ranks ahead of broader memory sections like
+    /// `user_memory`, even when the surrounding builder was assembled
+    /// via [`Self::with_defaults`] which already contains them.
+    pub fn insert_section_before(
+        mut self,
+        target_name: &str,
+        section: Box<dyn PromptSection>,
+    ) -> Self {
+        let position = self.sections.iter().position(|s| s.name() == target_name);
+        match position {
+            Some(idx) => self.sections.insert(idx, section),
+            None => self.sections.push(section),
+        }
+        self
+    }
+
     /// Render every section in order into a single prompt string.
     ///
     /// The rendered bytes are intended to be **frozen for the whole
@@ -238,6 +268,15 @@ pub struct WorkspaceSection;
 pub struct RuntimeSection;
 pub struct DateTimeSection;
 pub struct UserMemorySection;
+/// Renders explicit user reflections — a privileged memory class
+/// distinct from generic tree summaries. Rendered above
+/// [`UserMemorySection`] so the orchestrator sees the user's own
+/// intentional self-statements before any broader summary block.
+///
+/// Empty (and skipped) when [`LearnedContextData::reflections`] is
+/// empty — keeps the prompt clean for users who haven't yet expressed
+/// any reflection-style content.
+pub struct UserReflectionsSection;
 /// Renders the authenticated user's non-secret identity fields
 /// (`id` / `name` / `email`) into the system prompt — see issue #926.
 ///
@@ -329,12 +368,22 @@ impl PromptSection for UserFilesSection {
             );
         }
         if ctx.include_memory_md {
-            inject_workspace_file_capped(
-                &mut out,
-                ctx.workspace_dir,
-                "MEMORY.md",
-                USER_FILE_MAX_CHARS,
-            );
+            // Prefer the session-frozen curated-memory snapshot when the
+            // session has taken one — that's the runtime-writable store
+            // behind `curated_memory.add/replace/remove`. Fall back to
+            // the workspace file only when no snapshot is attached (pure
+            // prompt-unit tests and older call sites).
+            if let Some(snap) = &ctx.curated_snapshot {
+                inject_snapshot_content(&mut out, "MEMORY.md", &snap.memory, USER_FILE_MAX_CHARS);
+                inject_snapshot_content(&mut out, "USER.md", &snap.user, USER_FILE_MAX_CHARS);
+            } else {
+                inject_workspace_file_capped(
+                    &mut out,
+                    ctx.workspace_dir,
+                    "MEMORY.md",
+                    USER_FILE_MAX_CHARS,
+                );
+            }
         }
         Ok(out)
     }
@@ -457,6 +506,39 @@ impl PromptSection for RuntimeSection {
             std::env::consts::OS,
             ctx.model_name
         ))
+    }
+}
+
+impl PromptSection for UserReflectionsSection {
+    fn name(&self) -> &str {
+        "user_reflections"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        if ctx.learned.reflections.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut out = String::from("## User Reflections\n\n");
+        out.push_str(
+            "Explicit reflections the user authored about themselves, their goals, \
+             or how they want you to behave going forward. Treat these as \
+             higher-priority than the broader user-memory summaries below: \
+             they are recent, intentional, identity-relevant signals and \
+             should steer your responses ahead of any generic historical \
+             context.\n\n",
+        );
+        for reflection in &ctx.learned.reflections {
+            let trimmed = reflection.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            out.push_str("- ");
+            out.push_str(trimmed);
+            out.push('\n');
+        }
+        out.push('\n');
+        Ok(out)
     }
 }
 
@@ -602,6 +684,12 @@ pub fn render_user_memory(ctx: &PromptContext<'_>) -> Result<String> {
     UserMemorySection.build(ctx)
 }
 
+/// Render the privileged `## User Reflections` block. Empty when the
+/// learning subsystem has not captured any reflections yet.
+pub fn render_user_reflections(ctx: &PromptContext<'_>) -> Result<String> {
+    UserReflectionsSection.build(ctx)
+}
+
 /// Render the `## Tools` catalogue in the dispatcher's tool-call format.
 pub fn render_tools(ctx: &PromptContext<'_>) -> Result<String> {
     ToolsSection.build(ctx)
@@ -704,6 +792,7 @@ fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     }
 }
@@ -1054,6 +1143,39 @@ fn sync_workspace_file(workspace_dir: &Path, filename: &str) {
 /// (`SOUL.md`, `IDENTITY.md`, `HEARTBEAT.md`).
 fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &str) {
     inject_workspace_file_capped(prompt, workspace_dir, filename, BOOTSTRAP_MAX_CHARS);
+}
+
+/// Inject `content` into `prompt` under a header matching
+/// [`inject_workspace_file_capped`]'s format — so a swap from the
+/// file-based loader to a curated-memory snapshot is byte-compatible
+/// for the output header and truncation semantics.
+///
+/// Empty/whitespace content is silently skipped, mirroring the file
+/// loader's "no noisy placeholder" behaviour.
+fn inject_snapshot_content(prompt: &mut String, label: &str, content: &str, max_chars: usize) {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let _ = writeln!(prompt, "### {label}\n");
+    let truncated = if trimmed.chars().count() > max_chars {
+        trimmed
+            .char_indices()
+            .nth(max_chars)
+            .map(|(idx, _)| &trimmed[..idx])
+            .unwrap_or(trimmed)
+    } else {
+        trimmed
+    };
+    prompt.push_str(truncated);
+    if truncated.len() < trimmed.len() {
+        let _ = writeln!(
+            prompt,
+            "\n\n[... truncated at {max_chars} chars — use `read` for full file]\n"
+        );
+    } else {
+        prompt.push_str("\n\n");
+    }
 }
 
 /// Inject `filename` into `prompt` with an explicit character budget.

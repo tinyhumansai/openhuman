@@ -31,6 +31,11 @@ pub struct SubagentRunOptions {
 
     /// Stable id for tracing / DomainEvents (defaults to a UUID).
     pub task_id: Option<String>,
+
+    /// Optional thread ID for persistent worker threads. When set,
+    /// every assistant message and tool result in the inner loop is
+    /// appended to this thread in the global ConversationStore.
+    pub worker_thread_id: Option<String>,
 }
 
 /// Outcome of a single sub-agent run, returned to the parent.

@@ -73,6 +73,12 @@ cargo check --manifest-path app/src-tauri/Cargo.toml
 
 **Quality**: ESLint + Prettier + Husky in the `app` workspace.
 
+### Codex web / Linear-launched PR checklist
+
+Before opening AI-authored PRs from Codex web sessions or Linear-launched implementation agents, follow [`docs/agent-workflows/codex-pr-checklist.md`](docs/agent-workflows/codex-pr-checklist.md).
+
+This checklist is required for remote agents because OpenHuman has several merge gates that are easy to miss in partial environments: Prettier, Rust formatting, TypeScript typecheck, focused Vitest coverage, controller dispatch parity, and Tauri vendored dependency availability. If a command cannot run in the remote environment, the PR body must report the exact blocked command and error instead of claiming validation passed.
+
 ### Agent debug runners (`scripts/debug/`)
 
 Use these wrappers instead of invoking Vitest / WDIO / cargo directly when iterating — they keep stdout summary-sized and tee full output to `target/debug-logs/<kind>-<suffix>-<timestamp>.log`. Add `--verbose` to also stream raw output. See [`scripts/debug/README.md`](scripts/debug/README.md).

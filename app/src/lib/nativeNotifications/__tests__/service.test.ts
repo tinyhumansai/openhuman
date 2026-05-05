@@ -70,14 +70,14 @@ describe('nativeNotifications service', () => {
       category: 'system',
       title: 'Webhook error',
       body: 'skill-x webhook returned HTTP 500',
-      deep_link: '/webhooks',
+      deep_link: '/settings/webhooks-triggers',
       timestamp_ms: 1,
     });
     const items = store.getState().notifications.items;
     expect(items).toHaveLength(1);
     expect(items[0].id).toBe('webhook:s:1');
     expect(items[0].category).toBe('system');
-    expect(items[0].deepLink).toBe('/webhooks');
+    expect(items[0].deepLink).toBe('/settings/webhooks-triggers');
   });
 
   it('ignores core_notification payloads missing id/title', () => {

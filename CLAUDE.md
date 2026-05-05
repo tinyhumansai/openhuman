@@ -2,7 +2,7 @@
 
 **AI assistant for communities — React + Tauri v2 desktop app with a Rust core (JSON-RPC / CLI).**
 
-Narrative architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Frontend: [`docs/src/README.md`](docs/src/README.md). Tauri shell: [`docs/src-tauri/README.md`](docs/src-tauri/README.md).
+Narrative architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Frontend: [`docs/src/README.md`](docs/src/README.md). Tauri shell: [`docs/src-tauri/README.md`](docs/src-tauri/README.md). Coding-harness tool surface: [`docs/CODING_HARNESS.md`](docs/CODING_HARNESS.md).
 
 ---
 

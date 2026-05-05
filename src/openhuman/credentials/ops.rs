@@ -479,6 +479,35 @@ pub async fn list_provider_credentials(
     Ok(RpcOutcome::single_log(items, "provider credentials listed"))
 }
 
+/// List credentials whose provider key starts with `prefix`.
+///
+/// Pure prefix variant of [`list_provider_credentials`] for namespaces
+/// that group multiple providers under a common stem (e.g.
+/// `"channel:"` covers `channel:telegram:managed_dm`,
+/// `channel:slack:bot_token`, …). The exact-match filter on
+/// `list_provider_credentials` cannot express this without enumerating
+/// every concrete provider key up front.
+pub async fn list_provider_credentials_by_prefix(
+    config: &Config,
+    prefix: &str,
+) -> Result<Vec<super::responses::AuthProfileSummary>, String> {
+    let auth = AuthService::from_config(config);
+    let profiles = auth.load_profiles().map_err(|e| e.to_string())?;
+    let mut items = profiles
+        .profiles
+        .values()
+        .filter(|profile| profile.provider != APP_SESSION_PROVIDER)
+        .filter(|profile| profile.provider.starts_with(prefix))
+        .map(summarize_auth_profile)
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| {
+        a.provider
+            .cmp(&b.provider)
+            .then_with(|| a.profile_name.cmp(&b.profile_name))
+    });
+    Ok(items)
+}
+
 pub async fn oauth_connect(
     config: &Config,
     provider: &str,

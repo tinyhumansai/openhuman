@@ -48,6 +48,7 @@ fn prompt_builder_assembles_sections() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
     let rendered = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
@@ -78,6 +79,7 @@ fn identity_section_creates_missing_workspace_files() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
 
@@ -117,6 +119,7 @@ fn datetime_section_includes_timestamp_and_timezone() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
 
@@ -158,6 +161,7 @@ fn ctx_with_identity(identity: Option<UserIdentity>) -> PromptContext<'static> {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: identity,
     }
 }
@@ -296,6 +300,7 @@ fn tools_section_pformat_renders_signature_not_schema() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
 
@@ -341,6 +346,7 @@ fn tools_section_uses_pformat_signature_for_every_dispatcher() {
             connected_identities_md: String::new(),
             include_profile: false,
             include_memory_md: false,
+            curated_snapshot: None,
             user_identity: None,
         };
         let rendered = ToolsSection.build(&ctx).unwrap();
@@ -382,6 +388,7 @@ fn user_memory_section_renders_namespaces_with_headings() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
@@ -411,6 +418,7 @@ fn user_memory_section_returns_empty_when_no_summaries() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
@@ -1059,6 +1067,7 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         connected_identities_md: String::new(),
         include_profile: true,
         include_memory_md: true,
+        curated_snapshot: None,
         user_identity: None,
     };
 
@@ -1101,6 +1110,7 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
     let narrow = builder.build(&ctx_narrow).unwrap();
@@ -1180,10 +1190,139 @@ fn prompt_tool_constructors_and_user_memory_skip_empty_bodies() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
+        curated_snapshot: None,
         user_identity: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.contains("### user"));
     assert!(!rendered.contains("### empty"));
     assert_eq!(default_workspace_file_content("missing"), "");
+}
+
+fn ctx_with_learned(learned: LearnedContextData) -> PromptContext<'static> {
+    let prompt_tools: &'static [PromptTool<'static>] = &[];
+    PromptContext {
+        workspace_dir: Path::new("/tmp"),
+        model_name: "test-model",
+        agent_id: "",
+        tools: prompt_tools,
+        skills: &[],
+        dispatcher_instructions: "",
+        learned,
+        visible_tool_names: &NO_FILTER,
+        tool_call_format: ToolCallFormat::PFormat,
+        connected_integrations: &[],
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: false,
+        user_identity: None,
+    }
+}
+
+#[test]
+fn user_reflections_section_renders_bullets_with_priority_preamble() {
+    let ctx = ctx_with_learned(LearnedContextData {
+        reflections: vec![
+            "Going forward I want concise replies".into(),
+            "I realized I prefer Rust over TypeScript".into(),
+        ],
+        ..Default::default()
+    });
+    let rendered = UserReflectionsSection.build(&ctx).unwrap();
+    assert!(rendered.starts_with("## User Reflections\n\n"));
+    assert!(
+        rendered.contains("higher-priority"),
+        "preamble must signal that reflections outrank generic memory"
+    );
+    assert!(rendered.contains("- Going forward I want concise replies"));
+    assert!(rendered.contains("- I realized I prefer Rust over TypeScript"));
+}
+
+#[test]
+fn user_reflections_section_returns_empty_without_entries() {
+    let ctx = ctx_with_learned(LearnedContextData::default());
+    assert!(UserReflectionsSection.build(&ctx).unwrap().is_empty());
+}
+
+#[test]
+fn user_reflections_section_skips_blank_entries() {
+    let ctx = ctx_with_learned(LearnedContextData {
+        reflections: vec!["   ".into(), "Real reflection".into(), "".into()],
+        ..Default::default()
+    });
+    let rendered = UserReflectionsSection.build(&ctx).unwrap();
+    assert!(rendered.contains("- Real reflection"));
+    // Bullet count should match the non-blank entry count.
+    assert_eq!(rendered.matches("\n- ").count(), 1);
+}
+
+#[test]
+fn render_user_reflections_helper_matches_section_output() {
+    let ctx = ctx_with_learned(LearnedContextData {
+        reflections: vec!["x".into()],
+        ..Default::default()
+    });
+    let via_section = UserReflectionsSection.build(&ctx).unwrap();
+    let via_helper = render_user_reflections(&ctx).unwrap();
+    assert_eq!(via_section, via_helper);
+}
+
+#[test]
+fn insert_section_before_places_section_ahead_of_named_target() {
+    // Reflections must rank ahead of generic memory in builders that
+    // already include `UserMemorySection` (the `with_defaults` chain).
+    // Verify the helper inserts at the correct index instead of
+    // tail-appending.
+    let builder = SystemPromptBuilder::with_defaults()
+        .insert_section_before("user_memory", Box::new(UserReflectionsSection));
+    let names: Vec<&str> = builder.sections.iter().map(|s| s.name()).collect();
+    let r_idx = names
+        .iter()
+        .position(|n| *n == "user_reflections")
+        .expect("user_reflections section");
+    let m_idx = names
+        .iter()
+        .position(|n| *n == "user_memory")
+        .expect("user_memory section");
+    assert!(
+        r_idx < m_idx,
+        "insert_section_before should place the new section ahead of its target, got order {names:?}"
+    );
+}
+
+#[test]
+fn insert_section_before_falls_back_to_append_when_target_missing() {
+    // Dynamic / sub-agent builders do not include a `user_memory`
+    // section. The helper should still land the new section so the
+    // caller's wiring stays loop-free, just at the tail.
+    let builder = SystemPromptBuilder::default()
+        .add_section(Box::new(SafetySection))
+        .insert_section_before("user_memory", Box::new(UserReflectionsSection));
+    let names: Vec<&str> = builder.sections.iter().map(|s| s.name()).collect();
+    assert_eq!(names.last(), Some(&"user_reflections"));
+    assert_eq!(names.len(), 2);
+}
+
+#[test]
+fn user_reflections_render_above_user_memory_when_both_present() {
+    // Acceptance criterion: reflections rank above generic
+    // tree summaries — verify by composing the same way the runtime
+    // does (UserReflectionsSection appended ahead of any
+    // UserMemorySection content).
+    let ctx = ctx_with_learned(LearnedContextData {
+        reflections: vec!["I want terse answers".into()],
+        tree_root_summaries: vec![("user".into(), "Generic summary".into())],
+        ..Default::default()
+    });
+    let reflections = UserReflectionsSection.build(&ctx).unwrap();
+    let memory = UserMemorySection.build(&ctx).unwrap();
+    let combined = format!("{reflections}{memory}");
+    let r_idx = combined
+        .find("## User Reflections")
+        .expect("reflections heading");
+    let m_idx = combined.find("## User Memory").expect("memory heading");
+    assert!(
+        r_idx < m_idx,
+        "reflections must render before user-memory block"
+    );
 }

@@ -35,7 +35,7 @@ export function registerGlobalActions(
       label: 'Go to Intelligence',
       group: 'Navigation',
       shortcut: 'mod+3',
-      handler: nav('/intelligence'),
+      handler: nav('/settings/intelligence'),
       keywords: ['memory', 'knowledge'],
     },
     {

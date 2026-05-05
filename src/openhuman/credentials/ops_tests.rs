@@ -390,3 +390,64 @@ async fn auth_get_me_errors_without_session() {
     let err = auth_get_me(&config).await.unwrap_err();
     assert!(err.contains("session JWT required"));
 }
+
+// ── list_provider_credentials_by_prefix ───────────────────────
+
+/// Issue #1149 root-cause regression: the exact-match filter on
+/// `list_provider_credentials` cannot enumerate provider keys grouped
+/// under a common stem (e.g. `channel:telegram:managed_dm`,
+/// `channel:slack:bot_token`). The prefix variant fixes that — without
+/// it, `channel_status` always returned `connected: false`.
+#[tokio::test]
+async fn list_provider_credentials_by_prefix_matches_namespaced_keys() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    for provider in [
+        "channel:telegram:managed_dm",
+        "channel:slack:bot_token",
+        "skill:notion",
+    ] {
+        store_provider_credentials(
+            &config,
+            provider,
+            None,
+            Some("token-x".to_string()),
+            None,
+            Some(true),
+        )
+        .await
+        .expect("seed credential");
+    }
+
+    let channels = list_provider_credentials_by_prefix(&config, "channel:")
+        .await
+        .expect("prefix list should succeed");
+    let providers: Vec<&str> = channels.iter().map(|p| p.provider.as_str()).collect();
+
+    assert_eq!(channels.len(), 2, "got {providers:?}");
+    assert!(providers.contains(&"channel:slack:bot_token"));
+    assert!(providers.contains(&"channel:telegram:managed_dm"));
+}
+
+#[tokio::test]
+async fn list_provider_credentials_by_prefix_returns_empty_when_no_match() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    store_provider_credentials(
+        &config,
+        "skill:notion",
+        None,
+        Some("token-x".to_string()),
+        None,
+        Some(true),
+    )
+    .await
+    .expect("seed credential");
+
+    let result = list_provider_credentials_by_prefix(&config, "channel:")
+        .await
+        .expect("prefix list should succeed");
+    assert!(result.is_empty(), "got {result:?}");
+}

@@ -130,57 +130,12 @@ pub(crate) fn detect_auth(config: &Config) -> (bool, Value) {
 ///   for that provider. See `openhuman::webview_accounts`.
 /// * `exchange_count` / `ready_to_complete` / `ready_to_complete_reason`
 ///   — the gate the finalizer enforces.
-/// Walk `config.channels_config` and return the connected messaging-channel
-/// slugs in a stable order. Shared between `build_status_snapshot` and
-/// `format_status_markdown` so the channel list can't drift between the
-/// JSON and markdown views.
-fn detect_channels(config: &Config) -> Vec<&'static str> {
-    let cc = &config.channels_config;
-    let mut out: Vec<&'static str> = Vec::new();
-    if cc.telegram.is_some() {
-        out.push("telegram");
-    }
-    if cc.discord.is_some() {
-        out.push("discord");
-    }
-    if cc.slack.is_some() {
-        out.push("slack");
-    }
-    if cc.mattermost.is_some() {
-        out.push("mattermost");
-    }
-    if cc.email.is_some() {
-        out.push("email");
-    }
-    if cc.whatsapp.is_some() {
-        out.push("whatsapp");
-    }
-    if cc.signal.is_some() {
-        out.push("signal");
-    }
-    if cc.matrix.is_some() {
-        out.push("matrix");
-    }
-    if cc.imessage.is_some() {
-        out.push("imessage");
-    }
-    if cc.irc.is_some() {
-        out.push("irc");
-    }
-    if cc.lark.is_some() {
-        out.push("lark");
-    }
-    if cc.dingtalk.is_some() {
-        out.push("dingtalk");
-    }
-    if cc.linq.is_some() {
-        out.push("linq");
-    }
-    if cc.qq.is_some() {
-        out.push("qq");
-    }
-    out
-}
+// Channel detection now lives in
+// `crate::openhuman::channels::controllers::ops::connected_channel_slugs`
+// (precomputed in `compute_state` because it needs to read the
+// credential store), so the welcome-agent surface honors managed-DM /
+// OAuth connections that don't materialise a TOML
+// `channels_config.<slug>` block (issue #1149).
 
 pub(crate) fn build_status_snapshot(
     config: &Config,
@@ -189,10 +144,11 @@ pub(crate) fn build_status_snapshot(
     ready_to_complete: bool,
     ready_to_complete_reason: &str,
     composio_connected_toolkits: &[String],
+    connected_channels: &[String],
     webview_logins: Value,
 ) -> Value {
     let (is_authenticated, auth_source) = detect_auth(config);
-    let channels_connected = detect_channels(config);
+    let channels_connected: Vec<&str> = connected_channels.iter().map(|s| s.as_str()).collect();
 
     let composio_enabled = config.composio.enabled;
     let delegate_agents: Vec<&str> = config.agents.keys().map(|s| s.as_str()).collect();
@@ -246,10 +202,11 @@ pub(crate) fn format_status_markdown(
     ready_to_complete: bool,
     ready_to_complete_reason: &str,
     composio_connected_toolkits: &[String],
+    connected_channels: &[String],
     webview_logins: &Value,
 ) -> String {
     let (is_authenticated, auth_source) = detect_auth(config);
-    let channels = detect_channels(config);
+    let channels: Vec<&str> = connected_channels.iter().map(|s| s.as_str()).collect();
 
     let active_channel = config
         .channels_config
@@ -321,6 +278,11 @@ pub(crate) struct OnboardingState {
     pub is_authenticated: bool,
     pub exchange_count: u32,
     pub composio_connected_toolkits: Vec<String>,
+    /// Slugs of messaging channels currently connected, merged across
+    /// the legacy `channels_config.<slug>` TOML store and the
+    /// `channel:<slug>:<mode>` credential store. Computed in
+    /// [`compute_state`] (issue #1149).
+    pub connected_channels: Vec<String>,
     pub onboarding_status: &'static str,
     pub ready_to_complete: bool,
     pub ready_to_complete_reason: String,
@@ -339,6 +301,22 @@ pub(crate) async fn compute_state(
         .map(|i| i.toolkit.clone())
         .collect();
     let composio_connections = composio_connected_toolkits.len() as u32;
+
+    // Merge legacy `channels_config.<slug>` with the credential store
+    // so managed-DM / OAuth channels (e.g. Telegram managed_dm) report
+    // as connected to the welcome agent (issue #1149). Best-effort —
+    // a credential-store read failure logs and falls back to empty
+    // rather than masking the rest of the snapshot.
+    let connected_channels =
+        crate::openhuman::channels::controllers::connected_channel_slugs(config)
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(
+                    error = %err,
+                    "[onboarding] connected_channel_slugs failed; reporting empty channel list"
+                );
+                Vec::new()
+            });
 
     let onboarding_status = if !is_authenticated {
         "unauthenticated"
@@ -365,6 +343,7 @@ pub(crate) async fn compute_state(
         is_authenticated,
         exchange_count,
         composio_connected_toolkits,
+        connected_channels,
         onboarding_status,
         ready_to_complete,
         ready_to_complete_reason,
@@ -385,6 +364,7 @@ mod tests {
             false,
             "no_apps_connected",
             &[],
+            &[],
             json!({"gmail": false}),
         );
         assert_eq!(snap["onboarding_status"], "pending");
@@ -400,6 +380,8 @@ mod tests {
             0
         );
         assert_eq!(snap["webview_logins"]["gmail"], false);
+        assert!(snap["channels_connected"].is_array());
+        assert_eq!(snap["channels_connected"].as_array().unwrap().len(), 0);
     }
 
     #[test]
@@ -412,6 +394,7 @@ mod tests {
             false,
             "no_apps_connected",
             &["gmail".to_string(), "github".to_string()],
+            &[],
             json!({"gmail": true, "whatsapp": false}),
         );
         let toolkits = snap["composio_connected_toolkits"].as_array().unwrap();
@@ -419,6 +402,51 @@ mod tests {
         assert_eq!(toolkits[1], "github");
         assert_eq!(snap["webview_logins"]["gmail"], true);
         assert_eq!(snap["webview_logins"]["whatsapp"], false);
+    }
+
+    /// Issue #1149: managed-DM / OAuth channels are stored in the
+    /// credential layer, not in `channels_config`. The snapshot must
+    /// reflect them so the welcome agent doesn't say "Telegram not
+    /// connected" right after a managed-DM link succeeds.
+    #[test]
+    fn build_status_snapshot_surfaces_credential_only_channels() {
+        let config = Config::default();
+        // `channels_config.telegram` is None — the channel was linked
+        // via the managed-DM flow which only writes a credential entry.
+        // The merged slug list (built upstream by `compute_state`) is
+        // what `build_status_snapshot` consumes.
+        let snap = build_status_snapshot(
+            &config,
+            "pending",
+            1,
+            false,
+            "no_apps_connected",
+            &[],
+            &["telegram".to_string()],
+            json!({}),
+        );
+        let channels = snap["channels_connected"].as_array().unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0], "telegram");
+    }
+
+    #[test]
+    fn format_status_markdown_surfaces_credential_only_channels() {
+        let config = Config::default();
+        let md = format_status_markdown(
+            &config,
+            "pending",
+            1,
+            false,
+            "no_apps_connected",
+            &[],
+            &["telegram".to_string()],
+            &json!({}),
+        );
+        assert!(
+            md.contains("**channels:** telegram"),
+            "markdown should surface credential-stored channel: {md}"
+        );
     }
 
     #[test]

@@ -7,36 +7,48 @@ use std::fmt::Write;
 /// A single message in a conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
+    #[serde(default, skip_serializing)]
+    pub id: Option<String>,
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing)]
+    pub extra_metadata: Option<serde_json::Value>,
 }
 
 impl ChatMessage {
     pub fn system(content: impl Into<String>) -> Self {
         Self {
+            id: None,
             role: "system".into(),
             content: content.into(),
+            extra_metadata: None,
         }
     }
 
     pub fn user(content: impl Into<String>) -> Self {
         Self {
+            id: None,
             role: "user".into(),
             content: content.into(),
+            extra_metadata: None,
         }
     }
 
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
+            id: None,
             role: "assistant".into(),
             content: content.into(),
+            extra_metadata: None,
         }
     }
 
     pub fn tool(content: impl Into<String>) -> Self {
         Self {
+            id: None,
             role: "tool".into(),
             content: content.into(),
+            extra_metadata: None,
         }
     }
 }

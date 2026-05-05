@@ -67,6 +67,7 @@ pub(crate) async fn dispatch_subagent(
         toolkit_override: skill_filter.map(str::to_string),
         context: None,
         task_id: Some(task_id.clone()),
+        worker_thread_id: None,
     };
 
     match run_subagent(definition, prompt, options).await {

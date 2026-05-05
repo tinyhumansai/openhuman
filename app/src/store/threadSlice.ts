@@ -119,9 +119,21 @@ export const loadThreadMessages = createAsyncThunk(
 
 export const addMessageLocal = createAsyncThunk(
   'thread/addMessageLocal',
-  async (payload: { threadId: string; message: ThreadMessage }, { rejectWithValue }) => {
+  async (payload: { threadId: string; message: ThreadMessage }, { dispatch, rejectWithValue }) => {
     try {
       const persisted = await threadApi.appendMessage(payload.threadId, payload.message);
+      if (payload.message.sender === 'user' && payload.message.content.trim()) {
+        try {
+          await dispatch(generateThreadTitleIfNeeded({ threadId: payload.threadId })).unwrap();
+        } catch (error) {
+          if (IS_DEV) {
+            console.debug('[threadSlice] addMessageLocal title refresh failed', {
+              threadId: payload.threadId,
+              error,
+            });
+          }
+        }
+      }
       return { threadId: payload.threadId, message: persisted };
     } catch (error) {
       return rejectWithValue(error instanceof Error ? error.message : 'Failed to save message');

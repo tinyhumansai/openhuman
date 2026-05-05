@@ -56,7 +56,8 @@ to a sub-agent wastes a turn. Use these directly:
 | `read_workspace_state`      | Get git status + file tree before planning a code task.                                                   |
 | `composio_list_connections` | Check which external integrations (Gmail, Notion, GitHub, …) the user has authorised *right now*. Session-start list may be stale. |
 | `ask_user_clarification`    | Ask one focused question when the request is ambiguous — don't guess.                                     |
-| `spawn_subagent`            | Escape hatch for agent ids not listed in the delegation table above; only use when direct handling is not sufficient. |
+| `spawn_subagent`            | Inline delegation: the sub-agent's work is collapsed into a single result in this thread. Use for quick tasks. |
+| `spawn_worker_thread`       | Dedicated delegation: creates a fresh 'worker' thread for the sub-agent. Use for long, complex, or multi-step tasks to avoid cluttering the parent thread. |
 
 **Scheduling rule of thumb.** To "remind me in 10 minutes", call `current_time`
 first. If `cron_add` is available and enabled for this runtime, then call
@@ -89,7 +90,7 @@ transcript. For everyday delegation keep `dedicated_thread` off (the default)
 and surface the result inline.
 
 Worker threads are one level deep by design: a sub-agent never sees
-`spawn_subagent`, so a worker cannot itself spawn another worker.
+`spawn_subagent` or `spawn_worker_thread`, so a worker cannot itself spawn another worker.
 
 ## Connecting external services
 

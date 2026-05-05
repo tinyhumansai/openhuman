@@ -1217,6 +1217,21 @@ impl Agent {
             .await
             .unwrap_or_default();
 
+        // Explicit user reflections — privileged memory class. Pulled
+        // separately from observations/patterns so the prompt assembly
+        // can render them ahead of generic tree summaries.
+        let reflection_entries = self
+            .memory
+            .list(
+                Some(crate::openhuman::learning::reflection::REFLECTIONS_NAMESPACE),
+                Some(&MemoryCategory::Custom(
+                    crate::openhuman::learning::reflection::REFLECTIONS_NAMESPACE.into(),
+                )),
+                None,
+            )
+            .await
+            .unwrap_or_default();
+
         // Pull every namespace's root-level summary from the tree
         // summarizer. This is the densest user memory we can hand the
         // orchestrator: each root holds up to 20 000 tokens of distilled
@@ -1249,6 +1264,15 @@ impl Agent {
             user_profile: profile_entries
                 .iter()
                 .take(20)
+                .map(|e| sanitize_learned_entry(&e.content))
+                .collect(),
+            // Cap reflections at 10 to keep the privileged section
+            // bounded — the issue requires reflections improve context
+            // rather than flood it. Newest first.
+            reflections: reflection_entries
+                .iter()
+                .rev()
+                .take(10)
                 .map(|e| sanitize_learned_entry(&e.content))
                 .collect(),
             tree_root_summaries,
@@ -1303,6 +1327,7 @@ impl Agent {
             ),
             include_profile: !self.omit_profile,
             include_memory_md: !self.omit_memory_md,
+            curated_snapshot: None,
             user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
         };
         // Route through the global context manager so every

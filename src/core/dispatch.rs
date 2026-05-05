@@ -5,7 +5,7 @@
 
 use crate::core::rpc_log;
 use crate::core::types::{AppState, InvocationResult};
-use serde_json::json;
+use serde_json::{json, Map, Value};
 
 /// Dispatches an RPC method call to the appropriate subsystem.
 ///
@@ -44,8 +44,16 @@ pub async fn dispatch(
         return result.map(crate::core::types::invocation_to_rpc_json);
     }
 
-    // Tier 2: Domain-specific dispatcher.
-    // This routes to controllers registered in src/core/all.rs and src/rpc/mod.rs.
+    // Tier 2: Registered domain controllers.
+    if let Some(result) = try_registry_dispatch(method, params.clone()).await {
+        log::debug!(
+            "[rpc:dispatch] routed method={} subsystem=controller_registry",
+            method
+        );
+        return result;
+    }
+
+    // Tier 3: Legacy domain-specific dispatcher.
     if let Some(result) = crate::rpc::try_dispatch(method, params).await {
         log::debug!(
             "[rpc:dispatch] routed method={} subsystem=openhuman",
@@ -76,6 +84,43 @@ fn try_core_dispatch(
             json!({ "version": state.core_version }),
         )),
         _ => None,
+    }
+}
+
+async fn try_registry_dispatch(
+    method: &str,
+    params: Value,
+) -> Option<Result<serde_json::Value, String>> {
+    let schema = crate::core::all::schema_for_rpc_method(method)?;
+    let params_obj = match params_to_object(params) {
+        Ok(params_obj) => params_obj,
+        Err(err) => return Some(Err(err)),
+    };
+    if let Err(err) = crate::core::all::validate_params(&schema, &params_obj) {
+        return Some(Err(err));
+    }
+    crate::core::all::try_invoke_registered_rpc(method, params_obj).await
+}
+
+fn params_to_object(params: Value) -> Result<Map<String, Value>, String> {
+    match params {
+        Value::Object(map) => Ok(map),
+        Value::Null => Ok(Map::new()),
+        other => Err(format!(
+            "invalid params: expected object or null, got {}",
+            type_name(&other)
+        )),
+    }
+}
+
+fn type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
     }
 }
 

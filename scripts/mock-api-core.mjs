@@ -1149,8 +1149,21 @@ async function handleRequest(req, res) {
       json(res, 500, { success: false, error: "Mock enable trigger failure" });
       return;
     }
-    const slug = parsedBody?.slug ?? "UNKNOWN";
-    const connectionId = parsedBody?.connectionId ?? "";
+    const slug = typeof parsedBody?.slug === "string" ? parsedBody.slug.trim() : "";
+    const connectionId = typeof parsedBody?.connectionId === "string"
+      ? parsedBody.connectionId.trim()
+      : "";
+    if (!slug) {
+      json(res, 400, { success: false, error: "Missing required field: slug" });
+      return;
+    }
+    if (!connectionId) {
+      json(res, 400, {
+        success: false,
+        error: "Missing required field: connectionId",
+      });
+      return;
+    }
     const triggerId = `ti-${Date.now()}`;
     const active = parseBehaviorJson("composioActiveTriggers", []);
     active.push({
@@ -1174,11 +1187,25 @@ async function handleRequest(req, res) {
     method === "DELETE" &&
     /^\/agent-integrations\/composio\/triggers\/[^/]+\/?$/.test(url)
   ) {
-    const id = url.split("/").filter(Boolean).pop().split("?")[0];
+    let id = url.split("/").filter(Boolean).pop() ?? "";
+    id = id.split("?")[0];
+    if (!id) {
+      json(res, 400, { success: false, error: "Missing trigger id" });
+      return;
+    }
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      json(res, 400, { success: false, error: "Invalid trigger id encoding" });
+      return;
+    }
     const active = parseBehaviorJson("composioActiveTriggers", []);
     const next = active.filter((t) => t.id !== id);
-    setMockBehavior("composioActiveTriggers", JSON.stringify(next));
-    json(res, 200, { success: true, data: { deleted: true } });
+    const deleted = next.length !== active.length;
+    if (deleted) {
+      setMockBehavior("composioActiveTriggers", JSON.stringify(next));
+    }
+    json(res, 200, { success: true, data: { deleted } });
     return;
   }
 

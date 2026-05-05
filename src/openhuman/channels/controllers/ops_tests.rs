@@ -360,3 +360,123 @@ async fn disconnect_imessage_clears_runtime_config() {
         .and_then(|v| v.get("imessage"));
     assert!(im_entry.is_none(), "imessage config should be cleared");
 }
+
+// ---------------------------------------------------------------------------
+// Issue #1149: managed-DM / OAuth channels are stored only in the credential
+// layer (`channel:<slug>:<mode>`), not in `channels_config.<slug>`. Both
+// `channel_status` and `connected_channel_slugs` must surface them so the
+// chat agent stops reporting "Telegram not connected" right after a
+// managed-DM link succeeds.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn channel_status_reports_managed_dm_credential_as_connected() {
+    let (_tmp, config) = isolated_test_config();
+
+    // Simulate the post-link state: `telegram_login_check` stored a
+    // credential marker under `channel:telegram:managed_dm` with no
+    // corresponding `channels_config.telegram` block.
+    crate::openhuman::credentials::ops::store_provider_credentials(
+        &config,
+        "channel:telegram:managed_dm",
+        None,
+        Some("managed".to_string()),
+        Some(serde_json::json!({ "linked": true })),
+        Some(true),
+    )
+    .await
+    .expect("seed managed-DM credential");
+
+    let result = channel_status(&config, Some("telegram"))
+        .await
+        .expect("channel_status should succeed");
+
+    let managed_dm = result
+        .value
+        .iter()
+        .find(|e| e.auth_mode == ChannelAuthMode::ManagedDm)
+        .expect("managed_dm entry");
+    assert!(
+        managed_dm.connected,
+        "managed-DM credential should report connected: {:?}",
+        result.value
+    );
+    assert!(managed_dm.has_credentials);
+}
+
+#[tokio::test]
+async fn connected_channel_slugs_merges_credentials_and_config() {
+    let (_tmp, mut config) = isolated_test_config();
+
+    // Layer 1: TOML-resident channel (e.g. discord bot_token).
+    config.channels_config.discord = Some(DiscordConfig {
+        bot_token: "tok".to_string(),
+        guild_id: None,
+        channel_id: None,
+        allowed_users: vec![],
+        listen_to_bots: false,
+        mention_only: false,
+    });
+
+    // Layer 2: credential-only channel (telegram managed_dm).
+    crate::openhuman::credentials::ops::store_provider_credentials(
+        &config,
+        "channel:telegram:managed_dm",
+        None,
+        Some("managed".to_string()),
+        Some(serde_json::json!({ "linked": true })),
+        Some(true),
+    )
+    .await
+    .expect("seed managed-DM credential");
+
+    let slugs = connected_channel_slugs(&config)
+        .await
+        .expect("connected_channel_slugs should succeed");
+
+    assert!(slugs.contains(&"discord".to_string()), "got {slugs:?}");
+    assert!(slugs.contains(&"telegram".to_string()), "got {slugs:?}");
+}
+
+#[tokio::test]
+async fn connected_channel_slugs_dedupes_when_both_layers_present() {
+    let (_tmp, mut config) = isolated_test_config();
+
+    config.channels_config.discord = Some(DiscordConfig {
+        bot_token: "tok".to_string(),
+        guild_id: None,
+        channel_id: None,
+        allowed_users: vec![],
+        listen_to_bots: false,
+        mention_only: false,
+    });
+
+    // Same slug appears in both layers — should collapse to one entry.
+    crate::openhuman::credentials::ops::store_provider_credentials(
+        &config,
+        "channel:discord:managed_dm",
+        None,
+        Some("managed".to_string()),
+        Some(serde_json::json!({ "linked": true })),
+        Some(true),
+    )
+    .await
+    .expect("seed managed-DM credential");
+
+    let slugs = connected_channel_slugs(&config)
+        .await
+        .expect("connected_channel_slugs should succeed");
+
+    let discord_count = slugs.iter().filter(|s| *s == "discord").count();
+    assert_eq!(discord_count, 1, "discord should appear once: {slugs:?}");
+}
+
+#[tokio::test]
+async fn connected_channel_slugs_empty_when_nothing_configured() {
+    let (_tmp, config) = isolated_test_config();
+    let slugs = connected_channel_slugs(&config).await.unwrap();
+    assert!(
+        slugs.is_empty(),
+        "fresh config should yield no channels: {slugs:?}"
+    );
+}

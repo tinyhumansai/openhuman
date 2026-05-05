@@ -169,6 +169,7 @@ mod tests {
             include_profile: false,
             include_memory_md: false,
             user_identity: None,
+            curated_snapshot: None,
         }
     }
 
@@ -180,6 +181,7 @@ mod tests {
                 observations: vec!["Tool use succeeded".into()],
                 patterns: vec!["User prefers terse replies".into()],
                 user_profile: Vec::new(),
+                reflections: Vec::new(),
                 tree_root_summaries: Vec::new(),
             }))
             .unwrap();
@@ -212,6 +214,7 @@ mod tests {
                     "Timezone: America/Los_Angeles".into(),
                     "Prefers Rust".into(),
                 ],
+                reflections: Vec::new(),
                 tree_root_summaries: Vec::new(),
             }))
             .unwrap();

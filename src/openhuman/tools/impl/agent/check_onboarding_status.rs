@@ -125,6 +125,7 @@ async fn check_status() -> anyhow::Result<ToolResult> {
         state.ready_to_complete,
         &state.ready_to_complete_reason,
         &state.composio_connected_toolkits,
+        &state.connected_channels,
         &webview_logins,
     );
 

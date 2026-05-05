@@ -167,7 +167,11 @@ export default function Intelligence() {
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
-                <h1 className="text-xl font-bold text-stone-900">Intelligence</h1>
+                <h1
+                  className="text-xl font-bold text-stone-900"
+                  data-walkthrough="intelligence-header">
+                  Intelligence
+                </h1>
                 {/* Header count badge was sourced from `stats.total` which
                     in turn came from the legacy actionable-items pipeline
                     (`filterItems(items, ...)`). The Memory tab now mounts

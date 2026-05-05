@@ -6,6 +6,7 @@
 use rusqlite::{params, OptionalExtension};
 use serde_json::json;
 
+use crate::openhuman::memory::safety;
 use crate::openhuman::memory::store::types::MemoryKvRecord;
 
 use super::UnifiedMemory;
@@ -13,12 +14,33 @@ use super::UnifiedMemory;
 impl UnifiedMemory {
     /// Insert or update a global key-value pair.
     pub async fn kv_set_global(&self, key: &str, value: &serde_json::Value) -> Result<(), String> {
+        if safety::has_likely_secret(key) {
+            log::warn!(
+                "[memory:safety] kv_set_global rejected secret-like key key_chars={}",
+                key.chars().count()
+            );
+            return Err("kv key cannot contain secrets".to_string());
+        }
+
+        let sanitized_value = safety::sanitize_json(value);
+        let report = sanitized_value.report;
+        if report.changed() {
+            log::warn!(
+                "[memory:safety] kv_set_global sanitized key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
+                key.chars().count(),
+                report.text_redactions,
+                report.key_redactions,
+                report.blocked_secret_hits,
+                report.depth_redactions
+            );
+        }
+
         let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO kv_global (key, value_json, updated_at)
              VALUES (?1, ?2, ?3)
              ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at",
-            params![key, value.to_string(), Self::now_ts()],
+            params![key, sanitized_value.value.to_string(), Self::now_ts()],
         )
         .map_err(|e| format!("kv_set_global: {e}"))?;
         Ok(())
@@ -45,12 +67,40 @@ impl UnifiedMemory {
         key: &str,
         value: &serde_json::Value,
     ) -> Result<(), String> {
+        if safety::has_likely_secret(namespace) || safety::has_likely_secret(key) {
+            log::warn!(
+                "[memory:safety] kv_set_namespace rejected secret-like namespace/key namespace_chars={} key_chars={}",
+                namespace.chars().count(),
+                key.chars().count()
+            );
+            return Err("kv namespace/key cannot contain secrets".to_string());
+        }
+
+        let sanitized_value = safety::sanitize_json(value);
+        let report = sanitized_value.report;
+        if report.changed() {
+            log::warn!(
+                "[memory:safety] kv_set_namespace sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
+                namespace.chars().count(),
+                key.chars().count(),
+                report.text_redactions,
+                report.key_redactions,
+                report.blocked_secret_hits,
+                report.depth_redactions
+            );
+        }
+
         let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO kv_namespace (namespace, key, value_json, updated_at)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(namespace, key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at",
-            params![Self::sanitize_namespace(namespace), key, value.to_string(), Self::now_ts()],
+            params![
+                Self::sanitize_namespace(namespace),
+                key,
+                sanitized_value.value.to_string(),
+                Self::now_ts()
+            ],
         )
         .map_err(|e| format!("kv_set_namespace: {e}"))?;
         Ok(())

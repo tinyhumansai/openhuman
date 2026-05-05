@@ -8,6 +8,7 @@ SQLite-backed implementation of the memory store. One `UnifiedMemory` struct own
 - **`init.rs`** — constructor, `CREATE TABLE` bootstrap (docs, kv, graph, vector chunks, episodic FTS5, segments, events, profile), idempotent legacy-namespace migrations, plus path / namespace helpers (`sanitize_namespace`, `now_ts`, `namespace_dir`).
 - **`documents.rs`** — `memory_docs` CRUD: `upsert_document` (chunks + embeds + writes markdown sidecar), `upsert_document_metadata_only` (light path), `list_documents`, `list_namespaces`, `delete_document`, `clear_namespace`.
 - **`kv.rs`** — global and namespace-scoped get/set/delete/list against `kv_global` / `kv_namespace`.
+- **`../../safety/`** — secret redaction/validation helpers. Document, KV, and episodic writes sanitize credentials before persistence and emit `[memory:safety]` diagnostics when a payload is rewritten.
 - **`graph.rs`** — `graph_namespace` / `graph_global` upserts with attribute merging and evidence accumulation, plus namespace / global / cross-namespace queries and document-scoped relation removal.
 - **`query.rs`** — hybrid retrieval. Combines graph relevance, vector similarity, keyword overlap, episodic signal and freshness; exposes `query_namespace_*` (with query) and `recall_namespace_*` (query-less) entry points used by `MemoryClient`.
 - **`helpers.rs`** — shared utilities: f32-vector byte codecs, cosine similarity, markdown chunking, text/graph normalisation, JSON attribute merging, recency scoring.

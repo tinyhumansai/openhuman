@@ -53,13 +53,54 @@ fn round_trip_produces_byte_identical_messages() {
 
     assert_eq!(loaded.messages.len(), messages.len());
     for (original, loaded) in messages.iter().zip(loaded.messages.iter()) {
+        assert_eq!(original.id, loaded.id, "id mismatch");
         assert_eq!(original.role, loaded.role, "role mismatch");
         assert_eq!(
             original.content, loaded.content,
             "content mismatch for role={}",
             original.role
         );
+        assert_eq!(
+            original.extra_metadata, loaded.extra_metadata,
+            "extra metadata mismatch for role={}",
+            original.role
+        );
     }
+}
+
+#[test]
+fn message_id_and_extra_metadata_round_trip() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("message_identity.jsonl");
+    let mut messages = sample_messages();
+    messages[1].id = Some("msg_user_123".into());
+    messages[1].extra_metadata = Some(serde_json::json!({
+        "citations": [{"id": "mem-1", "label": "Memory"}],
+        "tool_call_id": "call-1"
+    }));
+    let meta = sample_meta();
+
+    write_transcript(&path, &messages, &meta, None).unwrap();
+
+    let loaded = read_transcript(&path).unwrap();
+    assert_eq!(loaded.messages[1].id.as_deref(), Some("msg_user_123"));
+    assert_eq!(
+        loaded.messages[1].extra_metadata,
+        Some(serde_json::json!({
+            "citations": [{"id": "mem-1", "label": "Memory"}],
+            "tool_call_id": "call-1"
+        }))
+    );
+
+    let raw = fs::read_to_string(&path).unwrap();
+    assert!(
+        raw.contains("\"id\":\"msg_user_123\""),
+        "message id should be persisted in JSONL"
+    );
+    assert!(
+        raw.contains("\"extra_metadata\""),
+        "extra metadata should be persisted in JSONL"
+    );
 }
 
 /// JSON encoding handles any delimiter natively, making the old
@@ -228,6 +269,48 @@ fn find_latest_picks_newest_keyed_stem_in_flat_dir() {
 
     let latest = find_latest_transcript(dir.path(), "main").unwrap();
     assert!(latest.to_string_lossy().ends_with("1714999999_main.jsonl"));
+}
+
+#[test]
+fn find_root_transcript_for_thread_skips_subagent_siblings() {
+    let dir = TempDir::new().unwrap();
+    let raw_dir = dir.path().join("session_raw");
+    fs::create_dir_all(&raw_dir).unwrap();
+
+    let mut root_meta = sample_meta();
+    root_meta.thread_id = Some("thread-abc".into());
+    write_transcript(
+        &raw_dir.join("1714000000_orchestrator_thread-abc.jsonl"),
+        &sample_messages(),
+        &root_meta,
+        None,
+    )
+    .unwrap();
+
+    let mut newer_other_meta = sample_meta();
+    newer_other_meta.thread_id = Some("thread-other".into());
+    write_transcript(
+        &raw_dir.join("1714999999_orchestrator_thread-other.jsonl"),
+        &sample_messages(),
+        &newer_other_meta,
+        None,
+    )
+    .unwrap();
+
+    let mut subagent_meta = sample_meta();
+    subagent_meta.thread_id = Some("thread-abc".into());
+    write_transcript(
+        &raw_dir.join("1715000000_orchestrator_thread-abc__1715000100_worker.jsonl"),
+        &sample_messages(),
+        &subagent_meta,
+        None,
+    )
+    .unwrap();
+
+    let found = find_root_transcript_for_thread(dir.path(), "thread-abc").unwrap();
+    assert!(found
+        .to_string_lossy()
+        .ends_with("1714000000_orchestrator_thread-abc.jsonl"));
 }
 
 #[test]

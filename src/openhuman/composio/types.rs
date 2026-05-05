@@ -87,6 +87,25 @@ pub struct ComposioConnection {
     pub created_at: Option<String>,
 }
 
+impl ComposioConnection {
+    /// Return the toolkit slug in the canonical form used by provider
+    /// lookup, prompt injection, and tool-action prefix matching.
+    pub fn normalized_toolkit(&self) -> String {
+        self.toolkit.trim().to_ascii_lowercase()
+    }
+
+    /// Whether this row represents a usable connection.
+    ///
+    /// The web UI already treats status case-insensitively. Keep the
+    /// core-side chat/runtime filters aligned so a backend spelling such
+    /// as `connected` cannot display as connected in Settings while
+    /// disappearing from the agent's integration surface.
+    pub fn is_active(&self) -> bool {
+        let status = self.status.trim();
+        status.eq_ignore_ascii_case("ACTIVE") || status.eq_ignore_ascii_case("CONNECTED")
+    }
+}
+
 /// Response body of `GET /agent-integrations/composio/connections`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ComposioConnectionsResponse {
@@ -356,6 +375,40 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn connection_is_active_matches_ui_status_normalization() {
+        for status in ["ACTIVE", "CONNECTED", "active", "connected", " connected "] {
+            let conn = ComposioConnection {
+                id: "c1".into(),
+                toolkit: "slack".into(),
+                status: status.into(),
+                created_at: None,
+            };
+            assert!(conn.is_active(), "status {status:?} should be active");
+        }
+
+        for status in ["PENDING", "INITIATED", "FAILED", ""] {
+            let conn = ComposioConnection {
+                id: "c1".into(),
+                toolkit: "slack".into(),
+                status: status.into(),
+                created_at: None,
+            };
+            assert!(!conn.is_active(), "status {status:?} should not be active");
+        }
+    }
+
+    #[test]
+    fn connection_normalizes_toolkit_for_runtime_matching() {
+        let conn = ComposioConnection {
+            id: "c1".into(),
+            toolkit: " Slack ".into(),
+            status: "ACTIVE".into(),
+            created_at: None,
+        };
+        assert_eq!(conn.normalized_toolkit(), "slack");
+    }
+
+    #[test]
     fn toolkits_response_defaults_to_empty() {
         let resp: ComposioToolkitsResponse = serde_json::from_str("{}").unwrap();
         assert!(resp.toolkits.is_empty());
@@ -467,6 +520,82 @@ mod tests {
         assert!(resp.error.is_none());
         assert_eq!(resp.cost_usd, 0.0);
         assert!(resp.data.is_null());
+    }
+
+    #[test]
+    fn available_trigger_deserializes_and_serializes_camelcase_fields() {
+        let raw = json!({
+            "slug": "GMAIL_NEW_GMAIL_MESSAGE",
+            "scope": "static",
+            "defaultConfig": { "labelIds": ["INBOX"] },
+            "requiredConfigKeys": ["labelIds"],
+            "repo": { "owner": "acme", "repo": "inbox" }
+        });
+        let trigger: ComposioAvailableTrigger = serde_json::from_value(raw).unwrap();
+        assert_eq!(trigger.slug, "GMAIL_NEW_GMAIL_MESSAGE");
+        assert_eq!(trigger.scope, "static");
+        assert_eq!(
+            trigger.default_config,
+            Some(json!({ "labelIds": ["INBOX"] }))
+        );
+        assert_eq!(
+            trigger.required_config_keys,
+            Some(vec!["labelIds".to_string()])
+        );
+        let repo = trigger.repo.as_ref().expect("repo");
+        assert_eq!(repo.owner, "acme");
+        assert_eq!(repo.repo, "inbox");
+
+        let value = serde_json::to_value(&trigger).unwrap();
+        assert!(value.get("defaultConfig").is_some());
+        assert!(value.get("requiredConfigKeys").is_some());
+    }
+
+    #[test]
+    fn active_trigger_parses_connection_id_and_optional_fields() {
+        let raw = json!({
+            "id": "ti_1",
+            "slug": "GMAIL_NEW_GMAIL_MESSAGE",
+            "toolkit": "gmail",
+            "connectionId": "c-1",
+            "triggerConfig": { "labelIds": "INBOX" },
+            "state": "active"
+        });
+        let trigger: ComposioActiveTrigger = serde_json::from_value(raw).unwrap();
+        assert_eq!(trigger.id, "ti_1");
+        assert_eq!(trigger.slug, "GMAIL_NEW_GMAIL_MESSAGE");
+        assert_eq!(trigger.connection_id, "c-1");
+        assert_eq!(trigger.trigger_config, Some(json!({"labelIds":"INBOX"})));
+        assert_eq!(trigger.state.as_deref(), Some("active"));
+
+        let value = serde_json::to_value(&trigger).unwrap();
+        assert!(value.get("connectionId").is_some());
+        assert!(value.get("triggerConfig").is_some());
+        assert!(value.get("state").is_some());
+    }
+
+    #[test]
+    fn trigger_enable_response_uses_camelcase_and_optional_defaults() {
+        let raw = json!({
+            "triggerId": "ti_9",
+            "slug": "GMAIL_NEW_GMAIL_MESSAGE",
+            "connectionId": "c-9"
+        });
+        let resp: ComposioEnableTriggerResponse = serde_json::from_value(raw).unwrap();
+        assert_eq!(resp.trigger_id, "ti_9");
+        assert_eq!(resp.slug, "GMAIL_NEW_GMAIL_MESSAGE");
+        assert_eq!(resp.connection_id, "c-9");
+
+        let serialized = serde_json::to_value(&resp).unwrap();
+        assert_eq!(serialized.get("triggerId").unwrap(), "ti_9");
+        assert_eq!(serialized.get("connectionId").unwrap(), "c-9");
+    }
+
+    #[test]
+    fn delete_trigger_response_defaults_deleted_to_false() {
+        let raw = json!({});
+        let resp: ComposioDisableTriggerResponse = serde_json::from_value(raw).unwrap();
+        assert!(!resp.deleted);
     }
 
     #[test]

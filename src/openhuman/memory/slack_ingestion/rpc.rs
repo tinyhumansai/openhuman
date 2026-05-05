@@ -59,10 +59,7 @@ pub async fn sync_trigger_rpc(
     let mut candidates: Vec<_> = connections
         .connections
         .into_iter()
-        .filter(|c| {
-            c.toolkit.eq_ignore_ascii_case("slack")
-                && matches!(c.status.as_str(), "ACTIVE" | "CONNECTED")
-        })
+        .filter(|c| c.normalized_toolkit() == "slack" && c.is_active())
         .collect();
 
     if let Some(ref wanted) = req.connection_id {
@@ -150,10 +147,10 @@ pub async fn sync_status_rpc(
 
     let mut rows = Vec::new();
     for conn in connections.connections {
-        if !conn.toolkit.eq_ignore_ascii_case("slack") {
+        if conn.normalized_toolkit() != "slack" {
             continue;
         }
-        if !matches!(conn.status.as_str(), "ACTIVE" | "CONNECTED") {
+        if !conn.is_active() {
             continue;
         }
         let state = match SyncState::load(&memory, "slack", &conn.id).await {
