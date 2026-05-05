@@ -44,6 +44,7 @@ pub mod migration;
 pub mod node_runtime;
 pub mod notifications;
 pub mod overlay;
+pub mod people;
 pub mod prompt_injection;
 pub mod provider_surfaces;
 pub mod providers;
