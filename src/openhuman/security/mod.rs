@@ -1,5 +1,6 @@
 mod core;
 pub mod ops;
+mod schemas;
 
 pub mod audit;
 pub mod bubblewrap;
@@ -28,3 +29,8 @@ pub use policy::SecurityPolicy;
 pub use secrets::SecretStore;
 #[allow(unused_imports)]
 pub use traits::{NoopSandbox, Sandbox};
+
+pub use schemas::{
+    all_controller_schemas as all_security_controller_schemas,
+    all_registered_controllers as all_security_registered_controllers,
+};
