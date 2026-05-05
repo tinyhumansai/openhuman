@@ -57,7 +57,7 @@ describe('Insights dashboard smoke', () => {
 
   it('mounts the /intelligence route and renders the Memory tab', async () => {
     stepLog('navigating to /intelligence');
-    await navigateViaHash('/intelligence');
+    await navigateViaHash('/settings/intelligence');
 
     // Tabs / page chrome — Memory is the canonical first view.
     await waitForText('Memory', 15_000);

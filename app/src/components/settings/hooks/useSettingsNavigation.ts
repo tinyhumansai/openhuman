@@ -31,7 +31,9 @@ export type SettingsRoute =
   | 'voice-debug'
   | 'local-model-debug'
   | 'notifications'
-  | 'notification-routing';
+  | 'notification-routing'
+  | 'intelligence'
+  | 'webhooks-triggers';
 
 export interface BreadcrumbItem {
   label: string;
@@ -96,6 +98,8 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/memory-data')) return 'memory-data';
     if (path.includes('/settings/memory-debug')) return 'memory-debug';
     if (path.includes('/settings/webhooks-debug')) return 'webhooks-debug';
+    if (path.includes('/settings/webhooks-triggers')) return 'webhooks-triggers';
+    if (path.includes('/settings/intelligence')) return 'intelligence';
     if (path.includes('/settings/recovery-phrase')) return 'recovery-phrase';
     if (path.includes('/settings/agent-chat')) return 'agent-chat';
     // Notification routes must be checked in specificity order so the more
@@ -208,6 +212,8 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'webhooks-debug':
       case 'memory-data':
       case 'memory-debug':
+      case 'intelligence':
+      case 'webhooks-triggers':
         return [settingsCrumb, developerCrumb];
 
       // Developer options section page

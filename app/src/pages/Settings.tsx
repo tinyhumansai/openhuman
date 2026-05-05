@@ -32,6 +32,8 @@ import WebhooksDebugPanel from '../components/settings/panels/WebhooksDebugPanel
 import SettingsHome from '../components/settings/SettingsHome';
 import SettingsSectionPage from '../components/settings/SettingsSectionPage';
 import { APP_VERSION } from '../utils/config';
+import Intelligence from './Intelligence';
+import Webhooks from './Webhooks';
 
 const accountSettingsItems = [
   {
@@ -295,6 +297,8 @@ const Settings = () => {
         <Route path="webhooks-debug" element={wrapSettingsPage(<WebhooksDebugPanel />)} />
         <Route path="memory-data" element={wrapSettingsPage(<MemoryDataPanel />)} />
         <Route path="memory-debug" element={wrapSettingsPage(<MemoryDebugPanel />)} />
+        <Route path="intelligence" element={<Intelligence />} />
+        <Route path="webhooks-triggers" element={<Webhooks />} />
         {/* About / updates */}
         <Route path="about" element={wrapSettingsPage(<AboutPanel />)} />
         {/* Fallback */}
