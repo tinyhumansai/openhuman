@@ -579,7 +579,10 @@ fn chat_message_identity_metadata_is_not_provider_wire_payload() {
 
     let serialized = serde_json::to_value(&message).unwrap();
 
-    assert_eq!(serialized.get("role").and_then(|v| v.as_str()), Some("user"));
+    assert_eq!(
+        serialized.get("role").and_then(|v| v.as_str()),
+        Some("user")
+    );
     assert_eq!(
         serialized.get("content").and_then(|v| v.as_str()),
         Some("hello")
