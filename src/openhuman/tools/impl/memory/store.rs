@@ -94,9 +94,9 @@ impl Tool for MemoryStoreTool {
 
         if safety::has_likely_secret(content) {
             log::warn!(
-                "[memory:safety] memory_store rejected secret-like content namespace={} key={} content_chars={}",
-                namespace,
-                key,
+                "[memory:safety] memory_store rejected secret-like content namespace_chars={} key_chars={} content_chars={}",
+                namespace.chars().count(),
+                key.chars().count(),
                 content.chars().count()
             );
             return Ok(ToolResult::error(

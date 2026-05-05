@@ -26,11 +26,12 @@ impl UnifiedMemory {
         let report = sanitized_value.report;
         if report.changed() {
             log::warn!(
-                "[memory:safety] kv_set_global sanitized key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={}",
+                "[memory:safety] kv_set_global sanitized key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
                 key.chars().count(),
                 report.text_redactions,
                 report.key_redactions,
-                report.blocked_secret_hits
+                report.blocked_secret_hits,
+                report.depth_redactions
             );
         }
 
@@ -79,12 +80,13 @@ impl UnifiedMemory {
         let report = sanitized_value.report;
         if report.changed() {
             log::warn!(
-                "[memory:safety] kv_set_namespace sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={}",
+                "[memory:safety] kv_set_namespace sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
                 namespace.chars().count(),
                 key.chars().count(),
                 report.text_redactions,
                 report.key_redactions,
-                report.blocked_secret_hits
+                report.blocked_secret_hits,
+                report.depth_redactions
             );
         }
 

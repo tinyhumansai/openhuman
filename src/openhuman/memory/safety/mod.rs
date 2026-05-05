@@ -11,17 +11,22 @@ use crate::openhuman::memory::store::types::NamespaceDocumentInput;
 
 const REDACTED_SECRET: &str = "[REDACTED_SECRET]";
 const REDACTED_PRIVATE_KEY: &str = "[REDACTED_PRIVATE_KEY]";
+const MAX_JSON_SANITIZE_DEPTH: usize = 128;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SanitizationReport {
     pub text_redactions: usize,
     pub key_redactions: usize,
     pub blocked_secret_hits: usize,
+    pub depth_redactions: usize,
 }
 
 impl SanitizationReport {
     pub fn changed(&self) -> bool {
-        self.text_redactions > 0 || self.key_redactions > 0 || self.blocked_secret_hits > 0
+        self.text_redactions > 0
+            || self.key_redactions > 0
+            || self.blocked_secret_hits > 0
+            || self.depth_redactions > 0
     }
 
     pub fn merge(self, rhs: Self) -> Self {
@@ -29,6 +34,7 @@ impl SanitizationReport {
             text_redactions: self.text_redactions + rhs.text_redactions,
             key_redactions: self.key_redactions + rhs.key_redactions,
             blocked_secret_hits: self.blocked_secret_hits + rhs.blocked_secret_hits,
+            depth_redactions: self.depth_redactions + rhs.depth_redactions,
         }
     }
 }
@@ -214,7 +220,7 @@ pub fn sanitize_text(value: &str) -> Sanitized<String> {
 }
 
 pub fn sanitize_json(value: &Value) -> Sanitized<Value> {
-    sanitize_json_inner(value)
+    sanitize_json_inner(value, 0)
 }
 
 pub fn sanitize_document_input(input: NamespaceDocumentInput) -> Sanitized<NamespaceDocumentInput> {
@@ -253,7 +259,17 @@ pub fn sanitize_document_input(input: NamespaceDocumentInput) -> Sanitized<Names
     }
 }
 
-fn sanitize_json_inner(value: &Value) -> Sanitized<Value> {
+fn sanitize_json_inner(value: &Value, depth: usize) -> Sanitized<Value> {
+    if depth >= MAX_JSON_SANITIZE_DEPTH {
+        return Sanitized {
+            value: Value::String(REDACTED_SECRET.to_string()),
+            report: SanitizationReport {
+                depth_redactions: 1,
+                ..SanitizationReport::default()
+            },
+        };
+    }
+
     match value {
         Value::Object(map) => {
             let mut out = serde_json::Map::new();
@@ -264,7 +280,7 @@ fn sanitize_json_inner(value: &Value) -> Sanitized<Value> {
                     out.insert(key.clone(), Value::String(REDACTED_SECRET.to_string()));
                     continue;
                 }
-                let sanitized = sanitize_json_inner(value);
+                let sanitized = sanitize_json_inner(value, depth + 1);
                 report = report.merge(sanitized.report);
                 out.insert(key.clone(), sanitized.value);
             }
@@ -277,7 +293,7 @@ fn sanitize_json_inner(value: &Value) -> Sanitized<Value> {
             let mut out = Vec::with_capacity(items.len());
             let mut report = SanitizationReport::default();
             for item in items {
-                let sanitized = sanitize_json_inner(item);
+                let sanitized = sanitize_json_inner(item, depth + 1);
                 report = report.merge(sanitized.report);
                 out.push(sanitized.value);
             }
@@ -320,6 +336,9 @@ fn is_sensitive_key(key: &str) -> bool {
     ) || normalized.ends_with("token")
         || normalized.ends_with("apikey")
         || normalized.ends_with("clientsecret")
+        || normalized.contains("password")
+        || normalized.contains("secret")
+        || normalized.ends_with("key")
 }
 
 #[cfg(test)]
@@ -367,6 +386,23 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_json_redacts_common_sensitive_key_variants() {
+        let input = json!({
+            "db_password": "p@ss",
+            "secret_key": "abc123",
+            "api_secret": "def456",
+            "monkey": "banana"
+        });
+
+        let sanitized = sanitize_json(&input);
+        assert_eq!(sanitized.value["db_password"], json!(REDACTED_SECRET));
+        assert_eq!(sanitized.value["secret_key"], json!(REDACTED_SECRET));
+        assert_eq!(sanitized.value["api_secret"], json!(REDACTED_SECRET));
+        assert_eq!(sanitized.value["monkey"], json!(REDACTED_SECRET));
+        assert!(sanitized.report.key_redactions >= 4);
+    }
+
+    #[test]
     fn has_likely_secret_detects_common_patterns() {
         assert!(has_likely_secret("api_key=abc123"));
         assert!(has_likely_secret("Bearer abcdefghijklmnopqrstuvwxyz"));
@@ -403,5 +439,20 @@ mod tests {
         assert!(!sanitized.value.contains("OPENSSH PRIVATE KEY"));
         assert!(sanitized.value.contains(REDACTED_PRIVATE_KEY));
         assert!(sanitized.report.blocked_secret_hits >= 1);
+    }
+
+    #[test]
+    fn sanitize_json_redacts_values_beyond_max_depth() {
+        let mut nested = json!("leaf");
+        for _ in 0..(MAX_JSON_SANITIZE_DEPTH + 2) {
+            nested = json!({ "nested": nested });
+        }
+
+        let sanitized = sanitize_json(&nested);
+        assert!(sanitized.report.depth_redactions >= 1);
+        assert!(sanitized
+            .value
+            .to_string()
+            .contains(&format!("\"{REDACTED_SECRET}\"")));
     }
 }

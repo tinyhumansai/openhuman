@@ -32,12 +32,13 @@ impl UnifiedMemory {
         let input = sanitized.value;
         if sanitized.report.changed() {
             log::warn!(
-                "[memory:safety] document write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={}",
+                "[memory:safety] document write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
                 input.namespace.chars().count(),
                 input.key.chars().count(),
                 sanitized.report.text_redactions,
                 sanitized.report.key_redactions,
-                sanitized.report.blocked_secret_hits
+                sanitized.report.blocked_secret_hits,
+                sanitized.report.depth_redactions
             );
         }
 
@@ -194,12 +195,13 @@ impl UnifiedMemory {
         let input = sanitized.value;
         if sanitized.report.changed() {
             log::warn!(
-                "[memory:safety] metadata-only write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={}",
+                "[memory:safety] metadata-only write sanitized namespace_chars={} key_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
                 input.namespace.chars().count(),
                 input.key.chars().count(),
                 sanitized.report.text_redactions,
                 sanitized.report.key_redactions,
-                sanitized.report.blocked_secret_hits
+                sanitized.report.blocked_secret_hits,
+                sanitized.report.depth_redactions
             );
         }
 
