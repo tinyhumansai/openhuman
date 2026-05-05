@@ -623,6 +623,14 @@ pub struct WebviewAccountsState {
     /// per webview label and bail to the Google sign-in flow after a
     /// threshold so the user breaks out of the loop.
     gmeet_marketing_rewrites: Mutex<HashMap<String, (Instant, u32)>>,
+    /// Per-label "awaiting post-auth handoff" flag. Set when the gmeet
+    /// rewrite-loop bail navigates to `accounts.google.com/ServiceLogin`,
+    /// consumed (single-shot) by the `myaccount.google.com` intercept so
+    /// only the immediate post-auth bounce gets rewritten back to Meet —
+    /// legitimate user-initiated `myaccount.google.com` navigations (e.g.
+    /// "Manage your Google Account" from the avatar menu) are passed
+    /// through unchanged.
+    gmeet_awaiting_handoff: Mutex<HashSet<String>>,
 }
 
 /// Threshold and window for the gmeet workspace-marketing rewrite loop
@@ -652,6 +660,30 @@ impl WebviewAccountsState {
     pub(crate) fn clear_gmeet_marketing_rewrite(&self, label: &str) {
         if let Ok(mut g) = self.gmeet_marketing_rewrites.lock() {
             g.remove(label);
+        }
+    }
+
+    /// Mark `label` as awaiting the post-auth `myaccount.google.com` →
+    /// `meet.google.com` handoff. Set by the rewrite-loop bail right
+    /// before navigating to `accounts.google.com/ServiceLogin?continue=`,
+    /// so the next `myaccount.google.com` commit on this label is treated
+    /// as the auth chain's terminal hop (the `?utm_source=sign_in_no_continue`
+    /// dump-page) and gets force-redirected to Meet.
+    pub(crate) fn mark_awaiting_gmeet_handoff(&self, label: &str) {
+        if let Ok(mut g) = self.gmeet_awaiting_handoff.lock() {
+            g.insert(label.to_string());
+        }
+    }
+
+    /// Single-shot consume of the post-auth handoff flag for `label`.
+    /// Returns `true` exactly once after `mark_awaiting_gmeet_handoff`,
+    /// then resets so subsequent `myaccount.google.com` navigations
+    /// (e.g. user-initiated profile/settings visits) pass through as
+    /// normal and aren't hijacked back to Meet.
+    pub(crate) fn take_awaiting_gmeet_handoff(&self, label: &str) -> bool {
+        match self.gmeet_awaiting_handoff.lock() {
+            Ok(mut g) => g.remove(label),
+            Err(_) => false,
         }
     }
 
@@ -741,6 +773,12 @@ impl WebviewAccountsState {
         // reuses the same label on reopen, so a stale saturated entry
         // would jump a fresh open straight to the bail URL.
         if let Ok(mut g) = self.gmeet_marketing_rewrites.lock() {
+            g.clear();
+        }
+        // Drop the post-auth handoff flag too — a stale flag would
+        // hijack the first user-initiated `myaccount.google.com` visit
+        // after a relaunch back to Meet.
+        if let Ok(mut g) = self.gmeet_awaiting_handoff.lock() {
             g.clear();
         }
         self.inner
@@ -1725,32 +1763,51 @@ pub async fn webview_account_open<R: Runtime>(
                 // through the workspace marketing redirect (which was the
                 // unauthenticated branch). Force the hop here so the user
                 // doesn't have to click through the apps grid manually.
+                //
+                // Gated on the per-label `gmeet_awaiting_handoff` flag —
+                // set by the Bail branch right before navigating to
+                // `ServiceLogin?continue=` — so legitimate user-initiated
+                // visits to `myaccount.google.com` (e.g. "Manage your
+                // Google Account" from the avatar menu) pass through and
+                // remain reachable in-app.
                 if host == "myaccount.google.com" {
-                    log::info!(
-                        "[webview-accounts] gmeet post-auth handoff detected on myaccount.google.com; navigating parent to https://meet.google.com/"
-                    );
-                    let app = nav_app.clone();
-                    let label = nav_label.clone();
-                    // Reset the marketing-rewrite counter so the next
-                    // workspace bounce (if any) gets a fresh window — the
-                    // user is now authenticated and shouldn't loop again.
-                    if let Some(s) = nav_app.try_state::<WebviewAccountsState>() {
-                        s.clear_gmeet_marketing_rewrite(&nav_label);
-                    }
-                    tauri::async_runtime::spawn(async move {
-                        if let Some(wv) = app.get_webview(&label) {
-                            if let Ok(target) = Url::parse("https://meet.google.com/") {
-                                if let Err(e) = wv.navigate(target) {
-                                    log::warn!(
-                                        "[webview-accounts] gmeet post-auth navigate failed label={} err={}",
-                                        label,
-                                        e
-                                    );
+                    let consumed = nav_app
+                        .try_state::<WebviewAccountsState>()
+                        .map(|s| s.take_awaiting_gmeet_handoff(&nav_label))
+                        .unwrap_or(false);
+                    if !consumed {
+                        log::debug!(
+                            "[webview-accounts] gmeet myaccount.google.com nav (label={}) not in handoff window; passing through",
+                            nav_label
+                        );
+                    } else {
+                        log::info!(
+                            "[webview-accounts] gmeet post-auth handoff detected on myaccount.google.com; navigating parent to https://meet.google.com/"
+                        );
+                        let app = nav_app.clone();
+                        let label = nav_label.clone();
+                        // Reset the marketing-rewrite counter so the next
+                        // workspace bounce (if any) gets a fresh window —
+                        // the user is now authenticated and shouldn't
+                        // loop again.
+                        if let Some(s) = nav_app.try_state::<WebviewAccountsState>() {
+                            s.clear_gmeet_marketing_rewrite(&nav_label);
+                        }
+                        tauri::async_runtime::spawn(async move {
+                            if let Some(wv) = app.get_webview(&label) {
+                                if let Ok(target) = Url::parse("https://meet.google.com/") {
+                                    if let Err(e) = wv.navigate(target) {
+                                        log::warn!(
+                                            "[webview-accounts] gmeet post-auth navigate failed label={} err={}",
+                                            label,
+                                            e
+                                        );
+                                    }
                                 }
                             }
-                        }
-                    });
-                    return false;
+                        });
+                        return false;
+                    }
                 }
                 if is_gmeet_marketing_redirect(host, url.path()) {
                     let action = nav_app
@@ -1774,6 +1831,18 @@ pub async fn webview_account_open<R: Runtime>(
                                 GMEET_REWRITE_MAX_ATTEMPTS,
                                 GMEET_REWRITE_WINDOW.as_secs()
                             );
+                            // Arm the post-auth handoff flag so the next
+                            // `myaccount.google.com` commit on this label
+                            // (the `?utm_source=sign_in_no_continue` dump
+                            // page Google sometimes drops users on after
+                            // the ServiceLogin chain) gets force-redirected
+                            // back to Meet. Without this gate, ANY
+                            // `myaccount.google.com` visit was hijacked,
+                            // breaking legitimate "Manage your Google
+                            // Account" flows.
+                            if let Some(s) = nav_app.try_state::<WebviewAccountsState>() {
+                                s.mark_awaiting_gmeet_handoff(&nav_label);
+                            }
                             // `service=meet` is rejected by Google (`400
                             // malformed`); the continue param must be
                             // URL-encoded since `&` would split it. Drop
@@ -2378,6 +2447,10 @@ pub async fn webview_account_purge<R: Runtime>(
         .remove(&args.account_id);
     if let Some(label) = label_opt.as_ref() {
         state.clear_gmeet_marketing_rewrite(label);
+        // Drop any pending handoff flag for this label so a stale entry
+        // can't hijack the next genuine `myaccount.google.com` visit on
+        // a webview that re-uses the same label.
+        state.take_awaiting_gmeet_handoff(label);
     }
 
     let data_dir = data_directory_for(&app, &args.account_id)?;
@@ -3567,5 +3640,42 @@ mod tests {
             state.track_gmeet_marketing_rewrite("acct_test", now),
             GmeetRewriteAction::Rewrite
         );
+    }
+
+    #[test]
+    fn gmeet_handoff_flag_default_is_unset() {
+        let state = WebviewAccountsState::default();
+        assert!(!state.take_awaiting_gmeet_handoff("acct_test"));
+    }
+
+    #[test]
+    fn gmeet_handoff_flag_marks_then_consumes_single_shot() {
+        let state = WebviewAccountsState::default();
+        state.mark_awaiting_gmeet_handoff("acct_test");
+        // First take returns true.
+        assert!(state.take_awaiting_gmeet_handoff("acct_test"));
+        // Second take returns false — single-shot semantics so a later
+        // user-initiated `myaccount.google.com` visit isn't hijacked.
+        assert!(!state.take_awaiting_gmeet_handoff("acct_test"));
+    }
+
+    #[test]
+    fn gmeet_handoff_flag_is_per_label() {
+        let state = WebviewAccountsState::default();
+        state.mark_awaiting_gmeet_handoff("acct_a");
+        // `acct_b` was never marked — must not consume a flag set on `acct_a`.
+        assert!(!state.take_awaiting_gmeet_handoff("acct_b"));
+        // `acct_a`'s flag is still pending.
+        assert!(state.take_awaiting_gmeet_handoff("acct_a"));
+    }
+
+    #[test]
+    fn gmeet_handoff_flag_cleared_by_drain_for_shutdown() {
+        let state = WebviewAccountsState::default();
+        state.mark_awaiting_gmeet_handoff("acct_test");
+        let _ = state.drain_for_shutdown();
+        // Stale flag would hijack the first user-initiated
+        // `myaccount.google.com` visit after relaunch.
+        assert!(!state.take_awaiting_gmeet_handoff("acct_test"));
     }
 }
