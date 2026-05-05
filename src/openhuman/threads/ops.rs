@@ -467,9 +467,8 @@ pub async fn threads_purge(
     // `turn_state_list` returns an empty set after a purge. Failures
     // are surfaced as RPC errors — this is a destructive cleanup
     // path, callers should not see "purged" while snapshots remain.
-    let snapshots = turn_state::store::list(dir.clone()).map_err(|err| {
-        format!("threads purged but turn-snapshot enumeration failed: {err}")
-    })?;
+    let snapshots = turn_state::store::list(dir.clone())
+        .map_err(|err| format!("threads purged but turn-snapshot enumeration failed: {err}"))?;
     for snapshot in snapshots {
         turn_state::store::delete(dir.clone(), &snapshot.thread_id).map_err(|err| {
             format!(
