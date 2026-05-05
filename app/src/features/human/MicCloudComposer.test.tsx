@@ -85,11 +85,7 @@ describe('MicCloudComposer', () => {
 
   afterEach(() => {
     if (originalMediaDevicesDescriptor) {
-      Object.defineProperty(
-        globalThis.navigator,
-        'mediaDevices',
-        originalMediaDevicesDescriptor
-      );
+      Object.defineProperty(globalThis.navigator, 'mediaDevices', originalMediaDevicesDescriptor);
     } else {
       delete (globalThis.navigator as { mediaDevices?: MediaDevices }).mediaDevices;
     }
