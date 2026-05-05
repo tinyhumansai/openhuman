@@ -5,6 +5,7 @@ import { threadApi } from '../../services/api/threadApi';
 import type { Thread, ThreadMessage } from '../../types/thread';
 import threadReducer, {
   addInferenceResponse,
+  addMessageLocal,
   clearAllThreads,
   clearSelectedThread,
   loadThreadMessages,
@@ -23,6 +24,7 @@ vi.mock('../../services/api/threadApi', () => ({
     deleteThread: vi.fn(),
     generateTitleIfNeeded: vi.fn(),
     updateMessage: vi.fn(),
+    updateLabels: vi.fn(),
     purge: vi.fn(),
   },
 }));
@@ -236,6 +238,52 @@ describe('threadSlice loadThreadMessages thunk', () => {
     const state = store.getState().thread;
     expect(state.isLoadingMessages).toBe(false);
     expect(state.messagesError).toBe('boom');
+  });
+});
+
+describe('threadSlice addMessageLocal thunk', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('requests a stable title refresh after persisting a user message', async () => {
+    const store = createStore();
+    const persisted = makeMessage({ id: 'srv-user', content: 'Summarize my latest 5 emails' });
+    const titledThread = makeThread({ id: 't-1', title: 'Summarize my latest 5 emails' });
+    mockedThreadApi.appendMessage.mockResolvedValueOnce(persisted);
+    mockedThreadApi.generateTitleIfNeeded.mockResolvedValueOnce(titledThread);
+    mockedThreadApi.getThreads.mockResolvedValueOnce({ threads: [titledThread], count: 1 });
+
+    const result = await store.dispatch(
+      addMessageLocal({ threadId: 't-1', message: makeMessage({ content: persisted.content }) })
+    );
+
+    expect(result.type).toBe('thread/addMessageLocal/fulfilled');
+    expect(mockedThreadApi.generateTitleIfNeeded).toHaveBeenCalledWith('t-1', undefined);
+    expect(store.getState().thread.threads[0].title).toBe('Summarize my latest 5 emails');
+    expect(store.getState().thread.messagesByThreadId['t-1']).toEqual([persisted]);
+  });
+
+  it('does not fail user message persistence when title refresh fails', async () => {
+    const store = createStore();
+    const persisted = makeMessage({ id: 'srv-user' });
+    mockedThreadApi.appendMessage.mockResolvedValueOnce(persisted);
+    mockedThreadApi.generateTitleIfNeeded.mockRejectedValueOnce(new Error('title offline'));
+
+    const result = await store.dispatch(addMessageLocal({ threadId: 't-1', message: persisted }));
+
+    expect(result.type).toBe('thread/addMessageLocal/fulfilled');
+    expect(store.getState().thread.messagesByThreadId['t-1']).toEqual([persisted]);
+  });
+
+  it('does not request title refresh for assistant messages', async () => {
+    const store = createStore();
+    const persisted = makeMessage({ id: 'srv-agent', sender: 'agent', content: 'ack' });
+    mockedThreadApi.appendMessage.mockResolvedValueOnce(persisted);
+
+    await store.dispatch(addMessageLocal({ threadId: 't-1', message: persisted }));
+
+    expect(mockedThreadApi.generateTitleIfNeeded).not.toHaveBeenCalled();
   });
 });
 

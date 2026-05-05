@@ -10,6 +10,7 @@ Storage backend for the memory subsystem. Houses the SQLite + FTS5 + vector + gr
 - **`client_tests.rs`** — coverage for the client-facing storage and graph round-trips against a fresh temp workspace.
 - **`factories.rs`** — `create_memory*` constructors that select the embedding provider from `MemoryConfig` and instantiate `UnifiedMemory`. `effective_memory_backend_name` always reports `"namespace"`.
 - **`memory_trait.rs`** — `impl Memory for UnifiedMemory`, mapping the generic trait surface (`store`, `recall`, `get`, `list`, `forget`, `namespace_summaries`) onto the unified store. Includes namespace normalisation and episodic-session augmentation.
+- **`../safety/`** — shared secret-detection + redaction helpers used by memory write paths (documents, KV, episodic) to prevent credentials/tokens from being persisted into long-lived memory.
 - **`unified/`** — the SQLite implementation, broken into per-table submodules. See `unified/README.md`.
 
 ## How it fits

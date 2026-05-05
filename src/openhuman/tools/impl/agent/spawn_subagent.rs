@@ -404,6 +404,7 @@ impl Tool for SpawnSubagentTool {
             toolkit_override,
             context,
             task_id: Some(task_id.clone()),
+            worker_thread_id: None,
         };
 
         let progress_sink = current_parent().and_then(|p| p.on_progress.clone());
@@ -547,6 +548,7 @@ fn persist_worker_thread(
             id: thread_id.clone(),
             title,
             created_at: now.clone(),
+            parent_thread_id: None,
             labels: Some(vec!["worker".to_string()]),
         },
     )

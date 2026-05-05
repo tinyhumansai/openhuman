@@ -11,6 +11,7 @@ pub mod global;
 pub mod ingestion;
 pub mod ops;
 pub mod rpc_models;
+pub mod safety;
 pub mod schemas;
 pub mod slack_ingestion;
 pub mod store;

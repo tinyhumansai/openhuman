@@ -19,6 +19,27 @@ test -f app/package.json
 
 Expected repository path in Codex web is `/workspace/openhuman`. If the checkout is missing or the command shows another project, stop immediately and report the environment binding problem. Do not edit files in the wrong repository.
 
+## Launch Trigger Rule
+
+Use exactly one Codex trigger per Linear issue.
+
+Preferred launch pattern:
+
+```md
+@Codex use the Codex environment for jwalin-shah/openhuman.
+
+Work issue <ISSUE-KEY>.
+Expected path: /workspace/openhuman.
+Start from latest origin/main.
+Create branch codex/<ISSUE-KEY>-<short-title>.
+Follow docs/agent-workflows/codex-pr-checklist.md exactly.
+Do not open duplicate PRs. If validation is blocked, report exact command and error in the PR body and Linear.
+```
+
+Do not also set `delegate: Codex` when posting an explicit `@Codex` launch comment. Linear delegate metadata can start its own Codex thread, so combining both mechanisms can double-trigger the same issue.
+
+If using `delegate: Codex` as the only trigger for an integration that requires it, do not add an `@Codex` comment. Record in the issue which trigger was used.
+
 ## Branch And PR Rules
 
 - Start from latest `origin/main` unless the Linear issue explicitly says otherwise.
@@ -64,8 +85,6 @@ For behavior extraction and architecture refactors:
 - When adding a drift guard, verify it checks the source of truth as it exists in this repo. Do not assume generated strings are written literally in source files.
 
 ## PR Body Requirements
-
-Use the `## AI Authored PR Metadata (required for Codex/Linear PRs)` section in `.github/PULL_REQUEST_TEMPLATE.md` and fill every field.
 
 Every AI-authored PR must include:
 

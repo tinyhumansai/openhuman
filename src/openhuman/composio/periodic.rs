@@ -154,11 +154,12 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
         considered += 1;
 
         // Skip connections that aren't actually live yet.
-        if !matches!(conn.status.as_str(), "ACTIVE" | "CONNECTED") {
+        if !conn.is_active() {
             continue;
         }
 
-        let Some(provider) = get_provider(&conn.toolkit) else {
+        let toolkit = conn.normalized_toolkit();
+        let Some(provider) = get_provider(&toolkit) else {
             // No provider registered for this toolkit — that's fine,
             // we just don't have native code for it. Tools still work
             // through `composio_execute`.
@@ -170,7 +171,7 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
             continue;
         };
 
-        let key = (conn.toolkit.clone(), conn.id.clone());
+        let key = (toolkit.clone(), conn.id.clone());
         let due = {
             let map = sync_map.lock().unwrap_or_else(|e| e.into_inner());
             match map.get(&key) {
@@ -186,7 +187,7 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
         let ctx = ProviderContext {
             config: Arc::clone(&config),
             client: client.clone(),
-            toolkit: conn.toolkit.clone(),
+            toolkit: toolkit.clone(),
             connection_id: Some(conn.id.clone()),
         };
 

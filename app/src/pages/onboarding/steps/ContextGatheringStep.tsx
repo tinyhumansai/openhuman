@@ -13,10 +13,8 @@
  * External calls still go through core (auth, proxy, billing). Only the
  * stage-by-stage orchestration lives in the renderer.
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import Button from '../../../components/ui/Button';
-import WhatLeavesLink from '../../../features/privacy/WhatLeavesLink';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 
@@ -148,39 +146,19 @@ const ContextGatheringStep = ({
   onNext,
   onBack: _onBack,
 }: ContextGatheringStepProps) => {
-  const [stageStatuses, setStageStatuses] = useState<Record<string, StageStatus>>(() => {
-    const initial: Record<string, StageStatus> = {};
-    for (const s of STAGES) initial[s.id] = 'pending';
-    return initial;
-  });
-  const [stageDetails, setStageDetails] = useState<Record<string, string>>({});
+  // Stage statuses are tracked in a ref — they drive pipeline branching only,
+  // not rendering, so there is no need to trigger re-renders on each update.
+  const stageStatusesRef = useRef<Record<string, StageStatus>>(
+    Object.fromEntries(STAGES.map(s => [s.id, 'pending' as StageStatus]))
+  );
   const [finished, setFinished] = useState(false);
-  const [started, setStarted] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [hasError, setHasError] = useState(false);
   const ranRef = useRef(false);
 
   const hasGmail = connectedSources.some(s => s.includes('gmail'));
 
-  const setStage = (id: Stage['id'], status: StageStatus, detail?: string) => {
-    setStageStatuses(prev => ({ ...prev, [id]: status }));
-    if (detail !== undefined) setStageDetails(prev => ({ ...prev, [id]: detail }));
-  };
-
-  const handleStart = () => {
-    if (ranRef.current) return;
-    ranRef.current = true;
-    setStarted(true);
-
-    if (!hasGmail) {
-      const skipped: Record<string, StageStatus> = {};
-      for (const s of STAGES) skipped[s.id] = 'skipped';
-      setStageStatuses(skipped);
-      setStageDetails({ 'gmail-search': 'Gmail not connected' });
-      setFinished(true);
-      return;
-    }
-
-    void runPipeline();
+  const setStage = (id: Stage['id'], status: StageStatus) => {
+    stageStatusesRef.current = { ...stageStatusesRef.current, [id]: status };
   };
 
   async function runPipeline() {
@@ -192,9 +170,9 @@ const ContextGatheringStep = ({
     try {
       profileUrl = await findLinkedInUrlViaComposio();
       if (profileUrl) {
-        setStage('gmail-search', 'done', profileUrl);
+        setStage('gmail-search', 'done');
       } else {
-        setStage('gmail-search', 'skipped', 'No LinkedIn URL found in mailbox');
+        setStage('gmail-search', 'skipped');
         setStage('linkedin-scrape', 'skipped');
         setStage('build-profile', 'skipped');
         setFinished(true);
@@ -202,9 +180,10 @@ const ContextGatheringStep = ({
       }
     } catch (e) {
       console.warn('[onboarding:context] gmail stage failed', e);
-      setStage('gmail-search', 'error', e instanceof Error ? e.message : String(e));
+      setStage('gmail-search', 'error');
       setStage('linkedin-scrape', 'skipped');
       setStage('build-profile', 'skipped');
+      setHasError(true);
       setFinished(true);
       return;
     }
@@ -214,14 +193,10 @@ const ContextGatheringStep = ({
     let scrapedMarkdown = '';
     try {
       scrapedMarkdown = await apifyScrapeLinkedIn(profileUrl);
-      setStage(
-        'linkedin-scrape',
-        scrapedMarkdown.trim() ? 'done' : 'skipped',
-        scrapedMarkdown.trim() ? 'Profile scraped' : 'No scraped data'
-      );
+      setStage('linkedin-scrape', scrapedMarkdown.trim() ? 'done' : 'skipped');
     } catch (e) {
       console.warn('[onboarding:context] apify_linkedin_scrape stage failed', e);
-      setStage('linkedin-scrape', 'error', e instanceof Error ? e.message : String(e));
+      setStage('linkedin-scrape', 'error');
       // Continue — save_profile can still write a URL-only file.
     }
 
@@ -232,60 +207,54 @@ const ContextGatheringStep = ({
         ? scrapedMarkdown
         : `# User Profile\n\nLinkedIn: ${profileUrl}\n\n_Scrape returned no data._`;
       await saveProfile(body);
-      setStage('build-profile', 'done', 'PROFILE.md saved');
+      setStage('build-profile', 'done');
     } catch (e) {
       console.warn('[onboarding:context] save_profile failed', e);
-      setStage('build-profile', 'error', e instanceof Error ? e.message : String(e));
+      setStage('build-profile', 'error');
+      setHasError(true);
     }
 
     setFinished(true);
   }
 
-  const completedCount = STAGES.filter(s => {
-    const st = stageStatuses[s.id];
-    return st === 'done' || st === 'skipped' || st === 'error';
-  }).length;
-  const progressPercent = Math.round((completedCount / STAGES.length) * 100);
-  const isRunning = !finished;
-  const activeStageIdx = STAGES.findIndex(s => stageStatuses[s.id] === 'active');
+  // Auto-start pipeline on mount
+  useEffect(() => {
+    if (ranRef.current) return;
+    ranRef.current = true;
 
-  const handleContinue = async () => {
-    setError(null);
-    try {
-      await onNext();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong.');
+    if (!hasGmail) {
+      for (const s of STAGES) setStage(s.id, 'skipped');
+      setFinished(true);
+      return;
     }
-  };
 
-  if (!started) {
+    void runPipeline();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-navigate on successful completion
+  useEffect(() => {
+    if (finished && !hasError) {
+      const t = setTimeout(() => {
+        void Promise.resolve(onNext()).catch(e => {
+          console.warn('[onboarding:context] auto-advance failed', e);
+          setHasError(true);
+        });
+      }, 800);
+      return () => clearTimeout(t);
+    }
+  }, [finished, hasError, onNext]);
+
+  if (finished && hasError) {
     return (
-      <div
-        className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up"
-        data-testid="context-gathering-intro">
-        <div className="text-center mb-5">
-          <h1 className="text-xl font-bold mb-2 text-stone-900">Getting To Know You</h1>
-          <p className="text-stone-500 text-sm leading-relaxed max-w-sm mx-auto">
-            I'm going to build a short profile about you so the first conversation is warm.
+      <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
+        <div className="flex flex-col items-center justify-center gap-5">
+          <h1 className="text-xl font-bold text-stone-900">Almost there!</h1>
+          <p className="text-sm text-stone-600 text-center max-w-xs leading-relaxed">
+            We couldn&apos;t build your full profile right now, but that&apos;s okay — you can
+            always update it later.
           </p>
-        </div>
-        <div className="rounded-xl border border-stone-100 bg-stone-50 p-4 mb-5 text-sm text-stone-600 leading-relaxed">
-          {hasGmail ? (
-            <>
-              Using your <span className="font-medium text-stone-900">connected Gmail</span> we will
-              build a short profile about you. Everything happens in your device itself for maximum
-              privacy.
-            </>
-          ) : (
-            <>You haven't connected Gmail. Nothing to read. You can skip this step.</>
-          )}
-        </div>
-        <OnboardingNextButton label={hasGmail ? "Let's go!" : 'Continue'} onClick={handleStart} />
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <Button variant="ghost" size="sm" onClick={() => void onNext()}>
-            Skip for now
-          </Button>
-          <WhatLeavesLink />
+          <OnboardingNextButton label="Continue" onClick={() => void onNext()} />
         </div>
       </div>
     );
@@ -293,115 +262,20 @@ const ContextGatheringStep = ({
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
-      <div className="text-center mb-5">
-        <h1 className="text-xl font-bold mb-2 text-stone-900">
-          {finished ? 'Context Ready' : 'Building Memory From Your Connections'}
-        </h1>
-        <p className="text-stone-500 text-sm">
-          {finished
-            ? 'Short profile saved locally. Ready to chat.'
-            : 'Working from what you already connected…'}
-        </p>
-      </div>
+      <div className="flex flex-col items-center justify-center gap-6 py-8">
+        {/* Pulsing avatar silhouette */}
+        <div className="w-20 h-20 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer" />
 
-      <div className="mb-5">
-        <div className="h-2 w-full overflow-hidden rounded-full bg-stone-100">
-          {isRunning ? (
-            <div className="h-full w-full rounded-full bg-primary-400/60 animate-pulse" />
-          ) : (
-            <div
-              className="h-full rounded-full bg-primary-500 transition-all duration-500 ease-out"
-              style={{ width: `${finished ? 100 : Math.max(progressPercent, 8)}%` }}
-            />
-          )}
+        {/* Title */}
+        <h1 className="text-xl font-bold text-stone-900 animate-pulse">Building your profile...</h1>
+        <p className="text-sm text-stone-500 leading-relaxed">This will only take a moment.</p>
+
+        {/* Skeleton bars */}
+        <div className="w-64 flex flex-col gap-3 mt-2">
+          <div className="h-3 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer" />
+          <div className="h-3 w-3/4 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer [animation-delay:150ms]" />
+          <div className="h-3 w-1/2 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer [animation-delay:300ms]" />
         </div>
-        {isRunning && activeStageIdx >= 0 && (
-          <p className="mt-2 text-xs text-primary-600 text-center animate-pulse">
-            {STAGES[activeStageIdx].label}...
-          </p>
-        )}
-      </div>
-
-      <div className="mb-5 space-y-2">
-        {STAGES.map((stage, idx) => {
-          const status = stageStatuses[stage.id];
-          const detail = stageDetails[stage.id];
-          const displayStatus =
-            isRunning && status === 'pending' && idx <= (activeStageIdx < 0 ? 0 : activeStageIdx)
-              ? 'active'
-              : status;
-
-          return (
-            <div
-              key={stage.id}
-              className="flex items-start gap-3 rounded-xl border border-stone-100 px-3 py-2.5">
-              <div className="mt-0.5 flex-shrink-0">
-                {displayStatus === 'done' && (
-                  <div className="h-4 w-4 rounded-full bg-sage-500 flex items-center justify-center">
-                    <svg
-                      className="h-2.5 w-2.5 text-white"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={3}
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                  </div>
-                )}
-                {displayStatus === 'active' && (
-                  <div className="h-4 w-4 rounded-full border-2 border-primary-500 border-t-transparent animate-spin" />
-                )}
-                {displayStatus === 'pending' && (
-                  <div className="h-4 w-4 rounded-full border-2 border-stone-200" />
-                )}
-                {displayStatus === 'skipped' && (
-                  <div className="h-4 w-4 rounded-full bg-stone-200 flex items-center justify-center">
-                    <span className="text-[8px] text-stone-400">--</span>
-                  </div>
-                )}
-                {displayStatus === 'error' && (
-                  <div className="h-4 w-4 rounded-full bg-amber-400 flex items-center justify-center">
-                    <span className="text-[8px] text-white font-bold">!</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="min-w-0 flex-1">
-                <p
-                  className={`text-sm font-medium ${
-                    displayStatus === 'active'
-                      ? 'text-stone-900'
-                      : displayStatus === 'done'
-                        ? 'text-sage-700'
-                        : displayStatus === 'error'
-                          ? 'text-amber-700'
-                          : 'text-stone-400'
-                  }`}>
-                  {stage.label}
-                </p>
-                {detail && !isRunning && (
-                  <p
-                    className={`mt-0.5 text-xs truncate ${
-                      displayStatus === 'error' ? 'text-amber-500' : 'text-stone-400'
-                    }`}>
-                    {detail}
-                  </p>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {error && <p className="text-coral-400 text-sm mb-3 text-center">{error}</p>}
-
-      <OnboardingNextButton onClick={handleContinue} disabled={!finished} label="Continue" />
-      <div className="mt-3 flex justify-center">
-        <WhatLeavesLink />
       </div>
     </div>
   );

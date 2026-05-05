@@ -569,6 +569,35 @@ fn convert_messages_for_native_maps_tool_result_payload() {
 }
 
 #[test]
+fn chat_message_identity_metadata_is_not_provider_wire_payload() {
+    let message = ChatMessage {
+        id: Some("msg_123".to_string()),
+        role: "user".to_string(),
+        content: "hello".to_string(),
+        extra_metadata: Some(serde_json::json!({"citation": "mem-1"})),
+    };
+
+    let serialized = serde_json::to_value(&message).unwrap();
+
+    assert_eq!(
+        serialized.get("role").and_then(|v| v.as_str()),
+        Some("user")
+    );
+    assert_eq!(
+        serialized.get("content").and_then(|v| v.as_str()),
+        Some("hello")
+    );
+    assert!(
+        serialized.get("id").is_none(),
+        "provider ChatMessage serialization must not leak UI message ids"
+    );
+    assert!(
+        serialized.get("extra_metadata").is_none(),
+        "provider ChatMessage serialization must not leak UI metadata"
+    );
+}
+
+#[test]
 fn flatten_system_messages_merges_into_first_user() {
     let input = vec![
         ChatMessage::system("core policy"),
@@ -892,8 +921,10 @@ fn response_with_multiple_tool_calls() {
 async fn chat_with_tools_fails_without_key() {
     let p = make_provider("TestProvider", "https://example.com", None);
     let messages = vec![ChatMessage {
+        id: None,
         role: "user".to_string(),
         content: "hello".to_string(),
+        extra_metadata: None,
     }];
     let tools = vec![serde_json::json!({
         "type": "function",
