@@ -48,10 +48,15 @@ pub async fn status_list_rpc(config: &Config) -> Result<RpcOutcome<StatusListRes
             // first ':'); falls back to `source_kind` when no prefix.
             //
             // `provider_chunks` projects per-row provider + the columns
-            // we need. `wave_anchors` finds, for each provider, the
-            // earliest chunk within WAVE_WINDOW_MS of the most recent
-            // — this is the wave's start. The outer SELECT joins back
-            // to count both lifetime totals and in-wave totals.
+            // we need. `provider_pending` flags providers that still
+            // have at least one chunk waiting for an embedding —
+            // `wave_anchors` is gated on this so a fully-drained
+            // provider gets `batch_total = batch_processed = 0` (the
+            // UI then hides the progress bar instead of rendering a
+            // completed one for an idle connection). `wave_anchors`
+            // finds the earliest chunk within WAVE_WINDOW_MS of the
+            // most recent — the wave's start. The outer SELECT joins
+            // back to count both lifetime and in-wave totals.
             let mut stmt = conn.prepare(
                 "WITH provider_chunks AS ( \
                     SELECT \
@@ -70,11 +75,19 @@ pub async fn status_list_rpc(config: &Config) -> Result<RpcOutcome<StatusListRes
                     FROM provider_chunks \
                     GROUP BY provider \
                  ), \
+                 provider_pending AS ( \
+                    SELECT provider, \
+                           SUM(CASE WHEN embedding IS NULL THEN 1 ELSE 0 END) AS pending \
+                    FROM provider_chunks \
+                    GROUP BY provider \
+                 ), \
                  wave_anchors AS ( \
                     SELECT p.provider, MIN(p.created_at_ms) AS anchor \
                     FROM provider_chunks p \
                     JOIN provider_max m ON p.provider = m.provider \
-                    WHERE p.created_at_ms >= m.max_created - ?1 \
+                    JOIN provider_pending pp ON p.provider = pp.provider \
+                    WHERE pp.pending > 0 \
+                      AND p.created_at_ms >= m.max_created - ?1 \
                     GROUP BY p.provider \
                  ) \
                  SELECT \
