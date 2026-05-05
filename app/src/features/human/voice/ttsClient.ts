@@ -52,12 +52,7 @@ export async function synthesizeSpeech(text: string, opts: TtsOptions = {}): Pro
   if (voiceId) params.voice_id = voiceId;
   if (opts.modelId) params.model_id = opts.modelId;
   if (opts.outputFormat) params.output_format = opts.outputFormat;
-  ttsLog(
-    'synthesize chars=%d (raw=%d) voice=%s',
-    spoken.length,
-    text.length,
-    voiceId ?? 'default'
-  );
+  ttsLog('synthesize chars=%d (raw=%d) voice=%s', spoken.length, text.length, voiceId ?? 'default');
 
   const result = await callCoreRpc<TtsResponse>({
     method: 'openhuman.voice_reply_synthesize',

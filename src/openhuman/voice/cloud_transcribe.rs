@@ -67,7 +67,11 @@ pub async fn transcribe_cloud(
         .map_err(|e| e.to_string())?
         .and_then(|t| {
             let s = t.trim().to_string();
-            if s.is_empty() { None } else { Some(s) }
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         })
         .ok_or_else(|| "no backend session token; sign in first".to_string())?;
 
@@ -148,9 +152,8 @@ pub async fn transcribe_cloud(
         ));
     }
 
-    let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
-        format!("parse transcription response failed: {e}; body={body}")
-    })?;
+    let parsed: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("parse transcription response failed: {e}; body={body}"))?;
     let text = parsed
         .get("text")
         .and_then(|v| v.as_str())

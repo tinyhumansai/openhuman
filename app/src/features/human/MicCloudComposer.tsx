@@ -251,9 +251,7 @@ export function MicCloudComposer({
         onClick={() => (isRecording ? stopRecording() : void startRecording())}
         disabled={buttonDisabled}
         className={`relative w-14 h-14 flex items-center justify-center rounded-full text-white shadow-soft transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-          isRecording
-            ? 'bg-coral-500 hover:bg-coral-400'
-            : 'bg-primary-500 hover:bg-primary-600'
+          isRecording ? 'bg-coral-500 hover:bg-coral-400' : 'bg-primary-500 hover:bg-primary-600'
         }`}>
         {isRecording && (
           <span className="absolute inset-0 rounded-full bg-coral-500/40 animate-ping" />

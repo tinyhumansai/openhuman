@@ -247,10 +247,7 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
                 optional_string("model", "Backend STT model id (default: whisper-v1)."),
                 optional_string("language", "BCP-47 language hint, e.g. 'en'."),
             ],
-            outputs: vec![json_output(
-                "result",
-                "CloudTranscribeResult: { text }.",
-            )],
+            outputs: vec![json_output("result", "CloudTranscribeResult: { text }.")],
         },
         "voice_server_start" => ControllerSchema {
             namespace: "voice",

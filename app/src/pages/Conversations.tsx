@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
-import MicCloudComposer from '../features/human/MicCloudComposer';
 import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
@@ -11,6 +10,7 @@ import PillTabBar from '../components/PillTabBar';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
+import MicCloudComposer from '../features/human/MicCloudComposer';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../constants/onboardingChat';
 import { useStickToBottom } from '../hooks/useStickToBottom';
@@ -131,10 +131,7 @@ export function isComposerInteractionBlocked(args: {
 //   );
 // }
 
-const Conversations = ({
-  variant = 'page',
-  composer = 'text',
-}: ConversationsProps = {}) => {
+const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsProps = {}) => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const {
