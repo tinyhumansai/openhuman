@@ -52,23 +52,41 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
   thinkOutEndSec,
 }) => {
   const frame = useCurrentFrame();
-  const { fps, width, height } = useVideoConfig();
+  const { fps, width, height, durationInFrames } = useVideoConfig();
 
-  // Gentle bob for the whole character.
-  const bob = Math.sin((frame / fps) * Math.PI * 1.2) * 14;
+  // Snap each periodic oscillator to a whole number of cycles within
+  // `durationInFrames` so the first and last frames match — the Player loops
+  // back to frame 0, and any phase mismatch shows up as a visible pop.
+  const totalSec = durationInFrames / fps;
+  // Closest frequency (Hz) that completes an integer number of cycles in the duration.
+  const loopHz = (targetHz: number): number =>
+    Math.max(1, Math.round(targetHz * totalSec)) / totalSec;
+  // Closest period (frames) that divides the duration into an integer number of cycles.
+  const loopPeriod = (targetFrames: number): number =>
+    durationInFrames / Math.max(1, Math.round(durationInFrames / targetFrames));
+
+  // Convert the original `Math.sin((frame/fps) * π * X)` form: angular freq = X/2 Hz.
+  // Replace X with 2 * loopHz(originalHz) to keep speed close to the design intent.
+  const ang = (originalHz: number): number => 2 * Math.PI * loopHz(originalHz) * (frame / fps);
+
+  // Gentle bob for the whole character — design freq 0.6 Hz.
+  const bob = Math.sin(ang(0.6)) * 14;
 
   // Head dot drifts independently and squashes when pressing into the body.
-  const dotPhase = (frame / fps) * Math.PI * 1.0;
-  const dotDx = Math.sin(dotPhase * 0.7) * 6;
-  const dotDy = Math.sin(dotPhase) * 9;
-  const press = Math.max(0, Math.sin(dotPhase));
+  // Original used a single dotPhase with multiplied factors; split into two
+  // independent loops so each snaps to an integer cycle count.
+  const dotDriftX = ang(0.35); // was sin(dotPhase * 0.7) → 0.35 Hz
+  const dotDriftY = ang(0.5);  // was sin(dotPhase)       → 0.5 Hz
+  const dotDx = Math.sin(dotDriftX) * 6;
+  const dotDy = Math.sin(dotDriftY) * 9;
+  const press = Math.max(0, Math.sin(dotDriftY));
   const dotSquashY = 1 - 0.08 * press;
   const dotSquashX = 1 + 0.05 * press;
 
-  // Right arm wave — keyframe-based hi-wave: 3 swings then a rest pause, loops every 2.4s.
-  // Negative rotation = arm tips upward (counterclockwise). Eased for natural feel.
+  // Right arm wave — keyframe-based hi-wave: 3 swings then a rest pause.
+  // Period snaps to an integer divisor of the duration.
   const easeInOut = Easing.inOut(Easing.cubic);
-  const wavePeriod = Math.round(fps * 2.4);
+  const wavePeriod = loopPeriod(Math.round(fps * 2.4));
   const frameInCycle = frame % wavePeriod;
   const wave = arm === "wave"
     ? interpolate(
@@ -79,22 +97,22 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
       )
     : 0;
 
-  // Left arm gentle sway — slower frequency, smaller amplitude.
-  const leftSway = Math.sin((frame / fps) * Math.PI * 1.6) * 7;
+  // Left arm gentle sway — design freq 0.8 Hz.
+  const leftSway = Math.sin(ang(0.8)) * 7;
 
-  // Steady right arm sway — mirrors left arm with slight phase offset.
-  const steadySway = Math.sin((frame / fps) * Math.PI * 1.6 + 0.3) * 6;
+  // Steady right arm sway — same freq, slight phase offset (offset is harmless
+  // for loop-alignment as long as the base freq fits an integer cycle count).
+  const steadySway = Math.sin(ang(0.8) + 0.3) * 6;
 
-  // Lip sync — slowed to ~1.5–2.3 Hz for natural speech pace (was 2.25–3.55 Hz).
-  // Phase offset keeps them from closing simultaneously.
-  const talkA = Math.abs(Math.sin((frame / fps) * Math.PI * 3.0));
-  const talkB = Math.abs(Math.sin((frame / fps) * Math.PI * 4.6 + 1.2));
+  // Lip sync — design freqs 1.5 and 2.3 Hz. Phase offset preserved.
+  const talkA = Math.abs(Math.sin(ang(1.5)));
+  const talkB = Math.abs(Math.sin(ang(2.3) + 1.2));
   const mouthOpen = talking ? Math.max(talkA, talkB * 0.8) : 0;
   // Tongue fades in only when mouth is open enough — prevents visible tongue during near-closed frames.
   const tongueOpacity = talking ? Math.min(1, Math.max(0, (mouthOpen - 0.15) / 0.35)) : 0;
 
-  // Blink every ~2.6s for ~6 frames.
-  const blinkPeriod = Math.round(fps * 2.6);
+  // Blink — period snaps to an integer divisor of the duration.
+  const blinkPeriod = loopPeriod(Math.round(fps * 2.6));
   const blinkOffset = Math.round(blinkPeriod / 2);
   const inBlink = (frame + blinkOffset) % blinkPeriod < 6;
   const blinkScale = inBlink ? 0.12 : 1;
