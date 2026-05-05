@@ -2,31 +2,38 @@ import type { Step } from 'react-joyride';
 import type { NavigateFunction } from 'react-router-dom';
 
 /**
- * Polls via requestAnimationFrame until `[data-walkthrough="<selector>"]`
- * appears in the DOM, then resolves. Rejects after `timeout` ms (default 3000).
+ * Polls via setTimeout until `[data-walkthrough="<selector>"]` appears in the
+ * DOM, then resolves. Rejects after `timeout` ms (default 3000).
  *
- * Used as the `before` hook for steps that require a page navigation before
- * the target element is mounted.
+ * Uses setTimeout (not rAF) so tests can advance time with fake timers.
  */
 export function waitForTarget(selector: string, timeout = 3000): Promise<void> {
+  const POLL_INTERVAL = 50;
+
   return new Promise<void>((resolve, reject) => {
-    const deadline = Date.now() + timeout;
+    let elapsed = 0;
 
     function check() {
       if (document.querySelector(`[data-walkthrough="${selector}"]`)) {
         resolve();
         return;
       }
-      if (Date.now() >= deadline) {
+      elapsed += POLL_INTERVAL;
+      if (elapsed >= timeout) {
         reject(
           new Error(`[walkthrough] waitForTarget timed out: [data-walkthrough="${selector}"]`)
         );
         return;
       }
-      window.requestAnimationFrame(check);
+      setTimeout(check, POLL_INTERVAL);
     }
 
-    window.requestAnimationFrame(check);
+    // Initial check — element may already be present.
+    if (document.querySelector(`[data-walkthrough="${selector}"]`)) {
+      resolve();
+      return;
+    }
+    setTimeout(check, POLL_INTERVAL);
   });
 }
 

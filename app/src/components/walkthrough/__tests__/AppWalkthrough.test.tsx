@@ -593,27 +593,31 @@ describe('waitForTarget', () => {
   });
 
   it('resolves when element is added to DOM after a delay', async () => {
+    vi.useFakeTimers();
     const el = document.createElement('div');
     el.setAttribute('data-walkthrough', 'async-target');
 
-    // Add element after a short delay using setTimeout (resolved via fake timers).
-    const addEl = () => document.body.appendChild(el);
-
     const promise = waitForTarget('async-target', 500);
-    // Add the element before the timeout expires.
-    addEl();
+
+    // Add element after 100ms (two poll intervals).
+    setTimeout(() => document.body.appendChild(el), 100);
+    await vi.advanceTimersByTimeAsync(150);
 
     try {
       await expect(promise).resolves.toBeUndefined();
     } finally {
+      vi.useRealTimers();
       if (el.parentNode) document.body.removeChild(el);
     }
   });
 
   it('rejects when element is not found before timeout', async () => {
-    // Use a very short timeout so the test completes quickly.
-    await expect(waitForTarget('nonexistent-target', 50)).rejects.toThrow(
-      '[walkthrough] waitForTarget timed out'
-    );
+    vi.useFakeTimers();
+    const promise = waitForTarget('nonexistent-target', 100).catch((e: Error) => e);
+    await vi.advanceTimersByTimeAsync(150);
+    const result = await promise;
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toContain('[walkthrough] waitForTarget timed out');
+    vi.useRealTimers();
   });
 });
