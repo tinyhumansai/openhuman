@@ -227,6 +227,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
         session_key: "0_test".into(),
         session_parent_prefix: None,
+        on_progress: None,
     }
 }
 
@@ -608,4 +609,98 @@ async fn runner_errors_outside_parent_context() {
     let def = make_def_named_tools(&[]);
     let result = run_subagent(&def, "x", SubagentRunOptions::default()).await;
     assert!(matches!(result, Err(SubagentRunError::NoParentContext)));
+}
+
+/// #1122 — when the parent attaches a progress sink, the inner loop
+/// emits `SubagentIterationStarted` for each round and a paired
+/// `SubagentToolCallStarted` / `SubagentToolCallCompleted` for each
+/// child tool call. The web-channel bridge translates these into the
+/// `subagent_iteration_start` / `subagent_tool_call` /
+/// `subagent_tool_result` socket events the parent thread renders.
+#[tokio::test]
+async fn typed_mode_emits_child_progress_events_when_sink_attached() {
+    use crate::openhuman::agent::progress::AgentProgress;
+
+    let provider = ScriptedProvider::new(vec![
+        tool_response("file_read", "{\"path\":\"x\"}"),
+        text_response("done"),
+    ]);
+    let mut parent = make_parent(provider, vec![stub("file_read")]);
+
+    // Wire the parent's progress sink so the runner re-emits child
+    // lifecycle events through the same channel a real session would
+    // expose to the web bridge.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentProgress>(64);
+    parent.on_progress = Some(tx);
+
+    let def = make_def_named_tools(&["file_read"]);
+    let outcome = with_parent_context(parent, async {
+        run_subagent(&def, "read x", SubagentRunOptions::default()).await
+    })
+    .await
+    .expect("runner should succeed");
+    assert_eq!(outcome.iterations, 2);
+
+    // Drain everything the runner sent. The receiver's sender half is
+    // dropped when `parent` falls out of scope above, so `recv` returns
+    // None once the queue empties.
+    let mut events = Vec::new();
+    while let Some(ev) = rx.recv().await {
+        events.push(ev);
+    }
+
+    let iter_starts = events
+        .iter()
+        .filter(|e| matches!(e, AgentProgress::SubagentIterationStarted { .. }))
+        .count();
+    assert_eq!(iter_starts, 2, "one iteration_start per round");
+
+    let tool_starts: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentProgress::SubagentToolCallStarted {
+                call_id,
+                tool_name,
+                iteration,
+                ..
+            } => Some((call_id.clone(), tool_name.clone(), *iteration)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_starts.len(), 1);
+    assert_eq!(tool_starts[0].1, "file_read");
+    assert_eq!(tool_starts[0].2, 1);
+
+    let tool_done: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentProgress::SubagentToolCallCompleted {
+                call_id,
+                success,
+                iteration,
+                ..
+            } => Some((call_id.clone(), *success, *iteration)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_done.len(), 1);
+    assert_eq!(tool_done[0].0, tool_starts[0].0, "matching call_id pair");
+    assert!(tool_done[0].1, "stub tool returns ok");
+    assert_eq!(tool_done[0].2, 1);
+}
+
+/// Runs without an attached sink must remain backwards compatible — the
+/// runner is a no-op for child progress and the outcome is unchanged.
+#[tokio::test]
+async fn typed_mode_progress_emission_is_a_noop_without_sink() {
+    let provider = ScriptedProvider::new(vec![text_response("done")]);
+    let parent = make_parent(provider, vec![]);
+    assert!(parent.on_progress.is_none());
+    let def = make_def_named_tools(&[]);
+    let outcome = with_parent_context(parent, async {
+        run_subagent(&def, "x", SubagentRunOptions::default()).await
+    })
+    .await
+    .expect("runner should succeed");
+    assert_eq!(outcome.iterations, 1);
 }

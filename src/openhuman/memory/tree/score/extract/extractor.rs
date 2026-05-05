@@ -1,3 +1,6 @@
+//! [`EntityExtractor`] trait plus the regex and composite implementations
+//! used as Phase 2's default extraction stack.
+
 use async_trait::async_trait;
 
 use super::regex;
@@ -36,6 +39,8 @@ pub struct CompositeExtractor {
 }
 
 impl CompositeExtractor {
+    /// Build a composite from an explicit list of extractors. Order matters
+    /// only to logs — outputs are merged and deduplicated.
     pub fn new(inner: Vec<Box<dyn EntityExtractor>>) -> Self {
         Self { inner }
     }

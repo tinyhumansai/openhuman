@@ -1,9 +1,12 @@
+//! Tests for the `query` module — hybrid retrieval scoring.
+
 use std::sync::Arc;
 
 use serde_json::json;
 use tempfile::TempDir;
 
-use crate::openhuman::memory::{embeddings::NoopEmbedding, NamespaceDocumentInput, UnifiedMemory};
+use crate::openhuman::embeddings::NoopEmbedding;
+use crate::openhuman::memory::{NamespaceDocumentInput, UnifiedMemory};
 
 #[tokio::test]
 async fn graph_duplicate_upsert_aggregates_evidence_count() {

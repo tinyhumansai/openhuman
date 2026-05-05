@@ -21,10 +21,13 @@
 //! The child files are an implementation detail.
 
 mod builder;
+pub mod migration;
 mod runtime;
 pub(crate) mod transcript;
 mod turn;
 mod types;
+
+pub use migration::{migrate_session_layout_if_needed, MigrationOutcome};
 
 #[cfg(test)]
 mod tests;

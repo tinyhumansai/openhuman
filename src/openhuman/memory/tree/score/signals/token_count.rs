@@ -8,10 +8,15 @@
 //! Output is a score in `[0.0, 1.0]` shaped as a plateau between
 //! `TOKEN_MIN` and `TOKEN_MAX` with linear ramps on both sides.
 
-pub const TOKEN_MIN: u32 = 10; // below this → score 0
-pub const TOKEN_RAMP_LOW: u32 = 30; // 10..30 → linear 0→1
-pub const TOKEN_RAMP_HIGH: u32 = 3_000; // 3000..8000 → linear 1→0.5
-pub const TOKEN_MAX: u32 = 8_000; // above → score 0.5 (not zero — still has content)
+/// Below this token count the chunk scores 0 (treated as noise).
+pub const TOKEN_MIN: u32 = 10;
+/// Top of the linear ramp from 0 → 1 starting at [`TOKEN_MIN`].
+pub const TOKEN_RAMP_LOW: u32 = 30;
+/// Start of the linear ramp from 1 → 0.5 ending at [`TOKEN_MAX`].
+pub const TOKEN_RAMP_HIGH: u32 = 3_000;
+/// Above this token count the score is clamped to 0.5 (oversized content
+/// still carries information but loses the plateau bonus).
+pub const TOKEN_MAX: u32 = 8_000;
 
 /// Score for a chunk's token count. See module docs for shape.
 pub fn score(token_count: u32) -> f32 {

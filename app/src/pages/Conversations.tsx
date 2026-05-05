@@ -3,20 +3,27 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
+import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import PillTabBar from '../components/PillTabBar';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
+// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+// import { ONBOARDING_WELCOME_THREAD_LABEL } from '../constants/onboardingChat';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
-import { isWelcomeLocked } from '../lib/coreState/store';
-import { useCoreState } from '../providers/CoreStateProvider';
+// [#1123] getCoreStateSnapshot and isWelcomeLocked commented out — welcome-agent onboarding replaced by Joyride walkthrough
+// import { getCoreStateSnapshot, isWelcomeLocked } from '../lib/coreState/store';
+// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+// import { useCoreState } from '../providers/CoreStateProvider';
 import { chatCancel, chatSend, useRustChat } from '../services/chatService';
+import { store } from '../store';
 import {
   beginInferenceTurn,
   clearRuntimeForThread,
+  fetchAndHydrateTurnState,
   setToolTimelineForThread,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -89,30 +96,31 @@ export function isComposerInteractionBlocked(args: {
   return !args.rustChat || Boolean(args.activeThreadId) || args.welcomePending;
 }
 
-function WelcomeThinkingTypewriter() {
-  const text = 'Your agent is thinking...';
-  const [visibleChars, setVisibleChars] = useState(0);
-
-  useEffect(() => {
-    const isComplete = visibleChars >= text.length;
-    const delayMs = isComplete ? 950 : 42;
-    const timeoutId = window.setTimeout(() => {
-      setVisibleChars(current => (current >= text.length ? 0 : current + 1));
-    }, delayMs);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [text.length, visibleChars]);
-
-  return (
-    <p className="flex items-center text-sm text-stone-600 font-mono tracking-tight">
-      <span>{text.slice(0, visibleChars)}</span>
-      <span
-        aria-hidden="true"
-        className="ml-0.5 inline-block h-4 w-px bg-stone-400 animate-pulse"
-      />
-    </p>
-  );
-}
+// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+// function WelcomeThinkingTypewriter() {
+//   const text = 'Your agent is thinking...';
+//   const [visibleChars, setVisibleChars] = useState(0);
+//
+//   useEffect(() => {
+//     const isComplete = visibleChars >= text.length;
+//     const delayMs = isComplete ? 950 : 42;
+//     const timeoutId = window.setTimeout(() => {
+//       setVisibleChars(current => (current >= text.length ? 0 : current + 1));
+//     }, delayMs);
+//
+//     return () => window.clearTimeout(timeoutId);
+//   }, [text.length, visibleChars]);
+//
+//   return (
+//     <p className="flex items-center text-sm text-stone-600 font-mono tracking-tight">
+//       <span>{text.slice(0, visibleChars)}</span>
+//       <span
+//         aria-hidden="true"
+//         className="ml-0.5 inline-block h-4 w-px bg-stone-400 animate-pulse"
+//       />
+//     </p>
+//   );
+// }
 
 const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const dispatch = useAppDispatch();
@@ -124,24 +132,28 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     isLoadingMessages,
     messagesError,
     activeThreadId,
-    welcomeThreadId,
+    // [#1123] welcomeThreadId commented out — welcome-agent onboarding replaced by Joyride walkthrough
+    // welcomeThreadId,
   } = useAppSelector(state => state.thread);
 
-  const { snapshot } = useCoreState();
-  const welcomeLocked = isWelcomeLocked(snapshot);
+  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+  // const { snapshot } = useCoreState();
+  // const welcomeLocked = isWelcomeLocked(snapshot);
+
+  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
   // While the proactive welcome agent is running and hasn't published its
   // first message yet, hide the composer (and a few other non-message
   // chrome bits) so the user just sees the "Your agent is thinking..."
   // loader. Flips off the moment the first agent message arrives.
-  const welcomePending =
-    !!welcomeThreadId && selectedThreadId === welcomeThreadId && messages.length === 0;
-  const chatOnboardingCompleted = snapshot.chatOnboardingCompleted;
-  const previousChatOnboardingCompletedRef = useRef<boolean | null>(null);
+  // const welcomePending =
+  //   !!welcomeThreadId && selectedThreadId === welcomeThreadId && messages.length === 0;
+  // const chatOnboardingCompleted = snapshot.chatOnboardingCompleted;
+  // const previousChatOnboardingCompletedRef = useRef<boolean | null>(null);
   // Guard against the mount-time `loadThreads()` promise resolving AFTER
   // the welcome-lock unlock transition creates a fresh thread. Without
   // this, the stale `.then(...)` would re-select the old welcome thread
   // and clobber the auto-created one (#883 CodeRabbit feedback).
-  const skipInitialThreadSelectionRef = useRef(false);
+  // const skipInitialThreadSelectionRef = useRef(false);
 
   const [showSidebar, setShowSidebar] = useState(true);
   const [inputValue, setInputValue] = useState('');
@@ -155,6 +167,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const [selectedLabel, setSelectedLabel] = useState<string>('all');
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
+  const [sendAdvisory, setSendAdvisory] = useState<string | null>(null);
   const socketStatus = useAppSelector(selectSocketStatus);
   const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
   const inferenceStatusByThread = useAppSelector(
@@ -230,11 +243,34 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     void dispatch(loadThreads())
       .unwrap()
       .then(data => {
-        if (cancelled || skipInitialThreadSelectionRef.current) return;
+        // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+        // if (cancelled || skipInitialThreadSelectionRef.current) return;
+        if (cancelled) return;
+        // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+        // Always prefer the welcome thread during lockdown regardless of
+        // whether the server list is empty or not. Without this guard the
+        // stale `.then` could select a pre-existing thread from a prior
+        // session and pull the user out of the welcome conversation.
+        // const snapForSelect = getCoreStateSnapshot().snapshot;
+        // const threadStateForSelect = store.getState().thread;
+        // if (isWelcomeLocked(snapForSelect) && threadStateForSelect.welcomeThreadId) {
+        //   dispatch(setSelectedThread(threadStateForSelect.welcomeThreadId));
+        //   void dispatch(loadThreadMessages(threadStateForSelect.welcomeThreadId));
+        //   return;
+        // }
+        const threadStateForSelect = store.getState().thread;
         if (data.threads.length > 0) {
-          const mostRecent = data.threads[0];
-          dispatch(setSelectedThread(mostRecent.id));
-          void dispatch(loadThreadMessages(mostRecent.id));
+          // Prefer the thread the user was last viewing (persisted across
+          // reloads via redux-persist on the `thread` slice). Only fall
+          // through to "most recent" if that thread no longer exists
+          // server-side (deleted, purged, or different user).
+          const persistedId = threadStateForSelect.selectedThreadId;
+          const resumeId =
+            persistedId && data.threads.some(t => t.id === persistedId)
+              ? persistedId
+              : data.threads[0].id;
+          dispatch(setSelectedThread(resumeId));
+          void dispatch(loadThreadMessages(resumeId));
         } else {
           void handleCreateNewThread();
         }
@@ -249,30 +285,32 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   useEffect(() => {
     if (selectedThreadId) {
       void dispatch(loadThreadMessages(selectedThreadId));
+      void dispatch(fetchAndHydrateTurnState(selectedThreadId));
     }
   }, [selectedThreadId, dispatch]);
 
+  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
   // Welcome lockdown unlock (#883) — when `chatOnboardingCompleted`
   // transitions from `false` → `true` (the welcome agent just called
   // `complete_onboarding(action: "complete")`), open a fresh thread so
   // the user starts their first "real" conversation with the orchestrator
   // instead of continuing the welcome thread. Ref-tracked one-shot so
   // the 2s snapshot poll cannot re-fire this.
-  useEffect(() => {
-    const prev = previousChatOnboardingCompletedRef.current;
-    previousChatOnboardingCompletedRef.current = chatOnboardingCompleted;
-    if (prev === false && chatOnboardingCompleted === true) {
-      // Signal the mount-time `loadThreads()` promise to bail if it is
-      // still pending — otherwise its stale resolution would overwrite
-      // our freshly created thread selection.
-      skipInitialThreadSelectionRef.current = true;
-      console.debug('[welcome-lock] chat onboarding completed — opening new thread');
-      void handleCreateNewThread();
-    }
-    // handleCreateNewThread is stable for the component lifetime (only
-    // uses `dispatch`); the ref guards against duplicate fires.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatOnboardingCompleted]);
+  // useEffect(() => {
+  //   const prev = previousChatOnboardingCompletedRef.current;
+  //   previousChatOnboardingCompletedRef.current = chatOnboardingCompleted;
+  //   if (prev === false && chatOnboardingCompleted === true) {
+  //     // Signal the mount-time `loadThreads()` promise to bail if it is
+  //     // still pending — otherwise its stale resolution would overwrite
+  //     // our freshly created thread selection.
+  //     skipInitialThreadSelectionRef.current = true;
+  //     console.debug('[welcome-lock] chat onboarding completed — opening new thread');
+  //     void handleCreateNewThread();
+  //   }
+  //   // handleCreateNewThread is stable for the component lifetime (only
+  //   // uses `dispatch`); the ref guards against duplicate fires.
+  //   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [chatOnboardingCompleted]);
 
   const location = useLocation();
   const { containerRef: messagesContainerRef, endRef: messagesEndRef } = useStickToBottom(
@@ -309,7 +347,10 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     if (sendError && inputValue.length > 0) {
       setSendError(null);
     }
-  }, [inputValue, sendError]);
+    if (sendAdvisory && inputValue.length > 0) {
+      setSendAdvisory(null);
+    }
+  }, [inputValue, sendAdvisory, sendError]);
 
   const armSilenceTimer = (threadId: string) => {
     if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
@@ -319,7 +360,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       setSendError(
         chatSendError(
           'safety_timeout',
-          'No response from the assistant after 10 minutes. Try again or check your connection.'
+          'No response from the agent after 10 minutes. Try again or check your connection.'
         )
       );
       dispatch(clearRuntimeForThread({ threadId }));
@@ -441,13 +482,14 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const handleSlashCommand = (command: string): boolean => {
     const cmd = command.toLowerCase();
     if (cmd === '/new' || cmd === '/clear') {
+      // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
       // Welcome lockdown (#883) — consume the command so it is not sent
       // to the agent, but skip thread creation/reset so the user cannot
       // escape the welcome conversation via `/new` or `/clear`.
-      if (welcomeLocked) {
-        setInputValue('');
-        return true;
-      }
+      // if (welcomeLocked) {
+      //   setInputValue('');
+      //   return true;
+      // }
       setInputValue('');
       void handleCreateNewThread();
       return true;
@@ -462,6 +504,13 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     if (!trimmed || !selectedThreadId || composerInteractionBlocked) return;
 
     if (handleSlashCommand(trimmed)) return;
+
+    const promptGuard = checkPromptInjection(trimmed);
+    if (promptGuard.verdict === 'review' || promptGuard.verdict === 'block') {
+      setSendAdvisory(promptGuardMessage(promptGuard));
+    } else {
+      setSendAdvisory(null);
+    }
 
     if (isAtLimit) {
       setShowLimitModal(true);
@@ -526,7 +575,17 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       }
       sendingThreadIdRef.current = null;
       const msg = err instanceof Error ? err.message : String(err);
-      setSendError(chatSendError('cloud_send_failed', msg));
+      if (
+        msg.toLowerCase().includes('blocked by a security policy') ||
+        msg.toLowerCase().includes('flagged for security review')
+      ) {
+        const code = msg.toLowerCase().includes('flagged for security review')
+          ? 'prompt_review'
+          : 'prompt_blocked';
+        setSendError(chatSendError(code, msg));
+      } else {
+        setSendError(chatSendError('cloud_send_failed', msg));
+      }
       dispatch(clearRuntimeForThread({ threadId: sendingThreadId }));
       dispatch(setActiveThread(null));
     }
@@ -781,9 +840,10 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   // Blocks all composer interaction while a turn is in-flight, the
   // proactive welcome opener is pending, or Rust chat is unavailable.
   // isSending: the *selected* thread is in-flight (drives selected-thread UI only).
+  // [#1123] welcomePending removed — welcome-agent onboarding replaced by Joyride walkthrough
   const composerInteractionBlocked = isComposerInteractionBlocked({
     activeThreadId,
-    welcomePending,
+    welcomePending: false,
     rustChat,
   });
   const isSending = Boolean(
@@ -795,10 +855,22 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     selectedThreadToolTimeline.length > 0 && !isSending && Boolean(latestVisibleAgentMessage);
 
   const filteredThreads = useMemo(() => {
-    return threads.filter(t => {
+    const base = threads.filter(t => {
       if (selectedLabel === 'all') return true;
       return t.labels?.includes(selectedLabel);
     });
+    // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+    // if (!welcomeLocked) return base;
+    // // During welcome lockdown only the onboarding welcome thread should
+    // // appear — not stray blank threads from races or proactive:* handling.
+    // if (welcomeThreadId) {
+    //   return base.filter(t => t.id === welcomeThreadId);
+    // }
+    // // Fallback: welcomeThreadId not yet set but the server already returned the
+    // // thread (e.g. hot-reload). Keep only onboarding-labelled threads so the
+    // // welcome thread is visible rather than hidden behind the empty-state message.
+    // return base.filter(t => (t.labels ?? []).includes(ONBOARDING_WELCOME_THREAD_LABEL));
+    return base;
   }, [threads, selectedLabel]);
 
   const sortedThreads = useMemo(() => {
@@ -828,6 +900,28 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   }, [allLabels, selectedLabel]);
 
   const isSidebar = variant === 'sidebar';
+  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+  // During welcome lockdown keep the sidebar forced open so the user always
+  // sees the single onboarding thread entry and cannot accidentally close the
+  // panel via the toggle (leaving themselves with no thread list).
+  // const effectiveShowSidebar = welcomeLocked ? true : showSidebar;
+  const effectiveShowSidebar = showSidebar;
+
+  // Stable title resolver used by both the sidebar thread list and the header.
+  // [#1123] welcome-lock title override removed — Joyride walkthrough replaced welcome-agent
+  const resolveThreadDisplayTitle = (threadId: string | null): string => {
+    if (!threadId) return 'Select a thread';
+    const t = threads.find(thr => thr.id === threadId);
+    // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+    // if (
+    //   welcomeLocked &&
+    //   t?.id === welcomeThreadId &&
+    //   (t?.labels ?? []).includes(ONBOARDING_WELCOME_THREAD_LABEL)
+    // ) {
+    //   return 'Onboarding';
+    // }
+    return t?.title ?? 'Select a thread';
+  };
 
   return (
     <div
@@ -838,12 +932,13 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       }>
       {/* Thread sidebar — only shown in page mode (when Conversations itself
           is a top-level route, not embedded as a sidebar in another page).
-          Suppressed during welcome lockdown (#883) — the user must stay in
-          the welcome conversation. */}
-      {!isSidebar && showSidebar && !welcomeLocked && (
+          During welcome lockdown the sidebar is always open (effectiveShowSidebar
+          is clamped to true) so the single onboarding thread is always visible. */}
+      {!isSidebar && effectiveShowSidebar && (
         <div className="w-64 flex-shrink-0 flex flex-col bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100">
             <h2 className="text-sm font-semibold text-stone-700">Threads</h2>
+            {/* [#1123] welcomeLocked guard removed — always show new thread button */}
             <button
               onClick={() => void handleCreateNewThread()}
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
@@ -858,6 +953,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
               </svg>
             </button>
           </div>
+          {/* [#1123] welcomeLocked guard removed — always show label filter */}
           <div className="px-4 py-2 border-b border-stone-50">
             <PillTabBar
               items={labelTabs}
@@ -901,8 +997,9 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                           ? 'font-medium text-primary-700'
                           : 'text-stone-700'
                       }`}>
-                      {thread.title}
+                      {resolveThreadDisplayTitle(thread.id)}
                     </p>
+                    {/* [#1123] welcomeLocked guard removed — always show delete button */}
                     <button
                       onClick={e => {
                         e.stopPropagation();
@@ -963,35 +1060,34 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             parent page's chrome instead. Hidden entirely during welcome
             lockdown (#883) so the onboarding chat is just the conversation
             with no chrome around it. */}
-        {!isSidebar && !welcomeLocked && (
+        {!isSidebar && (
           <div className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100">
-            {!welcomeLocked && (
-              <button
-                onClick={() => setShowSidebar(prev => !prev)}
-                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
-                title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 6h16M4 12h16M4 18h16"
-                  />
-                </svg>
-              </button>
-            )}
+            <button
+              onClick={() => setShowSidebar(prev => !prev)}
+              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
+              title={effectiveShowSidebar ? 'Hide sidebar' : 'Show sidebar'}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 6h16M4 12h16M4 18h16"
+                />
+              </svg>
+            </button>
             <h3 className="text-sm font-medium text-stone-700 truncate flex-1">
-              {threads.find(t => t.id === selectedThreadId)?.title ?? 'Select a thread'}
+              {resolveThreadDisplayTitle(selectedThreadId)}
             </h3>
-            <TokenUsagePill />
-            {!welcomeLocked && (
+            {/* [#1123] welcomeLocked guard removed — always show token usage + new thread button */}
+            <>
+              <TokenUsagePill />
               <button
                 onClick={() => void handleCreateNewThread()}
                 className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
                 title="New thread (/new)">
                 + New
               </button>
-            )}
+            </>
           </div>
         )}
         <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-5 py-4 bg-[#f6f6f6]">
@@ -1039,8 +1135,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                     )}
                   <div
                     className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div
-                      className={`relative ${msg.sender === 'user' ? 'w-fit max-w-[75%]' : 'w-full md:max-w-[75%]'}`}>
+                    <div className="relative w-fit max-w-[75%]">
                       {msg.sender === 'agent' ? (
                         <div className="space-y-1">
                           {splitAgentMessageIntoBubbles(msg.content).map(
@@ -1224,7 +1319,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                 (selectedStreamingAssistant.content.length > 0 ||
                   selectedStreamingAssistant.thinking.length > 0) && (
                   <div className="flex justify-start">
-                    <div className="relative w-full md:max-w-[75%]">
+                    <div className="relative w-fit max-w-[75%]">
                       {selectedStreamingAssistant.thinking.length > 0 && (
                         <details className="mb-1.5 bg-stone-100 rounded-lg px-3 py-1.5 text-xs text-stone-600 open:bg-stone-100">
                           <summary className="cursor-pointer select-none flex items-center gap-1.5">
@@ -1301,20 +1396,21 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
               )}
               <div ref={messagesEndRef} />
             </div>
-          ) : welcomeThreadId && selectedThreadId === welcomeThreadId ? (
-            // Welcome thread, no messages yet — the proactive welcome agent
-            // is running in the background. Show a friendly loader until
-            // the first agent message lands (which flips us into the
-            // `hasVisibleMessages` branch above).
-            <div className="flex-1 flex flex-col items-center justify-center h-full gap-3">
-              <div className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
-                <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
-                <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:300ms]" />
-              </div>
-              <WelcomeThinkingTypewriter />
-            </div>
           ) : (
+            // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+            // ) : welcomeThreadId && selectedThreadId === welcomeThreadId ? (
+            //   // Welcome thread, no messages yet — the proactive welcome agent
+            //   // is running in the background. Show a friendly loader until
+            //   // the first agent message lands (which flips us into the
+            //   // `hasVisibleMessages` branch above).
+            //   <div className="flex-1 flex flex-col items-center justify-center h-full gap-3">
+            //     <div className="flex items-center gap-1">
+            //       <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
+            //       <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
+            //       <span className="w-2 h-2 rounded-full bg-stone-500 animate-bounce [animation-delay:300ms]" />
+            //     </div>
+            //     <WelcomeThinkingTypewriter />
+            //   </div>
             <div className="flex-1 flex items-center justify-center h-full">
               <p className="text-sm text-stone-600">No messages yet</p>
             </div>
@@ -1322,130 +1418,142 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
         </div>
 
         <div className="flex-shrink-0 border-t border-stone-200 px-4 py-3">
-          {!welcomeLocked && !welcomePending && (
-            <>
-              {isNearLimit &&
-                !isAtLimit &&
-                isFreeTier &&
-                shouldShowBanner('conversations-warning', 24 * 60 * 60 * 1000) && (
-                  <div className="mb-3">
-                    <UpsellBanner
-                      variant="warning"
-                      title="Approaching usage limit"
-                      message={`You've used ${Math.round(Math.max(usagePct10h, usagePct7d) * 100)}% of your inference budget. Upgrade for higher limits.`}
-                      ctaLabel="Upgrade"
-                      onCtaClick={() => {
-                        void openUrl(BILLING_DASHBOARD_URL);
-                      }}
-                      dismissible
-                      onDismiss={() => dismissBanner('conversations-warning')}
-                    />
-                  </div>
-                )}
-              {teamUsage && (shouldShowBudgetCompletedMessage || isRateLimited) && (
-                <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <svg
-                      className="w-4 h-4 text-coral-400 flex-shrink-0"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                      />
-                    </svg>
-                    <p className="text-xs text-coral-600 truncate">
-                      {shouldShowBudgetCompletedMessage
-                        ? teamUsage.cycleBudgetUsd > 0
-                          ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
-                          : 'Your included budget is complete. Add credits or upgrade to continue.'
-                        : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
-                    </p>
-                  </div>
-                  {shouldShowBudgetCompletedMessage && (
-                    <button
-                      onClick={() => {
-                        void openUrl(BILLING_DASHBOARD_URL);
-                      }}
-                      className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
-                      Top Up
-                    </button>
-                  )}
+          {/* [#1123] welcomeLocked and welcomePending guards removed — Joyride walkthrough replaced welcome-agent */}
+          <>
+            {isNearLimit &&
+              !isAtLimit &&
+              isFreeTier &&
+              shouldShowBanner('conversations-warning', 24 * 60 * 60 * 1000) && (
+                <div className="mb-3">
+                  <UpsellBanner
+                    variant="warning"
+                    title="Approaching usage limit"
+                    message={`You've used ${Math.round(Math.max(usagePct10h, usagePct7d) * 100)}% of your inference budget. Upgrade for higher limits.`}
+                    ctaLabel="Upgrade"
+                    onCtaClick={() => {
+                      void openUrl(BILLING_DASHBOARD_URL);
+                    }}
+                    dismissible
+                    onDismiss={() => dismissBanner('conversations-warning')}
+                  />
                 </div>
               )}
+            {teamUsage && (shouldShowBudgetCompletedMessage || isRateLimited) && (
+              <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <svg
+                    className="w-4 h-4 text-coral-400 flex-shrink-0"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                  <p className="text-xs text-coral-600 truncate">
+                    {shouldShowBudgetCompletedMessage
+                      ? teamUsage.cycleBudgetUsd > 0
+                        ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
+                        : 'Your included budget is complete. Add credits or upgrade to continue.'
+                      : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
+                  </p>
+                </div>
+                {shouldShowBudgetCompletedMessage && (
+                  <button
+                    onClick={() => {
+                      void openUrl(BILLING_DASHBOARD_URL);
+                    }}
+                    className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
+                    Top Up
+                  </button>
+                )}
+              </div>
+            )}
 
-              {/* Quota / usage pills — hidden during welcome lockdown so the
+            {/* Quota / usage pills — hidden during welcome lockdown so the
                   onboarding chat doesn't surface billing affordances. */}
-              <div className="flex items-center justify-end gap-2 mb-2">
-                {(isLoadingBudget || teamUsage) && (
-                  <div className="relative group">
-                    {teamUsage ? (
-                      <div className="flex items-center gap-2">
-                        {!teamUsage.bypassCycleLimit && (
-                          <LimitPill
-                            label="5h"
-                            usedPct={
-                              teamUsage.fiveHourCapUsd > 0
-                                ? Math.min(1, teamUsage.cycleLimit5hr / teamUsage.fiveHourCapUsd)
-                                : 0
-                            }
-                          />
-                        )}
+            <div className="flex items-center justify-end gap-2 mb-2">
+              {(isLoadingBudget || teamUsage) && (
+                <div className="relative group">
+                  {teamUsage ? (
+                    <div className="flex items-center gap-2">
+                      {!teamUsage.bypassCycleLimit && (
                         <LimitPill
-                          label="7d"
+                          label="5h"
                           usedPct={
-                            teamUsage.cycleBudgetUsd > 0
-                              ? Math.min(
-                                  1,
-                                  (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) /
-                                    teamUsage.cycleBudgetUsd
-                                )
+                            teamUsage.fiveHourCapUsd > 0
+                              ? Math.min(1, teamUsage.cycleLimit5hr / teamUsage.fiveHourCapUsd)
                               : 0
                           }
                         />
-                      </div>
-                    ) : (
-                      <span className="text-[10px] text-stone-400 animate-pulse">loading…</span>
-                    )}
-                    {teamUsage && (
-                      <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
-                        <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
-                          {!teamUsage.bypassCycleLimit && (
-                            <div className="flex items-center justify-between gap-4">
-                              <span className="text-stone-400">5-hour limit</span>
-                              <span>
-                                ${(teamUsage.cycleLimit5hr ?? 0).toFixed(2)} / $
-                                {(teamUsage.fiveHourCapUsd ?? 0).toFixed(2)}
-                                {teamUsage.fiveHourResetsAt && (
-                                  <span className="text-stone-400 ml-1">
-                                    — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
-                                  </span>
-                                )}
-                              </span>
-                            </div>
-                          )}
+                      )}
+                      <LimitPill
+                        label="7d"
+                        usedPct={
+                          teamUsage.cycleBudgetUsd > 0
+                            ? Math.min(
+                                1,
+                                (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) /
+                                  teamUsage.cycleBudgetUsd
+                              )
+                            : 0
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <span className="text-[10px] text-stone-400 animate-pulse">loading…</span>
+                  )}
+                  {teamUsage && (
+                    <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
+                      <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
+                        {!teamUsage.bypassCycleLimit && (
                           <div className="flex items-center justify-between gap-4">
-                            <span className="text-stone-400">Weekly limit</span>
+                            <span className="text-stone-400">5-hour limit</span>
                             <span>
-                              ${(teamUsage.remainingUsd ?? 0).toFixed(2)} / $
-                              {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} left
-                              {teamUsage.cycleEndsAt && (
+                              ${(teamUsage.cycleLimit5hr ?? 0).toFixed(2)} / $
+                              {(teamUsage.fiveHourCapUsd ?? 0).toFixed(2)}
+                              {teamUsage.fiveHourResetsAt && (
                                 <span className="text-stone-400 ml-1">
-                                  — resets {formatResetTime(teamUsage.cycleEndsAt)}
+                                  — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
                                 </span>
                               )}
                             </span>
                           </div>
+                        )}
+                        <div className="flex items-center justify-between gap-4">
+                          <span className="text-stone-400">Weekly limit</span>
+                          <span>
+                            ${(teamUsage.remainingUsd ?? 0).toFixed(2)} / $
+                            {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} left
+                            {teamUsage.cycleEndsAt && (
+                              <span className="text-stone-400 ml-1">
+                                — resets {formatResetTime(teamUsage.cycleEndsAt)}
+                              </span>
+                            )}
+                          </span>
                         </div>
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
+
+          {sendAdvisory && (
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-amber-700" data-chat-send-advisory>
+                {sendAdvisory}
+              </p>
+              <button
+                onClick={() => setSendAdvisory(null)}
+                className="text-xs text-stone-500 hover:text-stone-700 transition-colors ml-2">
+                Dismiss
+              </button>
+            </div>
           )}
 
           {sendError && (

@@ -20,7 +20,7 @@ use crate::openhuman::memory::tree::util::redact::redact;
 
 /// Default upper bound on per-chunk tokens.
 ///
-/// Sized below the L0 seal budget (`source_tree::types::TOKEN_BUDGET = 4_500`)
+/// Sized below the L0 seal budget (`tree_source::types::TOKEN_BUDGET = 4_500`)
 /// so each seal accumulates roughly 1–3 chunks before firing — natural pacing
 /// for the local 1B summariser, which produces noticeably better summaries
 /// with smaller (≤4–5k) inputs than at the previous 10k cap.

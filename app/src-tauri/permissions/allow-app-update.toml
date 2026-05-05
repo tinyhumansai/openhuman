@@ -1,0 +1,22 @@
+[[permission]]
+identifier = "allow-app-update"
+description = "Tauri shell auto-update commands — probe the updater endpoint, stage a download, and install it on user confirmation."
+
+[permission.commands]
+allow = [
+    # Probe-only: hits the configured updater endpoint and returns the
+    # detected version info. Does not download or install.
+    "check_app_update",
+    # Legacy combined path — downloads + installs + restarts in one call.
+    # Kept for backwards compat but the auto-update flow now uses the
+    # download/install split below.
+    "apply_app_update",
+    # Download the bundle bytes into memory and stage them in Tauri state.
+    # Does NOT install — the frontend can defer install until the user
+    # confirms a restart at a safe moment.
+    "download_app_update",
+    # Install previously-staged bytes and relaunch. Errors if no download
+    # has been staged this session.
+    "install_app_update",
+]
+deny = []

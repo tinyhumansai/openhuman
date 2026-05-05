@@ -1,3 +1,6 @@
+//! Unit tests for memory RPC schema registration and parameter parsing,
+//! validating that every advertised function name has a registered controller.
+
 use super::*;
 use serde_json::json;
 
@@ -29,6 +32,7 @@ const ALL_FUNCTIONS: &[&str] = &[
     "sync_channel",
     "sync_all",
     "learn_all",
+    "ingestion_status",
 ];
 
 #[test]

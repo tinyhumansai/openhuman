@@ -27,6 +27,7 @@ pub enum JobKind {
 }
 
 impl JobKind {
+    /// Snake-case wire string written to `mem_tree_jobs.kind`.
     pub fn as_str(&self) -> &'static str {
         match self {
             JobKind::ExtractChunk => "extract_chunk",
@@ -38,6 +39,7 @@ impl JobKind {
         }
     }
 
+    /// Inverse of [`Self::as_str`]; returns `Err` for unknown kinds.
     pub fn parse(s: &str) -> Result<Self> {
         Ok(match s {
             "extract_chunk" => JobKind::ExtractChunk,
@@ -76,6 +78,7 @@ pub enum JobStatus {
 }
 
 impl JobStatus {
+    /// Snake-case wire string written to `mem_tree_jobs.status`.
     pub fn as_str(&self) -> &'static str {
         match self {
             JobStatus::Ready => "ready",
@@ -86,6 +89,7 @@ impl JobStatus {
         }
     }
 
+    /// Inverse of [`Self::as_str`]; returns `Err` for unknown values.
     pub fn parse(s: &str) -> Result<Self> {
         Ok(match s {
             "ready" => JobStatus::Ready,
@@ -97,6 +101,8 @@ impl JobStatus {
         })
     }
 
+    /// True for `Done`, `Failed`, `Cancelled` — i.e. no further worker
+    /// transitions are expected.
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
@@ -118,7 +124,8 @@ pub enum NodeRef {
 }
 
 impl NodeRef {
-    /// Stringified id with kind prefix, suitable for dedupe-key composition.
+    /// Stringified id with kind prefix (`leaf:` or `summary:`), suitable
+    /// for dedupe-key composition.
     pub fn dedupe_fragment(&self) -> String {
         match self {
             NodeRef::Leaf { chunk_id } => format!("leaf:{chunk_id}"),
@@ -133,6 +140,8 @@ pub struct ExtractChunkPayload {
 }
 
 impl ExtractChunkPayload {
+    /// Stable dedupe key written to `mem_tree_jobs.dedupe_key` so a partial
+    /// unique index can suppress in-flight duplicates.
     pub fn dedupe_key(&self) -> String {
         format!("extract:{}", self.chunk_id)
     }
@@ -155,6 +164,8 @@ pub struct AppendBufferPayload {
 }
 
 impl AppendBufferPayload {
+    /// Stable dedupe key written to `mem_tree_jobs.dedupe_key` so a partial
+    /// unique index can suppress in-flight duplicates.
     pub fn dedupe_key(&self) -> String {
         let node_part = self.node.dedupe_fragment();
         match &self.target {
@@ -179,6 +190,8 @@ pub struct SealPayload {
 }
 
 impl SealPayload {
+    /// Stable dedupe key written to `mem_tree_jobs.dedupe_key` so a partial
+    /// unique index can suppress in-flight duplicates.
     pub fn dedupe_key(&self) -> String {
         // Active seal-job uniqueness is enforced per (tree, level): a seal
         // already in flight suppresses duplicate enqueues. Once the job
@@ -194,6 +207,8 @@ pub struct TopicRoutePayload {
 }
 
 impl TopicRoutePayload {
+    /// Stable dedupe key written to `mem_tree_jobs.dedupe_key` so a partial
+    /// unique index can suppress in-flight duplicates.
     pub fn dedupe_key(&self) -> String {
         format!("topic_route:{}", self.node.dedupe_fragment())
     }
@@ -207,6 +222,8 @@ pub struct DigestDailyPayload {
 }
 
 impl DigestDailyPayload {
+    /// Stable dedupe key written to `mem_tree_jobs.dedupe_key` so a partial
+    /// unique index can suppress in-flight duplicates.
     pub fn dedupe_key(&self) -> String {
         format!("digest_daily:{}", self.date_iso)
     }
@@ -221,6 +238,8 @@ pub struct FlushStalePayload {
 }
 
 impl FlushStalePayload {
+    /// Stable dedupe key. `date_iso` scopes one flush per UTC day so the
+    /// scheduler can re-enqueue safely without duplicating work.
     pub fn dedupe_key(&self, date_iso: &str) -> String {
         format!("flush_stale:{date_iso}")
     }
@@ -259,6 +278,7 @@ pub struct NewJob {
 }
 
 impl NewJob {
+    /// Build an [`JobKind::ExtractChunk`] enqueue request.
     pub fn extract_chunk(p: &ExtractChunkPayload) -> Result<Self> {
         Ok(Self {
             kind: JobKind::ExtractChunk,
@@ -269,6 +289,7 @@ impl NewJob {
         })
     }
 
+    /// Build an [`JobKind::AppendBuffer`] enqueue request.
     pub fn append_buffer(p: &AppendBufferPayload) -> Result<Self> {
         Ok(Self {
             kind: JobKind::AppendBuffer,
@@ -279,6 +300,7 @@ impl NewJob {
         })
     }
 
+    /// Build an [`JobKind::Seal`] enqueue request.
     pub fn seal(p: &SealPayload) -> Result<Self> {
         Ok(Self {
             kind: JobKind::Seal,
@@ -289,6 +311,7 @@ impl NewJob {
         })
     }
 
+    /// Build an [`JobKind::TopicRoute`] enqueue request.
     pub fn topic_route(p: &TopicRoutePayload) -> Result<Self> {
         Ok(Self {
             kind: JobKind::TopicRoute,
@@ -299,6 +322,7 @@ impl NewJob {
         })
     }
 
+    /// Build an [`JobKind::DigestDaily`] enqueue request.
     pub fn digest_daily(p: &DigestDailyPayload) -> Result<Self> {
         Ok(Self {
             kind: JobKind::DigestDaily,
@@ -309,6 +333,7 @@ impl NewJob {
         })
     }
 
+    /// Build an [`JobKind::FlushStale`] enqueue request scoped to `date_iso`.
     pub fn flush_stale(p: &FlushStalePayload, date_iso: &str) -> Result<Self> {
         Ok(Self {
             kind: JobKind::FlushStale,

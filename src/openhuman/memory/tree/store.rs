@@ -22,10 +22,15 @@ const DEFAULT_LIST_LIMIT: usize = 100;
 const MAX_LIST_LIMIT: usize = 10_000;
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Chunk lifecycle: freshly persisted, awaiting the async extract job.
 pub const CHUNK_STATUS_PENDING_EXTRACTION: &str = "pending_extraction";
+/// Chunk lifecycle: extract ran and the chunk passed admission.
 pub const CHUNK_STATUS_ADMITTED: &str = "admitted";
+/// Chunk lifecycle: appended to the L0 buffer of its source tree.
 pub const CHUNK_STATUS_BUFFERED: &str = "buffered";
+/// Chunk lifecycle: rolled into a sealed L1 summary.
 pub const CHUNK_STATUS_SEALED: &str = "sealed";
+/// Chunk lifecycle: rejected by the admission gate (too low signal).
 pub const CHUNK_STATUS_DROPPED: &str = "dropped";
 
 const SCHEMA: &str = "
@@ -457,6 +462,7 @@ pub fn count_chunks(config: &Config) -> Result<u64> {
     })
 }
 
+/// Set the lifecycle status column for `chunk_id`. See `CHUNK_STATUS_*`.
 pub fn set_chunk_lifecycle_status(config: &Config, chunk_id: &str, status: &str) -> Result<()> {
     with_connection(config, |conn| {
         set_chunk_lifecycle_status_conn(conn, chunk_id, status)
@@ -471,6 +477,7 @@ pub(crate) fn set_chunk_lifecycle_status_tx(
     set_chunk_lifecycle_status_conn(tx, chunk_id, status)
 }
 
+/// Read the lifecycle status column for `chunk_id`, or `None` if the row is absent.
 pub fn get_chunk_lifecycle_status(config: &Config, chunk_id: &str) -> Result<Option<String>> {
     with_connection(config, |conn| {
         get_chunk_lifecycle_status_conn(conn, chunk_id)
@@ -495,6 +502,7 @@ fn get_chunk_lifecycle_status_conn(conn: &Connection, chunk_id: &str) -> Result<
     Ok(row)
 }
 
+/// Count chunks currently sitting at a given lifecycle status (test/diagnostic helper).
 pub fn count_chunks_by_lifecycle_status(config: &Config, status: &str) -> Result<u64> {
     with_connection(config, |conn| {
         let n: i64 = conn.query_row(

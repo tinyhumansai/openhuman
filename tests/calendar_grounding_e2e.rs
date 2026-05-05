@@ -156,6 +156,7 @@ async fn test_integrations_agent_has_current_date_context() -> Result<()> {
         tool_call_format: openhuman_core::openhuman::context::prompt::ToolCallFormat::PFormat,
         session_key: "0_test".into(),
         session_parent_prefix: None,
+        on_progress: None,
     };
 
     let def =

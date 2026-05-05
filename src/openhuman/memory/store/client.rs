@@ -11,11 +11,12 @@ use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::openhuman::memory::embeddings::{self, EmbeddingProvider};
+use crate::openhuman::embeddings::{self, EmbeddingProvider};
+use crate::openhuman::memory::ingestion::queue as ingestion_queue;
 use crate::openhuman::memory::ingestion::{
-    MemoryIngestionConfig, MemoryIngestionRequest, MemoryIngestionResult,
+    IngestionJob, IngestionQueue, IngestionState, MemoryIngestionConfig, MemoryIngestionRequest,
+    MemoryIngestionResult,
 };
-use crate::openhuman::memory::ingestion_queue::{self, IngestionJob, IngestionQueue};
 use crate::openhuman::memory::store::types::{
     NamespaceDocumentInput, NamespaceMemoryHit, NamespaceRetrievalContext,
 };
@@ -93,7 +94,10 @@ impl MemoryClient {
         let inner = Arc::new(memory);
 
         // Start the background worker for document ingestion and graph extraction.
-        let ingestion_queue = ingestion_queue::start_worker(Arc::clone(&inner));
+        // The worker shares its IngestionState with the synchronous ingest path
+        // below so all ingestion is singleton-serialised.
+        let ingestion_queue =
+            ingestion_queue::start_worker_with_state(Arc::clone(&inner), IngestionState::new());
 
         Ok(Self {
             inner,
@@ -141,11 +145,62 @@ impl MemoryClient {
     /// Perform a full ingestion (chunking, embedding, extraction) synchronously.
     ///
     /// Unlike `put_doc`, this waits for the entire process to complete.
+    /// Serialised against the background worker via the shared
+    /// [`IngestionState`] singleton lock — only one ingestion runs at a time.
     pub async fn ingest_doc(
         &self,
         request: MemoryIngestionRequest,
     ) -> Result<MemoryIngestionResult, String> {
-        self.inner.ingest_document(request).await
+        let state = self.ingestion_queue.state();
+        let _guard = state.acquire().await;
+
+        let title = request.document.title.clone();
+        let namespace = request.document.namespace.clone();
+        // Synthetic id until upsert assigns one — purely for the snapshot.
+        let placeholder_id = format!("sync:{title}");
+
+        let queue_depth = state.snapshot().queue_depth;
+        state.mark_running(&placeholder_id, &title, &namespace);
+        crate::core::event_bus::publish_global(
+            crate::core::event_bus::DomainEvent::MemoryIngestionStarted {
+                document_id: placeholder_id.clone(),
+                title,
+                namespace: namespace.clone(),
+                queue_depth,
+            },
+        );
+
+        let started = std::time::Instant::now();
+        let outcome = self.inner.ingest_document(request).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let success = outcome.is_ok();
+
+        // Use the same placeholder id as the matching MemoryIngestionStarted
+        // event so subscribers can correlate start/complete pairs. The real
+        // upstream-assigned document id is available on `Ok(outcome)` for
+        // callers that need it.
+        state.mark_completed(
+            &placeholder_id,
+            success,
+            chrono::Utc::now().timestamp_millis(),
+        );
+        crate::core::event_bus::publish_global(
+            crate::core::event_bus::DomainEvent::MemoryIngestionCompleted {
+                document_id: placeholder_id,
+                namespace,
+                success,
+                elapsed_ms,
+                queue_depth: state.snapshot().queue_depth,
+            },
+        );
+
+        outcome
+    }
+
+    /// Returns the shared ingestion state — singleton lock + status snapshot.
+    /// Used by the `openhuman.memory_ingestion_status` RPC handler.
+    pub fn ingestion_state(&self) -> IngestionState {
+        self.ingestion_queue.state()
     }
 
     /// Specialized method for syncing skill data into memory.

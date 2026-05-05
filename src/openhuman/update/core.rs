@@ -17,7 +17,7 @@ pub fn current_version() -> &'static str {
 
 /// Build the target triple string used in release asset names.
 /// E.g. `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`.
-fn platform_triple() -> &'static str {
+pub fn platform_triple() -> &'static str {
     #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
     {
         "x86_64-apple-darwin"

@@ -2,14 +2,23 @@
 //!
 //! Produces a fixed-dimension vector per chunk / summary so retrieval can
 //! rerank candidates by semantic similarity. Phase 4's default backend is a
-//! local [Ollama](https://ollama.com) endpoint running `nomic-embed-text`;
+//! local [Ollama](https://ollama.com) endpoint running `bge-m3`;
 //! tests use the deterministic [`InertEmbedder`] so no network is required.
 //!
-//! Dimension is hard-coded at [`EMBEDDING_DIM`] (768) — matches the
-//! nomic-embed-text output and keeps the blob layout on `mem_tree_chunks` /
+//! Dimension is hard-coded at [`EMBEDDING_DIM`] (1024) — matches the
+//! bge-m3 output and keeps the blob layout on `mem_tree_chunks` /
 //! `mem_tree_summaries` consistent across providers. Mixing dimensions
 //! mid-run would corrupt cosine comparisons; we catch that at the trait
 //! level rather than deferring to retrieval-time diagnostics.
+//!
+//! NOTE: bge-m3 replaces the prior `nomic-embed-text` (768-dim, 2048
+//! token context). Migration was driven by nomic's hard 2048-token
+//! context cap causing long-chunk embed failures (chunker estimates
+//! undercount BERT-WordPiece tokens by ~1.5-2× for HTML-derived
+//! markdown, so 1500 chunker-tokens routinely exceed nomic's cap).
+//! bge-m3 has a native 8192-token context. Existing `embedding` blobs
+//! from the 768-dim era are invalid against the new dimension and
+//! must be wiped or re-embedded.
 //!
 //! Write-time semantics: ingest + seal call [`Embedder::embed`] **before**
 //! persisting the new row, so a provider error cascades into "don't write
@@ -30,11 +39,11 @@ pub use ollama::OllamaEmbedder;
 
 /// Embedding dimensionality used across the memory tree.
 ///
-/// Hard-coded to match `nomic-embed-text`; swapping providers requires a
-/// matching dimension or the trait's post-call validation will bail. Any
-/// change to this constant breaks on-disk compatibility with existing
+/// Hard-coded to match `bge-m3`; swapping providers requires a matching
+/// dimension or the trait's post-call validation will bail. Any change
+/// to this constant breaks on-disk compatibility with existing
 /// `mem_tree_chunks.embedding` / `mem_tree_summaries.embedding` blobs.
-pub const EMBEDDING_DIM: usize = 768;
+pub const EMBEDDING_DIM: usize = 1024;
 
 /// Trait backing all Phase 4 embedders. Implementations MUST produce
 /// exactly [`EMBEDDING_DIM`] floats per call — callers that persist the
@@ -206,9 +215,12 @@ mod tests {
     #[test]
     fn unpack_wrong_dim_errors() {
         // Correct byte multiple, but wrong float count.
-        let bad = vec![0u8; 16]; // 4 floats, expected 768
+        let bad = vec![0u8; 16]; // 4 floats, expected EMBEDDING_DIM (1024)
         let err = unpack_embedding(&bad).unwrap_err().to_string();
-        assert!(err.contains("expected 768"), "got {err}");
+        assert!(
+            err.contains(&format!("expected {EMBEDDING_DIM}")),
+            "got {err}"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.53.4"
+version = "0.53.16"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -25,13 +25,16 @@ crate-type = ["rlib"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-# Used by composio post-processing to convert Gmail HTML bodies to
-# markdown. `html2md` is the canonical pure-Rust crate (no system deps);
-# `htmd` (>0.5) is more actively maintained but our usage is one
-# function call (`parse_html`) and the migration cost outweighs the
-# upside today. Re-evaluate if html2md goes unmaintained or we need
-# GFM/table fidelity beyond what html2md emits.
-html2md = "0.2"
+# (Removed `html2md` dep. dhat-rs profiling on real Gmail inboxes
+# showed `html2md::walk` and `html2md::tables::handle` allocating
+# ~894 MB peak heap on a 10 KB HTML input from Otter.ai-style emails
+# (deeply-nested table-as-layout HTML). Cause: recursive walker holding
+# per-frame Vec state across nesting layers + 5 sequential
+# `regex::replace_all` passes in `clean_markdown` each producing a
+# fresh full-size String. We now use a linear-time tag-and-entity
+# stripper (`fast_html_to_text` in
+# providers/gmail/post_process.rs) and prefer the email's
+# `text/plain` MIME part when available.)
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "native-tls", "stream", "http2", "multipart", "socks"] }
 tokio = { version = "1", features = ["full", "sync"] }
 once_cell = "1.19"
@@ -86,6 +89,8 @@ dialoguer = { version = "0.12", features = ["fuzzy-select"] }
 dotenvy = "0.15"
 console = "0.16"
 regex = "1.10"
+walkdir = "2"
+glob = "0.3"
 unicode-segmentation = "1"
 unicode-width = "0.2"
 hostname = "0.4.2"
@@ -104,7 +109,7 @@ tower = { version = "0.5", default-features = false }
 opentelemetry = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "metrics", "http-proto", "reqwest-client", "reqwest-rustls-webpki-roots"] }
-sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "tracing", "reqwest", "rustls"] }
+sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "tracing", "debug-images", "reqwest", "rustls"] }
 tokio-stream = { version = "0.1.18", features = ["full"] }
 url = "2"
 socketioxide = { version = "0.15", features = ["extensions"] }
@@ -117,6 +122,11 @@ enigo = "0.3"
 arboard = "3"
 rdev = "0.5"
 fs2 = "0.4"
+# Cross-platform battery probe for the scheduler gate. Maintained fork of
+# the abandoned `battery` crate; same `use battery::*;` API surface. Used
+# only by `openhuman::scheduler_gate::signals` to decide when to throttle
+# background LLM work on laptops.
+starship-battery = "0.10"
 
 matrix-sdk = { version = "0.16", optional = true, default-features = false, features = ["e2e-encryption", "rustls-tls", "markdown"] }
 fantoccini = { version = "0.22.0", optional = true, default-features = false, features = ["rustls-tls"] }
@@ -158,6 +168,17 @@ whatsapp-web = ["dep:whatsapp-rust", "dep:whatsapp-rust-tokio-transport", "dep:w
 # See: https://github.com/tinyhumansai/openhuman/issues/273
 [patch.crates-io]
 whisper-rs-sys = { git = "https://github.com/tinyhumansai/whisper-rs-sys.git", branch = "main" }
+
+# Emit just enough DWARF in release builds for Sentry to symbolicate Rust
+# panics + render surrounding source lines. `line-tables-only` keeps the
+# binary small (only file+line tables, no full type info) while still
+# letting `sentry-cli debug-files upload --include-sources` produce a
+# usable `.src.zip`. `split-debuginfo = "packed"` writes the debug data
+# into a separate `.dSYM` bundle on macOS so the shipped executable
+# itself stays slim.
+[profile.release]
+debug = "line-tables-only"
+split-debuginfo = "packed"
 
 # Fast CI builds: trade runtime perf for compile speed
 [profile.ci]

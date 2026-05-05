@@ -27,6 +27,8 @@ pub struct SyncTriggerRequest {
     pub connection_id: Option<String>,
 }
 
+/// Result of `slack_memory_sync_trigger` — per-connection [`SyncOutcome`]s
+/// plus aggregate counters.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncTriggerResponse {
     pub outcomes: Vec<SyncOutcome>,
@@ -105,14 +107,18 @@ pub async fn sync_trigger_rpc(
     ))
 }
 
+/// Request body for `slack_memory_sync_status` — no parameters.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct SyncStatusRequest {}
 
+/// Response body for `slack_memory_sync_status` — one row per active
+/// Slack Composio connection.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncStatusResponse {
     pub connections: Vec<ConnectionStatus>,
 }
 
+/// Per-connection sync state snapshot pulled from the Composio sync-state KV.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionStatus {
     pub connection_id: String,

@@ -105,57 +105,51 @@ impl ScoringConfig {
         }
     }
 
-    /// Build a [`ScoringConfig`] from the workspace [`Config`]. When
-    /// `memory_tree.llm_extractor_endpoint` and `llm_extractor_model`
-    /// are both set, wires [`extract::LlmEntityExtractor`] as the
-    /// second-pass extractor. Otherwise falls back to
-    /// [`Self::default_regex_only`]. Construction errors in the LLM
-    /// extractor (rare — only client-builder failures) also fall back
-    /// to regex-only with a warn log; scoring never blocks on LLM
-    /// availability.
+    /// Build a [`ScoringConfig`] from the workspace [`Config`]. The
+    /// resolution rules match `build_summary_extractor`:
+    ///
+    /// - `llm_backend = "cloud"` (default): always wires the LLM extractor
+    ///   against the cloud provider, using the configured
+    ///   `cloud_llm_model` (defaulting to `summarization-v1`).
+    /// - `llm_backend = "local"`: wires the LLM extractor only when both
+    ///   `llm_extractor_endpoint` and `llm_extractor_model` are set;
+    ///   otherwise falls back to [`Self::default_regex_only`].
+    ///
+    /// Construction errors in the chat provider (rare — only client-builder
+    /// failures) fall back to regex-only with a warn log; scoring never
+    /// blocks on LLM availability.
     pub fn from_config(config: &crate::openhuman::config::Config) -> Self {
-        let endpoint = config
-            .memory_tree
-            .llm_extractor_endpoint
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let model = config
-            .memory_tree
-            .llm_extractor_model
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
+        use crate::openhuman::memory::tree::chat::{build_chat_provider, ChatConsumer};
 
-        let (Some(endpoint), Some(model)) = (endpoint, model) else {
-            log::debug!("[memory_tree::score] llm_extractor not configured — using regex-only");
-            return Self::default_regex_only();
+        let model = match extract::resolve_extractor_model(config) {
+            Some(m) => m,
+            None => {
+                log::debug!(
+                    "[memory_tree::score] llm_extractor not resolvable for llm_backend={} \
+                     — using regex-only",
+                    config.memory_tree.llm_backend.as_str()
+                );
+                return Self::default_regex_only();
+            }
         };
-
-        let timeout_ms = config
-            .memory_tree
-            .llm_extractor_timeout_ms
-            .unwrap_or(15_000);
 
         let cfg = extract::LlmExtractorConfig {
-            endpoint: endpoint.to_string(),
-            model: model.to_string(),
-            timeout: std::time::Duration::from_millis(timeout_ms),
+            model: model.clone(),
             ..extract::LlmExtractorConfig::default()
         };
-        match extract::LlmEntityExtractor::new(cfg) {
-            Ok(llm) => {
+
+        match build_chat_provider(config, ChatConsumer::Extract) {
+            Ok(provider) => {
                 log::info!(
-                    "[memory_tree::score] using LlmEntityExtractor endpoint={} model={} timeout_ms={}",
-                    endpoint,
-                    model,
-                    timeout_ms
+                    "[memory_tree::score] using LlmEntityExtractor provider={} model={}",
+                    provider.name(),
+                    model
                 );
-                Self::with_llm_extractor(Arc::new(llm))
+                Self::with_llm_extractor(Arc::new(extract::LlmEntityExtractor::new(cfg, provider)))
             }
             Err(err) => {
                 log::warn!(
-                    "[memory_tree::score] LlmEntityExtractor construction failed: {err:#} — \
+                    "[memory_tree::score] build_chat_provider failed: {err:#} — \
                      falling back to regex-only"
                 );
                 Self::default_regex_only()

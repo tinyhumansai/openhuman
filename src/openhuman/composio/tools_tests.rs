@@ -301,3 +301,140 @@ async fn sandbox_sandboxed_mode_does_not_trigger_readonly_gate() {
         "Sandboxed mode must not trigger the read-only gate, got: {msg}"
     );
 }
+
+// ── render_tools_markdown ───────────────────────────────────────────
+
+#[test]
+fn render_tools_markdown_groups_by_toolkit_and_drops_schemas() {
+    use crate::openhuman::composio::types::{
+        ComposioToolFunction, ComposioToolSchema, ComposioToolsResponse,
+    };
+
+    let resp = ComposioToolsResponse {
+        tools: vec![
+            ComposioToolSchema {
+                kind: "function".into(),
+                function: ComposioToolFunction {
+                    name: "GMAIL_SEND_EMAIL".into(),
+                    description: Some("Send an email\n  via\n Gmail.".into()),
+                    parameters: Some(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "to": { "type": "string" },
+                            "subject": { "type": "string" },
+                            "body": { "type": "string" },
+                            "cc": { "type": "array" },
+                        },
+                        "required": ["to", "subject", "body"],
+                    })),
+                },
+            },
+            ComposioToolSchema {
+                kind: "function".into(),
+                function: ComposioToolFunction {
+                    name: "NOTION_CREATE_PAGE".into(),
+                    description: Some("Create a Notion page.".into()),
+                    parameters: Some(serde_json::json!({
+                        "type": "object",
+                        "properties": { "title": {} },
+                        "required": ["title"],
+                    })),
+                },
+            },
+        ],
+    };
+
+    let md = render_tools_markdown(&resp);
+
+    // Toolkit grouping (BTreeMap → alphabetical).
+    let gmail_pos = md.find("## gmail").expect("gmail header missing");
+    let notion_pos = md.find("## notion").expect("notion header missing");
+    assert!(gmail_pos < notion_pos);
+
+    // Each tool listed with slug + collapsed one-line description + req args.
+    assert!(md.contains("`GMAIL_SEND_EMAIL`"));
+    assert!(md.contains("Send an email via Gmail."));
+    assert!(md.contains("**req:** to, subject, body"));
+    assert!(md.contains("**opt:** cc"));
+    assert!(md.contains("`NOTION_CREATE_PAGE`"));
+
+    // No JSON Schema keywords leak through — that's the whole point.
+    assert!(
+        !md.contains("\"type\""),
+        "raw schema should not appear in markdown:\n{md}"
+    );
+    assert!(
+        !md.contains("properties"),
+        "raw schema should not appear in markdown:\n{md}"
+    );
+
+    // Markdown should be materially smaller than the JSON serialization.
+    let json_len = serde_json::to_string(&resp).unwrap().len();
+    assert!(
+        md.len() < json_len,
+        "markdown ({} bytes) should be shorter than JSON ({} bytes)",
+        md.len(),
+        json_len
+    );
+}
+
+#[test]
+fn retain_connected_tools_drops_unconnected_toolkits_case_insensitively() {
+    use crate::openhuman::composio::types::{
+        ComposioToolFunction, ComposioToolSchema, ComposioToolsResponse,
+    };
+    use std::collections::HashSet;
+
+    let mut resp = ComposioToolsResponse {
+        tools: vec![
+            ComposioToolSchema {
+                kind: "function".into(),
+                function: ComposioToolFunction {
+                    name: "GMAIL_SEND_EMAIL".into(),
+                    description: None,
+                    parameters: None,
+                },
+            },
+            ComposioToolSchema {
+                kind: "function".into(),
+                function: ComposioToolFunction {
+                    name: "NOTION_CREATE_PAGE".into(),
+                    description: None,
+                    parameters: None,
+                },
+            },
+            ComposioToolSchema {
+                kind: "function".into(),
+                function: ComposioToolFunction {
+                    name: "GMAIL_LIST_THREADS".into(),
+                    description: None,
+                    parameters: None,
+                },
+            },
+        ],
+    };
+
+    // Caller pre-lowercases connected toolkit slugs (matches what the
+    // tool's `execute_with_options` does).
+    let connected: HashSet<String> = ["gmail".to_string()].into_iter().collect();
+    let dropped = retain_connected_tools(&mut resp, &connected);
+
+    assert_eq!(dropped, 1, "should drop the notion tool");
+    let names: Vec<&str> = resp
+        .tools
+        .iter()
+        .map(|t| t.function.name.as_str())
+        .collect();
+    assert!(names.contains(&"GMAIL_SEND_EMAIL"));
+    assert!(names.contains(&"GMAIL_LIST_THREADS"));
+    assert!(!names.contains(&"NOTION_CREATE_PAGE"));
+}
+
+#[test]
+fn render_tools_markdown_handles_empty_response() {
+    use crate::openhuman::composio::types::ComposioToolsResponse;
+
+    let resp = ComposioToolsResponse { tools: vec![] };
+    let md = render_tools_markdown(&resp);
+    assert!(md.contains("No composio tools available"));
+}

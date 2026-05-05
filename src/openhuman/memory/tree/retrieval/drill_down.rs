@@ -28,8 +28,8 @@ use crate::openhuman::memory::tree::retrieval::types::{
     hit_from_chunk, hit_from_summary, RetrievalHit,
 };
 use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, cosine_similarity};
-use crate::openhuman::memory::tree::source_tree::store;
 use crate::openhuman::memory::tree::store::{get_chunk, get_chunk_embedding};
+use crate::openhuman::memory::tree::tree_source::store;
 
 /// Walk the summary hierarchy down one step (or more if `max_depth > 1`)
 /// and return the hydrated child hits. Children at level 1 are raw chunks;
@@ -239,13 +239,13 @@ fn walk_with_embeddings(
 mod tests {
     use super::*;
     use crate::openhuman::memory::tree::content_store;
-    use crate::openhuman::memory::tree::source_tree::bucket_seal::{
+    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::tree_source::bucket_seal::{
         append_leaf, LabelStrategy, LeafRef,
     };
-    use crate::openhuman::memory::tree::source_tree::registry::get_or_create_source_tree;
-    use crate::openhuman::memory::tree::source_tree::summariser::inert::InertSummariser;
-    use crate::openhuman::memory::tree::source_tree::types::TreeKind;
-    use crate::openhuman::memory::tree::store::upsert_chunks;
+    use crate::openhuman::memory::tree::tree_source::registry::get_or_create_source_tree;
+    use crate::openhuman::memory::tree::tree_source::summariser::inert::InertSummariser;
+    use crate::openhuman::memory::tree::tree_source::types::TreeKind;
     use crate::openhuman::memory::tree::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
     use chrono::Utc;
     use tempfile::TempDir;
@@ -282,7 +282,7 @@ mod tests {
                     tags: vec![],
                     source_ref: Some(SourceRef::new("slack://x")),
                 },
-                token_count: crate::openhuman::memory::tree::source_tree::types::TOKEN_BUDGET * 6
+                token_count: crate::openhuman::memory::tree::tree_source::types::TOKEN_BUDGET * 6
                     / 10,
                 seq_in_source: seq,
                 created_at: ts,
@@ -305,7 +305,7 @@ mod tests {
                 &tree,
                 &LeafRef {
                     chunk_id: c.id.clone(),
-                    token_count: crate::openhuman::memory::tree::source_tree::types::TOKEN_BUDGET
+                    token_count: crate::openhuman::memory::tree::tree_source::types::TOKEN_BUDGET
                         * 6
                         / 10,
                     timestamp: ts,
@@ -410,9 +410,9 @@ mod tests {
     // (or similar — the key invariant is that BFS returns all siblings at
     // one depth before any descendant at a deeper depth).
 
-    use crate::openhuman::memory::tree::source_tree::store as tree_store;
-    use crate::openhuman::memory::tree::source_tree::types::{SummaryNode, Tree, TreeStatus};
     use crate::openhuman::memory::tree::store::with_connection;
+    use crate::openhuman::memory::tree::tree_source::store as tree_store;
+    use crate::openhuman::memory::tree::tree_source::types::{SummaryNode, Tree, TreeStatus};
 
     /// Build a tiny 2-level tree directly via store inserts so we can
     /// assert BFS ordering without needing ~100 leaves to cascade L1→L2

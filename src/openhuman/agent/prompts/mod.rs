@@ -535,13 +535,13 @@ impl PromptSection for UserIdentitySection {
         // failure mode we're trying to suppress (#926).
         let mut fields = String::new();
         if let Some(name) = identity.name.as_deref().filter(|s| !s.trim().is_empty()) {
-            let _ = writeln!(fields, "- name: {name}");
+            let _ = writeln!(fields, "- name: {}", sanitize_identity_field(name));
         }
         if let Some(email) = identity.email.as_deref().filter(|s| !s.trim().is_empty()) {
-            let _ = writeln!(fields, "- email: {email}");
+            let _ = writeln!(fields, "- email: {}", sanitize_identity_field(email));
         }
         if let Some(id) = identity.id.as_deref().filter(|s| !s.trim().is_empty()) {
-            let _ = writeln!(fields, "- id: {id}");
+            let _ = writeln!(fields, "- id: {}", sanitize_identity_field(id));
         }
         if fields.trim().is_empty() {
             return Ok(String::new());
@@ -555,6 +555,20 @@ impl PromptSection for UserIdentitySection {
         out.push_str(&fields);
         Ok(out.trim_end().to_string())
     }
+}
+
+/// Collapse newlines and runs of whitespace in a user-identity field so
+/// it fits on a single markdown bullet without breaking the prompt
+/// structure. Values come from `auth_get_me` (server-controlled), but
+/// defence-in-depth: a name with embedded newlines could split the
+/// `- name:` bullet and reshape the `## User` block.
+fn sanitize_identity_field(s: &str) -> String {
+    s.chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

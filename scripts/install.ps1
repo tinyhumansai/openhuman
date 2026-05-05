@@ -9,7 +9,71 @@
 
   Also works when saved and run directly:
   .\scripts\install.ps1 -DryRun
+
+  MSI installs use the Tauri WiX package (InstallScope perMachine). Per-user
+  public properties (MSIINSTALLPERUSER / ALLUSERS=2) conflict with that layout
+  and commonly fail with exit 1603 — see tinyhumansai/openhuman#913.
+
+  When the current session is not elevated, msiexec is started with -Verb RunAs
+  so Windows shows UAC once (machine install to Program Files).
 #>
+
+# --- Script-scoped helpers (unit-tested; safe to dot-source this file) ---
+
+function Get-OpenHumanMsiexecInstallArgumentList {
+  <#
+  .SYNOPSIS
+    Argument list for Start-Process msiexec.exe (no per-user MSI overrides).
+  #>
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$MsiPath
+  )
+  # Pass -ArgumentList as string[]: each entry is one argv token for msiexec, so spaces in
+  # $MsiPath do not split. Do not wrap $MsiPath in extra literal " characters here — that can
+  # double-escape when Start-Process builds the native command line (see PR #1187 review).
+  return @('/i', $MsiPath, '/qn', '/norestart')
+}
+
+function Test-OpenHumanWindowsProcessElevated {
+  <#
+  .SYNOPSIS
+    True when the current process is running with an administrator token (Windows only).
+  #>
+  if ($env:OS -ne 'Windows_NT') {
+    return $false
+  }
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+  return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Select-OpenHumanWindowsAssetFromRelease {
+  <#
+  .SYNOPSIS
+    Pick the Windows x64 MSI from a GitHub release object, else NSIS exe.
+  #>
+  param(
+    [Parameter(Mandatory = $true)]
+    [object]$Release
+  )
+  $assets = @($Release.assets)
+  if (-not $assets -or $assets.Count -eq 0) {
+    return $null
+  }
+
+  $msi = $assets | Where-Object { $_.name -match 'OpenHuman_.*x64.*\.msi$' } | Select-Object -First 1
+  if ($msi) {
+    return $msi
+  }
+
+  $exe = $assets | Where-Object { $_.name -match 'OpenHuman_.*x64.*\.exe$' } | Select-Object -First 1
+  if ($exe) {
+    return $exe
+  }
+
+  return $null
+}
 
 # Wrap in a function so `param()` works when piped via `irm | iex`.
 # When piped, PowerShell cannot bind param() at the top-level scope.
@@ -23,7 +87,7 @@ function Install-OpenHuman {
 
   $ErrorActionPreference = "Stop"
 
-  $InstallerVersion = "1.0.0"
+  $InstallerVersion = "1.1.0"
   $Repo = "tinyhumansai/openhuman"
   $LatestReleaseApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
 
@@ -90,25 +154,10 @@ Examples:
   $assetUrl = ""
   $assetDigest = ""
 
-  function Select-WindowsAssetFromRelease([object]$Rel) {
-    $assets = @($Rel.assets)
-    if (-not $assets -or $assets.Count -eq 0) {
-      return $null
-    }
-
-    $msi = $assets | Where-Object { $_.name -match 'OpenHuman_.*x64.*\.msi$' } | Select-Object -First 1
-    if ($msi) { return $msi }
-
-    $exe = $assets | Where-Object { $_.name -match 'OpenHuman_.*x64.*\.exe$' } | Select-Object -First 1
-    if ($exe) { return $exe }
-
-    return $null
-  }
-
   try {
     $release = Invoke-RestMethod -Uri $LatestReleaseApiUrl -UseBasicParsing
     $releaseTag = ($release.tag_name -replace '^v', '')
-    $selected = Select-WindowsAssetFromRelease -Rel $release
+    $selected = Select-OpenHumanWindowsAssetFromRelease -Release $release
     if ($selected) {
       $assetName = $selected.name
       $assetUrl = $selected.browser_download_url
@@ -155,7 +204,13 @@ Examples:
 
   if ($DryRun) {
     if ($assetName -like "*.msi") {
-      Write-Output "DRY RUN: msiexec /i `"$tmpFile`" MSIINSTALLPERUSER=1 ALLUSERS=2 /qn /norestart"
+      $dryMsiArgs = Get-OpenHumanMsiexecInstallArgumentList -MsiPath $tmpFile
+      Write-Output "DRY RUN: msiexec ArgumentList = $($dryMsiArgs | ConvertTo-Json -Compress)"
+      if (Test-OpenHumanWindowsProcessElevated) {
+        Write-Output "DRY RUN: (already elevated) Start-Process msiexec -Wait -ArgumentList <above>"
+      } else {
+        Write-Output "DRY RUN: (non-admin) Start-Process msiexec -Verb RunAs -Wait -ArgumentList <above>"
+      }
     } else {
       Write-Output "DRY RUN: Start-Process `"$tmpFile`" -Wait"
     }
@@ -164,10 +219,17 @@ Examples:
 
   Write-Info "Installing OpenHuman"
   if ($assetName -like "*.msi") {
-    $msiArgs = "/i `"$tmpFile`" MSIINSTALLPERUSER=1 ALLUSERS=2 /qn /norestart"
-    $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Wait -PassThru
+    $msiArgs = Get-OpenHumanMsiexecInstallArgumentList -MsiPath $tmpFile
+    $elevated = Test-OpenHumanWindowsProcessElevated
+    if ($elevated) {
+      $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Wait -PassThru
+    } else {
+      Write-Info "Requesting administrator approval for machine-wide install (UAC)…"
+      $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Verb RunAs -Wait -PassThru
+    }
     if ($proc.ExitCode -ne 0) {
       Write-Err "MSI install failed with exit code $($proc.ExitCode)."
+      Write-WarnMsg "If this persists, capture a log: msiexec /i `"$tmpFile`" /l*v `"$env:TEMP\OpenHuman-msi.log`""
       return
     }
   } elseif ($assetName -like "*.exe") {
@@ -199,5 +261,7 @@ Examples:
   }
 }
 
-# Run the installer, forwarding any arguments passed when invoked as a file.
-Install-OpenHuman @args
+# Run when executed as a script; skip when dot-sourced (e.g. unit tests).
+if ($MyInvocation.InvocationName -ne '.') {
+  Install-OpenHuman @args
+}

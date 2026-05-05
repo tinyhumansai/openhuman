@@ -49,6 +49,7 @@ pub enum SegmentStatus {
 }
 
 impl SegmentStatus {
+    /// Stable lowercase identifier persisted in the `conversation_segments` table.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Open => "open",
@@ -57,6 +58,8 @@ impl SegmentStatus {
         }
     }
 
+    /// Parse a stored string back to a `SegmentStatus`; unknown values fall
+    /// back to `Open`.
     pub fn parse_or_default(s: &str) -> Self {
         match s {
             "closed" => Self::Closed,
@@ -116,6 +119,7 @@ pub enum BoundaryDecision {
     Boundary(BoundaryReason),
 }
 
+/// Reason a new segment boundary was triggered.
 #[derive(Debug, Clone)]
 pub enum BoundaryReason {
     TimeGap,

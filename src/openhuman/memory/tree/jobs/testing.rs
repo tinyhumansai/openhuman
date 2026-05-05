@@ -1,3 +1,5 @@
+//! Test helpers for the jobs runtime — not used in production code paths.
+
 use anyhow::Result;
 
 use crate::openhuman::config::Config;

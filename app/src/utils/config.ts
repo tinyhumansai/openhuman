@@ -132,3 +132,10 @@ export const MINIMUM_SUPPORTED_APP_VERSION =
 export const LATEST_APP_DOWNLOAD_URL =
   (import.meta.env.VITE_LATEST_APP_DOWNLOAD_URL as string | undefined)?.trim() ||
   'https://github.com/tinyhumansai/openhuman/releases/latest';
+
+/**
+ * Set `VITE_SENTRY_SMOKE_TEST=true` in one build (or in `.env.local`) to
+ * fire a one-shot diagnostic event at `initSentry()` time and verify the
+ * Sentry pipeline end-to-end. Has no effect in normal builds.
+ */
+export const SENTRY_SMOKE_TEST = import.meta.env.VITE_SENTRY_SMOKE_TEST === 'true';

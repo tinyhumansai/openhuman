@@ -31,6 +31,7 @@ use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, Promp
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
 use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage, ProviderDelta};
+use crate::openhuman::tools::traits::ToolCallOptions;
 use crate::openhuman::tools::Tool;
 use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
@@ -892,7 +893,14 @@ impl Agent {
                 false,
             )
         } else if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
-            let exec = tool.execute(call.arguments.clone());
+            // Per-call options: ask the tool for markdown output when the
+            // context manager is configured to prefer it. Tools that
+            // implement `execute_with_options` will populate
+            // `markdown_formatted`; others fall through to the default
+            // implementation which forwards to `execute`.
+            let prefer_markdown = self.context.prefer_markdown_tool_output();
+            let options = ToolCallOptions { prefer_markdown };
+            let exec = tool.execute_with_options(call.arguments.clone(), options);
             let outcome = if let Some(fork_ctx) = fork_context_for_call {
                 harness::with_fork_context(fork_ctx, exec).await
             } else {
@@ -901,7 +909,14 @@ impl Agent {
             match outcome {
                 Ok(r) => {
                     if !r.is_error {
-                        let mut output = r.output();
+                        let mut output = r.output_for_llm(prefer_markdown);
+                        if prefer_markdown && r.markdown_formatted.is_some() {
+                            log::debug!(
+                                "[agent_loop] tool={} returned markdown payload bytes={}",
+                                call.name,
+                                output.len()
+                            );
+                        }
                         // Issue #574 — if a payload summarizer is wired
                         // in (orchestrator session only) and the output
                         // exceeds the configured threshold, hand it to
@@ -944,7 +959,10 @@ impl Agent {
                         }
                         (output, true)
                     } else {
-                        (format!("Error: {}", r.output()), false)
+                        (
+                            format!("Error: {}", r.output_for_llm(prefer_markdown)),
+                            false,
+                        )
                     }
                 }
                 Err(e) => (format!("Error executing {}: {e}", call.name), false),
@@ -1072,6 +1090,7 @@ impl Agent {
             tool_call_format: self.tool_dispatcher.tool_call_format(),
             session_key: self.session_key.clone(),
             session_parent_prefix: self.session_parent_prefix.clone(),
+            on_progress: self.on_progress.clone(),
         }
     }
 
@@ -1204,7 +1223,16 @@ impl Agent {
         // long-term context. Done synchronously here because the calls
         // are filesystem reads, not provider/network round-trips, and
         // happen exactly once per session (only on the first turn).
-        let tree_root_summaries = collect_tree_root_summaries(&self.workspace_dir);
+        //
+        // Per-namespace + total caps come from the user-facing memory
+        // window preset on `AgentConfig` so changing the slider in the
+        // UI takes effect on the very next session-start.
+        let limits = self.config.resolved_memory_limits();
+        let tree_root_summaries = collect_tree_root_summaries(
+            &self.workspace_dir,
+            limits.per_namespace_max_chars,
+            limits.total_tree_max_chars,
+        );
 
         LearnedContextData {
             observations: obs_entries
@@ -1389,6 +1417,7 @@ impl Agent {
             output_tokens,
             cached_input_tokens,
             charged_amount_usd,
+            thread_id: crate::openhuman::providers::thread_context::current_thread_id(),
         };
 
         if let Err(err) = transcript::write_transcript(path, messages, &meta, turn_usage) {
@@ -1482,18 +1511,19 @@ impl Agent {
 
 /// Wrapper around
 /// [`crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps`]
-/// that pins the per-namespace and total caps to the constants exposed
-/// from `context::prompt`. The store helper does the actual work — this
-/// indirection just keeps the call site readable and the caps in one
-/// place where the prompt section is defined.
-fn collect_tree_root_summaries(workspace_dir: &std::path::Path) -> Vec<(String, String)> {
-    use crate::openhuman::context::prompt::{
-        USER_MEMORY_PER_NAMESPACE_MAX_CHARS, USER_MEMORY_TOTAL_MAX_CHARS,
-    };
+/// that takes user-resolved per-namespace and total caps. The actual
+/// limits are derived from the active
+/// [`crate::openhuman::config::schema::agent::MemoryContextWindow`]
+/// preset by [`crate::openhuman::config::schema::agent::AgentConfig::resolved_memory_limits`].
+fn collect_tree_root_summaries(
+    workspace_dir: &std::path::Path,
+    per_namespace_cap: usize,
+    total_cap: usize,
+) -> Vec<(String, String)> {
     crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps(
         workspace_dir,
-        USER_MEMORY_PER_NAMESPACE_MAX_CHARS,
-        USER_MEMORY_TOTAL_MAX_CHARS,
+        per_namespace_cap,
+        total_cap,
     )
 }
 

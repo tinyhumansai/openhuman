@@ -99,6 +99,14 @@ pub fn all_tools_with_runtime(
         shell,
         Box::new(FileReadTool::new(security.clone())),
         Box::new(FileWriteTool::new(security.clone())),
+        // Coding-harness baseline tools (issue #1205): file navigation
+        // + atomic editing primitives. Use these instead of falling
+        // through to `shell` for grep/find/sed work.
+        Box::new(GrepTool::new(security.clone())),
+        Box::new(GlobTool::new(security.clone())),
+        Box::new(ListFilesTool::new(security.clone())),
+        Box::new(EditFileTool::new(security.clone())),
+        Box::new(ApplyPatchTool::new(security.clone())),
         Box::new(CsvExportTool::new(security.clone())),
         // Sub-agent dispatch — lets the parent agent delegate focused
         // sub-tasks (research, code execution, API specialists, …) by
@@ -107,6 +115,13 @@ pub fn all_tools_with_runtime(
         // returns a single text result. See
         // `agent::harness::subagent_runner` for the dispatch path.
         Box::new(SpawnSubagentTool::new()),
+        // Coding-harness control flow (issue #1205): a process-global
+        // todo registry the agent can rewrite end-to-end, plus the
+        // `plan_exit` marker that hands a plan-mode pass off to a
+        // build-mode pass. The plan→build mode switch itself is a
+        // follow-up; the tool emits a stable marker today.
+        Box::new(TodoWriteTool::new(global_todo_store())),
+        Box::new(PlanExitTool::new()),
         Box::new(CheckOnboardingStatusTool::new()),
         Box::new(CompleteOnboardingTool::new()),
         Box::new(CurrentTimeTool::new()),
@@ -173,6 +188,17 @@ pub fn all_tools_with_runtime(
         http_config.allowed_domains.clone(),
         http_config.max_response_size,
         http_config.timeout_secs,
+    )));
+
+    // Coding-harness baseline `web_fetch` (issue #1205) — single-purpose
+    // GET-and-read primitive that reuses the same allowed-domains gate
+    // as `http_request`. Use this for docs/READMEs; reach for
+    // `http_request` only when you need richer HTTP semantics.
+    tools.push(Box::new(WebFetchTool::new(
+        security.clone(),
+        http_config.allowed_domains.clone(),
+        Some(http_config.max_response_size),
+        Some(http_config.timeout_secs),
     )));
 
     // curl — always registered. Shares `http_request.allowed_domains`,
@@ -369,6 +395,19 @@ pub fn all_tools_with_runtime(
         tracing::debug!(
             "[integrations] build_client returned None — integration tools not registered"
         );
+    }
+
+    // Coding-harness `lsp` tool (issue #1205) — capability-gated by the
+    // OPENHUMAN_LSP_ENABLED env var. The backend (real language-server
+    // bridge) is a follow-up; today the gate just controls visibility
+    // so agents don't see a method that always errors.
+    if crate::openhuman::tools::implementations::lsp_capability_enabled() {
+        tools.push(Box::new(
+            crate::openhuman::tools::implementations::LspTool::new(),
+        ));
+        tracing::debug!("[lsp] capability gate on — LspTool registered");
+    } else {
+        tracing::debug!("[lsp] capability gate off (set OPENHUMAN_LSP_ENABLED=1 to register)");
     }
 
     tools

@@ -33,15 +33,17 @@ describe('Skills page — Gmail composio integration', () => {
   it('renders Gmail as a connected composio integration and opens its management modal', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
-    const productivitySection = screen
-      .getByRole('heading', { name: 'Productivity' })
+    const integrationsSection = screen
+      .getByRole('heading', { name: 'Integrations' })
       .closest('.rounded-2xl');
-    expect(productivitySection).not.toBeNull();
-    expect(within(productivitySection as HTMLElement).getByText('Gmail')).toBeInTheDocument();
-    expect(within(productivitySection as HTMLElement).getByText('Connected')).toBeInTheDocument();
+    expect(integrationsSection).not.toBeNull();
+    expect(within(integrationsSection as HTMLElement).getByText('Gmail')).toBeInTheDocument();
+    expect(within(integrationsSection as HTMLElement).getByText('Connected')).toBeInTheDocument();
 
     fireEvent.click(
-      within(productivitySection as HTMLElement).getByRole('button', { name: 'Manage' })
+      within(integrationsSection as HTMLElement).getByRole('button', {
+        name: /Gmail.*Connected.*Manage/i,
+      })
     );
 
     expect(await screen.findByRole('heading', { name: 'Manage Gmail' })).toBeInTheDocument();

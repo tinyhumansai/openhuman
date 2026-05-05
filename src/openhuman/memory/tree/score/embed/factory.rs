@@ -85,7 +85,7 @@ mod tests {
     fn ollama_chosen_when_endpoint_and_model_set() {
         let (_tmp, mut cfg) = test_config();
         cfg.memory_tree.embedding_endpoint = Some("http://localhost:11434".into());
-        cfg.memory_tree.embedding_model = Some("nomic-embed-text".into());
+        cfg.memory_tree.embedding_model = Some("bge-m3".into());
         cfg.memory_tree.embedding_timeout_ms = Some(5000);
         let e = build_embedder_from_config(&cfg).expect("Ollama path should build");
         assert_eq!(e.name(), "ollama");

@@ -16,7 +16,6 @@ import {
 
 const Welcome = () => {
   const { isProcessing, errorMessage } = useDeepLinkAuthState();
-  const handleDisabledOAuthClick = () => undefined;
 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [rpcUrl, setRpcUrl] = useState(getStoredRpcUrl());
@@ -191,7 +190,7 @@ const Welcome = () => {
             </div>
           ) : (
             <>
-              {/* OAuth buttons intentionally inert until auth flow is re-enabled. */}
+              {/* Real OAuth: click → system browser → backend → deep link back to app. */}
               <div className="flex items-center justify-center gap-3">
                 {oauthProviderConfigs
                   .filter(provider => provider.showOnWelcome)
@@ -199,7 +198,6 @@ const Welcome = () => {
                     <OAuthProviderButton
                       key={provider.id}
                       provider={provider}
-                      onClickOverride={handleDisabledOAuthClick}
                       className="!rounded-full !px-4 !py-2"
                     />
                   ))}

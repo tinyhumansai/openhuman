@@ -151,6 +151,7 @@ pub struct SourceRef {
 }
 
 impl SourceRef {
+    /// Wrap an opaque provider-specific identifier as a [`SourceRef`].
     pub fn new(value: impl Into<String>) -> Self {
         Self {
             value: value.into(),

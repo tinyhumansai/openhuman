@@ -28,6 +28,7 @@ import {
 import { socketService } from '../services/socketService';
 import { store } from '../store';
 import { resetUserScopedState } from '../store/resetActions';
+import { loadThreads, resetThreadCachesPreservingSelection } from '../store/threadSlice';
 import { getActiveUserId, setActiveUserId } from '../store/userScopedStorage';
 import {
   openhumanUpdateAnalyticsSettings,
@@ -239,6 +240,39 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         teamInvitesById: shouldClearScopedCaches ? {} : previous.teamInvitesById,
       };
     });
+
+    // When the authenticated identity changes without a full restart-driven
+    // flip (e.g. same-process session attach or web where `restartApp` is a
+    // no-op), the thread slice can still hold rows from the pre-login
+    // workspace. Clear and re-list from the core so new signups never render
+    // stale titles from another bucket (#1157). `handleIdentityFlip` already
+    // dispatches `resetUserScopedState`, so skip when `isFlip` is true.
+    // Match `commitState`'s request-id guard so a superseded refresh cannot
+    // clear threads after a newer snapshot has already won (CodeRabbit).
+    if (
+      requestId === snapshotRequestIdRef.current &&
+      !isFlip &&
+      shouldClearScopedCaches &&
+      nextIdentity &&
+      !isLogout
+    ) {
+      const threadReloadRequestId = requestId;
+      // Reset the in-memory thread caches (rows from a pre-auth bucket — see
+      // #1157) but preserve the redux-persisted `selectedThreadId` so a
+      // reload of an already-authed user resumes the user's last-viewed
+      // thread (#1168). The Conversations mount effect falls back to "most
+      // recent" if the persisted id is no longer in the reloaded list.
+      store.dispatch(resetThreadCachesPreservingSelection());
+      void store
+        .dispatch(loadThreads())
+        .unwrap()
+        .catch(err => {
+          if (threadReloadRequestId !== snapshotRequestIdRef.current) {
+            return;
+          }
+          log('post-identity thread reload failed: %O', sanitizeError(err));
+        });
+    }
 
     if (isFlip && nextIdentity) {
       await handleIdentityFlip({ reason: 'identity-flip', nextUserId: nextIdentity }).catch(err => {

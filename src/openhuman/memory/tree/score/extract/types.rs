@@ -53,6 +53,7 @@ pub enum EntityKind {
 }
 
 impl EntityKind {
+    /// Snake-case wire string for serialisation and SQL storage.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Email => "email",
@@ -73,6 +74,7 @@ impl EntityKind {
         }
     }
 
+    /// Inverse of [`Self::as_str`]; returns `Err` for unknown wire strings.
     pub fn parse(s: &str) -> Result<Self, String> {
         match s {
             "email" => Ok(Self::Email),
@@ -144,6 +146,7 @@ pub struct ExtractedEntities {
 }
 
 impl ExtractedEntities {
+    /// True when neither entities nor topics were extracted.
     pub fn is_empty(&self) -> bool {
         self.entities.is_empty() && self.topics.is_empty()
     }

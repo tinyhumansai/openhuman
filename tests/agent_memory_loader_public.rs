@@ -85,7 +85,11 @@ fn entry(key: &str, content: &str, score: Option<f64>) -> MemoryEntry {
 }
 
 #[tokio::test]
-async fn loader_merges_primary_and_working_memory_with_filters() -> Result<()> {
+async fn loader_skips_primary_recall_and_filters_working_memory() -> Result<()> {
+    // The open-ended `[Memory context]` recall block was removed: it duplicated
+    // what the memory tree + memory search tool already cover, and would echo
+    // the just-saved `user_msg` entry back at the user. The loader now only
+    // emits the bounded `[User working memory]` block.
     let memory: Arc<dyn Memory> = Arc::new(ScriptedMemory {
         primary: vec![
             entry("high", "keep me", Some(0.9)),
@@ -93,7 +97,7 @@ async fn loader_merges_primary_and_working_memory_with_filters() -> Result<()> {
         ],
         working: vec![
             entry("working.user.pref", "concise", Some(0.95)),
-            entry("high", "duplicate", Some(0.95)),
+            entry("not.working.user", "ignored", Some(0.95)),
         ],
     });
 
@@ -102,12 +106,12 @@ async fn loader_merges_primary_and_working_memory_with_filters() -> Result<()> {
         .load_context(memory.as_ref(), "hello")
         .await?;
 
-    assert!(context.contains("[Memory context]"));
-    assert!(context.contains("- high: keep me"));
+    assert!(!context.contains("[Memory context]"));
+    assert!(!context.contains("keep me"));
     assert!(!context.contains("drop me"));
     assert!(context.contains("[User working memory]"));
     assert!(context.contains("working.user.pref"));
-    assert!(!context.contains("duplicate"));
+    assert!(!context.contains("not.working.user"));
     Ok(())
 }
 
@@ -130,23 +134,30 @@ async fn loader_can_return_only_working_memory_when_primary_is_empty() -> Result
 
 #[tokio::test]
 async fn loader_respects_tight_budgets() -> Result<()> {
+    // Primary `[Memory context]` recall is no longer injected, so any
+    // entries on the `primary` channel must be ignored regardless of budget.
+    // Tight budgets that can't fit the `[User working memory]` header should
+    // produce an empty context.
     let memory: Arc<dyn Memory> = Arc::new(ScriptedMemory {
         primary: vec![entry("main", "1234567890", Some(0.9))],
         working: vec![entry("working.user.tip", "include me", Some(0.9))],
     });
 
-    let header_len = "[Memory context]\n".len();
+    let header = "[User working memory]\n";
     let empty = DefaultMemoryLoader::new(1, 0.4)
-        .with_max_chars(header_len)
+        .with_max_chars(header.len() - 1)
         .load_context(memory.as_ref(), "hello")
         .await?;
     assert!(empty.is_empty());
 
+    let line = "- working.user.tip: include me\n";
     let bounded = DefaultMemoryLoader::new(1, 0.4)
-        .with_max_chars("[Memory context]\n- main: 1234567890\n".len() + 1)
+        .with_max_chars(header.len() + line.len() + 1)
         .load_context(memory.as_ref(), "hello")
         .await?;
-    assert!(bounded.contains("- main: 1234567890"));
-    assert!(!bounded.contains("working.user.tip"));
+    assert!(bounded.contains("[User working memory]"));
+    assert!(bounded.contains("- working.user.tip: include me"));
+    // Primary recall is gone — `main` must never appear.
+    assert!(!bounded.contains("- main: 1234567890"));
     Ok(())
 }

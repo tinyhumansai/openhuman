@@ -1,6 +1,6 @@
 //! Shell-side runtime toggle for webview-originated OS notifications.
 //!
-//! The embedded webviews (Slack, Gmail, Discord, …) can fire native OS
+//! The embedded webviews (Slack, Discord, Telegram, …) can fire native OS
 //! notifications via the CEF IPC hook in `webview_accounts`. This domain
 //! owns the on/off switch. Default is ON so embedded SaaS webviews like
 //! Slack behave like a normal browser session and surface native

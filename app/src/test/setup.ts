@@ -24,6 +24,52 @@ import {
 vi.stubEnv('DEV', true);
 vi.stubEnv('MODE', 'test');
 
+function createStorageMock(): Storage {
+  const store = new Map<string, string>();
+  return {
+    get length() {
+      return store.size;
+    },
+    clear() {
+      store.clear();
+    },
+    getItem(key: string) {
+      return store.has(key) ? store.get(key)! : null;
+    },
+    key(index: number) {
+      return Array.from(store.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      store.delete(key);
+    },
+    setItem(key: string, value: string) {
+      store.set(String(key), String(value));
+    },
+  };
+}
+
+function ensureStorage(name: 'localStorage' | 'sessionStorage') {
+  const current = globalThis[name];
+  if (
+    current &&
+    typeof current.getItem === 'function' &&
+    typeof current.setItem === 'function' &&
+    typeof current.removeItem === 'function' &&
+    typeof current.clear === 'function'
+  ) {
+    return;
+  }
+
+  Object.defineProperty(globalThis, name, {
+    value: createStorageMock(),
+    configurable: true,
+    writable: true,
+  });
+}
+
+ensureStorage('localStorage');
+ensureStorage('sessionStorage');
+
 // Polyfill ResizeObserver for cmdk/Radix components in jsdom
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class ResizeObserver {

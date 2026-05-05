@@ -90,24 +90,26 @@ export function setCoreStateSnapshot(next: CoreState): void {
 /**
  * Is the UI currently locked to the welcome-agent conversation? (#883)
  *
+ * [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough.
+ * Function body always returns `false` so existing callers compile without
+ * changes. The welcome-lock UI affordances are also commented out at each
+ * call site but the function signature is preserved to avoid import errors.
+ *
+ * Original implementation:
  * Returns `true` when the authenticated user has completed the React
  * wizard (`onboardingCompleted`) but the chat-based welcome flow has
- * not yet finalized (`chatOnboardingCompleted === false`). Consumers
- * (BottomTabBar, Accounts left rail, Conversations thread sidebar,
- * AppShell redirect) hide their navigation affordances while this is
- * `true` so the user cannot escape the welcome conversation until the
- * welcome agent calls `complete_onboarding(action: "complete")`.
- *
- * The auth guard prevents a lock flicker during signed-out first paint
- * (snapshot briefly reports `onboardingCompleted=false` before the
- * async refresh completes; the overlay handles that path).
+ * not yet finalized (`chatOnboardingCompleted === false`).
  */
-export function isWelcomeLocked(snapshot: CoreAppSnapshot): boolean {
-  return (
-    snapshot.auth.isAuthenticated &&
-    snapshot.onboardingCompleted &&
-    !snapshot.chatOnboardingCompleted
-  );
+// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
+export function isWelcomeLocked(_snapshot: CoreAppSnapshot): boolean {
+  // [#1123] Always return false — welcome-lock replaced by Joyride walkthrough
+  return false;
+  // Original implementation:
+  // return (
+  //   snapshot.auth.isAuthenticated &&
+  //   snapshot.onboardingCompleted &&
+  //   !snapshot.chatOnboardingCompleted
+  // );
 }
 
 export function patchCoreStateSnapshot(patch: {

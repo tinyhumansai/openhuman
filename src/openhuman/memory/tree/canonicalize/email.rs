@@ -42,6 +42,9 @@ pub struct EmailThread {
     pub messages: Vec<EmailMessage>,
 }
 
+/// Canonicalise an email thread into a [`CanonicalisedSource`]. Bodies are
+/// passed through [`email_clean::clean_body`] to strip reply chains and footer
+/// boilerplate. Returns `Ok(None)` when the thread has no messages.
 pub fn canonicalise(
     source_id: &str,
     owner: &str,

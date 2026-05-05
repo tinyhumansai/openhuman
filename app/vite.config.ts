@@ -37,7 +37,14 @@ function maybeSentryPlugin(): PluginOption | null {
     authToken,
     org: process.env.SENTRY_ORG,
     project: process.env.SENTRY_PROJECT,
-    release: { name: computeSentryRelease() },
+    release: {
+      name: computeSentryRelease(),
+      // The frontend already passes this release to Sentry.init(). Keeping the
+      // plugin's virtual release module enabled can be transformed by the node
+      // polyfill injector into startup code that calls Rollup helpers before
+      // they are initialized in the generated desktop bundle.
+      inject: false,
+    },
     sourcemaps: {
       // Vite emits hashed asset files into `app/dist/assets/`. Upload every
       // .js / .map the build produces.

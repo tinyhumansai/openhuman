@@ -43,6 +43,7 @@ pub enum FacetType {
 }
 
 impl FacetType {
+    /// Stable lowercase identifier persisted in the `user_profile` table.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Preference => "preference",
@@ -53,6 +54,8 @@ impl FacetType {
         }
     }
 
+    /// Parse a stored string back to a `FacetType`; unknown values fall back
+    /// to `Preference`.
     pub fn parse_or_default(s: &str) -> Self {
         match s {
             "skill" => Self::Skill,

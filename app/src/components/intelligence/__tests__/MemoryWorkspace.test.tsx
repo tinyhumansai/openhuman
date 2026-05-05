@@ -1,257 +1,279 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../test/test-utils';
+import type { Chunk, EntityRef, ScoreBreakdown, Source } from '../../../utils/tauriCommands';
 import { MemoryWorkspace } from '../MemoryWorkspace';
 
-// Mock useIntelligenceStats — the hook used by MemoryWorkspace
-vi.mock('../../../hooks/useIntelligenceStats', () => ({
-  useIntelligenceStats: () => ({
-    sessions: { total: 5, totalTokens: 1200 },
-    memoryFiles: 3,
-    entities: { contact: 2, message: 10 },
-    isLoading: false,
-    refetch: vi.fn(),
-  }),
-}));
-
-// Mock channelConnectionsApi so listStatus doesn't hit the network
-vi.mock('../../../services/api/channelConnectionsApi', () => ({
-  channelConnectionsApi: {
-    listStatus: vi.fn().mockResolvedValue([
-      {
-        channel_id: 'telegram-main',
-        auth_mode: 'managed_dm',
-        connected: true,
-        has_credentials: true,
-      },
-      { channel_id: 'discord-bot', auth_mode: 'bot_token', connected: true, has_credentials: true },
-    ]),
-  },
-}));
-
-// Override the global tauriCommands mock from setup.ts with memory-specific stubs
+// The MemoryWorkspace orchestrator + its detail-pane child both fan out
+// to the `memory_tree_*` JSON-RPC wrappers. The setup.ts global mock
+// stubs auth helpers; we extend it here with the read-side surface so
+// the workspace can render against a deterministic fixture set.
 vi.mock('../../../utils/tauriCommands', () => ({
   isTauri: vi.fn(() => true),
-  memoryListDocuments: vi.fn().mockResolvedValue({
-    documents: [
-      { documentId: 'doc-1', namespace: 'research', title: 'Paper A' },
-      { documentId: 'doc-2', namespace: 'research', title: 'Paper B' },
-    ],
-  }),
-  memoryListNamespaces: vi.fn().mockResolvedValue(['research', 'conversations']),
-  aiListMemoryFiles: vi.fn().mockResolvedValue(['2026-03-31.md']),
-  aiReadMemoryFile: vi.fn().mockResolvedValue('# Memory\nSome content'),
-  aiWriteMemoryFile: vi.fn().mockResolvedValue(undefined),
-  memoryDeleteDocument: vi.fn().mockResolvedValue(undefined),
-  memoryQueryNamespace: vi.fn().mockResolvedValue({ text: 'query result', entities: [] }),
-  memoryRecallNamespace: vi.fn().mockResolvedValue({ text: 'recall result', entities: [] }),
-  memorySyncAll: vi.fn().mockResolvedValue({ requested: true }),
-  memorySyncChannel: vi.fn().mockResolvedValue({ requested: true, channel_id: 'telegram-main' }),
-  memoryLearnAll: vi.fn().mockResolvedValue({
-    namespaces_processed: 2,
-    results: [
-      { namespace: 'research', status: 'ok' },
-      { namespace: 'conversations', status: 'ok' },
-    ],
-  }),
-  memoryGraphQuery: vi.fn().mockResolvedValue([
-    {
-      namespace: 'research',
-      subject: 'Alice',
-      predicate: 'AUTHORED',
-      object: 'Paper A',
-      attrs: { entity_types: { subject: 'person', object: 'document' } },
-      updatedAt: 1700000000,
-      evidenceCount: 3,
-      orderIndex: null,
-      documentIds: ['doc-1'],
-      chunkIds: ['doc-1#chunk-1'],
-    },
-    {
-      namespace: 'research',
-      subject: 'Bob',
-      predicate: 'REVIEWED',
-      object: 'Paper A',
-      attrs: { entity_types: { subject: 'person', object: 'document' } },
-      updatedAt: 1700000001,
-      evidenceCount: 1,
-      orderIndex: null,
-      documentIds: ['doc-1'],
-      chunkIds: [],
-    },
-  ]),
+  memoryTreeListChunks: vi.fn(),
+  memoryTreeListSources: vi.fn(),
+  memoryTreeTopEntities: vi.fn(),
+  memoryTreeEntityIndexFor: vi.fn(),
+  memoryTreeChunkScore: vi.fn(),
 }));
 
-describe('MemoryWorkspace', () => {
-  const onToast = vi.fn();
+const {
+  memoryTreeListChunks,
+  memoryTreeListSources,
+  memoryTreeTopEntities,
+  memoryTreeEntityIndexFor,
+  memoryTreeChunkScore,
+} = (await import('../../../utils/tauriCommands')) as unknown as {
+  memoryTreeListChunks: Mock;
+  memoryTreeListSources: Mock;
+  memoryTreeTopEntities: Mock;
+  memoryTreeEntityIndexFor: Mock;
+  memoryTreeChunkScore: Mock;
+};
 
-  it('renders the Memory heading', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    expect(screen.getByText('Memory')).toBeInTheDocument();
+// ── Fixtures — small but realistic ───────────────────────────────────────
+
+const NOW_MS = Date.UTC(2026, 4, 4, 9, 14, 0);
+const HOUR = 60 * 60 * 1000;
+
+const FIXTURE_CHUNKS: Chunk[] = [
+  {
+    id: 'chunk-today-01',
+    source_kind: 'email',
+    source_id: 'gmail:enamakel@mail.tinyhumans.ai|sanil@vezures.xyz',
+    source_ref: 'gmail://msg/aaa',
+    owner: 'sanil@vezures.xyz',
+    timestamp_ms: NOW_MS,
+    token_count: 312,
+    lifecycle_status: 'admitted',
+    content_preview:
+      'welcome to the future of ai assistants — openhuman. hey hey Sanil Jain! steve here.',
+    has_embedding: true,
+    tags: ['person/Steven-Enamakel', 'organization/TinyHumans', 'product/openhuman'],
+  },
+  {
+    id: 'chunk-today-02',
+    source_kind: 'email',
+    source_id: 'gmail:notifications@github.com|sanil@vezures.xyz',
+    source_ref: 'gmail://msg/bbb',
+    owner: 'sanil@vezures.xyz',
+    timestamp_ms: NOW_MS - 90 * 60 * 1000,
+    token_count: 94,
+    lifecycle_status: 'admitted',
+    content_preview: '[tinyhumansai/openhuman] PR #1175 merged.',
+    has_embedding: true,
+    tags: ['organization/GitHub', 'product/openhuman', 'event/pr-merged'],
+  },
+  {
+    id: 'chunk-today-03',
+    source_kind: 'chat',
+    source_id: 'slack:T0123|C-engineering',
+    source_ref: 'slack://channel/eng/p1',
+    owner: 'sanil@vezures.xyz',
+    timestamp_ms: NOW_MS - 3 * HOUR,
+    token_count: 47,
+    lifecycle_status: 'admitted',
+    content_preview: 'maya patel: pushed the staging chart fix',
+    has_embedding: true,
+    tags: ['person/Maya-Patel', 'organization/TinyHumans'],
+  },
+];
+
+const FIXTURE_SOURCES: Source[] = [
+  {
+    source_id: 'gmail:enamakel@mail.tinyhumans.ai|sanil@vezures.xyz',
+    display_name: 'Steven Enamakel',
+    source_kind: 'email',
+    chunk_count: 1,
+    most_recent_ms: NOW_MS,
+    lifecycle_status: 'admitted',
+  },
+  {
+    source_id: 'gmail:notifications@github.com|sanil@vezures.xyz',
+    display_name: 'GitHub notifications',
+    source_kind: 'email',
+    chunk_count: 1,
+    most_recent_ms: NOW_MS - 90 * 60 * 1000,
+    lifecycle_status: 'admitted',
+  },
+  {
+    source_id: 'slack:T0123|C-engineering',
+    display_name: 'Slack: #engineering',
+    source_kind: 'chat',
+    chunk_count: 1,
+    most_recent_ms: NOW_MS - 3 * HOUR,
+    lifecycle_status: 'admitted',
+  },
+];
+
+const FIXTURE_PEOPLE: EntityRef[] = [
+  { entity_id: 'person:Steven Enamakel', kind: 'person', surface: 'Steven Enamakel', count: 2 },
+  { entity_id: 'person:Maya Patel', kind: 'person', surface: 'Maya Patel', count: 1 },
+];
+
+const FIXTURE_TOPICS: EntityRef[] = [
+  { entity_id: 'product:openhuman', kind: 'product', surface: 'openhuman', count: 3 },
+  { entity_id: 'event:pr-merged', kind: 'event', surface: 'pr-merged', count: 1 },
+];
+
+const FIXTURE_SCORE: ScoreBreakdown = {
+  signals: [
+    { name: 'source', weight: 0.3, value: 0.8 },
+    { name: 'entities', weight: 0.4, value: 0.7 },
+    { name: 'recency', weight: 0.3, value: 0.9 },
+  ],
+  total: 0.79,
+  threshold: 0.85,
+  kept: true,
+  llm_consulted: false,
+};
+
+beforeEach(() => {
+  memoryTreeListChunks.mockReset();
+  memoryTreeListSources.mockReset();
+  memoryTreeTopEntities.mockReset();
+  memoryTreeEntityIndexFor.mockReset();
+  memoryTreeChunkScore.mockReset();
+
+  memoryTreeListChunks.mockResolvedValue({ chunks: FIXTURE_CHUNKS, total: FIXTURE_CHUNKS.length });
+  memoryTreeListSources.mockResolvedValue(FIXTURE_SOURCES);
+  // The workspace calls topEntities twice: ('person', 12) and (undefined, 40).
+  memoryTreeTopEntities.mockImplementation((kind?: string) => {
+    if (kind === 'person') return Promise.resolve(FIXTURE_PEOPLE);
+    return Promise.resolve([...FIXTURE_PEOPLE, ...FIXTURE_TOPICS]);
+  });
+  memoryTreeEntityIndexFor.mockResolvedValue([
+    { entity_id: 'person:Steven Enamakel', kind: 'person', surface: 'Steven Enamakel', count: 1 },
+    { entity_id: 'organization:TinyHumans', kind: 'organization', surface: 'TinyHumans', count: 1 },
+  ]);
+  memoryTreeChunkScore.mockResolvedValue(FIXTURE_SCORE);
+});
+
+describe('MemoryWorkspace — 2-pane + overlay browser', () => {
+  it('renders the navigator + result list scaffold and the search box', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    // Workspace renders the empty placeholder until the first fixture
+    // round-trip lands — the full 2-pane shell only mounts once allChunks
+    // is populated. Wait for the post-load state, then assert all four
+    // anchors exist together.
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-workspace')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('memory-navigator')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-result-list')).toBeInTheDocument();
+    expect(screen.getByLabelText('Search memory')).toBeInTheDocument();
   });
 
-  it('displays graph relations after loading', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-
+  it('calls the canonical memory_tree_* RPCs on mount', async () => {
+    renderWithProviders(<MemoryWorkspace />);
     await waitFor(() => {
-      expect(screen.getByText('Alice', { selector: 'span' })).toBeInTheDocument();
+      expect(memoryTreeListChunks).toHaveBeenCalledWith({ limit: 500 });
+      expect(memoryTreeListSources).toHaveBeenCalled();
+      expect(memoryTreeTopEntities).toHaveBeenCalledWith('person', 12);
+      expect(memoryTreeTopEntities).toHaveBeenCalledWith(undefined, 40);
+    });
+  });
+
+  it('renders navigator section headings (recent, sources, people, topics)', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => {
+      expect(screen.getByText('recent')).toBeInTheDocument();
+    });
+    expect(screen.getByText('sources')).toBeInTheDocument();
+    expect(screen.getByText('people')).toBeInTheDocument();
+    expect(screen.getByText('topics')).toBeInTheDocument();
+  });
+
+  it('does NOT auto-open the detail overlay on mount (2-pane is the default rest state)', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    // Wait for fixtures to land so we know the workspace is fully rendered.
+    await waitFor(() => screen.getByTestId('memory-result-list'));
+    // The new layout opens detail only on row click; no overlay until then.
+    expect(screen.queryByTestId('memory-chunk-detail')).toBeNull();
+  });
+
+  it('renders the Sources section count + per-kind nesting after the load resolves', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    // Inside the Sources NavSection, fixtures group into Email (2) + Chat (1).
+    // Each per-kind sub-section is rendered as its own NavSection — closed by
+    // default, but the labels are visible.
+    await waitFor(() => {
+      expect(screen.getByText('Email')).toBeInTheDocument();
+      expect(screen.getByText('Chat')).toBeInTheDocument();
+    });
+    // Person entities (from FIXTURE_PEOPLE) ARE visible by default — the
+    // people NavSection is `defaultOpen`.
+    expect(screen.getAllByText('Steven Enamakel').length).toBeGreaterThan(0);
+    expect(screen.getByText('Maya Patel')).toBeInTheDocument();
+  });
+
+  it('typing in the search box narrows the result-list rows', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => {
+      const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+      expect(rows.length).toBe(FIXTURE_CHUNKS.length);
     });
 
-    expect(screen.getByText('AUTHORED', { selector: 'span' })).toBeInTheDocument();
-    expect(screen.getByText('Bob', { selector: 'span' })).toBeInTheDocument();
-    expect(screen.getByText('REVIEWED', { selector: 'span' })).toBeInTheDocument();
-    // "Paper A" appears in both graph relations and documents list,
-    // so just verify at least one instance is present
-    expect(screen.getAllByText('Paper A').length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('shows evidence count badge when > 1', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    const search = screen.getByLabelText('Search memory') as HTMLInputElement;
+    fireEvent.change(search, { target: { value: 'PR #1175' } });
 
     await waitFor(() => {
-      expect(screen.getByText('x3')).toBeInTheDocument();
-    });
-
-    // Bob's relation has evidenceCount 1 — should NOT show a badge
-    expect(screen.queryByText('x1')).not.toBeInTheDocument();
-  });
-
-  it('shows Relations stat in the stats bar', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-
-    // The stats bar has a "Relations" label
-    await waitFor(() => {
-      expect(screen.getByText('Relations')).toBeInTheDocument();
+      const visible = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+      expect(visible.length).toBe(1);
+      expect(visible[0]?.textContent ?? '').toMatch(/PR #1175|github/i);
     });
   });
 
-  it('renders the Memory Graph section', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+  it('opens the detail overlay when a result row is clicked', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => {
+      const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+      expect(rows.length).toBeGreaterThan(0);
+    });
+
+    const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+    fireEvent.click(rows[0]!);
 
     await waitFor(() => {
-      expect(screen.getByText('Memory Graph')).toBeInTheDocument();
+      // Detail overlay mounts the ChunkDetail (data-testid="memory-chunk-detail")
+      // along with the letterhead — both show only after a row click in the
+      // 2-pane + overlay layout.
+      expect(screen.getByTestId('memory-chunk-detail')).toBeInTheDocument();
+      expect(screen.getByTestId('memory-chunk-letterhead')).toBeInTheDocument();
+    });
+  });
+
+  it('closes the detail overlay on Escape key', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => {
+      const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+      expect(rows.length).toBeGreaterThan(0);
+    });
+
+    const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
+    fireEvent.click(rows[0]!);
+    await waitFor(() => screen.getByTestId('memory-chunk-detail'));
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('memory-chunk-detail')).toBeNull();
     });
   });
 });
 
-describe('MemoryWorkspace – no graph relations', () => {
-  const onToast = vi.fn();
+describe('MemoryWorkspace — empty state', () => {
+  it('renders the empty placeholder when the core returns zero chunks', async () => {
+    memoryTreeListChunks.mockResolvedValueOnce({ chunks: [], total: 0 });
+    memoryTreeListSources.mockResolvedValueOnce([]);
+    memoryTreeTopEntities.mockResolvedValue([]);
 
-  it('shows empty-state message when no relations exist', async () => {
-    // Override only memoryGraphQuery to return empty
-    const tauriMod = await import('../../../utils/tauriCommands');
-    vi.mocked(tauriMod.memoryGraphQuery).mockResolvedValueOnce([]);
-
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    renderWithProviders(<MemoryWorkspace />);
 
     await waitFor(() => {
-      expect(screen.getByText('No memory graph data yet')).toBeInTheDocument();
+      expect(screen.getByTestId('memory-empty-placeholder')).toBeInTheDocument();
     });
-  });
-});
-
-describe('MemoryWorkspace – non-Tauri environment', () => {
-  const onToast = vi.fn();
-
-  it('shows Tauri-required warning when not running in Tauri', async () => {
-    const tauriMod = await import('../../../utils/tauriCommands');
-    vi.mocked(tauriMod.isTauri).mockReturnValue(false);
-
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-
-    await waitFor(() => {
-      expect(
-        screen.getByText('Memory workspace requires the desktop Tauri runtime to load real data.')
-      ).toBeInTheDocument();
-    });
-
-    // Restore for other tests
-    vi.mocked(tauriMod.isTauri).mockReturnValue(true);
-  });
-});
-
-describe('MemoryWorkspace – Sync section', () => {
-  const onToast = vi.fn();
-
-  it('renders the Sync collapsible button', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => {
-      expect(screen.getByText('Sync')).toBeInTheDocument();
-    });
-  });
-
-  it('expands and shows Sync all button when toggled', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => {
-      expect(screen.getByText('Sync')).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByText('Sync').closest('button')!);
-    await waitFor(() => {
-      expect(screen.getByText('Sync all')).toBeInTheDocument();
-    });
-  });
-
-  it('calls memorySyncAll when Sync all button clicked', async () => {
-    const tauriMod = await import('../../../utils/tauriCommands');
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => screen.getByText('Sync'));
-    fireEvent.click(screen.getByText('Sync').closest('button')!);
-    await waitFor(() => screen.getByText('Sync all'));
-    fireEvent.click(screen.getByText('Sync all'));
-    await waitFor(() => {
-      expect(vi.mocked(tauriMod.memorySyncAll)).toHaveBeenCalled();
-    });
-  });
-
-  it('calls memorySyncChannel when per-channel Sync button clicked', async () => {
-    const tauriMod = await import('../../../utils/tauriCommands');
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => screen.getByText('Sync'));
-    fireEvent.click(screen.getByText('Sync').closest('button')!);
-    await waitFor(() => screen.getAllByText('Sync').length > 1);
-    // The per-channel sync buttons appear after channels load
-    await waitFor(() => screen.getByText('telegram-main'));
-    const syncBtns = screen.getAllByText('Sync');
-    // Last Sync buttons are per-channel (first is the header)
-    fireEvent.click(syncBtns[syncBtns.length - 1]);
-    await waitFor(() => {
-      expect(vi.mocked(tauriMod.memorySyncChannel)).toHaveBeenCalledWith('discord-bot');
-    });
-  });
-});
-
-describe('MemoryWorkspace – Learn section', () => {
-  const onToast = vi.fn();
-
-  it('renders the Learn collapsible button', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => {
-      expect(screen.getByText('Learn')).toBeInTheDocument();
-    });
-  });
-
-  it('expands and shows Learn all button when toggled', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => screen.getByText('Learn'));
-    fireEvent.click(screen.getByText('Learn').closest('button')!);
-    await waitFor(() => {
-      expect(screen.getByText('Learn all')).toBeInTheDocument();
-    });
-  });
-
-  it('calls memoryLearnAll and shows result summary', async () => {
-    const tauriMod = await import('../../../utils/tauriCommands');
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    await waitFor(() => screen.getByText('Learn'));
-    fireEvent.click(screen.getByText('Learn').closest('button')!);
-    await waitFor(() => screen.getByText('Learn all'));
-    fireEvent.click(screen.getByText('Learn all'));
-    await waitFor(() => {
-      expect(vi.mocked(tauriMod.memoryLearnAll)).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect(screen.getByText(/2 processed/)).toBeInTheDocument();
-    });
+    expect(screen.getByText('Nothing yet.')).toBeInTheDocument();
   });
 });

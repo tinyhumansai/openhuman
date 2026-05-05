@@ -371,6 +371,9 @@ pub fn lookup_entity(
     })
 }
 
+/// All distinct canonical entity ids associated with `node_id`, ordered by
+/// score (desc) then recency. Used by topic-routing to pick which topic
+/// trees a node should fan into.
 pub fn list_entity_ids_for_node(config: &Config, node_id: &str) -> Result<Vec<String>> {
     with_connection(config, |conn| {
         let mut stmt = conn.prepare(

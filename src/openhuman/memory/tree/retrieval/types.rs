@@ -19,7 +19,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::openhuman::memory::tree::score::extract::EntityKind;
-use crate::openhuman::memory::tree::source_tree::types::{SummaryNode, Tree, TreeKind};
+use crate::openhuman::memory::tree::tree_source::types::{SummaryNode, Tree, TreeKind};
 use crate::openhuman::memory::tree::types::{Chunk, SourceKind};
 
 /// Whether a hit represents a leaf (raw chunk) or a summary node.
@@ -34,6 +34,8 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
+    /// Stable lowercase string form (`"leaf"` / `"summary"`) — matches the
+    /// serde representation and is suitable for SQL discriminator columns.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Leaf => "leaf",

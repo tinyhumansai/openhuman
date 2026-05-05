@@ -8,7 +8,8 @@
 //! skill-executor wording stays scoped to `integrations_agent/prompt.rs`).
 
 use crate::openhuman::context::prompt::{
-    render_tools, render_user_files, render_workspace, ConnectedIntegration, PromptContext,
+    render_tools, render_user_files, render_user_identity, render_workspace, ConnectedIntegration,
+    PromptContext,
 };
 use anyhow::Result;
 use std::fmt::Write;
@@ -19,6 +20,12 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     let mut out = String::with_capacity(8192);
     out.push_str(ARCHETYPE.trim_end());
     out.push_str("\n\n");
+
+    let user_id = render_user_identity(ctx)?;
+    if !user_id.trim().is_empty() {
+        out.push_str(user_id.trim_end());
+        out.push_str("\n\n");
+    }
 
     let user_files = render_user_files(ctx)?;
     if !user_files.trim().is_empty() {
@@ -132,6 +139,36 @@ mod tests {
         let body = build(&ctx_with(&[])).unwrap();
         assert!(!body.is_empty());
         assert!(!body.contains("## Connected Integrations"));
+    }
+
+    #[test]
+    fn build_injects_user_identity_when_present() {
+        use crate::openhuman::context::prompt::UserIdentity;
+        let mut ctx = ctx_with(&[]);
+        ctx.user_identity = Some(UserIdentity {
+            name: Some("Alice".into()),
+            email: Some("alice@example.com".into()),
+            id: None,
+        });
+        let body = build(&ctx).unwrap();
+        assert!(
+            body.contains("## User"),
+            "should contain user identity heading"
+        );
+        assert!(body.contains("Alice"), "should contain the user's name");
+        assert!(
+            body.contains("alice@example.com"),
+            "should contain the user's email"
+        );
+    }
+
+    #[test]
+    fn build_omits_user_identity_when_absent() {
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(
+            !body.contains("## User"),
+            "should not contain user identity when None"
+        );
     }
 
     #[test]

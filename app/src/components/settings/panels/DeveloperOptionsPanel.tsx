@@ -1,3 +1,7 @@
+import { useState } from 'react';
+
+import { triggerSentryTestEvent } from '../../../services/analytics';
+import { APP_ENVIRONMENT } from '../../../utils/config';
 import SettingsHeader from '../components/SettingsHeader';
 import SettingsMenuItem from '../components/SettingsMenuItem';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -134,8 +138,72 @@ const developerItems = [
   },
 ];
 
+type SentryTestStatus =
+  | { kind: 'idle' }
+  | { kind: 'sending' }
+  | { kind: 'sent'; eventId: string | undefined }
+  | { kind: 'error'; message: string };
+
+// Staging-only Sentry pipeline check (issue #1072). Removed once the
+// staging dashboard confirms events are landing with the right tags.
+const SentryTestRow = () => {
+  const [status, setStatus] = useState<SentryTestStatus>({ kind: 'idle' });
+
+  const onClick = async () => {
+    setStatus({ kind: 'sending' });
+    try {
+      const eventId = await triggerSentryTestEvent();
+      setStatus({ kind: 'sent', eventId });
+    } catch (err) {
+      setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  return (
+    <div className="px-4 py-3 mb-3 rounded-lg border border-amber-300 bg-amber-50">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-amber-900">Trigger Sentry Test (staging)</div>
+          <div className="text-xs text-amber-800 mt-0.5">
+            Fires a tagged error to verify the Sentry pipeline. Issue #1072 — remove after
+            verification.
+          </div>
+        </div>
+        <button
+          onClick={onClick}
+          disabled={status.kind === 'sending'}
+          className="shrink-0 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium transition-colors disabled:opacity-60">
+          {status.kind === 'sending' ? 'Sending…' : 'Send test event'}
+        </button>
+      </div>
+      {/*
+       * Single live region so screen readers announce the result when
+       * status flips from `sending` to `sent` / `error`. `aria-live=polite`
+       * waits for any in-flight speech to finish; `aria-atomic` makes the
+       * reader re-read the whole region rather than only the diff.
+       */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="mt-2 text-xs">
+        {status.kind === 'sent' && (
+          <span className="text-amber-900">
+            Event sent.{' '}
+            {status.eventId ? (
+              <span className="font-mono">id: {status.eventId}</span>
+            ) : (
+              <span>(no id — Sentry disabled in this build)</span>
+            )}
+          </span>
+        )}
+        {status.kind === 'error' && (
+          <span className="text-coral-600">Failed: {status.message}</span>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const DeveloperOptionsPanel = () => {
   const { navigateToSettings, navigateBack, breadcrumbs } = useSettingsNavigation();
+  const showSentryTest = APP_ENVIRONMENT === 'staging';
 
   return (
     <div className="z-10 relative">
@@ -147,6 +215,7 @@ const DeveloperOptionsPanel = () => {
       />
 
       <div>
+        {showSentryTest && <SentryTestRow />}
         {developerItems.map((item, index) => (
           <SettingsMenuItem
             key={item.id}

@@ -247,7 +247,7 @@ fn apply_env_overrides_web_search_max_results_and_timeout_clamped() {
 #[test]
 fn apply_env_overrides_picks_up_sentry_dsn() {
     let _g = ENV_LOCK.lock().unwrap();
-    clear_env(&["OPENHUMAN_SENTRY_DSN"]);
+    clear_env(&["OPENHUMAN_CORE_SENTRY_DSN", "OPENHUMAN_SENTRY_DSN"]);
     let mut cfg = Config::default();
     unsafe {
         std::env::set_var("OPENHUMAN_SENTRY_DSN", "https://token@sentry.io/1");
@@ -257,7 +257,41 @@ fn apply_env_overrides_picks_up_sentry_dsn() {
         cfg.observability.sentry_dsn.as_deref(),
         Some("https://token@sentry.io/1")
     );
-    clear_env(&["OPENHUMAN_SENTRY_DSN"]);
+    clear_env(&["OPENHUMAN_CORE_SENTRY_DSN", "OPENHUMAN_SENTRY_DSN"]);
+}
+
+#[test]
+fn apply_env_overrides_prefers_core_sentry_dsn_when_both_set() {
+    let _g = ENV_LOCK.lock().unwrap();
+    clear_env(&["OPENHUMAN_CORE_SENTRY_DSN", "OPENHUMAN_SENTRY_DSN"]);
+    let mut cfg = Config::default();
+    unsafe {
+        std::env::set_var("OPENHUMAN_SENTRY_DSN", "https://legacy@sentry.io/1");
+        std::env::set_var("OPENHUMAN_CORE_SENTRY_DSN", "https://new@sentry.io/2");
+    }
+    cfg.apply_env_overrides();
+    assert_eq!(
+        cfg.observability.sentry_dsn.as_deref(),
+        Some("https://new@sentry.io/2"),
+        "namespaced var must win over the legacy unprefixed one"
+    );
+    clear_env(&["OPENHUMAN_CORE_SENTRY_DSN", "OPENHUMAN_SENTRY_DSN"]);
+}
+
+#[test]
+fn apply_env_overrides_picks_up_core_sentry_dsn_alone() {
+    let _g = ENV_LOCK.lock().unwrap();
+    clear_env(&["OPENHUMAN_CORE_SENTRY_DSN", "OPENHUMAN_SENTRY_DSN"]);
+    let mut cfg = Config::default();
+    unsafe {
+        std::env::set_var("OPENHUMAN_CORE_SENTRY_DSN", "https://token@sentry.io/3");
+    }
+    cfg.apply_env_overrides();
+    assert_eq!(
+        cfg.observability.sentry_dsn.as_deref(),
+        Some("https://token@sentry.io/3")
+    );
+    clear_env(&["OPENHUMAN_CORE_SENTRY_DSN", "OPENHUMAN_SENTRY_DSN"]);
 }
 
 // ── EnvLookup seam for resolve_runtime_config_dirs ─────────────
@@ -592,6 +626,37 @@ fn env_overlay_sentry_dsn_trims_and_ignores_blank() {
     assert_eq!(
         cfg.observability.sentry_dsn.as_deref(),
         Some("https://t@sentry.io/42")
+    );
+}
+
+#[test]
+fn env_overlay_prefers_namespaced_core_sentry_dsn() {
+    let mut cfg = Config::default();
+    cfg.observability.sentry_dsn = None;
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SENTRY_DSN", "https://legacy@sentry.io/1")
+            .with("OPENHUMAN_CORE_SENTRY_DSN", "https://new@sentry.io/2"),
+    );
+    assert_eq!(
+        cfg.observability.sentry_dsn.as_deref(),
+        Some("https://new@sentry.io/2"),
+        "OPENHUMAN_CORE_SENTRY_DSN must win over OPENHUMAN_SENTRY_DSN"
+    );
+}
+
+#[test]
+fn env_overlay_namespaced_core_sentry_dsn_works_alone() {
+    let mut cfg = Config::default();
+    cfg.observability.sentry_dsn = None;
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CORE_SENTRY_DSN", "https://token@sentry.io/3"),
+    );
+    assert_eq!(
+        cfg.observability.sentry_dsn.as_deref(),
+        Some("https://token@sentry.io/3")
     );
 }
 

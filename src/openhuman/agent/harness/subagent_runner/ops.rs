@@ -30,11 +30,43 @@ use super::tool_prep::{
 use super::types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
 use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
 use crate::openhuman::agent::harness::with_current_sandbox_mode;
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::{
     render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
 };
 use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
+
+/// Lazy resolver that lets `integrations_agent` recover when the model
+/// calls a Composio action slug that exists in the bound toolkit's full
+/// catalogue but was filtered out of the up-front fuzzy top-K. On a
+/// match we build the [`ComposioActionTool`] on demand so the call
+/// dispatches normally instead of dead-ending in
+/// `Error: tool '...' is not available`.
+struct LazyToolkitResolver {
+    client: crate::openhuman::composio::ComposioClient,
+    actions: Vec<crate::openhuman::context::prompt::ConnectedIntegrationTool>,
+}
+
+impl LazyToolkitResolver {
+    fn resolve(&self, name: &str) -> Option<Box<dyn Tool>> {
+        let action = self.actions.iter().find(|a| a.name == name)?;
+        Some(Box::new(
+            crate::openhuman::composio::ComposioActionTool::new(
+                self.client.clone(),
+                action.name.clone(),
+                action.description.clone(),
+                action.parameters.clone(),
+            ),
+        ))
+    }
+
+    /// Slugs from the bound toolkit, for inclusion in unknown-tool
+    /// errors so the model can self-correct without burning a turn.
+    fn known_slugs(&self) -> Vec<&str> {
+        self.actions.iter().map(|a| a.name.as_str()).collect()
+    }
+}
 
 /// Run a sub-agent based on its definition and a task prompt.
 ///
@@ -122,6 +154,75 @@ async fn run_typed_mode(
     // `load_prompt_source(...)` call lives just above
     // `render_subagent_system_prompt` below.
 
+    // ── Refresh connected-integrations at spawn time ───────────────────
+    //
+    // The parent session's `connected_integrations` Vec is frozen at
+    // session-start (see `session/turn.rs::fetch_connected_integrations`,
+    // which only runs while `history.is_empty()` to preserve the
+    // KV-cache prefix). That means a toolkit the user authorised mid-
+    // thread — e.g. Calendly — is missing from `parent.connected_integrations`,
+    // and the spawn-time toolkit lookup further down rejects it as
+    // "not allowlisted / not connected" until the user starts a new
+    // thread or restarts the app.
+    //
+    // Re-fetch from the global integrations cache here. The cache is
+    // invalidated by `ComposioConnectionCreatedSubscriber` once the
+    // OAuth handshake reaches ACTIVE/CONNECTED, so this call returns
+    // the fresh list almost for free on the warm path. Fall back to
+    // the parent's frozen list when the live fetch returns empty (no
+    // signed-in user, backend unreachable, …) so offline / not-signed-
+    // in behaviour is unchanged.
+    let live_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration> = {
+        if parent.composio_client.is_none() {
+            parent.connected_integrations.clone()
+        } else {
+            match crate::openhuman::config::Config::load_or_init().await {
+                Ok(config) => {
+                    use crate::openhuman::composio::FetchConnectedIntegrationsStatus;
+                    // `fetch_connected_integrations_status` distinguishes
+                    // an authoritative empty list (user disconnected
+                    // their last integration mid-thread) from
+                    // backend-unavailable (no client / transient error).
+                    // Adopt the authoritative case as truth — even when
+                    // empty — so a revoked toolkit really disappears
+                    // from the spawn pre-flight; only fall back to the
+                    // parent's frozen list when the backend explicitly
+                    // can't answer.
+                    match crate::openhuman::composio::fetch_connected_integrations_status(&config)
+                        .await
+                    {
+                        FetchConnectedIntegrationsStatus::Authoritative(fresh) => {
+                            tracing::debug!(
+                                count = fresh.len(),
+                                parent_count = parent.connected_integrations.len(),
+                                "[subagent_runner] refreshed connected_integrations at spawn time"
+                            );
+                            fresh
+                        }
+                        FetchConnectedIntegrationsStatus::Unavailable => {
+                            tracing::debug!(
+                                "[subagent_runner] integrations backend unavailable; falling back to parent's frozen list"
+                            );
+                            parent.connected_integrations.clone()
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Real failure — config couldn't be read, so the
+                    // backend client can't be built either. Use the
+                    // parent's frozen list as a best-effort fallback so
+                    // the spawn can still proceed for sessions that
+                    // were established when config was healthy.
+                    tracing::debug!(
+                        error = %e,
+                        "[subagent_runner] config load failed; falling back to parent's frozen integrations list"
+                    );
+                    parent.connected_integrations.clone()
+                }
+            }
+        }
+    };
+
     // ── Filter tools per definition + per-spawn override ───────────────
     let toolkit_filter = options.toolkit_override.as_deref();
     let mut allowed_indices = filter_tool_indices(
@@ -206,6 +307,7 @@ async fn run_typed_mode(
     // are stripped from the parent-filtered indices in this path so
     // the model only sees one way to call each action.
     let mut dynamic_tools: Vec<Box<dyn Tool>> = Vec::new();
+    let mut lazy_resolver: Option<LazyToolkitResolver> = None;
     let is_integrations_agent_with_toolkit =
         definition.id == "integrations_agent" && toolkit_filter.is_some();
 
@@ -235,9 +337,12 @@ async fn run_typed_mode(
             // The spawn_subagent pre-flight already verified the
             // toolkit is in the allowlist AND has an active
             // connection, so the matching entry must be present and
-            // marked connected. Defensive lookup anyway.
-            if let Some(cached_integration) = parent
-                .connected_integrations
+            // marked connected. Defensive lookup anyway. Reads from
+            // `live_integrations` (refreshed above) rather than the
+            // session-frozen `parent.connected_integrations` so a
+            // mid-thread `composio_authorize` is visible without a
+            // new thread / restart.
+            if let Some(cached_integration) = live_integrations
                 .iter()
                 .find(|ci| ci.connected && ci.toolkit.eq_ignore_ascii_case(tk))
             {
@@ -345,6 +450,15 @@ async fn run_typed_mode(
                     action_count = dynamic_tools.len(),
                     "[subagent_runner:typed] dynamically registered per-action composio tools"
                 );
+                // Stash the full catalogue so the inner loop can lazily
+                // register actions that the fuzzy top-K dropped — the
+                // model often picks the right slug anyway and the
+                // existing fuzzy filter exists only to keep schemas out
+                // of the system prompt, not to gate execution.
+                lazy_resolver = Some(LazyToolkitResolver {
+                    client: client.clone(),
+                    actions: integration.tools.clone(),
+                });
             } else {
                 tracing::warn!(
                     agent_id = %definition.id,
@@ -462,14 +576,12 @@ async fn run_typed_mode(
     // a sub-agent that's actually executing work.
     let narrowed_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration> =
         match toolkit_filter {
-            Some(tk) => parent
-                .connected_integrations
+            Some(tk) => live_integrations
                 .iter()
                 .filter(|ci| ci.connected && ci.toolkit.eq_ignore_ascii_case(tk))
                 .cloned()
                 .collect(),
-            None => parent
-                .connected_integrations
+            None => live_integrations
                 .iter()
                 .filter(|ci| ci.connected)
                 .cloned()
@@ -613,9 +725,10 @@ async fn run_typed_mode(
         parent.provider.as_ref(),
         &mut history,
         &parent.all_tools,
-        &dynamic_tools,
+        dynamic_tools,
         &filtered_specs,
-        &allowed_names,
+        allowed_names,
+        lazy_resolver,
         &model,
         temperature,
         definition.max_iterations,
@@ -717,9 +830,10 @@ async fn run_fork_mode(
         parent.provider.as_ref(),
         &mut history,
         &parent.all_tools,
-        &fork_extra_tools,
+        fork_extra_tools,
         fork.tool_specs.as_slice(),
-        &allowed_names,
+        allowed_names,
+        None,
         &model,
         temperature,
         max_iterations,
@@ -768,9 +882,10 @@ async fn run_inner_loop(
     provider: &dyn Provider,
     history: &mut Vec<ChatMessage>,
     parent_tools: &[Box<dyn Tool>],
-    extra_tools: &[Box<dyn Tool>],
+    mut extra_tools: Vec<Box<dyn Tool>>,
     tool_specs: &[ToolSpec],
-    allowed_names: &HashSet<String>,
+    mut allowed_names: HashSet<String>,
+    lazy_resolver: Option<LazyToolkitResolver>,
     model: &str,
     temperature: f64,
     max_iterations: usize,
@@ -914,6 +1029,7 @@ async fn run_inner_loop(
             output_tokens: usage.output_tokens,
             cached_input_tokens: usage.cached_input_tokens,
             charged_amount_usd: usage.charged_amount_usd,
+            thread_id: crate::openhuman::providers::thread_context::current_thread_id(),
         };
         if let Err(err) = transcript::write_transcript(&path, history, &meta, None) {
             tracing::debug!(
@@ -924,6 +1040,11 @@ async fn run_inner_loop(
         }
     };
 
+    // Per-turn progress sink shared with the parent — `None` for runs
+    // that don't have a subscriber (CLI / triage / tests). Cloned upfront
+    // so the inner loop body doesn't repeatedly re-resolve `parent.on_progress`.
+    let progress_sink = parent.on_progress.clone();
+
     for iteration in 0..max_iterations {
         tracing::debug!(
             task_id = %task_id,
@@ -932,6 +1053,17 @@ async fn run_inner_loop(
             history_len = history.len(),
             "[subagent_runner] iteration start"
         );
+
+        if let Some(ref tx) = progress_sink {
+            let _ = tx
+                .send(AgentProgress::SubagentIterationStarted {
+                    agent_id: agent_id.to_string(),
+                    task_id: task_id.to_string(),
+                    iteration: (iteration + 1) as u32,
+                    max_iterations: max_iterations as u32,
+                })
+                .await;
+        }
 
         let resp = provider
             .chat(
@@ -1027,6 +1159,41 @@ async fn run_inner_loop(
         // XmlToolDispatcher's `format_results`.
         let mut text_mode_result_block = String::new();
         for call in &native_calls {
+            let call_started = Instant::now();
+            if let Some(ref tx) = progress_sink {
+                let _ = tx
+                    .send(AgentProgress::SubagentToolCallStarted {
+                        agent_id: agent_id.to_string(),
+                        task_id: task_id.to_string(),
+                        call_id: call.id.clone(),
+                        tool_name: call.name.clone(),
+                        iteration: (iteration + 1) as u32,
+                    })
+                    .await;
+            }
+
+            // Lazy registration: if the call is for an unknown tool but
+            // matches a real action slug in the bound toolkit's full
+            // catalogue, build the [`ComposioActionTool`] on the spot and
+            // admit it to the allowlist for this and subsequent turns.
+            // The fuzzy top-K filter exists to keep schemas out of the
+            // system prompt, not to gate execution — when the model
+            // names the slug correctly we should just dispatch.
+            if !allowed_names.contains(&call.name) {
+                if let Some(resolver) = lazy_resolver.as_ref() {
+                    if let Some(tool) = resolver.resolve(&call.name) {
+                        tracing::info!(
+                            task_id = %task_id,
+                            agent_id = %agent_id,
+                            tool = %call.name,
+                            "[subagent_runner] lazily registered toolkit action outside fuzzy top-K"
+                        );
+                        allowed_names.insert(tool.name().to_string());
+                        extra_tools.push(tool);
+                    }
+                }
+            }
+
             let result_text = if !allowed_names.contains(&call.name) {
                 tracing::warn!(
                     task_id = %task_id,
@@ -1034,9 +1201,17 @@ async fn run_inner_loop(
                     tool = %call.name,
                     "[subagent_runner] tool not in allowlist for this sub-agent"
                 );
+                let mut available: Vec<&str> = allowed_names.iter().map(|s| s.as_str()).collect();
+                if let Some(resolver) = lazy_resolver.as_ref() {
+                    available.extend(resolver.known_slugs());
+                }
+                available.sort_unstable();
+                available.dedup();
                 format!(
-                    "Error: tool '{}' is not available to the {} sub-agent",
-                    call.name, agent_id
+                    "Error: tool '{}' is not available to the {} sub-agent. Available tools: {}",
+                    call.name,
+                    agent_id,
+                    available.join(", ")
                 )
             } else if let Some(tool) = extra_tools
                 .iter()
@@ -1118,12 +1293,12 @@ async fn run_inner_loop(
                 result_text
             };
 
+            let call_success = !result_text.starts_with("Error");
+            let call_output_chars = result_text.chars().count();
+            let call_elapsed_ms = call_started.elapsed().as_millis() as u64;
+
             if force_text_mode {
-                let status = if result_text.starts_with("Error") {
-                    "error"
-                } else {
-                    "ok"
-                };
+                let status = if call_success { "ok" } else { "error" };
                 let _ = std::fmt::Write::write_fmt(
                     &mut text_mode_result_block,
                     format_args!(
@@ -1137,6 +1312,21 @@ async fn run_inner_loop(
                     "content": result_text,
                 });
                 history.push(ChatMessage::tool(tool_msg.to_string()));
+            }
+
+            if let Some(ref tx) = progress_sink {
+                let _ = tx
+                    .send(AgentProgress::SubagentToolCallCompleted {
+                        agent_id: agent_id.to_string(),
+                        task_id: task_id.to_string(),
+                        call_id: call.id.clone(),
+                        tool_name: call.name.clone(),
+                        success: call_success,
+                        output_chars: call_output_chars,
+                        elapsed_ms: call_elapsed_ms,
+                        iteration: (iteration + 1) as u32,
+                    })
+                    .await;
             }
         }
 

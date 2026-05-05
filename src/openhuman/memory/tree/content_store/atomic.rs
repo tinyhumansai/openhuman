@@ -100,6 +100,7 @@ pub fn write_if_new(abs_path: &Path, bytes: &[u8]) -> anyhow::Result<bool> {
 /// A summary that has been written to disk and is ready for SQLite upsert.
 #[derive(Debug, Clone)]
 pub struct StagedSummary {
+    /// Identifier of the summary that was staged.
     pub summary_id: String,
     /// Relative content path (forward-slash, e.g. `"summaries/source/slug/L1/id.md"`).
     pub content_path: String,

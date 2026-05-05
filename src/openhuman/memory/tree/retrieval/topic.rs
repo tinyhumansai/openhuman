@@ -23,8 +23,8 @@ use crate::openhuman::memory::tree::retrieval::types::{
 };
 use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, cosine_similarity};
 use crate::openhuman::memory::tree::score::store::{lookup_entity, EntityHit};
-use crate::openhuman::memory::tree::source_tree::store;
-use crate::openhuman::memory::tree::source_tree::types::{Tree, TreeKind};
+use crate::openhuman::memory::tree::tree_source::store;
+use crate::openhuman::memory::tree::tree_source::types::{Tree, TreeKind};
 
 const DEFAULT_LIMIT: usize = 10;
 /// How many rows we pull from the entity index before filtering. We give
@@ -161,8 +161,8 @@ async fn rerank_by_semantic_similarity(
     hits: Vec<RetrievalHit>,
 ) -> Result<Vec<RetrievalHit>> {
     use crate::openhuman::memory::tree::retrieval::types::NodeKind;
-    use crate::openhuman::memory::tree::source_tree::store as src_store;
     use crate::openhuman::memory::tree::store::get_chunk_embedding;
+    use crate::openhuman::memory::tree::tree_source::store as src_store;
 
     let embedder = build_embedder_from_config(config)?;
     let query_vec = embedder.embed(query).await?;
@@ -517,11 +517,11 @@ mod tests {
         use crate::openhuman::memory::tree::score::extract::EntityKind;
         use crate::openhuman::memory::tree::score::resolver::CanonicalEntity;
         use crate::openhuman::memory::tree::score::store as score_store;
-        use crate::openhuman::memory::tree::source_tree::store as tree_store;
-        use crate::openhuman::memory::tree::source_tree::types::{
+        use crate::openhuman::memory::tree::store::with_connection;
+        use crate::openhuman::memory::tree::tree_source::store as tree_store;
+        use crate::openhuman::memory::tree::tree_source::types::{
             SummaryNode, Tree, TreeKind, TreeStatus,
         };
-        use crate::openhuman::memory::tree::store::with_connection;
 
         let (_tmp, cfg) = test_config();
         let ts = Utc::now();

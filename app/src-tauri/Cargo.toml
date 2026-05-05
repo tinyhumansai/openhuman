@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.53.4"
+version = "0.53.16"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -69,6 +69,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "process", "sync", "time
 #   JSON-RPC frames from the core sidecar so core-side handlers can
 #   reach the live-webview connectors via CDP.
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }
+url = "2"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -80,15 +81,6 @@ hex = "0.4"
 # "No provider set" the first time `tauri dev` proxies a request. We install
 # the ring provider at startup in `lib.rs::run()`.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-semver = "1"
-# Auto-update archive extraction. GitHub release assets ship as
-# `openhuman-core-<version>-<triple>.tar.gz` on Unix and `…<triple>.zip`
-# on Windows; the inner binary is `openhuman-core` (or `.exe`) with no
-# wrapping directory. See `core_update.rs::extract_archive`.
-flate2 = "1"
-tar = "0.4"
-zip = { version = "2", default-features = false, features = ["deflate"] }
-
 log = "0.4"
 env_logger = "0.11"
 
@@ -98,7 +90,7 @@ env_logger = "0.11"
 # can be overridden at runtime via the same env var. Feature set mirrors the
 # core sidecar (`Cargo.toml` at repo root) minus `tracing` since the shell
 # uses `log` + `env_logger`.
-sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
+sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "debug-images", "reqwest", "rustls"] }
 
 # Used by the imessage_scanner module.
 anyhow = "1.0"
@@ -114,6 +106,14 @@ async-trait = "0.1"
 tauri-runtime-cef = { path = "vendor/tauri-cef/crates/tauri-runtime-cef" }
 cef = { version = "=146.4.1", default-features = false }
 
+# Core domain logic, embedded in-process so the core's HTTP/JSON-RPC server
+# runs as a tokio task inside the Tauri host. Avoids the orphan-sidecar class
+# of bugs (PR #1061: Cmd+Q leaving `openhuman-core` and CEF helpers behind)
+# by tying the core's lifetime to the GUI process. The existing port-7788
+# probe in `core_process::ensure_running` still attaches to a running
+# `openhuman-core run` harness when one is already listening.
+openhuman_core = { path = "../..", package = "openhuman", default-features = false }
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", default-features = false, features = ["signal"] }
 
@@ -125,7 +125,10 @@ mac-notification-sys = "0.6"
 rusqlite = { version = "0.37", features = ["bundled"] }
 objc2-user-notifications = "0.3.2"
 block2 = "0.6.2"
-objc2-foundation = "0.3.2"
+objc2-foundation = { version = "0.3.2", features = ["NSTimer", "block2"] }
+# Native WKWebView host for the floating mascot window — bypasses CEF
+# (which can't render transparent windowed-mode browsers).
+objc2-web-kit = { version = "0.3.2", features = ["block2"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = { version = "4", default-features = false, features = ["dbus"] }
@@ -140,6 +143,12 @@ custom-protocol = ["tauri/custom-protocol"]
 sandbox-bubblewrap = []
 
 [patch.crates-io]
+# `cargo tauri build` resolves dependencies from this manifest, so the
+# workspace-level whisper-rs-sys patch is not applied here. The fork forces
+# whisper.cpp to use MSVC's static runtime (/MT), matching CEF and avoiding
+# LNK2038/LNK1169 CRT conflicts on Windows.
+whisper-rs-sys = { git = "https://github.com/tinyhumansai/whisper-rs-sys.git", branch = "main" }
+
 # CEF support lives on the `feat/cef` branch of tauri-apps/tauri. We carry our
 # own fork at tinyhumansai/tauri-cef on `feat/cef-notification-intercept` which
 # adds native Web Notifications interception — `tauri-runtime-cef::notification`
@@ -169,6 +178,17 @@ tauri-plugin-notification = { path = "vendor/tauri-plugin-notification" }
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
 tempfile = "3"
+
+# Emit just enough DWARF in release builds for Sentry to symbolicate Rust
+# panics + render surrounding source lines. `line-tables-only` keeps the
+# binary small (only file+line tables, no full type info) while still
+# letting `sentry-cli debug-files upload --include-sources` produce a
+# usable `.src.zip`. `split-debuginfo = "packed"` writes the debug data
+# into a separate `.dSYM` bundle on macOS so the shipped executable
+# itself stays slim.
+[profile.release]
+debug = "line-tables-only"
+split-debuginfo = "packed"
 
 # Fast CI builds: trade runtime perf for compile speed
 [profile.ci]

@@ -23,6 +23,8 @@ use crate::rpc::RpcOutcome;
 
 // ── query_source ──────────────────────────────────────────────────────
 
+/// Request body for `memory_tree_query_source`. All fields are optional;
+/// see [`super::source::query_source`] for selection semantics.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct QuerySourceRequest {
     #[serde(default)]
@@ -41,6 +43,9 @@ pub struct QuerySourceRequest {
     pub limit: Option<usize>,
 }
 
+/// JSON-RPC handler body for `memory_tree_query_source`. Parses the
+/// request, delegates to [`super::source::query_source`], and wraps the
+/// outcome with a PII-redacted log line.
 pub async fn query_source_rpc(
     config: &Config,
     req: QuerySourceRequest,
@@ -76,11 +81,13 @@ pub async fn query_source_rpc(
 
 // ── query_global ──────────────────────────────────────────────────────
 
+/// Request body for `memory_tree_query_global`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QueryGlobalRequest {
     pub window_days: u32,
 }
 
+/// JSON-RPC handler body for `memory_tree_query_global`.
 pub async fn query_global_rpc(
     config: &Config,
     req: QueryGlobalRequest,
@@ -97,6 +104,7 @@ pub async fn query_global_rpc(
 
 // ── query_topic ───────────────────────────────────────────────────────
 
+/// Request body for `memory_tree_query_topic`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QueryTopicRequest {
     pub entity_id: String,
@@ -110,6 +118,7 @@ pub struct QueryTopicRequest {
     pub limit: Option<usize>,
 }
 
+/// JSON-RPC handler body for `memory_tree_query_topic`.
 pub async fn query_topic_rpc(
     config: &Config,
     req: QueryTopicRequest,
@@ -145,6 +154,7 @@ pub async fn query_topic_rpc(
 
 // ── search_entities ───────────────────────────────────────────────────
 
+/// Request body for `memory_tree_search_entities`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchEntitiesRequest {
     pub query: String,
@@ -154,11 +164,14 @@ pub struct SearchEntitiesRequest {
     pub limit: Option<usize>,
 }
 
+/// Response envelope for `memory_tree_search_entities`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchEntitiesResponse {
     pub matches: Vec<EntityMatch>,
 }
 
+/// JSON-RPC handler body for `memory_tree_search_entities`. Validates the
+/// optional `kinds` filter against [`EntityKind`].
 pub async fn search_entities_rpc(
     config: &Config,
     req: SearchEntitiesRequest,
@@ -191,6 +204,7 @@ pub async fn search_entities_rpc(
 
 // ── drill_down ────────────────────────────────────────────────────────
 
+/// Request body for `memory_tree_drill_down`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DrillDownRequest {
     pub node_id: String,
@@ -207,11 +221,13 @@ pub struct DrillDownRequest {
     pub limit: Option<usize>,
 }
 
+/// Response envelope for `memory_tree_drill_down`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DrillDownResponse {
     pub hits: Vec<RetrievalHit>,
 }
 
+/// JSON-RPC handler body for `memory_tree_drill_down`.
 pub async fn drill_down_rpc(
     config: &Config,
     req: DrillDownRequest,
@@ -243,16 +259,19 @@ pub async fn drill_down_rpc(
 
 // ── fetch_leaves ──────────────────────────────────────────────────────
 
+/// Request body for `memory_tree_fetch_leaves`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FetchLeavesRequest {
     pub chunk_ids: Vec<String>,
 }
 
+/// Response envelope for `memory_tree_fetch_leaves`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FetchLeavesResponse {
     pub hits: Vec<RetrievalHit>,
 }
 
+/// JSON-RPC handler body for `memory_tree_fetch_leaves`.
 pub async fn fetch_leaves_rpc(
     config: &Config,
     req: FetchLeavesRequest,

@@ -8,8 +8,9 @@ import { openUrl } from '../utils/openUrl';
  * a catastrophic React render error. Self-contained with zero dependencies
  * on Redux, Router, or any context provider.
  *
- * The ErrorReportNotification lives in a separate React root, so the user
- * can still review and report the error from this screen.
+ * Errors caught by the boundary are auto-forwarded to Sentry by the
+ * `Sentry.ErrorBoundary` wrapper in `App.tsx` (subject to user analytics
+ * consent enforced in `analytics.ts::beforeSend`).
  */
 
 interface ErrorFallbackScreenProps {
