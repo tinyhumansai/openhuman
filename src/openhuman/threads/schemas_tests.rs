@@ -12,6 +12,9 @@ const ALL_FUNCTIONS: &[&str] = &[
     "message_update",
     "delete",
     "purge",
+    "turn_state_get",
+    "turn_state_list",
+    "turn_state_clear",
 ];
 
 #[test]
