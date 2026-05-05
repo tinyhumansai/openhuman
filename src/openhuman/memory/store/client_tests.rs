@@ -1,3 +1,6 @@
+//! Tests for `MemoryClient` — exercise the sync storage surface (upsert, list,
+//! kv, graph) against a fresh temp workspace.
+
 use super::*;
 use tempfile::TempDir;
 

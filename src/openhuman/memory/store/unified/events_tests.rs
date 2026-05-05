@@ -1,3 +1,5 @@
+//! Tests for the `events` module — heuristic extraction and FTS5 storage.
+
 use super::*;
 
 fn setup_db() -> Arc<Mutex<Connection>> {

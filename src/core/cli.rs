@@ -88,8 +88,9 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
 /// and prints the event UUID to stdout. Optional `--panic` flag additionally
 /// triggers a panic so the panic integration is exercised too.
 ///
-/// Requires a DSN resolvable at runtime — either via the `OPENHUMAN_SENTRY_DSN`
-/// env var or baked into the binary at build time via `option_env!`. Absent a
+/// Requires a DSN resolvable at runtime — either via the
+/// `OPENHUMAN_CORE_SENTRY_DSN` env var (or the legacy `OPENHUMAN_SENTRY_DSN`
+/// alias) or baked into the binary at build time via `option_env!`. Absent a
 /// DSN, the command exits non-zero with a diagnostic instead of silently
 /// producing no telemetry.
 fn run_sentry_test_command(args: &[String]) -> Result<()> {
@@ -119,10 +120,11 @@ fn run_sentry_test_command(args: &[String]) -> Result<()> {
                 println!("  --panic           After capturing the event, trigger a panic so the");
                 println!("                    panic integration reports it as a separate event.");
                 println!();
-                println!("Requires OPENHUMAN_SENTRY_DSN at runtime, or baked into the binary at");
                 println!(
-                    "build time via option_env!. On success, prints the event UUID to stdout."
+                    "Requires OPENHUMAN_CORE_SENTRY_DSN (or the legacy OPENHUMAN_SENTRY_DSN alias)"
                 );
+                println!("at runtime, or baked into the binary at build time via option_env!. On");
+                println!("success, prints the event UUID to stdout.");
                 return Ok(());
             }
             other => return Err(anyhow::anyhow!("unknown sentry-test arg: {other}")),
@@ -140,8 +142,8 @@ fn run_sentry_test_command(args: &[String]) -> Result<()> {
         None => {
             return Err(anyhow::anyhow!(
                 "Sentry is not initialized in this binary — no DSN is resolvable. \
-                 Set OPENHUMAN_SENTRY_DSN in the environment (or rebuild with it defined \
-                 at compile time) and try again."
+                 Set OPENHUMAN_CORE_SENTRY_DSN (or the legacy OPENHUMAN_SENTRY_DSN alias) \
+                 in the environment (or rebuild with it defined at compile time) and try again."
             ));
         }
     }

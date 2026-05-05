@@ -24,6 +24,7 @@ fn sample_meta() -> TranscriptMeta {
         output_tokens: 1200,
         cached_input_tokens: 3500,
         charged_amount_usd: 0.0045,
+        thread_id: None,
     }
 }
 
@@ -105,32 +106,59 @@ fn meta_round_trip() {
 }
 
 #[test]
-fn path_resolution_creates_dir_and_increments_index() {
+fn path_resolution_creates_flat_session_raw_dir_and_increments_index() {
     let dir = TempDir::new().unwrap();
     let workspace = dir.path();
 
     let path0 = resolve_new_transcript_path(workspace, "main").unwrap();
     assert!(path0.to_string_lossy().contains("main_0.jsonl"));
+    // Flat layout: jsonl lives directly under session_raw/, no date dir.
+    let parent = path0.parent().unwrap();
     assert!(
-        path0.to_string_lossy().contains("session_raw"),
-        "jsonl should live under session_raw/, got {}",
-        path0.display()
+        parent.ends_with("session_raw"),
+        "jsonl parent should be session_raw/ (flat layout), got {}",
+        parent.display()
     );
-    // Write something so the next call sees it.
     fs::write(&path0, "placeholder").unwrap();
 
     let path1 = resolve_new_transcript_path(workspace, "main").unwrap();
     assert!(path1.to_string_lossy().contains("main_1.jsonl"));
+    assert!(path1.parent().unwrap().ends_with("session_raw"));
 }
 
 #[test]
-fn md_companion_path_swaps_session_raw_to_sessions() {
+fn resolve_keyed_writes_to_flat_session_raw() {
+    let dir = TempDir::new().unwrap();
+    let path = resolve_keyed_transcript_path(dir.path(), "1714000000_orchestrator").unwrap();
+    assert_eq!(path.parent().unwrap(), dir.path().join("session_raw"));
+    assert!(path
+        .to_string_lossy()
+        .ends_with("1714000000_orchestrator.jsonl"));
+}
+
+#[test]
+fn md_companion_path_for_flat_jsonl_uses_iso_date_dir() {
+    let jsonl = PathBuf::from("/tmp/ws/session_raw/1714000000_main.jsonl");
+    let md = md_companion_path(&jsonl);
+    let today = chrono::Local::now().format("%Y_%m_%d").to_string();
+    assert_eq!(
+        md,
+        PathBuf::from(format!("/tmp/ws/sessions/{today}/1714000000_main.md")),
+        "flat session_raw should map to sessions/YYYY_MM_DD/ on the md side"
+    );
+}
+
+#[test]
+fn md_companion_path_preserves_legacy_ddmmyyyy_dir() {
+    // A pre-migration jsonl at session_raw/DDMMYYYY/{stem}.jsonl should
+    // keep its date component so old transcripts aren't relabeled with
+    // today's date.
     let jsonl = PathBuf::from("/tmp/ws/session_raw/17042026/main_0.jsonl");
     let md = md_companion_path(&jsonl);
     assert_eq!(
         md,
         PathBuf::from("/tmp/ws/sessions/17042026/main_0.md"),
-        "md companion should live under sessions/ with .md extension"
+        "legacy date-grouped raw paths must keep their original date dir"
     );
 }
 
@@ -142,19 +170,19 @@ fn md_companion_path_falls_back_to_sibling_when_no_session_raw_component() {
 }
 
 #[test]
-fn resolve_avoids_index_collision_with_legacy_md_in_sessions_dir() {
+fn resolve_avoids_index_collision_with_md_in_iso_date_dir() {
     let dir = TempDir::new().unwrap();
     let workspace = dir.path();
-    let date = chrono::Local::now().format("%d%m%Y").to_string();
-    let legacy = workspace.join("sessions").join(&date);
-    fs::create_dir_all(&legacy).unwrap();
-    fs::write(legacy.join("main_0.md"), "legacy").unwrap();
-    fs::write(legacy.join("main_1.md"), "legacy").unwrap();
+    let date = chrono::Local::now().format("%Y_%m_%d").to_string();
+    let md_dir = workspace.join("sessions").join(&date);
+    fs::create_dir_all(&md_dir).unwrap();
+    fs::write(md_dir.join("main_0.md"), "x").unwrap();
+    fs::write(md_dir.join("main_1.md"), "x").unwrap();
 
     let path = resolve_new_transcript_path(workspace, "main").unwrap();
     assert!(
         path.to_string_lossy().contains("main_2.jsonl"),
-        "should advance past legacy indices, got {}",
+        "should advance past md indices in today's YYYY_MM_DD dir, got {}",
         path.display()
     );
 }
@@ -167,10 +195,9 @@ fn sanitize_agent_name_strips_special_chars() {
 }
 
 #[test]
-fn find_latest_returns_highest_index() {
+fn find_latest_scans_flat_session_raw_dir() {
     let dir = TempDir::new().unwrap();
-    let date = chrono::Local::now().format("%d%m%Y").to_string();
-    let raw_dir = dir.path().join("session_raw").join(&date);
+    let raw_dir = dir.path().join("session_raw");
     fs::create_dir_all(&raw_dir).unwrap();
 
     fs::write(raw_dir.join("main_0.jsonl"), "a").unwrap();
@@ -178,11 +205,66 @@ fn find_latest_returns_highest_index() {
     fs::write(raw_dir.join("main_1.jsonl"), "b").unwrap();
     fs::write(raw_dir.join("other_0.jsonl"), "x").unwrap();
 
-    let latest = find_latest_transcript(dir.path(), "main");
-    assert!(latest.is_some());
-    let latest = latest.unwrap();
-    assert!(latest.to_string_lossy().contains("main_2.jsonl"));
-    assert!(latest.to_string_lossy().contains("session_raw"));
+    let latest = find_latest_transcript(dir.path(), "main").unwrap();
+    assert!(latest.to_string_lossy().ends_with("main_2.jsonl"));
+    assert_eq!(latest.parent().unwrap(), raw_dir);
+}
+
+#[test]
+fn find_latest_picks_newest_keyed_stem_in_flat_dir() {
+    let dir = TempDir::new().unwrap();
+    let raw_dir = dir.path().join("session_raw");
+    fs::create_dir_all(&raw_dir).unwrap();
+
+    // Keyed stem layout: `{unix_ts}_{agent_id}.jsonl`.
+    fs::write(raw_dir.join("1714000000_main.jsonl"), "old").unwrap();
+    fs::write(raw_dir.join("1714999999_main.jsonl"), "new").unwrap();
+    // Sub-agent transcripts (contain `__`) must be skipped.
+    fs::write(
+        raw_dir.join("1714000000_orchestrator__1714500000_planner.jsonl"),
+        "sub",
+    )
+    .unwrap();
+
+    let latest = find_latest_transcript(dir.path(), "main").unwrap();
+    assert!(latest.to_string_lossy().ends_with("1714999999_main.jsonl"));
+}
+
+#[test]
+fn find_latest_falls_back_to_legacy_ddmmyyyy_raw_dir() {
+    // Pre-migration transcript at session_raw/DDMMYYYY/main_*.jsonl
+    // must still resolve via the legacy fallback when the flat dir is
+    // empty.
+    let dir = TempDir::new().unwrap();
+    let date = chrono::Local::now().format("%d%m%Y").to_string();
+    let legacy_raw = dir.path().join("session_raw").join(&date);
+    fs::create_dir_all(&legacy_raw).unwrap();
+    fs::write(legacy_raw.join("main_5.jsonl"), "legacy").unwrap();
+
+    let latest = find_latest_transcript(dir.path(), "main").unwrap();
+    assert!(latest.to_string_lossy().ends_with("main_5.jsonl"));
+    assert!(latest.to_string_lossy().contains(&date));
+}
+
+#[test]
+fn find_latest_prefers_flat_over_legacy_ddmmyyyy() {
+    let dir = TempDir::new().unwrap();
+    let raw_root = dir.path().join("session_raw");
+    fs::create_dir_all(&raw_root).unwrap();
+    fs::write(raw_root.join("main_9.jsonl"), "flat").unwrap();
+
+    let date = chrono::Local::now().format("%d%m%Y").to_string();
+    let legacy_raw = raw_root.join(&date);
+    fs::create_dir_all(&legacy_raw).unwrap();
+    fs::write(legacy_raw.join("main_99.jsonl"), "legacy").unwrap();
+
+    let latest = find_latest_transcript(dir.path(), "main").unwrap();
+    // Flat dir takes precedence so newly-created sessions always win
+    // over stale legacy files — even when a legacy file has a higher
+    // numeric index. The flat dir is the canonical layout going
+    // forward.
+    assert_eq!(latest.parent().unwrap(), raw_root);
+    assert!(latest.to_string_lossy().ends_with("main_9.jsonl"));
 }
 
 #[test]
@@ -359,5 +441,54 @@ fn latest_in_dir_prefers_jsonl_over_md() {
     assert!(
         latest.to_string_lossy().ends_with(".jsonl"),
         "should prefer .jsonl when both exist at same index"
+    );
+}
+
+/// `thread_id` (the backend-side LLM thread identifier) must be both
+/// emitted in the JSONL `_meta` header and surfaced in the `.md`
+/// companion so a human reading the transcript can correlate it with
+/// `InferenceLog` rows on the backend. Sessions without an ambient
+/// thread (CLI, tests) keep `thread_id = None` and neither field
+/// appears — the absence is intentional, not a missing feature.
+#[test]
+fn thread_id_round_trips_and_appears_in_md_when_present() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("thread.jsonl");
+    let messages = sample_messages();
+    let mut meta = sample_meta();
+    meta.thread_id = Some("thread-xyz-42".into());
+
+    write_transcript(&path, &messages, &meta, None).unwrap();
+
+    // JSONL round-trip preserves the field.
+    let loaded = read_transcript(&path).unwrap();
+    assert_eq!(loaded.meta.thread_id.as_deref(), Some("thread-xyz-42"));
+
+    // Markdown companion exposes it under the header.
+    let md = fs::read_to_string(path.with_extension("md")).unwrap();
+    assert!(
+        md.contains("- Thread: `thread-xyz-42`"),
+        "thread id should be rendered in md header, got:\n{md}"
+    );
+}
+
+#[test]
+fn thread_id_absent_omits_md_line_and_jsonl_field() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("no_thread.jsonl");
+    let messages = sample_messages();
+    let meta = sample_meta(); // thread_id = None
+
+    write_transcript(&path, &messages, &meta, None).unwrap();
+
+    let raw_jsonl = fs::read_to_string(&path).unwrap();
+    assert!(
+        !raw_jsonl.contains("\"thread_id\""),
+        "absent thread_id must be skipped in JSONL so the field doesn't show up as `null`"
+    );
+    let md = fs::read_to_string(path.with_extension("md")).unwrap();
+    assert!(
+        !md.contains("- Thread:"),
+        "no `- Thread:` line should appear when thread_id is None, got:\n{md}"
     );
 }

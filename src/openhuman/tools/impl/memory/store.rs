@@ -105,7 +105,8 @@ impl Tool for MemoryStoreTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::{embeddings::NoopEmbedding, UnifiedMemory};
+    use crate::openhuman::embeddings::NoopEmbedding;
+    use crate::openhuman::memory::UnifiedMemory;
     use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
     use tempfile::TempDir;
 

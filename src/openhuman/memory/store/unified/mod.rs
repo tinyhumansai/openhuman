@@ -5,8 +5,13 @@ use rusqlite::Connection;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::openhuman::memory::embeddings::EmbeddingProvider;
+use crate::openhuman::embeddings::EmbeddingProvider;
 
+/// SQLite-backed unified memory store.
+///
+/// Owns a single connection (WAL-mode) plus the on-disk markdown sidecar
+/// directory and vector storage path. Methods are added across the sibling
+/// modules (`documents`, `kv`, `graph`, `query`, …) via `impl` blocks.
 pub struct UnifiedMemory {
     pub(crate) workspace_dir: PathBuf,
     pub(crate) db_path: PathBuf,

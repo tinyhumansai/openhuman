@@ -35,7 +35,7 @@ use image::imageops::FilterType;
 use image::{ImageBuffer, Rgb, RgbImage};
 use tempfile::tempdir;
 
-use openhuman_core::openhuman::memory::embeddings::NoopEmbedding;
+use openhuman_core::openhuman::embeddings::NoopEmbedding;
 use openhuman_core::openhuman::memory::store::types::NamespaceDocumentInput;
 use openhuman_core::openhuman::memory::store::UnifiedMemory;
 use openhuman_core::openhuman::screen_intelligence::CaptureFrame;
@@ -118,7 +118,7 @@ fn make_capture_frame(image_ref: Option<String>) -> CaptureFrame {
 
 /// Open a UnifiedMemory backed by NoopEmbedding in a temp dir.
 fn open_test_memory(dir: &Path) -> UnifiedMemory {
-    let embedder: Arc<dyn openhuman_core::openhuman::memory::embeddings::EmbeddingProvider> =
+    let embedder: Arc<dyn openhuman_core::openhuman::embeddings::EmbeddingProvider> =
         Arc::new(NoopEmbedding);
     UnifiedMemory::new(dir, embedder, Some(5)).expect("UnifiedMemory::new")
 }

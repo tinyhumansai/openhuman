@@ -21,6 +21,7 @@
     "notification:allow-notify",
     "opener:default",
     "updater:default",
-    "allow-core-process"
+    "allow-core-process",
+    "allow-app-update"
   ]
 }

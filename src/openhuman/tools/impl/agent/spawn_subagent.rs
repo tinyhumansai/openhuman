@@ -24,6 +24,7 @@ use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{
     run_subagent, SubagentRunOptions, SubagentRunOutcome,
 };
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::memory::conversations::{
     self, ConversationMessage, CreateConversationThread,
 };
@@ -230,12 +231,66 @@ impl Tool for SpawnSubagentTool {
         // gets a precise, actionable error on every failure mode —
         // nothing reaches the LLM loop unless the spawn is valid.
         if definition.id == "integrations_agent" {
+            // The parent's `connected_integrations` Vec is frozen at
+            // session-start (see `session/turn.rs::fetch_connected_integrations`),
+            // so a toolkit the user authorised mid-thread isn't visible
+            // here. Refresh from the global integrations cache —
+            // invalidated by `ComposioConnectionCreatedSubscriber` once
+            // OAuth reaches ACTIVE — so the pre-flight sees the latest
+            // truth. Falls back to the parent's frozen list when the
+            // live fetch returns empty (no signed-in user, backend
+            // unreachable, …) so offline behaviour is unchanged.
             let parent_ctx = current_parent();
+            let live_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration> = {
+                match crate::openhuman::config::Config::load_or_init().await {
+                    Ok(config) => {
+                        use crate::openhuman::composio::FetchConnectedIntegrationsStatus;
+                        // Use the status-discriminating fetch so we can
+                        // tell "user has zero active integrations" (truth
+                        // — adopt it) apart from "backend unavailable"
+                        // (preserve the parent's frozen snapshot so the
+                        // pre-flight doesn't reject every toolkit during
+                        // a transient 5xx).
+                        match crate::openhuman::composio::fetch_connected_integrations_status(
+                            &config,
+                        )
+                        .await
+                        {
+                            FetchConnectedIntegrationsStatus::Authoritative(fresh) => {
+                                tracing::debug!(
+                                    target: "spawn_subagent",
+                                    count = fresh.len(),
+                                    "[spawn_subagent] refreshed connected_integrations for pre-flight"
+                                );
+                                fresh
+                            }
+                            FetchConnectedIntegrationsStatus::Unavailable => {
+                                tracing::debug!(
+                                    target: "spawn_subagent",
+                                    "[spawn_subagent] integrations backend unavailable; falling back to parent's frozen list"
+                                );
+                                parent_ctx
+                                    .as_ref()
+                                    .map(|p| p.connected_integrations.clone())
+                                    .unwrap_or_default()
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            target: "spawn_subagent",
+                            error = %e,
+                            "[spawn_subagent] config load failed; falling back to parent's frozen list"
+                        );
+                        parent_ctx
+                            .as_ref()
+                            .map(|p| p.connected_integrations.clone())
+                            .unwrap_or_default()
+                    }
+                }
+            };
             let allowlist: Vec<&crate::openhuman::context::prompt::ConnectedIntegration> =
-                parent_ctx
-                    .as_ref()
-                    .map(|p| p.connected_integrations.iter().collect())
-                    .unwrap_or_default();
+                live_integrations.iter().collect();
             let connected_slugs: Vec<String> = allowlist
                 .iter()
                 .filter(|ci| ci.connected)
@@ -296,7 +351,7 @@ impl Tool for SpawnSubagentTool {
                                 "Integration '{tk}' is available but the user has not \
                                  authorized it yet. Do NOT retry this spawn. Tell the user \
                                  the integration is available and ask them to authorize \
-                                 '{tk}' in Settings → Integrations before retrying the \
+                                 '{tk}' in Connections → Integrations before retrying the \
                                  original request."
                             )));
                         }
@@ -326,6 +381,23 @@ impl Tool for SpawnSubagentTool {
             prompt_chars: prompt.chars().count(),
         });
 
+        // Mirror the spawn onto the parent's per-turn progress sink so the
+        // web-channel bridge can stream a live subagent row into the
+        // parent thread's UI. Best-effort: a closed/missing sink is
+        // silently ignored — the global DomainEvent above is the
+        // authoritative record.
+        if let Some(progress) = current_parent().and_then(|p| p.on_progress.clone()) {
+            let _ = progress
+                .send(AgentProgress::SubagentSpawned {
+                    agent_id: definition.id.clone(),
+                    task_id: task_id.clone(),
+                    mode: mode.to_string(),
+                    dedicated_thread,
+                    prompt_chars: prompt.chars().count(),
+                })
+                .await;
+        }
+
         // ── Run the sub-agent ──────────────────────────────────────────
         let options = SubagentRunOptions {
             skill_filter_override: None,
@@ -333,6 +405,8 @@ impl Tool for SpawnSubagentTool {
             context,
             task_id: Some(task_id.clone()),
         };
+
+        let progress_sink = current_parent().and_then(|p| p.on_progress.clone());
 
         match run_subagent(definition, &prompt, options).await {
             Ok(outcome) => {
@@ -344,6 +418,18 @@ impl Tool for SpawnSubagentTool {
                     output_chars: outcome.output.chars().count(),
                     iterations: outcome.iterations,
                 });
+
+                if let Some(ref tx) = progress_sink {
+                    let _ = tx
+                        .send(AgentProgress::SubagentCompleted {
+                            agent_id: outcome.agent_id.clone(),
+                            task_id: outcome.task_id.clone(),
+                            elapsed_ms: outcome.elapsed.as_millis() as u64,
+                            iterations: outcome.iterations as u32,
+                            output_chars: outcome.output.chars().count(),
+                        })
+                        .await;
+                }
 
                 if dedicated_thread {
                     let workspace_dir = current_parent()
@@ -403,10 +489,20 @@ impl Tool for SpawnSubagentTool {
                 );
                 publish_global(DomainEvent::SubagentFailed {
                     parent_session,
-                    task_id,
+                    task_id: task_id.clone(),
                     agent_id: definition.id.clone(),
                     error: message.clone(),
                 });
+
+                if let Some(ref tx) = progress_sink {
+                    let _ = tx
+                        .send(AgentProgress::SubagentFailed {
+                            agent_id: definition.id.clone(),
+                            task_id: task_id.clone(),
+                            error: message.clone(),
+                        })
+                        .await;
+                }
                 // Surface as a non-fatal tool error so the parent model
                 // can react and (e.g.) retry with different params.
                 Ok(ToolResult::error(parent_visible_error))

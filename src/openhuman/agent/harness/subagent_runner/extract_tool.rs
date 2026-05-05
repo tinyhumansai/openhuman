@@ -479,6 +479,7 @@ fn write_extract_transcript(
         output_tokens: 0,
         cached_input_tokens: 0,
         charged_amount_usd: 0.0,
+        thread_id: crate::openhuman::providers::thread_context::current_thread_id(),
     };
 
     if let Err(e) = write_transcript(&path, &messages, &meta, Some(&turn_usage)) {

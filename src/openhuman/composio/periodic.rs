@@ -8,7 +8,7 @@
 //!
 //! Design notes:
 //!
-//!   * One global tick (60s) drives every provider — we don't spawn a
+//!   * One global tick (5min) drives every provider — we don't spawn a
 //!     task per connection, because the number of connections per user
 //!     is small and a single tick keeps the bookkeeping trivial.
 //!   * Per-connection state (last sync timestamp) lives in a
@@ -36,7 +36,14 @@ use super::providers::{get_provider, ProviderContext, SyncReason};
 /// How often the scheduler wakes up to look for due syncs. Independent
 /// from per-provider `sync_interval_secs` — this just bounds how long
 /// past a provider's interval we might fire.
-const TICK_SECONDS: u64 = 60;
+///
+/// 5 min trades a little staleness for noticeably less foreground load:
+/// each tick triggers an HTTP fetch + DB write per due connection, and
+/// for users with several connected providers the old 60s cadence kept
+/// the laptop visibly busy. Per-provider `sync_interval_secs` still
+/// caps the *minimum* delay between actual syncs — this only loosens
+/// the upper bound.
+const TICK_SECONDS: u64 = 300;
 
 /// Process-wide guard so the scheduler is only started once even
 /// when both `start_channels` and `bootstrap_skill_runtime` call into
@@ -228,7 +235,7 @@ mod tests {
     fn tick_seconds_is_sane_default() {
         // Sanity check: don't accidentally ship a 1-second tick.
         assert!(TICK_SECONDS >= 30);
-        assert!(TICK_SECONDS <= 300);
+        assert!(TICK_SECONDS <= 600);
     }
 
     #[test]

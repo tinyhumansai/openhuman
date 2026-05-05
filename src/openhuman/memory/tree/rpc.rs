@@ -116,11 +116,14 @@ pub struct ListChunksRequest {
     pub limit: Option<usize>,
 }
 
+/// Response shape for the `list_chunks` RPC.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ListChunksResponse {
     pub chunks: Vec<Chunk>,
 }
 
+/// `list_chunks` RPC handler. Filters and returns persisted chunks ordered by
+/// timestamp DESC.
 pub async fn list_chunks_rpc(
     config: &Config,
     req: ListChunksRequest,
@@ -151,16 +154,19 @@ pub async fn list_chunks_rpc(
     ))
 }
 
+/// Request shape for the `get_chunk` RPC.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetChunkRequest {
     pub id: String,
 }
 
+/// Response shape for the `get_chunk` RPC.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetChunkResponse {
     pub chunk: Option<Chunk>,
 }
 
+/// `get_chunk` RPC handler. Returns the chunk identified by `id`, or `None`.
 pub async fn get_chunk_rpc(
     config: &Config,
     req: GetChunkRequest,
@@ -192,6 +198,7 @@ pub struct TriggerDigestRequest {
     pub date_iso: Option<String>,
 }
 
+/// Response from the `trigger_digest` RPC.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TriggerDigestResponse {
     /// True when the job was newly enqueued; false when an active job for
@@ -205,6 +212,9 @@ pub struct TriggerDigestResponse {
     pub date_iso: String,
 }
 
+/// `trigger_digest` RPC handler. Manually enqueues the global tree's daily
+/// digest job for `date_iso` (defaults to yesterday in UTC); idempotent via the
+/// jobs-queue dedupe index.
 pub async fn trigger_digest_rpc(
     config: &Config,
     req: TriggerDigestRequest,

@@ -20,6 +20,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("install"),
         schemas("restart"),
+        schemas("shutdown"),
         schemas("start"),
         schemas("stop"),
         schemas("status"),
@@ -42,6 +43,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("restart"),
             handler: handle_restart,
+        },
+        RegisteredController {
+            schema: schemas("shutdown"),
+            handler: handle_shutdown,
         },
         RegisteredController {
             schema: schemas("start"),
@@ -77,50 +82,54 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 /// * `function` - The name of the service function (e.g., "install", "restart").
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
-        "install" | "restart" | "start" | "stop" | "status" | "uninstall" => ControllerSchema {
-            namespace: "service",
-            function: match function {
-                "install" => "install",
-                "restart" => "restart",
-                "start" => "start",
-                "stop" => "stop",
-                "status" => "status",
-                _ => "uninstall",
-            },
-            description: "Manage desktop service lifecycle.",
-            inputs: if function == "restart" {
-                vec![
-                    FieldSchema {
-                        name: "source",
-                        ty: TypeSchema::String,
-                        comment: "Optional caller label for restart diagnostics.",
-                        required: false,
-                    },
-                    FieldSchema {
-                        name: "reason",
-                        ty: TypeSchema::String,
-                        comment: "Optional free-form reason for the restart request.",
-                        required: false,
-                    },
-                ]
-            } else {
-                vec![]
-            },
-            outputs: vec![FieldSchema {
-                name: "status",
-                ty: if function == "restart" {
-                    TypeSchema::Json
-                } else {
-                    TypeSchema::Ref("ServiceStatus")
+        "install" | "restart" | "shutdown" | "start" | "stop" | "status" | "uninstall" => {
+            let lifecycle_self_signal = function == "restart" || function == "shutdown";
+            ControllerSchema {
+                namespace: "service",
+                function: match function {
+                    "install" => "install",
+                    "restart" => "restart",
+                    "shutdown" => "shutdown",
+                    "start" => "start",
+                    "stop" => "stop",
+                    "status" => "status",
+                    _ => "uninstall",
                 },
-                comment: if function == "restart" {
-                    "Restart request acknowledgement payload."
+                description: "Manage desktop service lifecycle.",
+                inputs: if lifecycle_self_signal {
+                    vec![
+                        FieldSchema {
+                            name: "source",
+                            ty: TypeSchema::String,
+                            comment: "Optional caller label for diagnostics.",
+                            required: false,
+                        },
+                        FieldSchema {
+                            name: "reason",
+                            ty: TypeSchema::String,
+                            comment: "Optional free-form reason for the request.",
+                            required: false,
+                        },
+                    ]
                 } else {
-                    "Service status payload."
+                    vec![]
                 },
-                required: true,
-            }],
-        },
+                outputs: vec![FieldSchema {
+                    name: "status",
+                    ty: if lifecycle_self_signal {
+                        TypeSchema::Json
+                    } else {
+                        TypeSchema::Ref("ServiceStatus")
+                    },
+                    comment: match function {
+                        "restart" => "Restart request acknowledgement payload.",
+                        "shutdown" => "Shutdown request acknowledgement payload.",
+                        _ => "Service status payload.",
+                    },
+                    required: true,
+                }],
+            }
+        }
         "daemon_host_get" => ControllerSchema {
             namespace: "service",
             function: "daemon_host_get",
@@ -203,6 +212,20 @@ fn handle_restart(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// Service controller for `service.shutdown`.
+///
+/// Uses the same `{source, reason}` shape as `service.restart`.
+fn handle_shutdown(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload: ServiceRestartParams =
+            serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
+        to_json(
+            crate::openhuman::service::rpc::service_shutdown(payload.source, payload.reason)
+                .await?,
+        )
+    })
+}
+
 /// Service controller for `service.stop`.
 fn handle_stop(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
@@ -260,13 +283,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_returns_eight() {
-        assert_eq!(all_controller_schemas().len(), 8);
+    fn all_schemas_returns_nine() {
+        assert_eq!(all_controller_schemas().len(), 9);
     }
 
     #[test]
-    fn all_controllers_returns_eight() {
-        assert_eq!(all_registered_controllers().len(), 8);
+    fn all_controllers_returns_nine() {
+        assert_eq!(all_registered_controllers().len(), 9);
     }
 
     #[test]
@@ -278,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_schemas_have_no_inputs_except_restart() {
+    fn lifecycle_schemas_have_no_inputs_except_self_signals() {
         for fn_name in ["install", "start", "stop", "status", "uninstall"] {
             let s = schemas(fn_name);
             assert!(
@@ -290,16 +313,18 @@ mod tests {
     }
 
     #[test]
-    fn restart_schema_has_optional_source_and_reason() {
-        let s = schemas("restart");
-        assert_eq!(s.function, "restart");
-        assert_eq!(s.inputs.len(), 2);
-        for input in &s.inputs {
-            assert!(
-                !input.required,
-                "restart input '{}' should be optional",
-                input.name
-            );
+    fn restart_and_shutdown_schemas_have_optional_source_and_reason() {
+        for fn_name in ["restart", "shutdown"] {
+            let s = schemas(fn_name);
+            assert_eq!(s.function, fn_name);
+            assert_eq!(s.inputs.len(), 2, "{fn_name} should have 2 inputs");
+            for input in &s.inputs {
+                assert!(
+                    !input.required,
+                    "{fn_name} input '{}' should be optional",
+                    input.name
+                );
+            }
         }
     }
 
@@ -339,6 +364,7 @@ mod tests {
         for fn_name in [
             "install",
             "restart",
+            "shutdown",
             "start",
             "stop",
             "status",

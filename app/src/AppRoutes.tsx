@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
+import HumanPage from './features/human/HumanPage';
 import Accounts from './pages/Accounts';
 import Channels from './pages/Channels';
 import Home from './pages/Home';
@@ -15,6 +16,10 @@ import Settings from './pages/Settings';
 import Skills from './pages/Skills';
 import Webhooks from './pages/Webhooks';
 import Welcome from './pages/Welcome';
+import { APP_ENVIRONMENT } from './utils/config';
+
+/** /human is mascot work-in-progress — only mount the route pre-prod. */
+const HUMAN_ROUTE_ENABLED = APP_ENVIRONMENT !== 'production';
 
 const AppRoutes = () => {
   return (
@@ -48,6 +53,17 @@ const AppRoutes = () => {
           </ProtectedRoute>
         }
       />
+
+      {HUMAN_ROUTE_ENABLED && (
+        <Route
+          path="/human"
+          element={
+            <ProtectedRoute requireAuth={true}>
+              <HumanPage />
+            </ProtectedRoute>
+          }
+        />
+      )}
 
       <Route
         path="/intelligence"

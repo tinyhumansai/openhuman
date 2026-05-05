@@ -182,3 +182,24 @@ If the lock is left behind by a crashed process (PID no longer alive), the prefl
 **Known limitation**
 
 Dev and release builds still share `com.openhuman.app` as the cache identifier. Isolating dev to a separate `com.openhuman.app.dev` cache requires changes to the vendored `tauri-runtime-cef` (cache path is built inside the runtime from the bundle identifier, not exposed to the openhuman shell). Tracked as a follow-up to #864.
+
+### Stale `openhuman` RPC process on the core port
+
+**Symptom**
+
+A previous Tauri build or `openhuman-core run` harness left a process listening on `OPENHUMAN_CORE_PORT` (default `7788`). Until issue #1130 the new Tauri build would silently attach to that listener — leading to version drift and 401s when the new build's `OPENHUMAN_CORE_TOKEN` didn't match.
+
+**Current behavior (issue #1130)**
+
+`core_process::ensure_running` now probes the port at startup:
+
+- If `GET /` identifies the listener as an OpenHuman core (JSON body with `"name": "openhuman"`), it is treated as a stale process from a previous run and proactively terminated (`SIGTERM`, then `SIGKILL` after 750ms on Unix; `taskkill /F /T /PID` on Windows). The Tauri host then spawns its own fresh embedded core.
+- If the listener is something else (or doesn't speak HTTP), startup fails loudly with the conflict surfaced in the log instead of silently attaching.
+- Set `OPENHUMAN_CORE_REUSE_EXISTING=1` to opt back into the legacy attach-to-anything behavior — useful when running `openhuman-core run` as a manual debugging harness.
+
+**Manual cleanup (still works)**
+
+```bash
+pkill -f "OpenHuman.app/Contents"
+pkill -f "openhuman-core"
+```

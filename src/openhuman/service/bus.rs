@@ -11,6 +11,9 @@ use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 /// double-registered and never dropped (which would abort the task).
 static RESTART_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
+/// Same idea as [`RESTART_HANDLE`] but for the shutdown subscriber.
+static SHUTDOWN_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+
 /// Register the [`RestartSubscriber`] on the global event bus.
 ///
 /// Idempotent: subsequent calls return immediately if the subscriber is already
@@ -33,9 +36,32 @@ pub fn register_restart_subscriber() {
     }
 }
 
+/// Register the [`ShutdownSubscriber`] on the global event bus.
+///
+/// Mirrors [`register_restart_subscriber`] — idempotent, owned by the service
+/// domain, called from the shared subscriber bootstrap in `jsonrpc.rs`.
+pub fn register_shutdown_subscriber() {
+    if SHUTDOWN_HANDLE.get().is_some() {
+        return;
+    }
+
+    match crate::core::event_bus::subscribe_global(Arc::new(ShutdownSubscriber)) {
+        Some(handle) => {
+            let _ = SHUTDOWN_HANDLE.set(handle);
+        }
+        None => {
+            log::warn!("[event_bus] failed to register shutdown subscriber — bus not initialized");
+        }
+    }
+}
+
 /// One-shot gate so only the first restart event actually spawns a replacement
 /// process. Subsequent events are ignored (the process is about to exit).
 static RESTART_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// Same one-shot gate but for shutdown — only the first request actually
+/// schedules `process::exit`.
+static SHUTDOWN_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 /// Long-lived event-bus subscriber that turns restart requests into a real
 /// process respawn.
@@ -101,6 +127,57 @@ impl EventHandler for RestartSubscriber {
     }
 }
 
+/// Long-lived event-bus subscriber that turns shutdown requests into a
+/// graceful `process::exit(0)` after a short flush window.
+///
+/// Distinct from [`RestartSubscriber`]: no replacement process is spawned —
+/// we just exit. Frontends that want the process back up are expected to
+/// invoke `service.start` (or rely on a supervisor) after calling
+/// `service.shutdown`.
+pub struct ShutdownSubscriber;
+
+#[async_trait]
+impl EventHandler for ShutdownSubscriber {
+    fn name(&self) -> &str {
+        "service::shutdown"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["system"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        let DomainEvent::SystemShutdownRequested { source, reason } = event else {
+            return;
+        };
+
+        if SHUTDOWN_IN_PROGRESS
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            log::debug!(
+                "[service:shutdown] ignoring duplicate shutdown request source={} (already in progress)",
+                source,
+            );
+            return;
+        }
+
+        log::warn!(
+            "[service:shutdown] executing shutdown source={} reason={}",
+            source,
+            reason
+        );
+
+        // Brief 150ms grace period before exit, mirroring the restart path,
+        // so in-flight RPC responses and log writes can flush before the
+        // tokio runtime is torn down.
+        tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            std::process::exit(0);
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +238,48 @@ mod tests {
         // than registering duplicates.
         register_restart_subscriber();
         register_restart_subscriber();
+    }
+
+    // Shutdown subscriber: same shape of metadata + early-return tests as the
+    // restart subscriber. The success path (`handle()` → `process::exit`) is
+    // intentionally untested for the same reason — it would terminate the
+    // test runner.
+
+    #[test]
+    fn shutdown_subscriber_name_is_namespaced() {
+        assert_eq!(ShutdownSubscriber.name(), "service::shutdown");
+    }
+
+    #[test]
+    fn shutdown_subscriber_domain_filter_is_system() {
+        assert_eq!(ShutdownSubscriber.domains(), Some(&["system"][..]));
+    }
+
+    #[tokio::test]
+    async fn shutdown_handle_returns_early_on_non_shutdown_event() {
+        ShutdownSubscriber
+            .handle(&DomainEvent::AgentTurnStarted {
+                session_id: "s".into(),
+                channel: "web".into(),
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_handle_ignores_duplicate_when_gate_is_set() {
+        let previous = SHUTDOWN_IN_PROGRESS.swap(true, Ordering::SeqCst);
+        ShutdownSubscriber
+            .handle(&DomainEvent::SystemShutdownRequested {
+                source: "test".into(),
+                reason: "duplicate-suppression".into(),
+            })
+            .await;
+        SHUTDOWN_IN_PROGRESS.store(previous, Ordering::SeqCst);
+    }
+
+    #[tokio::test]
+    async fn register_shutdown_subscriber_is_idempotent_and_safe_without_bus() {
+        register_shutdown_subscriber();
+        register_shutdown_subscriber();
     }
 }

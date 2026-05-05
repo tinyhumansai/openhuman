@@ -7,11 +7,15 @@ use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::socketio::WebChannelEvent;
+use crate::core::socketio::{SubagentProgressDetail, WebChannelEvent};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
+use crate::openhuman::prompt_injection::{
+    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+};
+use crate::openhuman::threads::turn_state::{TurnStateMirror, TurnStateStore};
 use crate::rpc::RpcOutcome;
 
 use super::presentation;
@@ -119,6 +123,18 @@ fn inference_budget_exceeded_user_message() -> &'static str {
     "I don't have any budget available right now. Please top up your credits or choose a plan to continue."
 }
 
+fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
+    match action {
+        PromptEnforcementAction::Allow => "Message accepted.",
+        PromptEnforcementAction::Blocked => {
+            "Your message was blocked by a security policy. Please rephrase and remove instruction-override or secret-exfiltration requests."
+        }
+        PromptEnforcementAction::ReviewBlocked => {
+            "Your message was flagged for security review and was not processed. Please rephrase the request in a direct, task-focused way."
+        }
+    }
+}
+
 pub async fn start_chat(
     client_id: &str,
     thread_id: &str,
@@ -141,6 +157,39 @@ pub async fn start_chat(
     }
 
     let request_id = Uuid::new_v4().to_string();
+    let prompt_decision = enforce_prompt_input(
+        &message,
+        PromptEnforcementContext {
+            source: "channels.providers.web.start_chat",
+            request_id: Some(&request_id),
+            user_id: Some(&client_id),
+            session_id: Some(&thread_id),
+        },
+    );
+    if !matches!(prompt_decision.action, PromptEnforcementAction::Allow) {
+        log::warn!(
+            "[web-channel] prompt rejected client_id={} thread_id={} request_id={} action={} score={:.2} reasons={} hash={} chars={}",
+            client_id,
+            thread_id,
+            request_id,
+            match prompt_decision.action {
+                PromptEnforcementAction::Allow => "allow",
+                PromptEnforcementAction::Blocked => "block",
+                PromptEnforcementAction::ReviewBlocked => "review_blocked",
+            },
+            prompt_decision.score,
+            prompt_decision
+                .reasons
+                .iter()
+                .map(|r| r.code.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            prompt_decision.prompt_hash,
+            prompt_decision.prompt_chars,
+        );
+        return Err(prompt_guard_user_message(prompt_decision.action).to_string());
+    }
+
     let map_key = key_for(&client_id, &thread_id);
 
     {
@@ -168,6 +217,7 @@ pub async fn start_chat(
                 delta_kind: None,
                 tool_call_id: None,
                 citations: None,
+                subagent: None,
             });
         }
     }
@@ -234,6 +284,7 @@ pub async fn start_chat(
                     delta_kind: None,
                     tool_call_id: None,
                     citations: None,
+                    subagent: None,
                 });
             }
         }
@@ -326,6 +377,7 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
             delta_kind: None,
             tool_call_id: None,
             citations: None,
+            subagent: None,
         });
     }
 
@@ -357,7 +409,7 @@ async fn run_chat_task(
         sessions.remove(&map_key)
     };
 
-    let mut agent = match prior {
+    let (mut agent, was_built_fresh) = match prior {
         Some(entry)
             if entry.model_override == model_override
                 && entry.temperature == temperature
@@ -369,7 +421,7 @@ async fn run_chat_task(
                 client_id,
                 thread_id
             );
-            entry.agent
+            (entry.agent, false)
         }
         Some(prior_entry) => {
             log::info!(
@@ -379,36 +431,100 @@ async fn run_chat_task(
                 client_id,
                 thread_id
             );
+            (
+                build_session_agent(
+                    &config,
+                    client_id,
+                    thread_id,
+                    model_override.clone(),
+                    temperature,
+                )?,
+                true,
+            )
+        }
+        None => (
             build_session_agent(
                 &config,
                 client_id,
                 thread_id,
                 model_override.clone(),
                 temperature,
-            )?
-        }
-        None => build_session_agent(
-            &config,
-            client_id,
-            thread_id,
-            model_override.clone(),
-            temperature,
-        )?,
+            )?,
+            true,
+        ),
     };
+
+    // Cold-boot resume from the conversation JSONL.
+    //
+    // The agent's `try_load_session_transcript` mechanism only fires
+    // when a transcript file matches `agent_definition_name` — it
+    // misses on cold boot if the previous process wrote transcripts
+    // under a different name (the `set_agent_definition_name` /
+    // `session_key` rename bug fixed in this PR). The conversation
+    // JSONL store is the authoritative per-thread message log either
+    // way, so seed from it whenever we just built a fresh agent. The
+    // method is a no-op if the agent already has a cached transcript
+    // or non-empty history, so this is cheap on the warm path too.
+    if was_built_fresh {
+        match crate::openhuman::memory::conversations::get_messages(
+            config.workspace_dir.clone(),
+            thread_id,
+        ) {
+            Ok(prior_messages) if !prior_messages.is_empty() => {
+                let pairs: Vec<(String, String)> = prior_messages
+                    .into_iter()
+                    .map(|m| (m.sender, m.content))
+                    .collect();
+                if let Err(err) = agent.seed_resume_from_messages(pairs, message) {
+                    log::warn!(
+                        "[web-channel] failed to seed agent resume from conversation log \
+                         thread={} err={}",
+                        thread_id,
+                        err
+                    );
+                }
+            }
+            Ok(_) => {
+                log::debug!(
+                    "[web-channel] no prior messages to seed for thread={} — first turn",
+                    thread_id
+                );
+            }
+            Err(err) => {
+                log::warn!(
+                    "[web-channel] failed to read conversation log for resume thread={} err={}",
+                    thread_id,
+                    err
+                );
+            }
+        }
+    }
 
     // Wire up a real-time progress channel so tool calls, iterations,
     // and sub-agent events are emitted to the web channel as they happen
     // (instead of retroactively after the loop finishes).
     let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(64);
     agent.set_on_progress(Some(progress_tx));
+    let turn_state_store = TurnStateStore::new(config.workspace_dir.clone());
     spawn_progress_bridge(
         progress_rx,
         client_id.to_string(),
         thread_id.to_string(),
         request_id.to_string(),
+        turn_state_store,
     );
 
-    let result = match agent.run_single(message).await {
+    // Make `thread_id` ambient for any outbound provider call inside
+    // the agent loop. The OpenAI-compatible provider reads it via
+    // `thread_context::current_thread_id()` and forwards it on
+    // `/openai/v1/chat/completions` so the backend can group
+    // InferenceLog entries and reuse the KV cache for this thread.
+    let result = match crate::openhuman::providers::thread_context::with_thread_id(
+        thread_id.to_string(),
+        agent.run_single(message),
+    )
+    .await
+    {
         Ok(response) => {
             let citations = agent.take_last_turn_citations();
             Ok(WebChatTaskResult {
@@ -463,6 +579,7 @@ fn spawn_progress_bridge(
     client_id: String,
     thread_id: String,
     request_id: String,
+    turn_state_store: TurnStateStore,
 ) {
     use crate::openhuman::agent::progress::AgentProgress;
 
@@ -475,8 +592,11 @@ fn spawn_progress_bridge(
         );
         let mut round: u32 = 0;
         let mut events_seen: u64 = 0;
+        let mut turn_state =
+            TurnStateMirror::new(turn_state_store, thread_id.clone(), request_id.clone());
         while let Some(event) = rx.recv().await {
             events_seen += 1;
+            turn_state.observe(&event);
             // Per-variant trace so branch decisions are visible in
             // terminal output when correlating progress over Socket.IO.
             // Kept at trace-level for high-volume deltas and debug for
@@ -586,6 +706,7 @@ fn spawn_progress_bridge(
                         delta_kind: None,
                         tool_call_id: None,
                         citations: None,
+                        subagent: None,
                     });
                 }
                 AgentProgress::IterationStarted {
@@ -614,6 +735,7 @@ fn spawn_progress_bridge(
                         delta_kind: None,
                         tool_call_id: None,
                         citations: None,
+                        subagent: None,
                     });
                 }
                 AgentProgress::ToolCallStarted {
@@ -660,58 +782,57 @@ fn spawn_progress_bridge(
                         ..Default::default()
                     });
                 }
-                AgentProgress::SubagentSpawned { agent_id, task_id } => {
+                AgentProgress::SubagentSpawned {
+                    agent_id,
+                    task_id,
+                    mode,
+                    dedicated_thread,
+                    prompt_chars,
+                } => {
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_spawned".to_string(),
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        full_response: None,
                         message: Some(format!("Sub-agent '{agent_id}' spawned")),
-                        error_type: None,
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
-                        args: None,
-                        output: None,
-                        success: None,
                         round: Some(round),
-                        reaction_emoji: None,
-                        segment_index: None,
-                        segment_total: None,
-                        delta: None,
-                        delta_kind: None,
-                        tool_call_id: None,
-                        citations: None,
+                        subagent: Some(SubagentProgressDetail {
+                            mode: Some(mode),
+                            dedicated_thread: Some(dedicated_thread),
+                            prompt_chars: Some(prompt_chars as u64),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::SubagentCompleted {
                     agent_id,
                     task_id,
                     elapsed_ms,
+                    iterations,
+                    output_chars,
                 } => {
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_completed".to_string(),
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        full_response: None,
                         message: Some(format!(
                             "Sub-agent '{agent_id}' completed in {elapsed_ms}ms"
                         )),
-                        error_type: None,
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
-                        args: None,
-                        output: None,
                         success: Some(true),
                         round: Some(round),
-                        reaction_emoji: None,
-                        segment_index: None,
-                        segment_total: None,
-                        delta: None,
-                        delta_kind: None,
-                        tool_call_id: None,
-                        citations: None,
+                        subagent: Some(SubagentProgressDetail {
+                            elapsed_ms: Some(elapsed_ms),
+                            iterations: Some(iterations),
+                            output_chars: Some(output_chars as u64),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::SubagentFailed {
@@ -724,22 +845,97 @@ fn spawn_progress_bridge(
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        full_response: None,
                         message: Some(error),
-                        error_type: None,
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
-                        args: None,
-                        output: None,
                         success: Some(false),
                         round: Some(round),
-                        reaction_emoji: None,
-                        segment_index: None,
-                        segment_total: None,
-                        delta: None,
-                        delta_kind: None,
-                        tool_call_id: None,
-                        citations: None,
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentIterationStarted {
+                    agent_id,
+                    task_id,
+                    iteration,
+                    max_iterations,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_iteration_start".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        message: Some(format!(
+                            "Sub-agent '{agent_id}' iteration {iteration}/{max_iterations}"
+                        )),
+                        tool_name: Some(agent_id),
+                        skill_id: Some(task_id),
+                        round: Some(round),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            child_max_iterations: Some(max_iterations),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentToolCallStarted {
+                    agent_id,
+                    task_id,
+                    call_id,
+                    tool_name,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_tool_call".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        tool_name: Some(tool_name),
+                        skill_id: Some(task_id.clone()),
+                        round: Some(round),
+                        tool_call_id: Some(call_id),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            agent_id: Some(agent_id),
+                            task_id: Some(task_id),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentToolCallCompleted {
+                    agent_id,
+                    task_id,
+                    call_id,
+                    tool_name,
+                    success,
+                    output_chars,
+                    elapsed_ms,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_tool_result".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        tool_name: Some(tool_name),
+                        skill_id: Some(task_id.clone()),
+                        success: Some(success),
+                        round: Some(round),
+                        tool_call_id: Some(call_id),
+                        output: Some(
+                            json!({"output_chars": output_chars, "elapsed_ms": elapsed_ms})
+                                .to_string(),
+                        ),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            agent_id: Some(agent_id),
+                            task_id: Some(task_id),
+                            elapsed_ms: Some(elapsed_ms),
+                            output_chars: Some(output_chars as u64),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::TextDelta { delta, iteration } => {
@@ -798,6 +994,7 @@ fn spawn_progress_bridge(
                 }
             }
         }
+        turn_state.finish();
         log::debug!(
             "[web_channel][bridge] exit client_id={} thread_id={} request_id={} round={} events_seen={}",
             client_id,

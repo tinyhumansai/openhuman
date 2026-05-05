@@ -10,6 +10,18 @@ pub struct ToolResult {
     /// Indicates if the tool encountered an error during execution.
     #[serde(default)]
     pub is_error: bool,
+    /// Optional markdown rendering of the result. When the agent loop
+    /// is configured with `prefer_markdown`, this is sent to the LLM
+    /// instead of the JSON-serialised content blocks. Mirrors the
+    /// `markdownFormatted` field on Composio's backend responses
+    /// (see #1165) — markdown is significantly cheaper than JSON in
+    /// the model context window.
+    #[serde(
+        default,
+        rename = "markdownFormatted",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub markdown_formatted: Option<String>,
 }
 
 impl ToolResult {
@@ -17,6 +29,7 @@ impl ToolResult {
         Self {
             content: vec![ToolContent::Text { text: text.into() }],
             is_error: false,
+            markdown_formatted: None,
         }
     }
 
@@ -26,6 +39,7 @@ impl ToolResult {
                 text: message.into(),
             }],
             is_error: true,
+            markdown_formatted: None,
         }
     }
 
@@ -33,7 +47,40 @@ impl ToolResult {
         Self {
             content: vec![ToolContent::Json { data }],
             is_error: false,
+            markdown_formatted: None,
         }
+    }
+
+    /// Construct a successful result that carries both a JSON payload
+    /// (for programmatic consumers / debugging) and a markdown rendering
+    /// (preferred by the agent loop when `prefer_markdown` is on).
+    pub fn success_with_markdown(data: serde_json::Value, markdown: impl Into<String>) -> Self {
+        Self {
+            content: vec![ToolContent::Json { data }],
+            is_error: false,
+            markdown_formatted: Some(markdown.into()),
+        }
+    }
+
+    /// Attach (or replace) the markdown rendering on an existing result.
+    pub fn with_markdown(mut self, markdown: impl Into<String>) -> Self {
+        self.markdown_formatted = Some(markdown.into());
+        self
+    }
+
+    /// Returns the markdown rendering when present and non-empty,
+    /// otherwise falls back to [`Self::output`]. Used by the agent loop
+    /// when token-saving markdown output is requested.
+    pub fn output_for_llm(&self, prefer_markdown: bool) -> String {
+        if prefer_markdown {
+            if let Some(md) = self.markdown_formatted.as_deref() {
+                let trimmed = md.trim();
+                if !trimmed.is_empty() {
+                    return md.to_string();
+                }
+            }
+        }
+        self.output()
     }
 
     pub fn text(&self) -> String {
@@ -112,6 +159,7 @@ mod tests {
                 },
             ],
             is_error: false,
+            markdown_formatted: None,
         };
         assert_eq!(r.text(), "line1\nline2");
         let output = r.output();
@@ -162,8 +210,41 @@ mod tests {
         let r = ToolResult {
             content: vec![],
             is_error: false,
+            markdown_formatted: None,
         };
         assert!(r.text().is_empty());
         assert!(r.output().is_empty());
+    }
+
+    #[test]
+    fn output_for_llm_prefers_markdown_when_requested() {
+        let r =
+            ToolResult::success_with_markdown(json!({"items": [{"id": 1}, {"id": 2}]}), "- 1\n- 2");
+        assert_eq!(r.output_for_llm(true), "- 1\n- 2");
+        // When prefer_markdown is false, falls back to JSON pretty-print.
+        let raw = r.output_for_llm(false);
+        assert!(raw.contains("\"items\""));
+    }
+
+    #[test]
+    fn output_for_llm_falls_back_to_output_when_markdown_missing() {
+        let r = ToolResult::success("plain");
+        assert_eq!(r.output_for_llm(true), "plain");
+        assert_eq!(r.output_for_llm(false), "plain");
+    }
+
+    #[test]
+    fn output_for_llm_falls_back_when_markdown_blank() {
+        let r = ToolResult::success("plain").with_markdown("   \n  ");
+        assert_eq!(r.output_for_llm(true), "plain");
+    }
+
+    #[test]
+    fn markdown_field_serde_roundtrip() {
+        let r = ToolResult::success_with_markdown(json!({"a": 1}), "**a**: 1");
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(s.contains("markdownFormatted"));
+        let back: ToolResult = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.markdown_formatted.as_deref(), Some("**a**: 1"));
     }
 }

@@ -134,9 +134,27 @@ impl Tool for ComposioActionTool {
                         elapsed_ms,
                     },
                 );
-                Ok(ToolResult::success(
-                    serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
-                ))
+                // Mirror `ComposioExecuteTool::execute` (composio/tools.rs):
+                // prefer the backend-rendered `markdownFormatted` for LLM
+                // consumption when present, fall back to the raw JSON
+                // envelope on absence or non-success. Keeps both routes
+                // (dispatcher + per-action) consistent so the model sees
+                // the same compact transcript regardless of which tool
+                // surface integrations_agent picked.
+                let body = if resp.successful {
+                    match resp
+                        .markdown_formatted
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        Some(md) => md.to_string(),
+                        None => serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
+                    }
+                } else {
+                    serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into())
+                };
+                Ok(ToolResult::success(body))
             }
             Err(e) => {
                 crate::core::event_bus::publish_global(

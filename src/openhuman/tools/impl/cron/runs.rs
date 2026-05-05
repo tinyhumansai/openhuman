@@ -1,9 +1,10 @@
 use crate::openhuman::config::Config;
 use crate::openhuman::cron;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::json;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 const MAX_RUN_OUTPUT_CHARS: usize = 500;
@@ -51,6 +52,15 @@ impl Tool for CronRunsTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_options(args, ToolCallOptions::default())
+            .await
+    }
+
+    async fn execute_with_options(
+        &self,
+        args: serde_json::Value,
+        options: ToolCallOptions,
+    ) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
             return Ok(ToolResult::error(
                 "cron is disabled by config (cron.enabled=false)".to_string(),
@@ -84,11 +94,46 @@ impl Tool for CronRunsTool {
                     })
                     .collect();
 
-                Ok(ToolResult::success(serde_json::to_string_pretty(&runs)?))
+                let json_str = serde_json::to_string_pretty(&runs)?;
+                let mut result = ToolResult::success(json_str);
+                if options.prefer_markdown {
+                    result.markdown_formatted = Some(render_runs_markdown(job_id, &runs));
+                }
+                Ok(result)
             }
             Err(e) => Ok(ToolResult::error(e.to_string())),
         }
     }
+
+    fn supports_markdown(&self) -> bool {
+        true
+    }
+}
+
+fn render_runs_markdown(job_id: &str, runs: &[RunView]) -> String {
+    if runs.is_empty() {
+        return format!("_No recorded runs for job `{job_id}`._");
+    }
+    let mut out = format!("# Cron runs for `{job_id}` ({})\n", runs.len());
+    for r in runs {
+        let _ = writeln!(
+            out,
+            "\n## #{} — {}",
+            r.id,
+            r.started_at.format("%Y-%m-%d %H:%M:%S UTC")
+        );
+        let _ = writeln!(out, "- **status**: {}", r.status);
+        if let Some(ms) = r.duration_ms {
+            let _ = writeln!(out, "- **duration_ms**: {ms}");
+        }
+        if let Some(out_text) = &r.output {
+            let trimmed = out_text.trim();
+            if !trimmed.is_empty() {
+                let _ = writeln!(out, "- **output**:\n```\n{trimmed}\n```");
+            }
+        }
+    }
+    out
 }
 
 fn truncate(input: &str, max_chars: usize) -> String {

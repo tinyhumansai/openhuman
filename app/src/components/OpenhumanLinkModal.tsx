@@ -374,7 +374,6 @@ const ACCOUNTS_SETUP_PROVIDERS: readonly AccountProvider[] = [
   'telegram',
   'slack',
   'discord',
-  'gmail',
   'linkedin',
 ];
 

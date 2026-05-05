@@ -82,6 +82,25 @@ impl std::fmt::Display for PermissionLevel {
     }
 }
 
+/// Per-invocation options threaded from the agent loop into a tool's
+/// execution. Lets callers (the harness, orchestrator, RPC dispatcher)
+/// hint at how the tool should shape its output without polluting the
+/// tool's user-facing parameter schema.
+///
+/// Tools that opt in override [`Tool::execute_with_options`] and check
+/// these flags; tools that ignore the struct keep working unchanged
+/// because the trait's default implementation forwards to
+/// [`Tool::execute`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ToolCallOptions {
+    /// When true, the caller (typically the agent loop) prefers a
+    /// markdown rendering of the result for direct LLM consumption,
+    /// because markdown is materially cheaper than JSON in tokens.
+    /// Tools should populate `ToolResult::markdown_formatted` when
+    /// this is set; the harness will pick that field up if present.
+    pub prefer_markdown: bool,
+}
+
 /// Description of a tool for the LLM
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
@@ -105,6 +124,32 @@ pub trait Tool: Send + Sync {
     /// Execute the tool with given arguments.
     /// Returns a unified `ToolResult` (MCP content blocks + error flag).
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult>;
+
+    /// Execute the tool with caller-provided options.
+    ///
+    /// Default implementation forwards to [`Self::execute`] — existing
+    /// tools keep working without changes. Tools that can produce a
+    /// compact markdown rendering (saving tokens in the agent loop)
+    /// should override this method, inspect
+    /// [`ToolCallOptions::prefer_markdown`], and populate
+    /// `ToolResult::markdown_formatted` on the returned result.
+    async fn execute_with_options(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute(args).await
+    }
+
+    /// Whether this tool can produce a markdown rendering when
+    /// [`ToolCallOptions::prefer_markdown`] is set. Default: `false`.
+    /// Tools that override [`Self::execute_with_options`] to honor the
+    /// flag should also override this to advertise the capability —
+    /// telemetry / agent-loop diagnostics use it to attribute token
+    /// savings.
+    fn supports_markdown(&self) -> bool {
+        false
+    }
 
     /// Permission level required to execute this tool.
     /// Channels with a lower maximum permission level will reject this tool.

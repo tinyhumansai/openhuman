@@ -1,7 +1,7 @@
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{self, CronJobPatch};
 use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -38,7 +38,20 @@ impl Tool for CronUpdateTool {
         })
     }
 
+    fn supports_markdown(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_options(args, ToolCallOptions::default())
+            .await
+    }
+
+    async fn execute_with_options(
+        &self,
+        args: serde_json::Value,
+        options: ToolCallOptions,
+    ) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
             return Ok(ToolResult::error(
                 "cron is disabled by config (cron.enabled=false)".to_string(),
@@ -75,7 +88,20 @@ impl Tool for CronUpdateTool {
         }
 
         match cron::update_job(&self.config, job_id, patch) {
-            Ok(job) => Ok(ToolResult::success(serde_json::to_string_pretty(&job)?)),
+            Ok(job) => {
+                let mut tr = ToolResult::success(serde_json::to_string_pretty(&job)?);
+                if options.prefer_markdown {
+                    tr.markdown_formatted = Some(format!(
+                        "Updated **{}** (`{}`).\n- **schedule**: `{}`\n- **enabled**: {}\n- **next_run**: {}",
+                        job.name.as_deref().unwrap_or(&job.id),
+                        job.id,
+                        job.expression,
+                        job.enabled,
+                        job.next_run.format("%Y-%m-%d %H:%M:%S UTC"),
+                    ));
+                }
+                Ok(tr)
+            }
             Err(e) => Ok(ToolResult::error(e.to_string())),
         }
     }

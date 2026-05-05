@@ -68,11 +68,15 @@ const ScreenIntelligenceDebugPanelContent = ({
         <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-stone-400">
           Permissions
         </h4>
-        <div className="grid grid-cols-3 gap-2 text-xs">
-          <PermissionDot label="Screen" value={permissions?.screen_recording} />
-          <PermissionDot label="Accessibility" value={permissions?.accessibility} />
-          <PermissionDot label="Input" value={permissions?.input_monitoring} />
-        </div>
+        {status?.platform_supported === false ? (
+          <p className="text-xs text-stone-500">Platform not supported</p>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <PermissionDot label="Screen" value={permissions?.screen_recording} />
+            <PermissionDot label="Accessibility" value={permissions?.accessibility} />
+            <PermissionDot label="Input" value={permissions?.input_monitoring} />
+          </div>
+        )}
       </div>
 
       {/* Session Status */}

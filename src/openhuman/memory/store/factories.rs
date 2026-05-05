@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::openhuman::config::{EmbeddingRouteConfig, MemoryConfig, StorageProviderConfig};
-use crate::openhuman::memory::embeddings::{self, EmbeddingProvider};
+use crate::openhuman::embeddings::{self, EmbeddingProvider};
 use crate::openhuman::memory::store::unified::UnifiedMemory;
 use crate::openhuman::memory::traits::Memory;
 

@@ -44,36 +44,27 @@ jobs:
           restore-keys: |
             cef-ubuntu-22.04-
 
-      # Note: the vendored CEF-aware tauri-cli is pre-installed in the
-      # ghcr.io/tinyhumansai/openhuman_ci image (see .github/Dockerfile),
-      # so `cargo tauri build` below resolves to the fork without any
-      # per-run compile step.
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      # Note: the vendored CEF-aware tauri-cli, Node 24, and pnpm are all
+      # pre-installed in the ghcr.io/tinyhumansai/openhuman_ci image (see
+      # .github/Dockerfile), so `cargo tauri build` below resolves to the
+      # fork without any per-run compile step.
+      - name: Cache pnpm store
+        uses: actions/cache@v4
         with:
-          cache: true
-      - name: Setup Node.js 24.x
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.x
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Install cmake (for whisper-rs)
-        run: apt-get update && apt-get install -y --no-install-recommends cmake &&
-          rm -rf /var/lib/apt/lists/*
-      - name: Build sidecar core binary
-        run: cargo build --profile ci --target x86_64-unknown-linux-gnu --bin openhuman-core
-      - name: Stage sidecar for Tauri bundler
-        run: |
-          mkdir -p app/src-tauri/binaries
-          cp target/x86_64-unknown-linux-gnu/ci/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
-          chmod +x app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
+      # Core is linked into the Tauri binary as a path dep — no separate
+      # sidecar build / stage step needed.
       - name: Build Tauri app (CEF default)
         working-directory: app
         run: |
           # Skip tsc in beforeBuildCommand — typechecking runs in the dedicated
           # `typecheck` workflow, so doing it again here is duplicated CI time.
-          TAURI_CONFIG_OVERRIDE='{"build":{"beforeBuildCommand":"npx vite build && pnpm run core:stage"},"plugins":{"updater":{"active":false}}}'
+          TAURI_CONFIG_OVERRIDE='{"build":{"beforeBuildCommand":"npx vite build"},"plugins":{"updater":{"active":false}}}'
           cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
         env:
           NODE_ENV: production

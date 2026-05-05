@@ -54,6 +54,13 @@ pub struct Config {
     #[serde(default)]
     pub scheduler: SchedulerConfig,
 
+    /// Background-AI scheduler gate — throttles memory-tree digests,
+    /// embeddings, and other LLM-bound background work based on power
+    /// state, CPU pressure, and deployment mode. See
+    /// [`crate::openhuman::scheduler_gate`].
+    #[serde(default)]
+    pub scheduler_gate: SchedulerGateConfig,
+
     #[serde(default)]
     pub agent: AgentConfig,
 
@@ -251,6 +258,7 @@ impl Default for Config {
             autocomplete: AutocompleteConfig::default(),
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
+            scheduler_gate: SchedulerGateConfig::default(),
             agent: AgentConfig::default(),
             context: ContextConfig::default(),
             model_routes: Vec::new(),

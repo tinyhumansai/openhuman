@@ -15,9 +15,13 @@
 
 use crate::openhuman::memory::tree::types::Metadata;
 
+/// Tag set when the user replied to this message/thread.
 pub const TAG_REPLY: &str = "reply";
+/// Tag set when the user authored this content.
 pub const TAG_SENT: &str = "sent";
+/// Tag set when the user was @-mentioned.
 pub const TAG_MENTION: &str = "mention";
+/// Tag set when the message arrived in a direct-message channel.
 pub const TAG_DM: &str = "dm";
 
 /// Score in `[0.0, 1.0]` based on engagement tags present on the chunk.

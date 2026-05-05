@@ -13,8 +13,8 @@
 //   ingest     { messages, unread?, snapshotKey? }      (recipe-driven)
 //   <custom>   arbitrary — recipes push via api.emit(kind, payload)
 //
-// NOTE: only injected for providers that still need a JS bridge (gmail,
-// linkedin, google-meet). The migrated providers (whatsapp, telegram,
+// NOTE: only injected for providers that still need a JS bridge
+// (linkedin, google-meet). The migrated providers (whatsapp, telegram,
 // slack, discord, browserscan) load with ZERO injected JS under cef —
 // their scraping runs natively via CDP in the per-provider scanner
 // modules. WebSocket interception lives in the Rust-side CDP Network

@@ -1,6 +1,10 @@
+//! Wire/storage types for the workspace-backed conversation store: threads,
+//! messages, create requests, and partial-update patches.
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// A persisted conversation thread, mirroring one entry in `threads.jsonl`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationThread {
@@ -16,6 +20,7 @@ pub struct ConversationThread {
     pub labels: Vec<String>,
 }
 
+/// A single message appended to a thread's JSONL log.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationMessage {
@@ -29,6 +34,7 @@ pub struct ConversationMessage {
     pub created_at: String,
 }
 
+/// Input payload to create-or-update a thread via [`super::ensure_thread`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateConversationThread {
@@ -39,6 +45,7 @@ pub struct CreateConversationThread {
     pub labels: Option<Vec<String>>,
 }
 
+/// Partial update to apply to a stored message (e.g. rewriting `extraMetadata`).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationMessagePatch {

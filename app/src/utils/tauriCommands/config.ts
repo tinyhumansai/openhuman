@@ -17,12 +17,28 @@ export interface ModelSettingsUpdate {
   default_temperature?: number | null;
 }
 
+/**
+ * Stepped user-facing memory-context window preset. Mirrors the core
+ * `MemoryContextWindow` enum (`src/openhuman/config/schema/agent.rs`)
+ * — the actual char budgets are owned by the core, this is the label.
+ */
+export type MemoryContextWindow = 'minimal' | 'balanced' | 'extended' | 'maximum';
+
+export const MEMORY_CONTEXT_WINDOWS: MemoryContextWindow[] = [
+  'minimal',
+  'balanced',
+  'extended',
+  'maximum',
+];
+
 export interface MemorySettingsUpdate {
   backend?: string | null;
   auto_save?: boolean | null;
   embedding_provider?: string | null;
   embedding_model?: string | null;
   embedding_dimensions?: number | null;
+  /** One of `MEMORY_CONTEXT_WINDOWS`. */
+  memory_window?: MemoryContextWindow | null;
 }
 
 export interface RuntimeSettingsUpdate {
@@ -193,7 +209,7 @@ export async function aiGetConfig(): Promise<AIPreview> {
     soul: {
       raw: '',
       name: 'OpenHuman',
-      description: 'AI assistant',
+      description: 'Agent',
       personalityPreview: [],
       safetyRulesPreview: [],
       loadedAt: Date.now(),

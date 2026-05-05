@@ -276,7 +276,7 @@ fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     );
     let long = "x".repeat(500);
     assert_eq!(sanitize_learned_entry(&long).chars().count(), 200);
-    assert!(collect_tree_root_summaries(agent.workspace_dir()).is_empty());
+    assert!(collect_tree_root_summaries(agent.workspace_dir(), 8_000, 32_000).is_empty());
 }
 
 #[tokio::test]

@@ -1099,12 +1099,105 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // ── Composio routes (used by trigger-toggles E2E spec) ────────────
+  //
+  // Behavior knobs (set via /__admin/behavior):
+  //   composioConnections        — JSON array, default `[{id:'c1',toolkit:'gmail',status:'ACTIVE'}]`
+  //   composioAvailableTriggers  — JSON array, default one Gmail trigger
+  //   composioActiveTriggers     — JSON array, default empty
+  //   composioEnableFails        — '1' to make POST /triggers return 500
+  //
+  // Enable/disable requests mutate `composioActiveTriggers` in place so the
+  // UI can poll subsequent reads and observe the change.
+  if (
+    method === "GET" &&
+    /^\/agent-integrations\/composio\/connections\/?(\?.*)?$/.test(url)
+  ) {
+    const connections = parseBehaviorJson(
+      "composioConnections",
+      [{ id: "c1", toolkit: "gmail", status: "ACTIVE" }],
+    );
+    json(res, 200, { success: true, data: { connections } });
+    return;
+  }
+
+  if (
+    method === "GET" &&
+    /^\/agent-integrations\/composio\/triggers\/available(\?.*)?$/.test(url)
+  ) {
+    const triggers = parseBehaviorJson("composioAvailableTriggers", [
+      { slug: "GMAIL_NEW_GMAIL_MESSAGE", scope: "static" },
+    ]);
+    json(res, 200, { success: true, data: { triggers } });
+    return;
+  }
+
+  if (
+    method === "GET" &&
+    /^\/agent-integrations\/composio\/triggers(\?.*)?$/.test(url)
+  ) {
+    const triggers = parseBehaviorJson("composioActiveTriggers", []);
+    json(res, 200, { success: true, data: { triggers } });
+    return;
+  }
+
+  if (
+    method === "POST" &&
+    /^\/agent-integrations\/composio\/triggers\/?$/.test(url)
+  ) {
+    if (mockBehavior.composioEnableFails === "1") {
+      json(res, 500, { success: false, error: "Mock enable trigger failure" });
+      return;
+    }
+    const slug = parsedBody?.slug ?? "UNKNOWN";
+    const connectionId = parsedBody?.connectionId ?? "";
+    const triggerId = `ti-${Date.now()}`;
+    const active = parseBehaviorJson("composioActiveTriggers", []);
+    active.push({
+      id: triggerId,
+      slug,
+      toolkit: slug.split("_")[0]?.toLowerCase() ?? "",
+      connectionId,
+      ...(parsedBody?.triggerConfig
+        ? { triggerConfig: parsedBody.triggerConfig }
+        : {}),
+    });
+    setMockBehavior("composioActiveTriggers", JSON.stringify(active));
+    json(res, 200, {
+      success: true,
+      data: { triggerId, slug, connectionId },
+    });
+    return;
+  }
+
+  if (
+    method === "DELETE" &&
+    /^\/agent-integrations\/composio\/triggers\/[^/]+\/?$/.test(url)
+  ) {
+    const id = url.split("/").filter(Boolean).pop().split("?")[0];
+    const active = parseBehaviorJson("composioActiveTriggers", []);
+    const next = active.filter((t) => t.id !== id);
+    setMockBehavior("composioActiveTriggers", JSON.stringify(next));
+    json(res, 200, { success: true, data: { deleted: true } });
+    return;
+  }
+
   // Catch-all: fail fast so tests notice missing mock endpoints.
   console.log(`[MockServer] UNHANDLED ${method} ${url}`);
   json(res, 404, {
     success: false,
     error: `Mock server: no handler for ${method} ${url}`,
   });
+}
+
+function parseBehaviorJson(key, fallback) {
+  const raw = mockBehavior[key];
+  if (!raw) return JSON.parse(JSON.stringify(fallback));
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return JSON.parse(JSON.stringify(fallback));
+  }
 }
 
 function handleSocketIOMessage(socket, text, sid) {

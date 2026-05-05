@@ -71,46 +71,8 @@ jobs:
 
       # vite build runs via tauri.conf.json's beforeBuildCommand during the
       # "Build Tauri app" step below — no separate frontend build needed.
-      - name: Resolve core manifest and binary names
-        id: core-paths
-        shell: bash
-        run: |
-          if [ -f "openhuman_core/Cargo.toml" ]; then
-            CORE_DIR="openhuman_core"
-          elif [ -f "rust-core/Cargo.toml" ]; then
-            CORE_DIR="rust-core"
-          elif [ -f "Cargo.toml" ] && grep -q '^name = "openhuman"' Cargo.toml; then
-            CORE_DIR="."
-          else
-            echo "No core Cargo manifest found"
-            exit 1
-          fi
-          SIDE_CAR_BASE="$(node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('app/src-tauri/tauri.conf.json','utf8'));const b=(c.bundle&&Array.isArray(c.bundle.externalBin)&&c.bundle.externalBin[0])||'binaries/openhuman-core';process.stdout.write(String(b).split('/').pop());")"
-          CORE_BIN_NAME="${SIDE_CAR_BASE}"
-          echo "core_dir=$CORE_DIR" >> "$GITHUB_OUTPUT"
-          echo "core_manifest=$CORE_DIR/Cargo.toml" >> "$GITHUB_OUTPUT"
-          echo "core_target_dir=target/x86_64-pc-windows-msvc/release" >> "$GITHUB_OUTPUT"
-          echo "core_bin_name=$CORE_BIN_NAME" >> "$GITHUB_OUTPUT"
-          echo "sidecar_base=$SIDE_CAR_BASE" >> "$GITHUB_OUTPUT"
-      - name: Build sidecar core binary
-        shell: bash
-        run: |
-          cargo build \
-            --manifest-path "$CORE_MANIFEST" \
-            --release \
-            --target x86_64-pc-windows-msvc \
-            --bin "$CORE_BIN_NAME"
-        env:
-          CORE_MANIFEST: ${{ steps.core-paths.outputs.core_manifest }}
-          CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
-      - name: Stage sidecar for Tauri bundler
-        shell: bash
-        run: |
-          bash scripts/release/stage-sidecar.sh \
-            x86_64-pc-windows-msvc \
-            "${{ steps.core-paths.outputs.core_target_dir }}" \
-            "${{ steps.core-paths.outputs.core_bin_name }}" \
-            "${{ steps.core-paths.outputs.sidecar_base }}"
+      # Core is linked into the Tauri binary as a path dep — no separate
+      # sidecar build / stage / path-resolution step needed.
       - name: Define Tauri configuration overrides
         id: config-overrides
         # `prepareTauriConfig.js` only emits the Windows DigiCert sign

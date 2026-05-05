@@ -1,11 +1,13 @@
 ---
 name: Feature
 about: Used for new features or suggestions
-title: "[Feature] "
-labels: enhancement
+title: ""
+type: Feature
 assignees: ''
 
 ---
+
+Use a concise sentence-case title that describes the requested outcome. Do not add `Feature` or bracket prefixes to the title.
 
 ## Summary
 
@@ -24,6 +26,7 @@ How you plan to solve it — scope (core / app / both), approach, tradeoffs. Ski
 - [ ] **Feature 1** — TODO
 - [ ] **Feature 2** — TODO
 - [ ] **Feature 3** — TODO
+- [ ] **Diff coverage ≥ 80%** — the implementing PR meets the changed-lines coverage gate (Vitest + cargo-llvm-cov, enforced by [`.github/workflows/coverage.yml`](../../.github/workflows/coverage.yml)).
 
 - …
 

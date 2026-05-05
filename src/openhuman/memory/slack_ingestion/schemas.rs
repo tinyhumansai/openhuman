@@ -18,10 +18,12 @@ use crate::rpc::RpcOutcome;
 
 const NAMESPACE: &str = "slack_memory";
 
+/// Returns every schema published by the Slack-ingestion namespace.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![schemas("sync_trigger"), schemas("sync_status")]
 }
 
+/// Returns every controller (schema + handler pair) for the Slack-ingestion namespace.
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
         RegisteredController {
@@ -35,6 +37,7 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
     ]
 }
 
+/// Build the [`ControllerSchema`] for one named function in this namespace.
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
         "sync_trigger" => ControllerSchema {

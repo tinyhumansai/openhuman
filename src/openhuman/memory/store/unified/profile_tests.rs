@@ -1,3 +1,5 @@
+//! Tests for the `profile` module — facet upsert with confidence merging.
+
 use super::*;
 
 fn setup_db() -> Arc<Mutex<Connection>> {

@@ -52,10 +52,17 @@ const notificationPersistConfig = {
 };
 const persistedNotificationReducer = persistReducer(notificationPersistConfig, notificationReducer);
 
+// Persist only the user's last-viewed thread id so a reload resumes where
+// they were instead of falling through to "create a new thread". The
+// thread list and per-thread message caches are re-fetched from the core
+// on boot, so we deliberately don't persist them.
+const threadPersistConfig = { key: 'thread', storage, whitelist: ['selectedThreadId'] };
+const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer);
+
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
-    thread: threadReducer,
+    thread: persistedThreadReducer,
     chatRuntime: chatRuntimeReducer,
     channelConnections: persistedChannelConnectionsReducer,
     accounts: persistedAccountsReducer,

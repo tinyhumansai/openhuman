@@ -23,6 +23,8 @@ struct MemorySettingsUpdate {
     embedding_provider: Option<String>,
     embedding_model: Option<String>,
     embedding_dimensions: Option<usize>,
+    /// One of `"minimal" | "balanced" | "extended" | "maximum"`.
+    memory_window: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -293,6 +295,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Embedding dimensions.",
                     required: false,
                 },
+                optional_string(
+                    "memory_window",
+                    "Stepped long-term memory window preset: minimal | balanced | extended | maximum.",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
@@ -622,6 +628,7 @@ fn handle_update_memory_settings(params: Map<String, Value>) -> ControllerFuture
             embedding_provider: update.embedding_provider,
             embedding_model: update.embedding_model,
             embedding_dimensions: update.embedding_dimensions,
+            memory_window: update.memory_window,
         };
         to_json(config_rpc::load_and_apply_memory_settings(patch).await?)
     })

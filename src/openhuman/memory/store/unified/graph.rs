@@ -1,3 +1,9 @@
+//! Knowledge-graph relations stored in `graph_namespace` and `graph_global`.
+//!
+//! Provides upsert (with attribute merging + evidence accumulation), namespace
+//! / global / cross-namespace queries, and the document-scoped removal used
+//! when a source document is deleted or re-ingested.
+
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Map, Value};
 
@@ -94,6 +100,7 @@ impl UnifiedMemory {
         Ok(())
     }
 
+    /// Upsert a relation into the cross-namespace `graph_global` table.
     pub async fn graph_upsert_global(
         &self,
         subject: &str,
@@ -105,6 +112,9 @@ impl UnifiedMemory {
             .await
     }
 
+    /// Upsert a relation into the namespace-scoped `graph_namespace` table,
+    /// merging attributes (evidence count, document/chunk ids) with any
+    /// existing edge.
     pub async fn graph_upsert_namespace(
         &self,
         namespace: &str,
@@ -117,6 +127,7 @@ impl UnifiedMemory {
             .await
     }
 
+    /// Query relations in the global graph with optional subject/predicate filters.
     pub async fn graph_query_global(
         &self,
         subject: Option<&str>,
@@ -153,6 +164,7 @@ impl UnifiedMemory {
             .collect::<Vec<_>>())
     }
 
+    /// Query relations within a single namespace with optional subject/predicate filters.
     pub async fn graph_query_namespace(
         &self,
         namespace: &str,

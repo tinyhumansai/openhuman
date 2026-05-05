@@ -46,6 +46,8 @@ impl IngestResult {
     }
 }
 
+/// Ingest a batch of chat messages: canonicalise → chunk → fast-score → persist
+/// → enqueue async extract jobs. Returns a noop [`IngestResult`] on an empty batch.
 pub async fn ingest_chat(
     config: &Config,
     source_id: &str,
@@ -61,6 +63,8 @@ pub async fn ingest_chat(
     persist(config, source_id, canonical).await
 }
 
+/// Ingest an email thread: canonicalise → chunk → fast-score → persist → enqueue
+/// async extract jobs. Returns a noop [`IngestResult`] on an empty thread.
 pub async fn ingest_email(
     config: &Config,
     source_id: &str,
@@ -76,6 +80,8 @@ pub async fn ingest_email(
     persist(config, source_id, canonical).await
 }
 
+/// Ingest a single document: canonicalise → chunk → fast-score → persist →
+/// enqueue async extract jobs. Returns a noop [`IngestResult`] on empty input.
 pub async fn ingest_document(
     config: &Config,
     source_id: &str,

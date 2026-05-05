@@ -96,7 +96,12 @@ pub fn summary_rel_path(
 /// Illegal characters: `\`, `/`, `:`, `*`, `?`, `"`, `<`, `>`, `|`.
 /// (Forward slash is not replaced since `summary_id` should not contain path
 /// separators, but we sanitize it anyway for safety.)
-fn sanitize_filename(s: &str) -> String {
+///
+/// Exposed at crate scope so [`super::compose`] can convert structured IDs
+/// like `summary:L1:UUID` into the basename used by [`summary_rel_path`]
+/// (`summary-L1-UUID`) when emitting Obsidian wikilinks. This keeps a single
+/// source of truth for the id→filename mapping.
+pub(crate) fn sanitize_filename(s: &str) -> String {
     s.chars()
         .map(|c| match c {
             '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
