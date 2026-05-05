@@ -14,6 +14,14 @@ export interface YellowMascotProps {
   arm?: 'wave' | 'none';
   /** Override SVG element size; defaults to filling the parent. */
   size?: number | string;
+  /** Center opacity of the ground shadow gradient. Defaults to 0.35; bump
+   *  up when the mascot is rendered very small (floating mascot window) so
+   *  the shadow stays readable. */
+  groundShadowOpacity?: number;
+  /** Replace the warm yellow/amber arm inner-shadow tints with darker
+   *  neutrals — for very small renders where the warm tint reads as a
+   *  bright halo instead of a shadow. */
+  compactArmShading?: boolean;
 }
 
 const FPS = 30;
@@ -67,8 +75,20 @@ export const YellowMascot: FC<YellowMascotProps> = ({
   face = 'idle',
   arm = 'none',
   size = '100%',
+  groundShadowOpacity,
+  compactArmShading,
 }) => {
-  const { component, inputProps } = useMemo(() => variantForFace(face, arm), [face, arm]);
+  const { component, inputProps } = useMemo(() => {
+    const variant = variantForFace(face, arm);
+    return {
+      component: variant.component,
+      inputProps: {
+        ...variant.inputProps,
+        ...(groundShadowOpacity !== undefined && { groundShadowOpacity }),
+        ...(compactArmShading !== undefined && { compactArmShading }),
+      },
+    };
+  }, [face, arm, groundShadowOpacity, compactArmShading]);
   const playerRef = useRef<PlayerRef>(null);
 
   // Player's `autoPlay` prop is unreliable across browsers / strict-mode mounts

@@ -38,9 +38,9 @@ use tauri::AppHandle;
 use crate::AppRuntime;
 
 /// Logical width / height of the mascot panel. The `<YellowMascot>` SVG
-/// canvas is square so we keep the host square too. 25% smaller than the
-/// original 140pt so it sits unobtrusively in the corner.
-const PANEL_SIZE: f64 = 105.0;
+/// canvas is square so we keep the host square too. Down to ~79pt
+/// (140 → 105 → 79) so it sits unobtrusively in the corner.
+const PANEL_SIZE: f64 = 79.0;
 /// Distance from the bottom-right monitor corner on first show.
 const PANEL_MARGIN: f64 = 0.0;
 /// How often we poll the cursor position to detect hover over the mascot.

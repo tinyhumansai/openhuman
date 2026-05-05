@@ -37,7 +37,20 @@ type ThinkingTiming = {
   thinkOutEndSec?: number;
 };
 
-export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & ThinkingTiming> = ({
+export const MascotCharacter: React.FC<
+  MascotProps & {
+    idPrefix?: string;
+    /** Center opacity of the ground shadow gradient. Defaults to 0.35;
+     *  bump up (e.g. 0.75) when the mascot is rendered very small (e.g.
+     *  the floating mascot window) so the shadow stays readable. */
+    groundShadowOpacity?: number;
+    /** When true, replaces the warm yellow/amber arm inner-shadow tints
+     *  with darker neutrals so the under-arm shading reads as a real
+     *  shadow at very small render sizes (instead of looking like a
+     *  bright halo). */
+    compactArmShading?: boolean;
+  } & ThinkingTiming
+> = ({
   arm = 'wave',
   face = 'normal',
   talking = false,
@@ -47,11 +60,28 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
   recordingColor = '#ff3b30',
   loadingColor = '#ffffff',
   idPrefix = 'mascot',
+  groundShadowOpacity = 0.35,
+  compactArmShading = false,
   thinkInStartSec = 1.0,
   thinkInEndSec = 2.0,
   thinkOutStartSec,
   thinkOutEndSec,
 }) => {
+  // Arm-shadow color matrices. Default is the warm yellow→amber pair
+  // that matches the mascot's hand-painted look at full size; in
+  // compact mode (small render) we kill the yellow highlight and turn
+  // the amber shadow into a true black so the under-arm reads as a
+  // single dark mass instead of a noisy halo at low pixel counts.
+  const armHighlightMatrix = compactArmShading
+    ? '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+    : '0 0 0 0 0.973501 0 0 0 0 0.909066 0 0 0 0 0.671677 0 0 0 1 0';
+  const rightArmShadowMatrix = compactArmShading
+    ? '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0'
+    : '0 0 0 0 0.796078 0 0 0 0 0.576471 0 0 0 0 0.0980392 0 0 0 1 0';
+  const leftArmShadowMatrix = compactArmShading
+    ? '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0'
+    : '0 0 0 0 0.796078 0 0 0 0 0.576471 0 0 0 0 0.0980392 0 0 0 0.8 0';
+
   const frame = useCurrentFrame();
   const { fps, width, height, durationInFrames } = useVideoConfig();
 
@@ -261,9 +291,17 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
       <svg width={size} height={size} viewBox="0 0 1000 1000" style={{ overflow: 'visible' }}>
         <defs>
-          {/* Ground shadow gradient */}
+          {/* Ground shadow gradient. Center opacity is configurable via
+              `groundShadowOpacity` so callers rendering the mascot at a
+              very small size (e.g. the floating mascot window) can darken
+              the shadow without affecting the full-size views. */}
           <radialGradient id={p('ground')} cx="0.5" cy="0.5" r="0.5">
-            <stop offset="0%" stopColor="#000000" stopOpacity="0.35" />
+            <stop offset="0%" stopColor="#000000" stopOpacity={groundShadowOpacity} />
+            <stop
+              offset="60%"
+              stopColor="#000000"
+              stopOpacity={Math.max(0, groundShadowOpacity * 0.45)}
+            />
             <stop offset="100%" stopColor="#000000" stopOpacity="0" />
           </radialGradient>
 
@@ -420,10 +458,7 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
             <feOffset dx="-11" dy="28" />
             <feGaussianBlur stdDeviation="11" />
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
-            <feColorMatrix
-              type="matrix"
-              values="0 0 0 0 0.973501 0 0 0 0 0.909066 0 0 0 0 0.671677 0 0 0 1 0"
-            />
+            <feColorMatrix type="matrix" values={armHighlightMatrix} />
             <feBlend mode="normal" in2="shape" result="effect1_innerShadow" />
             <feColorMatrix
               in="SourceAlpha"
@@ -434,10 +469,7 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
             <feOffset dx="-8" dy="1" />
             <feGaussianBlur stdDeviation="4.25" />
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
-            <feColorMatrix
-              type="matrix"
-              values="0 0 0 0 0.796078 0 0 0 0 0.576471 0 0 0 0 0.0980392 0 0 0 1 0"
-            />
+            <feColorMatrix type="matrix" values={rightArmShadowMatrix} />
             <feBlend mode="normal" in2="effect1_innerShadow" result="effect2_innerShadow" />
             <feTurbulence type="fractalNoise" baseFrequency="0.999" numOctaves={3} seed={8703} />
             <feDisplacementMap
@@ -474,10 +506,7 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
             <feOffset dx="1" dy="-20" />
             <feGaussianBlur stdDeviation="7.55" />
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
-            <feColorMatrix
-              type="matrix"
-              values="0 0 0 0 0.973501 0 0 0 0 0.909066 0 0 0 0 0.671677 0 0 0 1 0"
-            />
+            <feColorMatrix type="matrix" values={armHighlightMatrix} />
             <feBlend mode="normal" in2="shape" result="effect1_innerShadow" />
             <feColorMatrix
               in="SourceAlpha"
@@ -488,10 +517,7 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
             <feOffset dx="3" dy="-8" />
             <feGaussianBlur stdDeviation="3.55" />
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
-            <feColorMatrix
-              type="matrix"
-              values="0 0 0 0 0.796078 0 0 0 0 0.576471 0 0 0 0 0.0980392 0 0 0 0.8 0"
-            />
+            <feColorMatrix type="matrix" values={leftArmShadowMatrix} />
             <feBlend mode="normal" in2="effect1_innerShadow" result="effect2_innerShadow" />
             <feTurbulence type="fractalNoise" baseFrequency="0.999" numOctaves={3} seed={8703} />
             <feDisplacementMap

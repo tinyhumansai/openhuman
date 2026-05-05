@@ -18,7 +18,7 @@ const MascotWindowApp = () => {
     <div
       style={{ position: 'fixed', inset: 0, background: 'transparent' }}
       data-face={DEFAULT_FACE}>
-      <YellowMascot face={DEFAULT_FACE} />
+      <YellowMascot face={DEFAULT_FACE} groundShadowOpacity={0.75} compactArmShading />
     </div>
   );
 };
