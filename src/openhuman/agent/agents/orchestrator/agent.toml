@@ -83,6 +83,7 @@ named = [
     "read_workspace_state",
     "ask_user_clarification",
     "spawn_subagent",
+    "spawn_worker_thread",
     "composio_list_connections",
     # Time + scheduling — lets the orchestrator answer "what time is it",
     # "remind me in 10 minutes", "every morning at 8" directly rather than

@@ -29,7 +29,7 @@ use crate::openhuman::agent::harness::definition::{
 };
 use crate::openhuman::context::prompt::ConnectedIntegration;
 
-use super::{ArchetypeDelegationTool, SkillDelegationTool, Tool};
+use super::{ArchetypeDelegationTool, SkillDelegationTool, SpawnWorkerThreadTool, Tool};
 
 /// Synthesise the delegation tool list for an agent based on its
 /// declarative `subagents` field.
@@ -64,6 +64,11 @@ pub fn collect_orchestrator_tools(
     connected_integrations: &[ConnectedIntegration],
 ) -> Vec<Box<dyn Tool>> {
     let mut tools: Vec<Box<dyn Tool>> = Vec::new();
+
+    // Orchestrator-only tool: spawn_worker_thread.
+    if definition.id == "orchestrator" {
+        tools.push(Box::new(SpawnWorkerThreadTool::new()));
+    }
 
     for entry in &definition.subagents {
         match entry {

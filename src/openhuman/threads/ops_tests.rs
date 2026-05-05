@@ -288,6 +288,7 @@ fn sample_thread() -> ConversationThread {
         message_count: 5,
         last_message_at: "2026-01-01T00:00:00Z".into(),
         created_at: "2026-01-01T00:00:00Z".into(),
+        parent_thread_id: None,
         labels: vec!["work".to_string()],
     }
 }

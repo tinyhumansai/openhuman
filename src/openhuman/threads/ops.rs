@@ -78,6 +78,7 @@ fn thread_to_summary(thread: ConversationThread) -> ConversationThreadSummary {
         message_count: thread.message_count,
         last_message_at: thread.last_message_at,
         created_at: thread.created_at,
+        parent_thread_id: thread.parent_thread_id,
         labels: thread.labels,
     }
 }
@@ -132,6 +133,7 @@ pub async fn thread_upsert(
             id: request.id,
             title: request.title,
             created_at: request.created_at,
+            parent_thread_id: request.parent_thread_id,
             labels: request.labels,
         },
     )?;
@@ -157,6 +159,7 @@ pub async fn thread_create_new(
             id,
             title,
             created_at,
+            parent_thread_id: None,
             // Pass labels through as-is; the store's infer_labels() applies
             // the same default on index rebuild, so this is the single source
             // of truth for default labels.
