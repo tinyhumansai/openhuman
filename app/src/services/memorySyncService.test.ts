@@ -43,4 +43,14 @@ describe('memorySyncService.memorySyncStatusList', () => {
     mockCallCoreRpc.mockRejectedValueOnce(new Error('rpc boom'));
     await expect(memorySyncStatusList()).rejects.toThrow('rpc boom');
   });
+
+  it('throws on malformed response (missing statuses[])', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ wrong: 'shape' });
+    await expect(memorySyncStatusList()).rejects.toThrow(/missing statuses/);
+  });
+
+  it('throws on null response', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce(null);
+    await expect(memorySyncStatusList()).rejects.toThrow(/missing statuses/);
+  });
 });

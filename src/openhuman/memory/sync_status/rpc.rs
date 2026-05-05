@@ -114,10 +114,7 @@ pub async fn handle_status_list(_params: Map<String, Value>) -> Result<Value, St
                     freshness: FreshnessLabel::from_age_ms(last_chunk_at_ms, now_ms),
                 })
             })?;
-            let mut out = Vec::new();
-            for row in iter {
-                out.push(row?);
-            }
+            let out = iter.collect::<Result<Vec<_>, _>>()?;
             Ok(out)
         })
     })

@@ -56,7 +56,7 @@ function freshnessBadgeClass(label: FreshnessLabel): string {
 function relativeTimestamp(epochMs: number | null): string | null {
   if (epochMs === null) return null;
   const delta = Date.now() - epochMs;
-  if (delta < 0) return 'just now';
+  if (delta < 1000) return 'just now';
   const seconds = Math.floor(delta / 1000);
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);

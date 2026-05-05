@@ -7,7 +7,12 @@
  * from the most recent chunk's timestamp — no settings, no phases, no
  * persisted KV store. The chunks table is the source of truth.
  */
+import debug from 'debug';
+
 import { callCoreRpc } from './coreRpcClient';
+
+const log = debug('memory-sync');
+const errLog = debug('memory-sync:error');
 
 /** Activity freshness derived at the server from the most-recent chunk. */
 export type FreshnessLabel = 'active' | 'recent' | 'idle';
@@ -43,8 +48,22 @@ interface StatusListResponse {
 
 /** List one row per source_kind that has chunks. Ordered server-side by recency. */
 export async function memorySyncStatusList(): Promise<MemorySyncStatus[]> {
-  const resp = await callCoreRpc<StatusListResponse>({
-    method: 'openhuman.memory_sync_status_list',
-  });
+  log('memory_sync_status_list: calling core RPC');
+  let resp: StatusListResponse;
+  try {
+    resp = await callCoreRpc<StatusListResponse>({
+      method: 'openhuman.memory_sync_status_list',
+    });
+  } catch (err) {
+    errLog('memory_sync_status_list: RPC failed: %O', err);
+    throw err;
+  }
+  if (!resp || !Array.isArray(resp.statuses)) {
+    errLog('memory_sync_status_list: malformed response (missing statuses[]): %O', resp);
+    throw new Error(
+      'Invalid response from openhuman.memory_sync_status_list: missing statuses[]',
+    );
+  }
+  log('memory_sync_status_list: received %d row(s)', resp.statuses.length);
   return resp.statuses;
 }
