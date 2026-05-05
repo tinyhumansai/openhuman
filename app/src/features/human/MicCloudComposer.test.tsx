@@ -47,8 +47,16 @@ const fakeStream = { getTracks: () => [{ stop: vi.fn() }] } as unknown as MediaS
 describe('MicCloudComposer', () => {
   let recorder: FakeRecorder;
   let getUserMediaMock: ReturnType<typeof vi.fn>;
+  // Snapshot the descriptor so afterEach can restore it — without this, the
+  // first test that overrides `navigator.mediaDevices` leaks the override
+  // into siblings and makes the suite order-dependent.
+  let originalMediaDevicesDescriptor: PropertyDescriptor | undefined;
 
   beforeEach(() => {
+    originalMediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis.navigator,
+      'mediaDevices'
+    );
     transcribeCloudMock.mockReset();
     encodeBlobToWavMock.mockReset();
     recorder = makeFakeRecorder('audio/webm;codecs=opus');
@@ -76,6 +84,15 @@ describe('MicCloudComposer', () => {
   });
 
   afterEach(() => {
+    if (originalMediaDevicesDescriptor) {
+      Object.defineProperty(
+        globalThis.navigator,
+        'mediaDevices',
+        originalMediaDevicesDescriptor
+      );
+    } else {
+      delete (globalThis.navigator as { mediaDevices?: MediaDevices }).mediaDevices;
+    }
     vi.unstubAllGlobals();
   });
 
