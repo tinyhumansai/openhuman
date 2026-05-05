@@ -1697,45 +1697,107 @@ pub fn run() {
     // operation every CEF helper (GPU / Network / Utility / Renderer) is
     // gone by now. If anything is still alive — e.g. a renderer that was
     // mid-spawn when the user quit — it would otherwise be re-parented to
-    // launchd on macOS / init on Linux and survive the GUI exit. SIGTERM
-    // its children before this process actually exits.
+    // launchd on macOS / init on Linux and survive the GUI exit. Sweep its
+    // children before this process actually exits.
     //
     // We don't `wait()` on them: the kernel will reap them as our exit
-    // unwinds, and any helper that ignores SIGTERM is a CEF bug we'd
-    // rather see in Activity Monitor than silently SIGKILL.
+    // unwinds. Give stubborn helpers a short grace period, then force-kill
+    // anything still parented to us so the GUI exit leaves no background
+    // processes behind.
     sweep_orphan_children();
 }
 
-/// Send SIGTERM to every direct child of the current process. No-op on
-/// non-Unix platforms (Windows job objects already kill CEF helpers when
-/// the parent exits).
+/// Send SIGTERM, then SIGKILL holdouts, to every direct child of the
+/// current process. No-op on non-Unix platforms (Windows job objects already
+/// kill CEF helpers when the parent exits).
 fn sweep_orphan_children() {
     #[cfg(unix)]
     {
-        let pid = std::process::id();
-        match std::process::Command::new("pkill")
-            .args(["-TERM", "-P", &pid.to_string()])
-            .status()
-        {
-            Ok(status) => {
-                // pkill exits 0 if it killed at least one process, 1 if no
-                // matches (the healthy case after cef::shutdown), 2/3 on
-                // error. Both 0 and 1 are expected; log 0 loudly so we
-                // notice when the safety net actually catches something.
-                match status.code() {
-                    Some(0) => log::warn!(
-                        "[app] sweep: SIGTERM'd leftover child processes after cef::shutdown"
-                    ),
-                    Some(1) => log::info!("[app] sweep: no leftover children (clean exit)"),
-                    other => log::warn!("[app] sweep: pkill exited with {:?}", other),
-                }
-            }
-            Err(e) => log::warn!("[app] sweep: failed to invoke pkill: {e}"),
-        }
+        sweep_orphan_children_unix(std::process::id());
     }
     #[cfg(not(unix))]
     {
         log::debug!("[app] sweep: skipped on non-unix platform");
+    }
+}
+
+#[cfg(unix)]
+fn sweep_orphan_children_unix(parent_pid: u32) {
+    let term_count = match direct_child_pids(parent_pid) {
+        Ok(pids) => pids.len(),
+        Err(err) => {
+            log::warn!("[app] sweep: failed to enumerate children before SIGTERM: {err}");
+            0
+        }
+    };
+
+    if term_count > 0 {
+        match pkill_children(parent_pid, "TERM") {
+            Ok(status) => log_unexpected_pkill_status("SIGTERM", status),
+            Err(err) => log::warn!("[app] sweep: failed to invoke pkill SIGTERM: {err}"),
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    let kill_count = match direct_child_pids(parent_pid) {
+        Ok(pids) => pids.len(),
+        Err(err) => {
+            log::warn!("[app] sweep: failed to enumerate children after SIGTERM: {err}");
+            0
+        }
+    };
+
+    if kill_count > 0 {
+        match pkill_children(parent_pid, "KILL") {
+            Ok(status) => log_unexpected_pkill_status("SIGKILL", status),
+            Err(err) => log::warn!("[app] sweep: failed to invoke pkill SIGKILL: {err}"),
+        }
+        log::warn!("[app] sweep: term={term_count} kill={kill_count} total={term_count}");
+    } else {
+        log::info!("[app] sweep: term={term_count} kill=0 total={term_count}");
+    }
+}
+
+#[cfg(unix)]
+fn direct_child_pids(parent_pid: u32) -> Result<Vec<u32>, String> {
+    let output = std::process::Command::new("pgrep")
+        .args(["-P", &parent_pid.to_string()])
+        .output()
+        .map_err(|err| format!("spawn pgrep: {err}"))?;
+
+    match output.status.code() {
+        Some(0) => Ok(parse_pgrep_pids(&String::from_utf8_lossy(&output.stdout))),
+        Some(1) => Ok(Vec::new()),
+        other => Err(format!("pgrep exited with {other:?}")),
+    }
+}
+
+#[cfg(unix)]
+fn parse_pgrep_pids(stdout: &str) -> Vec<u32> {
+    stdout
+        .lines()
+        .filter_map(|line| line.trim().parse().ok())
+        .collect()
+}
+
+#[cfg(unix)]
+fn pkill_children(parent_pid: u32, signal: &str) -> Result<std::process::ExitStatus, String> {
+    let signal_arg = format!("-{signal}");
+    let parent_pid = parent_pid.to_string();
+    std::process::Command::new("pkill")
+        .args([signal_arg.as_str(), "-P", parent_pid.as_str()])
+        .status()
+        .map_err(|err| format!("spawn pkill -{signal}: {err}"))
+}
+
+#[cfg(unix)]
+fn log_unexpected_pkill_status(signal_name: &str, status: std::process::ExitStatus) {
+    // pkill exits 0 if it signaled at least one process, 1 if no process
+    // matched. Both are valid because children can exit between pgrep and
+    // pkill; other statuses are real command failures.
+    match status.code() {
+        Some(0) | Some(1) => {}
+        other => log::warn!("[app] sweep: pkill {signal_name} exited with {other:?}"),
     }
 }
 
