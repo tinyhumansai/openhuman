@@ -1,5 +1,5 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { describe, expect, test } from 'vitest';
 
 import { CORE_RPC_METHODS, LEGACY_METHOD_ALIASES, normalizeRpcMethod } from '../rpcMethods';
@@ -24,9 +24,25 @@ describe('rpcMethods catalog', () => {
   });
 
   test('catalog canonical methods exist in core schema registry (drift guard)', () => {
-    const coreAll = fs.readFileSync(path.resolve(__dirname, '../../../../src/core/all.rs'), 'utf8');
+    const schemaSources = [
+      fs.readFileSync(
+        path.resolve(__dirname, '../../../../src/openhuman/config/schemas.rs'),
+        'utf8'
+      ),
+      fs.readFileSync(
+        path.resolve(__dirname, '../../../../src/openhuman/screen_intelligence/schemas.rs'),
+        'utf8'
+      ),
+    ].join('\n');
+
     for (const method of Object.values(CORE_RPC_METHODS)) {
-      expect(coreAll).toContain(method);
+      const methodRoot = method.slice('openhuman.'.length);
+      const namespace = methodRoot.startsWith('screen_intelligence_')
+        ? 'screen_intelligence'
+        : 'config';
+      const fnName = methodRoot.slice(`${namespace}_`.length);
+      expect(schemaSources).toContain(`namespace: "${namespace}"`);
+      expect(schemaSources).toContain(`function: "${fnName}"`);
     }
   });
 });
