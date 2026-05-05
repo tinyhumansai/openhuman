@@ -283,6 +283,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "spawn_worker_thread",   // orchestrator-only, prepended in collect_orchestrator_tools
                 "research",              // researcher's delegate_name override
                 "delegate_archivist",    // archivist has no delegate_name → default
                 "delegate_gmail",
@@ -313,7 +314,10 @@ mod tests {
         let reg = registry_with_targets();
         let tools = collect_orchestrator_tools(&orch, &reg, &[]);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-        assert_eq!(names, vec!["research", "delegate_archivist"]);
+        assert_eq!(
+            names,
+            vec!["spawn_worker_thread", "research", "delegate_archivist"]
+        );
     }
 
     /// An AgentId entry that points at an id not present in the registry
@@ -329,7 +333,7 @@ mod tests {
         let reg = registry_with_targets();
         let tools = collect_orchestrator_tools(&orch, &reg, &[]);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-        assert_eq!(names, vec!["research"]);
+        assert_eq!(names, vec!["spawn_worker_thread", "research"]);
     }
 
     /// An empty `subagents` list should produce zero tools — regular
