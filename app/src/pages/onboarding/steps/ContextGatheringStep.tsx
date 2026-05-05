@@ -161,34 +161,6 @@ const ContextGatheringStep = ({
     stageStatusesRef.current = { ...stageStatusesRef.current, [id]: status };
   };
 
-  // Auto-start pipeline on mount
-  useEffect(() => {
-    if (ranRef.current) return;
-    ranRef.current = true;
-
-    if (!hasGmail) {
-      for (const s of STAGES) setStage(s.id, 'skipped');
-      setFinished(true);
-      return;
-    }
-
-    void runPipeline();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Auto-navigate on successful completion
-  useEffect(() => {
-    if (finished && !hasError) {
-      const t = setTimeout(() => {
-        void Promise.resolve(onNext()).catch(e => {
-          console.warn('[onboarding:context] auto-advance failed', e);
-          setHasError(true);
-        });
-      }, 800);
-      return () => clearTimeout(t);
-    }
-  }, [finished, hasError, onNext]);
-
   async function runPipeline() {
     console.debug('[onboarding:context] runPipeline started');
 
@@ -244,6 +216,34 @@ const ContextGatheringStep = ({
 
     setFinished(true);
   }
+
+  // Auto-start pipeline on mount
+  useEffect(() => {
+    if (ranRef.current) return;
+    ranRef.current = true;
+
+    if (!hasGmail) {
+      for (const s of STAGES) setStage(s.id, 'skipped');
+      setFinished(true);
+      return;
+    }
+
+    void runPipeline();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-navigate on successful completion
+  useEffect(() => {
+    if (finished && !hasError) {
+      const t = setTimeout(() => {
+        void Promise.resolve(onNext()).catch(e => {
+          console.warn('[onboarding:context] auto-advance failed', e);
+          setHasError(true);
+        });
+      }, 800);
+      return () => clearTimeout(t);
+    }
+  }, [finished, hasError, onNext]);
 
   if (finished && hasError) {
     return (
