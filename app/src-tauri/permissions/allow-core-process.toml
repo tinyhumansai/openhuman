@@ -40,6 +40,16 @@ allow = [
     "screen_share_begin_session",
     "screen_share_thumbnail",
     "screen_share_finalize_session",
+    # Native notification surface (see src/native_notifications/). The
+    # frontend bridge in app/src/lib/nativeNotifications/tauriBridge.ts
+    # calls these directly instead of routing through the bundled
+    # tauri-plugin-notification (whose desktop permission_state is
+    # hardcoded to Granted, see #1152). Without these allow entries the
+    # invokes return "Command not found" and the UI falsely reports the
+    # OS as denied.
+    "notification_permission_state",
+    "notification_permission_request",
+    "show_native_notification",
     # Gmail-CDP surface (see app/src-tauri/src/gmail/). Drives the
     # logged-in Gmail webview through DOMSnapshot + Input events. Used
     # by onboarding's LinkedIn-enrichment pipeline today and by future
