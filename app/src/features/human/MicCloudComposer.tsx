@@ -200,7 +200,7 @@ export function MicCloudComposer({
    * re-encoded WAV so we don't regress correctness for the speed win.
    */
   async function transcribeWithFallback(blob: Blob): Promise<string> {
-    const startedAt = performance.now();
+    const startedAt = Date.now();
     const opts = language ? { language } : undefined;
     try {
       composerLog(
@@ -210,22 +210,22 @@ export function MicCloudComposer({
         language || 'auto'
       );
       const text = await transcribeCloud(blob, opts);
-      composerLog('transcribe ok attempt=native ms=%d', Math.round(performance.now() - startedAt));
+      composerLog('transcribe ok attempt=native ms=%d', Math.round(Date.now() - startedAt));
       return text;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       composerLog('transcribe failed attempt=native — falling back to wav: %s', msg);
-      const reEncodeStart = performance.now();
+      const reEncodeStart = Date.now();
       const wav = await encodeBlobToWav(blob);
       composerLog(
         'wav fallback bytes=%d encode_ms=%d',
         wav.size,
-        Math.round(performance.now() - reEncodeStart)
+        Math.round(Date.now() - reEncodeStart)
       );
       const text = await transcribeCloud(wav, opts);
       composerLog(
         'transcribe ok attempt=wav-fallback total_ms=%d',
-        Math.round(performance.now() - startedAt)
+        Math.round(Date.now() - startedAt)
       );
       return text;
     }
