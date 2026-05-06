@@ -137,8 +137,8 @@ describe('LocalModelPanel — usage flags', () => {
 
     // The four sub-flag inputs should be disabled while runtime is off
     const checkboxes = screen.getAllByRole('checkbox');
-    const masterIdx = checkboxes.findIndex(
-      cb => cb.closest('label')?.textContent?.includes('Enable local AI runtime')
+    const masterIdx = checkboxes.findIndex(cb =>
+      cb.closest('label')?.textContent?.includes('Enable local AI runtime')
     );
     expect(masterIdx).toBeGreaterThanOrEqual(0);
     const subFlags = checkboxes.filter((_, i) => i !== masterIdx);
