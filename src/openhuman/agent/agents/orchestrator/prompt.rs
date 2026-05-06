@@ -75,21 +75,14 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
         return String::new();
     }
     let mut out = String::from(
-        "## Delegation Guide — Integrations\n\n\
-         For any task that touches one of these external services, \
-         delegate to `integrations_agent` with the matching `toolkit` \
-         argument. The sub-agent receives the full action catalogue \
-         for that integration as native tool schemas — do not attempt \
-         to call integration actions directly from this agent.\n\n\
-         Only the integrations listed below are currently authorised. \
-         If the user asks about another service, tell them to connect \
-         it in **Skills** page before retrying.\n\n",
+        "## Connected Integrations\n\n\
+         Delegate tasks for these services using the matching `delegate_{toolkit}` tool:\n\n",
     );
     for ci in connected {
         let _ = writeln!(
             out,
-            "- **{}** — {}\n  Delegate with: `spawn_subagent(agent_id=\"integrations_agent\", toolkit=\"{}\", prompt=<task>)`",
-            ci.toolkit, ci.description, ci.toolkit,
+            "- **{}** (delegate via `delegate_{}`): {}",
+            ci.toolkit, ci.toolkit, ci.description
         );
     }
     out
@@ -127,7 +120,7 @@ mod tests {
     fn build_returns_nonempty_body() {
         let body = build(&ctx_with(&[])).unwrap();
         assert!(!body.is_empty());
-        assert!(!body.contains("## Delegation Guide"));
+        assert!(!body.contains("## Connected Integrations"));
     }
 
     #[test]
@@ -154,12 +147,27 @@ mod tests {
             connected: true,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
-        assert!(body.contains("## Delegation Guide — Integrations"));
-        assert!(body.contains(
-            "spawn_subagent(agent_id=\"integrations_agent\", toolkit=\"gmail\", prompt=<task>)"
-        ));
+        assert!(body.contains("## Connected Integrations"));
+        assert!(body.contains("delegate_gmail"));
+        // Must NOT contain the old verbose spawn_subagent snippet.
+        assert!(!body.contains("spawn_subagent(agent_id=\"integrations_agent\""));
         // Delegator voice must NOT use the skill-executor wording.
         assert!(!body.contains("You have direct access"));
+    }
+
+    #[test]
+    fn delegation_guide_uses_compact_delegate_format() {
+        let integrations = vec![ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email access.".into(),
+            tools: Vec::new(),
+            connected: true,
+        }];
+        let body = build(&ctx_with(&integrations)).unwrap();
+        assert!(body.contains("## Connected Integrations"));
+        assert!(body.contains("delegate_gmail"));
+        // Must NOT contain the old verbose spawn_subagent snippet.
+        assert!(!body.contains("spawn_subagent(agent_id=\"integrations_agent\""));
     }
 
     #[test]
@@ -196,6 +204,6 @@ mod tests {
             connected: false,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
-        assert!(!body.contains("## Delegation Guide"));
+        assert!(!body.contains("## Connected Integrations"));
     }
 }

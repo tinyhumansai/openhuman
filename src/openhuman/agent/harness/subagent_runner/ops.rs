@@ -99,10 +99,24 @@ pub async fn run_subagent(
     // want to gate on it (e.g. `composio_execute` rejecting
     // Write/Admin slugs under `ReadOnly`) read it via
     // `current_sandbox_mode()`; tools that don't care just ignore it.
-    let outcome = with_current_sandbox_mode(definition.sandbox_mode, async {
+    let mut outcome = with_current_sandbox_mode(definition.sandbox_mode, async {
         run_typed_mode(definition, task_prompt, &options, &parent, &task_id).await
     })
     .await?;
+
+    // Truncate result to the definition's cap if set.
+    if let Some(cap) = definition.max_result_chars {
+        if outcome.output.len() > cap {
+            tracing::debug!(
+                agent_id = %definition.id,
+                original_chars = outcome.output.len(),
+                cap,
+                "[subagent_runner] truncating oversized result to max_result_chars cap"
+            );
+            outcome.output.truncate(cap);
+            outcome.output.push_str("\n[...truncated]");
+        }
+    }
 
     tracing::info!(
         agent_id = %definition.id,
@@ -688,7 +702,7 @@ async fn run_typed_mode(
 
     let mut context_parts: Vec<&str> = Vec::new();
     if !definition.omit_memory_context {
-        if let Some(ref mem_ctx) = parent.memory_context {
+        if let Some(ref mem_ctx) = *parent.memory_context {
             context_parts.push(mem_ctx);
         }
     }

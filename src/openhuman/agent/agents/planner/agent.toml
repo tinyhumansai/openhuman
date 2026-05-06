@@ -4,6 +4,7 @@ delegate_name = "plan"
 when_to_use = "Architect — break a complex task into a small DAG of subtasks with explicit acceptance criteria. Reads memory and searches the web to ground plans in real context. Read-only; produces JSON, not code."
 temperature = 0.4
 max_iterations = 8
+max_result_chars = 8000
 sandbox_mode = "read_only"
 omit_identity = true
 omit_memory_context = false

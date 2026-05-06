@@ -148,7 +148,7 @@ async fn test_integrations_agent_has_current_date_context() -> Result<()> {
         memory: Arc::new(StubMemory),
         agent_config: openhuman_core::openhuman::config::AgentConfig::default(),
         skills: Arc::new(vec![]),
-        memory_context: None,
+        memory_context: Arc::new(None),
         session_id: "test-session".into(),
         channel: "test".into(),
         connected_integrations: vec![],

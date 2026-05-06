@@ -384,7 +384,7 @@ mod tests {
             all_tools: Arc::new(vec![]),
             all_tool_specs: Arc::new(vec![]),
             skills: Arc::new(vec![]),
-            memory_context: None,
+            memory_context: std::sync::Arc::new(None),
             connected_integrations: vec![],
             composio_client: None,
             on_progress: None,

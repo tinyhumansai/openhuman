@@ -213,6 +213,7 @@ mod tests {
             skill_filter: None,
             extra_tools: vec![],
             max_iterations: 8,
+            max_result_chars: None,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
             background: false,

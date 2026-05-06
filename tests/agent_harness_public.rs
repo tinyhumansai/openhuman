@@ -130,7 +130,7 @@ fn stub_parent_context() -> ParentExecutionContext {
         memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
         skills: Arc::new(vec![]),
-        memory_context: Some("ctx".into()),
+        memory_context: Arc::new(Some("ctx".into())),
         session_id: "test-session".into(),
         channel: "test-channel".into(),
         connected_integrations: vec![],

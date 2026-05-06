@@ -318,20 +318,14 @@ fn tools_section_pformat_renders_signature_not_schema() {
 }
 
 #[test]
-fn tools_section_uses_pformat_signature_for_every_dispatcher() {
-    // Tool rendering is uniform across dispatchers: always the
+fn tools_section_uses_pformat_signature_for_text_dispatchers() {
+    // Tool rendering is uniform across text dispatchers: always the
     // compact `Call as: name[args]` signature, never a raw JSON
-    // schema dump. Native tool calls still carry the full schema
-    // in the provider request; the `Json` / `PFormat` text
-    // dispatchers supply any extra framing via
-    // `ctx.dispatcher_instructions`.
+    // schema dump. Native tool calls are handled differently — see
+    // `tools_section_empty_for_native` below.
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
     let prompt_tools = PromptTool::from_tools(&tools);
-    for format in [
-        ToolCallFormat::PFormat,
-        ToolCallFormat::Json,
-        ToolCallFormat::Native,
-    ] {
+    for format in [ToolCallFormat::PFormat, ToolCallFormat::Json] {
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "test-model",
@@ -1325,5 +1319,68 @@ fn user_reflections_render_above_user_memory_when_both_present() {
     assert!(
         r_idx < m_idx,
         "reflections must render before user-memory block"
+    );
+}
+
+// ─── ToolsSection native-skip tests ──────────────────────────────────────────
+
+#[test]
+fn tools_section_empty_for_native() {
+    // Native function-calling: the provider sends full JSON schemas in the
+    // API request — repeating them in the system prompt is pure token bloat.
+    // ToolsSection must return an empty string for Native mode.
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+    let prompt_tools = PromptTool::from_tools(&tools);
+    let ctx = PromptContext {
+        workspace_dir: Path::new("/tmp"),
+        model_name: "test-model",
+        agent_id: "",
+        tools: &prompt_tools,
+        skills: &[],
+        dispatcher_instructions: "",
+        learned: LearnedContextData::default(),
+        visible_tool_names: &NO_FILTER,
+        tool_call_format: ToolCallFormat::Native,
+        connected_integrations: &[],
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: false,
+        curated_snapshot: None,
+        user_identity: None,
+    };
+    let out = ToolsSection.build(&ctx).unwrap();
+    assert!(
+        out.is_empty(),
+        "Native mode should produce empty ToolsSection, got: {out:?}"
+    );
+}
+
+#[test]
+fn tools_section_nonempty_for_pformat() {
+    // PFormat is a text-driven format — the model discovers tools by reading
+    // the prose `## Tools` section. It must be non-empty.
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+    let prompt_tools = PromptTool::from_tools(&tools);
+    let ctx = PromptContext {
+        workspace_dir: Path::new("/tmp"),
+        model_name: "test-model",
+        agent_id: "",
+        tools: &prompt_tools,
+        skills: &[],
+        dispatcher_instructions: "",
+        learned: LearnedContextData::default(),
+        visible_tool_names: &NO_FILTER,
+        tool_call_format: ToolCallFormat::PFormat,
+        connected_integrations: &[],
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: false,
+        curated_snapshot: None,
+        user_identity: None,
+    };
+    let out = ToolsSection.build(&ctx).unwrap();
+    assert!(
+        out.contains("## Tools"),
+        "PFormat should render tool catalogue header, got: {out:?}"
     );
 }

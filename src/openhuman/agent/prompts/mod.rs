@@ -395,6 +395,12 @@ impl PromptSection for ToolsSection {
     }
 
     fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        // Native function-calling: the provider already sends full JSON
+        // schemas in the API request — no need to repeat them in the
+        // system prompt. Skip the catalogue to save tokens.
+        if ctx.tool_call_format == ToolCallFormat::Native {
+            return Ok(String::new());
+        }
         let mut out = String::from("## Tools\n\n");
         let has_filter = !ctx.visible_tool_names.is_empty();
         for tool in ctx.tools {
