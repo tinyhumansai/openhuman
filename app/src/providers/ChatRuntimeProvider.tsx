@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { requestUsageRefresh } from '../hooks/usageRefresh';
 import { useRefetchSnapshotOnTurnEnd } from '../hooks/useRefetchSnapshotOnTurnEnd';
 import {
+  type ChatDoneEvent,
   type ChatInferenceStartEvent,
   type ChatIterationStartEvent,
   type ChatSegmentEvent,
@@ -42,6 +43,8 @@ import { formatTimelineEntry, promptFromArgsBuffer } from '../utils/toolTimeline
 
 const logChatRuntime = debug('openhuman:chat-runtime');
 
+type SegmentDelivery = { segments: Map<number, string> };
+
 function rtLog(message: string, fields?: Record<string, string | number | null | undefined>) {
   if (IS_PROD) return;
   if (fields && Object.keys(fields).length > 0) {
@@ -52,6 +55,29 @@ function rtLog(message: string, fields?: Record<string, string | number | null |
   } else {
     logChatRuntime('[chat-runtime] %s', message);
   }
+}
+
+function segmentDeliveryKey(threadId: string, requestId?: string | null): string {
+  return `${threadId}:${requestId ?? 'none'}`;
+}
+
+function hasCompleteSegmentDelivery(
+  event: ChatDoneEvent,
+  delivery: SegmentDelivery | undefined
+): boolean {
+  const expected = event.segment_total ?? 0;
+  if (expected <= 0 || !delivery) return false;
+  if (delivery.segments.size < expected) return false;
+
+  for (let i = 0; i < expected; i += 1) {
+    const segment = delivery.segments.get(i);
+    if (segment === undefined || !event.full_response.includes(segment)) return false;
+  }
+  return true;
+}
+
+function chatDoneExtraMetadata(event: ChatDoneEvent): Record<string, unknown> | undefined {
+  return event.citations?.length ? { citations: event.citations } : undefined;
 }
 
 const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
@@ -67,6 +93,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   );
 
   const seenChatEventsRef = useRef<Map<string, number>>(new Map());
+  const segmentDeliveriesRef = useRef<Map<string, SegmentDelivery>>(new Map());
   const proactiveThreadCreationPromiseRef = useRef<Promise<string | null> | null>(null);
   const proactiveDispatchQueueRef = useRef<Promise<void>>(Promise.resolve());
   const toolTimelineRef = useRef(toolTimelineByThread);
@@ -184,6 +211,24 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     const decorateEntry = (entry: ToolTimelineEntry): ToolTimelineEntry => {
       const formatted = formatTimelineEntry(entry);
       return { ...entry, displayName: formatted.title, detail: formatted.detail };
+    };
+
+    const finishChatDoneTurn = (event: ChatDoneEvent, path: string) => {
+      rtLog('refresh_usage_counter', {
+        thread: event.thread_id,
+        request: event.request_id,
+        reason: 'chat_done',
+      });
+      requestUsageRefresh();
+      rtLog('snapshot_refetch_queued', {
+        thread: event.thread_id,
+        request: event.request_id,
+        reason: 'chat_done',
+        path,
+      });
+      refetchSnapshot();
+      dispatch(endInferenceTurn({ threadId: event.thread_id }));
+      dispatch(setActiveThread(null));
     };
 
     const findPendingDelegationContext = (
@@ -484,9 +529,16 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           !markChatEventSeen(eventKey, { threadId: event.thread_id, requestId: event.request_id })
         )
           return;
+        const content = segmentText(event);
+        const deliveryKey = segmentDeliveryKey(event.thread_id, event.request_id);
+        const delivery = segmentDeliveriesRef.current.get(deliveryKey) ?? {
+          segments: new Map<number, string>(),
+        };
+        delivery.segments.set(event.segment_index, content);
+        segmentDeliveriesRef.current.set(deliveryKey, delivery);
         void dispatch(
           addInferenceResponse({
-            content: segmentText(event),
+            content,
             threadId: event.thread_id,
             extraMetadata: event.citations?.length ? { citations: event.citations } : undefined,
           })
@@ -607,6 +659,11 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           output_tokens: event.total_output_tokens,
         });
 
+        const deliveryKey = segmentDeliveryKey(event.thread_id, event.request_id);
+        const segmentDelivery = segmentDeliveriesRef.current.get(deliveryKey);
+        const completeSegmentDelivery = hasCompleteSegmentDelivery(event, segmentDelivery);
+        segmentDeliveriesRef.current.delete(deliveryKey);
+
         dispatch(
           recordChatTurnUsage({
             inputTokens: event.total_input_tokens,
@@ -630,9 +687,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 addInferenceResponse({
                   content: event.full_response,
                   threadId: event.thread_id,
-                  extraMetadata: event.citations?.length
-                    ? { citations: event.citations }
-                    : undefined,
+                  extraMetadata: chatDoneExtraMetadata(event),
                 })
               ).unwrap();
               void dispatch(
@@ -648,21 +703,42 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 error: error instanceof Error ? error.message : String(error),
               });
             }
-            rtLog('refresh_usage_counter', {
-              thread: event.thread_id,
-              request: event.request_id,
-              reason: 'chat_done',
-            });
-            requestUsageRefresh();
-            rtLog('snapshot_refetch_queued', {
-              thread: event.thread_id,
-              request: event.request_id,
-              reason: 'chat_done',
-              path: 'proactive',
-            });
-            refetchSnapshot();
-            dispatch(endInferenceTurn({ threadId: event.thread_id }));
-            dispatch(setActiveThread(null));
+            finishChatDoneTurn(event, 'proactive');
+          })();
+          return;
+        }
+
+        if (!completeSegmentDelivery && event.full_response.length > 0) {
+          rtLog('chat_done_segment_reconcile', {
+            thread: event.thread_id,
+            request: event.request_id,
+            expected: event.segment_total,
+            received: segmentDelivery?.segments.size ?? 0,
+            full_len: event.full_response.length,
+          });
+          void (async () => {
+            try {
+              await dispatch(
+                addInferenceResponse({
+                  content: event.full_response,
+                  threadId: event.thread_id,
+                  extraMetadata: chatDoneExtraMetadata(event),
+                })
+              ).unwrap();
+              void dispatch(
+                generateThreadTitleIfNeeded({
+                  threadId: event.thread_id,
+                  assistantMessage: event.full_response,
+                })
+              );
+            } catch (error) {
+              rtLog('chat_done_reconcile_append_failed', {
+                thread: event.thread_id,
+                request: event.request_id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+            finishChatDoneTurn(event, 'segment_reconcile');
           })();
           return;
         }
@@ -673,21 +749,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             assistantMessage: event.full_response,
           })
         );
-        rtLog('refresh_usage_counter', {
-          thread: event.thread_id,
-          request: event.request_id,
-          reason: 'chat_done',
-        });
-        requestUsageRefresh();
-        rtLog('snapshot_refetch_queued', {
-          thread: event.thread_id,
-          request: event.request_id,
-          reason: 'chat_done',
-          path: 'ordinary',
-        });
-        refetchSnapshot();
-        dispatch(endInferenceTurn({ threadId: event.thread_id }));
-        dispatch(setActiveThread(null));
+        finishChatDoneTurn(event, 'ordinary');
       },
       onError: event => {
         const eventKey = `error:${event.thread_id}:${event.request_id ?? 'none'}:${event.error_type}:${event.message}`;
@@ -702,6 +764,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           err: event.error_type,
         });
 
+        segmentDeliveriesRef.current.delete(segmentDeliveryKey(event.thread_id, event.request_id));
         dispatch(clearInferenceStatusForThread({ threadId: event.thread_id }));
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
 

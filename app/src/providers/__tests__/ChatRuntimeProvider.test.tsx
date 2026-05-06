@@ -127,7 +127,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(usage.turns).toBe(1);
 
       // Snapshot refetch fired exactly once on the first chat_done — issue #924.
-      expect(mockRefetchSnapshot).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(mockRefetchSnapshot).toHaveBeenCalledTimes(1));
     });
 
     it('processes tool_call for different rounds as distinct events', () => {
@@ -245,6 +245,85 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
   });
 
   describe('mid-turn streaming invariants', () => {
+    it('reconciles missing segment events from chat_done.full_response', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onSegment?.({
+          thread_id: 't-segmented',
+          request_id: 'r-segmented',
+          full_response: 'Part one.',
+          segment_index: 0,
+          segment_total: 2,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-segmented',
+          expect.objectContaining({ content: 'Part one.', sender: 'agent' })
+        )
+      );
+
+      act(() => {
+        listeners.onDone?.({
+          thread_id: 't-segmented',
+          request_id: 'r-segmented',
+          full_response: 'Part one.\n\nPart two.',
+          rounds_used: 1,
+          total_input_tokens: 10,
+          total_output_tokens: 20,
+          segment_total: 2,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-segmented',
+          expect.objectContaining({ content: 'Part one.\n\nPart two.', sender: 'agent' })
+        )
+      );
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not duplicate chat_done.full_response when all segments arrived', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onSegment?.({
+          thread_id: 't-complete',
+          request_id: 'r-complete',
+          full_response: 'Part one.',
+          segment_index: 0,
+          segment_total: 2,
+        });
+        listeners.onSegment?.({
+          thread_id: 't-complete',
+          request_id: 'r-complete',
+          full_response: 'Part two.',
+          segment_index: 1,
+          segment_total: 2,
+        });
+      });
+
+      await waitFor(() => expect(threadApi.appendMessage).toHaveBeenCalledTimes(2));
+
+      act(() => {
+        listeners.onDone?.({
+          thread_id: 't-complete',
+          request_id: 'r-complete',
+          full_response: 'Part one.\n\nPart two.',
+          rounds_used: 1,
+          total_input_tokens: 10,
+          total_output_tokens: 20,
+          segment_total: 2,
+        });
+      });
+
+      await waitFor(() => expect(mockRefetchSnapshot).toHaveBeenCalledTimes(1));
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(2);
+    });
+
     it('accumulates text_delta chunks within the same request_id', () => {
       const listeners = renderProvider();
 
