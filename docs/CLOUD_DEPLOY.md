@@ -10,8 +10,8 @@ separately is useful for:
 
 This guide covers three deploy paths, easiest first:
 
-1. [DigitalOcean App Platform — one-click](#1-digitalocean-app-platform-one-click)
-2. [DigitalOcean App Platform — manual `doctl`](#2-digitalocean-app-platform-manual-doctl)
+1. [DigitalOcean App Platform: one-click](#1-digitalocean-app-platform-one-click)
+2. [DigitalOcean App Platform: manual via doctl](#2-digitalocean-app-platform-manual-via-doctl)
 3. [Any VPS via Docker Compose](#3-any-vps-via-docker-compose)
 
 What gets deployed in every path: a single container running
@@ -46,7 +46,7 @@ restart.
 
 ---
 
-## 1. DigitalOcean App Platform — one-click
+## 1. DigitalOcean App Platform: one-click
 
 Click the button below to create a new App Platform application from this
 repository's [`.do/app.yaml`](../.do/app.yaml):
@@ -74,7 +74,7 @@ opt-in).
 
 ---
 
-## 2. DigitalOcean App Platform — manual `doctl`
+## 2. DigitalOcean App Platform: manual via doctl
 
 If you'd rather not click through the UI:
 
