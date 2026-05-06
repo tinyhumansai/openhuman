@@ -19,10 +19,7 @@ fn redact_url(raw: &str) -> String {
         Ok(u) => {
             let scheme = u.scheme();
             let host = u.host_str().unwrap_or("");
-            let port = u
-                .port()
-                .map(|p| format!(":{p}"))
-                .unwrap_or_default();
+            let port = u.port().map(|p| format!(":{p}")).unwrap_or_default();
             let path = u.path();
             format!("{scheme}://{host}{port}{path}")
         }
