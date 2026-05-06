@@ -149,7 +149,7 @@ fn create_provider(
 ) -> Result<Box<dyn crate::openhuman::providers::traits::Provider>, String> {
     // Tree summarization runs exclusively on local AI to keep memory
     // processing private and offline — no backend calls.
-    if !config.local_ai.enabled {
+    if !config.local_ai.runtime_enabled {
         return Err("tree summarizer requires local_ai to be enabled in config".to_string());
     }
     create_local_ai_provider(config)

@@ -181,7 +181,7 @@ export interface PresetsResponse {
   device: DeviceProfileResult;
   /** When true the device is below the RAM floor and cloud fallback is the recommended default. */
   recommend_disabled?: boolean;
-  /** Current value of `config.local_ai.enabled`. When false, cloud fallback is in use. */
+  /** Current value of `config.local_ai.runtime_enabled`. When false, cloud fallback is in use. */
   local_ai_enabled?: boolean;
 }
 

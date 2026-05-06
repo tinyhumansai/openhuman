@@ -448,6 +448,24 @@ impl SubconsciousEngine {
             }
         };
 
+        // Gate: subconscious evaluation via local AI requires the per-feature flag.
+        // When off, all tasks resolve to Noop rather than erroring.
+        // TODO: wire a cloud fallback here when use_local_for_subconscious is false.
+        if !config.local_ai.use_local_for_subconscious() {
+            tracing::info!(
+                "[subconscious] local_ai.usage.subconscious not enabled — \
+                 skipping local evaluation, all tasks → Noop (no cloud fallback configured)"
+            );
+            return tasks
+                .iter()
+                .map(|t| TaskEvaluation {
+                    task_id: t.id.clone(),
+                    decision: TickDecision::Noop,
+                    reason: "local_ai.usage.subconscious not enabled".to_string(),
+                })
+                .collect();
+        }
+
         let messages = vec![
             crate::openhuman::local_ai::ops::LocalAiChatMessage {
                 role: "system".to_string(),

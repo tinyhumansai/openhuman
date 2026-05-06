@@ -11,7 +11,7 @@ async fn spawn_mock(app: Router) -> String {
 
 fn enabled_config() -> Config {
     let mut config = Config::default();
-    config.local_ai.enabled = true;
+    config.local_ai.runtime_enabled = true;
     config
 }
 
@@ -133,7 +133,7 @@ async fn inference_errors_on_empty_response_when_allow_empty_false() {
 async fn summarize_disabled_returns_error() {
     // When local_ai is disabled the summarize fn should short-circuit.
     let mut config = Config::default();
-    config.local_ai.enabled = false;
+    config.local_ai.runtime_enabled = false;
     let service = LocalAiService::new(&config);
     let err = service.summarize(&config, "text", None).await.unwrap_err();
     assert!(err.contains("local ai is disabled"));
@@ -142,7 +142,7 @@ async fn summarize_disabled_returns_error() {
 #[tokio::test]
 async fn prompt_disabled_returns_error() {
     let mut config = Config::default();
-    config.local_ai.enabled = false;
+    config.local_ai.runtime_enabled = false;
     let service = LocalAiService::new(&config);
     let err = service
         .prompt(&config, "text", None, false)
@@ -154,7 +154,7 @@ async fn prompt_disabled_returns_error() {
 #[tokio::test]
 async fn inline_complete_disabled_returns_empty_string() {
     let mut config = Config::default();
-    config.local_ai.enabled = false;
+    config.local_ai.runtime_enabled = false;
     let service = LocalAiService::new(&config);
     let out = service
         .inline_complete(&config, "ctx", "casual", None, &[], None)
@@ -168,7 +168,7 @@ async fn inline_complete_interactive_disabled_returns_empty_string() {
     // Interactive variant must match the gated variant on the
     // disabled short-circuit so the autocomplete UX is identical.
     let mut config = Config::default();
-    config.local_ai.enabled = false;
+    config.local_ai.runtime_enabled = false;
     let service = LocalAiService::new(&config);
     let out = service
         .inline_complete_interactive(&config, "ctx", "casual", None, &[], None)

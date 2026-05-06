@@ -171,7 +171,7 @@ pub(crate) fn build_status_snapshot(
             "browser": config.browser.enabled,
             "web_search": true,
             "http_request": true,
-            "local_ai": config.local_ai.enabled,
+            "local_ai": config.local_ai.runtime_enabled,
         },
         "composio_connected_toolkits": composio_connected_toolkits,
         "webview_logins": webview_logins,

@@ -138,7 +138,7 @@ Project: Q1 Budget Report
     config.heartbeat.inference_enabled = true;
     config.heartbeat.interval_minutes = 5;
     config.heartbeat.context_budget_tokens = 40_000;
-    config.local_ai.enabled = true;
+    config.local_ai.runtime_enabled = true;
 
     let engine = openhuman_core::openhuman::subconscious::SubconsciousEngine::new(
         &config,

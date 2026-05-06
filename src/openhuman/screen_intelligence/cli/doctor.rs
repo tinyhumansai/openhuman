@@ -60,10 +60,10 @@ pub(super) fn run_doctor(args: &[String]) -> Result<()> {
             eprintln!("    use_vision_model:  {}", si.use_vision_model);
             eprintln!("    baseline_fps:      {}", si.baseline_fps);
             eprintln!("    keep_screenshots:  {}", si.keep_screenshots);
-            eprintln!("    local_ai.enabled:  {}", la.enabled);
+            eprintln!("    local_ai.runtime_enabled:  {}", la.runtime_enabled);
             eprintln!("    local_ai.provider: {}", la.provider);
-            if si.vision_enabled && !la.enabled {
-                eprintln!("    ⚠  Vision is enabled but local_ai.enabled=false — vision analysis will fail");
+            if si.vision_enabled && !la.runtime_enabled {
+                eprintln!("    ⚠  Vision is enabled but local_ai.runtime_enabled=false — vision analysis will fail");
             }
         }
 
@@ -96,7 +96,7 @@ pub(super) fn run_doctor(args: &[String]) -> Result<()> {
                     "use_vision_model": c.screen_intelligence.use_vision_model,
                     "baseline_fps": c.screen_intelligence.baseline_fps,
                     "keep_screenshots": c.screen_intelligence.keep_screenshots,
-                    "local_ai_enabled": c.local_ai.enabled,
+                    "local_ai_enabled": c.local_ai.runtime_enabled,
                     "local_ai_provider": c.local_ai.provider,
                 })),
             }))

@@ -155,6 +155,16 @@ impl ReflectionHook {
     async fn run_reflection(&self, prompt: &str) -> anyhow::Result<String> {
         match self.config.reflection_source {
             ReflectionSource::Local => {
+                // Gate: local reflection requires the per-feature flag.
+                // When off, no-op silently rather than erroring the turn.
+                // TODO: wire a cloud fallback here when use_local_for_learning is false.
+                if !self.full_config.local_ai.use_local_for_learning() {
+                    tracing::info!(
+                        "[learning::reflection] local_ai.usage.learning_reflection not enabled — \
+                         skipping local reflection (no cloud fallback configured for this subsystem)"
+                    );
+                    return Ok(String::new());
+                }
                 // Local reflection acquires the scheduler_gate LLM
                 // permit transitively through `service.prompt` →
                 // `inference_with_temperature_internal`. Cloud

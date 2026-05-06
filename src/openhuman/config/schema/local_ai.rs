@@ -3,10 +3,48 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Per-feature flags controlling which subsystems route through the local
+/// Ollama runtime. All default to `false` (use cloud instead). Guarded by
+/// `LocalAiConfig::runtime_enabled` — when that is `false` every helper
+/// method below returns `false` regardless of these values.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LocalAiUsage {
+    /// When true (and `runtime_enabled`), use the local model for embedding
+    /// generation instead of the cloud backend.
+    #[serde(default)]
+    pub embeddings: bool,
+    /// When true (and `runtime_enabled`), use the local model inside the
+    /// heartbeat loop.
+    #[serde(default)]
+    pub heartbeat: bool,
+    /// When true (and `runtime_enabled`), use the local model for
+    /// learning/reflection passes.
+    #[serde(default)]
+    pub learning_reflection: bool,
+    /// When true (and `runtime_enabled`), use the local model for
+    /// subconscious evaluation and execution.
+    #[serde(default)]
+    pub subconscious: bool,
+}
+
+impl Default for LocalAiUsage {
+    fn default() -> Self {
+        Self {
+            embeddings: false,
+            heartbeat: false,
+            learning_reflection: false,
+            subconscious: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LocalAiConfig {
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
+    /// Master runtime switch. Defaults to `false` — Ollama is OFF by default.
+    /// Note: the old on-disk field was `enabled`; that key is now unknown to
+    /// serde and will be silently ignored on load (intentional forced reset).
+    #[serde(default = "default_runtime_enabled")]
+    pub runtime_enabled: bool,
     #[serde(default = "default_provider")]
     pub provider: String,
     #[serde(default)]
@@ -64,10 +102,14 @@ pub struct LocalAiConfig {
     /// local LLM to fix grammar/punctuation using conversation context.
     #[serde(default = "default_voice_llm_cleanup_enabled")]
     pub voice_llm_cleanup_enabled: bool,
+    /// Per-feature flags. Each gate is AND-ed with `runtime_enabled`.
+    /// All default to `false` (cloud path).
+    #[serde(default)]
+    pub usage: LocalAiUsage,
 }
 
-fn default_enabled() -> bool {
-    true
+fn default_runtime_enabled() -> bool {
+    false
 }
 
 fn default_provider() -> String {
@@ -155,10 +197,38 @@ fn default_voice_llm_cleanup_enabled() -> bool {
     true
 }
 
+impl LocalAiConfig {
+    /// Returns `true` when the local Ollama runtime is active.
+    /// This is the primary gate; all per-feature helpers below AND with this.
+    pub fn is_active(&self) -> bool {
+        self.runtime_enabled
+    }
+
+    /// Use the local model for embedding generation.
+    pub fn use_local_for_embeddings(&self) -> bool {
+        self.runtime_enabled && self.usage.embeddings
+    }
+
+    /// Use the local model inside the heartbeat loop.
+    pub fn use_local_for_heartbeat(&self) -> bool {
+        self.runtime_enabled && self.usage.heartbeat
+    }
+
+    /// Use the local model for learning/reflection passes.
+    pub fn use_local_for_learning(&self) -> bool {
+        self.runtime_enabled && self.usage.learning_reflection
+    }
+
+    /// Use the local model for subconscious evaluation and execution.
+    pub fn use_local_for_subconscious(&self) -> bool {
+        self.runtime_enabled && self.usage.subconscious
+    }
+}
+
 impl Default for LocalAiConfig {
     fn default() -> Self {
         Self {
-            enabled: default_enabled(),
+            runtime_enabled: default_runtime_enabled(),
             provider: default_provider(),
             base_url: None,
             api_key: None,
@@ -183,6 +253,7 @@ impl Default for LocalAiConfig {
             ollama_binary_path: None,
             whisper_in_process: default_whisper_in_process(),
             voice_llm_cleanup_enabled: default_voice_llm_cleanup_enabled(),
+            usage: LocalAiUsage::default(),
         }
     }
 }
