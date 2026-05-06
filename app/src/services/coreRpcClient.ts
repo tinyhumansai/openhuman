@@ -142,7 +142,7 @@ export async function getCoreRpcUrl(): Promise<string> {
  * Returns `null` in non-Tauri environments (e.g. Vitest) where the command
  * is not available so existing tests remain unaffected.
  */
-async function getCoreRpcToken(): Promise<string | null> {
+export async function getCoreRpcToken(): Promise<string | null> {
   if (didResolveCoreRpcToken) return resolvedCoreRpcToken;
   if (!coreIsTauri()) return null;
   if (resolvingCoreRpcToken) return resolvingCoreRpcToken;
