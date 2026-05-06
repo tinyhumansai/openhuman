@@ -33,6 +33,12 @@ interface AppStateSnapshotResult {
   onboardingCompleted: boolean;
   chatOnboardingCompleted: boolean;
   analyticsEnabled: boolean;
+  /**
+   * Mirror of `Config::meet.auto_orchestrator_handoff` (#1299). Defaults
+   * to `false` when missing so older core builds without the field
+   * still deserialize cleanly into the privacy-conservative state.
+   */
+  meetAutoOrchestratorHandoff?: boolean;
   localState: {
     encryptionKey?: string | null;
     primaryWalletAddress?: string | null;
