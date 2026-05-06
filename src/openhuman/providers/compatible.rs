@@ -361,8 +361,22 @@ impl OpenAiCompatibleProvider {
             .await?;
 
         if !response.status().is_success() {
+            let status = response.status();
+            let status_str = status.as_u16().to_string();
             let error = response.text().await?;
-            anyhow::bail!("{} Responses API error: {error}", self.name);
+            let message = format!("{} Responses API error: {error}", self.name);
+            crate::core::observability::report_error(
+                message.as_str(),
+                "llm_provider",
+                "responses_api",
+                &[
+                    ("provider", self.name.as_str()),
+                    ("model", model),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+            anyhow::bail!(message);
         }
 
         let body = response.text().await?;
@@ -675,17 +689,28 @@ impl OpenAiCompatibleProvider {
 
         if !response.status().is_success() {
             let status = response.status();
+            let status_str = status.as_u16().to_string();
             let body = response.text().await.unwrap_or_default();
             // Sanitize the upstream error body so we don't leak user
             // prompts, tool arguments, or credentials the backend
             // echoed back into the anyhow chain / logs.
             let sanitized = super::sanitize_api_error(&body);
-            anyhow::bail!(
+            let message = format!(
                 "{} streaming API error ({}): {}",
-                self.name,
-                status,
-                sanitized
+                self.name, status, sanitized
             );
+            crate::core::observability::report_error(
+                message.as_str(),
+                "llm_provider",
+                "streaming_chat",
+                &[
+                    ("provider", self.name.as_str()),
+                    ("model", native_request.model.as_str()),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+            anyhow::bail!(message);
         }
 
         // Some OpenAI-compatible backends (and our e2e mock) accept
@@ -1127,7 +1152,20 @@ impl Provider for OpenAiCompatibleProvider {
                     });
             }
 
-            anyhow::bail!("{} API error ({status}): {sanitized}", self.name);
+            let status_str = status.as_u16().to_string();
+            let message = format!("{} API error ({status}): {sanitized}", self.name);
+            crate::core::observability::report_error(
+                message.as_str(),
+                "llm_provider",
+                "chat_completions",
+                &[
+                    ("provider", self.name.as_str()),
+                    ("model", model),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+            anyhow::bail!(message);
         }
 
         let body = response.text().await?;
@@ -1511,7 +1549,20 @@ impl Provider for OpenAiCompatibleProvider {
                     });
             }
 
-            anyhow::bail!("{} API error ({status}): {sanitized}", self.name);
+            let status_str = status.as_u16().to_string();
+            let message = format!("{} API error ({status}): {sanitized}", self.name);
+            crate::core::observability::report_error(
+                message.as_str(),
+                "llm_provider",
+                "native_chat",
+                &[
+                    ("provider", self.name.as_str()),
+                    ("model", model),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+            anyhow::bail!(message);
         }
 
         let response_bytes = response.bytes().await?;
@@ -1575,6 +1626,8 @@ impl Provider for OpenAiCompatibleProvider {
         let url = self.chat_completions_url();
         let client = self.http_client();
         let auth_header = self.auth_header.clone();
+        let provider_name = self.name.clone();
+        let model_owned = model.to_string();
 
         // Use a channel to bridge the async HTTP response to the stream
         let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamChunk>>(100);
@@ -1599,6 +1652,16 @@ impl Provider for OpenAiCompatibleProvider {
             let response = match req_builder.send().await {
                 Ok(r) => r,
                 Err(e) => {
+                    crate::core::observability::report_error(
+                        e.to_string().as_str(),
+                        "llm_provider",
+                        "stream_chat",
+                        &[
+                            ("provider", provider_name.as_str()),
+                            ("model", model_owned.as_str()),
+                            ("failure", "transport"),
+                        ],
+                    );
                     let _ = tx.send(Err(StreamError::Http(e))).await;
                     return;
                 }
@@ -1607,10 +1670,22 @@ impl Provider for OpenAiCompatibleProvider {
             // Check status
             if !response.status().is_success() {
                 let status = response.status();
+                let status_str = status.as_u16().to_string();
                 let error = match response.text().await {
                     Ok(e) => e,
                     Err(_) => format!("HTTP error: {}", status),
                 };
+                crate::core::observability::report_error(
+                    format!("{}: {}", status, error).as_str(),
+                    "llm_provider",
+                    "stream_chat",
+                    &[
+                        ("provider", provider_name.as_str()),
+                        ("model", model_owned.as_str()),
+                        ("status", status_str.as_str()),
+                        ("failure", "non_2xx"),
+                    ],
+                );
                 let _ = tx
                     .send(Err(StreamError::Provider(format!("{}: {}", status, error))))
                     .await;
