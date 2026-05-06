@@ -18,8 +18,11 @@ use std::time::Duration;
 
 use serde_json::json;
 use tauri::{AppHandle, Runtime};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tokio::time::sleep;
+// `tokio::time::Instant` (not `std::time::Instant`) so the hard-ceiling
+// elapsed check honours `tokio::time::pause()` / `advance()` in unit tests.
+use tokio::time::{sleep, Instant};
 
 use super::{browser_ws_url, find_page_target_where, CdpConn};
 use crate::webview_accounts::{emit_load_finished, RevealTrigger};
@@ -43,10 +46,28 @@ const INITIAL_ATTACH_SCHEDULE: [Duration; 4] = [
     Duration::from_millis(400),
 ];
 
-/// Watchdog budget before we synthesise a `webview-account:load` event with
-/// `state: "timeout"` so the frontend can switch from an empty loading state
-/// to explicit retry/help UI on flaky networks. Matches issue #867.
-const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long the page must be **idle** (no CDP progress signal) before the
+/// watchdog gives up and synthesises a `webview-account:load{state:"timeout"}`
+/// event so the frontend can switch from an empty loading state to explicit
+/// retry/help UI on flaky networks. See issue #1213.
+///
+/// Replaces the previous wall-clock `LOAD_TIMEOUT` (15 s after spawn): a
+/// fast initial paint followed by slow subresources would needlessly fire
+/// timeout, while a genuinely stuck page would not get more than 15 s of
+/// runway. The idle watchdog resets on every `Page.frameStartedLoading` /
+/// `Page.frameStoppedLoading` / `Page.lifecycleEvent` /
+/// `Page.frameNavigated` / `Page.loadEventFired` so it only fires after a
+/// true silence — letting providers like Google Meet take 20–30 s to fully
+/// hydrate without spurious timeouts, while still surfacing genuine stalls
+/// quickly.
+const IDLE_BUDGET: Duration = Duration::from_secs(8);
+
+/// Hard ceiling on total watchdog runtime. If the page is *continuously*
+/// emitting progress signals (e.g. an infinite redirect loop, a busy
+/// long-poll, a streaming load that never settles) the watchdog must still
+/// release the loading spinner so the frontend doesn't hang forever.
+/// Picked roughly 2× the slowest provider's observed cold-load tail.
+const HARD_CEILING: Duration = Duration::from_secs(60);
 
 /// Returns the unique marker substring that the account's initial
 /// placeholder URL contains so `Target.getTargets` can identify it.
@@ -129,10 +150,17 @@ pub struct SpawnedSession {
 }
 
 /// Spawn the per-account CDP session. Returns immediately; the background
-/// task keeps the session alive and retries on disconnect. Also spawns a
-/// 15 s watchdog task that fires a `webview-account:load{state:"timeout"}`
-/// event if neither the native `on_page_load` nor CDP `Page.loadEventFired`
-/// signals arrive in time.
+/// task keeps the session alive and retries on disconnect. Also spawns an
+/// idle-watchdog task that fires a `webview-account:load{state:"timeout"}`
+/// event when the page has been silent (no CDP progress signal) for
+/// [`IDLE_BUDGET`] OR has been continuously loading for [`HARD_CEILING`].
+///
+/// The session task and the watchdog communicate over a small mpsc channel:
+/// the `pump_events` callback inside `run_session_cycle` sends a `()` ping on
+/// every progress-relevant CDP method, which resets the watchdog's idle
+/// timer. When the session task exits cleanly the sender drops, the
+/// watchdog's `recv()` returns `None`, and it terminates without emitting
+/// a stale timeout.
 ///
 /// Both `JoinHandle`s inside the returned [`SpawnedSession`] must be stored
 /// by the caller and aborted on account close/purge to prevent task leaks
@@ -142,39 +170,174 @@ pub fn spawn_session<R: Runtime>(
     account_id: String,
     real_url: String,
 ) -> SpawnedSession {
-    // Load-overlay watchdog — independent of the session loop. Emits a
-    // `timeout` signal after LOAD_TIMEOUT so the frontend's loading spinner
-    // is always released even if neither the native `on_page_load` nor the
-    // CDP `Page.loadEventFired` signal arrives (flaky network, provider
-    // blocking, CDP socket hiccup).
-    //
-    // `emit_load_finished` only treats terminal load signals (`finished`) as
-    // dedup markers. If the watchdog fires first, frontend sees `timeout`
-    // and can show retry UI; a later real `finished` signal can still reveal.
-    // Late watchdogs after a terminal load are no-ops. The returned
-    // `JoinHandle` is stored in `WebviewAccountsState.load_watchdogs` and
-    // aborted on close/purge so a watchdog spawned for a vanished account
-    // can't fire a stale timeout against a freshly-reused id.
+    // 64 is generous — pump_events processes events one at a time, so a
+    // backlog only builds if the watchdog itself is starved. We use
+    // `try_send` on the producer side so a hypothetical full channel never
+    // blocks the CDP event loop.
+    let (progress_tx, progress_rx) = mpsc::channel::<()>(64);
+
     let watchdog = {
         let app = app.clone();
         let account_id = account_id.clone();
         let real_url = real_url.clone();
         tokio::spawn(async move {
-            sleep(LOAD_TIMEOUT).await;
-            emit_load_finished(
-                &app,
-                &account_id,
-                "timeout",
-                &real_url,
-                RevealTrigger::Watchdog,
+            log::debug!(
+                "[cdp-session][{}][watchdog] start idle_budget={:?} hard_ceiling={:?} url={}",
+                account_id,
+                IDLE_BUDGET,
+                HARD_CEILING,
+                real_url
             );
+            let outcome = run_idle_watchdog(progress_rx, IDLE_BUDGET, HARD_CEILING).await;
+            match outcome {
+                WatchdogOutcome::Idle | WatchdogOutcome::HardCeiling => {
+                    log::info!(
+                        "[cdp-session][{}][watchdog] firing timeout reason={} url={}",
+                        account_id,
+                        outcome.reason_str(),
+                        real_url
+                    );
+                    // `emit_load_finished` dedups timeouts that arrive after a
+                    // terminal `finished` event — see `loaded_accounts` in
+                    // `webview_accounts/mod.rs`. So it is safe to call
+                    // unconditionally even if the page actually loaded fine.
+                    emit_load_finished(
+                        &app,
+                        &account_id,
+                        "timeout",
+                        &real_url,
+                        RevealTrigger::Watchdog,
+                    );
+                }
+                WatchdogOutcome::SenderDropped => {
+                    log::debug!(
+                        "[cdp-session][{}][watchdog] clean exit reason=sender_dropped url={}",
+                        account_id,
+                        real_url
+                    );
+                }
+            }
         })
     };
-    let session = tokio::spawn(async move { run_session_forever(app, account_id, real_url).await });
+
+    let session =
+        tokio::spawn(
+            async move { run_session_forever(app, account_id, real_url, progress_tx).await },
+        );
+
     SpawnedSession { session, watchdog }
 }
 
-async fn run_session_forever<R: Runtime>(app: AppHandle<R>, account_id: String, real_url: String) {
+/// Returns `true` for CDP method names we treat as "the page is still
+/// making progress" — i.e. a signal that the watchdog's idle timer should
+/// be reset. Restricted to Page-domain methods so we do not need to enable
+/// `Network.enable` in this session (which would be a behaviour change for
+/// every existing webview account).
+///
+/// Whether a method counts as progress is a *behavioural* decision, so it
+/// lives in this dedicated helper that the unit tests can exercise without
+/// standing up a real CDP connection.
+pub(crate) fn is_progress_signal(method: &str) -> bool {
+    matches!(
+        method,
+        "Page.frameStartedLoading"
+            | "Page.frameStoppedLoading"
+            | "Page.frameNavigated"
+            | "Page.lifecycleEvent"
+            | "Page.loadEventFired"
+            | "Page.domContentEventFired"
+    )
+}
+
+/// Outcome of [`run_idle_watchdog`]. Returned (instead of an inline
+/// `FnOnce` callback) so the caller can log the *reason* for a timeout
+/// — `idle_silence` vs `hard_ceiling` — and distinguish either from a
+/// clean sender-dropped exit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WatchdogOutcome {
+    /// `IDLE_BUDGET` of true silence elapsed without a progress ping.
+    Idle,
+    /// Total runtime exceeded `HARD_CEILING` even though pings kept arriving.
+    HardCeiling,
+    /// The session task dropped its sender — clean exit, no timeout fired.
+    SenderDropped,
+}
+
+impl WatchdogOutcome {
+    pub(crate) fn reason_str(self) -> &'static str {
+        match self {
+            WatchdogOutcome::Idle => "idle_silence",
+            WatchdogOutcome::HardCeiling => "hard_ceiling",
+            WatchdogOutcome::SenderDropped => "sender_dropped",
+        }
+    }
+}
+
+/// Drives the idle-watchdog state machine. Public-in-crate so the unit
+/// tests can exercise it with a mock channel.
+///
+/// Behaviour:
+///
+/// 1. On every `()` received from `progress_rx`, restart the
+///    [`IDLE_BUDGET`] sleep. The page is still progressing.
+/// 2. If the [`IDLE_BUDGET`] sleep elapses with no ping, return
+///    [`WatchdogOutcome::Idle`] — the page has gone silent without
+///    finishing.
+/// 3. If total runtime since spawn exceeds [`HARD_CEILING`] regardless of
+///    progress, return [`WatchdogOutcome::HardCeiling`] — prevents an
+///    infinite-redirect or chatty long-poll from keeping the spinner up
+///    forever.
+/// 4. If the sender side drops (`recv()` returns `None`) without a timeout
+///    having fired, return [`WatchdogOutcome::SenderDropped`] — the
+///    session task ended on its own and the watchdog should NOT emit a
+///    stale timeout.
+///
+/// The `tokio::select!` is `biased;` so the recv arm is polled first
+/// each iteration. This prevents a false-positive timeout when both the
+/// `IDLE_BUDGET` sleep and a progress ping become ready in the same
+/// poll cycle (without `biased`, select picks pseudo-randomly).
+pub(crate) async fn run_idle_watchdog(
+    mut progress_rx: mpsc::Receiver<()>,
+    idle_budget: Duration,
+    hard_ceiling: Duration,
+) -> WatchdogOutcome {
+    let started = Instant::now();
+    loop {
+        let elapsed = started.elapsed();
+        let remaining_ceiling = hard_ceiling.saturating_sub(elapsed);
+        if remaining_ceiling.is_zero() {
+            return WatchdogOutcome::HardCeiling;
+        }
+        let wake_after = idle_budget.min(remaining_ceiling);
+        tokio::select! {
+            biased;
+            recv = progress_rx.recv() => {
+                match recv {
+                    // Progress ping — reset by looping back into select.
+                    Some(()) => continue,
+                    // Sender dropped (session task ended) — exit clean.
+                    None => return WatchdogOutcome::SenderDropped,
+                }
+            }
+            _ = sleep(wake_after) => {
+                // No ping inside the wake budget. If we hit the cap because
+                // of `hard_ceiling.min(idle_budget)`, classify as hard
+                // ceiling so the caller log line is accurate; else idle.
+                if wake_after >= remaining_ceiling {
+                    return WatchdogOutcome::HardCeiling;
+                }
+                return WatchdogOutcome::Idle;
+            }
+        }
+    }
+}
+
+async fn run_session_forever<R: Runtime>(
+    app: AppHandle<R>,
+    account_id: String,
+    real_url: String,
+    progress_tx: mpsc::Sender<()>,
+) {
     log::info!(
         "[cdp-session][{}] up real_url={} marker={}",
         account_id,
@@ -197,7 +360,7 @@ async fn run_session_forever<R: Runtime>(app: AppHandle<R>, account_id: String, 
     // don't tight-loop against a target that just torched its renderer.
     for (idx, delay) in INITIAL_ATTACH_SCHEDULE.iter().enumerate() {
         sleep(*delay).await;
-        match run_session_cycle(&app, &account_id, &real_url).await {
+        match run_session_cycle(&app, &account_id, &real_url, &progress_tx).await {
             Ok(()) => {
                 log::info!(
                     "[cdp-session][{}] initial session ended cleanly attempt={} reconnecting",
@@ -219,7 +382,7 @@ async fn run_session_forever<R: Runtime>(app: AppHandle<R>, account_id: String, 
     }
     loop {
         sleep(ATTACH_BACKOFF).await;
-        match run_session_cycle(&app, &account_id, &real_url).await {
+        match run_session_cycle(&app, &account_id, &real_url, &progress_tx).await {
             Ok(()) => {
                 log::info!(
                     "[cdp-session][{}] session ended cleanly, reconnecting",
@@ -237,6 +400,7 @@ async fn run_session_cycle<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
     real_url: &str,
+    progress_tx: &mpsc::Sender<()>,
 ) -> Result<(), String> {
     let browser_ws = browser_ws_url().await?;
     let mut cdp = CdpConn::open(&browser_ws).await?;
@@ -418,6 +582,27 @@ async fn run_session_cycle<R: Runtime>(
     cdp.call("Page.enable", json!({}), Some(&session_id))
         .await?;
 
+    // Subscribe to lifecycle events too — they carry sub-load progress
+    // signals (`init`, `firstPaint`, `DOMContentLoaded`, `load`,
+    // `networkAlmostIdle`, `networkIdle`) that the idle-watchdog uses to
+    // distinguish a still-progressing load from a stalled one. See
+    // [`run_idle_watchdog`] / issue #1213. Best-effort — if it fails, the
+    // watchdog still has frameStarted/Stopped + loadEventFired to work with.
+    if let Err(e) = cdp
+        .call(
+            "Page.setLifecycleEventsEnabled",
+            json!({ "enabled": true }),
+            Some(&session_id),
+        )
+        .await
+    {
+        log::debug!(
+            "[cdp-session][{}] Page.setLifecycleEventsEnabled failed: {} — watchdog falls back to frame-only signals",
+            account_id,
+            e
+        );
+    }
+
     // Drive the webview from the placeholder to the real provider URL.
     // Fragment survives same-origin navigations so scanners can match on
     // it indefinitely. Skip navigation if the target is already on the
@@ -453,7 +638,14 @@ async fn run_session_cycle<R: Runtime>(
     let cb_app = app.clone();
     let cb_account_id = account_id.to_string();
     let cb_real_url = real_url.to_string();
+    let cb_progress_tx = progress_tx.clone();
     cdp.pump_events(&session_id, move |method, _params| {
+        // Keep the idle-watchdog (#1213) alive on every progress signal.
+        // `try_send` so a hypothetical full channel never blocks the CDP
+        // event loop — pings are fungible, dropping one is fine.
+        if is_progress_signal(method) {
+            let _ = cb_progress_tx.try_send(());
+        }
         if method == "Page.loadEventFired" {
             emit_load_finished(
                 &cb_app,
@@ -616,6 +808,152 @@ mod tests {
             INITIAL_ATTACH_SCHEDULE[0],
             Duration::ZERO,
             "first attempt must run immediately (CEF prewarm hits)",
+        );
+    }
+
+    // -- idle-watchdog (#1213) ---------------------------------------------
+
+    #[test]
+    fn is_progress_signal_recognises_known_page_methods() {
+        assert!(is_progress_signal("Page.frameStartedLoading"));
+        assert!(is_progress_signal("Page.frameStoppedLoading"));
+        assert!(is_progress_signal("Page.frameNavigated"));
+        assert!(is_progress_signal("Page.lifecycleEvent"));
+        assert!(is_progress_signal("Page.loadEventFired"));
+        assert!(is_progress_signal("Page.domContentEventFired"));
+    }
+
+    #[test]
+    fn is_progress_signal_rejects_unrelated_methods() {
+        // Non-progress Page methods (we want to ignore window-level chatter)
+        assert!(!is_progress_signal("Page.javascriptDialogOpening"));
+        assert!(!is_progress_signal("Page.fileChooserOpened"));
+        // Other domains
+        assert!(!is_progress_signal("Network.requestWillBeSent"));
+        assert!(!is_progress_signal("Runtime.consoleAPICalled"));
+        assert!(!is_progress_signal(""));
+        assert!(!is_progress_signal("nonsense"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_watchdog_fires_after_idle_budget_with_no_progress() {
+        let (tx, rx) = mpsc::channel::<()>(8);
+        let handle = tokio::spawn(async move {
+            run_idle_watchdog(rx, Duration::from_secs(8), Duration::from_secs(60)).await
+        });
+
+        // Hold the sender alive so the watchdog can't exit via channel-closed.
+        let _hold = tx;
+        // Advance past the idle budget.
+        tokio::time::advance(Duration::from_secs(9)).await;
+        let outcome = handle.await.expect("watchdog task panicked");
+
+        assert_eq!(
+            outcome,
+            WatchdogOutcome::Idle,
+            "watchdog must surface Idle after silence inside hard ceiling"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_watchdog_resets_on_each_progress_ping() {
+        let (tx, rx) = mpsc::channel::<()>(8);
+        let handle = tokio::spawn(async move {
+            run_idle_watchdog(rx, Duration::from_secs(8), Duration::from_secs(60)).await
+        });
+
+        // Drip pings every 5s for 25s total. Idle budget is 8s, so as long
+        // as we ping at <8s intervals the watchdog must NOT fire.
+        for _ in 0..5 {
+            tokio::time::advance(Duration::from_secs(5)).await;
+            tx.send(()).await.expect("send ping");
+        }
+
+        // Drop the sender → watchdog exits clean.
+        drop(tx);
+        let outcome = handle.await.expect("watchdog task panicked");
+        assert_eq!(
+            outcome,
+            WatchdogOutcome::SenderDropped,
+            "drip-ping then sender-drop path must be classified as clean exit, not timeout"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_watchdog_exits_clean_when_sender_dropped_before_idle() {
+        let (tx, rx) = mpsc::channel::<()>(8);
+        let handle = tokio::spawn(async move {
+            run_idle_watchdog(rx, Duration::from_secs(8), Duration::from_secs(60)).await
+        });
+
+        // Session ends quickly — drop sender well before idle budget.
+        tokio::time::advance(Duration::from_secs(1)).await;
+        drop(tx);
+        let outcome = handle.await.expect("watchdog task panicked");
+
+        assert_eq!(
+            outcome,
+            WatchdogOutcome::SenderDropped,
+            "sender-dropped path is a clean exit, not a timeout"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_watchdog_hard_ceiling_caps_runaway_progress() {
+        let (tx, rx) = mpsc::channel::<()>(64);
+        let handle = tokio::spawn(async move {
+            run_idle_watchdog(rx, Duration::from_secs(8), Duration::from_secs(60)).await
+        });
+
+        // Send a chatty stream of pings every 1s for 65s — under idle
+        // budget every time, but past the 60s hard ceiling.
+        for _ in 0..70 {
+            tokio::time::advance(Duration::from_secs(1)).await;
+            let _ = tx.try_send(());
+        }
+        let _hold = tx; // keep sender alive so close-path doesn't short-circuit
+                        // Allow the spawned task to observe the ceiling.
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let outcome = handle.await.expect("watchdog task panicked");
+
+        assert_eq!(
+            outcome,
+            WatchdogOutcome::HardCeiling,
+            "hard ceiling must override progress pings once total runtime > ceiling"
+        );
+    }
+
+    /// Regression for the `biased; recv-first` reordering. With `recv` polled
+    /// first each iteration, a ping that lands at exactly the same poll as
+    /// the idle-budget sleep must keep the watchdog alive (no false-positive
+    /// timeout). Without `biased;` `tokio::select!` picks pseudo-randomly.
+    #[tokio::test(start_paused = true)]
+    async fn idle_watchdog_biased_recv_wins_over_concurrent_idle_wake() {
+        let (tx, rx) = mpsc::channel::<()>(8);
+        let handle = tokio::spawn(async move {
+            run_idle_watchdog(rx, Duration::from_secs(8), Duration::from_secs(60)).await
+        });
+
+        // Park exactly on the boundary: advance the full idle budget AND
+        // queue a ping. Without `biased;` the timeout branch could win the
+        // race; with `biased;` the recv branch is polled first so the loop
+        // resets cleanly.
+        tx.send(()).await.expect("send ping");
+        tokio::time::advance(Duration::from_secs(8)).await;
+        // Drop sender so the watchdog exits clean — if it had fired Idle on
+        // the previous wake we'd see Idle instead of SenderDropped here.
+        drop(tx);
+        let outcome = handle.await.expect("watchdog task panicked");
+        assert_eq!(outcome, WatchdogOutcome::SenderDropped);
+    }
+
+    #[test]
+    fn watchdog_outcome_reason_str_distinguishes_idle_and_ceiling() {
+        assert_eq!(WatchdogOutcome::Idle.reason_str(), "idle_silence");
+        assert_eq!(WatchdogOutcome::HardCeiling.reason_str(), "hard_ceiling");
+        assert_eq!(
+            WatchdogOutcome::SenderDropped.reason_str(),
+            "sender_dropped"
         );
     }
 }
