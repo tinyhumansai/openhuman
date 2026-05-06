@@ -112,7 +112,8 @@ pub async fn execute_approved_write(
 /// Execute a text-only task using the local Ollama model.
 ///
 /// Gated by `local_ai.usage.subconscious`. When the flag is off (or
-/// `runtime_enabled` is off), no-ops silently and returns an empty string.
+/// `runtime_enabled` is off), returns `Err` so callers don't mistake a
+/// disabled subsystem for a successfully-completed empty execution.
 /// TODO: wire a cloud fallback here when use_local_for_subconscious is false.
 async fn execute_with_local_model(
     task: &SubconsciousTask,
