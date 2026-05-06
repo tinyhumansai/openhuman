@@ -30,6 +30,7 @@ import { store } from '../store';
 import { resetUserScopedState } from '../store/resetActions';
 import { loadThreads, resetThreadCachesPreservingSelection } from '../store/threadSlice';
 import { getActiveUserId, setActiveUserId } from '../store/userScopedStorage';
+import { REMOTE_CORE_RPC_MODE } from '../utils/config';
 import {
   openhumanUpdateAnalyticsSettings,
   restartApp,
@@ -38,7 +39,6 @@ import {
   syncMemoryClientToken,
   logout as tauriLogout,
 } from '../utils/tauriCommands';
-import { REMOTE_CORE_RPC_MODE } from '../utils/config';
 
 const log = debugFactory('core-state');
 

@@ -3,10 +3,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   type DeploymentInstance,
+  deploymentsApi,
   type DeploymentStatus,
   type ProvisionParams,
-  deploymentsApi,
 } from '../../../services/api/deploymentsApi';
+import { clearCoreRpcTokenCache, clearCoreRpcUrlCache } from '../../../services/coreRpcClient';
 import { buildRpcEndpoint } from '../../../utils/configPersistence';
 import {
   clearCoreToken,
@@ -14,7 +15,6 @@ import {
   storeCoreToken,
   storeRpcUrl,
 } from '../../../utils/configPersistence';
-import { clearCoreRpcTokenCache, clearCoreRpcUrlCache } from '../../../services/coreRpcClient';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -414,7 +414,11 @@ const CloudInstancePanel = () => {
                     onClick={() => setShowSecret(v => !v)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600">
                     {showSecret ? (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24">
                         <path
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -423,7 +427,11 @@ const CloudInstancePanel = () => {
                         />
                       </svg>
                     ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24">
                         <path
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -460,8 +468,7 @@ const CloudInstancePanel = () => {
               {/* Custom domain (optional) */}
               <div>
                 <label className="block text-xs font-medium text-stone-700 mb-1">
-                  Custom Domain{' '}
-                  <span className="font-normal text-stone-400">(optional)</span>
+                  Custom Domain <span className="font-normal text-stone-400">(optional)</span>
                 </label>
                 <input
                   type="text"
@@ -524,7 +531,12 @@ const CloudInstancePanel = () => {
             {/* Step breakdown */}
             <div className="space-y-1.5">
               {(['pending', 'provisioning', 'deploying', 'starting'] as const).map(step => {
-                const statuses: DeploymentStatus[] = ['pending', 'provisioning', 'deploying', 'starting'];
+                const statuses: DeploymentStatus[] = [
+                  'pending',
+                  'provisioning',
+                  'deploying',
+                  'starting',
+                ];
                 const currentIdx = statuses.indexOf(instance.status);
                 const stepIdx = statuses.indexOf(step);
                 const isCompleted = stepIdx < currentIdx;
