@@ -364,7 +364,8 @@ impl OpenAiCompatibleProvider {
             let status = response.status();
             let status_str = status.as_u16().to_string();
             let error = response.text().await?;
-            let message = format!("{} Responses API error: {error}", self.name);
+            let sanitized = super::sanitize_api_error(&error);
+            let message = format!("{} Responses API error: {sanitized}", self.name);
             crate::core::observability::report_error(
                 message.as_str(),
                 "llm_provider",

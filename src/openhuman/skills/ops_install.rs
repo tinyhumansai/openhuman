@@ -9,6 +9,27 @@ use super::ops_discover::{discover_skills_inner, is_workspace_trusted};
 use super::ops_parse::parse_skill_md_str;
 use super::ops_types::{SkillFrontmatter, SkillScope, MAX_NAME_LEN, SKILL_MD};
 
+/// Strip userinfo, query, and fragment from a URL for safe inclusion in
+/// observability tags. Returns `<scheme>://<host>[:<port>]<path>` on success,
+/// or `"<unparseable>"` on parse failure. Never returns the raw URL — even
+/// validated install URLs may carry signed query params or embedded creds we
+/// don't want flowing to Sentry.
+fn redact_url(raw: &str) -> String {
+    match url::Url::parse(raw) {
+        Ok(u) => {
+            let scheme = u.scheme();
+            let host = u.host_str().unwrap_or("");
+            let port = u
+                .port()
+                .map(|p| format!(":{p}"))
+                .unwrap_or_default();
+            let path = u.path();
+            format!("{scheme}://{host}{port}{path}")
+        }
+        Err(_) => "<unparseable>".to_string(),
+    }
+}
+
 /// Default wall-clock budget for the SKILL.md fetch.
 pub const DEFAULT_INSTALL_TIMEOUT_SECS: u64 = 60;
 /// Hard ceiling callers can request via `timeout_secs`.
@@ -142,6 +163,8 @@ pub async fn install_skill_from_url(
         "[skills] install_skill_from_url: fetching SKILL.md"
     );
 
+    let redacted_fetch_url = redact_url(&fetch_url);
+
     let response = match client.get(&fetch_url).send().await {
         Ok(resp) => resp,
         Err(e) => {
@@ -154,7 +177,7 @@ pub async fn install_skill_from_url(
                 msg.as_str(),
                 "skills",
                 "install_fetch",
-                &[("url", fetch_url.as_str()), ("failure", failure)],
+                &[("url", redacted_fetch_url.as_str()), ("failure", failure)],
             );
             return Err(msg);
         }
@@ -172,7 +195,7 @@ pub async fn install_skill_from_url(
             "skills",
             "install_fetch",
             &[
-                ("url", fetch_url.as_str()),
+                ("url", redacted_fetch_url.as_str()),
                 ("status", status_str.as_str()),
                 ("failure", "non_2xx"),
             ],
