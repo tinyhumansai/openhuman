@@ -10,7 +10,7 @@
  *
  * Mounted once at AppShell root.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
@@ -416,7 +416,8 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
   const order = useAppSelector(s => s.accounts.order);
 
   // Track accounts added during this modal session so "Done" can navigate.
-  const newlyAdded = useRef<Set<string>>(new Set());
+  // Uses state (not ref) so the CTA label re-renders when toggles change.
+  const [newlyAdded, setNewlyAdded] = useState<Map<string, string>>(new Map());
 
   // Map provider → first existing account (one provider, one row).
   const accountByProvider = useMemo(() => {
@@ -441,7 +442,11 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
       const existing = accountByProvider.get(providerId);
       if (!existing) return;
       void purgeWebviewAccount(existing.id).catch(() => {});
-      newlyAdded.current.delete(existing.id);
+      setNewlyAdded(prev => {
+        const next = new Map(prev);
+        next.delete(existing.id);
+        return next;
+      });
       dispatch(removeAccount({ accountId: existing.id }));
       return;
     }
@@ -452,7 +457,7 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
       createdAt: new Date().toISOString(),
       status: 'pending',
     };
-    newlyAdded.current.add(acct.id);
+    setNewlyAdded(prev => new Map(prev).set(acct.id, label));
     dispatch(addAccount(acct));
   };
 
@@ -460,12 +465,16 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
     close();
     // Navigate to /chat and activate the first newly-added account so its
     // WebviewHost mounts and the auth flow starts immediately.
-    const firstNew = [...newlyAdded.current][0];
+    const firstNew = [...newlyAdded.keys()][0];
     if (firstNew) {
       dispatch(setActiveAccount(firstNew));
       navigate('/chat');
     }
   };
+
+  // Dynamic CTA based on what's been toggled on
+  const firstNewLabel = [...newlyAdded.values()][0];
+  const doneLabel = firstNewLabel ? `Continue with ${firstNewLabel} sign-in` : 'Done';
 
   return (
     <div className="space-y-4 text-sm text-stone-700">
@@ -517,10 +526,10 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
         })}
       </div>
       <p className="text-xs text-stone-400">
-        Toggling on adds a private webview. Press Done to open the first app and sign in —
-        credentials stay on your device.
+        Toggling on adds a private webview. You'll sign in the first time you open it — credentials
+        stay on your device.
       </p>
-      <DoneFooter close={close} onDone={handleDone} />
+      <DoneFooter close={close} onDone={handleDone} doneLabel={doneLabel} />
     </div>
   );
 };
@@ -530,10 +539,12 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
 const DoneFooter = ({
   close,
   onDone,
+  doneLabel = 'Done',
   skipLabel = 'Skip for now',
 }: {
   close: () => void;
   onDone?: () => void;
+  doneLabel?: string;
   skipLabel?: string;
 }) => (
   <div className="flex items-center justify-between gap-3 pt-1">
@@ -547,7 +558,7 @@ const DoneFooter = ({
       type="button"
       onClick={onDone ?? close}
       className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50">
-      Done
+      {doneLabel}
     </button>
   </div>
 );

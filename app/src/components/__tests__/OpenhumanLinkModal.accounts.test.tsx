@@ -108,8 +108,8 @@ describe('OpenhumanLinkModal accounts setup', () => {
     const accountIds = store.getState().accounts.order;
     expect(accountIds).toHaveLength(2);
 
-    // Click Done
-    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    // Click the CTA (dynamic label: "Continue with Telegram Web sign-in")
+    fireEvent.click(screen.getByRole('button', { name: /Continue with Telegram Web sign-in/ }));
 
     expect(store.getState().accounts.activeAccountId).toBe(accountIds[0]);
     expect(mockNavigate).toHaveBeenCalledWith('/chat');
@@ -131,6 +131,22 @@ describe('OpenhumanLinkModal accounts setup', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('shows dynamic CTA label when a provider is toggled on', () => {
+    renderModal();
+    openAccountsModal();
+
+    // Before toggling, button says "Done"
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+
+    // Toggle Discord on
+    fireEvent.click(screen.getByLabelText('Connect Discord'));
+
+    // CTA should now reference Discord
+    expect(
+      screen.getByRole('button', { name: /Continue with Discord sign-in/ })
+    ).toBeInTheDocument();
   });
 
   it('shows status indicator for existing accounts with a status', () => {
