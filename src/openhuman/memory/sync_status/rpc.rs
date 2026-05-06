@@ -133,10 +133,13 @@ pub async fn status_list_rpc(config: &Config) -> Result<RpcOutcome<StatusListRes
     .map_err(|e| format!("spawn_blocking join failed: {e}"))?
     .map_err(|e| format!("memory_tree DB access failed: {e:#}"))?;
 
-    let log = format!(
+    tracing::debug!(
         "[memory_sync_status][rpc] status_list returning {} row(s)",
         statuses.len()
     );
-    tracing::debug!("{log}");
-    Ok(RpcOutcome::single_log(StatusListResponse { statuses }, log))
+    // No `single_log` wrapper: the controller serializes
+    // `RpcOutcome::into_cli_compatible_json`, and a non-empty `logs` list
+    // wraps the value in `{ result, logs }`. The frontend reads
+    // `resp.statuses` directly, so any envelope here breaks parsing.
+    Ok(RpcOutcome::new(StatusListResponse { statuses }, vec![]))
 }
