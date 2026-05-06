@@ -51,6 +51,48 @@ fn coord_validation_rejects_negative() {
 }
 
 #[test]
+fn clamp_waypoint_floors_at_zero() {
+    assert_eq!(clamp_waypoint(-1), 0);
+    assert_eq!(clamp_waypoint(-9999), 0);
+}
+
+#[test]
+fn clamp_waypoint_caps_at_max() {
+    assert_eq!(clamp_waypoint(MAX_COORD as i32), MAX_COORD as i32);
+    assert_eq!(clamp_waypoint(MAX_COORD as i32 + 100), MAX_COORD as i32);
+}
+
+#[test]
+fn clamp_waypoint_passes_through_in_range() {
+    assert_eq!(clamp_waypoint(0), 0);
+    assert_eq!(clamp_waypoint(500), 500);
+    assert_eq!(clamp_waypoint(MAX_COORD as i32 - 1), MAX_COORD as i32 - 1);
+}
+
+#[test]
+fn humanized_path_clamped_for_edge_endpoints() {
+    // Bezier control points are zero-centered Gaussians scaled by
+    // distance, so perpendicular offsets can push waypoints negative
+    // or beyond MAX_COORD even when start/end are valid edge coords.
+    // Verify the clamp covers every waypoint regardless of seed.
+    let opts = HumanPathOptions {
+        steps: 25,
+        curvature: 0.8,
+        ..HumanPathOptions::default()
+    };
+    for seed in 0u64..32 {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let path = planned_mouse_path((0, 0), (200, 0), true, &opts, &mut rng);
+        for (x, y, _) in &path {
+            let cx = clamp_waypoint(*x);
+            let cy = clamp_waypoint(*y);
+            assert!((0..=MAX_COORD as i32).contains(&cx), "seed={seed} cx={cx}");
+            assert!((0..=MAX_COORD as i32).contains(&cy), "seed={seed} cy={cy}");
+        }
+    }
+}
+
+#[test]
 fn coord_validation_rejects_overflow() {
     assert!(validate_coord("x", MAX_COORD + 1).is_err());
 }

@@ -71,6 +71,15 @@ fn validate_coord(name: &str, value: i64) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Clamp a sampled bezier waypoint into the same screen-coord band that
+/// `validate_coord` enforces on caller-supplied endpoints. Bezier control
+/// points are zero-centered Gaussians, so perpendicular offsets can push
+/// intermediate `(x, y)` outside `0..=MAX_COORD` even when the start and
+/// end are valid — clamp before handing to `enigo.move_mouse`.
+fn clamp_waypoint(value: i32) -> i32 {
+    value.clamp(0, MAX_COORD as i32)
+}
+
 fn planned_mouse_path<R: rand::Rng>(
     start: (i32, i32),
     end: (i32, i32),
@@ -110,7 +119,9 @@ fn humanized_move(
         steps = path.len(),
         "[mouse][humanized] generated path"
     );
-    for (x, y, dwell) in path {
+    for (raw_x, raw_y, dwell) in path {
+        let x = clamp_waypoint(raw_x);
+        let y = clamp_waypoint(raw_y);
         trace!(x, y, dwell_ms = dwell, "[mouse][humanized] step");
         enigo
             .move_mouse(x, y, Coordinate::Abs)
