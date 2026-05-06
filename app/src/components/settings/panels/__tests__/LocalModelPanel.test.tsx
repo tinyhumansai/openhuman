@@ -109,9 +109,9 @@ describe('LocalModelPanel — usage flags', () => {
     vi.mocked(openhumanLocalAiPresets).mockResolvedValue(presets);
     vi.mocked(openhumanLocalAiDownload).mockResolvedValue({ result: idleStatus, logs: [] });
     vi.mocked(openhumanLocalAiDownloadAllAssets).mockResolvedValue({
-      result: { downloaded: 0, skipped: 0 },
+      result: idleDownloads,
       logs: [],
-    } as unknown as CommandResponse<unknown>);
+    });
 
     vi.mocked(openhumanGetConfig).mockImplementation(async () => makeSnapshot(runtime));
     vi.mocked(openhumanUpdateLocalAiSettings).mockImplementation(async patch => {
