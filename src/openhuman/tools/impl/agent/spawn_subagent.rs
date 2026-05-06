@@ -9,14 +9,8 @@
 //! into a single text result that the parent receives as a normal
 //! `tool_result`.
 //!
-//! Modes:
-//! - `"typed"` (default) — narrow prompt + filtered tools + cheaper
-//!   model. Use for delegated work where the parent doesn't need to
-//!   share its full context.
-//! - `"fork"` — replay the parent's *exact* rendered prompt + tool
-//!   schemas + message prefix. Use for parallel decomposition of a
-//!   homogeneous task; relies on the inference backend's automatic
-//!   prefix caching for token savings.
+//! Sub-agents always run in "typed" mode: a narrow archetype-specific
+//! prompt with a filtered tool list, on a cheaper model where applicable.
 //!
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
@@ -100,7 +94,7 @@ impl Tool for SpawnSubagentTool {
         let agent_id_schema = if agent_ids.is_empty() {
             json!({
                 "type": "string",
-                "description": "Sub-agent id (e.g. code_executor, researcher, critic, fork)."
+                "description": "Sub-agent id (e.g. code_executor, researcher, critic)."
             })
         } else {
             json!({
@@ -131,11 +125,6 @@ impl Tool for SpawnSubagentTool {
                 "toolkit": {
                     "type": "string",
                     "description": "Composio toolkit slug to scope this spawn to — e.g. `gmail`, `notion`, `slack`. REQUIRED when `agent_id = \"integrations_agent\"`. Narrows the sub-agent's visible Composio actions AND its Connected Integrations prompt section to only that toolkit's catalogue, so the sub-agent's context window only carries the platform it was asked to operate on. Must match a currently-connected integration (see the Delegation Guide)."
-                },
-                "mode": {
-                    "type": "string",
-                    "enum": ["typed", "fork"],
-                    "description": "`typed` (default) builds a narrow prompt + filtered tools. `fork` replays the parent's exact prompt for prefix-cache reuse on the inference backend."
                 },
                 "dedicated_thread": {
                     "type": "boolean",
@@ -177,8 +166,6 @@ impl Tool for SpawnSubagentTool {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
 
-        let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("typed");
-
         let dedicated_thread = args
             .get("dedicated_thread")
             .and_then(|v| v.as_bool())
@@ -205,19 +192,12 @@ impl Tool for SpawnSubagentTool {
             }
         };
 
-        // Resolve `mode` against the definition. Explicit `mode` argument
-        // wins; otherwise we infer from the definition itself.
-        let lookup_id = if mode == "fork" {
-            "fork"
-        } else {
-            agent_id.as_str()
-        };
-        let definition = match registry.get(lookup_id) {
+        let definition = match registry.get(agent_id.as_str()) {
             Some(def) => def,
             None => {
                 let available: Vec<&str> = registry.list().iter().map(|d| d.id.as_str()).collect();
                 return Ok(ToolResult::error(format!(
-                    "spawn_subagent: unknown agent_id '{lookup_id}'. Available: {}",
+                    "spawn_subagent: unknown agent_id '{agent_id}'. Available: {}",
                     available.join(", ")
                 )));
             }
@@ -376,7 +356,7 @@ impl Tool for SpawnSubagentTool {
         publish_global(DomainEvent::SubagentSpawned {
             parent_session: parent_session.clone(),
             agent_id: definition.id.clone(),
-            mode: mode.to_string(),
+            mode: "typed".to_string(),
             task_id: task_id.clone(),
             prompt_chars: prompt.chars().count(),
         });
@@ -391,7 +371,7 @@ impl Tool for SpawnSubagentTool {
                 .send(AgentProgress::SubagentSpawned {
                     agent_id: definition.id.clone(),
                     task_id: task_id.clone(),
-                    mode: mode.to_string(),
+                    mode: "typed".to_string(),
                     dedicated_thread,
                     prompt_chars: prompt.chars().count(),
                 })
