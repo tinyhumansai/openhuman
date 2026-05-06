@@ -333,3 +333,124 @@ where
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Serialize tests that mutate `RUST_LOG` / `OPENHUMAN_LOG_FILE_CONSTRAINTS` —
+    /// Cargo runs unit tests in parallel threads in the same process, so
+    /// concurrent env-var writes would race.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_clean_rust_log<R>(f: impl FnOnce() -> R) -> R {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let prior = std::env::var("RUST_LOG").ok();
+        std::env::remove_var("RUST_LOG");
+        let result = f();
+        match prior {
+            Some(v) => std::env::set_var("RUST_LOG", v),
+            None => std::env::remove_var("RUST_LOG"),
+        }
+        result
+    }
+
+    #[test]
+    fn level_tag_covers_all_levels() {
+        assert_eq!(level_tag(&Level::ERROR), "ERR");
+        assert_eq!(level_tag(&Level::WARN), "WRN");
+        assert_eq!(level_tag(&Level::INFO), "INF");
+        assert_eq!(level_tag(&Level::DEBUG), "DBG");
+        assert_eq!(level_tag(&Level::TRACE), "TRC");
+    }
+
+    #[test]
+    fn short_target_strips_module_path() {
+        assert_eq!(short_target("openhuman_core::core::rpc"), "rpc");
+        // Non-namespaced target stays as-is.
+        assert_eq!(short_target("plain"), "plain");
+    }
+
+    #[test]
+    fn seed_rust_log_global_uses_info_by_default() {
+        with_clean_rust_log(|| {
+            seed_rust_log(false, CliLogDefault::Global);
+            assert_eq!(std::env::var("RUST_LOG").unwrap(), "info");
+        });
+    }
+
+    #[test]
+    fn seed_rust_log_global_uses_debug_when_verbose() {
+        with_clean_rust_log(|| {
+            seed_rust_log(true, CliLogDefault::Global);
+            assert_eq!(std::env::var("RUST_LOG").unwrap(), "debug");
+        });
+    }
+
+    #[test]
+    fn seed_rust_log_autocomplete_scopes_to_module() {
+        with_clean_rust_log(|| {
+            seed_rust_log(false, CliLogDefault::AutocompleteOnly);
+            assert_eq!(
+                std::env::var("RUST_LOG").unwrap(),
+                "off,openhuman_core::openhuman::autocomplete=debug"
+            );
+        });
+        with_clean_rust_log(|| {
+            seed_rust_log(true, CliLogDefault::AutocompleteOnly);
+            assert_eq!(
+                std::env::var("RUST_LOG").unwrap(),
+                "off,openhuman_core::openhuman::autocomplete=trace"
+            );
+        });
+    }
+
+    #[test]
+    fn seed_rust_log_respects_existing_value() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let prior = std::env::var("RUST_LOG").ok();
+        std::env::set_var("RUST_LOG", "warn");
+        seed_rust_log(true, CliLogDefault::Global);
+        // Caller's existing setting must not be clobbered.
+        assert_eq!(std::env::var("RUST_LOG").unwrap(), "warn");
+        match prior {
+            Some(v) => std::env::set_var("RUST_LOG", v),
+            None => std::env::remove_var("RUST_LOG"),
+        }
+    }
+
+    #[test]
+    fn build_env_filter_returns_a_filter() {
+        // Smoke test: shouldn't panic and should produce *some* filter regardless of inputs.
+        let _ = build_env_filter(false, CliLogDefault::Global);
+        let _ = build_env_filter(true, CliLogDefault::AutocompleteOnly);
+    }
+
+    #[test]
+    fn parse_log_file_constraints_handles_csv_and_whitespace() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let prior = std::env::var("OPENHUMAN_LOG_FILE_CONSTRAINTS").ok();
+        std::env::set_var("OPENHUMAN_LOG_FILE_CONSTRAINTS", "rpc, , agent ,memory");
+        let parsed = parse_log_file_constraints();
+        assert_eq!(parsed, vec!["rpc", "agent", "memory"]);
+
+        std::env::remove_var("OPENHUMAN_LOG_FILE_CONSTRAINTS");
+        assert!(parse_log_file_constraints().is_empty());
+
+        match prior {
+            Some(v) => std::env::set_var("OPENHUMAN_LOG_FILE_CONSTRAINTS", v),
+            None => std::env::remove_var("OPENHUMAN_LOG_FILE_CONSTRAINTS"),
+        }
+    }
+
+    #[test]
+    fn log_directory_is_none_before_init_for_embedded() {
+        // In a fresh `cargo test` process where no test has called
+        // `init_for_embedded`, `log_directory()` must return `None` so the
+        // shell-side `reveal_logs_folder` command can surface a clear
+        // error rather than launching against an empty path.
+        if LOG_DIR.get().is_none() {
+            assert!(log_directory().is_none());
+        }
+    }
+}
