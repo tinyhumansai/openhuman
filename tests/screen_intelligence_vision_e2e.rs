@@ -139,7 +139,7 @@ embedding_model = "none"
 embedding_dimensions = 0
 
 [local_ai]
-enabled = {local_ai_enabled}
+runtime_enabled = {local_ai_enabled}
 provider = "{local_ai_provider}"
 
 [screen_intelligence]
