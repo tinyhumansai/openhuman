@@ -80,7 +80,39 @@ const SCHEMA_DDL: &str = "
     );
     CREATE INDEX IF NOT EXISTS idx_escalations_status
         ON subconscious_escalations(status);
+
+    -- #623: reflection layer (proactive subconscious). DDL lives in
+    -- `super::reflection_store::REFLECTION_SCHEMA_DDL`; appended here so
+    -- a single migration runs per connection.
+    CREATE TABLE IF NOT EXISTS subconscious_reflections (
+        id              TEXT PRIMARY KEY,
+        kind            TEXT NOT NULL,
+        body            TEXT NOT NULL,
+        disposition     TEXT NOT NULL,
+        proposed_action TEXT,
+        source_refs     TEXT NOT NULL DEFAULT '[]',
+        created_at      REAL NOT NULL,
+        surfaced_at     REAL,
+        acted_on_at     REAL,
+        dismissed_at    REAL
+    );
+    CREATE INDEX IF NOT EXISTS idx_reflections_created
+        ON subconscious_reflections(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_reflections_disposition_created
+        ON subconscious_reflections(disposition, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS subconscious_hotness_snapshots (
+        entity_id       TEXT PRIMARY KEY,
+        score           REAL NOT NULL,
+        captured_at     REAL NOT NULL
+    );
 ";
+
+/// Test-only re-export of [`SCHEMA_DDL`] for unit tests in sibling
+/// modules (e.g. `reflection_store_tests`) that need to spin up an
+/// in-memory connection with the full schema.
+#[cfg(test)]
+pub(crate) const SCHEMA_DDL_FOR_TESTS: &str = SCHEMA_DDL;
 
 // ── Task CRUD ────────────────────────────────────────────────────────────────
 
