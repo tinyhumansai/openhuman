@@ -49,6 +49,11 @@ impl RegisteredController {
 /// The global static registry of all controllers, initialized once on first access.
 static REGISTRY: OnceLock<Vec<RegisteredController>> = OnceLock::new();
 
+/// Internal-only controllers: registered for RPC dispatch but NOT in the agent-facing
+/// schema catalog.  These handlers are callable by trusted callers (e.g. the Tauri scanner)
+/// but should not be advertised to agents via tool listings or schema discovery.
+static INTERNAL_REGISTRY: OnceLock<Vec<RegisteredController>> = OnceLock::new();
+
 /// The global static registry of standalone CLI adapters.
 static CLI_ADAPTERS: OnceLock<Vec<RegisteredCliAdapter>> = OnceLock::new();
 
@@ -66,6 +71,16 @@ fn registry() -> &'static [RegisteredController] {
             });
             registered
         })
+        .as_slice()
+}
+
+/// Returns a reference to the internal-only controller registry.
+///
+/// These controllers are callable over RPC but are NOT included in agent tool listings
+/// or schema discovery endpoints.
+fn internal_registry() -> &'static [RegisteredController] {
+    INTERNAL_REGISTRY
+        .get_or_init(build_internal_only_controllers)
         .as_slice()
 }
 
@@ -192,6 +207,21 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     );
     // Integration notification ingest, triage, and per-provider settings
     controllers.extend(crate::openhuman::notifications::all_notifications_registered_controllers());
+    // Structured WhatsApp Web data — agent-facing read-only controllers (list/search).
+    // The write-path ingest controller is registered separately in build_internal_only_controllers.
+    controllers.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_registered_controllers());
+    controllers
+}
+
+/// Aggregates controllers that are registered for RPC routing but NOT exposed to agents.
+///
+/// These are write-path or internal-only handlers callable by trusted callers
+/// (e.g. the Tauri scanner ingest path) that should not appear in agent tool listings.
+fn build_internal_only_controllers() -> Vec<RegisteredController> {
+    let mut controllers = Vec::new();
+    // whatsapp_data ingest: scanner-side write path.  Callable over RPC by the
+    // Tauri scanner but excluded from agent-facing schema discovery.
+    controllers.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_internal_controllers());
     controllers
 }
 
@@ -255,6 +285,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     );
     // Integration notification ingest, triage, and per-provider settings
     schemas.extend(crate::openhuman::notifications::all_notifications_controller_schemas());
+    // Structured WhatsApp Web data — local SQLite store, agent-queryable
+    schemas.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_controller_schemas());
     schemas
 }
 
@@ -340,6 +372,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "Integration notification ingest, triage scoring, listing, read-state, \
              and per-provider routing settings.",
         ),
+        "whatsapp_data" => Some(
+            "Structured WhatsApp conversation and message store — list chats, read messages, and search across WhatsApp Web data.",
+        ),
         _ => None,
     }
 }
@@ -361,9 +396,13 @@ pub fn rpc_method_from_parts(namespace: &str, function: &str) -> Option<String> 
 }
 
 /// Retrieves the schema for a specific RPC method.
+///
+/// Checks both the agent-facing registry and the internal registry so that
+/// parameter validation still applies to internal-only methods (e.g. ingest).
 pub fn schema_for_rpc_method(method: &str) -> Option<ControllerSchema> {
     registry()
         .iter()
+        .chain(internal_registry().iter())
         .find(|r| r.rpc_method_name() == method)
         .map(|r| r.schema.clone())
 }
@@ -400,12 +439,21 @@ pub fn validate_params(
 
 /// Attempts to invoke a registered RPC method by name.
 ///
-/// Returns `None` if the method is not found in the registry.
+/// Checks both the agent-facing controller registry and the internal-only registry,
+/// so scanner-side write paths (e.g. `openhuman.whatsapp_data_ingest`) are routable
+/// even though they are not included in agent tool listings.
+///
+/// Returns `None` if the method is not found in either registry.
 pub async fn try_invoke_registered_rpc(
     method: &str,
     params: Map<String, Value>,
 ) -> Option<Result<Value, String>> {
     for controller in registry() {
+        if controller.rpc_method_name() == method {
+            return Some((controller.handler)(params).await);
+        }
+    }
+    for controller in internal_registry() {
         if controller.rpc_method_name() == method {
             return Some((controller.handler)(params).await);
         }
