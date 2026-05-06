@@ -296,6 +296,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "local_ai" => Some("Local AI chat, inference, downloads, and media operations."),
         "migrate" => Some("Data migration utilities."),
         "screen_intelligence" => Some("Screen capture, permissions, and accessibility automation."),
+        "security" => Some("Security policy and autonomy guardrail metadata."),
         "service" => Some("Desktop service lifecycle management."),
         "skills" => Some("Discovered SKILL.md skills and their bundled resources."),
         "socket" => Some("Skills runtime socket bridge controls."),
