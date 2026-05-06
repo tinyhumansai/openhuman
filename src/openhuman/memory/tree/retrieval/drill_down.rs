@@ -118,9 +118,7 @@ async fn rerank_by_semantic_similarity(
     let query_vec = match embedder.embed(query).await {
         Ok(v) => v,
         Err(err) => {
-            log::warn!(
-                "[retrieval::drill_down] embed query failed — returning BFS order: {err}"
-            );
+            log::warn!("[retrieval::drill_down] embed query failed — returning BFS order: {err}");
             return Ok(hits);
         }
     };
