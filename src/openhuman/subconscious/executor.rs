@@ -124,12 +124,19 @@ async fn execute_with_local_model(
         .map_err(|e| format!("config load: {e}"))?;
 
     if !config.local_ai.use_local_for_subconscious() {
+        // Fail fast rather than returning Ok("") — upstream code uses an
+        // empty string as a normal "task ran but produced no output"
+        // signal, so a silent skip would mask a disabled subsystem as a
+        // completed action. Surface the gate state so callers can
+        // distinguish "skipped" from "succeeded with empty output".
         tracing::info!(
             "[subconscious:executor] local_ai.usage.subconscious not enabled — \
-             skipping local model execution for task '{}' (no cloud fallback configured)",
+             refusing to execute task '{}' (no cloud fallback configured)",
             task.title
         );
-        return Ok(String::new());
+        return Err(
+            "local_ai.usage.subconscious not enabled (no cloud fallback configured)".to_string(),
+        );
     }
 
     let prompt_text = prompt::build_text_execution_prompt(task, situation_report, identity_context);

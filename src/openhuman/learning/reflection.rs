@@ -444,6 +444,17 @@ impl PostTurnHook for ReflectionHook {
             }
         };
 
+        // Empty response is the sentinel `run_reflection` uses when the
+        // local-only `use_local_for_learning` gate is off. Don't burn quota
+        // on an empty parse — clean-skip without storing a blank record.
+        if raw.trim().is_empty() {
+            self.rollback_increment(&session_key);
+            log::debug!(
+                "[learning] reflection skipped (empty response — gate off or local AI unavailable)"
+            );
+            return Ok(());
+        }
+
         let output = Self::parse_reflection(&raw);
 
         log::info!(
