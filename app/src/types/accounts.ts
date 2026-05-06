@@ -41,6 +41,14 @@ export interface AccountsState {
   accounts: Record<string, Account>;
   order: string[];
   activeAccountId: string | null;
+  /**
+   * Issue #1233 — most-recently-active non-agent account id, persisted
+   * across sessions. Drives the on-mount prewarm of `Accounts.tsx` so the
+   * first user click hits the warm-reopen branch instead of paying a
+   * cold load. Updated on rail click + new-account pick. `null` until the
+   * user activates a real (non-agent) account at least once.
+   */
+  lastActiveAccountId: string | null;
   messages: Record<string, IngestedMessage[]>;
   unread: Record<string, number>;
   logs: Record<string, AccountLogEntry[]>;

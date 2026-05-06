@@ -16,6 +16,7 @@ const initialState: AccountsState = {
   accounts: {},
   order: [],
   activeAccountId: null,
+  lastActiveAccountId: null,
   messages: {},
   unread: {},
   logs: {},
@@ -47,10 +48,31 @@ const accountsSlice = createSlice({
       if (state.activeAccountId === accountId) {
         state.activeAccountId = state.order[0] ?? null;
       }
+      // Issue #1233 — drop the MRU pointer if the deleted account was the
+      // last-active one, otherwise the next session would try to prewarm a
+      // gone account, hit the `accountsById[mruId]` undefined branch, and
+      // silently no-op. Replace it with whatever's still in `order`
+      // (matches `activeAccountId`'s fallback above) so the prewarm has a
+      // real candidate.
+      if (state.lastActiveAccountId === accountId) {
+        state.lastActiveAccountId = state.order[0] ?? null;
+      }
     },
 
     setActiveAccount(state, action: PayloadAction<string | null>) {
       state.activeAccountId = action.payload;
+    },
+
+    /**
+     * Issue #1233 — record the most-recently-activated non-agent account
+     * id. Persisted via the `lastActiveAccountId` whitelist entry in
+     * `store/index.ts` so it survives across sessions and drives the
+     * Accounts-mount prewarm. The agent pseudo-id is filtered out at the
+     * dispatch site, not here, because this slice has no knowledge of
+     * the agent constant.
+     */
+    setLastActiveAccount(state, action: PayloadAction<string | null>) {
+      state.lastActiveAccountId = action.payload;
     },
 
     setAccountStatus(
@@ -115,6 +137,7 @@ export const {
   addAccount,
   removeAccount,
   setActiveAccount,
+  setLastActiveAccount,
   setAccountStatus,
   appendMessages,
   appendLog,
@@ -122,5 +145,9 @@ export const {
   focusAccountFromNotification,
   resetAccountsState,
 } = accountsSlice.actions;
+
+/** Issue #1233 — selector for the persisted MRU account id. */
+export const selectLastActiveAccountId = (state: { accounts: AccountsState }): string | null =>
+  state.accounts.lastActiveAccountId;
 
 export default accountsSlice.reducer;

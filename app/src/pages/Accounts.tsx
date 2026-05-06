@@ -15,12 +15,16 @@ import {
   showWebviewAccount,
   startWebviewAccountService,
 } from '../services/webviewAccountService';
-import { addAccount, removeAccount, setActiveAccount } from '../store/accountsSlice';
+import {
+  addAccount,
+  removeAccount,
+  setActiveAccount,
+  setLastActiveAccount,
+} from '../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { fetchRespondQueue } from '../store/providerSurfaceSlice';
 import type { Account, AccountProvider, ProviderDescriptor } from '../types/accounts';
 import { AGENT_ACCOUNT_ID as AGENT_ID } from '../utils/accountsFullscreen';
-import { writeMruAccountId } from '../utils/webviewAccountMru';
 import { AgentChatPanel } from './Conversations';
 
 function makeAccountId(): string {
@@ -187,13 +191,16 @@ const Accounts = () => {
     };
     dispatch(addAccount(acct));
     dispatch(setActiveAccount(id));
-    writeMruAccountId(id);
+    // Issue #1233 — record this real-account selection in the persisted
+    // MRU pointer so the next session can prewarm it. Agent selections
+    // never reach this code path (separate `selectAgent` callback below).
+    dispatch(setLastActiveAccount(id));
   };
 
   const selectAgent = () => dispatch(setActiveAccount(AGENT_ID));
   const selectAccount = (id: string) => {
     dispatch(setActiveAccount(id));
-    writeMruAccountId(id);
+    dispatch(setLastActiveAccount(id));
   };
 
   const openContextMenu = (accountId: string, e: React.MouseEvent) => {

@@ -1,8 +1,17 @@
 import { useEffect } from 'react';
 
 import { prewarmWebviewAccount } from '../services/webviewAccountService';
+import { selectLastActiveAccountId } from '../store/accountsSlice';
+import { useAppSelector } from '../store/hooks';
 import type { Account } from '../types/accounts';
-import { PREWARM_MAX_ACCOUNTS, readMruAccountId } from '../utils/webviewAccountMru';
+
+/**
+ * Cap on `accounts.length` for which the MRU prewarm runs. Power users
+ * with many accounts skip prewarm so the spawn cost stays bounded — the
+ * prewarmed webview reserves a CEF process + provider profile, and we
+ * don't want a 20-account user to have all 20 warming on launch.
+ */
+export const PREWARM_MAX_ACCOUNTS = 5;
 
 interface UsePrewarmMostRecentAccountArgs {
   accounts: Account[];
@@ -18,8 +27,12 @@ interface UsePrewarmMostRecentAccountArgs {
  * `webview_account_open` and emits `state:"reused"` instead of paying the
  * cold-load wait.
  *
+ * The MRU id is read from the persisted Redux store
+ * (`selectLastActiveAccountId`) — same single source of truth the rest of
+ * Accounts uses, no separate `localStorage` channel.
+ *
  * Skips when:
- *   - no MRU id persisted (first run)
+ *   - no MRU id in store (first run)
  *   - the user has more than `PREWARM_MAX_ACCOUNTS` accounts (bound the
  *     spawn cost on power users)
  *   - the MRU account is the currently active one (no point prewarming
@@ -36,8 +49,8 @@ export function usePrewarmMostRecentAccount({
   accountsById,
   activeAccountId,
 }: UsePrewarmMostRecentAccountArgs): void {
+  const mruId = useAppSelector(selectLastActiveAccountId);
   useEffect(() => {
-    const mruId = readMruAccountId();
     if (!mruId) return;
     if (accounts.length === 0 || accounts.length > PREWARM_MAX_ACCOUNTS) return;
     const acct = accountsById[mruId];
@@ -47,11 +60,10 @@ export function usePrewarmMostRecentAccount({
       return;
     }
     void prewarmWebviewAccount(acct.id, acct.provider);
-    // Mount-only by design — see docstring. The deps the hook reads are
-    // captured at first render so a later add-account or status flip
-    // doesn't trigger a duplicate prewarm. We deliberately omit the
-    // values from the deps array; the rule isn't enforced in this repo's
-    // ESLint config, so we explain the omission in prose instead of via
-    // a missing-rule disable directive.
+    // Mount-only by design — see docstring. Snapshotting deps captured at
+    // first render keeps the prewarm a single fire even when the parent
+    // re-renders for unrelated reasons (resize, status flip on another
+    // account, etc.). Rule isn't enforced in this repo's ESLint config so
+    // the prose comment carries the intent.
   }, []);
 }
