@@ -1146,8 +1146,7 @@ pub fn run() {
         let arch = std::env::consts::ARCH;
         let os = std::env::consts::OS;
         #[cfg(target_os = "macos")]
-        let os_ver = macos_os_version()
-            .unwrap_or_else(|| "unknown".to_string());
+        let os_ver = macos_os_version().unwrap_or_else(|| "unknown".to_string());
         #[cfg(not(target_os = "macos"))]
         let os_ver = "n/a".to_string();
         log::info!("[startup] platform: arch={arch} os={os} os_version={os_ver}");
