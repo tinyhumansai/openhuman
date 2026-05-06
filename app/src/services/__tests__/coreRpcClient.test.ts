@@ -421,4 +421,76 @@ describe('coreRpcClient', () => {
     expect(tokenCalls).toBe(1);
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  describe('testCoreRpcConnection', () => {
+    test('POSTs an openhuman.ping JSON-RPC envelope to the supplied URL', async () => {
+      vi.resetModules();
+      vi.mocked(isTauri).mockReturnValue(false);
+      const { testCoreRpcConnection } = await import('../coreRpcClient');
+      const fetchMock = vi.mocked(fetch);
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+      await testCoreRpcConnection('http://example.test:7788/rpc');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('http://example.test:7788/rpc');
+      const requestInit = init as RequestInit;
+      expect(requestInit.method).toBe('POST');
+      expect(JSON.parse(requestInit.body as string)).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'openhuman.ping',
+        params: {},
+      });
+    });
+
+    test('omits Authorization header when no bearer token is available (non-Tauri)', async () => {
+      vi.resetModules();
+      vi.mocked(isTauri).mockReturnValue(false);
+      const { testCoreRpcConnection } = await import('../coreRpcClient');
+      const fetchMock = vi.mocked(fetch);
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+      await testCoreRpcConnection('http://example.test:7788/rpc');
+
+      const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
+      const headers = requestInit.headers as Record<string, string>;
+      expect(headers).toMatchObject({ 'Content-Type': 'application/json' });
+      expect(headers).not.toHaveProperty('Authorization');
+    });
+
+    test('attaches Authorization: Bearer when the Tauri bearer token resolves', async () => {
+      vi.resetModules();
+      vi.mocked(isTauri).mockReturnValue(true);
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'core_rpc_token') return 'deadbeef';
+        throw new Error(`unexpected command: ${cmd}`);
+      });
+      const { testCoreRpcConnection } = await import('../coreRpcClient');
+      const fetchMock = vi.mocked(fetch);
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+      await testCoreRpcConnection('http://example.test:7788/rpc');
+
+      const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
+      const headers = requestInit.headers as Record<string, string>;
+      expect(headers.Authorization).toBe('Bearer deadbeef');
+      expect(headers['Content-Type']).toBe('application/json');
+    });
+
+    test('returns the raw fetch Response so callers can inspect status/ok', async () => {
+      vi.resetModules();
+      vi.mocked(isTauri).mockReturnValue(false);
+      const { testCoreRpcConnection } = await import('../coreRpcClient');
+      const fetchMock = vi.mocked(fetch);
+      const probe = { ok: false, status: 405, statusText: 'Method Not Allowed' } as Response;
+      fetchMock.mockResolvedValueOnce(probe);
+
+      const response = await testCoreRpcConnection('http://example.test:7788/rpc');
+
+      expect(response).toBe(probe);
+      expect(response.status).toBe(405);
+    });
+  });
 });
