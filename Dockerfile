@@ -21,6 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # libraries even when the corresponding features are disabled at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    cmake \
     pkg-config \
     libssl-dev \
     libasound2-dev \
