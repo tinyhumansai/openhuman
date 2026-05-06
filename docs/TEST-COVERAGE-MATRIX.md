@@ -422,33 +422,33 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 ### 13.2 Automation & Channels
 
-| ID     | Feature               | Layer | Test path(s)             | Status | Notes |
-| ------ | --------------------- | ----- | ------------------------ | ------ | ----- |
-| 13.2.1 | Channel Configuration | WD    | _missing_ — tracked #969 | ❌     |       |
-| 13.2.2 | Permission Settings   | WD    | _missing_ — tracked #969 | ❌     |       |
+| ID     | Feature               | Layer | Test path(s)                                                | Status | Notes |
+| ------ | --------------------- | ----- | ----------------------------------------------------------- | ------ | ----- |
+| 13.2.1 | Channel Configuration | WD    | `app/test/e2e/specs/settings-channels-permissions.spec.ts`  | ✅     |       |
+| 13.2.2 | Permission Settings   | WD    | `app/test/e2e/specs/settings-channels-permissions.spec.ts`  | ✅     |       |
 
 ### 13.3 AI & Skills
 
-| ID     | Feature             | Layer | Test path(s)                                                              | Status | Notes                               |
-| ------ | ------------------- | ----- | ------------------------------------------------------------------------- | ------ | ----------------------------------- |
-| 13.3.1 | Model Configuration | VU    | `app/src/components/settings/panels/__tests__/AutocompletePanel.test.tsx` | 🟡     | Generic; AI-model-switch unasserted |
-| 13.3.2 | Skill Toggle        | WD    | `skill-lifecycle.spec.ts`                                                 | ✅     |                                     |
+| ID     | Feature             | Layer | Test path(s)                                                                                                              | Status | Notes                               |
+| ------ | ------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------------------- |
+| 13.3.1 | Model Configuration | VU+WD | `app/src/components/settings/panels/__tests__/AutocompletePanel.test.tsx`, `app/test/e2e/specs/settings-ai-skills.spec.ts` | ✅     | AI-model-switch covered             |
+| 13.3.2 | Skill Toggle        | WD    | `skill-lifecycle.spec.ts`, `app/test/e2e/specs/settings-ai-skills.spec.ts`                                                 | ✅     |                                     |
 
 ### 13.4 Developer Options
 
-| ID     | Feature            | Layer | Test path(s)             | Status | Notes                          |
-| ------ | ------------------ | ----- | ------------------------ | ------ | ------------------------------ |
-| 13.4.1 | Webhook Inspection | WD    | _missing_ — tracked #969 | ❌     |                                |
-| 13.4.2 | Runtime Logs       | WD    | _missing_ — tracked #969 | ❌     |                                |
-| 13.4.3 | Memory Debug       | WD    | _missing_ — tracked #969 | ❌     | Panel exists; assertion needed |
+| ID     | Feature            | Layer | Test path(s)                                         | Status | Notes |
+| ------ | ------------------ | ----- | ---------------------------------------------------- | ------ | ----- |
+| 13.4.1 | Webhook Inspection | WD    | `app/test/e2e/specs/settings-dev-options.spec.ts`    | ✅     |       |
+| 13.4.2 | Runtime Logs       | WD    | `app/test/e2e/specs/settings-dev-options.spec.ts`    | ✅     |       |
+| 13.4.3 | Memory Debug       | WD    | `app/test/e2e/specs/settings-dev-options.spec.ts`    | ✅     |       |
 
 ### 13.5 Data Management
 
-| ID     | Feature          | Layer | Test path(s)             | Status | Notes                                  |
-| ------ | ---------------- | ----- | ------------------------ | ------ | -------------------------------------- |
-| 13.5.1 | Clear App Data   | WD    | _missing_ — tracked #969 | ❌     | Destructive — confirm-then-reset       |
-| 13.5.2 | Cache Reset      | WD    | _missing_ — tracked #969 | ❌     |                                        |
-| 13.5.3 | Full State Reset | WD    | _missing_ — tracked #969 | ❌     | Restart-and-verify fresh-install state |
+| ID     | Feature          | Layer | Test path(s)                                            | Status | Notes                                  |
+| ------ | ---------------- | ----- | ------------------------------------------------------- | ------ | -------------------------------------- |
+| 13.5.1 | Clear App Data   | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     | Destructive — confirm-then-reset       |
+| 13.5.2 | Cache Reset      | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     |                                        |
+| 13.5.3 | Full State Reset | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     | Restart-and-verify fresh-install state |
 
 ---
 
