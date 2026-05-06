@@ -2728,8 +2728,8 @@ pub async fn webview_account_reveal<R: Runtime>(
     let elapsed_ms = state
         .spawn_started_at
         .lock()
-        .ok()
-        .and_then(|mut g| g.remove(&args.account_id))
+        .unwrap()
+        .remove(&args.account_id)
         .map(|started| started.elapsed().as_millis())
         .map(|ms| ms.to_string())
         .unwrap_or_else(|| "unknown".to_string());
