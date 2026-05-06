@@ -43,9 +43,7 @@ vi.mock('../../lib/coreState/store', () => ({
 }));
 
 // Mock MCP — must be a newable constructor
-vi.mock('../../lib/mcp', () => ({
-  SocketIOMCPTransportImpl: vi.fn(() => ({})),
-}));
+vi.mock('../../lib/mcp', () => ({ SocketIOMCPTransportImpl: vi.fn(() => ({})) }));
 
 // Hoist getCoreRpcUrl mock so it is available before the module is loaded
 const hoisted = vi.hoisted(() => ({ getCoreRpcUrlMock: vi.fn<() => Promise<string>>() }));
