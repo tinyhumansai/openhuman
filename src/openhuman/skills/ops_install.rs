@@ -145,19 +145,39 @@ pub async fn install_skill_from_url(
     let response = match client.get(&fetch_url).send().await {
         Ok(resp) => resp,
         Err(e) => {
-            if e.is_timeout() {
-                return Err(format!("fetch timed out after {timeout_secs}s"));
-            }
-            return Err(format!("fetch failed: {e}"));
+            let (failure, msg) = if e.is_timeout() {
+                ("timeout", format!("fetch timed out after {timeout_secs}s"))
+            } else {
+                ("transport", format!("fetch failed: {e}"))
+            };
+            crate::core::observability::report_error(
+                msg.as_str(),
+                "skills",
+                "install_fetch",
+                &[("url", fetch_url.as_str()), ("failure", failure)],
+            );
+            return Err(msg);
         }
     };
 
     let status = response.status();
     if !status.is_success() {
-        return Err(format!(
+        let status_str = status.as_u16().to_string();
+        let msg = format!(
             "fetch failed: {fetch_url} returned status {}",
             status.as_u16()
-        ));
+        );
+        crate::core::observability::report_error(
+            msg.as_str(),
+            "skills",
+            "install_fetch",
+            &[
+                ("url", fetch_url.as_str()),
+                ("status", status_str.as_str()),
+                ("failure", "non_2xx"),
+            ],
+        );
+        return Err(msg);
     }
 
     if let Some(len) = response.content_length() {
