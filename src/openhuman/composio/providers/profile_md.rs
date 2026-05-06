@@ -44,12 +44,25 @@ pub fn merge_provider_into_profile_md(
     if toolkit.is_empty() {
         return Ok(());
     }
+    // Require a real connection_id so the bullet keys match what the
+    // disconnect path (`composio_delete_connection`) will look up. A
+    // synthetic "default" fallback would orphan bullets when the
+    // connection is removed.
     let identifier = profile
         .connection_id
         .as_deref()
         .map(normalize_token)
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "default".to_string());
+        .filter(|v| !v.is_empty());
+    let identifier = match identifier {
+        Some(id) => id,
+        None => {
+            tracing::debug!(
+                toolkit = %toolkit,
+                "[composio:profile_md] skipping merge — connection_id missing or empty"
+            );
+            return Ok(());
+        }
+    };
 
     let bullet = match render_bullet(&toolkit, &identifier, profile) {
         Some(b) => b,
@@ -70,7 +83,7 @@ pub fn merge_provider_into_profile_md(
     let updated = upsert_bullet(&existing, &toolkit, &identifier, &bullet);
     fs::write(&path, updated)?;
     tracing::debug!(
-        path = %path.display(),
+        target_file = "PROFILE.md",
         toolkit = %toolkit,
         identifier = %identifier,
         "[composio:profile_md] merged provider profile into PROFILE.md"
@@ -102,7 +115,7 @@ pub fn remove_provider_from_profile_md(
     if updated != existing {
         fs::write(&path, updated)?;
         tracing::debug!(
-            path = %path.display(),
+            target_file = "PROFILE.md",
             toolkit = %toolkit,
             identifier = %identifier,
             "[composio:profile_md] removed provider bullet from PROFILE.md"
@@ -207,61 +220,78 @@ fn remove_bullet(existing: &str, toolkit: &str, identifier: &str) -> String {
 }
 
 /// Split the file into `(prefix, block_body, suffix)` around the
-/// managed block. If no block is present, `prefix` is the full file
-/// (with a trailing newline ensured for clean assembly) and
-/// `block_body` is empty.
+/// managed block. Bytes outside the markers are returned verbatim so
+/// the caller can preserve user-authored whitespace, indentation, and
+/// trailing newlines exactly. If no block is present, `prefix` is the
+/// full file and `block_body` / `suffix` are empty.
 fn split_block(existing: &str) -> (String, String, String) {
     if let (Some(start), Some(end)) = (existing.find(BLOCK_START), existing.find(BLOCK_END)) {
         if end > start {
-            let prefix = existing[..start].trim_end().to_string();
+            let prefix = existing[..start].to_string();
             let body = existing[start + BLOCK_START.len()..end].to_string();
             let suffix_start = end + BLOCK_END.len();
-            let suffix = existing[suffix_start..]
-                .trim_start_matches('\n')
-                .to_string();
+            let suffix = existing[suffix_start..].to_string();
             return (prefix, body, suffix);
         }
     }
-    let prefix = if existing.is_empty() {
-        FILE_HEADER.to_string()
-    } else if existing.ends_with('\n') {
-        existing.to_string()
-    } else {
-        format!("{existing}\n")
-    };
-    (prefix, String::new(), String::new())
+    (existing.to_string(), String::new(), String::new())
 }
 
+/// Assemble `prefix + block + suffix`, preserving the user-authored
+/// bytes in `prefix` and `suffix` verbatim. We only normalize the
+/// newline separators *immediately adjacent* to the managed block —
+/// the bytes we own — to keep one blank line on each boundary.
 fn assemble(prefix: &str, block: &str, suffix: &str) -> String {
-    let prefix_trim = prefix.trim_end();
-    let suffix_trim = suffix.trim();
     if block.is_empty() {
-        let mut out = String::new();
-        if !prefix_trim.is_empty() {
-            out.push_str(prefix_trim);
+        // Removing the block entirely. Strip the newlines we previously
+        // added on each side of the block, but leave the rest of the
+        // user's content untouched.
+        let p = prefix.trim_end_matches('\n');
+        let s = suffix.trim_start_matches('\n');
+        let mut out = String::with_capacity(p.len() + s.len() + 2);
+        out.push_str(p);
+        if !p.is_empty() {
+            // Keep one trailing newline on the prefix.
             out.push('\n');
+            if !s.is_empty() {
+                // Plus a blank-line separator before whatever the user
+                // had after the block.
+                out.push('\n');
+            }
         }
-        if !suffix_trim.is_empty() {
-            out.push('\n');
-            out.push_str(suffix_trim);
+        out.push_str(s);
+        if !out.is_empty() && !out.ends_with('\n') {
             out.push('\n');
         }
         return out;
     }
+
     let mut out = String::new();
-    if prefix_trim.is_empty() {
+    if prefix.trim().is_empty() {
+        // Empty / whitespace-only file → seed with a friendly header so
+        // the agent prompt loader has a sensible top of the file.
         out.push_str(FILE_HEADER);
+        out.push('\n');
     } else {
-        out.push_str(prefix_trim);
-        out.push('\n');
+        // Preserve user prefix bytes verbatim, then ensure exactly one
+        // blank line before the block.
+        let p = prefix.trim_end_matches('\n');
+        out.push_str(p);
+        out.push_str("\n\n");
     }
-    out.push('\n');
     out.push_str(block);
-    out.push('\n');
-    if !suffix_trim.is_empty() {
+    // The block string we emit doesn't include a trailing newline.
+    if suffix.is_empty() {
         out.push('\n');
-        out.push_str(suffix_trim);
-        out.push('\n');
+    } else {
+        // Drop any newlines we previously inserted between block and
+        // suffix; preserve the rest of the user's bytes.
+        let s = suffix.trim_start_matches('\n');
+        out.push_str("\n\n");
+        out.push_str(s);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
     }
     out
 }
@@ -411,6 +441,48 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         remove_provider_from_profile_md(tmp.path(), "gmail", "c-1").unwrap();
         assert!(!tmp.path().join("PROFILE.md").exists());
+    }
+
+    #[test]
+    fn skips_when_connection_id_missing() {
+        let tmp = TempDir::new().unwrap();
+        let p = ProviderUserProfile {
+            toolkit: "gmail".into(),
+            connection_id: None,
+            display_name: Some("Jane".into()),
+            email: Some("jane@example.com".into()),
+            username: None,
+            avatar_url: None,
+            profile_url: None,
+            extras: serde_json::Value::Null,
+        };
+        merge_provider_into_profile_md(tmp.path(), &p).unwrap();
+        // No file written — without a connection_id we'd orphan the
+        // bullet at disconnect time.
+        assert!(!tmp.path().join("PROFILE.md").exists());
+    }
+
+    #[test]
+    fn preserves_indentation_and_blank_lines_around_block() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("PROFILE.md");
+        // User-authored content on both sides of where the block will
+        // land, with intentional blank lines and trailing whitespace.
+        let original = "# User Profile\n\n    indented bio line\n\n## Notes\n- alpha\n- beta\n\n";
+        fs::write(&path, original).unwrap();
+        merge_provider_into_profile_md(tmp.path(), &sample("gmail", "c-1")).unwrap();
+        let body = fs::read_to_string(&path).unwrap();
+        // User content unchanged byte-for-byte.
+        assert!(body.contains("    indented bio line"));
+        assert!(body.contains("## Notes\n- alpha\n- beta"));
+        // Block landed somewhere.
+        assert!(body.contains(BLOCK_START) && body.contains(BLOCK_END));
+        // Now remove and verify the user content is still intact.
+        remove_provider_from_profile_md(tmp.path(), "gmail", "c-1").unwrap();
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(after.contains("    indented bio line"));
+        assert!(after.contains("## Notes\n- alpha\n- beta"));
+        assert!(!after.contains(BLOCK_START));
     }
 
     #[test]
