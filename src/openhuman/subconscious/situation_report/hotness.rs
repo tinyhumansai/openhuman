@@ -39,7 +39,7 @@ pub async fn build_section(config: &Config, workspace_dir: &Path, _last_tick_at:
 
     // 2. Read previous snapshot.
     let previous = subconscious_store::with_connection(workspace_dir, |conn| {
-        reflection_store::load_hotness_snapshots(conn).map_err(anyhow::Error::from)
+        reflection_store::load_hotness_snapshots(conn)
     })
     .unwrap_or_else(|e| {
         log::warn!("[subconscious::situation_report::hotness] snapshot load failed: {e}");

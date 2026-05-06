@@ -212,7 +212,7 @@ impl SubconsciousEngine {
         };
         // Fetch last 8 reflections for anti-double-emit context.
         let recent_reflections = super::store::with_connection(&self.workspace_dir, |conn| {
-            super::reflection_store::list_recent(conn, 8, None).map_err(anyhow::Error::from)
+            super::reflection_store::list_recent(conn, 8, None)
         })
         .unwrap_or_else(|e| {
             warn!("[subconscious] recent reflections load failed: {e}");
@@ -401,7 +401,7 @@ impl SubconsciousEngine {
             }
         };
         let recent_reflections = super::store::with_connection(&self.workspace_dir, |conn| {
-            super::reflection_store::list_recent(conn, 8, None).map_err(anyhow::Error::from)
+            super::reflection_store::list_recent(conn, 8, None)
         })
         .unwrap_or_default();
         let report = build_situation_report(
@@ -805,7 +805,7 @@ fn parse_response(
 /// are logged but do not abort the rest — the tick must finish even if
 /// one row trips an I/O error.
 async fn persist_and_surface_reflections(
-    workspace_dir: &PathBuf,
+    workspace_dir: &std::path::Path,
     drafts: Vec<ReflectionDraft>,
     now: f64,
 ) -> Vec<Reflection> {
@@ -853,7 +853,7 @@ async fn persist_and_surface_reflections(
 
     let now_iso = chrono::Utc::now().to_rfc3339();
     if let Err(e) =
-        conversation_post::ensure_subconscious_thread(workspace_dir.clone(), now_iso.clone())
+        conversation_post::ensure_subconscious_thread(workspace_dir.to_path_buf(), now_iso.clone())
     {
         warn!("[subconscious] ensure_subconscious_thread failed: {e}");
         // Don't return — persistence still happened; just no surfacing.
@@ -864,10 +864,10 @@ async fn persist_and_surface_reflections(
         if r.disposition != Disposition::Notify {
             continue;
         }
-        match conversation_post::post_reflection(workspace_dir.clone(), r) {
+        match conversation_post::post_reflection(workspace_dir.to_path_buf(), r) {
             Ok(_msg) => {
                 if let Err(e) = store::with_connection(workspace_dir, |conn| {
-                    reflection_store::mark_surfaced(conn, &r.id, now).map_err(anyhow::Error::from)
+                    reflection_store::mark_surfaced(conn, &r.id, now)
                 }) {
                     warn!("[subconscious] mark_surfaced failed id={}: {e}", r.id);
                 }

@@ -566,7 +566,7 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
         let _ = store::with_connection(&config.workspace_dir, |conn| {
-            reflection_store::mark_acted(conn, &reflection_id, now).map_err(anyhow::Error::from)
+            reflection_store::mark_acted(conn, &reflection_id, now)
         });
 
         to_json(RpcOutcome::single_log(
@@ -592,7 +592,7 @@ fn handle_reflections_dismiss(params: Map<String, Value>) -> ControllerFuture {
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
         store::with_connection(&config.workspace_dir, |conn| {
-            reflection_store::mark_dismissed(conn, &reflection_id, now).map_err(anyhow::Error::from)
+            reflection_store::mark_dismissed(conn, &reflection_id, now)
         })
         .map_err(|e| e.to_string())?;
         to_json(RpcOutcome::single_log(
