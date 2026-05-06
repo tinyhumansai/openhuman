@@ -3,6 +3,7 @@ import http from "node:http";
 
 const DEFAULT_PORT = 18473;
 const MOCK_JWT = "e2e-mock-jwt-token";
+const MAX_PORT_RETRY_ATTEMPTS = 10;
 
 let requestLog = [];
 let mockBehavior = {};
@@ -1351,29 +1352,99 @@ function handleWebSocketUpgrade(req, socket) {
   socket.on("close", () => {});
 }
 
-function startMockServer(port = DEFAULT_PORT) {
-  return new Promise((resolve, reject) => {
-    if (server) {
-      resolve({ port: server.address()?.port ?? port, alreadyRunning: true });
-      return;
-    }
-    server = http.createServer((req, res) => {
-      handleRequest(req, res).catch((err) => {
-        console.error("[MockServer] Unhandled error:", err);
-        json(res, 500, { success: false, error: "Internal mock error" });
-      });
-    });
-    server.on("connection", (socket) => {
-      openSockets.add(socket);
-      socket.on("close", () => openSockets.delete(socket));
-    });
-    server.on("upgrade", (req, socket) => handleWebSocketUpgrade(req, socket));
-    server.on("error", reject);
-    server.listen(port, "127.0.0.1", () => {
-      console.log(`[MockServer] Listening on http://127.0.0.1:${port}`);
-      resolve({ port });
+function getMockServerPort() {
+  const address = server?.address();
+  return typeof address === "object" && address ? address.port : null;
+}
+
+function createServerInstance() {
+  const nextServer = http.createServer((req, res) => {
+    handleRequest(req, res).catch((err) => {
+      console.error("[MockServer] Unhandled error:", err);
+      json(res, 500, { success: false, error: "Internal mock error" });
     });
   });
+  nextServer.on("connection", (socket) => {
+    openSockets.add(socket);
+    socket.on("close", () => openSockets.delete(socket));
+  });
+  nextServer.on("upgrade", (req, socket) => handleWebSocketUpgrade(req, socket));
+  return nextServer;
+}
+
+function listen(serverInstance, port) {
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      serverInstance.off("listening", onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      serverInstance.off("error", onError);
+      const address = serverInstance.address();
+      const resolvedPort =
+        typeof address === "object" && address ? address.port : port;
+      resolve(resolvedPort);
+    };
+    serverInstance.once("error", onError);
+    serverInstance.once("listening", onListening);
+    serverInstance.listen(port, "127.0.0.1");
+  });
+}
+
+async function startMockServer(port = DEFAULT_PORT, options = {}) {
+  if (server) {
+    return { port: getMockServerPort() ?? port, alreadyRunning: true };
+  }
+
+  const preferredPort = Number.isInteger(port) && port > 0 ? port : DEFAULT_PORT;
+  const retryIfInUse = options.retryIfInUse === true;
+  const candidatePorts = retryIfInUse
+    ? [
+        preferredPort,
+        ...Array.from(
+          { length: MAX_PORT_RETRY_ATTEMPTS },
+          (_, i) => preferredPort + i + 1,
+        ),
+        0,
+      ]
+    : [preferredPort];
+
+  let lastError = null;
+  for (const candidatePort of candidatePorts) {
+    const nextServer = createServerInstance();
+    try {
+      const resolvedPort = await listen(nextServer, candidatePort);
+      server = nextServer;
+      const retryNote =
+        resolvedPort === preferredPort
+          ? ""
+          : ` (preferred ${preferredPort} unavailable)`;
+      console.log(
+        `[MockServer] Listening on http://127.0.0.1:${resolvedPort}${retryNote}`,
+      );
+      return {
+        port: resolvedPort,
+        alreadyRunning: false,
+        requestedPort: preferredPort,
+        retried: resolvedPort !== preferredPort,
+      };
+    } catch (err) {
+      try {
+        nextServer.close();
+      } catch {
+        // The failed candidate may never have reached the listening state.
+      }
+      lastError = err;
+      if (!retryIfInUse || err?.code !== "EADDRINUSE") {
+        throw err;
+      }
+      console.warn(
+        `[MockServer] Port ${candidatePort} unavailable; trying another local port`,
+      );
+    }
+  }
+
+  throw lastError ?? new Error("Mock server failed to start");
 }
 
 function stopMockServer() {
@@ -1397,6 +1468,7 @@ function stopMockServer() {
 export {
   DEFAULT_PORT,
   clearRequestLog,
+  getMockServerPort,
   getMockBehavior,
   getRequestLog,
   resetMockBehavior,

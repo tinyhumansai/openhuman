@@ -10,7 +10,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import type React from 'react';
-import { afterAll, afterEach, beforeAll, beforeEach, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
 // @ts-ignore - test-only JS module outside app/src
 import {
@@ -20,9 +20,23 @@ import {
   stopMockServer,
 } from '../../../scripts/mock-api-core.mjs';
 
+const DEFAULT_TEST_MOCK_API_PORT = 5005;
+
+function readMockApiPort() {
+  const rawPort = process.env.VITEST_MOCK_API_PORT ?? process.env.MOCK_API_PORT;
+  const port = rawPort ? Number(rawPort) : DEFAULT_TEST_MOCK_API_PORT;
+  return Number.isInteger(port) && port > 0 ? port : DEFAULT_TEST_MOCK_API_PORT;
+}
+
+const mockApiServer = await startMockServer(readMockApiPort(), { retryIfInUse: true });
+const mockApiUrl = `http://localhost:${mockApiServer.port}`;
+process.env.VITEST_MOCK_API_URL = mockApiUrl;
+process.env.VITE_BACKEND_URL = mockApiUrl;
+
 // Mock import.meta.env defaults for tests
 vi.stubEnv('DEV', true);
 vi.stubEnv('MODE', 'test');
+vi.stubEnv('VITE_BACKEND_URL', mockApiUrl);
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -124,7 +138,7 @@ vi.mock('../utils/config', () => ({
   DEV_FORCE_ONBOARDING: false,
   SKILLS_GITHUB_REPO: 'test/skills',
   SENTRY_DSN: undefined,
-  BACKEND_URL: 'http://localhost:5005',
+  BACKEND_URL: mockApiUrl,
   TELEGRAM_BOT_USERNAME: 'openhuman_bot',
   LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
   APP_VERSION: '0.0.0-test',
@@ -133,7 +147,7 @@ vi.mock('../utils/config', () => ({
 }));
 
 vi.mock('../services/backendUrl', () => ({
-  getBackendUrl: vi.fn().mockResolvedValue('http://localhost:5005'),
+  getBackendUrl: vi.fn().mockImplementation(() => Promise.resolve(mockApiUrl)),
 }));
 
 // Mock redux-persist to avoid CJS/ESM issues in vitest
@@ -197,9 +211,6 @@ if (!process.env.DEBUG_TESTS) {
 }
 
 // Shared mock API server lifecycle for unit tests (default)
-beforeAll(async () => {
-  await startMockServer(5005);
-});
 afterEach(() => {
   clearRequestLog();
   cleanup();
