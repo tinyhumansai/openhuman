@@ -237,6 +237,8 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     );
 
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
-    expect(ctx?.snapshot.currentUser).toEqual({ first_name: 'Ada', username: 'ada' });
+    await waitFor(() =>
+      expect(ctx?.snapshot.currentUser).toEqual({ first_name: 'Ada', username: 'ada' })
+    );
   });
 });
