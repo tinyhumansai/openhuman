@@ -198,6 +198,7 @@ const PrivacyPanel = () => {
                 <button
                   data-testid="privacy-meet-handoff-toggle"
                   onClick={handleToggleMeetAutoHandoff}
+                  aria-label="Auto-handoff Google Meet transcripts to the orchestrator"
                   className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
                     meetAutoHandoff ? 'bg-primary-500' : 'bg-stone-600'
                   }`}

@@ -836,19 +836,50 @@ fn handle_get_analytics_settings(_params: Map<String, Value>) -> ControllerFutur
 
 fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let update = deserialize_params::<MeetSettingsUpdate>(params)?;
+        log::debug!("[config][rpc] update_meet_settings enter");
+        let update = match deserialize_params::<MeetSettingsUpdate>(params) {
+            Ok(u) => u,
+            Err(err) => {
+                log::warn!("[config][rpc] update_meet_settings invalid params: {err}");
+                return Err(err);
+            }
+        };
+        log::debug!(
+            "[config][rpc] update_meet_settings patch auto_orchestrator_handoff={:?}",
+            update.auto_orchestrator_handoff
+        );
         let patch = config_rpc::MeetSettingsPatch {
             auto_orchestrator_handoff: update.auto_orchestrator_handoff,
         };
-        to_json(config_rpc::load_and_apply_meet_settings(patch).await?)
+        match config_rpc::load_and_apply_meet_settings(patch).await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] update_meet_settings ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] update_meet_settings failed: {err}");
+                Err(err)
+            }
+        }
     })
 }
 
 fn handle_get_meet_settings(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async {
-        let config = config_rpc::load_config_with_timeout().await?;
+        log::debug!("[config][rpc] get_meet_settings enter");
+        let config = match config_rpc::load_config_with_timeout().await {
+            Ok(c) => c,
+            Err(err) => {
+                log::warn!("[config][rpc] get_meet_settings load failed: {err}");
+                return Err(err);
+            }
+        };
+        let auto_orchestrator_handoff = config.meet.auto_orchestrator_handoff;
+        log::debug!(
+            "[config][rpc] get_meet_settings ok auto_orchestrator_handoff={auto_orchestrator_handoff}"
+        );
         let result = serde_json::json!({
-            "auto_orchestrator_handoff": config.meet.auto_orchestrator_handoff,
+            "auto_orchestrator_handoff": auto_orchestrator_handoff,
         });
         to_json(RpcOutcome::new(
             result,
