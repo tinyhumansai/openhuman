@@ -40,6 +40,8 @@ fn every_registered_key_resolves_to_non_unknown_schema() {
         "workspace_onboarding_flag_set",
         "update_analytics_settings",
         "get_analytics_settings",
+        "update_meet_settings",
+        "get_meet_settings",
         "agent_server_status",
         "reset_local_data",
         "get_onboarding_completed",

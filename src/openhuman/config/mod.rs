@@ -29,7 +29,7 @@ pub use schema::{
     CurlConfig, DelegateAgentConfig, DictationActivationMode, DictationConfig, DiscordConfig,
     DockerRuntimeConfig, EmbeddingRouteConfig, GitbooksConfig, HeartbeatConfig, HttpRequestConfig,
     IMessageConfig, IntegrationToggle, IntegrationsConfig, LarkConfig, LearningConfig, LlmBackend,
-    LocalAiConfig, MatrixConfig, MemoryConfig, MemoryTreeConfig, ModelRouteConfig,
+    LocalAiConfig, MatrixConfig, MeetConfig, MemoryConfig, MemoryTreeConfig, ModelRouteConfig,
     MultimodalConfig, ObservabilityConfig, ProxyConfig, ProxyScope, ReflectionSource,
     ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig, SandboxBackend, SandboxConfig,
     SchedulerConfig, SchedulerGateConfig, SchedulerGateMode, ScreenIntelligenceConfig,

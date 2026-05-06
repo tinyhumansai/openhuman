@@ -157,6 +157,12 @@ pub struct Config {
     #[serde(default)]
     pub dictation: DictationConfig,
 
+    /// Google Meet integration settings — currently the
+    /// `auto_orchestrator_handoff` privacy gate (see
+    /// [`crate::openhuman::config::schema::MeetConfig`]).
+    #[serde(default)]
+    pub meet: MeetConfig,
+
     /// Whether the user has completed the **React UI** onboarding flow.
     ///
     /// Set by `OnboardingOverlay.tsx::handleDone` and the multi-step
@@ -288,6 +294,7 @@ impl Default for Config {
             learning: LearningConfig::default(),
             update: UpdateConfig::default(),
             dictation: DictationConfig::default(),
+            meet: MeetConfig::default(),
             onboarding_completed: false,
             chat_onboarding_completed: false,
         }
