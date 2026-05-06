@@ -35,14 +35,26 @@ describe('parseChecklist', () => {
     expect(result.totalUnchecked).toBe(2);
   });
 
-  it('treats N/A items as satisfied even when unchecked', () => {
+  it('requires N/A items to be checked with a reason', () => {
     const body = `- [ ] Tests added
 - [ ] N/A: documentation-only change
 - [ ] (N/A) no behaviour change
 - [ ] Manual smoke updated`;
     const result = parseChecklist(body);
     expect(result.items).toHaveLength(4);
-    expect(result.totalUnchecked).toBe(2);
+    expect(result.totalUnchecked).toBe(4);
+    expect(result.items[1].naReason).toBe('documentation-only change');
+    expect(result.items[2].naReason).toBe('no behaviour change');
+    expect(summarize(result)).toContain('N/A items must still be checked with a reason');
+  });
+
+  it('treats checked N/A items as satisfied', () => {
+    const body = `- [x] Tests added
+- [x] N/A: documentation-only change
+- [x] (N/A) no behaviour change`;
+    const result = parseChecklist(body);
+    expect(result.items).toHaveLength(3);
+    expect(result.totalUnchecked).toBe(0);
     expect(result.items[1].naReason).toBe('documentation-only change');
     expect(result.items[2].naReason).toBe('no behaviour change');
   });
