@@ -177,34 +177,45 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
       ref={ref}
       className="relative h-full w-full overflow-hidden rounded-2xl border border-stone-200/70 bg-stone-100 shadow-soft"
       aria-label={`webview host for account ${accountId}`}>
-      {/* Branded placeholder — always rendered so the host area is never a
-          blank stone-100 rectangle while the native webview is still
-          spinning up off-screen. The native CEF view composites above this
-          on reveal, so it's only visible during the loading window. */}
-      <div
-        data-testid={`webview-placeholder-${accountId}`}
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 text-stone-400">
-        <ProviderIcon provider={provider} className="h-12 w-12 opacity-70" />
-        <span className="text-xs font-medium tracking-wide text-stone-500">{providerName}</span>
-      </div>
-
-      {isLoading ? (
+      {/* Branded placeholder + (optional) loading overlay collapsed into a
+          single absolute container so we never paint two stacked / offset
+          flex columns when the spinner is on top of the placeholder.
+          - Placeholder always rendered (icon + provider name) so the host
+            area is never a blank stone-100 rectangle.
+          - When loading: spinner + "Loading {Provider}..." appended below
+            the same icon, plus the elapsed phase hint past 5s/10s.
+          - Native CEF view composites above this on reveal, so the
+            placeholder is only visible during the loading window. */}
+      {!isTimeout ? (
         <div
-          data-testid={`webview-loading-${accountId}`}
-          className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 text-stone-500"
-          role="status"
-          aria-live="polite"
-          aria-label="Loading account">
-          <ProviderIcon provider={provider} className="h-12 w-12" />
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-300 border-t-stone-600" />
-          <span className="text-xs font-medium tracking-wide">{`Loading ${providerName}...`}</span>
-          {phaseHint ? (
-            <span
-              data-testid={`webview-loading-hint-${accountId}`}
-              className="text-[11px] font-medium text-stone-400">
-              {phaseHint}
-            </span>
+          data-testid={`webview-placeholder-${accountId}`}
+          className={`pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 ${
+            isLoading ? 'text-stone-500' : 'text-stone-400'
+          }`}
+          role={isLoading ? 'status' : undefined}
+          aria-live={isLoading ? 'polite' : undefined}
+          aria-label={isLoading ? 'Loading account' : undefined}>
+          <ProviderIcon
+            provider={provider}
+            className={`h-12 w-12 ${isLoading ? '' : 'opacity-70'}`}
+          />
+          <span
+            className={`text-xs font-medium tracking-wide ${isLoading ? '' : 'text-stone-500'}`}>
+            {isLoading ? `Loading ${providerName}...` : providerName}
+          </span>
+          {isLoading ? (
+            <div
+              data-testid={`webview-loading-${accountId}`}
+              className="flex flex-col items-center gap-2">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-300 border-t-stone-600" />
+              {phaseHint ? (
+                <span
+                  data-testid={`webview-loading-hint-${accountId}`}
+                  className="text-[11px] font-medium text-stone-400">
+                  {phaseHint}
+                </span>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}
