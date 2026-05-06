@@ -35,8 +35,9 @@ const KIND_BADGE_CLASS: Record<PrivacyDataKind, string> = {
 
 const PrivacyPanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
-  const { snapshot, setAnalyticsEnabled } = useCoreState();
+  const { snapshot, setAnalyticsEnabled, setMeetAutoOrchestratorHandoff } = useCoreState();
   const analyticsEnabled = snapshot.analyticsEnabled;
+  const meetAutoHandoff = snapshot.meetAutoOrchestratorHandoff;
 
   const [capabilities, setCapabilities] = useState<AnnotatedCapability[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -70,6 +71,15 @@ const PrivacyPanel = () => {
       await setAnalyticsEnabled(newValue);
     } catch (error) {
       console.warn('[privacy] failed to persist analytics setting:', error);
+    }
+  };
+
+  const handleToggleMeetAutoHandoff = async () => {
+    const newValue = !meetAutoHandoff;
+    try {
+      await setMeetAutoOrchestratorHandoff(newValue);
+    } catch (error) {
+      console.warn('[privacy] failed to persist meet auto-handoff setting:', error);
     }
   };
 
@@ -161,6 +171,41 @@ const PrivacyPanel = () => {
                   <span
                     className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
                       analyticsEnabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Meeting Follow-ups Section (#1299) */}
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-3 px-1">
+              Meeting follow-ups
+            </h3>
+            <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+              <div className="flex items-center justify-between p-4">
+                <div className="flex-1 mr-4">
+                  <p className="text-sm font-medium text-stone-900">
+                    Auto-handoff Google Meet transcripts to the orchestrator
+                  </p>
+                  <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+                    When a Google Meet call ends, OpenHuman&rsquo;s orchestrator can read the
+                    transcript and may take actions like drafting messages, scheduling follow-ups,
+                    or posting summaries to your connected Slack workspace. Off by default.
+                  </p>
+                </div>
+                <button
+                  data-testid="privacy-meet-handoff-toggle"
+                  onClick={handleToggleMeetAutoHandoff}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    meetAutoHandoff ? 'bg-primary-500' : 'bg-stone-600'
+                  }`}
+                  role="switch"
+                  aria-checked={meetAutoHandoff}>
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      meetAutoHandoff ? 'translate-x-5' : 'translate-x-0'
                     }`}
                   />
                 </button>
