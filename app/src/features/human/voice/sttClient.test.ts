@@ -92,4 +92,21 @@ describe('transcribeCloud', () => {
     const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
     expect(await transcribeCloud(blob)).toBe('');
   });
+
+  // Issue #1289: stale sidecar binaries surface a generic
+  // "unknown method" error. Frontend rewrites it to an actionable
+  // message so users know to restart the desktop app.
+  it('rewrites "unknown method" errors to an actionable restart hint', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockRejectedValueOnce(new Error('unknown method: openhuman.voice_cloud_transcribe'));
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    await expect(transcribeCloud(blob)).rejects.toThrow(/Restart the OpenHuman desktop app/i);
+  });
+
+  it('passes through non-unknown-method errors verbatim', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockRejectedValueOnce(new Error('upstream STT failed: 502'));
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    await expect(transcribeCloud(blob)).rejects.toThrow(/upstream STT failed/);
+  });
 });
