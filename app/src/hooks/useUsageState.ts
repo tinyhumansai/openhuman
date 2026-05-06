@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { billingApi } from '../services/api/billingApi';
-import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
+import { type CreditBalance, creditsApi, type TeamUsage } from '../services/api/creditsApi';
 import type { CurrentPlanData, PlanTier } from '../types/api';
 import { subscribeUsageRefresh } from './usageRefresh';
 
 export interface UsageState {
   teamUsage: TeamUsage | null;
   currentPlan: CurrentPlanData | null;
+  creditBalance: CreditBalance | null;
   currentTier: PlanTier;
   isFreeTier: boolean;
   usagePct10h: number;
@@ -24,25 +25,33 @@ export interface UsageState {
 const CACHE_TTL_MS = 60_000;
 
 let _cache: {
-  data: { teamUsage: TeamUsage; currentPlan: CurrentPlanData };
+  data: { teamUsage: TeamUsage; currentPlan: CurrentPlanData; creditBalance: CreditBalance };
   fetchedAt: number;
 } | null = null;
 
-async function fetchUsageData(): Promise<{ teamUsage: TeamUsage; currentPlan: CurrentPlanData }> {
+async function fetchUsageData(): Promise<{
+  teamUsage: TeamUsage;
+  currentPlan: CurrentPlanData;
+  creditBalance: CreditBalance;
+}> {
   if (_cache && Date.now() - _cache.fetchedAt < CACHE_TTL_MS) {
     return _cache.data;
   }
-  const [teamUsage, currentPlan] = await Promise.all([
+  const [teamUsage, currentPlan, creditBalance] = await Promise.all([
     creditsApi.getTeamUsage(),
     billingApi.getCurrentPlan(),
+    creditsApi
+      .getBalance()
+      .catch((): CreditBalance => ({ promotionBalanceUsd: 0, teamTopupUsd: 0 })),
   ]);
-  _cache = { data: { teamUsage, currentPlan }, fetchedAt: Date.now() };
+  _cache = { data: { teamUsage, currentPlan, creditBalance }, fetchedAt: Date.now() };
   return _cache.data;
 }
 
 export function useUsageState(): UsageState {
   const [teamUsage, setTeamUsage] = useState<TeamUsage | null>(null);
   const [currentPlan, setCurrentPlan] = useState<CurrentPlanData | null>(null);
+  const [creditBalance, setCreditBalance] = useState<CreditBalance | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchCount, setFetchCount] = useState(0);
 
@@ -61,6 +70,7 @@ export function useUsageState(): UsageState {
         if (cancelled) return;
         setTeamUsage(data.teamUsage);
         setCurrentPlan(data.currentPlan);
+        setCreditBalance(data.creditBalance);
       })
       .catch(() => {
         // Usage unavailable — silently ignore
@@ -90,11 +100,17 @@ export function useUsageState(): UsageState {
     ? teamUsage.cycleBudgetUsd > 0.01 && teamUsage.remainingUsd <= 0.01
     : false;
 
-  // Some users have no included recurring budget at all. They still need the
-  // completed-budget warning in chat even though they are not in an exhausted
-  // paid cycle.
+  // Top-up and promotional credits should suppress the budget-completed banner
+  // even when the included recurring budget is exhausted.
+  const hasAvailableCredits = creditBalance
+    ? creditBalance.teamTopupUsd + creditBalance.promotionBalanceUsd > 0.01
+    : false;
+
+  // Show the banner only when ALL credit sources are exhausted: included budget,
+  // top-up balance, and promotional credits.
   const shouldShowBudgetCompletedMessage = teamUsage
-    ? isBudgetExhausted || (teamUsage.cycleBudgetUsd <= 0.01 && teamUsage.remainingUsd <= 0.01)
+    ? !hasAvailableCredits &&
+      (isBudgetExhausted || (teamUsage.cycleBudgetUsd <= 0.01 && teamUsage.remainingUsd <= 0.01))
     : false;
 
   const isRateLimited =
@@ -110,6 +126,7 @@ export function useUsageState(): UsageState {
   return {
     teamUsage,
     currentPlan,
+    creditBalance,
     currentTier,
     isFreeTier,
     usagePct10h,
