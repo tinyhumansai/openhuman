@@ -23,8 +23,12 @@ import {
 import { isTauri, purgeWebviewAccount } from '../services/webviewAccountService';
 import { addAccount, removeAccount, setActiveAccount } from '../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import type { Account, AccountProvider, AccountStatus } from '../types/accounts';
-import { PROVIDERS } from '../types/accounts';
+import {
+  type Account,
+  type AccountProvider,
+  type AccountStatus,
+  PROVIDERS,
+} from '../types/accounts';
 import { BILLING_DASHBOARD_URL } from '../utils/links';
 import { openUrl } from '../utils/openUrl';
 import { ProviderIcon } from './accounts/providerIcons';
