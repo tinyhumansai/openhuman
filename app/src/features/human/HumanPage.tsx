@@ -50,7 +50,7 @@ const HumanPage = () => {
       {/* Chat sidebar — vertically centered above the BottomTabBar (~80px). */}
       <div className="absolute right-4 top-0 bottom-20 z-10 flex items-center">
         <aside className="w-[420px] h-[min(720px,calc(100vh-160px))] rounded-2xl border border-stone-300 bg-white shadow-soft flex flex-col overflow-hidden">
-          <Conversations variant="sidebar" />
+          <Conversations variant="sidebar" composer="mic-cloud" />
         </aside>
       </div>
     </div>

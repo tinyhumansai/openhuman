@@ -10,6 +10,8 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::openhuman::memory::safety;
+
 /// A single episodic record (one turn or event).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EpisodicEntry {
@@ -70,17 +72,69 @@ END;
 
 /// Insert an episodic entry.
 pub fn episodic_insert(conn: &Arc<Mutex<Connection>>, entry: &EpisodicEntry) -> anyhow::Result<()> {
+    if safety::has_likely_secret(&entry.session_id) || safety::has_likely_secret(&entry.role) {
+        tracing::warn!(
+            "[memory:safety] episodic insert rejected secret-like session/role session_chars={} role_chars={}",
+            entry.session_id.chars().count(),
+            entry.role.chars().count()
+        );
+        anyhow::bail!("episodic session_id/role cannot contain secrets");
+    }
+
+    let content = safety::sanitize_text(&entry.content);
+    let lesson = entry
+        .lesson
+        .as_ref()
+        .map(|value| safety::sanitize_text(value));
+    let tool_calls_json = entry.tool_calls_json.as_ref().map(|value| {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) {
+            let sanitized = safety::sanitize_json(&parsed);
+            safety::Sanitized {
+                value: sanitized.value.to_string(),
+                report: sanitized.report,
+            }
+        } else {
+            safety::sanitize_text(value)
+        }
+    });
+
+    let report = content
+        .report
+        .merge(
+            lesson
+                .as_ref()
+                .map(|value| value.report)
+                .unwrap_or_default(),
+        )
+        .merge(
+            tool_calls_json
+                .as_ref()
+                .map(|value| value.report)
+                .unwrap_or_default(),
+        );
+    if report.changed() {
+        tracing::warn!(
+            "[memory:safety] episodic insert sanitized session_chars={} role_chars={} text_redactions={} key_redactions={} blocked_secret_hits={} depth_redactions={}",
+            entry.session_id.chars().count(),
+            entry.role.chars().count(),
+            report.text_redactions,
+            report.key_redactions,
+            report.blocked_secret_hits,
+            report.depth_redactions
+        );
+    }
+
     let conn = conn.lock();
     conn.execute(
         "INSERT INTO episodic_log (session_id, timestamp, role, content, lesson, tool_calls_json, cost_microdollars)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
-            entry.session_id,
+            &entry.session_id,
             entry.timestamp,
-            entry.role,
-            entry.content,
-            entry.lesson,
-            entry.tool_calls_json,
+            &entry.role,
+            content.value,
+            lesson.map(|value| value.value),
+            tool_calls_json.map(|value| value.value),
             entry.cost_microdollars as i64,
         ],
     )?;
@@ -220,5 +274,53 @@ mod tests {
         let conn = setup_db();
         let results = episodic_search(&conn, "nonexistent query", 10).unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn insert_redacts_secret_like_content() {
+        let conn = setup_db();
+        episodic_insert(
+            &conn,
+            &EpisodicEntry {
+                id: None,
+                session_id: "s1".into(),
+                timestamp: 1000.0,
+                role: "user".into(),
+                content: "Bearer abcdefghijklmnop".into(),
+                lesson: Some("token=abc123".into()),
+                tool_calls_json: Some("{\"api_key\":\"sk-1234567890123456789012345\"}".into()),
+                cost_microdollars: 0,
+            },
+        )
+        .unwrap();
+
+        let rows = episodic_session_entries(&conn, "s1").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].content, "Bearer [REDACTED]");
+        assert_eq!(rows[0].lesson.as_deref(), Some("[REDACTED]"));
+        assert_eq!(
+            rows[0].tool_calls_json.as_deref(),
+            Some("{\"api_key\":\"[REDACTED_SECRET]\"}")
+        );
+    }
+
+    #[test]
+    fn insert_rejects_secret_like_session_id() {
+        let conn = setup_db();
+        let err = episodic_insert(
+            &conn,
+            &EpisodicEntry {
+                id: None,
+                session_id: "Bearer abcdefghijklmnop".into(),
+                timestamp: 1000.0,
+                role: "user".into(),
+                content: "hello".into(),
+                lesson: None,
+                tool_calls_json: None,
+                cost_microdollars: 0,
+            },
+        )
+        .expect_err("secret-like session_id should be rejected");
+        assert!(err.to_string().contains("cannot contain secrets"));
     }
 }

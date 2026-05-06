@@ -58,6 +58,15 @@ struct AnalyticsSettingsUpdate {
 }
 
 #[derive(Debug, Deserialize)]
+struct LocalAiSettingsUpdate {
+    runtime_enabled: Option<bool>,
+    usage_embeddings: Option<bool>,
+    usage_heartbeat: Option<bool>,
+    usage_learning_reflection: Option<bool>,
+    usage_subconscious: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 struct SetBrowserAllowAllParams {
     enabled: bool,
 }
@@ -108,6 +117,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_screen_intelligence_settings"),
         schemas("update_runtime_settings"),
         schemas("update_browser_settings"),
+        schemas("update_local_ai_settings"),
         schemas("resolve_api_url"),
         schemas("get_runtime_flags"),
         schemas("set_browser_allow_all"),
@@ -155,6 +165,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_browser_settings"),
             handler: handle_update_browser_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_local_ai_settings"),
+            handler: handle_update_local_ai_settings,
         },
         RegisteredController {
             schema: schemas("resolve_api_url"),
@@ -357,6 +371,35 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "update_browser_settings",
             description: "Update browser automation settings.",
             inputs: vec![optional_bool("enabled", "Enable browser integration.")],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
+        "update_local_ai_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_local_ai_settings",
+            description:
+                "Update the local AI runtime master switch and per-feature usage flags.",
+            inputs: vec![
+                optional_bool(
+                    "runtime_enabled",
+                    "Master switch — when false, no subsystem uses the local Ollama runtime.",
+                ),
+                optional_bool(
+                    "usage_embeddings",
+                    "Use the local model for embedding generation (when runtime_enabled).",
+                ),
+                optional_bool(
+                    "usage_heartbeat",
+                    "Use the local model inside the heartbeat loop (when runtime_enabled).",
+                ),
+                optional_bool(
+                    "usage_learning_reflection",
+                    "Use the local model for learning/reflection passes (when runtime_enabled).",
+                ),
+                optional_bool(
+                    "usage_subconscious",
+                    "Use the local model for subconscious evaluation (when runtime_enabled).",
+                ),
+            ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "resolve_api_url" => ControllerSchema {
@@ -671,6 +714,20 @@ fn handle_update_browser_settings(params: Map<String, Value>) -> ControllerFutur
             enabled: update.enabled,
         };
         to_json(config_rpc::load_and_apply_browser_settings(patch).await?)
+    })
+}
+
+fn handle_update_local_ai_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<LocalAiSettingsUpdate>(params)?;
+        let patch = config_rpc::LocalAiSettingsPatch {
+            runtime_enabled: update.runtime_enabled,
+            usage_embeddings: update.usage_embeddings,
+            usage_heartbeat: update.usage_heartbeat,
+            usage_learning_reflection: update.usage_learning_reflection,
+            usage_subconscious: update.usage_subconscious,
+        };
+        to_json(config_rpc::load_and_apply_local_ai_settings(patch).await?)
     })
 }
 

@@ -25,7 +25,7 @@ use crate::openhuman::memory::conversations;
 /// fresh login.
 pub async fn start_login_gated_services(config: &Config) {
     // 1. Local AI (Ollama, whisper, embeddings)
-    if config.local_ai.enabled {
+    if config.local_ai.runtime_enabled {
         let service = crate::openhuman::local_ai::global(config);
         service.bootstrap(config).await;
         log::info!("[services] local AI bootstrapped after login");
@@ -77,7 +77,7 @@ pub async fn stop_login_gated_services(config: &Config) {
     // 4. Local AI — reset state to idle. We don't kill the Ollama process
     //    (it may be serving other clients or mid-download), but we clear
     //    the internal state so it re-bootstraps on next login.
-    if config.local_ai.enabled {
+    if config.local_ai.runtime_enabled {
         let service = crate::openhuman::local_ai::global(config);
         service.reset_to_idle(config);
         log::info!("[services] local AI reset to idle on logout");
@@ -477,6 +477,35 @@ pub async fn list_provider_credentials(
     });
 
     Ok(RpcOutcome::single_log(items, "provider credentials listed"))
+}
+
+/// List credentials whose provider key starts with `prefix`.
+///
+/// Pure prefix variant of [`list_provider_credentials`] for namespaces
+/// that group multiple providers under a common stem (e.g.
+/// `"channel:"` covers `channel:telegram:managed_dm`,
+/// `channel:slack:bot_token`, …). The exact-match filter on
+/// `list_provider_credentials` cannot express this without enumerating
+/// every concrete provider key up front.
+pub async fn list_provider_credentials_by_prefix(
+    config: &Config,
+    prefix: &str,
+) -> Result<Vec<super::responses::AuthProfileSummary>, String> {
+    let auth = AuthService::from_config(config);
+    let profiles = auth.load_profiles().map_err(|e| e.to_string())?;
+    let mut items = profiles
+        .profiles
+        .values()
+        .filter(|profile| profile.provider != APP_SESSION_PROVIDER)
+        .filter(|profile| profile.provider.starts_with(prefix))
+        .map(summarize_auth_profile)
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| {
+        a.provider
+            .cmp(&b.provider)
+            .then_with(|| a.profile_name.cmp(&b.profile_name))
+    });
+    Ok(items)
 }
 
 pub async fn oauth_connect(

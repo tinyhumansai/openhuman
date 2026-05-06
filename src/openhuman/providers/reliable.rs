@@ -409,10 +409,21 @@ impl Provider for ReliableProvider {
             }
         }
 
-        anyhow::bail!(
+        let aggregate = format!(
             "All providers/models failed. Attempts:\n{}",
             failures.join("\n")
-        )
+        );
+        crate::core::observability::report_error(
+            aggregate.as_str(),
+            "llm_provider",
+            "reliable_chat_with_system",
+            &[
+                ("model", model),
+                ("attempts", &failures.len().to_string()),
+                ("failure", "all_exhausted"),
+            ],
+        );
+        anyhow::bail!(aggregate)
     }
 
     async fn chat_with_history(
@@ -519,10 +530,21 @@ impl Provider for ReliableProvider {
             }
         }
 
-        anyhow::bail!(
+        let aggregate = format!(
             "All providers/models failed. Attempts:\n{}",
             failures.join("\n")
-        )
+        );
+        crate::core::observability::report_error(
+            aggregate.as_str(),
+            "llm_provider",
+            "reliable_chat_with_history",
+            &[
+                ("model", model),
+                ("attempts", &failures.len().to_string()),
+                ("failure", "all_exhausted"),
+            ],
+        );
+        anyhow::bail!(aggregate)
     }
 
     fn supports_native_tools(&self) -> bool {
@@ -665,10 +687,21 @@ impl Provider for ReliableProvider {
             }
         }
 
-        anyhow::bail!(
+        let aggregate = format!(
             "All providers/models failed. Attempts:\n{}",
             failures.join("\n")
-        )
+        );
+        crate::core::observability::report_error(
+            aggregate.as_str(),
+            "llm_provider",
+            "reliable_chat",
+            &[
+                ("model", model),
+                ("attempts", &failures.len().to_string()),
+                ("failure", "all_exhausted"),
+            ],
+        );
+        anyhow::bail!(aggregate)
     }
 
     async fn chat_with_tools(
@@ -776,10 +809,21 @@ impl Provider for ReliableProvider {
             }
         }
 
-        anyhow::bail!(
+        let aggregate = format!(
             "All providers/models failed. Attempts:\n{}",
             failures.join("\n")
-        )
+        );
+        crate::core::observability::report_error(
+            aggregate.as_str(),
+            "llm_provider",
+            "reliable_chat_with_tools",
+            &[
+                ("model", model),
+                ("attempts", &failures.len().to_string()),
+                ("failure", "all_exhausted"),
+            ],
+        );
+        anyhow::bail!(aggregate)
     }
 
     fn supports_streaming(&self) -> bool {

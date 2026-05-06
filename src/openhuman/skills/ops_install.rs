@@ -9,6 +9,24 @@ use super::ops_discover::{discover_skills_inner, is_workspace_trusted};
 use super::ops_parse::parse_skill_md_str;
 use super::ops_types::{SkillFrontmatter, SkillScope, MAX_NAME_LEN, SKILL_MD};
 
+/// Strip userinfo, query, and fragment from a URL for safe inclusion in
+/// observability tags. Returns `<scheme>://<host>[:<port>]<path>` on success,
+/// or `"<unparseable>"` on parse failure. Never returns the raw URL — even
+/// validated install URLs may carry signed query params or embedded creds we
+/// don't want flowing to Sentry.
+fn redact_url(raw: &str) -> String {
+    match url::Url::parse(raw) {
+        Ok(u) => {
+            let scheme = u.scheme();
+            let host = u.host_str().unwrap_or("");
+            let port = u.port().map(|p| format!(":{p}")).unwrap_or_default();
+            let path = u.path();
+            format!("{scheme}://{host}{port}{path}")
+        }
+        Err(_) => "<unparseable>".to_string(),
+    }
+}
+
 /// Default wall-clock budget for the SKILL.md fetch.
 pub const DEFAULT_INSTALL_TIMEOUT_SECS: u64 = 60;
 /// Hard ceiling callers can request via `timeout_secs`.
@@ -116,9 +134,12 @@ pub async fn install_skill_from_url(
     // tracked separately.
     validate_resolved_host(&fetch_url).await?;
 
+    let redacted_raw_url = redact_url(&raw_url);
+    let redacted_fetch_url = redact_url(&fetch_url);
+
     tracing::debug!(
-        raw_url = %raw_url,
-        fetch_url = %fetch_url,
+        raw_url = %redacted_raw_url,
+        fetch_url = %redacted_fetch_url,
         workspace = %workspace_dir.display(),
         timeout_secs = timeout_secs,
         "[skills] install_skill_from_url: entry"
@@ -138,26 +159,50 @@ pub async fn install_skill_from_url(
         .map_err(|e| format!("fetch failed: build http client: {e}"))?;
 
     tracing::info!(
-        fetch_url = %fetch_url,
+        fetch_url = %redacted_fetch_url,
         "[skills] install_skill_from_url: fetching SKILL.md"
     );
 
     let response = match client.get(&fetch_url).send().await {
         Ok(resp) => resp,
         Err(e) => {
-            if e.is_timeout() {
-                return Err(format!("fetch timed out after {timeout_secs}s"));
-            }
-            return Err(format!("fetch failed: {e}"));
+            let (failure, msg) = if e.is_timeout() {
+                ("timeout", format!("fetch timed out after {timeout_secs}s"))
+            } else {
+                ("transport", format!("fetch failed: {e}"))
+            };
+            crate::core::observability::report_error(
+                msg.as_str(),
+                "skills",
+                "install_fetch",
+                &[("url", redacted_fetch_url.as_str()), ("failure", failure)],
+            );
+            return Err(msg);
         }
     };
 
     let status = response.status();
     if !status.is_success() {
-        return Err(format!(
+        let status_str = status.as_u16().to_string();
+        let msg = format!(
             "fetch failed: {fetch_url} returned status {}",
             status.as_u16()
-        ));
+        );
+        let report_msg = format!(
+            "fetch failed: {redacted_fetch_url} returned status {}",
+            status.as_u16()
+        );
+        crate::core::observability::report_error(
+            report_msg.as_str(),
+            "skills",
+            "install_fetch",
+            &[
+                ("url", redacted_fetch_url.as_str()),
+                ("status", status_str.as_str()),
+                ("failure", "non_2xx"),
+            ],
+        );
+        return Err(msg);
     }
 
     if let Some(len) = response.content_length() {
@@ -278,8 +323,8 @@ pub async fn install_skill_from_url(
         .collect();
 
     tracing::info!(
-        raw_url = %raw_url,
-        fetch_url = %fetch_url,
+        raw_url = %redacted_raw_url,
+        fetch_url = %redacted_fetch_url,
         slug = %slug,
         bytes = content.len(),
         new_count = new_skills.len(),

@@ -3273,3 +3273,111 @@ async fn external_process_with_guessed_token_is_rejected() {
 
     rpc_join.abort();
 }
+
+/// End-to-end coverage for issue #1149: storing a managed-DM channel
+/// credential under `channel:<slug>:<mode>` and immediately observing
+/// `connected:true` from `openhuman.channels_status`.
+///
+/// Before the fix, `channels_status` always returned `connected:false`
+/// because the underlying `list_provider_credentials` call used an
+/// exact-match filter (`provider == "channel:"`) that never matched
+/// the real credential keys (`channel:telegram:managed_dm`,
+/// `channel:slack:bot_token`, …). The user could connect Telegram in
+/// the UI but the chat / Settings page would still report it
+/// disconnected on the next reload.
+///
+/// This test exercises the full RPC wire path so a regression in
+/// either the prefix helper or the channels controller is caught at
+/// the transport layer, not just at the unit level.
+#[tokio::test]
+async fn channels_status_reflects_managed_dm_credential_e2e() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── 1. baseline: telegram should report disconnected ────────────────────
+    let baseline = post_json_rpc(
+        &rpc_base,
+        7001,
+        "openhuman.channels_status",
+        json!({ "channel": "telegram" }),
+    )
+    .await;
+    let baseline_outer = assert_no_jsonrpc_error(&baseline, "channels_status (baseline)");
+    let baseline_result = baseline_outer.get("result").unwrap_or(baseline_outer);
+    let baseline_entries = baseline_result
+        .as_array()
+        .unwrap_or_else(|| panic!("expected array: {baseline_result}"));
+    let baseline_managed = baseline_entries
+        .iter()
+        .find(|e| e.get("auth_mode").and_then(Value::as_str) == Some("managed_dm"))
+        .expect("managed_dm entry should exist for telegram");
+    assert_eq!(
+        baseline_managed.get("connected").and_then(Value::as_bool),
+        Some(false),
+        "fresh config should report telegram managed_dm disconnected: {baseline_managed}"
+    );
+
+    // ── 2. simulate a successful managed-DM link by storing the credential
+    //      marker the way `telegram_login_check` does in production ─────────
+    let store = post_json_rpc(
+        &rpc_base,
+        7002,
+        "openhuman.auth_store_provider_credentials",
+        json!({
+            "provider": "channel:telegram:managed_dm",
+            "profile": "default",
+            "token": "managed",
+            "fields": { "linked": true },
+            "setActive": true,
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "auth_store_provider_credentials");
+
+    // ── 3. channels_status must now report telegram managed_dm connected ─
+    let after = post_json_rpc(
+        &rpc_base,
+        7003,
+        "openhuman.channels_status",
+        json!({ "channel": "telegram" }),
+    )
+    .await;
+    let after_outer = assert_no_jsonrpc_error(&after, "channels_status (after link)");
+    let after_result = after_outer.get("result").unwrap_or(after_outer);
+    let after_entries = after_result
+        .as_array()
+        .unwrap_or_else(|| panic!("expected array: {after_result}"));
+    let after_managed = after_entries
+        .iter()
+        .find(|e| e.get("auth_mode").and_then(Value::as_str) == Some("managed_dm"))
+        .expect("managed_dm entry should exist for telegram");
+    assert_eq!(
+        after_managed.get("connected").and_then(Value::as_bool),
+        Some(true),
+        "managed-DM credential should surface as connected: {after_managed}"
+    );
+    assert_eq!(
+        after_managed
+            .get("has_credentials")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}

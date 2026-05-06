@@ -356,11 +356,7 @@ impl Tool for ComposioListConnectionsTool {
                 // `fetch_connected_integrations_uncached` so the tool
                 // output and the prompt's Delegation Guide agree on
                 // what counts as "connected".
-                resp.connections.retain(|c| {
-                    let status = c.status.trim();
-                    status.eq_ignore_ascii_case("ACTIVE")
-                        || status.eq_ignore_ascii_case("CONNECTED")
-                });
+                resp.connections.retain(|c| c.is_active());
                 Ok(ToolResult::success(
                     serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
                 ))
@@ -536,12 +532,8 @@ impl Tool for ComposioListToolsTool {
                             let connected: std::collections::HashSet<String> = conns
                                 .connections
                                 .iter()
-                                .filter(|c| {
-                                    let s = c.status.trim();
-                                    s.eq_ignore_ascii_case("ACTIVE")
-                                        || s.eq_ignore_ascii_case("CONNECTED")
-                                })
-                                .map(|c| c.toolkit.trim().to_ascii_lowercase())
+                                .filter(|c| c.is_active())
+                                .map(|c| c.normalized_toolkit())
                                 .filter(|t| !t.is_empty())
                                 .collect();
                             let dropped = retain_connected_tools(&mut resp, &connected);

@@ -2,12 +2,12 @@
 //! implementations can enforce sandbox semantics at execution time without
 //! widening the [`crate::openhuman::tools::Tool`] trait signature.
 //!
-//! Sibling of the existing [`super::fork_context`] task-locals but serves
-//! a different concept: `PARENT_CONTEXT` / `FORK_CONTEXT` carry the
-//! *parent agent's* runtime context so that `spawn_subagent` can inherit
-//! it, whereas [`CURRENT_AGENT_SANDBOX_MODE`] carries the *currently-
-//! executing agent's* sandbox mode so that any tool it invokes can gate
-//! on that mode.
+//! Sibling of the existing [`super::fork_context`] task-local but serves
+//! a different concept: `PARENT_CONTEXT` carries the *parent agent's*
+//! runtime context so that `spawn_subagent` can inherit it, whereas
+//! [`CURRENT_AGENT_SANDBOX_MODE`] carries the *currently-executing
+//! agent's* sandbox mode so that any tool it invokes can gate on that
+//! mode.
 //!
 //! Why a task-local instead of an argument on [`Tool::execute`]: the tool
 //! trait is called from many places (CLI, JSON-RPC, tests, agent loops).

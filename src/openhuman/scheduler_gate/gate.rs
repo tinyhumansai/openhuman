@@ -8,10 +8,51 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use parking_lot::RwLock;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::openhuman::config::{Config, SchedulerGateConfig};
 use crate::openhuman::scheduler_gate::policy::{decide, Policy};
 use crate::openhuman::scheduler_gate::signals::Signals;
+
+/// Process-wide ceiling on concurrent LLM-bound work.
+///
+/// Held at 1 to keep concurrent local-Ollama / bge-m3 calls (8K context,
+/// ~1.3 GB resident each) from saturating local RAM. The cloud path
+/// itself is bandwidth-bound but the gate also fronts triage and
+/// reflection turns that fan out to `agent.run_turn`, where every local
+/// route loads the same Ollama model — so a single global slot is the
+/// safest contract until #1064 (per-toolkit triage toggle) and the
+/// cloud-side rate limiter ship.
+///
+/// See `feedback_local_llm_load.md` — backfills with multiple
+/// simultaneous Ollama requests have crashed the user's laptop twice.
+const LLM_SLOTS: usize = 1;
+
+static LLM_PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+
+fn llm_permits() -> &'static Arc<Semaphore> {
+    LLM_PERMITS.get_or_init(|| Arc::new(Semaphore::new(LLM_SLOTS)))
+}
+
+/// RAII guard returned by [`wait_for_capacity`] / [`acquire_llm_permit`].
+///
+/// While the caller holds an `LlmPermit`, no other LLM-bound caller in
+/// the process can acquire one (the global semaphore has a single slot).
+/// Drop the permit as soon as the LLM request returns — holding it past
+/// post-processing serialises unrelated work for no reason.
+///
+/// This type is intentionally opaque: callers can't reach into the
+/// underlying [`OwnedSemaphorePermit`] and risk forgetting to release it.
+#[must_use = "drop the LlmPermit only after the LLM call returns"]
+pub struct LlmPermit {
+    _permit: OwnedSemaphorePermit,
+}
+
+impl Drop for LlmPermit {
+    fn drop(&mut self) {
+        log::trace!("[scheduler_gate] llm permit released");
+    }
+}
 
 struct State {
     cfg: SchedulerGateConfig,
@@ -110,35 +151,182 @@ pub fn current_signals() -> Signals {
     })
 }
 
-/// Cooperatively block a worker until the host is ready for LLM-bound work.
+/// Cooperatively block a caller until the host is ready for LLM-bound
+/// work, then hand back an [`LlmPermit`] that holds a slot in the global
+/// LLM semaphore.
 ///
-/// * **Aggressive / Normal** — returns immediately.
-/// * **Throttled** — sleeps `throttled_backoff_ms` so concurrent workers
-///   serialise themselves and the host catches its breath between jobs.
-/// * **Paused** — polls every `paused_poll_ms` until the policy changes.
+/// Policy-driven backoff happens **before** semaphore acquisition so a
+/// `Paused` mode doesn't pile up tasks queued for the slot — they sit
+/// in the pause-poll loop, not in the semaphore wait queue.
 ///
-/// Designed so existing semaphore-bounded worker pools can keep their pool
-/// size and just gain a per-job throttle in front of the existing
-/// `semaphore.acquire()` call.
-pub async fn wait_for_capacity() {
+/// * **Aggressive / Normal** — wait for the global slot; return immediately
+///   once granted.
+/// * **Throttled** — sleep `throttled_backoff_ms` first so concurrent
+///   workers serialise themselves, then acquire the slot.
+/// * **Paused** — poll every `paused_poll_ms` until the policy changes,
+///   then acquire the slot.
+///
+/// Drop the returned [`LlmPermit`] as soon as the LLM call returns.
+///
+/// Returns `None` only if the global LLM semaphore has been closed
+/// (never happens in production — the semaphore lives for the lifetime
+/// of the process). Callers can safely treat `None` as "skip the
+/// gate" rather than propagating an error.
+pub async fn wait_for_capacity() -> Option<LlmPermit> {
     loop {
         let (policy, throttled_ms, paused_ms) = match STATE.get() {
             Some(state) => {
                 let g = state.read();
                 (g.policy, g.cfg.throttled_backoff_ms, g.cfg.paused_poll_ms)
             }
-            None => return,
+            None => {
+                // Gate not initialised (unit tests, early bootstrap).
+                // Acquire directly — no policy to consult.
+                return acquire_llm_permit_inner().await;
+            }
         };
         match policy {
-            Policy::Aggressive | Policy::Normal => return,
-            Policy::Throttled => {
-                tokio::time::sleep(Duration::from_millis(throttled_ms)).await;
-                return;
+            Policy::Aggressive | Policy::Normal => {
+                return acquire_llm_permit_inner().await;
             }
-            Policy::Paused => {
+            Policy::Throttled => {
+                log::trace!(
+                    "[scheduler_gate] throttled — sleeping {throttled_ms}ms before permit acquire"
+                );
+                tokio::time::sleep(Duration::from_millis(throttled_ms)).await;
+                return acquire_llm_permit_inner().await;
+            }
+            Policy::Paused { reason } => {
+                log::debug!(
+                    "[scheduler_gate] paused ({}); polling every {paused_ms}ms",
+                    reason.as_str()
+                );
                 tokio::time::sleep(Duration::from_millis(paused_ms)).await;
                 // re-evaluate; user may have toggled the gate back on.
             }
         }
+    }
+}
+
+async fn acquire_llm_permit_inner() -> Option<LlmPermit> {
+    let sem = llm_permits().clone();
+    match sem.acquire_owned().await {
+        Ok(permit) => {
+            log::trace!("[scheduler_gate] llm permit acquired");
+            Some(LlmPermit { _permit: permit })
+        }
+        Err(_) => {
+            // Semaphore closed — should never happen since we never
+            // close it. Log loudly and let the caller proceed without
+            // a permit so the pipeline doesn't deadlock.
+            log::warn!(
+                "[scheduler_gate] llm semaphore closed unexpectedly — proceeding without a permit"
+            );
+            None
+        }
+    }
+}
+
+/// Test/diagnostic hook: try to grab a permit without consulting the
+/// gate policy. Returns `None` if no slots are free. **Do not** call
+/// from production code — production callers should use
+/// [`wait_for_capacity`] so the policy backoff applies.
+#[cfg(test)]
+pub fn try_acquire_llm_permit() -> Option<LlmPermit> {
+    let sem = llm_permits().clone();
+    sem.try_acquire_owned()
+        .ok()
+        .map(|p| LlmPermit { _permit: p })
+}
+
+/// Number of permits currently available. Test-only diagnostic.
+#[cfg(test)]
+pub fn available_llm_permits() -> usize {
+    llm_permits().available_permits()
+}
+
+#[cfg(test)]
+mod tests {
+    //! These tests share the **process-wide** `LLM_PERMITS` semaphore
+    //! (which is intentional — that's what they're testing). They are
+    //! serialised via a module-local mutex so two test threads can't
+    //! both hold a permit at the same time and confuse each other's
+    //! `available_permits` reads.
+    use super::*;
+    use std::sync::Mutex;
+    use std::time::Instant;
+    use tokio::time::{timeout, Duration as TokioDuration};
+
+    static GATE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock() -> std::sync::MutexGuard<'static, ()> {
+        // Tolerate poisoning so a panicking test doesn't block the rest.
+        GATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[tokio::test]
+    async fn wait_for_capacity_returns_permit_when_gate_uninit() {
+        let _g = lock();
+        let permit = wait_for_capacity().await;
+        assert!(
+            permit.is_some(),
+            "uninit gate must still hand back a permit"
+        );
+        assert_eq!(
+            available_llm_permits(),
+            0,
+            "permit must occupy the single LLM slot"
+        );
+        drop(permit);
+        assert_eq!(available_llm_permits(), 1, "drop must release the slot");
+    }
+
+    #[tokio::test]
+    async fn second_waiter_blocks_until_first_drops() {
+        let _g = lock();
+        let first = wait_for_capacity().await.expect("first permit");
+        assert_eq!(available_llm_permits(), 0);
+
+        // Spawn a second acquirer; it must block.
+        let handle = tokio::spawn(async move {
+            let started = Instant::now();
+            let p = wait_for_capacity().await;
+            (started.elapsed(), p)
+        });
+
+        // Give the second waiter a moment to start polling.
+        tokio::time::sleep(TokioDuration::from_millis(40)).await;
+        assert!(!handle.is_finished(), "second waiter must be blocked");
+
+        // Release the first permit; the second should resolve.
+        drop(first);
+        let (elapsed, second) = timeout(TokioDuration::from_secs(1), handle)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            second.is_some(),
+            "second waiter must eventually get a permit"
+        );
+        assert!(
+            elapsed >= TokioDuration::from_millis(20),
+            "second waiter should have actually waited (got {elapsed:?})"
+        );
+        drop(second);
+    }
+
+    #[tokio::test]
+    async fn semaphore_size_is_one() {
+        let _g = lock();
+        let p1 = wait_for_capacity().await.expect("first permit");
+        // Try-acquire must fail while the slot is held.
+        assert!(
+            try_acquire_llm_permit().is_none(),
+            "semaphore must be size-1 — second try_acquire should fail"
+        );
+        drop(p1);
+        // Now another should succeed.
+        let p2 = try_acquire_llm_permit().expect("permit free after drop");
+        drop(p2);
     }
 }

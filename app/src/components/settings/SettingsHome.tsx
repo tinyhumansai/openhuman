@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { persistor } from '../../store';
@@ -9,11 +10,13 @@ import {
   restartApp,
   scheduleCefProfilePurge,
 } from '../../utils/tauriCommands';
+import { resetWalkthrough } from '../walkthrough/AppWalkthrough';
 import SettingsHeader from './components/SettingsHeader';
 import SettingsMenuItem from './components/SettingsMenuItem';
 import { useSettingsNavigation } from './hooks/useSettingsNavigation';
 
 const SettingsHome = () => {
+  const navigate = useNavigate();
   const { navigateToSettings } = useSettingsNavigation();
   const { clearSession, snapshot } = useCoreState();
   const [showLogoutAndClearModal, setShowLogoutAndClearModal] = useState(false);
@@ -201,6 +204,26 @@ const SettingsHome = () => {
       dangerous: false,
     },
     {
+      id: 'restart-tour',
+      title: 'Restart Tour',
+      description: 'Replay the product walkthrough from the beginning',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+          />
+        </svg>
+      ),
+      onClick: () => {
+        resetWalkthrough();
+        navigate('/home');
+      },
+      dangerous: false,
+    },
+    {
       id: 'about',
       title: 'About',
       description: 'App version and software updates',
@@ -276,7 +299,9 @@ const SettingsHome = () => {
 
   return (
     <div className="z-10 relative">
-      <SettingsHeader />
+      <div data-walkthrough="settings-menu">
+        <SettingsHeader />
+      </div>
 
       <div>
         {/* Grouped Settings */}

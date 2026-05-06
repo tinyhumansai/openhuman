@@ -18,6 +18,9 @@ importers:
       husky:
         specifier: ^9.1.7
         version: 9.1.7
+      ws:
+        specifier: ^8.20.0
+        version: 8.20.0
 
   app:
     dependencies:

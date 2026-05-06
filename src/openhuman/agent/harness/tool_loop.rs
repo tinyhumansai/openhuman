@@ -1,5 +1,7 @@
+use crate::openhuman::agent::cost::TurnCost;
 use crate::openhuman::agent::multimodal;
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent::stop_hooks::{current_stop_hooks, StopDecision, TurnState};
 use crate::openhuman::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
 use crate::openhuman::providers::{
     ChatMessage, ChatRequest, Provider, ProviderCapabilityError, ProviderDelta,
@@ -151,6 +153,7 @@ pub(crate) async fn run_tool_call_loop(
     );
 
     let mut context_guard = ContextGuard::new();
+    let mut turn_cost = TurnCost::new();
 
     // Announce turn start to progress subscribers (if any). We use
     // `send().await` for lifecycle (turn/iteration) events so they
@@ -163,6 +166,7 @@ pub(crate) async fn run_tool_call_loop(
         }
     }
 
+    let stop_hooks = current_stop_hooks();
     for iteration in 0..max_iterations {
         if let Some(ref sink) = on_progress {
             if let Err(e) = sink
@@ -175,6 +179,31 @@ pub(crate) async fn run_tool_call_loop(
                 log::warn!("[agent_loop] progress sink closed at IterationStarted: {e}");
             }
         }
+
+        // ── Stop hooks: policy check before the next LLM call ──
+        if !stop_hooks.is_empty() {
+            let state = TurnState {
+                iteration: (iteration + 1) as u32,
+                max_iterations: max_iterations as u32,
+                cost: &turn_cost,
+                model,
+            };
+            for hook in &stop_hooks {
+                match hook.check(&state).await {
+                    StopDecision::Continue => {}
+                    StopDecision::Stop { reason } => {
+                        tracing::warn!(
+                            iteration = (iteration + 1),
+                            hook = hook.name(),
+                            reason = %reason,
+                            "[agent_loop] stop hook triggered — aborting turn"
+                        );
+                        anyhow::bail!("Agent turn stopped by hook '{}': {reason}", hook.name());
+                    }
+                }
+            }
+        }
+
         // ── Context guard: check utilization before each LLM call ──
         match context_guard.check() {
             ContextCheckResult::Ok => {}
@@ -191,26 +220,42 @@ pub(crate) async fn run_tool_call_loop(
                 utilization_pct,
                 reason,
             } => {
-                tracing::error!(
-                    iteration,
-                    utilization_pct,
-                    "[agent_loop] context exhausted, aborting: {reason}"
+                let msg = format!("Context window exhausted ({utilization_pct}% full): {reason}");
+                crate::core::observability::report_error(
+                    msg.as_str(),
+                    "agent",
+                    "context_exhausted",
+                    &[
+                        ("provider", provider_name),
+                        ("model", model),
+                        ("utilization_pct", &utilization_pct.to_string()),
+                    ],
                 );
-                anyhow::bail!("Context window exhausted ({utilization_pct}% full): {reason}");
+                anyhow::bail!(msg);
             }
         }
 
         tracing::debug!(iteration, "[agent_loop] sending LLM request");
         let image_marker_count = multimodal::count_image_markers(history);
         if image_marker_count > 0 && !provider.supports_vision() {
-            return Err(ProviderCapabilityError {
+            let cap_err = ProviderCapabilityError {
                 provider: provider_name.to_string(),
                 capability: "vision".to_string(),
                 message: format!(
                     "received {image_marker_count} image marker(s), but this provider does not support vision input"
                 ),
-            }
-            .into());
+            };
+            crate::core::observability::report_error(
+                &cap_err,
+                "agent",
+                "provider_capability",
+                &[
+                    ("provider", provider_name),
+                    ("capability", "vision"),
+                    ("model", model),
+                ],
+            );
+            return Err(cap_err.into());
         }
 
         let prepared_messages =
@@ -295,13 +340,30 @@ pub(crate) async fn run_tool_call_loop(
                     // Update context guard with token usage from this response.
                     if let Some(ref usage) = resp.usage {
                         context_guard.update_usage(usage);
+                        turn_cost.add_call(model, usage);
                         tracing::debug!(
                             iteration,
                             input_tokens = usage.input_tokens,
                             output_tokens = usage.output_tokens,
                             context_window = usage.context_window,
+                            cumulative_usd = turn_cost.total_usd(),
                             "[agent_loop] LLM response received"
                         );
+                        if let Some(ref sink) = on_progress {
+                            let event = AgentProgress::TurnCostUpdated {
+                                model: model.to_string(),
+                                iteration: (iteration + 1) as u32,
+                                input_tokens: turn_cost.input_tokens,
+                                output_tokens: turn_cost.output_tokens,
+                                cached_input_tokens: turn_cost.cached_input_tokens,
+                                total_usd: turn_cost.total_usd(),
+                            };
+                            if let Err(e) = sink.send(event).await {
+                                log::warn!(
+                                    "[agent_loop] progress sink closed at TurnCostUpdated: {e}"
+                                );
+                            }
+                        }
                     } else {
                         tracing::debug!(
                             iteration,
@@ -346,6 +408,16 @@ pub(crate) async fn run_tool_call_loop(
                     )
                 }
                 Err(e) => {
+                    crate::core::observability::report_error(
+                        &e,
+                        "agent",
+                        "provider_chat",
+                        &[
+                            ("provider", provider_name),
+                            ("model", model),
+                            ("iteration", &(iteration + 1).to_string()),
+                        ],
+                    );
                     return Err(e);
                 }
             };
@@ -381,6 +453,15 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
             history.push(ChatMessage::assistant(response_text.clone()));
+            log::info!(
+                "[agent_loop] turn complete: iters={} provider_calls={} tokens_in={} tokens_out={} cached_in={} usd={:.4}",
+                (iteration + 1),
+                turn_cost.call_count,
+                turn_cost.input_tokens,
+                turn_cost.output_tokens,
+                turn_cost.cached_input_tokens,
+                turn_cost.total_usd(),
+            );
             if let Some(ref sink) = on_progress {
                 if let Err(e) = sink
                     .send(AgentProgress::TurnCompleted {
@@ -573,38 +654,69 @@ pub(crate) async fn run_tool_call_loop(
                                 );
                                 scrubbed = compacted;
                             }
-                            if let Some(summarizer) = payload_summarizer {
-                                log::debug!(
-                                    "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
-                                    call.name,
-                                    scrubbed.len()
-                                );
-                                match summarizer
-                                    .maybe_summarize(&call.name, None, &scrubbed)
-                                    .await
-                                {
-                                    Ok(Some(payload)) => {
-                                        log::info!(
-                                            "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
-                                            call.name,
-                                            payload.original_bytes,
-                                            payload.summary_bytes
-                                        );
-                                        scrubbed = payload.summary;
-                                    }
-                                    Ok(None) => {
-                                        log::debug!(
-                                            "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
-                                            call.name,
-                                            scrubbed.len()
-                                        );
-                                    }
-                                    Err(e) => {
-                                        log::warn!(
-                                            "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
-                                            call.name,
-                                            e
-                                        );
+
+                            // Per-tool max_result_size_chars cap. When
+                            // a tool sets it and the (post-tokenjuice)
+                            // body still exceeds the cap, truncate
+                            // here and skip the global payload
+                            // summarizer for this call — the cap is
+                            // fast and deterministic, the summarizer
+                            // is the fallback for tools that don't
+                            // know their own size budget.
+                            let mut hit_per_tool_cap = false;
+                            if let Some(cap) = tool.max_result_size_chars() {
+                                let char_count = scrubbed.chars().count();
+                                if char_count > cap {
+                                    let truncated: String = scrubbed.chars().take(cap).collect();
+                                    let dropped = char_count - cap;
+                                    log::info!(
+                                        "[agent_loop] per-tool cap applied tool={} cap_chars={} original_chars={} dropped_chars={}",
+                                        call.name,
+                                        cap,
+                                        char_count,
+                                        dropped,
+                                    );
+                                    scrubbed = format!(
+                                        "{truncated}\n\n[truncated by tool cap: {dropped} more chars not shown]"
+                                    );
+                                    hit_per_tool_cap = true;
+                                }
+                            }
+
+                            if !hit_per_tool_cap {
+                                if let Some(summarizer) = payload_summarizer {
+                                    log::debug!(
+                                        "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
+                                        call.name,
+                                        scrubbed.len()
+                                    );
+                                    match summarizer
+                                        .maybe_summarize(&call.name, None, &scrubbed)
+                                        .await
+                                    {
+                                        Ok(Some(payload)) => {
+                                            log::info!(
+                                                "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
+                                                call.name,
+                                                payload.original_bytes,
+                                                payload.summary_bytes
+                                            );
+                                            scrubbed = payload.summary;
+                                        }
+                                        Ok(None) => {
+                                            log::debug!(
+                                                "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
+                                                call.name,
+                                                scrubbed.len()
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log::warn!(
+                                                "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
+                                                call.name,
+                                                e
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -626,19 +738,33 @@ pub(crate) async fn run_tool_call_loop(
                         }
                     }
                     Ok(Err(e)) => {
-                        tracing::error!(
-                            iteration,
-                            tool = call.name.as_str(),
-                            "[agent_loop] tool execution failed: {e}"
+                        crate::core::observability::report_error(
+                            &e,
+                            "tool",
+                            "execute",
+                            &[
+                                ("tool", call.name.as_str()),
+                                ("outcome", "failed"),
+                                ("iteration", &(iteration + 1).to_string()),
+                            ],
                         );
                         (format!("Error executing {}: {e}", call.name), false)
                     }
                     Err(_) => {
-                        tracing::error!(
-                            iteration,
-                            tool = call.name.as_str(),
-                            secs = timeout_secs,
-                            "[agent_loop] tool execution timed out"
+                        let msg = format!(
+                            "tool '{}' timed out after {} seconds",
+                            call.name, timeout_secs
+                        );
+                        crate::core::observability::report_error(
+                            msg.as_str(),
+                            "tool",
+                            "execute",
+                            &[
+                                ("tool", call.name.as_str()),
+                                ("outcome", "timeout"),
+                                ("timeout_secs", &timeout_secs.to_string()),
+                                ("iteration", &(iteration + 1).to_string()),
+                            ],
                         );
                         (
                             format!(

@@ -69,17 +69,28 @@ impl IntegrationClient {
                     chain.push_str(&s.to_string());
                     src = s.source();
                 }
-                tracing::warn!("[integrations] POST {} failed: {}", url, chain);
+                crate::core::observability::report_error(
+                    chain.as_str(),
+                    "integrations",
+                    "post",
+                    &[("path", path), ("failure", "transport")],
+                );
                 anyhow::anyhow!("POST {} failed: {}", url, chain)
             })?;
 
         let status = resp.status();
         if !status.is_success() {
             let _body_text = resp.text().await.unwrap_or_default();
-            tracing::debug!(
-                "[integrations] POST {} → {} <redacted-response>",
-                url,
-                status
+            let status_str = status.as_u16().to_string();
+            crate::core::observability::report_error(
+                format!("Backend returned {} for POST {}", status, url).as_str(),
+                "integrations",
+                "post",
+                &[
+                    ("path", path),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
             );
             anyhow::bail!("Backend returned {} for POST {}", status, url);
         }
@@ -89,6 +100,12 @@ impl IntegrationClient {
             let msg = envelope
                 .error
                 .unwrap_or_else(|| "unknown backend error".into());
+            crate::core::observability::report_error(
+                msg.as_str(),
+                "integrations",
+                "post",
+                &[("path", path), ("failure", "envelope_error")],
+            );
             anyhow::bail!("Backend error for POST {}: {}", url, msg);
         }
         envelope
@@ -115,17 +132,28 @@ impl IntegrationClient {
                     chain.push_str(&s.to_string());
                     src = s.source();
                 }
-                tracing::warn!("[integrations] GET {} failed: {}", url, chain);
+                crate::core::observability::report_error(
+                    chain.as_str(),
+                    "integrations",
+                    "get",
+                    &[("path", path), ("failure", "transport")],
+                );
                 anyhow::anyhow!("GET {} failed: {}", url, chain)
             })?;
 
         let status = resp.status();
         if !status.is_success() {
             let _body_text = resp.text().await.unwrap_or_default();
-            tracing::debug!(
-                "[integrations] GET {} → {} <redacted-response>",
-                url,
-                status
+            let status_str = status.as_u16().to_string();
+            crate::core::observability::report_error(
+                format!("Backend returned {} for GET {}", status, url).as_str(),
+                "integrations",
+                "get",
+                &[
+                    ("path", path),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
             );
             anyhow::bail!("Backend returned {} for GET {}", status, url);
         }
@@ -135,6 +163,12 @@ impl IntegrationClient {
             let msg = envelope
                 .error
                 .unwrap_or_else(|| "unknown backend error".into());
+            crate::core::observability::report_error(
+                msg.as_str(),
+                "integrations",
+                "get",
+                &[("path", path), ("failure", "envelope_error")],
+            );
             anyhow::bail!("Backend error for GET {}: {}", url, msg);
         }
         envelope

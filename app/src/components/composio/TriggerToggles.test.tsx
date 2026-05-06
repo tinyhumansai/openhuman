@@ -88,7 +88,7 @@ describe('<TriggerToggles>', () => {
     );
   });
 
-  it('shows a load error when both lists fail', async () => {
+  it('shows a load error when available trigger list fails', async () => {
     mockListAvailable.mockRejectedValue(new Error('boom'));
     mockListTriggers.mockResolvedValue({ triggers: [] });
 

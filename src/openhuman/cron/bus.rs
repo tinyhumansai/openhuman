@@ -64,20 +64,32 @@ impl EventHandler for CronDeliverySubscriber {
                     );
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        job_id = %job_id,
-                        channel = %channel_lower,
-                        error = %e,
-                        "[cron] delivery failed"
+                    crate::core::observability::report_error(
+                        &e,
+                        "cron",
+                        "delivery",
+                        &[
+                            ("job_id", job_id.as_str()),
+                            ("channel", channel_lower.as_str()),
+                            ("failure", "channel_send"),
+                        ],
                     );
                 }
             }
         } else {
-            tracing::warn!(
-                job_id = %job_id,
-                channel = %channel_lower,
-                available = ?self.channels_by_name.keys().collect::<Vec<_>>(),
-                "[cron] no matching channel found for delivery"
+            let msg = format!(
+                "no matching channel '{}' found for cron delivery (job {})",
+                channel_lower, job_id
+            );
+            crate::core::observability::report_error(
+                msg.as_str(),
+                "cron",
+                "delivery",
+                &[
+                    ("job_id", job_id.as_str()),
+                    ("channel", channel_lower.as_str()),
+                    ("failure", "channel_missing"),
+                ],
             );
         }
     }

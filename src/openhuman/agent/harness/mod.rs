@@ -1,4 +1,4 @@
-//! Multi-agent harness — sub-agent dispatch and fork-cache support.
+//! Multi-agent harness — sub-agent dispatch and parent-context plumbing.
 //!
 //! The harness provides the infrastructure for an agent to delegate work to
 //! specialized sub-agents. It manages the lifecycle of these sub-agents,
@@ -10,10 +10,8 @@
 //! in the global [`AgentDefinitionRegistry`] and runs a dedicated tool loop.
 //!
 //! ## Token Optimization
-//! - **Typed Sub-agents**: Skips unnecessary system prompt sections (e.g.,
+//! - **Typed Sub-agents**: Skip unnecessary system prompt sections (e.g.,
 //!   identity, global skills) to keep sub-agent prompts small.
-//! - **Fork Mode**: Allows sub-agents to replay the parent's exact context
-//!   to leverage KV-cache reuse on the inference backend.
 //!
 //! ## Key Sub-modules
 //! - **[`subagent_runner`]**: The core logic for executing a sub-agent.
@@ -44,10 +42,7 @@ pub use definition::{
     AgentDefinition, AgentDefinitionRegistry, DefinitionSource, ModelSpec, PromptSource,
     SandboxMode, ToolScope,
 };
-pub use fork_context::{
-    current_fork, current_parent, with_fork_context, with_parent_context, ForkContext,
-    ParentExecutionContext,
-};
+pub use fork_context::{current_parent, with_parent_context, ParentExecutionContext};
 pub use interrupt::{check_interrupt, InterruptFence, InterruptedError};
 pub use sandbox_context::{current_sandbox_mode, with_current_sandbox_mode};
 pub use subagent_runner::{run_subagent, SubagentRunError, SubagentRunOptions};

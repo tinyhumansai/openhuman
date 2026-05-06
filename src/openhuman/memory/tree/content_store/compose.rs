@@ -38,7 +38,7 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::openhuman::memory::tree::content_store::paths::SummaryTreeKind;
+use crate::openhuman::memory::tree::content_store::paths::{sanitize_filename, SummaryTreeKind};
 use crate::openhuman::memory::tree::types::{Chunk, SourceKind};
 
 /// Compose the full file content (front-matter + body) for `chunk`.
@@ -310,13 +310,21 @@ fn build_summary_front_matter(r: &SummaryComposeInput<'_>) -> String {
     fm.push_str(&format!("tree_scope: {}\n", yaml_scalar(r.tree_scope)));
     fm.push_str(&format!("level: {}\n", r.level));
 
-    // children: YAML list
+    // children: YAML list of Obsidian wikilinks (`[[<basename>]]`) so the
+    // graph view draws summary→child edges. The wikilink target must match
+    // the actual file basename — for chunks that's the raw chunk_id (a SHA
+    // hash with no illegal chars), but for child summaries the structured id
+    // `summary:L<n>:UUID` is sanitised to `summary-L<n>-UUID` by
+    // `summary_rel_path` (colons are illegal on Windows NTFS). We apply the
+    // same sanitisation here so the link resolves. `yaml_scalar` auto-quotes
+    // because of the leading `[`, emitting `"[[<basename>]]"`.
     if r.child_ids.is_empty() {
         fm.push_str("children: []\n");
     } else {
         fm.push_str("children:\n");
         for id in r.child_ids {
-            fm.push_str(&format!("  - {}\n", yaml_scalar(id)));
+            let wikilink = format!("[[{}]]", sanitize_filename(id));
+            fm.push_str(&format!("  - {}\n", yaml_scalar(&wikilink)));
         }
     }
     fm.push_str(&format!("child_count: {}\n", r.child_count));
@@ -741,8 +749,14 @@ mod tests {
         );
         assert!(fm.contains("level: 1"), "must have level");
         assert!(fm.contains("child_count: 2"), "must have child_count");
-        assert!(fm.contains("  - child-1"), "must list child ids");
-        assert!(fm.contains("  - child-2"), "must list child ids");
+        assert!(
+            fm.contains("  - \"[[child-1]]\""),
+            "must list child ids as Obsidian wikilinks; got:\n{fm}"
+        );
+        assert!(
+            fm.contains("  - \"[[child-2]]\""),
+            "must list child ids as Obsidian wikilinks; got:\n{fm}"
+        );
         assert!(fm.contains("tags: []"), "must start with empty tags");
         // aliases must mention the scope
         assert!(fm.contains("aliases:"), "must have aliases");
@@ -751,6 +765,71 @@ mod tests {
             "body must be the summariser text"
         );
         assert!(composed.full.ends_with("This is the summariser output.\n"));
+    }
+
+    #[test]
+    fn children_are_emitted_as_obsidian_wikilinks() {
+        // Contract: every entry in `children:` must be wrapped in `[[…]]` so
+        // Obsidian's graph view draws a summary→child edge. The YAML scalar is
+        // quoted because of the leading `[` — both forms below are required.
+        let input = sample_summary_input(SummaryTreeKind::Source, "gmail:alice@x.com", 1);
+        let composed = compose_summary_md(&input);
+        let fm = &composed.front_matter;
+        for id in ["child-1", "child-2"] {
+            let expected = format!("  - \"[[{id}]]\"");
+            assert!(
+                fm.contains(&expected),
+                "child id {id} must be emitted as a quoted wikilink ({expected}); got:\n{fm}"
+            );
+            // Belt-and-braces: the bare id must NOT appear as a plain scalar
+            // (i.e. unwrapped). The wikilink form contains the id, so we
+            // search for the bare list-item form.
+            let plain = format!("  - {id}\n");
+            assert!(
+                !fm.contains(&plain),
+                "child id {id} must not be emitted as a plain scalar; got:\n{fm}"
+            );
+        }
+    }
+
+    #[test]
+    fn structured_child_summary_id_is_sanitised_in_wikilink() {
+        // Real-world case: an L2 summary lists child L1 summaries by their
+        // structured id (e.g. `summary:L1:UUID`). Colons are illegal in
+        // Windows NTFS filenames, so `summary_rel_path` writes the file as
+        // `summary-L1-UUID.md`. The wikilink target must match that basename
+        // — i.e. colons must be converted to dashes — otherwise Obsidian
+        // cannot resolve the link and the graph stays disconnected.
+        let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        let child_id = "summary:L1:b9fa5f08-bf79-41a7-a5c8-2d87883d5c01";
+        let expected_basename = "summary-L1-b9fa5f08-bf79-41a7-a5c8-2d87883d5c01";
+        let input = SummaryComposeInput {
+            summary_id: "summary:L2:cc9a1224",
+            tree_kind: SummaryTreeKind::Source,
+            tree_id: "t1",
+            tree_scope: "gmail:alice@x.com",
+            level: 2,
+            child_ids: &[child_id.to_string()],
+            child_count: 1,
+            time_range_start: ts,
+            time_range_end: ts,
+            sealed_at: ts,
+            body: "L2 body",
+        };
+        let composed = compose_summary_md(&input);
+        let fm = &composed.front_matter;
+        let expected = format!("  - \"[[{expected_basename}]]\"");
+        assert!(
+            fm.contains(&expected),
+            "structured child id must be sanitised to filename basename in wikilink; \
+             expected line: {expected}; got:\n{fm}"
+        );
+        // Raw colon-bearing id must NOT appear inside `[[…]]` — that wikilink
+        // would not resolve in Obsidian.
+        assert!(
+            !fm.contains(&format!("[[{child_id}]]")),
+            "raw structured id with colons must not appear inside wikilink; got:\n{fm}"
+        );
     }
 
     #[test]

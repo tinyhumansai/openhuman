@@ -22,6 +22,16 @@ This folder is the **desktop host** for OpenHuman: Tauri v2 + WebView, IPC comma
 
 `app/package.json` **`core:stage`** runs `scripts/stage-core-sidecar.mjs`, which `cargo build --bin openhuman` at the repo root and copies the binary into `app/src-tauri/binaries/` for Tauri `externalBin`.
 
+## Stuck process recovery
+
+Normal app quit runs teardown from `RunEvent::ExitRequested`: child webviews are closed before CEF shutdown, the embedded core's cancellation token is triggered, and the final process sweep sends `SIGTERM` to direct children before escalating holdouts with `SIGKILL` after a short grace period. Sweep summaries are logged as `[app] sweep: term=N kill=M total=K`; any nonzero `kill` count is a warning and means a child ignored graceful shutdown.
+
+On macOS, hard exits such as Force Quit, `SIGKILL`, or a renderer crash can skip normal teardown. The next launch runs startup recovery before CEF cache preflight: it lists OpenHuman processes whose executable path belongs to the launching `.app/Contents`, skips the current process, sends `SIGTERM`, waits briefly, then sends `SIGKILL` to stragglers that still match the same pid and command. These events use the `[startup-recovery]` log prefix.
+
+Startup recovery intentionally skips when `OPENHUMAN_CORE_REUSE_EXISTING=1` is set so manual CLI-core reuse still works. It also skips when the CEF `SingletonLock` is held by a live process, letting the normal second-instance path fail without killing the already-running app.
+
+For diagnostics, the Tauri command `process_diagnostics_list_owned` returns the currently owned process list used by startup recovery, or an error if process enumeration fails. The macOS implementation is bundle-scoped; Linux and Windows currently return an empty list.
+
 ## Related
 
 - Full stack narrative: [`../ARCHITECTURE.md`](../ARCHITECTURE.md)

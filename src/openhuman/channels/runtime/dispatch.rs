@@ -574,7 +574,6 @@ mod scoping_tests {
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
             background: false,
-            uses_fork_context: false,
             subagents: vec![],
             delegate_name: None,
             source: DefinitionSource::Builtin,
@@ -765,6 +764,15 @@ pub(crate) async fn process_channel_message(
     let active_provider = match get_or_create_provider(ctx.as_ref(), &route.provider).await {
         Ok(provider) => provider,
         Err(err) => {
+            crate::core::observability::report_error(
+                &err,
+                "channels",
+                "provider_init",
+                &[
+                    ("channel", msg.channel.as_str()),
+                    ("provider", route.provider.as_str()),
+                ],
+            );
             let safe_err = providers::sanitize_api_error(&err.to_string());
             let message = format!(
                 "⚠️ Failed to initialize provider `{}`. Please run `/models` to choose another provider.\nDetails: {safe_err}",
@@ -1137,6 +1145,15 @@ pub(crate) async fn process_channel_message(
                 "  ❌ LLM error after {}ms: {e}",
                 started_at.elapsed().as_millis()
             );
+            crate::core::observability::report_error(
+                &e,
+                "channels",
+                "dispatch_llm_error",
+                &[
+                    ("channel", msg.channel.as_str()),
+                    ("provider", route.provider.as_str()),
+                ],
+            );
             if let Some(channel) = target_channel.as_ref() {
                 if let Some(ref draft_id) = draft_message_id {
                     let _ = channel
@@ -1164,6 +1181,15 @@ pub(crate) async fn process_channel_message(
                 "  ❌ {} (elapsed: {}ms)",
                 timeout_msg,
                 started_at.elapsed().as_millis()
+            );
+            crate::core::observability::report_error(
+                timeout_msg.as_str(),
+                "channels",
+                "dispatch_llm_timeout",
+                &[
+                    ("channel", msg.channel.as_str()),
+                    ("timeout_secs", &ctx.message_timeout_secs.to_string()),
+                ],
             );
             let error_text =
                 "⚠️ Request timed out while waiting for the model. Please try again.".to_string();

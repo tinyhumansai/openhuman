@@ -11,9 +11,11 @@ pub mod global;
 pub mod ingestion;
 pub mod ops;
 pub mod rpc_models;
+pub mod safety;
 pub mod schemas;
 pub mod slack_ingestion;
 pub mod store;
+pub mod sync_status;
 pub mod traits;
 pub mod tree;
 
@@ -37,6 +39,10 @@ pub use store::{
     create_memory_with_storage_and_routes, effective_memory_backend_name, MemoryClient,
     MemoryClientRef, MemoryItemKind, MemoryState, NamespaceDocumentInput, NamespaceMemoryHit,
     NamespaceQueryResult, NamespaceRetrievalContext, RetrievalScoreBreakdown, UnifiedMemory,
+};
+pub use sync_status::{
+    all_memory_sync_status_controller_schemas, all_memory_sync_status_registered_controllers,
+    FreshnessLabel, MemorySyncStatus,
 };
 pub use traits::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 pub use tree::{

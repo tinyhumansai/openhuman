@@ -25,6 +25,6 @@ pub mod gate;
 pub mod policy;
 pub mod signals;
 
-pub use gate::{current_policy, current_signals, init_global, wait_for_capacity};
-pub use policy::Policy;
+pub use gate::{current_policy, current_signals, init_global, wait_for_capacity, LlmPermit};
+pub use policy::{PauseReason, Policy};
 pub use signals::Signals;

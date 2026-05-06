@@ -18,6 +18,7 @@ fn store_roundtrips_threads_and_messages() {
     let created_at = "2026-04-10T12:00:00Z".to_string();
     let thread = store
         .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
             id: "default-thread".to_string(),
             title: "Conversation".to_string(),
             created_at: created_at.clone(),
@@ -55,6 +56,7 @@ fn store_updates_message_metadata() {
     let (_temp, store) = make_store();
     store
         .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
             id: "default-thread".to_string(),
             title: "Conversation".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
@@ -95,6 +97,7 @@ fn purge_removes_threads_and_messages() {
     let (_temp, store) = make_store();
     store
         .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
             id: "default-thread".to_string(),
             title: "Conversation".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
@@ -125,6 +128,7 @@ fn purge_removes_threads_and_messages() {
 fn ensure_thread_is_idempotent() {
     let (_temp, store) = make_store();
     let req = CreateConversationThread {
+        parent_thread_id: None,
         id: "t1".to_string(),
         title: "Thread".to_string(),
         created_at: "2026-04-10T12:00:00Z".to_string(),
@@ -141,6 +145,7 @@ fn delete_thread_removes_thread_and_messages() {
     let (_temp, store) = make_store();
     store
         .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
             id: "t1".to_string(),
             title: "Thread".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
@@ -179,6 +184,7 @@ fn get_messages_empty_thread() {
     let (_temp, store) = make_store();
     store
         .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
             id: "t1".to_string(),
             title: "Empty".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
@@ -202,6 +208,7 @@ fn multiple_threads_and_messages() {
     for i in 0..3 {
         store
             .ensure_thread(CreateConversationThread {
+                parent_thread_id: None,
                 id: format!("t{i}"),
                 title: format!("Thread {i}"),
                 created_at: format!("2026-04-10T12:0{i}:00Z"),
@@ -239,6 +246,7 @@ fn update_message_nonexistent_returns_error() {
     let (_temp, store) = make_store();
     store
         .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
             id: "t1".to_string(),
             title: "Thread".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
@@ -260,6 +268,7 @@ fn update_thread_title_persists_latest_title() {
     let (_temp, store) = make_store();
     store
         .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
             id: "t1".to_string(),
             title: "Chat Apr 10 12:00 PM".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
@@ -284,6 +293,7 @@ fn store_handles_labels_and_inference() {
     // 1. Explicit labels on ensure
     store
         .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
             id: "t1".to_string(),
             title: "Thread 1".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
@@ -294,6 +304,7 @@ fn store_handles_labels_and_inference() {
     // 2. Inferred labels for morning briefing
     store
         .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
             id: "proactive:morning_briefing".to_string(),
             title: "Morning Briefing".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
@@ -304,6 +315,7 @@ fn store_handles_labels_and_inference() {
     // 3. Inferred labels for other proactive
     store
         .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
             id: "proactive:system".to_string(),
             title: "System Notification".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
@@ -314,6 +326,7 @@ fn store_handles_labels_and_inference() {
     // 4. Default inferred labels (work)
     store
         .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
             id: "user-thread".to_string(),
             title: "User Chat".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),

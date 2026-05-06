@@ -1,3 +1,4 @@
+use crate::openhuman::memory::safety;
 use crate::openhuman::memory::{Memory, MemoryCategory};
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
@@ -90,6 +91,19 @@ impl Tool for MemoryStoreTool {
         if key.is_empty() {
             return Ok(ToolResult::error("key cannot be empty".to_string()));
         }
+
+        if safety::has_likely_secret(content) {
+            log::warn!(
+                "[memory:safety] memory_store rejected secret-like content namespace_chars={} key_chars={} content_chars={}",
+                namespace.chars().count(),
+                key.chars().count(),
+                content.chars().count()
+            );
+            return Ok(ToolResult::error(
+                "Refusing to store content that looks like a secret. Remove credentials or tokens and try again.".to_string(),
+            ));
+        }
+
         let display_key = format!("{namespace}/{key}");
         match self
             .memory
@@ -174,6 +188,23 @@ mod tests {
         let entry = mem.get("global", "proj_note").await.unwrap().unwrap();
         assert_eq!(entry.content, "Uses async runtime");
         assert_eq!(entry.category, MemoryCategory::Custom("project".into()));
+    }
+
+    #[tokio::test]
+    async fn store_rejects_secret_like_content() {
+        let (_tmp, mem) = test_mem();
+        let tool = MemoryStoreTool::new(mem.clone(), test_security());
+        let result = tool
+            .execute(json!({
+                "namespace": "global",
+                "key": "api",
+                "content": "api_key=sk-123456789012345678901234567890"
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.output().contains("looks like a secret"));
+        assert!(mem.get("global", "api").await.unwrap().is_none());
     }
 
     #[tokio::test]

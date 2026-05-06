@@ -1,4 +1,4 @@
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -7,19 +7,13 @@ import HumanPage from './features/human/HumanPage';
 import Accounts from './pages/Accounts';
 import Channels from './pages/Channels';
 import Home from './pages/Home';
-import Intelligence from './pages/Intelligence';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
 import Rewards from './pages/Rewards';
 import Settings from './pages/Settings';
 import Skills from './pages/Skills';
-import Webhooks from './pages/Webhooks';
 import Welcome from './pages/Welcome';
-import { APP_ENVIRONMENT } from './utils/config';
-
-/** /human is mascot work-in-progress — only mount the route pre-prod. */
-const HUMAN_ROUTE_ENABLED = APP_ENVIRONMENT !== 'production';
 
 const AppRoutes = () => {
   return (
@@ -54,25 +48,16 @@ const AppRoutes = () => {
         }
       />
 
-      {HUMAN_ROUTE_ENABLED && (
-        <Route
-          path="/human"
-          element={
-            <ProtectedRoute requireAuth={true}>
-              <HumanPage />
-            </ProtectedRoute>
-          }
-        />
-      )}
-
       <Route
-        path="/intelligence"
+        path="/human"
         element={
           <ProtectedRoute requireAuth={true}>
-            <Intelligence />
+            <HumanPage />
           </ProtectedRoute>
         }
       />
+
+      <Route path="/intelligence" element={<Navigate to="/settings/intelligence" replace />} />
 
       <Route
         path="/skills"
@@ -130,14 +115,7 @@ const AppRoutes = () => {
         }
       />
 
-      <Route
-        path="/webhooks"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Webhooks />
-          </ProtectedRoute>
-        }
-      />
+      <Route path="/webhooks" element={<Navigate to="/settings/webhooks-triggers" replace />} />
 
       <Route
         path="/settings/*"

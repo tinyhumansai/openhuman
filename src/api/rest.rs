@@ -183,6 +183,22 @@ impl BackendOAuthClient {
         Ok(Self { client, base })
     }
 
+    /// Borrow the underlying `reqwest::Client` for callers that need to
+    /// drive a non-JSON request shape (e.g. `multipart/form-data` uploads
+    /// for cloud STT) without re-implementing TLS/proxy plumbing.
+    pub fn raw_client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Resolve a backend-relative path against the configured base URL.
+    /// Mirrors what `authed_json` does internally so callers using
+    /// `raw_client()` don't have to assemble URLs by hand.
+    pub fn url_for(&self, path: &str) -> Result<Url> {
+        self.base
+            .join(path.trim_start_matches('/'))
+            .with_context(|| format!("build URL for {path}"))
+    }
+
     /// Returns the URL for initiating a login flow for a specific provider.
     pub fn login_url(&self, provider: &str) -> Result<Url> {
         let p = provider.trim().trim_matches('/');
@@ -366,14 +382,44 @@ impl BackendOAuthClient {
             request = request.json(&body);
         }
 
-        let response = request
-            .send()
-            .await
-            .with_context(|| format!("backend request {} {}", method.as_str(), url.path()))?;
+        let response = request.send().await.map_err(|e| {
+            crate::core::observability::report_error(
+                e.to_string().as_str(),
+                "backend_api",
+                "authed_json",
+                &[
+                    ("method", method.as_str()),
+                    ("path", url.path()),
+                    ("failure", "transport"),
+                ],
+            );
+            anyhow::Error::new(e).context(format!(
+                "backend request {} {}",
+                method.as_str(),
+                url.path()
+            ))
+        })?;
 
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         if !status.is_success() {
+            let status_str = status.as_u16().to_string();
+            crate::core::observability::report_error(
+                format!(
+                    "{} {} failed ({status}): {text}",
+                    method.as_str(),
+                    url.path()
+                )
+                .as_str(),
+                "backend_api",
+                "authed_json",
+                &[
+                    ("method", method.as_str()),
+                    ("path", url.path()),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
             anyhow::bail!(
                 "{} {} failed ({status}): {text}",
                 method.as_str(),

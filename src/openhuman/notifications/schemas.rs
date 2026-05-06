@@ -8,340 +8,387 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
+type SchemaBuilder = fn() -> ControllerSchema;
+type ControllerHandler = fn(Map<String, Value>) -> ControllerFuture;
+
+struct NotificationControllerDef {
+    function: &'static str,
+    schema: SchemaBuilder,
+    handler: ControllerHandler,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Schema registry
 // ─────────────────────────────────────────────────────────────────────────────
 
+const NOTIFICATION_CONTROLLER_DEFS: &[NotificationControllerDef] = &[
+    NotificationControllerDef {
+        function: "ingest",
+        schema: schema_ingest,
+        handler: handle_ingest_wrap,
+    },
+    NotificationControllerDef {
+        function: "list",
+        schema: schema_list,
+        handler: handle_list_wrap,
+    },
+    NotificationControllerDef {
+        function: "mark_read",
+        schema: schema_mark_read,
+        handler: handle_mark_read_wrap,
+    },
+    NotificationControllerDef {
+        function: "settings_get",
+        schema: schema_settings_get,
+        handler: handle_settings_get_wrap,
+    },
+    NotificationControllerDef {
+        function: "settings_set",
+        schema: schema_settings_set,
+        handler: handle_settings_set_wrap,
+    },
+    NotificationControllerDef {
+        function: "dismiss",
+        schema: schema_dismiss,
+        handler: handle_dismiss_wrap,
+    },
+    NotificationControllerDef {
+        function: "mark_acted",
+        schema: schema_mark_acted,
+        handler: handle_mark_acted_wrap,
+    },
+    NotificationControllerDef {
+        function: "stats",
+        schema: schema_stats,
+        handler: handle_stats_wrap,
+    },
+];
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
-    vec![
-        schemas("ingest"),
-        schemas("list"),
-        schemas("mark_read"),
-        schemas("settings_get"),
-        schemas("settings_set"),
-        schemas("dismiss"),
-        schemas("mark_acted"),
-        schemas("stats"),
-    ]
+    NOTIFICATION_CONTROLLER_DEFS
+        .iter()
+        .map(|def| (def.schema)())
+        .collect()
 }
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
-    vec![
-        RegisteredController {
-            schema: schemas("ingest"),
-            handler: handle_ingest_wrap,
-        },
-        RegisteredController {
-            schema: schemas("list"),
-            handler: handle_list_wrap,
-        },
-        RegisteredController {
-            schema: schemas("mark_read"),
-            handler: handle_mark_read_wrap,
-        },
-        RegisteredController {
-            schema: schemas("settings_get"),
-            handler: handle_settings_get_wrap,
-        },
-        RegisteredController {
-            schema: schemas("settings_set"),
-            handler: handle_settings_set_wrap,
-        },
-        RegisteredController {
-            schema: schemas("dismiss"),
-            handler: handle_dismiss_wrap,
-        },
-        RegisteredController {
-            schema: schemas("mark_acted"),
-            handler: handle_mark_acted_wrap,
-        },
-        RegisteredController {
-            schema: schemas("stats"),
-            handler: handle_stats_wrap,
-        },
-    ]
+    NOTIFICATION_CONTROLLER_DEFS
+        .iter()
+        .map(|def| RegisteredController {
+            schema: (def.schema)(),
+            handler: def.handler,
+        })
+        .collect()
 }
 
 pub fn schemas(function: &str) -> ControllerSchema {
-    match function {
-        "ingest" => ControllerSchema {
-            namespace: "notification",
-            function: "ingest",
-            description: "Ingest a new notification from an embedded webview integration. \
+    if let Some(def) = NOTIFICATION_CONTROLLER_DEFS
+        .iter()
+        .find(|def| def.function == function)
+    {
+        return (def.schema)();
+    }
+
+    schema_unknown()
+}
+
+fn schema_ingest() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "notification",
+        function: "ingest",
+        description: "Ingest a new notification from an embedded webview integration. \
                           Immediately persists the record and kicks off background triage scoring.",
-            inputs: vec![
-                FieldSchema {
-                    name: "provider",
-                    ty: TypeSchema::String,
-                    comment: "Provider slug, e.g. \"gmail\", \"slack\", \"whatsapp\".",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "account_id",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Webview account identifier (optional).",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "title",
-                    ty: TypeSchema::String,
-                    comment: "Short notification title / subject.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "body",
-                    ty: TypeSchema::String,
-                    comment: "Notification body or preview text.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "raw_payload",
-                    ty: TypeSchema::Ref("JsonObject"),
-                    comment: "Full raw event payload from the source for downstream use.",
-                    required: true,
-                },
-            ],
-            outputs: vec![
-                FieldSchema {
-                    name: "id",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "UUID of the newly created notification record. Absent when skipped.",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "skipped",
-                    ty: TypeSchema::Bool,
-                    comment:
-                        "True when the provider is disabled and the notification was not stored.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "reason",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Human-readable reason populated alongside `skipped=true` \
-                              (e.g. \"provider_disabled\").",
-                    required: false,
-                },
-            ],
-        },
-
-        "list" => ControllerSchema {
-            namespace: "notification",
-            function: "list",
-            description: "Return a paginated list of ingested notifications with optional \
-                          provider and minimum-importance-score filters.",
-            inputs: vec![
-                FieldSchema {
-                    name: "provider",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Filter by provider slug. Omit to return all providers.",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "limit",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-                    comment: "Maximum number of records to return; defaults to 50.",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "offset",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-                    comment: "Number of records to skip for pagination; defaults to 0.",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "min_score",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
-                    comment: "Minimum importance score 0.0–1.0. Unscored items pass through.",
-                    required: false,
-                },
-            ],
-            outputs: vec![
-                FieldSchema {
-                    name: "items",
-                    ty: TypeSchema::Array(Box::new(TypeSchema::Ref("IntegrationNotification"))),
-                    comment: "Notification records ordered by received_at descending.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "unread_count",
-                    ty: TypeSchema::I64,
-                    comment: "Total count of unread notifications across all providers.",
-                    required: true,
-                },
-            ],
-        },
-
-        "mark_read" => ControllerSchema {
-            namespace: "notification",
-            function: "mark_read",
-            description: "Mark a single notification as read by its id.",
-            inputs: vec![FieldSchema {
-                name: "id",
+        inputs: vec![
+            FieldSchema {
+                name: "provider",
                 ty: TypeSchema::String,
-                comment: "UUID of the notification to mark as read.",
+                comment: "Provider slug, e.g. \"gmail\", \"slack\", \"whatsapp\".",
                 required: true,
-            }],
-            outputs: vec![FieldSchema {
-                name: "ok",
+            },
+            FieldSchema {
+                name: "account_id",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "Webview account identifier (optional).",
+                required: false,
+            },
+            FieldSchema {
+                name: "title",
+                ty: TypeSchema::String,
+                comment: "Short notification title / subject.",
+                required: true,
+            },
+            FieldSchema {
+                name: "body",
+                ty: TypeSchema::String,
+                comment: "Notification body or preview text.",
+                required: true,
+            },
+            FieldSchema {
+                name: "raw_payload",
+                ty: TypeSchema::Ref("JsonObject"),
+                comment: "Full raw event payload from the source for downstream use.",
+                required: true,
+            },
+        ],
+        outputs: vec![
+            FieldSchema {
+                name: "id",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "UUID of the newly created notification record. Absent when skipped.",
+                required: false,
+            },
+            FieldSchema {
+                name: "skipped",
                 ty: TypeSchema::Bool,
-                comment: "True when the update succeeded.",
+                comment: "True when the provider is disabled and the notification was not stored.",
                 required: true,
-            }],
-        },
-        "settings_get" => ControllerSchema {
-            namespace: "notification",
-            function: "settings_get",
-            description: "Get provider-level notification routing settings.",
-            inputs: vec![FieldSchema {
+            },
+            FieldSchema {
+                name: "reason",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "Human-readable reason populated alongside `skipped=true` \
+                              (e.g. \"provider_disabled\").",
+                required: false,
+            },
+        ],
+    }
+}
+
+fn schema_list() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "notification",
+        function: "list",
+        description: "Return a paginated list of ingested notifications with optional \
+                          provider and minimum-importance-score filters.",
+        inputs: vec![
+            FieldSchema {
+                name: "provider",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "Filter by provider slug. Omit to return all providers.",
+                required: false,
+            },
+            FieldSchema {
+                name: "limit",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Maximum number of records to return; defaults to 50.",
+                required: false,
+            },
+            FieldSchema {
+                name: "offset",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Number of records to skip for pagination; defaults to 0.",
+                required: false,
+            },
+            FieldSchema {
+                name: "min_score",
+                ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
+                comment: "Minimum importance score 0.0–1.0. Unscored items pass through.",
+                required: false,
+            },
+        ],
+        outputs: vec![
+            FieldSchema {
+                name: "items",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("IntegrationNotification"))),
+                comment: "Notification records ordered by received_at descending.",
+                required: true,
+            },
+            FieldSchema {
+                name: "unread_count",
+                ty: TypeSchema::I64,
+                comment: "Total count of unread notifications across all providers.",
+                required: true,
+            },
+        ],
+    }
+}
+
+fn schema_mark_read() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "notification",
+        function: "mark_read",
+        description: "Mark a single notification as read by its id.",
+        inputs: vec![FieldSchema {
+            name: "id",
+            ty: TypeSchema::String,
+            comment: "UUID of the notification to mark as read.",
+            required: true,
+        }],
+        outputs: vec![FieldSchema {
+            name: "ok",
+            ty: TypeSchema::Bool,
+            comment: "True when the update succeeded.",
+            required: true,
+        }],
+    }
+}
+
+fn schema_settings_get() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "notification",
+        function: "settings_get",
+        description: "Get provider-level notification routing settings.",
+        inputs: vec![FieldSchema {
+            name: "provider",
+            ty: TypeSchema::String,
+            comment: "Provider slug, e.g. \"gmail\".",
+            required: true,
+        }],
+        outputs: vec![FieldSchema {
+            name: "settings",
+            ty: TypeSchema::Ref("NotificationSettings"),
+            comment: "Current settings for provider, defaulted if missing.",
+            required: true,
+        }],
+    }
+}
+
+fn schema_settings_set() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "notification",
+        function: "settings_set",
+        description: "Upsert provider-level notification routing settings.",
+        inputs: vec![
+            FieldSchema {
                 name: "provider",
                 ty: TypeSchema::String,
                 comment: "Provider slug, e.g. \"gmail\".",
                 required: true,
-            }],
-            outputs: vec![FieldSchema {
+            },
+            FieldSchema {
+                name: "enabled",
+                ty: TypeSchema::Bool,
+                comment: "Enable/disable ingestion for this provider.",
+                required: true,
+            },
+            FieldSchema {
+                name: "importance_threshold",
+                ty: TypeSchema::F64,
+                comment: "Minimum score 0.0..1.0 for routing decisions.",
+                required: true,
+            },
+            FieldSchema {
+                name: "route_to_orchestrator",
+                ty: TypeSchema::Bool,
+                comment: "When true, allow triage react/escalate to route to orchestrator.",
+                required: true,
+            },
+        ],
+        outputs: vec![
+            FieldSchema {
+                name: "ok",
+                ty: TypeSchema::Bool,
+                comment: "True when settings were saved.",
+                required: true,
+            },
+            FieldSchema {
                 name: "settings",
                 ty: TypeSchema::Ref("NotificationSettings"),
-                comment: "Current settings for provider, defaulted if missing.",
+                comment: "The normalized (clamped) settings that were persisted.",
                 required: true,
-            }],
-        },
-        "settings_set" => ControllerSchema {
-            namespace: "notification",
-            function: "settings_set",
-            description: "Upsert provider-level notification routing settings.",
-            inputs: vec![
-                FieldSchema {
-                    name: "provider",
-                    ty: TypeSchema::String,
-                    comment: "Provider slug, e.g. \"gmail\".",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "enabled",
-                    ty: TypeSchema::Bool,
-                    comment: "Enable/disable ingestion for this provider.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "importance_threshold",
-                    ty: TypeSchema::F64,
-                    comment: "Minimum score 0.0..1.0 for routing decisions.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "route_to_orchestrator",
-                    ty: TypeSchema::Bool,
-                    comment: "When true, allow triage react/escalate to route to orchestrator.",
-                    required: true,
-                },
-            ],
-            outputs: vec![
-                FieldSchema {
-                    name: "ok",
-                    ty: TypeSchema::Bool,
-                    comment: "True when settings were saved.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "settings",
-                    ty: TypeSchema::Ref("NotificationSettings"),
-                    comment: "The normalized (clamped) settings that were persisted.",
-                    required: true,
-                },
-            ],
-        },
+            },
+        ],
+    }
+}
 
-        "dismiss" => ControllerSchema {
-            namespace: "notification",
-            function: "dismiss",
-            description: "Mark a notification as dismissed (user explicitly hid it).",
-            inputs: vec![FieldSchema {
-                name: "id",
-                ty: TypeSchema::String,
-                comment: "UUID of the notification to dismiss.",
-                required: true,
-            }],
-            outputs: vec![FieldSchema {
-                name: "ok",
-                ty: TypeSchema::Bool,
-                comment: "True when the update succeeded.",
-                required: true,
-            }],
-        },
-        "mark_acted" => ControllerSchema {
-            namespace: "notification",
-            function: "mark_acted",
-            description: "Mark a notification as acted upon (user took an action from it).",
-            inputs: vec![FieldSchema {
-                name: "id",
-                ty: TypeSchema::String,
-                comment: "UUID of the notification to mark as acted.",
-                required: true,
-            }],
-            outputs: vec![FieldSchema {
-                name: "ok",
-                ty: TypeSchema::Bool,
-                comment: "True when the update succeeded.",
-                required: true,
-            }],
-        },
-        "stats" => ControllerSchema {
-            namespace: "notification",
-            function: "stats",
-            description: "Return aggregate statistics for the notification intelligence pipeline.",
-            inputs: vec![],
-            outputs: vec![
-                FieldSchema {
-                    name: "total",
-                    ty: TypeSchema::I64,
-                    comment: "Total notification count.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "unread",
-                    ty: TypeSchema::I64,
-                    comment: "Count of unread notifications.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "unscored",
-                    ty: TypeSchema::I64,
-                    comment: "Count of notifications pending triage scoring.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "by_provider",
-                    ty: TypeSchema::Map(Box::new(TypeSchema::I64)),
-                    comment: "Notification counts grouped by provider slug.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "by_action",
-                    ty: TypeSchema::Map(Box::new(TypeSchema::I64)),
-                    comment: "Notification counts grouped by triage action.",
-                    required: true,
-                },
-            ],
-        },
+fn schema_dismiss() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "notification",
+        function: "dismiss",
+        description: "Mark a notification as dismissed (user explicitly hid it).",
+        inputs: vec![FieldSchema {
+            name: "id",
+            ty: TypeSchema::String,
+            comment: "UUID of the notification to dismiss.",
+            required: true,
+        }],
+        outputs: vec![FieldSchema {
+            name: "ok",
+            ty: TypeSchema::Bool,
+            comment: "True when the update succeeded.",
+            required: true,
+        }],
+    }
+}
 
-        _other => ControllerSchema {
-            namespace: "notification",
-            function: "unknown",
-            description: "Unknown notification controller function.",
-            inputs: vec![FieldSchema {
-                name: "function",
-                ty: TypeSchema::String,
-                comment: "Unknown function requested.",
+fn schema_mark_acted() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "notification",
+        function: "mark_acted",
+        description: "Mark a notification as acted upon (user took an action from it).",
+        inputs: vec![FieldSchema {
+            name: "id",
+            ty: TypeSchema::String,
+            comment: "UUID of the notification to mark as acted.",
+            required: true,
+        }],
+        outputs: vec![FieldSchema {
+            name: "ok",
+            ty: TypeSchema::Bool,
+            comment: "True when the update succeeded.",
+            required: true,
+        }],
+    }
+}
+
+fn schema_stats() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "notification",
+        function: "stats",
+        description: "Return aggregate statistics for the notification intelligence pipeline.",
+        inputs: vec![],
+        outputs: vec![
+            FieldSchema {
+                name: "total",
+                ty: TypeSchema::I64,
+                comment: "Total notification count.",
                 required: true,
-            }],
-            outputs: vec![FieldSchema {
-                name: "error",
-                ty: TypeSchema::String,
-                comment: "Lookup error details.",
+            },
+            FieldSchema {
+                name: "unread",
+                ty: TypeSchema::I64,
+                comment: "Count of unread notifications.",
                 required: true,
-            }],
-        },
+            },
+            FieldSchema {
+                name: "unscored",
+                ty: TypeSchema::I64,
+                comment: "Count of notifications pending triage scoring.",
+                required: true,
+            },
+            FieldSchema {
+                name: "by_provider",
+                ty: TypeSchema::Map(Box::new(TypeSchema::I64)),
+                comment: "Notification counts grouped by provider slug.",
+                required: true,
+            },
+            FieldSchema {
+                name: "by_action",
+                ty: TypeSchema::Map(Box::new(TypeSchema::I64)),
+                comment: "Notification counts grouped by triage action.",
+                required: true,
+            },
+        ],
+    }
+}
+
+fn schema_unknown() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "notification",
+        function: "unknown",
+        description: "Unknown notification controller function.",
+        inputs: vec![FieldSchema {
+            name: "function",
+            ty: TypeSchema::String,
+            comment: "Unknown function requested.",
+            required: true,
+        }],
+        outputs: vec![FieldSchema {
+            name: "error",
+            ty: TypeSchema::String,
+            comment: "Lookup error details.",
+            required: true,
+        }],
     }
 }
 
@@ -506,6 +553,20 @@ mod tests {
         assert_eq!(s.inputs.len(), 1);
         assert_eq!(s.inputs[0].name, "id");
         assert!(s.inputs[0].required);
+    }
+
+    #[test]
+    fn schemas_and_registered_controllers_have_bidirectional_parity() {
+        let schema_functions: std::collections::BTreeSet<_> = all_controller_schemas()
+            .into_iter()
+            .map(|schema| schema.function)
+            .collect();
+        let handler_functions: std::collections::BTreeSet<_> = all_registered_controllers()
+            .into_iter()
+            .map(|controller| controller.schema.function)
+            .collect();
+
+        assert_eq!(schema_functions, handler_functions);
     }
 
     #[test]

@@ -394,7 +394,7 @@ mod tests {
     #[tokio::test]
     async fn voice_transcribe_errors_when_local_ai_disabled() {
         let mut config = Config::default();
-        config.local_ai.enabled = false;
+        config.local_ai.runtime_enabled = false;
 
         let err = voice_transcribe(&config, " /tmp/input.wav ", None, true)
             .await
@@ -405,7 +405,7 @@ mod tests {
     #[tokio::test]
     async fn voice_transcribe_bytes_errors_when_local_ai_disabled() {
         let mut config = Config::default();
-        config.local_ai.enabled = false;
+        config.local_ai.runtime_enabled = false;
 
         let err = voice_transcribe_bytes(&config, b"abc", Some("wav".to_string()), None, true)
             .await
@@ -416,7 +416,7 @@ mod tests {
     #[tokio::test]
     async fn voice_tts_errors_when_local_ai_disabled() {
         let mut config = Config::default();
-        config.local_ai.enabled = false;
+        config.local_ai.runtime_enabled = false;
 
         let err = voice_tts(&config, "hello world", None)
             .await

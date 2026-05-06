@@ -43,7 +43,7 @@ use crate::openhuman::config::Config;
 use super::decision::{parse_triage_decision, ParseError, TriageDecision};
 use super::envelope::TriggerEnvelope;
 use super::events;
-use super::routing::{self, resolve_provider_with_config, ResolvedProvider};
+use super::routing::{resolve_provider_with_config, ResolvedProvider};
 
 /// Agent definition id for the built-in triage classifier. Hard-coded
 /// so a rogue workspace TOML can't override it to point at a different
@@ -88,46 +88,12 @@ pub async fn run_triage(envelope: &TriggerEnvelope) -> anyhow::Result<TriageRun>
         .await
         .context("resolving provider for triage turn")?;
 
-    // First attempt. On success, publish latency + return.
+    // Single attempt — triage always uses the remote provider.
+    // The local-AI retry path has been removed: used_local is always false
+    // so that branch could never fire, and mark_degraded no longer exists.
     match run_triage_with_resolved(resolved, envelope).await {
         Ok(run) => Ok(run),
-        Err(first_err)
-            if first_err
-                .downcast_ref::<TurnOutcomeFailure>()
-                .is_some_and(|f| f.used_local) =>
-        {
-            // Local turn failed — mark cache degraded, rebuild a remote
-            // provider from the SAME config, and retry once. If that
-            // also fails, publish `TriggerEscalationFailed` and return.
-            tracing::warn!(
-                error = %first_err,
-                "[triage::evaluator] local attempt failed — retrying on remote"
-            );
-            routing::mark_degraded().await;
-            let remote = resolve_provider_with_config(&config)
-                .await
-                .context("rebuilding remote provider for triage retry")?;
-            debug_assert!(!remote.used_local, "mark_degraded must force remote");
-            match run_triage_with_resolved(remote, envelope).await {
-                Ok(run) => {
-                    tracing::info!(
-                        label = %envelope.display_label,
-                        "[triage::evaluator] remote retry succeeded after local failure"
-                    );
-                    Ok(run)
-                }
-                Err(second_err) => {
-                    let reason =
-                        format!("local then remote both failed: {first_err} / {second_err}");
-                    events::publish_failed(envelope, &reason);
-                    Err(anyhow!(reason))
-                }
-            }
-        }
         Err(err) => {
-            // Remote attempt failed, or local attempt failed in a way
-            // that isn't eligible for retry (e.g. registry missing
-            // built-in — rebuilding won't help). Publish failure.
             let reason = format!("{err}");
             events::publish_failed(envelope, &reason);
             Err(err)
@@ -245,6 +211,19 @@ pub async fn run_triage_with_resolved(
         used_local = used_local,
         "[triage::evaluator] dispatching {AGENT_RUN_TURN_METHOD}"
     );
+
+    // Gate the LLM round-trip on the scheduler's global single slot
+    // ONLY when the resolved provider is local. Cloud routes already
+    // have their own (forthcoming) rate-limiter and are not the
+    // resource that the gate exists to protect — gating cloud here
+    // would just delay triage for no reason.
+    let _gate_permit = if used_local {
+        log::debug!("[triage::evaluator] local route — acquiring scheduler_gate llm permit");
+        crate::openhuman::scheduler_gate::wait_for_capacity().await
+    } else {
+        None
+    };
+
     let response = match request_native_global::<AgentTurnRequest, AgentTurnResponse>(
         AGENT_RUN_TURN_METHOD,
         request,
@@ -343,6 +322,7 @@ fn extract_inline_prompt(def: &AgentDefinition) -> Option<String> {
                 connected_identities_md: String::new(),
                 include_profile: false,
                 include_memory_md: false,
+                curated_snapshot: None,
                 user_identity: None,
             };
             match build(&ctx) {

@@ -173,6 +173,7 @@ fn persist_channel_turn(
             id: thread_id.clone(),
             title,
             created_at: created_at.clone(),
+            parent_thread_id: None,
             labels: Some(vec!["work".to_string()]),
         },
     )?;

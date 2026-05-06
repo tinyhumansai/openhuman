@@ -57,6 +57,8 @@ enum ThreadLogEntry {
         created_at: String,
         updated_at: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_thread_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         labels: Option<Vec<String>>,
     },
     Delete {
@@ -87,6 +89,7 @@ impl ConversationStore {
                 title: request.title.clone(),
                 created_at: request.created_at.clone(),
                 updated_at: now,
+                parent_thread_id: request.parent_thread_id.clone(),
                 labels: request.labels.clone(),
             },
         )?;
@@ -159,6 +162,7 @@ impl ConversationStore {
                 title: title.to_string(),
                 created_at: entry.created_at.clone(),
                 updated_at: updated_at.to_string(),
+                parent_thread_id: entry.parent_thread_id.clone(),
                 labels: Some(entry.labels.clone()),
             },
         )?;
@@ -192,6 +196,7 @@ impl ConversationStore {
                 title: entry.title.clone(),
                 created_at: entry.created_at.clone(),
                 updated_at: updated_at.to_string(),
+                parent_thread_id: entry.parent_thread_id.clone(),
                 labels: Some(labels),
             },
         )?;
@@ -352,6 +357,7 @@ impl ConversationStore {
             message_count,
             last_message_at,
             created_at: entry.created_at.clone(),
+            parent_thread_id: entry.parent_thread_id.clone(),
             labels: entry.labels.clone(),
         }))
     }
@@ -370,24 +376,28 @@ impl ConversationStore {
                     thread_id,
                     title,
                     created_at,
+                    parent_thread_id,
                     labels,
                     ..
                 } => {
-                    let (created_at_value, labels_value) = match index.get(&thread_id) {
-                        Some(existing) => (
-                            existing.created_at.clone(),
-                            labels.unwrap_or_else(|| existing.labels.clone()),
-                        ),
-                        None => {
-                            let inferred = labels.unwrap_or_else(|| infer_labels(&thread_id));
-                            (created_at, inferred)
-                        }
-                    };
+                    let (created_at_value, parent_thread_id_value, labels_value) =
+                        match index.get(&thread_id) {
+                            Some(existing) => (
+                                existing.created_at.clone(),
+                                parent_thread_id.or_else(|| existing.parent_thread_id.clone()),
+                                labels.unwrap_or_else(|| existing.labels.clone()),
+                            ),
+                            None => {
+                                let inferred = labels.unwrap_or_else(|| infer_labels(&thread_id));
+                                (created_at, parent_thread_id, inferred)
+                            }
+                        };
                     index.insert(
                         thread_id,
                         ThreadIndexEntry {
                             title,
                             created_at: created_at_value,
+                            parent_thread_id: parent_thread_id_value,
                             labels: labels_value,
                         },
                     );
@@ -414,6 +424,7 @@ impl ConversationStore {
 struct ThreadIndexEntry {
     title: String,
     created_at: String,
+    parent_thread_id: Option<String>,
     labels: Vec<String>,
 }
 

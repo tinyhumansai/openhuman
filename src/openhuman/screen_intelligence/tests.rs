@@ -74,7 +74,7 @@ embedding_model = "none"
 embedding_dimensions = 0
 
 [local_ai]
-enabled = {local_ai_enabled}
+runtime_enabled = {local_ai_enabled}
 provider = "{local_ai_provider}"
 
 [secrets]
@@ -840,7 +840,7 @@ async fn analyze_and_persist_frame_rejects_disabled_local_ai() {
         .await
         .expect_err("disabled local ai should be rejected");
     assert!(
-        err.contains("local_ai.enabled=true"),
+        err.contains("local_ai.runtime_enabled=true"),
         "unexpected error when local ai is disabled: {err}"
     );
 }

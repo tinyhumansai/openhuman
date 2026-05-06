@@ -83,6 +83,15 @@ impl Tool for ShellTool {
         })
     }
 
+    /// Cap shell output at ~30k chars before threading into history.
+    /// Verbose commands (`find /`, dependency installs, log dumps)
+    /// can otherwise blow past 100k chars in one call. The agent
+    /// rarely needs the full firehose — a head/tail/grep follow-up is
+    /// the right move when it does.
+    fn max_result_size_chars(&self) -> Option<usize> {
+        Some(30_000)
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let command = args
             .get("command")

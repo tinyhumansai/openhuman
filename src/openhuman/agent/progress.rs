@@ -56,9 +56,9 @@ pub enum AgentProgress {
     SubagentSpawned {
         agent_id: String,
         task_id: String,
-        /// Resolved spawn mode — `"typed"` or `"fork"`. The UI uses this
-        /// to distinguish narrow-prompt delegations from prefix-replay
-        /// forks when labelling the live subagent block.
+        /// Resolved spawn mode — currently always `"typed"`. Kept as a
+        /// string so future modes (e.g. background/swarm) can land
+        /// without changing the event shape.
         mode: String,
         /// `true` when the spawn was requested with
         /// `dedicated_thread: true`. The UI links the inline subagent
@@ -163,6 +163,30 @@ pub enum AgentProgress {
         delta: String,
         /// 1-based iteration index.
         iteration: u32,
+    },
+
+    /// Cumulative cost / token tally for the current turn, emitted
+    /// after each provider response that carried a usage block.
+    /// Consumers can render a live "$0.04 · 1.2k in / 480 out" line in
+    /// the UI without subscribing to provider-level events.
+    ///
+    /// `total_usd` prefers backend-reported `charged_amount_usd`
+    /// (sum of authoritative figures) and falls back to a tier-based
+    /// token-rate estimate for calls that didn't carry one — see
+    /// [`crate::openhuman::agent::cost::TurnCost::total_usd`].
+    TurnCostUpdated {
+        /// Last model that contributed to this update.
+        model: String,
+        /// 1-based iteration index this update belongs to.
+        iteration: u32,
+        /// Cumulative input tokens across the turn.
+        input_tokens: u64,
+        /// Cumulative output tokens across the turn.
+        output_tokens: u64,
+        /// Cumulative cached prefix input tokens across the turn.
+        cached_input_tokens: u64,
+        /// Best-available USD total for the turn so far.
+        total_usd: f64,
     },
 
     /// The turn completed with a final text response.

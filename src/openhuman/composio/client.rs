@@ -264,7 +264,8 @@ impl ComposioClient {
         }
         tracing::debug!(trigger_id = %trigger_id, "[composio] disable_trigger");
         self.raw_delete::<ComposioDisableTriggerResponse>(&format!(
-            "/agent-integrations/composio/triggers/{trigger_id}"
+            "/agent-integrations/composio/triggers/{}",
+            urlencoding::encode(trigger_id)
         ))
         .await
     }
@@ -322,6 +323,17 @@ impl ComposioClient {
                 status,
                 &body_text[..body_text.len().min(300)]
             );
+            let status_str = status.as_u16().to_string();
+            crate::core::observability::report_error(
+                format!("Backend returned {} for DELETE {}", status, url).as_str(),
+                "composio",
+                "delete",
+                &[
+                    ("path", path),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
             anyhow::bail!("Backend returned {} for DELETE {}", status, url);
         }
 
@@ -330,6 +342,12 @@ impl ComposioClient {
             let msg = envelope
                 .error
                 .unwrap_or_else(|| "unknown backend error".into());
+            crate::core::observability::report_error(
+                msg.as_str(),
+                "composio",
+                "delete",
+                &[("path", path), ("failure", "envelope_error")],
+            );
             anyhow::bail!("Backend error for DELETE {}: {}", url, msg);
         }
         envelope.data.ok_or_else(|| {

@@ -20,6 +20,7 @@
 
 pub mod agents;
 pub mod bus;
+pub mod cost;
 pub mod debug;
 pub mod dispatcher;
 pub mod error;
@@ -37,6 +38,7 @@ pub mod progress;
 /// a thin re-export shim for now.
 pub mod prompts;
 mod schemas;
+pub mod stop_hooks;
 pub mod tree_loader;
 pub mod triage;
 pub use schemas::{

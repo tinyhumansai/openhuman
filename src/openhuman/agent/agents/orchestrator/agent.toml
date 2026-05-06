@@ -83,6 +83,7 @@ named = [
     "read_workspace_state",
     "ask_user_clarification",
     "spawn_subagent",
+    "spawn_worker_thread",
     "composio_list_connections",
     # Time + scheduling — lets the orchestrator answer "what time is it",
     # "remind me in 10 minutes", "every morning at 8" directly rather than
@@ -95,4 +96,14 @@ named = [
     "cron_list",
     "cron_remove",
     "schedule",
+    # Coding-harness coordination primitives from #1208. `todowrite`
+    # gives the orchestrator a shared todo store to track multi-step
+    # work across delegations; `plan_exit` is the stable marker that
+    # the (forthcoming) plan→build mode runner consumes when a planner
+    # subagent hands a plan back up. Editing/navigation primitives
+    # (grep/glob/edit/apply_patch/lsp) intentionally stay with
+    # downstream agents — the orchestrator coordinates, it doesn't
+    # touch files itself.
+    "todowrite",
+    "plan_exit",
 ]

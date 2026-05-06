@@ -14,7 +14,7 @@ impl LocalAiService {
         text: &str,
         max_tokens: Option<u32>,
     ) -> Result<String, String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
         let system = "You summarize internal assistant context. Keep concise bullet points.";
@@ -33,7 +33,7 @@ impl LocalAiService {
         max_tokens: Option<u32>,
         no_think: bool,
     ) -> Result<String, String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
         let system = if no_think {
@@ -54,7 +54,66 @@ impl LocalAiService {
         style_examples: &[String],
         max_tokens: Option<u32>,
     ) -> Result<String, String> {
-        if !config.local_ai.enabled {
+        self.inline_complete_internal(
+            config,
+            context,
+            style_preset,
+            style_instructions,
+            style_examples,
+            max_tokens,
+            /* gated = */ true,
+        )
+        .await
+    }
+
+    /// Latency-sensitive sibling of [`Self::inline_complete`] that
+    /// **bypasses the scheduler gate's LLM permit**.
+    ///
+    /// Per-keystroke autocomplete must not block waiting for a
+    /// long-running memory-tree backfill or a triage turn to release
+    /// the global single slot. The user is at the keyboard; if the
+    /// background pipeline is busy we'd rather race the autocomplete
+    /// turn against it than show stale or empty completions for the
+    /// duration of the backfill.
+    ///
+    /// This is the only path inside [`LocalAiService`] that opts out of
+    /// the gate. Every other entry point (`inference`, `prompt`,
+    /// `summarize`, `inline_complete`, `vision_prompt`, `embed`)
+    /// acquires before talking to Ollama.
+    pub async fn inline_complete_interactive(
+        &self,
+        config: &Config,
+        context: &str,
+        style_preset: &str,
+        style_instructions: Option<&str>,
+        style_examples: &[String],
+        max_tokens: Option<u32>,
+    ) -> Result<String, String> {
+        log::trace!("[local_ai] inline_complete_interactive bypasses scheduler_gate permit");
+        self.inline_complete_internal(
+            config,
+            context,
+            style_preset,
+            style_instructions,
+            style_examples,
+            max_tokens,
+            /* gated = */ false,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn inline_complete_internal(
+        &self,
+        config: &Config,
+        context: &str,
+        style_preset: &str,
+        style_instructions: Option<&str>,
+        style_examples: &[String],
+        max_tokens: Option<u32>,
+        gated: bool,
+    ) -> Result<String, String> {
+        if !config.local_ai.runtime_enabled {
             return Ok(String::new());
         }
 
@@ -102,6 +161,7 @@ impl LocalAiService {
                 max_tokens.or(Some(24)),
                 true,
                 0.05,
+                gated,
             )
             .await?;
         Ok(sanitize_inline_completion(&raw, context))
@@ -116,7 +176,7 @@ impl LocalAiService {
         messages: Vec<crate::openhuman::local_ai::ollama_api::OllamaChatMessage>,
         max_tokens: Option<u32>,
     ) -> Result<String, String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
 
@@ -127,6 +187,9 @@ impl LocalAiService {
         if messages.is_empty() {
             return Err("messages must not be empty".to_string());
         }
+
+        // Multi-turn local chat is background LLM-bound work — gate it.
+        let _gate_permit = crate::openhuman::scheduler_gate::wait_for_capacity().await;
 
         tracing::debug!(
             message_count = messages.len(),
@@ -223,6 +286,36 @@ impl LocalAiService {
             .await
     }
 
+    /// Latency-sensitive sibling of [`Self::inference`] that **bypasses
+    /// the scheduler gate's LLM permit**.
+    ///
+    /// Used by user-arrival paths where the user is staring at the
+    /// output (push-to-talk dictation cleanup, in particular). If we
+    /// queue these behind a long-running memory backfill, the user
+    /// experiences a frozen UI; better to race the call against
+    /// background work and accept the contention than to silently
+    /// degrade interactivity.
+    ///
+    /// Sibling to [`Self::inline_complete_interactive`] for autocomplete.
+    /// Every other entry point (`inference`, `prompt`, `summarize`,
+    /// `inline_complete`, `vision_prompt`, `embed`, `chat_with_history`)
+    /// remains gated.
+    pub(crate) async fn inference_interactive(
+        &self,
+        config: &Config,
+        system: &str,
+        prompt: &str,
+        max_tokens: Option<u32>,
+        no_think: bool,
+    ) -> Result<String, String> {
+        log::trace!("[local_ai] inference_interactive bypasses scheduler_gate permit");
+        self.inference_with_temperature_internal(
+            config, system, prompt, max_tokens, no_think, 0.2, /* allow_empty = */ false,
+            /* gated = */ false,
+        )
+        .await
+    }
+
     pub(crate) async fn inference_with_temperature(
         &self,
         config: &Config,
@@ -239,11 +332,13 @@ impl LocalAiService {
             max_tokens,
             no_think,
             temperature,
-            false,
+            /* allow_empty = */ false,
+            /* gated = */ true,
         )
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn inference_with_temperature_allow_empty(
         &self,
         config: &Config,
@@ -252,6 +347,7 @@ impl LocalAiService {
         max_tokens: Option<u32>,
         no_think: bool,
         temperature: f32,
+        gated: bool,
     ) -> Result<String, String> {
         self.inference_with_temperature_internal(
             config,
@@ -260,7 +356,8 @@ impl LocalAiService {
             max_tokens,
             no_think,
             temperature,
-            true,
+            /* allow_empty = */ true,
+            gated,
         )
         .await
     }
@@ -275,10 +372,23 @@ impl LocalAiService {
         no_think: bool,
         temperature: f32,
         allow_empty: bool,
+        gated: bool,
     ) -> Result<String, String> {
         if !matches!(self.status.lock().state.as_str(), "ready") {
             self.bootstrap(config).await;
         }
+
+        // Cooperative throttle + global single-slot acquisition for
+        // background LLM-bound work. Drop happens at end of scope so
+        // post-processing (status writes, logging) does NOT hold the
+        // permit any longer than necessary. Interactive autocomplete
+        // skips this via `gated = false` from
+        // `inline_complete_interactive`.
+        let _gate_permit = if gated {
+            crate::openhuman::scheduler_gate::wait_for_capacity().await
+        } else {
+            None
+        };
 
         let started = std::time::Instant::now();
         let model_id = model_ids::effective_chat_model_id(config);

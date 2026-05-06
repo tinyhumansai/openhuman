@@ -98,7 +98,15 @@ impl EventHandler for WebhookRequestSubscriber {
                 );
                 let decoded = decode_webhook_body(&request.body);
                 if let Err(e) = &decoded {
-                    tracing::error!("[webhook] rejecting — failed to decode body: {}", e);
+                    crate::core::observability::report_error(
+                        e.to_string().as_str(),
+                        "webhooks",
+                        "decode_body",
+                        &[
+                            ("tunnel", tunnel_uuid.as_str()),
+                            ("method", method.as_str()),
+                        ],
+                    );
                     let resp = WebhookResponseData {
                         correlation_id: correlation_id.clone(),
                         status_code: 400,
@@ -126,14 +134,27 @@ impl EventHandler for WebhookRequestSubscriber {
                         let (resp, err) = match result {
                             Ok(Ok(output)) => (build_agent_response(&corr, 200, &output), None),
                             Ok(Err(e)) => {
-                                tracing::error!("[webhook] agent trigger failed: {}", e);
+                                crate::core::observability::report_error(
+                                    e.as_str(),
+                                    "webhooks",
+                                    "agent_trigger",
+                                    &[
+                                        ("correlation_id", corr.as_str()),
+                                        ("failure", "agent_error"),
+                                    ],
+                                );
                                 (
                                     build_agent_response(&corr, 500, &format!("Agent error: {e}")),
                                     Some(e),
                                 )
                             }
                             Err(_) => {
-                                tracing::error!("[webhook] agent trigger timed out (60s)");
+                                crate::core::observability::report_error(
+                                    "agent triage timed out after 60s",
+                                    "webhooks",
+                                    "agent_trigger",
+                                    &[("correlation_id", corr.as_str()), ("failure", "timeout")],
+                                );
                                 (
                                     build_agent_response(&corr, 504, "Agent triage timed out"),
                                     Some("timed out after 60s".to_string()),

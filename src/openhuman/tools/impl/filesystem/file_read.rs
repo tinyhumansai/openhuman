@@ -40,6 +40,11 @@ impl Tool for FileReadTool {
         })
     }
 
+    /// Pure read — safe to fan out across parallel `file_read` calls.
+    fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
+        true
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let path = args
             .get("path")

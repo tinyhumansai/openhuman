@@ -1,12 +1,18 @@
 //! Worker pool: claims jobs from `mem_tree_jobs`, dispatches them through
-//! [`handlers::handle_job`], and settles the row. A small global semaphore
-//! caps concurrent LLM-bound work; non-LLM jobs run unrestricted.
+//! [`handlers::handle_job`], and settles the row.
+//!
+//! Concurrency control for LLM-bound work is delegated to
+//! [`crate::openhuman::scheduler_gate`] — its global single-slot
+//! semaphore (`LlmPermit`) is the one source of truth across this
+//! worker, voice cleanup, autocomplete, triage, and reflection. The
+//! worker itself just calls `wait_for_capacity()`; non-LLM jobs
+//! (`AppendBuffer`, `FlushStale`) run without acquiring a permit.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::Result;
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::Notify;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::jobs::handlers;
@@ -14,12 +20,6 @@ use crate::openhuman::memory::tree::jobs::store::{
     claim_next, mark_done, mark_failed, recover_stale_locks, DEFAULT_LOCK_DURATION_MS,
 };
 
-// Held at 1 to keep concurrent bge-m3 embed calls (8K context, ~1.3 GB
-// resident each) from saturating local RAM. The cloud-chat path itself
-// would be fine at higher concurrency, but every worker also runs a
-// bge-m3 embed step, and 3 concurrent embeds at 8K context have
-// crashed the laptop in practice. See feedback memory
-// `feedback_local_llm_load.md`.
 const WORKER_COUNT: usize = 1;
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -47,18 +47,16 @@ pub fn start(config: Config) {
         let notify = WORKER_NOTIFY
             .get_or_init(|| Arc::new(Notify::new()))
             .clone();
-        let llm_slots = Arc::new(Semaphore::new(1));
         if let Err(err) = recover_stale_locks(&config) {
             log::warn!("[memory_tree::jobs] recover_stale_locks failed at startup: {err:#}");
         }
 
         for idx in 0..WORKER_COUNT {
             let notify = notify.clone();
-            let llm_slots = llm_slots.clone();
             let cfg = config.clone();
             tokio::spawn(async move {
                 loop {
-                    match run_once_with_semaphore(&cfg, llm_slots.clone()).await {
+                    match run_once(&cfg).await {
                         Ok(true) => continue,
                         Ok(false) => {
                             tokio::select! {
@@ -67,7 +65,12 @@ pub fn start(config: Config) {
                             }
                         }
                         Err(err) => {
-                            log::error!("[memory_tree::jobs] worker={} loop error: {:#}", idx, err);
+                            crate::core::observability::report_error(
+                                &err,
+                                "memory",
+                                "tree_jobs_worker",
+                                &[("worker_idx", &idx.to_string())],
+                            );
                             tokio::time::sleep(Duration::from_secs(1)).await;
                         }
                     }
@@ -80,14 +83,8 @@ pub fn start(config: Config) {
 }
 
 /// Claim and run a single job. Returns `true` when work was processed,
-/// `false` when no eligible row was available. Test entry point — the
-/// production worker loop calls [`run_once_with_semaphore`] directly.
+/// `false` when no eligible row was available.
 pub async fn run_once(config: &Config) -> Result<bool> {
-    let llm_slots = Arc::new(Semaphore::new(1));
-    run_once_with_semaphore(config, llm_slots).await
-}
-
-async fn run_once_with_semaphore(config: &Config, llm_slots: Arc<Semaphore>) -> Result<bool> {
     // Cooperative throttle BEFORE `claim_next()`. Holding the DB claim
     // across an awaited `wait_for_capacity()` would let `Paused` mode
     // sit on the row past `DEFAULT_LOCK_DURATION_MS`, after which
@@ -99,19 +96,28 @@ async fn run_once_with_semaphore(config: &Config, llm_slots: Arc<Semaphore>) -> 
     // is welcome; in Paused mode the user has explicitly asked us to
     // stand down. Returns immediately in Aggressive/Normal so plugged-in
     // desktops with headroom pay zero cost.
-    crate::openhuman::scheduler_gate::wait_for_capacity().await;
+    //
+    // For LLM-bound jobs the returned `LlmPermit` reserves the global
+    // single slot for the lifetime of `handle_job`. Non-LLM jobs
+    // (`AppendBuffer`, `FlushStale`) drop the permit before the
+    // handler runs so they don't block the slot.
+    let gate_permit = crate::openhuman::scheduler_gate::wait_for_capacity().await;
 
     let Some(job) = claim_next(config, DEFAULT_LOCK_DURATION_MS)? else {
         return Ok(false);
     };
 
-    let permit = if job.kind.is_llm_bound() {
-        Some(llm_slots.acquire().await?)
+    let llm_permit = if job.kind.is_llm_bound() {
+        gate_permit
     } else {
+        // Non-LLM jobs don't need the global slot; release it so an
+        // LLM-bound caller waiting elsewhere in the process can run.
+        drop(gate_permit);
         None
     };
+
     let result = handlers::handle_job(config, &job).await;
-    drop(permit);
+    drop(llm_permit);
 
     match result {
         Ok(()) => {

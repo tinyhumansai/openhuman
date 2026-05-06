@@ -446,7 +446,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "list_available_triggers",
             description:
                 "List the catalog of triggers the caller can enable for a toolkit. \
-                 For GitHub, fans out into per-repo entries (requires connection_id).",
+                 For GitHub, pass `connection_id` to fan out into per-repo entries.",
             inputs: vec![
                 FieldSchema {
                     name: "toolkit",
@@ -458,7 +458,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "connection_id",
                     ty: TypeSchema::Option(Box::new(TypeSchema::String)),
                     comment:
-                        "Optional connection id. Required to enumerate GitHub per-repo entries.",
+                        "Optional connection id. Optional for most toolkits; pass when \
+                         requesting GitHub per-repo catalog entries.",
                     required: false,
                 },
             ],

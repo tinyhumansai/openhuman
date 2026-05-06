@@ -7,12 +7,16 @@ mod cef_preflight;
 mod cef_profile;
 mod core_process;
 mod core_rpc;
+mod dictation_hotkeys;
 mod discord_scanner;
 mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+mod native_notifications;
 mod notification_settings;
+mod process_kill;
+mod process_recovery;
 mod screen_capture;
 mod slack_scanner;
 mod telegram_scanner;
@@ -20,8 +24,6 @@ mod webview_accounts;
 mod webview_apis;
 mod whatsapp_scanner;
 mod window_state;
-
-use std::sync::Mutex;
 
 #[cfg(target_os = "macos")]
 use tauri::WindowEvent;
@@ -45,37 +47,6 @@ use objc2_app_kit::{NSPanel, NSWindowCollectionBehavior, NSWindowStyleMask};
 
 // CEF is the only runtime; alias kept so command handlers thread the runtime generic uniformly.
 pub(crate) type AppRuntime = tauri::Cef;
-
-/// Tracks the currently registered dictation hotkey string so we can unregister it later.
-struct DictationHotkeyState(Mutex<Vec<String>>);
-
-fn expand_dictation_shortcuts(shortcut: &str) -> Vec<String> {
-    let trimmed = shortcut.trim();
-    if trimmed.is_empty() {
-        return vec![];
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        if trimmed.contains("CmdOrCtrl") {
-            let cmd_variant = trimmed.replace("CmdOrCtrl", "Cmd");
-            let ctrl_variant = trimmed.replace("CmdOrCtrl", "Ctrl");
-            if cmd_variant == ctrl_variant {
-                return vec![cmd_variant];
-            }
-            return vec![cmd_variant, ctrl_variant];
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        if trimmed.contains("CmdOrCtrl") {
-            return vec![trimmed.replace("CmdOrCtrl", "Ctrl")];
-        }
-    }
-
-    vec![trimmed.to_string()]
-}
 
 #[tauri::command]
 fn core_rpc_url() -> String {
@@ -103,6 +74,23 @@ fn overlay_parent_rpc_url() -> Option<String> {
         return None;
     }
     Some(trimmed.to_string())
+}
+
+#[tauri::command]
+fn process_diagnostics_list_owned() -> Result<Vec<process_recovery::ProcessInfo>, String> {
+    match process_recovery::enumerate_openhuman_processes() {
+        Ok(processes) => {
+            log::info!(
+                "[startup-recovery] diagnostics listed {} owned OpenHuman processes",
+                processes.len()
+            );
+            Ok(processes)
+        }
+        Err(err) => {
+            log::warn!("[startup-recovery] diagnostics process enumeration failed: {err}");
+            Err(err)
+        }
+    }
 }
 
 #[allow(dead_code)] // Overlay disabled in tauri.conf.json; helper kept for future re-enable.
@@ -636,12 +624,12 @@ async fn register_dictation_hotkey(
     log::info!("[dictation] register_dictation_hotkey: shortcut={shortcut}");
 
     let old_shortcuts = {
-        let state = app.state::<DictationHotkeyState>();
+        let state = app.state::<dictation_hotkeys::DictationHotkeyState>();
         let guard = state.0.lock().unwrap();
         guard.clone()
     };
 
-    let expanded_shortcuts = expand_dictation_shortcuts(&shortcut);
+    let expanded_shortcuts = dictation_hotkeys::expand_dictation_shortcuts(&shortcut);
     if expanded_shortcuts.is_empty() {
         return Err("Shortcut cannot be empty".to_string());
     }
@@ -707,7 +695,7 @@ async fn register_dictation_hotkey(
 
     // Persist all newly registered shortcuts.
     {
-        let state = app.state::<DictationHotkeyState>();
+        let state = app.state::<dictation_hotkeys::DictationHotkeyState>();
         let mut guard = state.0.lock().unwrap();
         *guard = expanded_shortcuts.clone();
     }
@@ -723,7 +711,7 @@ async fn register_dictation_hotkey(
 #[tauri::command]
 async fn unregister_dictation_hotkey(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[dictation] unregister_dictation_hotkey: called");
-    let state = app.state::<DictationHotkeyState>();
+    let state = app.state::<dictation_hotkeys::DictationHotkeyState>();
     let mut guard = state.0.lock().unwrap();
     if guard.is_empty() {
         log::debug!("[dictation] no shortcut registered — nothing to unregister");
@@ -799,128 +787,6 @@ fn mascot_native_window_is_open() -> bool {
 #[cfg(not(target_os = "macos"))]
 fn mascot_native_window_is_open() -> bool {
     false
-}
-
-/// Tauri command: fire a native OS notification from the frontend. Used by
-/// the in-app notification center to banner events (agent completions,
-/// connection drops, etc.) when the window is not focused.
-#[tauri::command]
-fn show_native_notification(
-    app: AppHandle<AppRuntime>,
-    title: String,
-    body: String,
-    tag: Option<String>,
-) -> Result<(), String> {
-    use tauri_plugin_notification::NotificationExt;
-    let permission_state = app
-        .notification()
-        .permission_state()
-        .map(|s| format!("{s:?}"))
-        .unwrap_or_else(|e| format!("err({e})"));
-    log::debug!(
-        "[notify] show_native_notification title_chars={} body_chars={} tag={:?} permission={permission_state}",
-        title.len(),
-        body.len(),
-        tag
-    );
-    let mut builder = app.notification().builder().title(&title);
-    if !body.is_empty() {
-        builder = builder.body(&body);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder.sound("default");
-    }
-    builder
-        .show()
-        .map_err(|e| format!("notification show failed: {e}"))
-}
-
-#[cfg(target_os = "macos")]
-fn macos_notification_permission_state_inner() -> Result<String, String> {
-    use std::ptr::NonNull;
-    use std::sync::mpsc;
-
-    use block2::RcBlock;
-    use objc2_user_notifications::{
-        UNAuthorizationStatus, UNNotificationSettings, UNUserNotificationCenter,
-    };
-
-    let center = UNUserNotificationCenter::currentNotificationCenter();
-    let (tx, rx) = mpsc::channel::<String>();
-    let completion = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
-        let status = unsafe { settings.as_ref().authorizationStatus() };
-        let state = if status == UNAuthorizationStatus::Authorized {
-            "granted"
-        } else if status == UNAuthorizationStatus::Denied {
-            "denied"
-        } else if status == UNAuthorizationStatus::NotDetermined {
-            "not_determined"
-        } else if status == UNAuthorizationStatus::Provisional {
-            "provisional"
-        } else if status == UNAuthorizationStatus::Ephemeral {
-            "ephemeral"
-        } else {
-            "unknown"
-        };
-        let _ = tx.send(state.to_string());
-    });
-    center.getNotificationSettingsWithCompletionHandler(&completion);
-    rx.recv_timeout(std::time::Duration::from_secs(2))
-        .map_err(|_| "timed out waiting for macOS notification settings".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn macos_notification_permission_request_inner() -> Result<String, String> {
-    use block2::RcBlock;
-    use objc2::runtime::Bool;
-    use objc2_foundation::NSError;
-    use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
-    use std::sync::mpsc;
-
-    let center = UNUserNotificationCenter::currentNotificationCenter();
-    let (tx, rx) = mpsc::channel::<bool>();
-    let options = UNAuthorizationOptions::Alert
-        | UNAuthorizationOptions::Badge
-        | UNAuthorizationOptions::Sound;
-    let completion = RcBlock::new(move |granted: Bool, _error: *mut NSError| {
-        let _ = tx.send(granted.as_bool());
-    });
-    center.requestAuthorizationWithOptions_completionHandler(options, &completion);
-    let granted = rx
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .map_err(|_| "timed out waiting for macOS permission prompt result".to_string())?;
-    if granted {
-        Ok("granted".to_string())
-    } else {
-        // If the user denies or notifications are disabled for the app,
-        // macOS reports `false` here.
-        Ok("denied".to_string())
-    }
-}
-
-#[tauri::command]
-fn notification_permission_state() -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    {
-        return macos_notification_permission_state_inner();
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok("granted".to_string())
-    }
-}
-
-#[tauri::command]
-fn notification_permission_request() -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    {
-        return macos_notification_permission_request_inner();
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok("granted".to_string())
-    }
 }
 
 fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
@@ -1284,6 +1150,9 @@ pub fn run() {
     }
 
     #[cfg(target_os = "macos")]
+    process_recovery::reap_stale_openhuman_processes();
+
+    #[cfg(target_os = "macos")]
     if let Err(e) = cef_preflight::check_default_cache() {
         eprintln!("\n[openhuman] {e}\n");
         std::process::exit(1);
@@ -1368,7 +1237,9 @@ pub fn run() {
         // build time with `TAURI_SIGNING_PRIVATE_KEY` (+ `_PASSWORD`); see
         // docs/AUTO_UPDATE.md for the full pipeline.
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(DictationHotkeyState(Mutex::new(Vec::new())))
+        .manage(dictation_hotkeys::DictationHotkeyState(
+            std::sync::Mutex::new(Vec::new()),
+        ))
         .manage(webview_accounts::WebviewAccountsState::default())
         .manage(notification_settings::NotificationSettingsState::new())
         .manage(PendingAppUpdateState::default());
@@ -1742,6 +1613,7 @@ pub fn run() {
             core_rpc_url,
             core_rpc_token,
             overlay_parent_rpc_url,
+            process_diagnostics_list_owned,
             check_core_update,
             apply_core_update,
             check_app_update,
@@ -1773,10 +1645,10 @@ pub fn run() {
             screen_capture::screen_share_begin_session,
             screen_capture::screen_share_thumbnail,
             screen_capture::screen_share_finalize_session,
-            notification_permission_state,
-            notification_permission_request,
+            native_notifications::notification_permission_state,
+            native_notifications::notification_permission_request,
             activate_main_window,
-            show_native_notification,
+            native_notifications::show_native_notification,
             mascot_window_show,
             mascot_window_hide
         ])
@@ -1843,46 +1715,14 @@ pub fn run() {
     // operation every CEF helper (GPU / Network / Utility / Renderer) is
     // gone by now. If anything is still alive — e.g. a renderer that was
     // mid-spawn when the user quit — it would otherwise be re-parented to
-    // launchd on macOS / init on Linux and survive the GUI exit. SIGTERM
-    // its children before this process actually exits.
+    // launchd on macOS / init on Linux and survive the GUI exit. Sweep its
+    // children before this process actually exits.
     //
     // We don't `wait()` on them: the kernel will reap them as our exit
-    // unwinds, and any helper that ignores SIGTERM is a CEF bug we'd
-    // rather see in Activity Monitor than silently SIGKILL.
-    sweep_orphan_children();
-}
-
-/// Send SIGTERM to every direct child of the current process. No-op on
-/// non-Unix platforms (Windows job objects already kill CEF helpers when
-/// the parent exits).
-fn sweep_orphan_children() {
-    #[cfg(unix)]
-    {
-        let pid = std::process::id();
-        match std::process::Command::new("pkill")
-            .args(["-TERM", "-P", &pid.to_string()])
-            .status()
-        {
-            Ok(status) => {
-                // pkill exits 0 if it killed at least one process, 1 if no
-                // matches (the healthy case after cef::shutdown), 2/3 on
-                // error. Both 0 and 1 are expected; log 0 loudly so we
-                // notice when the safety net actually catches something.
-                match status.code() {
-                    Some(0) => log::warn!(
-                        "[app] sweep: SIGTERM'd leftover child processes after cef::shutdown"
-                    ),
-                    Some(1) => log::info!("[app] sweep: no leftover children (clean exit)"),
-                    other => log::warn!("[app] sweep: pkill exited with {:?}", other),
-                }
-            }
-            Err(e) => log::warn!("[app] sweep: failed to invoke pkill: {e}"),
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        log::debug!("[app] sweep: skipped on non-unix platform");
-    }
+    // unwinds. Give stubborn helpers a short grace period, then force-kill
+    // anything still parented to us so the GUI exit leaves no background
+    // processes behind.
+    process_kill::sweep_orphan_children();
 }
 
 pub fn run_core_from_args(args: &[String]) -> Result<(), String> {
@@ -1945,43 +1785,6 @@ mod tests {
         // Note: This test relies on the current process args, so in test mode
         // it will typically return false. We verify the function is callable.
         let _result = is_daemon_mode();
-    }
-
-    /// Test expand_dictation_shortcuts for CmdOrCtrl expansion
-    #[test]
-    fn expand_dictation_shortcuts_cmd_or_ctrl_expansion() {
-        #[cfg(target_os = "macos")]
-        {
-            let result = expand_dictation_shortcuts("CmdOrCtrl+Shift+D");
-            assert_eq!(result.len(), 2);
-            assert!(result.contains(&"Cmd+Shift+D".to_string()));
-            assert!(result.contains(&"Ctrl+Shift+D".to_string()));
-        }
-
-        #[cfg(not(target_os = "macos"))]
-        {
-            let result = expand_dictation_shortcuts("CmdOrCtrl+Shift+D");
-            assert_eq!(result.len(), 1);
-            assert_eq!(result[0], "Ctrl+Shift+D");
-        }
-    }
-
-    /// Test expand_dictation_shortcuts with plain shortcut (no CmdOrCtrl)
-    #[test]
-    fn expand_dictation_shortcuts_plain_shortcut() {
-        let result = expand_dictation_shortcuts("Ctrl+Alt+T");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], "Ctrl+Alt+T");
-    }
-
-    /// Test expand_dictation_shortcuts with empty/whitespace input
-    #[test]
-    fn expand_dictation_shortcuts_empty_input() {
-        let result = expand_dictation_shortcuts("");
-        assert!(result.is_empty());
-
-        let result = expand_dictation_shortcuts("   ");
-        assert!(result.is_empty());
     }
 
     /// Test core_rpc_url returns expected format
@@ -2077,24 +1880,5 @@ mod tests {
         // "[app] RunEvent::Ready — GTK initialized, setting up tray"
         //
         // This test passes if the code compiles with these log messages.
-    }
-
-    /// Test expand_dictation_shortcuts with Cmd-only variant on macOS
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn expand_dictation_shortcuts_macos_cmd_only() {
-        // When CmdOrCtrl is replaced with just Cmd
-        let result = expand_dictation_shortcuts("CmdOrCtrl+Space");
-        assert!(result.contains(&"Cmd+Space".to_string()));
-    }
-
-    /// Test expand_dictation_shortcuts with Ctrl-only variant on non-macOS
-    #[test]
-    #[cfg(not(target_os = "macos"))]
-    fn expand_dictation_shortcuts_non_macos_ctrl_only() {
-        // When CmdOrCtrl is replaced with just Ctrl
-        let result = expand_dictation_shortcuts("CmdOrCtrl+Space");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], "Ctrl+Space");
     }
 }

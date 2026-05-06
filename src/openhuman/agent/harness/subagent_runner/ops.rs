@@ -1,22 +1,17 @@
 //! Sub-agent execution entry points and the inner tool-call loop.
 //!
 //! The public runner lives in [`run_subagent`]. It dispatches to
-//! [`run_typed_mode`] (narrow prompt + filtered tools) or
-//! [`run_fork_mode`] (prefix-replay) depending on the
-//! [`super::types::SubagentMode`] implied by the
-//! [`crate::openhuman::agent::harness::definition::AgentDefinition`].
-//!
-//! Both modes delegate to [`run_inner_loop`] which drives provider
-//! calls and tool execution until the model returns without further
-//! tool calls (or the iteration budget is exhausted).
+//! [`run_typed_mode`] (narrow prompt + filtered tools) which builds a
+//! brand-new system prompt and a filtered tool list for the requested
+//! archetype, then drives provider calls and tool execution until the
+//! model returns without further tool calls (or the iteration budget
+//! is exhausted).
 
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::super::fork_context::{
-    current_fork, current_parent, ForkContext, ParentExecutionContext,
-};
+use super::super::fork_context::{current_parent, ParentExecutionContext};
 use super::super::session::transcript;
 use super::extract_tool::ExtractFromResultTool;
 use super::handoff::{
@@ -34,6 +29,7 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::{
     render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
 };
+use crate::openhuman::memory::conversations::ConversationMessage;
 use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 
@@ -73,7 +69,7 @@ impl LazyToolkitResolver {
 /// This is the primary entry point for agent delegation. It performs the following:
 /// 1. Resolves the [`ParentExecutionContext`] task-local.
 /// 2. Generates a unique `task_id` if one wasn't provided.
-/// 3. Dispatches to either `run_fork_mode` or `run_typed_mode` based on the definition.
+/// 3. Dispatches to `run_typed_mode`.
 ///
 /// On success returns a [`SubagentRunOutcome`] whose `output` is the
 /// final assistant text. On failure the error is suitable for stringifying
@@ -104,12 +100,7 @@ pub async fn run_subagent(
     // Write/Admin slugs under `ReadOnly`) read it via
     // `current_sandbox_mode()`; tools that don't care just ignore it.
     let outcome = with_current_sandbox_mode(definition.sandbox_mode, async {
-        if definition.uses_fork_context {
-            let fork = current_fork().ok_or(SubagentRunError::NoForkContext)?;
-            run_fork_mode(definition, task_prompt, &options, &parent, &fork, &task_id).await
-        } else {
-            run_typed_mode(definition, task_prompt, &options, &parent, &task_id).await
-        }
+        run_typed_mode(definition, task_prompt, &options, &parent, &task_id).await
     })
     .await?;
 
@@ -254,7 +245,10 @@ async fn run_typed_mode(
     // should not list these tools either, but we enforce it here so a
     // misconfigured TOML can't bypass the rule.
     let before = allowed_indices.len();
-    allowed_indices.retain(|&i| !is_subagent_spawn_tool(parent.all_tools[i].name()));
+    allowed_indices.retain(|&i| {
+        let name = parent.all_tools[i].name();
+        !is_subagent_spawn_tool(name) && name != "spawn_worker_thread"
+    });
     let stripped = before - allowed_indices.len();
     if stripped > 0 {
         tracing::debug!(
@@ -651,6 +645,7 @@ async fn run_typed_mode(
         connected_identities_md: crate::openhuman::agent::prompts::render_connected_identities(),
         include_profile: !definition.omit_profile,
         include_memory_md: !definition.omit_memory_md,
+        curated_snapshot: None,
         user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
     };
 
@@ -734,6 +729,7 @@ async fn run_typed_mode(
         definition.max_iterations,
         task_id,
         &definition.id,
+        options.worker_thread_id.clone(),
         handoff_cache.as_deref(),
         parent,
     )
@@ -746,111 +742,6 @@ async fn run_typed_mode(
         iterations,
         elapsed: started.elapsed(),
         mode: SubagentMode::Typed,
-    })
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Fork mode — replay parent's bytes for prefix-cache reuse
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Execute a sub-agent in "Fork" mode.
-///
-/// This mode is an optimization. It replays the parent's EXACT rendered prompt
-/// and history prefix up to the point of delegation. This allows the inference
-/// server to reuse its existing KV-cache for the prefix, drastically reducing
-/// first-token latency and token costs for parallel delegation.
-async fn run_fork_mode(
-    definition: &AgentDefinition,
-    _task_prompt: &str,
-    _options: &SubagentRunOptions,
-    parent: &ParentExecutionContext,
-    fork: &ForkContext,
-    task_id: &str,
-) -> Result<SubagentRunOutcome, SubagentRunError> {
-    let started = Instant::now();
-
-    // The fork's task prompt comes from the ForkContext (set by the
-    // parent's tool-dispatch site), not from the spawn_subagent args
-    // directly. This guarantees the bytes the parent committed to are
-    // what the child sees.
-    let fork_task_prompt = fork.fork_task_prompt.clone();
-
-    tracing::debug!(
-        agent_id = %definition.id,
-        prefix_len = fork.message_prefix.len(),
-        "[subagent_runner:fork] replaying parent prefix"
-    );
-
-    // History = parent's exact prefix (which already starts with the
-    // parent's system message), then the new fork directive as a user
-    // message. The system_prompt arc is unused here because the prefix
-    // already contains the system message at index 0 — but we sanity-
-    // check that invariant.
-    debug_assert!(
-        fork.message_prefix
-            .first()
-            .map(|m| m.role == "system")
-            .unwrap_or(false),
-        "fork message_prefix must start with the parent's system message"
-    );
-    let mut history: Vec<ChatMessage> = (*fork.message_prefix).clone();
-    history.push(ChatMessage::user(fork_task_prompt));
-
-    // Fork mode keeps the parent's exact tool schema snapshot so the
-    // request body matches the prefix the backend has already cached.
-    // Runtime execution still resolves against the parent's live tool
-    // registry.
-    //
-    // Sub-agents (including fork-mode ones) must not spawn their own
-    // sub-agents — the rule that applies in `run_typed_mode`'s filter
-    // applies here too. We keep `spawn_subagent` / `delegate_*` in
-    // `fork.tool_specs` so the prefix bytes still match the parent's
-    // cached body (mutating the specs would defeat the whole point of
-    // fork mode), and instead drop them from `allowed_names` so the
-    // runtime rejects any attempt to call them with the usual
-    // "not in allowlist" path.
-    let allowed_names: HashSet<String> = parent
-        .all_tools
-        .iter()
-        .map(|t| t.name().to_string())
-        .filter(|name| !is_subagent_spawn_tool(name))
-        .collect();
-
-    let model = parent.model_name.clone();
-    let temperature = parent.temperature;
-    // Use the parent's iteration cap, not the synthetic fork definition's.
-    let max_iterations = parent.agent_config.max_tool_iterations.max(1);
-
-    // Fork mode replays the parent's exact tool list — no dynamic
-    // toolkit-scoped tools, so `extra_tools` is empty.
-    let fork_extra_tools: Vec<Box<dyn Tool>> = Vec::new();
-    // Transcript persistence happens per-iteration inside
-    // `run_inner_loop`; no post-loop write needed.
-    let (output, iterations, _agg_usage) = run_inner_loop(
-        parent.provider.as_ref(),
-        &mut history,
-        &parent.all_tools,
-        fork_extra_tools,
-        fork.tool_specs.as_slice(),
-        allowed_names,
-        None,
-        &model,
-        temperature,
-        max_iterations,
-        task_id,
-        &definition.id,
-        None,
-        parent,
-    )
-    .await?;
-
-    Ok(SubagentRunOutcome {
-        task_id: task_id.to_string(),
-        agent_id: definition.id.clone(),
-        output,
-        iterations,
-        elapsed: started.elapsed(),
-        mode: SubagentMode::Fork,
     })
 }
 
@@ -891,6 +782,7 @@ async fn run_inner_loop(
     max_iterations: usize,
     task_id: &str,
     agent_id: &str,
+    worker_thread_id: Option<String>,
     handoff_cache: Option<&ResultHandoffCache>,
     parent: &ParentExecutionContext,
 ) -> Result<(String, usize, AggregatedUsage), SubagentRunError> {
@@ -978,7 +870,7 @@ async fn run_inner_loop(
     if force_text_mode {
         // Append the XML tool protocol + available-tool list to the
         // existing system prompt. `history[0]` is the system message
-        // built by `run_typed_mode` / `run_fork_mode` upstream; we
+        // built by `run_typed_mode` upstream; we
         // augment it in-place so the model learns the call format for
         // this session without an extra message round-trip.
         if let Some(sys) = history.iter_mut().find(|m| m.role == "system") {
@@ -1039,6 +931,32 @@ async fn run_inner_loop(
             );
         }
     };
+
+    let append_worker_message =
+        |content: String, sender: String, extra_metadata: serde_json::Value| {
+            if let Some(ref thread_id) = worker_thread_id {
+                let message = ConversationMessage {
+                    id: format!("{}:{}", sender, uuid::Uuid::new_v4()),
+                    content,
+                    message_type: "text".to_string(),
+                    extra_metadata,
+                    sender,
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                };
+                if let Err(err) = crate::openhuman::memory::conversations::append_message(
+                    parent.workspace_dir.clone(),
+                    thread_id,
+                    message,
+                ) {
+                    tracing::debug!(
+                        agent_id = %agent_id,
+                        thread_id = %thread_id,
+                        error = %err,
+                        "[subagent_runner] failed to append message to worker thread"
+                    );
+                }
+            }
+        };
 
     // Per-turn progress sink shared with the parent — `None` for runs
     // that don't have a subscriber (CLI / triage / tests). Cloned upfront
@@ -1126,6 +1044,17 @@ async fn run_inner_loop(
                 "[subagent_runner] no tool calls — returning final response"
             );
             history.push(ChatMessage::assistant(response_text.clone()));
+            append_worker_message(
+                response_text.clone(),
+                "agent".to_string(),
+                serde_json::json!({
+                    "scope": "worker_thread",
+                    "agent_id": agent_id,
+                    "task_id": task_id,
+                    "iteration": iteration + 1,
+                    "final": true,
+                }),
+            );
             // Persist the final response before returning so the
             // transcript always captures the last provider reply.
             persist_transcript(history, &usage);
@@ -1145,6 +1074,18 @@ async fn run_inner_loop(
                 super::super::parse::build_native_assistant_history(&response_text, &native_calls);
             history.push(ChatMessage::assistant(assistant_history_content));
         }
+
+        append_worker_message(
+            response_text.clone(),
+            "agent".to_string(),
+            serde_json::json!({
+                "scope": "worker_thread",
+                "agent_id": agent_id,
+                "task_id": task_id,
+                "iteration": iteration + 1,
+                "tool_calls": native_calls.len(),
+            }),
+        );
 
         // Persist the assistant response + tool-call intents **before**
         // executing tools. If the session crashes mid-tool-call we
@@ -1309,9 +1250,21 @@ async fn run_inner_loop(
             } else {
                 let tool_msg = serde_json::json!({
                     "tool_call_id": call.id,
-                    "content": result_text,
+                    "content": result_text.clone(),
                 });
                 history.push(ChatMessage::tool(tool_msg.to_string()));
+                append_worker_message(
+                    result_text.clone(),
+                    "user".to_string(),
+                    serde_json::json!({
+                        "scope": "worker_thread",
+                        "agent_id": agent_id,
+                        "task_id": task_id,
+                        "iteration": iteration + 1,
+                        "tool_call_id": call.id,
+                        "tool_name": call.name,
+                    }),
+                );
             }
 
             if let Some(ref tx) = progress_sink {
@@ -1331,9 +1284,19 @@ async fn run_inner_loop(
         }
 
         if force_text_mode && !text_mode_result_block.is_empty() {
-            history.push(ChatMessage::user(format!(
-                "[Tool results]\n{text_mode_result_block}"
-            )));
+            let content = format!("[Tool results]\n{text_mode_result_block}");
+            history.push(ChatMessage::user(content.clone()));
+            append_worker_message(
+                content,
+                "user".to_string(),
+                serde_json::json!({
+                    "scope": "worker_thread",
+                    "agent_id": agent_id,
+                    "task_id": task_id,
+                    "iteration": iteration + 1,
+                    "mode": "text",
+                }),
+            );
         }
 
         // Persist again after tool results have been appended so the

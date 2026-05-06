@@ -2,6 +2,7 @@
  * Config and settings commands.
  */
 import { callCoreRpc } from '../../services/coreRpcClient';
+import { CORE_RPC_METHODS } from '../../services/rpcMethods';
 import { CommandResponse, isTauri } from './common';
 
 export interface ConfigSnapshot {
@@ -63,6 +64,14 @@ export interface ScreenIntelligenceSettingsUpdate {
   denylist?: string[] | null;
 }
 
+export interface LocalAiSettingsUpdate {
+  runtime_enabled?: boolean | null;
+  usage_embeddings?: boolean | null;
+  usage_heartbeat?: boolean | null;
+  usage_learning_reflection?: boolean | null;
+  usage_subconscious?: boolean | null;
+}
+
 export interface RuntimeFlags {
   browser_allow_all: boolean;
   log_prompts: boolean;
@@ -97,7 +106,7 @@ export async function openhumanGetConfig(): Promise<CommandResponse<ConfigSnapsh
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({ method: 'openhuman.get_config' });
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({ method: CORE_RPC_METHODS.configGet });
 }
 
 export async function openhumanUpdateModelSettings(
@@ -156,6 +165,18 @@ export async function openhumanUpdateScreenIntelligenceSettings(
   }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: 'openhuman.update_screen_intelligence_settings',
+    params: update,
+  });
+}
+
+export async function openhumanUpdateLocalAiSettings(
+  update: LocalAiSettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: 'openhuman.update_local_ai_settings',
     params: update,
   });
 }

@@ -83,7 +83,7 @@ pub async fn memory_learn_all(
     };
 
     // Short-circuit when there are no namespaces to process — avoids loading
-    // config (and the local_ai.enabled guard) for an empty batch.
+    // config (and the local_ai.runtime_enabled guard) for an empty batch.
     if target_ns.is_empty() {
         tracing::info!(
             "[memory.learn] memory_learn_all: no namespaces to process, returning early"
@@ -101,8 +101,8 @@ pub async fn memory_learn_all(
         .await
         .map_err(|e| format!("load config: {e}"))?;
 
-    if !config.local_ai.enabled {
-        return Err("memory_learn_all requires local_ai.enabled=true".to_string());
+    if !config.local_ai.runtime_enabled {
+        return Err("memory_learn_all requires local_ai.runtime_enabled=true".to_string());
     }
 
     let mut results = Vec::with_capacity(target_ns.len());

@@ -20,6 +20,14 @@ named = [
     "web_search",
     "web_search_tool",
     "file_read",
+    # Coding-harness read-only primitives from #1208. `web_fetch` is the
+    # simple URL-GET sibling of `http_request` (capped body, same
+    # allowed_domains gate); grep/glob/list let the researcher navigate
+    # cached docs in the workspace without falling through to shell.
+    "web_fetch",
+    "grep",
+    "glob",
+    "list",
     "memory_recall",
     # Parallel — full surface (search/extract are also delegated by web_search_tool;
     # chat/research/enrich/dataset unlock grounded answers and deep multi-step research).

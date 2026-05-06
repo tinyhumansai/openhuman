@@ -32,7 +32,8 @@
     "typecheck": "pnpm --filter openhuman-app compile"
   },
   "devDependencies": {
-    "husky": "^9.1.7"
+    "husky": "^9.1.7",
+    "ws": "^8.20.0"
   },
   "dependencies": {
     "@tauri-apps/api": "2.10.1"

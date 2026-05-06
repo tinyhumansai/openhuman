@@ -248,6 +248,12 @@ pub fn apply_preset_to_config(config: &mut LocalAiConfig, tier: ModelTier) {
         config.preload_vision_model = matches!(preset.vision_mode, VisionMode::Bundled);
         config.preload_embedding_model = true;
         config.selected_tier = Some(tier.as_str().to_string());
+        // Applying a real preset enables the runtime — this is the authoritative
+        // activation path. bootstrap's config_with_recommended_tier_if_unselected
+        // also sets runtime_enabled = true when opt_in_confirmed is true, but
+        // setting it here ensures in-process callers (tests, RPC handlers) see
+        // the correct state without relying on bootstrap's post-processing.
+        config.runtime_enabled = true;
     } else {
         tracing::debug!("[local_ai] apply_preset_to_config called for custom tier; no-op");
     }

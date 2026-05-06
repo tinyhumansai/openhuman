@@ -49,6 +49,7 @@ pub mod github;
 pub mod gmail;
 pub mod notion;
 pub mod profile;
+pub mod profile_md;
 pub mod registry;
 pub mod slack;
 pub mod sync_state;

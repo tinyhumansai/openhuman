@@ -6,6 +6,7 @@
 
 pub mod audio_capture;
 pub(crate) mod cli;
+pub mod cloud_transcribe;
 pub mod dictation_listener;
 pub mod hallucination;
 pub mod hotkey;

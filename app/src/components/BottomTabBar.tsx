@@ -7,10 +7,6 @@ import { useCoreState } from '../providers/CoreStateProvider';
 import { useAppSelector } from '../store/hooks';
 import { selectUnreadCount } from '../store/notificationSlice';
 import { isAccountsFullscreen } from '../utils/accountsFullscreen';
-import { APP_ENVIRONMENT } from '../utils/config';
-
-/** /human is mascot work-in-progress — only surface it pre-prod. */
-const HUMAN_TAB_ENABLED = APP_ENVIRONMENT !== 'production';
 
 const tabs = [
   {
@@ -69,22 +65,6 @@ const tabs = [
           strokeLinejoin="round"
           strokeWidth={1.8}
           d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5"
-        />
-      </svg>
-    ),
-  },
-  // Memory tab hidden until Intelligence feature is ready (#976)
-  {
-    id: 'intelligence',
-    label: 'Memory',
-    path: '/intelligence',
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={1.8}
-          d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
         />
       </svg>
     ),
@@ -212,53 +192,51 @@ const BottomTabBar = () => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setRevealed(false);
         }}>
         <nav className="pointer-events-auto inline-flex items-center gap-1 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
-          {tabs
-            .filter(tab => tab.id !== 'human' || HUMAN_TAB_ENABLED)
-            .map(tab => {
-              const active = isActive(tab.path);
-              const showBadge = tab.id === 'notifications' && unreadCount > 0;
-              // data-walkthrough attributes for the Joyride walkthrough steps.
-              // Maps tab ids to their walkthrough target names (steps 3–6).
-              const walkthroughAttr: Record<string, string> = {
-                chat: 'tab-chat',
-                skills: 'tab-skills',
-                notifications: 'tab-automation',
-                settings: 'tab-settings',
-              };
-              return (
-                <button
-                  key={tab.id}
-                  data-walkthrough={walkthroughAttr[tab.id]}
-                  onClick={() => navigate(tab.path)}
-                  className={`group relative flex items-center px-2 py-2 rounded-sm text-sm transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
+          {tabs.map(tab => {
+            const active = isActive(tab.path);
+            const showBadge = tab.id === 'notifications' && unreadCount > 0;
+            // data-walkthrough attributes for the Joyride walkthrough steps.
+            // Maps tab ids to their walkthrough target names.
+            const walkthroughAttr: Record<string, string> = {
+              chat: 'tab-chat',
+              skills: 'tab-skills',
+              notifications: 'tab-notifications',
+              settings: 'tab-settings',
+            };
+            return (
+              <button
+                key={tab.id}
+                data-walkthrough={walkthroughAttr[tab.id]}
+                onClick={() => navigate(tab.path)}
+                className={`group relative flex items-center px-2 py-2 rounded-sm text-sm transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
+                  active
+                    ? 'bg-white text-stone-900 font-semibold shadow-sm'
+                    : 'bg-transparent text-stone-500 hover:bg-stone-300/50 hover:text-stone-700'
+                }`}
+                aria-label={
+                  tab.id === 'notifications' && unreadCount > 0
+                    ? `${tab.label} (${unreadCount} unread)`
+                    : tab.label
+                }>
+                <span className="relative inline-flex flex-shrink-0">
+                  {tab.icon}
+                  {showBadge && (
+                    <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full bg-coral-500 text-[9px] font-bold text-white flex items-center justify-center leading-none">
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
+                </span>
+                <span
+                  className={`overflow-hidden whitespace-nowrap transition-[max-width,margin-left,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                     active
-                      ? 'bg-white text-stone-900 font-semibold shadow-sm'
-                      : 'bg-transparent text-stone-500 hover:bg-stone-300/50 hover:text-stone-700'
-                  }`}
-                  aria-label={
-                    tab.id === 'notifications' && unreadCount > 0
-                      ? `${tab.label} (${unreadCount} unread)`
-                      : tab.label
-                  }>
-                  <span className="relative inline-flex flex-shrink-0">
-                    {tab.icon}
-                    {showBadge && (
-                      <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full bg-coral-500 text-[9px] font-bold text-white flex items-center justify-center leading-none">
-                        {unreadCount > 9 ? '9+' : unreadCount}
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    className={`overflow-hidden whitespace-nowrap transition-[max-width,margin-left,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                      active
-                        ? 'max-w-[160px] ml-2 opacity-100'
-                        : 'max-w-0 ml-0 opacity-0 group-hover:max-w-[160px] group-hover:ml-2 group-hover:opacity-100 group-focus-visible:max-w-[160px] group-focus-visible:ml-2 group-focus-visible:opacity-100'
-                    }`}>
-                    {tab.label}
-                  </span>
-                </button>
-              );
-            })}
+                      ? 'max-w-[160px] ml-2 opacity-100'
+                      : 'max-w-0 ml-0 opacity-0 group-hover:max-w-[160px] group-hover:ml-2 group-hover:opacity-100 group-focus-visible:max-w-[160px] group-focus-visible:ml-2 group-focus-visible:opacity-100'
+                  }`}>
+                  {tab.label}
+                </span>
+              </button>
+            );
+          })}
         </nav>
       </div>
     </div>

@@ -4240,6 +4240,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-contacts"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b034b578389f89a85c055eacc8d8b368be5f04a6c1b07f672bf3aec21d0ef621"
+dependencies = [
+ "block2 0.6.2",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
 name = "objc2-core-data"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4500,7 +4511,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "openhuman"
-version = "0.53.16"
+version = "0.53.17"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4510,6 +4521,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64",
+ "block2 0.6.2",
  "chacha20poly1305",
  "chrono",
  "chrono-tz",
@@ -4528,6 +4540,7 @@ dependencies = [
  "fs2",
  "futures",
  "futures-util",
+ "glob",
  "hex",
  "hmac 0.12.1",
  "hostname",
@@ -4540,6 +4553,9 @@ dependencies = [
  "mail-parser",
  "matrix-sdk",
  "nu-ansi-term 0.46.0",
+ "objc2 0.6.4",
+ "objc2-contacts",
+ "objc2-foundation 0.3.2",
  "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -4589,6 +4605,7 @@ dependencies = [
  "uuid",
  "wacore",
  "wait-timeout",
+ "walkdir",
  "webpki-roots 1.0.6",
  "whatsapp-rust",
  "whatsapp-rust-tokio-transport",
