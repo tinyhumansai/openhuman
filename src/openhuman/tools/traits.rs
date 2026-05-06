@@ -170,6 +170,23 @@ pub trait Tool: Send + Sync {
         ToolCategory::System
     }
 
+    /// Per-tool cap on the character length of the result body sent
+    /// back to the model.
+    ///
+    /// When `Some(cap)` and the tool's `output_for_llm` exceeds it,
+    /// the agent's tool loop truncates the body and appends a marker
+    /// before threading the value into history — protecting the
+    /// context window from one chatty tool. When `None` (the
+    /// default), no per-tool cap applies and the global
+    /// `PayloadSummarizer` (if any) handles oversize bodies.
+    ///
+    /// Set this on tools whose output is *bounded but unpredictable*
+    /// (`bash`, `web_fetch`, etc.); leave it unset on tools where
+    /// callers genuinely want full content (`read_file`, `grep`).
+    fn max_result_size_chars(&self) -> Option<usize> {
+        None
+    }
+
     /// Get the full spec for LLM registration
     fn spec(&self) -> ToolSpec {
         ToolSpec {

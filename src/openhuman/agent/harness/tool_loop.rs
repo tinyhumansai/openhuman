@@ -631,38 +631,69 @@ pub(crate) async fn run_tool_call_loop(
                                 );
                                 scrubbed = compacted;
                             }
-                            if let Some(summarizer) = payload_summarizer {
-                                log::debug!(
-                                    "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
-                                    call.name,
-                                    scrubbed.len()
-                                );
-                                match summarizer
-                                    .maybe_summarize(&call.name, None, &scrubbed)
-                                    .await
-                                {
-                                    Ok(Some(payload)) => {
-                                        log::info!(
-                                            "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
-                                            call.name,
-                                            payload.original_bytes,
-                                            payload.summary_bytes
-                                        );
-                                        scrubbed = payload.summary;
-                                    }
-                                    Ok(None) => {
-                                        log::debug!(
-                                            "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
-                                            call.name,
-                                            scrubbed.len()
-                                        );
-                                    }
-                                    Err(e) => {
-                                        log::warn!(
-                                            "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
-                                            call.name,
-                                            e
-                                        );
+
+                            // Per-tool max_result_size_chars cap. When
+                            // a tool sets it and the (post-tokenjuice)
+                            // body still exceeds the cap, truncate
+                            // here and skip the global payload
+                            // summarizer for this call — the cap is
+                            // fast and deterministic, the summarizer
+                            // is the fallback for tools that don't
+                            // know their own size budget.
+                            let mut hit_per_tool_cap = false;
+                            if let Some(cap) = tool.max_result_size_chars() {
+                                let char_count = scrubbed.chars().count();
+                                if char_count > cap {
+                                    let truncated: String = scrubbed.chars().take(cap).collect();
+                                    let dropped = char_count - cap;
+                                    log::info!(
+                                        "[agent_loop] per-tool cap applied tool={} cap_chars={} original_chars={} dropped_chars={}",
+                                        call.name,
+                                        cap,
+                                        char_count,
+                                        dropped,
+                                    );
+                                    scrubbed = format!(
+                                        "{truncated}\n\n[truncated by tool cap: {dropped} more chars not shown]"
+                                    );
+                                    hit_per_tool_cap = true;
+                                }
+                            }
+
+                            if !hit_per_tool_cap {
+                                if let Some(summarizer) = payload_summarizer {
+                                    log::debug!(
+                                        "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
+                                        call.name,
+                                        scrubbed.len()
+                                    );
+                                    match summarizer
+                                        .maybe_summarize(&call.name, None, &scrubbed)
+                                        .await
+                                    {
+                                        Ok(Some(payload)) => {
+                                            log::info!(
+                                                "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
+                                                call.name,
+                                                payload.original_bytes,
+                                                payload.summary_bytes
+                                            );
+                                            scrubbed = payload.summary;
+                                        }
+                                        Ok(None) => {
+                                            log::debug!(
+                                                "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
+                                                call.name,
+                                                scrubbed.len()
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log::warn!(
+                                                "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
+                                                call.name,
+                                                e
+                                            );
+                                        }
                                     }
                                 }
                             }

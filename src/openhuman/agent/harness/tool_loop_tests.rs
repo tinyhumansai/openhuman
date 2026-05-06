@@ -796,3 +796,98 @@ async fn run_tool_call_loop_runs_unchanged_when_no_stop_hooks_installed() {
     .expect("loop should succeed without stop hooks");
     assert_eq!(result, "done");
 }
+
+#[tokio::test]
+async fn run_tool_call_loop_applies_per_tool_max_result_size_cap() {
+    /// Tool that emits a 200k-char body and declares a 100-char cap
+    /// via `max_result_size_chars`. The loop should truncate before
+    /// threading the body into history.
+    struct CappedHugeTool;
+
+    #[async_trait]
+    impl Tool for CappedHugeTool {
+        fn name(&self) -> &str {
+            "capped_huge"
+        }
+        fn description(&self) -> &str {
+            "emits a giant body but caps itself"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+            Ok(ToolResult::success("Z".repeat(200_000)))
+        }
+        fn permission_level(&self) -> crate::openhuman::tools::PermissionLevel {
+            crate::openhuman::tools::PermissionLevel::ReadOnly
+        }
+        fn max_result_size_chars(&self) -> Option<usize> {
+            Some(100)
+        }
+    }
+
+    let provider = ScriptedProvider {
+        responses: Mutex::new(vec![
+            // Round 1: ask for the tool.
+            Ok(ChatResponse {
+                text: Some(
+                    "<tool_call>{\"name\":\"capped_huge\",\"arguments\":{}}</tool_call>".into(),
+                ),
+                tool_calls: vec![],
+                usage: None,
+            }),
+            // Round 2: stop.
+            Ok(ChatResponse {
+                text: Some("done".into()),
+                tool_calls: vec![],
+                usage: None,
+            }),
+        ]),
+        native_tools: false,
+        vision: false,
+    };
+    let mut history = vec![ChatMessage::user("call the tool")];
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(CappedHugeTool)];
+
+    let result = run_tool_call_loop(
+        &provider,
+        &mut history,
+        &tools,
+        "test-provider",
+        "model",
+        0.0,
+        true,
+        None,
+        "channel",
+        &crate::openhuman::config::MultimodalConfig::default(),
+        2,
+        None,
+        None,
+        &[],
+        None,
+        None,
+    )
+    .await
+    .expect("loop with capped tool should succeed");
+    assert_eq!(result, "done");
+
+    // Tool-results message should contain the truncation marker and
+    // be far smaller than the 200k raw body (the 100-char cap plus a
+    // small marker, well under 1k bytes total for this one call).
+    let tool_results = history
+        .iter()
+        .find(|msg| msg.role == "user" && msg.content.contains("[Tool results]"))
+        .expect("tool results should be appended to history");
+    assert!(
+        tool_results
+            .content
+            .contains("[truncated by tool cap:"),
+        "expected truncation marker, got body: {}",
+        &tool_results.content[..tool_results.content.len().min(200)]
+    );
+    assert!(
+        tool_results.content.len() < 1_000,
+        "raw 200k payload should not appear in history (got {} bytes)",
+        tool_results.content.len()
+    );
+}
