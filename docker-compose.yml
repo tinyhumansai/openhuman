@@ -1,0 +1,48 @@
+# OpenHuman Core — Docker Compose for self-hosted cloud deploy.
+#
+# Brings up the headless Rust core (`openhuman-core`) on :7788, persists the
+# workspace to a named volume, and reads secrets/config from a `.env` file
+# next to this compose file.
+#
+# Usage:
+#   1. cp .env.example .env  (then edit values — at minimum BACKEND_URL and
+#      OPENHUMAN_CORE_TOKEN; the latter is required for any client that calls
+#      /rpc on this instance)
+#   2. docker compose up -d
+#   3. curl http://localhost:7788/health
+#
+# The image is built from the repo Dockerfile. To pin a published image
+# instead of building, replace `build:` with `image: ghcr.io/.../openhuman-core:<tag>`.
+
+services:
+  openhuman-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: openhuman-core:local
+    container_name: openhuman-core
+    restart: unless-stopped
+    ports:
+      - "${OPENHUMAN_CORE_PORT:-7788}:7788"
+    env_file:
+      - .env
+    environment:
+      # Bind to 0.0.0.0 inside the container so port-forwarding works regardless
+      # of what `.env` says. The Dockerfile already sets this default, but make
+      # it explicit so an inherited shell value cannot override it.
+      OPENHUMAN_CORE_HOST: 0.0.0.0
+      OPENHUMAN_CORE_PORT: "7788"
+      OPENHUMAN_WORKSPACE: /home/openhuman/.openhuman
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - openhuman-workspace:/home/openhuman/.openhuman
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7788/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  openhuman-workspace:
+    name: openhuman-workspace
