@@ -60,10 +60,7 @@ pub async fn build_section(config: &Config, workspace_dir: &Path, _last_tick_at:
         b.2.abs()
             .partial_cmp(&a.2.abs())
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| {
-                b.1.partial_cmp(&a.1)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+            .then_with(|| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
     });
 
     // 4. Format top-K.
@@ -141,9 +138,7 @@ fn update_snapshots_with_now(
     // the table already exists; we just need the migration to be applied
     // (callers always go through `with_connection` first, so the migration
     // ran by the time we get here).
-    let db_path = workspace_dir
-        .join("subconscious")
-        .join("subconscious.db");
+    let db_path = workspace_dir.join("subconscious").join("subconscious.db");
     let mut conn = rusqlite::Connection::open(&db_path)?;
     reflection_store::replace_hotness_snapshots(&mut conn, snapshots, now)?;
     Ok(())

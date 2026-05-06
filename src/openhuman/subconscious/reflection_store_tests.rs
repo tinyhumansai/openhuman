@@ -89,19 +89,14 @@ fn mark_surfaced_sets_timestamp_once() {
 #[test]
 fn mark_acted_and_dismissed_set_timestamps() {
     let conn = fresh_conn();
-    add_reflection(
-        &conn,
-        &sample_reflection("act", Disposition::Notify, 1.0),
-    )
-    .unwrap();
-    add_reflection(
-        &conn,
-        &sample_reflection("dis", Disposition::Notify, 1.0),
-    )
-    .unwrap();
+    add_reflection(&conn, &sample_reflection("act", Disposition::Notify, 1.0)).unwrap();
+    add_reflection(&conn, &sample_reflection("dis", Disposition::Notify, 1.0)).unwrap();
     mark_acted(&conn, "act", 50.0).unwrap();
     mark_dismissed(&conn, "dis", 60.0).unwrap();
-    assert_eq!(get_reflection(&conn, "act").unwrap().unwrap().acted_on_at, Some(50.0));
+    assert_eq!(
+        get_reflection(&conn, "act").unwrap().unwrap().acted_on_at,
+        Some(50.0)
+    );
     assert_eq!(
         get_reflection(&conn, "dis").unwrap().unwrap().dismissed_at,
         Some(60.0)
@@ -111,12 +106,7 @@ fn mark_acted_and_dismissed_set_timestamps() {
 #[test]
 fn hotness_snapshot_replace_clears_then_writes() {
     let mut conn = fresh_conn();
-    replace_hotness_snapshots(
-        &mut conn,
-        &[("e1".into(), 0.5), ("e2".into(), 1.5)],
-        100.0,
-    )
-    .unwrap();
+    replace_hotness_snapshots(&mut conn, &[("e1".into(), 0.5), ("e2".into(), 1.5)], 100.0).unwrap();
     let v1 = load_hotness_snapshots(&conn).unwrap();
     assert_eq!(v1.len(), 2);
 

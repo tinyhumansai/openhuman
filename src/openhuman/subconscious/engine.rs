@@ -867,8 +867,7 @@ async fn persist_and_surface_reflections(
         match conversation_post::post_reflection(workspace_dir.clone(), r) {
             Ok(_msg) => {
                 if let Err(e) = store::with_connection(workspace_dir, |conn| {
-                    reflection_store::mark_surfaced(conn, &r.id, now)
-                        .map_err(anyhow::Error::from)
+                    reflection_store::mark_surfaced(conn, &r.id, now).map_err(anyhow::Error::from)
                 }) {
                     warn!("[subconscious] mark_surfaced failed id={}: {e}", r.id);
                 }

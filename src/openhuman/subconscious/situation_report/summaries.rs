@@ -75,17 +75,14 @@ fn read_recent_summaries(config: &Config, cutoff_ms: i64) -> anyhow::Result<Vec<
              LIMIT ?2",
         )?;
         let rows = stmt
-            .query_map(
-                rusqlite::params![cutoff_ms, MAX_SUMMARIES as i64],
-                |row| {
-                    Ok(SummaryRow {
-                        summary_id: row.get(0)?,
-                        level: row.get::<_, i64>(1)? as u32,
-                        content: row.get(2)?,
-                        tree_scope: row.get(3)?,
-                    })
-                },
-            )?
+            .query_map(rusqlite::params![cutoff_ms, MAX_SUMMARIES as i64], |row| {
+                Ok(SummaryRow {
+                    summary_id: row.get(0)?,
+                    level: row.get::<_, i64>(1)? as u32,
+                    content: row.get(2)?,
+                    tree_scope: row.get(3)?,
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     })

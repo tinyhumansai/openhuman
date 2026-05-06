@@ -63,7 +63,8 @@ fn ensure_thread_is_idempotent() {
     let workspace = tmp.path().to_path_buf();
     let t1 = ensure_subconscious_thread(workspace.clone(), "2026-05-07T00:00:00Z".into())
         .expect("ensure 1");
-    let t2 = ensure_subconscious_thread(workspace, "2026-05-07T01:00:00Z".into()).expect("ensure 2");
+    let t2 =
+        ensure_subconscious_thread(workspace, "2026-05-07T01:00:00Z".into()).expect("ensure 2");
     assert_eq!(t1.id, t2.id);
     assert_eq!(t1.id, SUBCONSCIOUS_THREAD_ID);
     assert_eq!(t1.title, SUBCONSCIOUS_THREAD_TITLE);

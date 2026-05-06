@@ -208,8 +208,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "reflections_list" => ControllerSchema {
             namespace: "subconscious",
             function: "reflections_list",
-            description:
-                "List recent subconscious reflections (Observe + Notify). \
+            description: "List recent subconscious reflections (Observe + Notify). \
                  Newest first.",
             inputs: vec![
                 field_opt("limit", TypeSchema::U64, "Max entries (default 50)."),
@@ -228,8 +227,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "reflections_act" => ControllerSchema {
             namespace: "subconscious",
             function: "reflections_act",
-            description:
-                "Act on a reflection — drives `start_chat` against the user's \
+            description: "Act on a reflection — drives `start_chat` against the user's \
                  active orchestrator thread with a primer composed from the \
                  reflection body and proposed_action. Marks `acted_on_at`.",
             inputs: vec![
@@ -508,10 +506,7 @@ fn handle_escalations_dismiss(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_reflections_list(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let limit = params
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(50) as usize;
+        let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
         let since_ts = params.get("since_ts").and_then(|v| v.as_f64());
         let config = load_config().await?;
         let reflections = store::with_connection(&config.workspace_dir, |conn| {
@@ -571,8 +566,7 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
         let _ = store::with_connection(&config.workspace_dir, |conn| {
-            reflection_store::mark_acted(conn, &reflection_id, now)
-                .map_err(anyhow::Error::from)
+            reflection_store::mark_acted(conn, &reflection_id, now).map_err(anyhow::Error::from)
         });
 
         to_json(RpcOutcome::single_log(
@@ -598,8 +592,7 @@ fn handle_reflections_dismiss(params: Map<String, Value>) -> ControllerFuture {
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
         store::with_connection(&config.workspace_dir, |conn| {
-            reflection_store::mark_dismissed(conn, &reflection_id, now)
-                .map_err(anyhow::Error::from)
+            reflection_store::mark_dismissed(conn, &reflection_id, now).map_err(anyhow::Error::from)
         })
         .map_err(|e| e.to_string())?;
         to_json(RpcOutcome::single_log(
