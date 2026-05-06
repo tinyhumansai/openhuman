@@ -222,42 +222,53 @@ pub fn init_for_embedded(data_dir: &Path, verbose: bool) {
         let filter = build_env_filter(verbose, scope);
 
         let logs_dir = data_dir.join("logs");
-        // Best-effort — if dir creation fails we still want stderr logging
-        // so the failure itself is visible.
-        let file_layer = match std::fs::create_dir_all(&logs_dir) {
-            Ok(()) => {
-                let appender = tracing_appender::rolling::Builder::new()
+        // Build the file appender first, but keep the writer guard + path in
+        // locals — only commit to `FILE_GUARD` / `LOG_DIR` after `try_init()`
+        // succeeds. Otherwise a competing global subscriber would cause
+        // `try_init` to return Err and `log_directory()` would still report a
+        // path even though no file layer is attached. Errors are surfaced via
+        // `eprintln!` (the tracing subscriber isn't installed yet here) using
+        // the same `[logging]` prefix as the dir-creation diagnostic.
+        let pending_file: Option<(_, tracing_appender::non_blocking::WorkerGuard, PathBuf)> =
+            match std::fs::create_dir_all(&logs_dir) {
+                Ok(()) => match tracing_appender::rolling::Builder::new()
                     .rotation(tracing_appender::rolling::Rotation::DAILY)
                     .filename_prefix("openhuman")
                     .filename_suffix("log")
                     .max_log_files(7)
                     .build(&logs_dir)
-                    .ok();
+                {
+                    Ok(appender) => {
+                        let (writer, guard) = tracing_appender::non_blocking(appender);
+                        Some((writer, guard, logs_dir.clone()))
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "[logging] failed to create file appender in {}: {err}",
+                            logs_dir.display()
+                        );
+                        None
+                    }
+                },
+                Err(err) => {
+                    eprintln!(
+                        "[logging] failed to create logs dir {}: {err}",
+                        logs_dir.display()
+                    );
+                    None
+                }
+            };
 
-                appender.map(|appender| {
-                    let (writer, guard) = tracing_appender::non_blocking(appender);
-                    let _ = FILE_GUARD.set(guard);
-                    let _ = LOG_DIR.set(logs_dir.clone());
-                    let constraints = parse_log_file_constraints();
-                    tracing_subscriber::fmt::layer()
-                        .with_ansi(false)
-                        .event_format(CleanCliFormat)
-                        .with_writer(writer)
-                        .with_filter(tracing_subscriber::filter::filter_fn(move |meta| {
-                            event_matches_file_constraints(meta, &constraints)
-                        }))
-                })
-            }
-            Err(err) => {
-                // Use eprintln rather than tracing — the subscriber isn't
-                // installed yet at this point.
-                eprintln!(
-                    "[logging] failed to create logs dir {}: {err}",
-                    logs_dir.display()
-                );
-                None
-            }
-        };
+        let file_layer = pending_file.as_ref().map(|(writer, _, _)| {
+            let constraints = parse_log_file_constraints();
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .event_format(CleanCliFormat)
+                .with_writer(writer.clone())
+                .with_filter(tracing_subscriber::filter::filter_fn(move |meta| {
+                    event_matches_file_constraints(meta, &constraints)
+                }))
+        });
 
         // Stderr layer: useful for `tauri dev` and CLI-style launches. ANSI
         // only when stderr is a real terminal.
@@ -269,12 +280,29 @@ pub fn init_for_embedded(data_dir: &Path, verbose: bool) {
                 event_matches_file_constraints(meta, &stderr_constraints)
             }));
 
-        let _ = tracing_subscriber::registry()
+        match tracing_subscriber::registry()
             .with(filter)
             .with(stderr_layer)
             .with(file_layer)
             .with(sentry_tracing_layer())
-            .try_init();
+            .try_init()
+        {
+            Ok(()) => {
+                if let Some((_, guard, dir)) = pending_file {
+                    let _ = FILE_GUARD.set(guard);
+                    let _ = LOG_DIR.set(dir);
+                }
+            }
+            Err(err) => {
+                // Another global subscriber was already installed (rare —
+                // typically a pre-existing CLI init in the same process).
+                // Drop the writer guard so the background flushing thread
+                // shuts down cleanly, and leave LOG_DIR unset so the UI
+                // surfaces "logging not initialized" instead of pointing at
+                // an empty directory.
+                eprintln!("[logging] tracing subscriber init failed: {err}");
+            }
+        }
 
         let _ = tracing_log::LogTracer::init();
     });
