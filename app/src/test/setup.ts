@@ -111,6 +111,15 @@ vi.mock('../utils/tauriCommands', () => ({
     .fn()
     .mockResolvedValue({ result: { state: 'NotInstalled' }, logs: [] }),
   openhumanAgentServerStatus: vi.fn().mockResolvedValue({ result: { running: true }, logs: [] }),
+  openhumanUpdateMeetSettings: vi
+    .fn()
+    .mockResolvedValue({
+      result: { config: {}, workspace_dir: '/tmp', config_path: '/tmp/cfg.toml' },
+      logs: [],
+    }),
+  openhumanGetMeetSettings: vi
+    .fn()
+    .mockResolvedValue({ result: { auto_orchestrator_handoff: false }, logs: [] }),
   exchangeToken: vi.fn(),
   invoke: vi.fn(),
 }));
