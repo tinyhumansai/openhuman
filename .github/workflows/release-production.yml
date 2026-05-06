@@ -376,6 +376,27 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/tinyhumansai/openhuman-core
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.prepare-build.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare-build.outputs.version }}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
 
   # =========================================================================
   # Phase 3c: Generate and upload latest.json for the Tauri auto-updater.

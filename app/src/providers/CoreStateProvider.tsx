@@ -38,6 +38,7 @@ import {
   syncMemoryClientToken,
   logout as tauriLogout,
 } from '../utils/tauriCommands';
+import { REMOTE_CORE_RPC_MODE } from '../utils/config';
 
 const log = debugFactory('core-state');
 
@@ -219,7 +220,10 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     //   - poll-detected flip (core-side user swap)
     //   - re-login as a different user after sign-out
     const seedUserId = getActiveUserId();
-    const isFlip = Boolean(nextIdentity) && seedUserId !== nextIdentity;
+    // Remote-core mode deliberately bypasses local user-scoped restart logic.
+    // The identity-flip restart flow is only valid for local sidecar + local
+    // CEF profile ownership.
+    const isFlip = !REMOTE_CORE_RPC_MODE() && Boolean(nextIdentity) && seedUserId !== nextIdentity;
     const isLogout = Boolean(previousAuthed) && !nextAuthed;
     // Clear team caches whenever the visible identity changes (in-memory user
     // shift) so the post-commit UI doesn't show user A's team list during the

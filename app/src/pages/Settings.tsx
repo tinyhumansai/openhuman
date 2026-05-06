@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import AboutPanel from '../components/settings/panels/AboutPanel';
+import CloudInstancePanel from '../components/settings/panels/CloudInstancePanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
@@ -176,6 +177,25 @@ const featuresSettingsItems = [
   },
 ];
 
+const infrastructureSettingsItems = [
+  {
+    id: 'cloud-instance',
+    title: 'Cloud Instance',
+    description: 'Run your OpenHuman core 24/7 on your own AWS account (BYOC)',
+    route: 'cloud-instance',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"
+        />
+      </svg>
+    ),
+  },
+];
+
 const aiModelsSettingsItems = [
   {
     id: 'local-model',
@@ -251,6 +271,16 @@ const Settings = () => {
             />
           )}
         />
+        <Route
+          path="infrastructure"
+          element={wrapSettingsPage(
+            <SettingsSectionPage
+              title="Infrastructure"
+              description="Cloud instance management and deployment."
+              items={infrastructureSettingsItems}
+            />
+          )}
+        />
         {/* Account & Billing leaf panels */}
         <Route path="recovery-phrase" element={wrapSettingsPage(<RecoveryPhrasePanel />)} />
         <Route path="team" element={wrapSettingsPage(<TeamPanel />)} />
@@ -282,6 +312,8 @@ const Settings = () => {
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
         {/* AI & Models leaf panels */}
         <Route path="local-model" element={wrapSettingsPage(<LocalModelPanel />)} />
+        {/* Infrastructure leaf panels */}
+        <Route path="cloud-instance" element={wrapSettingsPage(<CloudInstancePanel />)} />
         {/* Developer Options */}
         <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
         <Route path="ai" element={wrapSettingsPage(<AIPanel />)} />

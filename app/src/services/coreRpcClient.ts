@@ -3,7 +3,7 @@ import debug from 'debug';
 
 import { dispatchLocalAiMethod } from '../lib/ai/localCoreAiMemory';
 import { CORE_RPC_TIMEOUT_MS, CORE_RPC_URL } from '../utils/config';
-import { getStoredRpcUrl } from '../utils/configPersistence';
+import { getStoredCoreToken, getStoredRpcUrl } from '../utils/configPersistence';
 import { sanitizeError } from '../utils/sanitize';
 import { normalizeRpcMethod } from './rpcMethods';
 
@@ -135,14 +135,40 @@ export async function getCoreRpcUrl(): Promise<string> {
 }
 
 /**
- * Returns the per-process RPC bearer token written by the core binary to
- * `~/.openhuman/core.token` at startup.  The token is fetched once via a
- * Tauri command and then cached for the lifetime of the frontend process.
+ * Invalidate the cached core RPC token so the next call to getCoreRpcToken()
+ * re-resolves. Call this after switching between local and remote cores.
+ */
+export function clearCoreRpcTokenCache(): void {
+  resolvedCoreRpcToken = null;
+  didResolveCoreRpcToken = false;
+  resolvingCoreRpcToken = null;
+}
+
+/**
+ * Returns the RPC bearer token for authenticating with the core.
  *
- * Returns `null` in non-Tauri environments (e.g. Vitest) where the command
- * is not available so existing tests remain unaffected.
+ * Resolution order:
+ *   1. Stored remote token (localStorage via getStoredCoreToken) — set when
+ *      the user is connected to a remote/cloud deployment. This takes priority
+ *      because it means the user explicitly switched to an external core.
+ *   2. Tauri `core_rpc_token` command — the embedded sidecar's token (local mode).
+ *   3. `null` — non-Tauri environments with no stored token (e.g. Vitest).
+ *
+ * The Tauri path result is cached for the lifetime of the process. The
+ * localStorage check is NOT cached (no-op cost, re-read each call) so that
+ * switching between local and remote takes effect immediately without needing
+ * to also clear the in-memory cache.
  */
 async function getCoreRpcToken(): Promise<string | null> {
+  // Check for a stored remote/cloud token first — this takes priority because
+  // it means the user explicitly connected to an external (cloud) core.
+  const storedToken = getStoredCoreToken();
+  if (storedToken) {
+    coreRpcLog('[deployment] using stored remote core token');
+    return storedToken;
+  }
+
+  // Local mode: use the Tauri-managed sidecar token.
   if (didResolveCoreRpcToken) return resolvedCoreRpcToken;
   if (!coreIsTauri()) return null;
   if (resolvingCoreRpcToken) return resolvingCoreRpcToken;
@@ -152,7 +178,7 @@ async function getCoreRpcToken(): Promise<string | null> {
       const token = await invoke<string>('core_rpc_token');
       resolvedCoreRpcToken = token?.trim() || null;
       didResolveCoreRpcToken = true;
-      coreRpcLog('core RPC token loaded');
+      coreRpcLog('core RPC token loaded from Tauri (local mode)');
       return resolvedCoreRpcToken;
     } catch (err) {
       coreRpcError('failed to load core RPC token', err);

@@ -10,6 +10,10 @@ import { isTauri } from './tauriCommands';
 // Storage key for RPC URL preference
 const RPC_URL_STORAGE_KEY = 'openhuman_core_rpc_url';
 
+// Storage key for core RPC bearer token when connecting to a remote/cloud core.
+// Populated when the user has an active remote deployment (token comes from backend /auth/me).
+const CORE_RPC_TOKEN_KEY = 'openhuman_core_rpc_token';
+
 // Default RPC URL — canonical value from config.ts so they can never drift
 const DEFAULT_RPC_URL = CORE_RPC_URL;
 
@@ -115,4 +119,56 @@ export function getDefaultRpcUrl(): string {
 export function buildRpcEndpoint(baseUrl: string): string {
   const normalized = normalizeRpcUrl(baseUrl);
   return normalized.endsWith('/rpc') ? normalized : `${normalized}/rpc`;
+}
+
+/**
+ * Get the stored core RPC token for remote/cloud core connections.
+ *
+ * This token is only populated when the user has an active remote deployment.
+ * It is sourced from the backend /auth/me response (user.coreToken).
+ *
+ * @returns The stored token, or null if none stored (local mode)
+ */
+export function getStoredCoreToken(): string | null {
+  try {
+    const stored = localStorage.getItem(CORE_RPC_TOKEN_KEY);
+    if (stored && stored.trim().length > 0) {
+      return stored.trim();
+    }
+  } catch {
+    // localStorage might be unavailable in some environments
+  }
+  return null;
+}
+
+/**
+ * Store a core RPC bearer token for remote/cloud core connections.
+ *
+ * Call this when the user switches to a remote deployment. The token is used
+ * by coreRpcClient as the Authorization header for all core RPC calls.
+ *
+ * @param token - The bearer token from backend /auth/me (user.coreToken)
+ */
+export function storeCoreToken(token: string): void {
+  try {
+    if (token && token.trim().length > 0) {
+      localStorage.setItem(CORE_RPC_TOKEN_KEY, token.trim());
+      console.debug('[deployment] Stored core RPC token for remote connection');
+    } else {
+      localStorage.removeItem(CORE_RPC_TOKEN_KEY);
+      console.debug('[deployment] Cleared core RPC token');
+    }
+  } catch {
+    console.warn('[deployment] Unable to store core RPC token in localStorage');
+  }
+}
+
+/**
+ * Clear the stored core RPC token.
+ *
+ * Call this when switching back to local core mode or when the deployment
+ * is terminated. Causes coreRpcClient to fall back to the Tauri-managed token.
+ */
+export function clearCoreToken(): void {
+  storeCoreToken('');
 }

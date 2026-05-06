@@ -147,3 +147,24 @@ export const SENTRY_SMOKE_TEST = import.meta.env.VITE_SENTRY_SMOKE_TEST === 'tru
  */
 export const MASCOT_VOICE_ID =
   (import.meta.env.VITE_MASCOT_VOICE_ID as string | undefined)?.trim() || 'ljX1ZrXuDIIRVcmiVSyR';
+
+/**
+ * Whether the app is currently in remote core mode — i.e. connected to a
+ * cloud-hosted or externally-managed `openhuman-core` rather than the
+ * Tauri-embedded local sidecar.
+ *
+ * `true` when the user has a stored remote core token in localStorage
+ * (populated when an active BYOC deployment is connected).
+ *
+ * This is intentionally a function so callers get the current value at call
+ * time, not a stale snapshot from module initialisation. Do not convert to a
+ * top-level `const` — the token is written after the module first loads.
+ */
+export function REMOTE_CORE_RPC_MODE(): boolean {
+  try {
+    const token = localStorage.getItem('openhuman_core_rpc_token');
+    return Boolean(token && token.trim().length > 0);
+  } catch {
+    return false;
+  }
+}
