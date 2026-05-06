@@ -207,5 +207,54 @@ describe('SettingsHome', () => {
       await user.click(screen.getByText('Restart Tour').closest('button')!);
       expect(mockNavigate).toHaveBeenCalledWith('/home');
     });
+
+    it('navigates to notification-routing settings when Notification Routing is clicked', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+
+      await user.click(screen.getByText('Notification Routing').closest('button')!);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('notification-routing');
+    });
+
+    it('navigates to features settings when Features is clicked', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+
+      await user.click(screen.getByText('Features').closest('button')!);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('features');
+    });
+
+    it('navigates to ai-models settings when AI & Models is clicked', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+
+      await user.click(screen.getByText('AI & Models').closest('button')!);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('ai-models');
+    });
+
+    it('opens billing URL when Billing & Usage is clicked', async () => {
+      const { openUrl } = await import('../../../utils/openUrl');
+      const user = userEvent.setup();
+      renderSettingsHome();
+
+      await user.click(screen.getByText('Billing & Usage').closest('button')!);
+      expect(openUrl).toHaveBeenCalledWith('https://billing.example.com');
+    });
+
+    it('navigates to about settings when About is clicked', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+
+      await user.click(screen.getByText('About').closest('button')!);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('about');
+    });
+
+    it('navigates to developer-options settings when Developer Options is clicked', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+
+      await user.click(screen.getByText('Developer Options').closest('button')!);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('developer-options');
+    });
   });
 });
