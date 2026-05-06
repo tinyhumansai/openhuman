@@ -855,6 +855,66 @@ fn emit_grouped_whatsapp<R: Runtime>(
             source
         );
     }
+
+    // Dual-write: also persist structured chat+message data via the
+    // dedicated whatsapp_data store. Fire-and-forget alongside the existing
+    // memory doc ingest path — does not affect scanner tick timing.
+    {
+        let acct = account_id.to_string();
+        let chats_value = Value::Object(chats.clone());
+        // Build normalized message array for the structured ingest.
+        let msgs_for_ingest: Vec<Value> = messages
+            .iter()
+            .filter_map(|m| {
+                let chat_id = m.get("chatId").and_then(|v| v.as_str())?.to_string();
+                if chat_id.is_empty() {
+                    return None;
+                }
+                let body = m
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim())
+                    .unwrap_or("");
+                if body.is_empty() {
+                    return None;
+                }
+                let msg_id = m
+                    .get("id")
+                    .cloned()
+                    .or_else(|| m.get("dataId").cloned())
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+                    .unwrap_or_default();
+                if msg_id.is_empty() {
+                    return None;
+                }
+                Some(json!({
+                    "message_id": msg_id,
+                    "chat_id": chat_id,
+                    "sender": m.get("fromName").cloned()
+                        .or_else(|| m.get("from").cloned())
+                        .unwrap_or(Value::Null),
+                    "sender_jid": m.get("from").cloned().unwrap_or(Value::Null),
+                    "from_me": m.get("fromMe").and_then(|v| v.as_bool()).unwrap_or(false),
+                    "body": body,
+                    "timestamp": m.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0),
+                    "message_type": m.get("type").cloned().unwrap_or(Value::Null),
+                    "source": source,
+                }))
+            })
+            .collect();
+        let src = source.to_string();
+        tokio::spawn(async move {
+            if let Err(e) =
+                post_whatsapp_data_ingest(&acct, &chats_value, &msgs_for_ingest, &src).await
+            {
+                log::warn!(
+                    "[wa][{}] whatsapp_data structured ingest failed: {}",
+                    acct,
+                    e
+                );
+            }
+        });
+    }
 }
 
 /// Build the `openhuman.memory_doc_ingest` payload for a single
@@ -987,6 +1047,87 @@ async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), 
         namespace,
         key,
         sorted.len()
+    );
+    Ok(())
+}
+
+/// POST a structured `openhuman.whatsapp_data_ingest` payload to the core.
+///
+/// This is the dual-write path alongside `post_memory_doc_ingest`. It
+/// persists chats and messages into the dedicated `whatsapp_data.db` SQLite
+/// store so the agent can query them via structured RPC tools.
+async fn post_whatsapp_data_ingest(
+    account_id: &str,
+    chats: &Value,
+    messages: &[Value],
+    source: &str,
+) -> Result<(), String> {
+    if messages.is_empty() && chats.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        return Ok(());
+    }
+    log::debug!(
+        "[wa][{}] whatsapp_data_ingest chats={} messages={} source={}",
+        account_id,
+        chats.as_object().map(|o| o.len()).unwrap_or(0),
+        messages.len(),
+        source
+    );
+
+    // Convert chats map values from {name: ..., ...} to {name: string|null}.
+    let chats_param: serde_json::Map<String, Value> = chats
+        .as_object()
+        .map(|o| {
+            o.iter()
+                .map(|(jid, v)| {
+                    let name = v
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .map(|s| Value::String(s.to_string()))
+                        .unwrap_or(Value::Null);
+                    (jid.clone(), json!({ "name": name }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let params = json!({
+        "account_id": account_id,
+        "chats": Value::Object(chats_param),
+        "messages": messages,
+    });
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "openhuman.whatsapp_data_ingest",
+        "params": params,
+    });
+
+    let url = crate::core_rpc::core_rpc_url_value();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+    let req = crate::core_rpc::apply_auth(client.post(&url))
+        .map_err(|e| format!("prepare {url}: {e}"))?;
+    let resp = req
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("POST {url}: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body_text = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body_text}"));
+    }
+    let v: Value = resp.json().await.map_err(|e| format!("decode: {e}"))?;
+    if let Some(err) = v.get("error") {
+        return Err(format!("rpc error: {err}"));
+    }
+    log::debug!(
+        "[wa][{}] whatsapp_data_ingest ok account={} messages={}",
+        account_id,
+        account_id,
+        messages.len()
     );
     Ok(())
 }

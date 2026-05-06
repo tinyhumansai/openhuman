@@ -192,6 +192,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     );
     // Integration notification ingest, triage, and per-provider settings
     controllers.extend(crate::openhuman::notifications::all_notifications_registered_controllers());
+    // Structured WhatsApp Web data — local SQLite store, agent-queryable
+    controllers.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_registered_controllers());
     controllers
 }
 
@@ -255,6 +257,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     );
     // Integration notification ingest, triage, and per-provider settings
     schemas.extend(crate::openhuman::notifications::all_notifications_controller_schemas());
+    // Structured WhatsApp Web data — local SQLite store, agent-queryable
+    schemas.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_controller_schemas());
     schemas
 }
 
@@ -339,6 +343,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "notification" => Some(
             "Integration notification ingest, triage scoring, listing, read-state, \
              and per-provider routing settings.",
+        ),
+        "whatsapp_data" => Some(
+            "Structured WhatsApp conversation and message store — list chats, read messages, and search across WhatsApp Web data.",
         ),
         _ => None,
     }
