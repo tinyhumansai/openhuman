@@ -107,6 +107,21 @@ pub trait ComposioProvider: Send + Sync {
                     facets_written = facets,
                     "[composio:provider] identity_set persisted profile facets"
                 );
+
+                // Mirror the same identity fragment into PROFILE.md so
+                // it lands in the agent's prompt context on the next
+                // turn (the facets table feeds queries; PROFILE.md
+                // feeds the system prompt).
+                if let Err(e) = super::profile_md::merge_provider_into_profile_md(
+                    &ctx.config.workspace_dir,
+                    &profile,
+                ) {
+                    tracing::warn!(
+                        toolkit = %toolkit,
+                        error = %e,
+                        "[composio:provider] PROFILE.md merge failed (non-fatal)"
+                    );
+                }
             }
             Err(e) => {
                 tracing::warn!(
