@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { invoke, isTauri } from '@tauri-apps/api/core';
+import { useEffect, useState } from 'react';
 
 import { triggerSentryTestEvent } from '../../../services/analytics';
 import { APP_ENVIRONMENT } from '../../../utils/config';
@@ -249,6 +250,61 @@ const SentryTestRow = () => {
   );
 };
 
+// Surfaces the on-disk log folder so users running into "stuck on
+// Initializing OpenHuman..." (and similar startup issues) can grab today's
+// `openhuman-YYYY-MM-DD.log` and send it to support without hunting through
+// `~/.openhuman/logs/`. Invokes the `reveal_logs_folder` Tauri command which
+// `open`/`explorer`/`xdg-open`s the directory in the platform file manager.
+const LogsFolderRow = () => {
+  const [path, setPath] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    invoke<string | null>('logs_folder_path')
+      .then(p => setPath(p ?? null))
+      .catch(err => {
+        setError(err instanceof Error ? err.message : String(err));
+      });
+  }, []);
+
+  const onClick = async () => {
+    setError(null);
+    try {
+      await invoke('reveal_logs_folder');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  if (!isTauri()) return null;
+
+  return (
+    <div className="px-4 py-3 mb-3 rounded-lg border border-slate-200 bg-slate-50">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-slate-900">App logs</div>
+          <div className="text-xs text-slate-700 mt-0.5">
+            Open the folder containing rolling daily log files. Attach the most recent file when
+            reporting an issue.
+          </div>
+          {path && <div className="text-[11px] text-slate-500 mt-1 font-mono truncate">{path}</div>}
+        </div>
+        <button
+          onClick={onClick}
+          className="shrink-0 px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium transition-colors">
+          Open logs folder
+        </button>
+      </div>
+      {error && (
+        <div role="status" aria-live="polite" className="mt-2 text-xs text-coral-600">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const DeveloperOptionsPanel = () => {
   const { navigateToSettings, navigateBack, breadcrumbs } = useSettingsNavigation();
   const showSentryTest = APP_ENVIRONMENT === 'staging';
@@ -263,6 +319,7 @@ const DeveloperOptionsPanel = () => {
       />
 
       <div>
+        <LogsFolderRow />
         {showSentryTest && <SentryTestRow />}
         {developerItems.map((item, index) => (
           <SettingsMenuItem

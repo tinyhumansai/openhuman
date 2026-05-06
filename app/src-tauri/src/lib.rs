@@ -9,6 +9,7 @@ mod core_process;
 mod core_rpc;
 mod dictation_hotkeys;
 mod discord_scanner;
+mod file_logging;
 mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
@@ -1119,10 +1120,13 @@ pub fn run() {
 
     let daemon_mode = is_daemon_mode();
 
-    let default_filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
-    let _ = env_logger::Builder::new()
-        .parse_filters(&default_filter)
-        .try_init();
+    // Install the unified tracing subscriber + daily-rotated file appender
+    // before any other startup work so CEF preflight failures, sentry
+    // smoke-test events, and the rest of `run()` are captured in
+    // `<data_dir>/logs/openhuman-YYYY-MM-DD.log`. The shell's `log::*` calls
+    // are bridged into the same subscriber via `tracing_log::LogTracer`,
+    // replacing the previous stderr-only `env_logger`.
+    file_logging::init();
 
     // The vendored tauri-cef dev-server proxy builds a reqwest 0.13 client
     // (see vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) which calls
@@ -1655,7 +1659,9 @@ pub fn run() {
             activate_main_window,
             native_notifications::show_native_notification,
             mascot_window_show,
-            mascot_window_hide
+            mascot_window_hide,
+            file_logging::reveal_logs_folder,
+            file_logging::logs_folder_path
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
