@@ -219,6 +219,15 @@ pub struct AnalyticsSettingsPatch {
     pub enabled: Option<bool>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct LocalAiSettingsPatch {
+    pub runtime_enabled: Option<bool>,
+    pub usage_embeddings: Option<bool>,
+    pub usage_heartbeat: Option<bool>,
+    pub usage_learning_reflection: Option<bool>,
+    pub usage_subconscious: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeFlagsOut {
     pub browser_allow_all: bool,
@@ -484,6 +493,45 @@ pub async fn load_and_apply_browser_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_browser_settings(&mut config, update).await
+}
+
+/// Updates the local-AI runtime + per-feature usage flags in the configuration.
+pub async fn apply_local_ai_settings(
+    config: &mut Config,
+    update: LocalAiSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    if let Some(v) = update.runtime_enabled {
+        config.local_ai.runtime_enabled = v;
+    }
+    if let Some(v) = update.usage_embeddings {
+        config.local_ai.usage.embeddings = v;
+    }
+    if let Some(v) = update.usage_heartbeat {
+        config.local_ai.usage.heartbeat = v;
+    }
+    if let Some(v) = update.usage_learning_reflection {
+        config.local_ai.usage.learning_reflection = v;
+    }
+    if let Some(v) = update.usage_subconscious {
+        config.local_ai.usage.subconscious = v;
+    }
+    config.save().await.map_err(|e| e.to_string())?;
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "local AI settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+/// Loads the configuration, applies local-AI settings updates, and saves it.
+pub async fn load_and_apply_local_ai_settings(
+    update: LocalAiSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_local_ai_settings(&mut config, update).await
 }
 
 /// Resolves the effective API URL from configuration or defaults.

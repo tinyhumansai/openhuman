@@ -10,11 +10,13 @@ import {
   type ApplyPresetResult,
   type LocalAiDownloadsProgress,
   type LocalAiStatus,
+  openhumanGetConfig,
   openhumanLocalAiDownload,
   openhumanLocalAiDownloadAllAssets,
   openhumanLocalAiDownloadsProgress,
   openhumanLocalAiPresets,
   openhumanLocalAiStatus,
+  openhumanUpdateLocalAiSettings,
   type PresetsResponse,
 } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
@@ -38,6 +40,22 @@ const LocalModelPanel = () => {
   const [presetsLoading, setPresetsLoading] = useState(true);
   const [presetError, setPresetError] = useState('');
   const [presetSuccess, setPresetSuccess] = useState<ApplyPresetResult | null>(null);
+
+  const [usageFlags, setUsageFlags] = useState<{
+    runtime_enabled: boolean;
+    usage_embeddings: boolean;
+    usage_heartbeat: boolean;
+    usage_learning_reflection: boolean;
+    usage_subconscious: boolean;
+  }>({
+    runtime_enabled: false,
+    usage_embeddings: false,
+    usage_heartbeat: false,
+    usage_learning_reflection: false,
+    usage_subconscious: false,
+  });
+  const [usageError, setUsageError] = useState('');
+  const [usageSaving, setUsageSaving] = useState(false);
 
   const progress = useMemo(() => {
     const downloadProgress = progressFromDownloads(downloads);
@@ -87,9 +105,45 @@ const LocalModelPanel = () => {
     }
   };
 
+  const loadUsage = async () => {
+    try {
+      const snap = await openhumanGetConfig();
+      const localAi = (snap.result?.config?.local_ai ?? {}) as Record<string, unknown>;
+      const usage = (localAi.usage ?? {}) as Record<string, unknown>;
+      setUsageFlags({
+        runtime_enabled: Boolean(localAi.runtime_enabled),
+        usage_embeddings: Boolean(usage.embeddings),
+        usage_heartbeat: Boolean(usage.heartbeat),
+        usage_learning_reflection: Boolean(usage.learning_reflection),
+        usage_subconscious: Boolean(usage.subconscious),
+      });
+      setUsageError('');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load local AI flags';
+      setUsageError(msg);
+    }
+  };
+
+  const updateUsage = async (patch: Partial<typeof usageFlags>) => {
+    const next = { ...usageFlags, ...patch };
+    setUsageFlags(next);
+    setUsageSaving(true);
+    setUsageError('');
+    try {
+      await openhumanUpdateLocalAiSettings(patch);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save local AI flags';
+      setUsageError(msg);
+      void loadUsage();
+    } finally {
+      setUsageSaving(false);
+    }
+  };
+
   useEffect(() => {
     void loadStatus();
     void loadPresets();
+    void loadUsage();
     const timer = setInterval(() => {
       void loadStatus();
     }, 1500);
@@ -208,6 +262,79 @@ const LocalModelPanel = () => {
           {statusError && (
             <div className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-600">
               {statusError}
+            </div>
+          )}
+        </section>
+
+        <section className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-stone-900">Usage</h3>
+            <p className="text-xs text-stone-500 mt-0.5">
+              Choose which subsystems run on the local model. Anything off uses the cloud.
+            </p>
+          </div>
+
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={usageFlags.runtime_enabled}
+              disabled={usageSaving}
+              onChange={e => void updateUsage({ runtime_enabled: e.target.checked })}
+            />
+            <div>
+              <div className="text-sm text-stone-900">Enable local AI runtime</div>
+              <div className="text-xs text-stone-500">
+                Master switch. Off by default — Ollama stays idle. When on, the tree summarizer,
+                screen intelligence, and autocomplete always use the local model.
+              </div>
+            </div>
+          </label>
+
+          <div className={`space-y-2 pl-6 ${usageFlags.runtime_enabled ? '' : 'opacity-50'}`}>
+            {(
+              [
+                {
+                  key: 'usage_embeddings' as const,
+                  label: 'Embeddings',
+                  hint: 'Generate memory embeddings locally instead of in the cloud.',
+                },
+                {
+                  key: 'usage_heartbeat' as const,
+                  label: 'Heartbeat',
+                  hint: 'Run heartbeat reasoning locally.',
+                },
+                {
+                  key: 'usage_learning_reflection' as const,
+                  label: 'Learning / reflection',
+                  hint: 'Run learning and reflection passes locally.',
+                },
+                {
+                  key: 'usage_subconscious' as const,
+                  label: 'Subconscious',
+                  hint: 'Run subconscious evaluation locally.',
+                },
+              ] as const
+            ).map(({ key, label, hint }) => (
+              <label key={key} className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={usageFlags[key]}
+                  disabled={!usageFlags.runtime_enabled || usageSaving}
+                  onChange={e => void updateUsage({ [key]: e.target.checked })}
+                />
+                <div>
+                  <div className="text-sm text-stone-900">{label}</div>
+                  <div className="text-xs text-stone-500">{hint}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+
+          {usageError && (
+            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-600">
+              {usageError}
             </div>
           )}
         </section>
