@@ -494,3 +494,117 @@ describe('coreRpcClient', () => {
     });
   });
 });
+
+describe('getCoreRpcUrl', () => {
+  // Each test gets a fresh module so module-level caches are cleared
+  beforeEach(() => {
+    vi.resetModules();
+    vi.mocked(isTauri).mockReturnValue(false);
+    vi.mocked(invoke).mockReset();
+  });
+
+  test('in web mode returns stored URL when getStoredRpcUrl returns a non-default value', async () => {
+    vi.doMock('../../utils/configPersistence', () => ({
+      getStoredRpcUrl: () => 'http://custom-host:9999/rpc',
+    }));
+    vi.mocked(isTauri).mockReturnValue(false);
+
+    const { getCoreRpcUrl: freshGetCoreRpcUrl } = await import('../coreRpcClient');
+    const url = await freshGetCoreRpcUrl();
+    expect(url).toBe('http://custom-host:9999/rpc');
+  });
+
+  test('in web mode returns default CORE_RPC_URL when nothing custom is stored', async () => {
+    vi.doMock('../../utils/configPersistence', () => ({
+      getStoredRpcUrl: () => 'http://127.0.0.1:7788/rpc',
+    }));
+    vi.mocked(isTauri).mockReturnValue(false);
+
+    const { getCoreRpcUrl: freshGetCoreRpcUrl } = await import('../coreRpcClient');
+    const url = await freshGetCoreRpcUrl();
+    expect(url).toBe('http://127.0.0.1:7788/rpc');
+  });
+
+  test('in web mode caches the result — second call does not change the returned value', async () => {
+    let callCount = 0;
+    vi.doMock('../../utils/configPersistence', () => ({
+      getStoredRpcUrl: () => {
+        callCount++;
+        return 'http://127.0.0.1:7788/rpc';
+      },
+    }));
+    vi.mocked(isTauri).mockReturnValue(false);
+
+    const { getCoreRpcUrl: freshGetCoreRpcUrl } = await import('../coreRpcClient');
+    const first = await freshGetCoreRpcUrl();
+    const second = await freshGetCoreRpcUrl();
+    expect(first).toBe(second);
+    // getStoredRpcUrl should only have been called once due to caching
+    expect(callCount).toBe(1);
+  });
+
+  test('returns fresh value after clearCoreRpcUrlCache()', async () => {
+    let storedValue = 'http://127.0.0.1:7788/rpc';
+    vi.doMock('../../utils/configPersistence', () => ({ getStoredRpcUrl: () => storedValue }));
+    vi.mocked(isTauri).mockReturnValue(false);
+
+    const { getCoreRpcUrl: freshGetCoreRpcUrl, clearCoreRpcUrlCache: freshClear } =
+      await import('../coreRpcClient');
+
+    const first = await freshGetCoreRpcUrl();
+    expect(first).toBe('http://127.0.0.1:7788/rpc');
+
+    // Change stored value and clear cache
+    storedValue = 'http://new-host:8888/rpc';
+    freshClear();
+
+    const second = await freshGetCoreRpcUrl();
+    expect(second).toBe('http://new-host:8888/rpc');
+  });
+
+  test('in Tauri mode calls invoke("core_rpc_url") when no stored URL is customised', async () => {
+    vi.doMock('../../utils/configPersistence', () => ({
+      getStoredRpcUrl: () => 'http://127.0.0.1:7788/rpc',
+    }));
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'core_rpc_url') return 'http://tauri-resolved:7788/rpc';
+      throw new Error(`unexpected: ${cmd}`);
+    });
+
+    const { getCoreRpcUrl: freshGetCoreRpcUrl } = await import('../coreRpcClient');
+    const url = await freshGetCoreRpcUrl();
+    expect(url).toBe('http://tauri-resolved:7788/rpc');
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('core_rpc_url');
+  });
+
+  test('in Tauri mode stored URL takes priority over invoke result', async () => {
+    vi.doMock('../../utils/configPersistence', () => ({
+      getStoredRpcUrl: () => 'http://stored-override:4444/rpc',
+    }));
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'core_rpc_url') return 'http://tauri-would-return:7788/rpc';
+      throw new Error(`unexpected: ${cmd}`);
+    });
+
+    const { getCoreRpcUrl: freshGetCoreRpcUrl } = await import('../coreRpcClient');
+    const url = await freshGetCoreRpcUrl();
+    // stored override should win; invoke should NOT have been called
+    expect(url).toBe('http://stored-override:4444/rpc');
+    expect(vi.mocked(invoke)).not.toHaveBeenCalled();
+  });
+
+  test('in Tauri mode falls back to CORE_RPC_URL when invoke fails and no stored URL', async () => {
+    vi.doMock('../../utils/configPersistence', () => ({
+      getStoredRpcUrl: () => 'http://127.0.0.1:7788/rpc',
+    }));
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockRejectedValue(new Error('invoke failed'));
+
+    const { getCoreRpcUrl: freshGetCoreRpcUrl } = await import('../coreRpcClient');
+    const url = await freshGetCoreRpcUrl();
+    // Should fall back to the default
+    expect(url).toBe('http://127.0.0.1:7788/rpc');
+  });
+});

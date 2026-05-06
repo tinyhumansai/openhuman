@@ -6,6 +6,17 @@ import { callCoreRpc } from './coreRpcClient';
 let resolvedBackendUrl: string | null = null;
 let resolvingBackendUrl: Promise<string> | null = null;
 
+/**
+ * Invalidate the cached backend URL so the next call to getBackendUrl()
+ * re-derives from the core RPC (Tauri) or web fallback.
+ * Call this after the user saves a new RPC URL preference so the backend
+ * URL is recomputed from the updated core endpoint.
+ */
+export function clearBackendUrlCache(): void {
+  resolvedBackendUrl = null;
+  resolvingBackendUrl = null;
+}
+
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
 }
