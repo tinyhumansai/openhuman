@@ -211,7 +211,7 @@ export async function openhumanUpdateMeetSettings(update: {
     throw new Error('Not running in Tauri');
   }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
-    method: 'openhuman.update_meet_settings',
+    method: 'openhuman.config_update_meet_settings',
     params: update,
   });
 }
@@ -223,7 +223,7 @@ export async function openhumanGetMeetSettings(): Promise<
     throw new Error('Not running in Tauri');
   }
   return await callCoreRpc<CommandResponse<{ auto_orchestrator_handoff: boolean }>>({
-    method: 'openhuman.get_meet_settings',
+    method: 'openhuman.config_get_meet_settings',
   });
 }
 
