@@ -236,7 +236,16 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
       </CoreStateProvider>
     );
 
-    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
-    expect(ctx?.snapshot.currentUser).toEqual({ first_name: 'Ada', username: 'ada' });
+    // Poll the captured ctx directly. Two micro-renders happen: one when
+    // `isReady` flips on first-snapshot resolution, and a follow-up render
+    // when the auth.user → currentUser backfill effect lands. Asserting
+    // only on `ready` and then immediately reading `ctx` races between
+    // those two renders — the captured reference can be the pre-backfill
+    // snapshot (`currentUser: null`) when the assertion runs. Polling the
+    // actual condition removes the gap.
+    await waitFor(() =>
+      expect(ctx?.snapshot.currentUser).toEqual({ first_name: 'Ada', username: 'ada' })
+    );
+    expect(screen.getByTestId('ready').textContent).toBe('ready');
   });
 });
