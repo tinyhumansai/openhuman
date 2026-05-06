@@ -3,6 +3,7 @@
 use serde_json::{Map, Value};
 
 use super::global::get_or_init_engine;
+use super::reflection_store;
 use super::store;
 use super::types::{EscalationStatus, TaskPatch, TaskRecurrence, TaskSource};
 use crate::core::all::{ControllerFuture, RegisteredController};
@@ -21,6 +22,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("escalations_list"),
         schemas("escalations_approve"),
         schemas("escalations_dismiss"),
+        schemas("reflections_list"),
+        schemas("reflections_act"),
+        schemas("reflections_dismiss"),
     ]
 }
 
@@ -65,6 +69,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("escalations_dismiss"),
             handler: handle_escalations_dismiss,
+        },
+        RegisteredController {
+            schema: schemas("reflections_list"),
+            handler: handle_reflections_list,
+        },
+        RegisteredController {
+            schema: schemas("reflections_act"),
+            handler: handle_reflections_act,
+        },
+        RegisteredController {
+            schema: schemas("reflections_dismiss"),
+            handler: handle_reflections_dismiss,
         },
     ]
 }
@@ -185,6 +201,59 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "escalation_id",
                 TypeSchema::String,
                 "Escalation ID.",
+            )],
+            outputs: vec![field("result", TypeSchema::Json, "Dismissal confirmation.")],
+        },
+        // ── #623: proactive reflection layer ─────────────────────────────────
+        "reflections_list" => ControllerSchema {
+            namespace: "subconscious",
+            function: "reflections_list",
+            description:
+                "List recent subconscious reflections (Observe + Notify). \
+                 Newest first.",
+            inputs: vec![
+                field_opt("limit", TypeSchema::U64, "Max entries (default 50)."),
+                field_opt(
+                    "since_ts",
+                    TypeSchema::F64,
+                    "Epoch seconds — only return reflections newer than this.",
+                ),
+            ],
+            outputs: vec![field(
+                "reflections",
+                TypeSchema::Json,
+                "Reflection records.",
+            )],
+        },
+        "reflections_act" => ControllerSchema {
+            namespace: "subconscious",
+            function: "reflections_act",
+            description:
+                "Act on a reflection — drives `start_chat` against the user's \
+                 active orchestrator thread with a primer composed from the \
+                 reflection body and proposed_action. Marks `acted_on_at`.",
+            inputs: vec![
+                field_req("reflection_id", TypeSchema::String, "Reflection ID."),
+                field_req(
+                    "target_thread_id",
+                    TypeSchema::String,
+                    "User's active orchestrator thread (NOT the subconscious thread).",
+                ),
+            ],
+            outputs: vec![field(
+                "result",
+                TypeSchema::Json,
+                "{request_id, reflection_id}.",
+            )],
+        },
+        "reflections_dismiss" => ControllerSchema {
+            namespace: "subconscious",
+            function: "reflections_dismiss",
+            description: "Dismiss a reflection card. Sets `dismissed_at`.",
+            inputs: vec![field_req(
+                "reflection_id",
+                TypeSchema::String,
+                "Reflection ID.",
             )],
             outputs: vec![field("result", TypeSchema::Json, "Dismissal confirmation.")],
         },
@@ -431,6 +500,111 @@ fn handle_escalations_dismiss(params: Map<String, Value>) -> ControllerFuture {
         to_json(RpcOutcome::single_log(
             serde_json::json!({"dismissed": escalation_id}),
             "escalation dismissed",
+        ))
+    })
+}
+
+// ── #623: proactive reflection handlers ──────────────────────────────────────
+
+fn handle_reflections_list(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(50) as usize;
+        let since_ts = params.get("since_ts").and_then(|v| v.as_f64());
+        let config = load_config().await?;
+        let reflections = store::with_connection(&config.workspace_dir, |conn| {
+            reflection_store::list_recent(conn, limit, since_ts)
+        })
+        .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::single_log(reflections, "reflections listed"))
+    })
+}
+
+fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let reflection_id = params
+            .get("reflection_id")
+            .and_then(|v| v.as_str())
+            .ok_or("reflection_id is required")?
+            .to_string();
+        let target_thread_id = params
+            .get("target_thread_id")
+            .and_then(|v| v.as_str())
+            .ok_or("target_thread_id is required")?
+            .to_string();
+
+        let config = load_config().await?;
+        let reflection = store::with_connection(&config.workspace_dir, |conn| {
+            reflection_store::get_reflection(conn, &reflection_id)
+        })
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("reflection not found: {reflection_id}"))?;
+
+        let primer = format!(
+            "Acting on a subconscious suggestion.\n\nObservation: {body}\n\nProposed action: {action}",
+            body = reflection.body,
+            action = reflection
+                .proposed_action
+                .clone()
+                .unwrap_or_else(|| "(no specific action provided)".to_string())
+        );
+
+        // Drive start_chat against the user's active orchestrator
+        // thread — NOT the subconscious thread (per #623). Acting on a
+        // reflection moves the conversation into the user's normal
+        // chat surface; the subconscious feed remains observation-only.
+        let request_id = crate::openhuman::channels::providers::web::start_chat(
+            "subconscious",
+            &target_thread_id,
+            &primer,
+            None,
+            None,
+        )
+        .await
+        .map_err(|e| format!("start_chat failed: {e}"))?;
+
+        // Stamp acted_on_at on success.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        let _ = store::with_connection(&config.workspace_dir, |conn| {
+            reflection_store::mark_acted(conn, &reflection_id, now)
+                .map_err(anyhow::Error::from)
+        });
+
+        to_json(RpcOutcome::single_log(
+            serde_json::json!({
+                "request_id": request_id,
+                "reflection_id": reflection_id,
+            }),
+            "reflection acted",
+        ))
+    })
+}
+
+fn handle_reflections_dismiss(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let reflection_id = params
+            .get("reflection_id")
+            .and_then(|v| v.as_str())
+            .ok_or("reflection_id is required")?
+            .to_string();
+        let config = load_config().await?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        store::with_connection(&config.workspace_dir, |conn| {
+            reflection_store::mark_dismissed(conn, &reflection_id, now)
+                .map_err(anyhow::Error::from)
+        })
+        .map_err(|e| e.to_string())?;
+        to_json(RpcOutcome::single_log(
+            serde_json::json!({"dismissed": reflection_id}),
+            "reflection dismissed",
         ))
     })
 }

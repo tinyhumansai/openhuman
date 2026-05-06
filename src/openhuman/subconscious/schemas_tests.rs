@@ -1,13 +1,25 @@
 use super::*;
 
 #[test]
-fn all_schemas_returns_ten() {
-    assert_eq!(all_controller_schemas().len(), 10);
+fn all_schemas_returns_thirteen() {
+    // 10 task/escalation schemas + 3 reflection schemas (#623).
+    assert_eq!(all_controller_schemas().len(), 13);
 }
 
 #[test]
-fn all_controllers_returns_ten() {
-    assert_eq!(all_registered_controllers().len(), 10);
+fn all_controllers_returns_thirteen() {
+    assert_eq!(all_registered_controllers().len(), 13);
+}
+
+#[test]
+fn reflection_rpcs_are_registered() {
+    let names: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.function)
+        .collect();
+    assert!(names.contains(&"reflections_list"));
+    assert!(names.contains(&"reflections_act"));
+    assert!(names.contains(&"reflections_dismiss"));
 }
 
 #[test]
