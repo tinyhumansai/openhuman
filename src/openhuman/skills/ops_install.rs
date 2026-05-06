@@ -134,9 +134,12 @@ pub async fn install_skill_from_url(
     // tracked separately.
     validate_resolved_host(&fetch_url).await?;
 
+    let redacted_raw_url = redact_url(&raw_url);
+    let redacted_fetch_url = redact_url(&fetch_url);
+
     tracing::debug!(
-        raw_url = %raw_url,
-        fetch_url = %fetch_url,
+        raw_url = %redacted_raw_url,
+        fetch_url = %redacted_fetch_url,
         workspace = %workspace_dir.display(),
         timeout_secs = timeout_secs,
         "[skills] install_skill_from_url: entry"
@@ -156,11 +159,9 @@ pub async fn install_skill_from_url(
         .map_err(|e| format!("fetch failed: build http client: {e}"))?;
 
     tracing::info!(
-        fetch_url = %fetch_url,
+        fetch_url = %redacted_fetch_url,
         "[skills] install_skill_from_url: fetching SKILL.md"
     );
-
-    let redacted_fetch_url = redact_url(&fetch_url);
 
     let response = match client.get(&fetch_url).send().await {
         Ok(resp) => resp,
@@ -187,8 +188,12 @@ pub async fn install_skill_from_url(
             "fetch failed: {fetch_url} returned status {}",
             status.as_u16()
         );
+        let report_msg = format!(
+            "fetch failed: {redacted_fetch_url} returned status {}",
+            status.as_u16()
+        );
         crate::core::observability::report_error(
-            msg.as_str(),
+            report_msg.as_str(),
             "skills",
             "install_fetch",
             &[
@@ -318,8 +323,8 @@ pub async fn install_skill_from_url(
         .collect();
 
     tracing::info!(
-        raw_url = %raw_url,
-        fetch_url = %fetch_url,
+        raw_url = %redacted_raw_url,
+        fetch_url = %redacted_fetch_url,
         slug = %slug,
         bytes = content.len(),
         new_count = new_skills.len(),

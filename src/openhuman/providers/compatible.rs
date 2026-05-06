@@ -1672,12 +1672,14 @@ impl Provider for OpenAiCompatibleProvider {
             if !response.status().is_success() {
                 let status = response.status();
                 let status_str = status.as_u16().to_string();
-                let error = match response.text().await {
+                let raw_error = match response.text().await {
                     Ok(e) => e,
                     Err(_) => format!("HTTP error: {}", status),
                 };
+                let sanitized_error = super::sanitize_api_error(&raw_error);
+                let message = format!("{}: {}", status, sanitized_error);
                 crate::core::observability::report_error(
-                    format!("{}: {}", status, error).as_str(),
+                    message.as_str(),
                     "llm_provider",
                     "stream_chat",
                     &[
@@ -1687,9 +1689,7 @@ impl Provider for OpenAiCompatibleProvider {
                         ("failure", "non_2xx"),
                     ],
                 );
-                let _ = tx
-                    .send(Err(StreamError::Provider(format!("{}: {}", status, error))))
-                    .await;
+                let _ = tx.send(Err(StreamError::Provider(message))).await;
                 return;
             }
 
