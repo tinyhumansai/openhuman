@@ -18,7 +18,7 @@ impl LocalAiService {
         image_refs: &[String],
         max_tokens: Option<u32>,
     ) -> Result<String, String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
         if image_refs.is_empty() {
@@ -135,7 +135,7 @@ impl LocalAiService {
         config: &Config,
         inputs: &[String],
     ) -> Result<LocalAiEmbeddingResult, String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
         let items: Vec<String> = inputs
@@ -215,7 +215,7 @@ mod tests {
 
     fn enabled_config() -> Config {
         let mut c = Config::default();
-        c.local_ai.enabled = true;
+        c.local_ai.runtime_enabled = true;
         c
     }
 
@@ -301,7 +301,7 @@ mod tests {
     #[tokio::test]
     async fn embed_disabled_returns_error() {
         let mut config = Config::default();
-        config.local_ai.enabled = false;
+        config.local_ai.runtime_enabled = false;
         let service = LocalAiService::new(&config);
         let err = service.embed(&config, &["x".into()]).await.unwrap_err();
         assert!(err.contains("local ai is disabled"));
@@ -310,7 +310,7 @@ mod tests {
     #[tokio::test]
     async fn vision_prompt_disabled_returns_error() {
         let mut config = Config::default();
-        config.local_ai.enabled = false;
+        config.local_ai.runtime_enabled = false;
         let service = LocalAiService::new(&config);
         let err = service
             .vision_prompt(&config, "describe", &[], None)

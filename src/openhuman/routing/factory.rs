@@ -16,7 +16,7 @@ const LOCAL_HEALTH_TTL: Duration = Duration::from_secs(30);
 /// Construct an [`IntelligentRoutingProvider`] from a remote backend provider
 /// and the local AI configuration.
 ///
-/// When `local_ai_config.enabled` is `false` the returned provider behaves
+/// When `local_ai_config.runtime_enabled` is `false` the returned provider behaves
 /// identically to the remote provider (local health always returns `false`).
 ///
 /// `remote_fallback_model` is the model string sent to the remote backend when
@@ -86,7 +86,7 @@ pub fn new_provider(
         local,
         local_ai_config.chat_model_id.clone(),
         remote_fallback_model.to_string(),
-        local_ai_config.enabled,
+        local_ai_config.runtime_enabled,
         health,
     )
 }

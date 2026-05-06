@@ -287,7 +287,7 @@ pub fn create_routed_provider_with_options(
 
 /// Create a provider with intelligent local/remote routing.
 ///
-/// When `config.local_ai.enabled` is `true` and Ollama is reachable,
+/// When `config.local_ai.runtime_enabled` is `true` and Ollama is reachable,
 /// lightweight and medium tasks (e.g. `hint:reaction`, `hint:summarize`) are
 /// served by the local model. Heavy tasks (`hint:reasoning`, `hint:agentic`,
 /// `hint:coding`) always go to the remote backend. A health-gated fallback

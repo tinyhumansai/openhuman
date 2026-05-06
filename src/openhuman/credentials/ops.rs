@@ -25,7 +25,7 @@ use crate::openhuman::memory::conversations;
 /// fresh login.
 pub async fn start_login_gated_services(config: &Config) {
     // 1. Local AI (Ollama, whisper, embeddings)
-    if config.local_ai.enabled {
+    if config.local_ai.runtime_enabled {
         let service = crate::openhuman::local_ai::global(config);
         service.bootstrap(config).await;
         log::info!("[services] local AI bootstrapped after login");
@@ -77,7 +77,7 @@ pub async fn stop_login_gated_services(config: &Config) {
     // 4. Local AI — reset state to idle. We don't kill the Ollama process
     //    (it may be serving other clients or mid-download), but we clear
     //    the internal state so it re-bootstraps on next login.
-    if config.local_ai.enabled {
+    if config.local_ai.runtime_enabled {
         let service = crate::openhuman::local_ai::global(config);
         service.reset_to_idle(config);
         log::info!("[services] local AI reset to idle on logout");

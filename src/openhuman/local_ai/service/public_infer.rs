@@ -14,7 +14,7 @@ impl LocalAiService {
         text: &str,
         max_tokens: Option<u32>,
     ) -> Result<String, String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
         let system = "You summarize internal assistant context. Keep concise bullet points.";
@@ -33,7 +33,7 @@ impl LocalAiService {
         max_tokens: Option<u32>,
         no_think: bool,
     ) -> Result<String, String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
         let system = if no_think {
@@ -113,7 +113,7 @@ impl LocalAiService {
         max_tokens: Option<u32>,
         gated: bool,
     ) -> Result<String, String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Ok(String::new());
         }
 
@@ -176,7 +176,7 @@ impl LocalAiService {
         messages: Vec<crate::openhuman::local_ai::ollama_api::OllamaChatMessage>,
         max_tokens: Option<u32>,
     ) -> Result<String, String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
 

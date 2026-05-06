@@ -48,7 +48,7 @@ fn test_config(tmp: &tempfile::TempDir) -> Config {
     let mut c = Config::default();
     c.workspace_dir = tmp.path().join("workspace");
     c.config_path = tmp.path().join("config.toml");
-    c.local_ai.enabled = false; // disable so the local-ai-disabled error path fires.
+    c.local_ai.runtime_enabled = false; // disable so the local-ai-disabled error path fires.
     c
 }
 

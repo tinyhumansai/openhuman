@@ -377,7 +377,7 @@ async fn try_reaction(user_message: &str) -> Option<String> {
         Err(_) => return None,
     };
 
-    if !config.local_ai.enabled {
+    if !config.local_ai.runtime_enabled {
         return None;
     }
 

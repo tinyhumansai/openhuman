@@ -108,7 +108,7 @@ impl LocalAiService {
         let device = crate::openhuman::local_ai::device::detect_device_profile();
         let effective_config = config_with_recommended_tier_if_unselected(config, &device);
 
-        if !effective_config.local_ai.enabled {
+        if !effective_config.local_ai.runtime_enabled {
             *self.status.lock() = LocalAiStatus::disabled(&effective_config);
             return;
         }
@@ -282,12 +282,17 @@ fn config_with_recommended_tier_if_unselected(config: &Config, device: &DevicePr
             "[local_ai] bootstrap: opt_in_confirmed=false, hard-overriding to disabled (cloud fallback)"
         );
         let mut effective_config = config.clone();
-        effective_config.local_ai.enabled = false;
+        effective_config.local_ai.runtime_enabled = false;
         return effective_config;
     }
 
-    // User has explicitly opted in via apply_preset. Honor the config as-is.
-    config.clone()
+    // User has explicitly opted in via apply_preset.
+    // Ensure runtime_enabled is true — the on-disk field may be stale (old
+    // installs that had `enabled = true` before the rename now serde-default to
+    // false, so we set it here based on the authoritative opt_in_confirmed flag).
+    let mut effective_config = config.clone();
+    effective_config.local_ai.runtime_enabled = true;
+    effective_config
 }
 
 fn format_degraded_warning(err: &str, config: &Config) -> String {
@@ -358,8 +363,8 @@ mod tests {
         let effective = config_with_recommended_tier_if_unselected(&config, &device);
 
         assert!(
-            !effective.local_ai.enabled,
-            "local_ai.enabled must default to false on <8 GB device"
+            !effective.local_ai.runtime_enabled,
+            "local_ai.runtime_enabled must default to false on <8 GB device"
         );
     }
 
@@ -373,8 +378,8 @@ mod tests {
         let effective = config_with_recommended_tier_if_unselected(&config, &device);
 
         assert!(
-            !effective.local_ai.enabled,
-            "local_ai.enabled must default to false when no tier selected, regardless of RAM"
+            !effective.local_ai.runtime_enabled,
+            "local_ai.runtime_enabled must default to false when no tier selected, regardless of RAM"
         );
     }
 
@@ -392,7 +397,7 @@ mod tests {
         let effective = config_with_recommended_tier_if_unselected(&config, &device);
 
         assert!(
-            effective.local_ai.enabled,
+            effective.local_ai.runtime_enabled,
             "explicit opt-in must be honored even on low-RAM device"
         );
     }
@@ -411,7 +416,7 @@ mod tests {
         let effective = config_with_recommended_tier_if_unselected(&config, &device);
 
         assert!(
-            effective.local_ai.enabled,
+            effective.local_ai.runtime_enabled,
             "explicit opt-in on sufficient-RAM device must stay enabled"
         );
         assert_eq!(
@@ -426,7 +431,7 @@ mod tests {
         // by old RAM-based bootstrap logic, but never went through an explicit MVP
         // opt-in. `opt_in_confirmed = false` must hard-override to disabled.
         let mut config = Config::default();
-        config.local_ai.enabled = true;
+        config.local_ai.runtime_enabled = true;
         config.local_ai.selected_tier = Some("ram_2_4gb".to_string());
         config.local_ai.opt_in_confirmed = false;
         let device = test_device(16);
@@ -434,7 +439,7 @@ mod tests {
         let effective = config_with_recommended_tier_if_unselected(&config, &device);
 
         assert!(
-            !effective.local_ai.enabled,
+            !effective.local_ai.runtime_enabled,
             "stale selected_tier without opt_in_confirmed must be hard-overridden to disabled"
         );
         assert_eq!(
