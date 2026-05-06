@@ -67,6 +67,9 @@ interface WebviewAccountLoadPayload {
   // `'timeout'`  — 15 s watchdog elapsed; keep hidden and show retry UI
   // `'reused'`   — warm re-open of already-loaded account; reveal synchronously
   state: 'finished' | 'timeout' | 'reused' | string;
+  // `'load'`     — native/CDP load signal caused this event
+  // `'watchdog'` — fallback watchdog caused this event
+  trigger?: 'load' | 'watchdog' | string;
   url: string;
 }
 
@@ -181,7 +184,13 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
     errLog('webview-account:load missing account_id — ignoring: %o', payload);
     return;
   }
-  log('load event account=%s state=%s url=%s', accountId, payload.state, payload.url);
+  log(
+    'load event account=%s state=%s trigger=%s url=%s',
+    accountId,
+    payload.state,
+    payload.trigger,
+    payload.url
+  );
   loadingAccounts.delete(accountId);
 
   const timeoutLike =
@@ -213,8 +222,9 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
   // the webview will have been positioned server-side by `emit_load_finished`.
   const bounds = lastBoundsByAccount.get(accountId);
   log('load finished account=%s state=%s reveal=%s', accountId, payload.state, Boolean(bounds));
+  const trigger = payload.trigger === 'watchdog' ? 'watchdog' : 'load';
   if (bounds) {
-    invoke('webview_account_reveal', { args: { account_id: accountId, bounds } })
+    invoke('webview_account_reveal', { args: { account_id: accountId, bounds, trigger } })
       .catch(err => {
         errLog('webview_account_reveal failed account=%s: %o', accountId, err);
       })

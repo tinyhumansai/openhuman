@@ -9,6 +9,7 @@ mod core_process;
 mod core_rpc;
 mod dictation_hotkeys;
 mod discord_scanner;
+mod file_logging;
 mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
@@ -1124,6 +1125,17 @@ pub fn run() {
         sample_rate: 1.0,
         ..sentry::ClientOptions::default()
     });
+    // Tag every Sentry event with CPU architecture and OS so Intel-specific
+    // crashes (issue #1012 — SIGABRT in CrBrowserMain on x86_64 macOS) are
+    // clearly identified without needing a separate build identifier.
+    sentry::configure_scope(|scope| {
+        scope.set_tag("cpu_arch", std::env::consts::ARCH);
+        scope.set_tag("os_name", std::env::consts::OS);
+        #[cfg(target_os = "macos")]
+        if let Some(ver) = macos_os_version() {
+            scope.set_tag("os_version", ver);
+        }
+    });
 
     // Optional smoke trigger for verifying the Sentry pipeline end-to-end.
     // Run with `OPENHUMAN_TAURI_SENTRY_TEST=panic` to fire a panic, or
@@ -1146,10 +1158,26 @@ pub fn run() {
 
     let daemon_mode = is_daemon_mode();
 
-    let default_filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
-    let _ = env_logger::Builder::new()
-        .parse_filters(&default_filter)
-        .try_init();
+    // Install the unified tracing subscriber + daily-rotated file appender
+    // before any other startup work so CEF preflight failures, sentry
+    // smoke-test events, and the rest of `run()` are captured in
+    // `<data_dir>/logs/openhuman-YYYY-MM-DD.log`. The shell's `log::*` calls
+    // are bridged into the same subscriber via `tracing_log::LogTracer`,
+    // replacing the previous stderr-only `env_logger`.
+    file_logging::init();
+
+    // Log platform identity early so every log session is tagged with arch
+    // and OS version — essential for reproducing and triaging Intel-only
+    // crashes like issue #1012 (SIGABRT in CrBrowserMain on x86_64 macOS).
+    {
+        let arch = std::env::consts::ARCH;
+        let os = std::env::consts::OS;
+        #[cfg(target_os = "macos")]
+        let os_ver = macos_os_version().unwrap_or_else(|| "unknown".to_string());
+        #[cfg(not(target_os = "macos"))]
+        let os_ver = "n/a".to_string();
+        log::info!("[startup] platform: arch={arch} os={os} os_version={os_ver}");
+    }
 
     // The vendored tauri-cef dev-server proxy builds a reqwest 0.13 client
     // (see vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) which calls
@@ -1236,6 +1264,18 @@ pub fn run() {
         // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
         // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
         args.push(("--remote-debugging-port", Some("19222")));
+        // Issue #1012 — Intel macOS (x86_64) crashes with EXC_CRASH (SIGABRT)
+        // inside CrBrowserMain when CEF 146 tries to use GPU compositing via
+        // Metal on Intel GPU hardware/drivers. Disable GPU compositing on
+        // x86_64 macOS so the browser process falls back to software
+        // compositing instead of aborting. This flag is a no-op on Apple
+        // Silicon (arm64) and on non-macOS targets; all other GPU paths
+        // (WebGL, video decode) remain unaffected.
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        {
+            args.push(("--disable-gpu-compositing", None));
+            log::info!("[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)");
+        }
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
 
@@ -1693,7 +1733,9 @@ pub fn run() {
             activate_main_window,
             native_notifications::show_native_notification,
             mascot_window_show,
-            mascot_window_hide
+            mascot_window_hide,
+            file_logging::reveal_logs_folder,
+            file_logging::logs_folder_path
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1816,6 +1858,23 @@ fn resolve_sentry_environment() -> String {
         }
     }
     "production".to_string()
+}
+
+/// Returns the macOS product version string (e.g. `"14.5"`) by reading
+/// `sw_vers -productVersion`. Returns `None` on non-macOS targets or when
+/// the command is unavailable. Used to tag Sentry events and startup logs
+/// with OS version so Intel-specific crashes (issue #1012) can be filtered
+/// by macOS release.
+#[cfg(target_os = "macos")]
+fn macos_os_version() -> Option<String> {
+    std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]
