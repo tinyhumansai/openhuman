@@ -98,7 +98,10 @@ pub fn lookup_pricing(model: &str) -> ModelPricing {
     if lower.contains("opus") {
         return PRICING_TABLE[0];
     }
-    if lower.contains("sonnet") || lower.contains("agentic") || lower.contains("coding") {
+    if lower.contains("coding") {
+        return PRICING_TABLE[2];
+    }
+    if lower.contains("sonnet") || lower.contains("agentic") {
         return PRICING_TABLE[1];
     }
     FALLBACK_PRICING
@@ -205,6 +208,15 @@ mod tests {
             lookup_pricing("claude-sonnet-4-6").output_per_mtok_usd,
             15.0
         );
+    }
+
+    #[test]
+    fn lookup_pricing_routes_coding_to_coding_row_not_agentic() {
+        // Pinned per CodeRabbit feedback: when the coding-tier row
+        // diverges from agentic, "coding" model strings must hit
+        // PRICING_TABLE[2], not [1].
+        assert_eq!(lookup_pricing("coding-v1").model, "coding-v1");
+        assert_eq!(lookup_pricing("agentic-v1").model, "agentic-v1");
     }
 
     #[test]

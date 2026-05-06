@@ -118,6 +118,15 @@ impl StopHook for BudgetStopHook {
     }
 
     async fn check(&self, ctx: &TurnState<'_>) -> StopDecision {
+        // Fail closed on a malformed cap: NaN, non-finite, or
+        // non-positive `max_usd` should *stop* rather than silently
+        // disable the guard (NaN comparisons always return false, so
+        // `spent >= NaN` would otherwise let the loop run forever).
+        if !self.max_usd.is_finite() || self.max_usd <= 0.0 {
+            return StopDecision::Stop {
+                reason: format!("invalid budget cap configured: max_usd={}", self.max_usd),
+            };
+        }
         let spent = ctx.cost.total_usd();
         if spent >= self.max_usd {
             StopDecision::Stop {
@@ -214,6 +223,42 @@ mod tests {
                 assert!(reason.contains("$1.0000"));
             }
             other => panic!("expected Stop, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn budget_hook_fails_closed_on_nan_cap() {
+        // NaN comparisons always return false, so without the guard
+        // `spent >= NaN` would silently disable the cap forever.
+        let cost = cost_with_usd(1.0);
+        let hook = BudgetStopHook::new(f64::NAN);
+        let ctx = TurnState {
+            iteration: 1,
+            max_iterations: 10,
+            cost: &cost,
+            model: "agentic-v1",
+        };
+        match hook.check(&ctx).await {
+            StopDecision::Stop { reason } => assert!(reason.contains("invalid budget cap")),
+            other => panic!("expected Stop on NaN cap, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn budget_hook_fails_closed_on_non_positive_cap() {
+        let cost = TurnCost::new();
+        let ctx = TurnState {
+            iteration: 1,
+            max_iterations: 10,
+            cost: &cost,
+            model: "agentic-v1",
+        };
+        for bad in [0.0, -1.0, f64::NEG_INFINITY, f64::INFINITY] {
+            let hook = BudgetStopHook::new(bad);
+            assert!(
+                matches!(hook.check(&ctx).await, StopDecision::Stop { .. }),
+                "cap {bad} should stop"
+            );
         }
     }
 
