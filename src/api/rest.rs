@@ -393,8 +393,11 @@ impl BackendOAuthClient {
                     ("failure", "transport"),
                 ],
             );
-            anyhow::Error::new(e)
-                .context(format!("backend request {} {}", method.as_str(), url.path()))
+            anyhow::Error::new(e).context(format!(
+                "backend request {} {}",
+                method.as_str(),
+                url.path()
+            ))
         })?;
 
         let status = response.status();

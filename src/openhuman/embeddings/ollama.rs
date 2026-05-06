@@ -174,10 +174,7 @@ impl EmbeddingProvider for OllamaEmbedding {
                     message.as_str(),
                     "embeddings",
                     "ollama_embed",
-                    &[
-                        ("model", self.model.as_str()),
-                        ("failure", "transport"),
-                    ],
+                    &[("model", self.model.as_str()), ("failure", "transport")],
                 );
                 anyhow::anyhow!(message)
             })?;

@@ -63,10 +63,7 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                     message.as_str(),
                     "rpc",
                     "invoke_method",
-                    &[
-                        ("method", method.as_str()),
-                        ("elapsed_ms", &ms.to_string()),
-                    ],
+                    &[("method", method.as_str()), ("elapsed_ms", &ms.to_string())],
                 );
             } else {
                 tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, message);

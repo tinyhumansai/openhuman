@@ -191,9 +191,7 @@ pub(crate) async fn run_tool_call_loop(
                 utilization_pct,
                 reason,
             } => {
-                let msg = format!(
-                    "Context window exhausted ({utilization_pct}% full): {reason}"
-                );
+                let msg = format!("Context window exhausted ({utilization_pct}% full): {reason}");
                 crate::core::observability::report_error(
                     msg.as_str(),
                     "agent",

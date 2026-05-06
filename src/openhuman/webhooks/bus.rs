@@ -138,7 +138,10 @@ impl EventHandler for WebhookRequestSubscriber {
                                     e.as_str(),
                                     "webhooks",
                                     "agent_trigger",
-                                    &[("correlation_id", corr.as_str()), ("failure", "agent_error")],
+                                    &[
+                                        ("correlation_id", corr.as_str()),
+                                        ("failure", "agent_error"),
+                                    ],
                                 );
                                 (
                                     build_agent_response(&corr, 500, &format!("Agent error: {e}")),

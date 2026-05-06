@@ -197,20 +197,16 @@ pub async fn download_and_stage_with_version(
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
-    let response = client
-        .get(download_url)
-        .send()
-        .await
-        .map_err(|e| {
-            let msg = format!("failed to download update: {e}");
-            crate::core::observability::report_error(
-                msg.as_str(),
-                "update",
-                "download",
-                &[("asset", asset_name), ("failure", "transport")],
-            );
-            msg
-        })?;
+    let response = client.get(download_url).send().await.map_err(|e| {
+        let msg = format!("failed to download update: {e}");
+        crate::core::observability::report_error(
+            msg.as_str(),
+            "update",
+            "download",
+            &[("asset", asset_name), ("failure", "transport")],
+        );
+        msg
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
