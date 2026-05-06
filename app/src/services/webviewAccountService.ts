@@ -12,6 +12,7 @@ import {
 import { addIntegrationNotification } from '../store/notificationSlice';
 import { fetchRespondQueue } from '../store/providerSurfaceSlice';
 import type { AccountProvider, IngestedMessage } from '../types/accounts';
+import { openhumanGetMeetSettings } from '../utils/tauriCommands/config';
 import { threadApi } from './api/threadApi';
 import { chatSend } from './chatService';
 import { callCoreRpc } from './coreRpcClient';
@@ -637,7 +638,7 @@ async function flushMeetingSession(
     );
 
     if (segments.length > 0) {
-      await handoffToOrchestrator(accountId, session, endedAt, markdown, participants);
+      await maybeHandoffToOrchestrator(accountId, session, endedAt, markdown, participants);
     }
   } catch (err) {
     errLog('meet: memory write failed: %o', err);
@@ -655,6 +656,45 @@ async function flushMeetingSession(
 }
 
 /**
+ * Privacy gate (#1299) — only call `handoffToOrchestrator` when the
+ * user has explicitly opted in via the `meet.auto_orchestrator_handoff`
+ * setting. Without this gate, every Meet call ended would auto-feed the
+ * transcript to the orchestrator, which has the full Slack tool surface
+ * and would proactively post summaries to public channels (e.g.
+ * `#general`) without consent.
+ *
+ * The setting is read fresh per call rather than cached so toggle
+ * changes mid-session take effect immediately. Failure to read settings
+ * (e.g. core RPC down) is treated as opt-out — privacy-conservative.
+ */
+async function maybeHandoffToOrchestrator(
+  accountId: string,
+  session: MeetingSession,
+  endedAt: number,
+  transcriptMarkdown: string,
+  participants: Set<string>
+): Promise<void> {
+  let optedIn = false;
+  try {
+    const settings = await openhumanGetMeetSettings();
+    optedIn = settings?.result?.auto_orchestrator_handoff === true;
+  } catch (err) {
+    // Fail-closed: if we can't read the setting, do not hand off.
+    errLog('meet: failed to read meet settings, defaulting to OFF: %o', err);
+  }
+
+  if (!optedIn) {
+    log(
+      'meet: orchestrator handoff disabled (auto_orchestrator_handoff !== true), skipping for code=%s',
+      session.code
+    );
+    return;
+  }
+
+  await handoffToOrchestrator(accountId, session, endedAt, transcriptMarkdown, participants);
+}
+
+/**
  * After a meeting transcript is persisted, open a fresh thread with the
  * orchestrator agent and hand it the transcript so it can extract notes
  * (summary, decisions, action items) and proactively act on follow-ups.
@@ -662,6 +702,10 @@ async function flushMeetingSession(
  * The orchestrator IS the LLM here — there's no separate summarisation
  * call. It produces structured notes inline as part of its reply and
  * routes any actionable items to its subagents/skills.
+ *
+ * IMPORTANT: This function is the privacy-sensitive path. Callers must
+ * gate it on user opt-in via {@link maybeHandoffToOrchestrator} — do
+ * NOT invoke it directly from session-end code paths. See #1299.
  */
 async function handoffToOrchestrator(
   accountId: string,
@@ -1048,3 +1092,6 @@ async function flushMeetingIfAny(accountId: string, reason: string): Promise<voi
   activeMeetings.delete(accountId);
   await flushMeetingSession(accountId, session, Date.now(), reason);
 }
+
+/** Test-only re-exports — do NOT import outside `__tests__/`. */
+export const __testInternals = { maybeHandoffToOrchestrator };
