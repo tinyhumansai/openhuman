@@ -1,3 +1,4 @@
+use crate::openhuman::agent::cost::TurnCost;
 use crate::openhuman::agent::multimodal;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
@@ -151,6 +152,7 @@ pub(crate) async fn run_tool_call_loop(
     );
 
     let mut context_guard = ContextGuard::new();
+    let mut turn_cost = TurnCost::new();
 
     // Announce turn start to progress subscribers (if any). We use
     // `send().await` for lifecycle (turn/iteration) events so they
@@ -295,13 +297,30 @@ pub(crate) async fn run_tool_call_loop(
                     // Update context guard with token usage from this response.
                     if let Some(ref usage) = resp.usage {
                         context_guard.update_usage(usage);
+                        turn_cost.add_call(model, usage);
                         tracing::debug!(
                             iteration,
                             input_tokens = usage.input_tokens,
                             output_tokens = usage.output_tokens,
                             context_window = usage.context_window,
+                            cumulative_usd = turn_cost.total_usd(),
                             "[agent_loop] LLM response received"
                         );
+                        if let Some(ref sink) = on_progress {
+                            let event = AgentProgress::TurnCostUpdated {
+                                model: model.to_string(),
+                                iteration: (iteration + 1) as u32,
+                                input_tokens: turn_cost.input_tokens,
+                                output_tokens: turn_cost.output_tokens,
+                                cached_input_tokens: turn_cost.cached_input_tokens,
+                                total_usd: turn_cost.total_usd(),
+                            };
+                            if let Err(e) = sink.send(event).await {
+                                log::warn!(
+                                    "[agent_loop] progress sink closed at TurnCostUpdated: {e}"
+                                );
+                            }
+                        }
                     } else {
                         tracing::debug!(
                             iteration,
@@ -381,6 +400,15 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
             history.push(ChatMessage::assistant(response_text.clone()));
+            log::info!(
+                "[agent_loop] turn complete: iters={} provider_calls={} tokens_in={} tokens_out={} cached_in={} usd={:.4}",
+                (iteration + 1),
+                turn_cost.call_count,
+                turn_cost.input_tokens,
+                turn_cost.output_tokens,
+                turn_cost.cached_input_tokens,
+                turn_cost.total_usd(),
+            );
             if let Some(ref sink) = on_progress {
                 if let Err(e) = sink
                     .send(AgentProgress::TurnCompleted {
