@@ -214,15 +214,15 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'memory-debug':
       case 'intelligence':
       case 'webhooks-triggers':
+      case 'notification-routing':
         return [settingsCrumb, developerCrumb];
 
       // Developer options section page
       case 'developer-options':
         return [settingsCrumb];
 
-      // Notifications panels sit at the top level of Settings.
+      // Notifications panel sits at the top level of Settings.
       case 'notifications':
-      case 'notification-routing':
         return [settingsCrumb];
 
       case 'home':
