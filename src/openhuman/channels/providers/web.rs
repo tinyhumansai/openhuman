@@ -992,6 +992,23 @@ fn spawn_progress_bridge(
                          client_id={client_id} thread_id={thread_id} request_id={request_id}"
                     );
                 }
+                AgentProgress::TurnCostUpdated {
+                    model,
+                    iteration,
+                    input_tokens,
+                    output_tokens,
+                    cached_input_tokens,
+                    total_usd,
+                } => {
+                    // Cost telemetry — not surfaced to the UI yet, but
+                    // logged at debug for now and ready for a future
+                    // socket payload.
+                    log::debug!(
+                        "[web_channel] turn cost update model={model} iter={iteration} \
+                         in={input_tokens} out={output_tokens} cached_in={cached_input_tokens} \
+                         total_usd={total_usd:.4} client_id={client_id} thread_id={thread_id}"
+                    );
+                }
             }
         }
         turn_state.finish();

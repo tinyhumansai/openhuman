@@ -56,19 +56,21 @@ pub struct SubagentRunOutcome {
 }
 
 /// Which prompt-construction path the runner took for a sub-agent.
+///
+/// Currently the only supported mode is `Typed` (narrow, archetype-specific
+/// prompt with filtered tools). Kept as an enum so future modes (e.g.
+/// background/swarm) can land without churning every call site that records
+/// the mode for telemetry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubagentMode {
     /// Built a narrow, archetype-specific prompt with filtered tools.
     Typed,
-    /// Replayed the parent's exact rendered prompt and history prefix.
-    Fork,
 }
 
 impl SubagentMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Typed => "typed",
-            Self::Fork => "fork",
         }
     }
 }
@@ -79,12 +81,6 @@ impl SubagentMode {
 pub enum SubagentRunError {
     #[error("spawn_subagent called outside of an agent turn — no parent context available")]
     NoParentContext,
-
-    #[error(
-        "fork-mode sub-agent requested but no ForkContext is set on the task-local. \
-         Did the parent agent forget to call `Agent::turn` with fork support?"
-    )]
-    NoForkContext,
 
     #[error("agent definition '{0}' not found in registry")]
     DefinitionNotFound(String),

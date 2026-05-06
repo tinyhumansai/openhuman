@@ -71,6 +71,11 @@ impl Tool for GrepTool {
         PermissionLevel::ReadOnly
     }
 
+    /// Pure read — safe to fan out across parallel `grep` calls.
+    fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
+        true
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let pattern = args
             .get("pattern")

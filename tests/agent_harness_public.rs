@@ -1,8 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::openhuman::agent::harness::{
-    check_interrupt, current_fork, current_parent, with_fork_context, with_parent_context,
-    ForkContext, InterruptFence, ParentExecutionContext,
+    check_interrupt, current_parent, with_parent_context, InterruptFence, ParentExecutionContext,
 };
 use openhuman_core::openhuman::agent::hooks::{
     fire_hooks, sanitize_tool_output, PostTurnHook, ToolCallRecord, TurnContext,
@@ -195,24 +194,8 @@ async fn interrupt_signal_handler_is_installable() {
 }
 
 #[tokio::test]
-async fn fork_and_parent_contexts_are_visible_only_within_scope() {
+async fn parent_context_is_visible_only_within_scope() {
     assert!(current_parent().is_none());
-    assert!(current_fork().is_none());
-
-    let fork = ForkContext {
-        system_prompt: Arc::new("hello".into()),
-        tool_specs: Arc::new(vec![]),
-        message_prefix: Arc::new(vec![ChatMessage::system("hello")]),
-        fork_task_prompt: "do thing".into(),
-    };
-
-    with_fork_context(fork, async {
-        let inner = current_fork().expect("fork context should be visible");
-        assert_eq!(*inner.system_prompt, "hello");
-        assert_eq!(inner.fork_task_prompt, "do thing");
-        assert_eq!(inner.message_prefix.len(), 1);
-    })
-    .await;
 
     let parent = stub_parent_context();
     with_parent_context(parent, async {
@@ -225,7 +208,6 @@ async fn fork_and_parent_contexts_are_visible_only_within_scope() {
     .await;
 
     assert!(current_parent().is_none());
-    assert!(current_fork().is_none());
 }
 
 #[test]

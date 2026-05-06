@@ -235,24 +235,6 @@ fn trim_history_preserves_system_and_keeps_latest_non_system_entries() {
 }
 
 #[test]
-fn build_fork_context_uses_visible_specs_and_prompt_argument() {
-    let mut visible = HashSet::new();
-    visible.insert("echo".to_string());
-    let agent = make_agent(Some(visible));
-    let call = ParsedToolCall {
-        name: "spawn_subagent".into(),
-        arguments: serde_json::json!({ "prompt": "fork task" }),
-        tool_call_id: None,
-    };
-
-    let fork = agent.build_fork_context(&call);
-    assert_eq!(fork.fork_task_prompt, "fork task");
-    assert_eq!(fork.tool_specs.len(), 1);
-    assert_eq!(fork.tool_specs[0].name, "echo");
-    assert_eq!(fork.message_prefix.len(), 0);
-}
-
-#[test]
 fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     let mut agent = make_agent(None);
     agent.last_memory_context = Some("remember this".into());

@@ -139,10 +139,6 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub background: bool,
 
-    /// Internal flag for `fork` mode sub-agents.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub uses_fork_context: bool,
-
     // ── delegation surface ─────────────────────────────────────────────
     /// Subagents this agent is allowed to spawn via synthesised
     /// `delegate_*` tools. Each entry expands at agent-build time into
@@ -225,10 +221,6 @@ impl SkillsWildcard {
     pub fn matches_all(&self) -> bool {
         self.skills == "*"
     }
-}
-
-fn is_false(b: &bool) -> bool {
-    !b
 }
 
 impl AgentDefinition {

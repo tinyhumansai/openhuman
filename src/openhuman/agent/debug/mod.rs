@@ -401,8 +401,8 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
 
     // Mirror the runner's text-mode mutation: when integrations_agent
     // has any tools the runner appends `build_text_mode_tool_instructions`
-    // to the system message (see `subagent_runner::run_fork_mode` /
-    // `run_typed_mode`, `force_text_mode` branch). Reproduce it here so
+    // to the system message (see `subagent_runner::run_typed_mode`,
+    // `force_text_mode` branch). Reproduce it here so
     // the dump matches what the LLM actually receives on turn 1.
     if !rendered_tools.is_empty() {
         let tool_specs: Vec<ToolSpec> = rendered_tools

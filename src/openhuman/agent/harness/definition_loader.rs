@@ -233,7 +233,6 @@ hint = "agentic"
         );
         assert!(reg.get("notion_specialist").is_some());
         assert!(reg.get("code_executor").is_some());
-        assert!(reg.get("fork").is_some());
     }
 
     #[test]

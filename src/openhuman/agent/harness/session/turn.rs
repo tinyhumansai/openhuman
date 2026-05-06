@@ -8,11 +8,9 @@
 //!   the context pipeline (tool-result budget → microcompact →
 //!   autocompact signal → session-memory extraction trigger).
 //! - [`Agent::execute_tool_call`] / [`Agent::execute_tools`] — the
-//!   per-call runners, including the fork-cache `ForkContext` stash
-//!   for `spawn_subagent { mode: "fork" }` invocations.
-//! - [`Agent::build_parent_execution_context`] /
-//!   [`Agent::build_fork_context`] — snapshot helpers for sub-agent
-//!   task-locals.
+//!   per-call runners.
+//! - [`Agent::build_parent_execution_context`] — snapshot helper for
+//!   the parent-context task-local that sub-agents read.
 //! - [`Agent::trim_history`], [`Agent::fetch_learned_context`],
 //!   [`Agent::build_system_prompt`] — the small helpers `turn()` leans
 //!   on every call.
@@ -862,25 +860,6 @@ impl Agent {
         log::info!("[agent] executing tool: {}", call.name);
         log::info!("[agent_loop] tool start name={}", call.name);
 
-        // Special-case `spawn_subagent { mode: "fork", … }`: stash a
-        // ForkContext task-local so the sub-agent runner can replay the
-        // parent's exact rendered prompt + tool schemas + message prefix
-        // for backend prefix-cache reuse. The branch is taken before
-        // executing the tool so the task-local is visible inside
-        // `tool.execute(...)`.
-        let fork_context_for_call = if call.name == "spawn_subagent"
-            && call
-                .arguments
-                .get("mode")
-                .and_then(|v| v.as_str())
-                .map(|s| s.eq_ignore_ascii_case("fork"))
-                .unwrap_or(false)
-        {
-            Some(self.build_fork_context(call))
-        } else {
-            None
-        };
-
         let (raw_result, success) = if !self.visible_tool_names.is_empty()
             && !self.visible_tool_names.contains(&call.name)
         {
@@ -900,12 +879,9 @@ impl Agent {
             // implementation which forwards to `execute`.
             let prefer_markdown = self.context.prefer_markdown_tool_output();
             let options = ToolCallOptions { prefer_markdown };
-            let exec = tool.execute_with_options(call.arguments.clone(), options);
-            let outcome = if let Some(fork_ctx) = fork_context_for_call {
-                harness::with_fork_context(fork_ctx, exec).await
-            } else {
-                exec.await
-            };
+            let outcome = tool
+                .execute_with_options(call.arguments.clone(), options)
+                .await;
             match outcome {
                 Ok(r) => {
                     if !r.is_error {
@@ -1091,39 +1067,6 @@ impl Agent {
             session_key: self.session_key.clone(),
             session_parent_prefix: self.session_parent_prefix.clone(),
             on_progress: self.on_progress.clone(),
-        }
-    }
-
-    /// Build a [`harness::ForkContext`] capturing the parent's
-    /// rendered system prompt + tool schemas + message prefix at the
-    /// moment a `spawn_subagent { mode: "fork", … }` call fires.
-    ///
-    /// The system prompt is pulled from `history[0]` (the agent always
-    /// stores its rendered system prompt as the first message). The
-    /// message prefix is the entire current history rendered through
-    /// the dispatcher — the *same* sequence the parent's next call
-    /// would send, except the new fork directive replaces the parent's
-    /// next continuation.
-    pub(super) fn build_fork_context(&self, call: &ParsedToolCall) -> harness::ForkContext {
-        let messages = self.tool_dispatcher.to_provider_messages(&self.history);
-        let system_prompt: String = messages
-            .first()
-            .filter(|m| m.role == "system")
-            .map(|m| m.content.clone())
-            .unwrap_or_default();
-
-        let fork_task_prompt = call
-            .arguments
-            .get("prompt")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-
-        harness::ForkContext {
-            system_prompt: Arc::new(system_prompt),
-            tool_specs: Arc::clone(&self.visible_tool_specs),
-            message_prefix: Arc::new(messages),
-            fork_task_prompt,
         }
     }
 

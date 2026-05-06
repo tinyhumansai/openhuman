@@ -23,7 +23,6 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: crate::openhuman::agent::harness::definition::SandboxMode::None,
         background: false,
-        uses_fork_context: false,
         subagents: vec![],
         delegate_name: None,
         source: crate::openhuman::agent::harness::definition::DefinitionSource::Builtin,
@@ -114,12 +113,11 @@ fn filter_skill_filter_combined_with_named_scope() {
 #[test]
 fn subagent_mode_as_str_roundtrip() {
     assert_eq!(SubagentMode::Typed.as_str(), "typed");
-    assert_eq!(SubagentMode::Fork.as_str(), "fork");
 }
 
 // ── End-to-end runner tests with mock provider ────────────────────────
 
-use crate::openhuman::agent::harness::fork_context::{with_fork_context, with_parent_context};
+use crate::openhuman::agent::harness::fork_context::with_parent_context;
 use crate::openhuman::providers::{ChatRequest as PChatRequest, ChatResponse, Provider, ToolCall};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -534,76 +532,6 @@ async fn typed_mode_blocks_unallowed_tool_calls() {
         tool_msg.content.contains("not available"),
         "blocked tool should produce a 'not available' error message"
     );
-}
-
-#[tokio::test]
-async fn fork_mode_replays_parent_prefix_bytes() {
-    // Construct a fake fork context with a known message prefix.
-    // The runner should replay it byte-for-byte plus a single
-    // appended user message carrying the fork directive.
-    let provider = ScriptedProvider::new(vec![text_response("fork done")]);
-    let parent = make_parent(provider.clone(), vec![stub("file_read"), stub("shell")]);
-
-    let prefix = vec![
-        crate::openhuman::providers::ChatMessage::system("PARENT_SYSTEM_PROMPT_BYTES"),
-        crate::openhuman::providers::ChatMessage::user("first user msg"),
-        crate::openhuman::providers::ChatMessage::assistant("parent assistant"),
-    ];
-
-    let fork = ForkContext {
-        system_prompt: Arc::new("PARENT_SYSTEM_PROMPT_BYTES".into()),
-        tool_specs: Arc::new(vec![parent.all_tool_specs[0].clone()]),
-        message_prefix: Arc::new(prefix.clone()),
-        fork_task_prompt: "ANALYSE THIS BRANCH".into(),
-    };
-
-    let def = crate::openhuman::agent::harness::builtin_definitions::fork_definition();
-
-    let outcome = with_parent_context(parent, async move {
-        with_fork_context(fork, async {
-            run_subagent(
-                &def,
-                "ignored — fork uses fork_task_prompt",
-                SubagentRunOptions::default(),
-            )
-            .await
-        })
-        .await
-    })
-    .await
-    .expect("fork runner should succeed");
-
-    assert_eq!(outcome.mode, SubagentMode::Fork);
-    assert_eq!(outcome.output, "fork done");
-
-    // Verify the request that hit the provider replays the parent
-    // prefix exactly and appends only the fork directive.
-    let captured = provider.captured.lock();
-    let first_call = &captured[0];
-    assert_eq!(first_call.messages.len(), prefix.len() + 1);
-    for (i, msg) in prefix.iter().enumerate() {
-        assert_eq!(first_call.messages[i].role, msg.role);
-        assert_eq!(first_call.messages[i].content, msg.content);
-    }
-    // The appended user message carries the fork directive.
-    let appended = first_call.messages.last().unwrap();
-    assert_eq!(appended.role, "user");
-    assert_eq!(appended.content, "ANALYSE THIS BRANCH");
-    assert_eq!(first_call.tool_count, 1);
-}
-
-#[tokio::test]
-async fn fork_mode_errors_when_no_fork_context() {
-    let provider = ScriptedProvider::new(vec![text_response("unused")]);
-    let parent = make_parent(provider, vec![stub("file_read")]);
-    let def = crate::openhuman::agent::harness::builtin_definitions::fork_definition();
-
-    let result = with_parent_context(parent, async {
-        run_subagent(&def, "x", SubagentRunOptions::default()).await
-    })
-    .await;
-
-    assert!(matches!(result, Err(SubagentRunError::NoForkContext)));
 }
 
 #[tokio::test]

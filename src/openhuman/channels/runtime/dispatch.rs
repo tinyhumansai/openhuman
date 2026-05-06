@@ -574,7 +574,6 @@ mod scoping_tests {
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
             background: false,
-            uses_fork_context: false,
             subagents: vec![],
             delegate_name: None,
             source: DefinitionSource::Builtin,

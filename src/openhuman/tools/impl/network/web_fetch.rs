@@ -71,6 +71,22 @@ impl Tool for WebFetchTool {
         PermissionLevel::ReadOnly
     }
 
+    /// Idempotent GET — safe to fan out across parallel `web_fetch`
+    /// calls. Targets that throttle aggressively are the user's
+    /// concern; we don't try to second-guess at the tool layer.
+    fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
+        true
+    }
+
+    /// Cap web_fetch results at ~50k chars before they reach the
+    /// model. The tool itself already truncates byte-wise via
+    /// `max_bytes` (default 1MB), but a 1MB HTML page is still tens
+    /// of thousands of tokens — the agent rarely needs that much, and
+    /// when it does, `read_file` on a saved copy is the right tool.
+    fn max_result_size_chars(&self) -> Option<usize> {
+        Some(50_000)
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let raw_url = args
             .get("url")
