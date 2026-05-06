@@ -71,6 +71,13 @@ impl Tool for WebFetchTool {
         PermissionLevel::ReadOnly
     }
 
+    /// Idempotent GET — safe to fan out across parallel `web_fetch`
+    /// calls. Targets that throttle aggressively are the user's
+    /// concern; we don't try to second-guess at the tool layer.
+    fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
+        true
+    }
+
     /// Cap web_fetch results at ~50k chars before they reach the
     /// model. The tool itself already truncates byte-wise via
     /// `max_bytes` (default 1MB), but a 1MB HTML page is still tens
