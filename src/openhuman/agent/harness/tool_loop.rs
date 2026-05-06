@@ -198,10 +198,7 @@ pub(crate) async fn run_tool_call_loop(
                             reason = %reason,
                             "[agent_loop] stop hook triggered — aborting turn"
                         );
-                        anyhow::bail!(
-                            "Agent turn stopped by hook '{}': {reason}",
-                            hook.name()
-                        );
+                        anyhow::bail!("Agent turn stopped by hook '{}': {reason}", hook.name());
                     }
                 }
             }

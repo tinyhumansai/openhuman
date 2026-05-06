@@ -31,7 +31,6 @@ pub mod memory_loader;
 pub mod multimodal;
 pub mod pformat;
 pub mod progress;
-pub mod stop_hooks;
 /// Prompt plumbing — types, section builders, and
 /// [`SystemPromptBuilder`](prompts::SystemPromptBuilder). Moved from
 /// `openhuman::context::prompt` so prompt rendering lives next to the
@@ -39,6 +38,7 @@ pub mod stop_hooks;
 /// a thin re-export shim for now.
 pub mod prompts;
 mod schemas;
+pub mod stop_hooks;
 pub mod tree_loader;
 pub mod triage;
 pub use schemas::{

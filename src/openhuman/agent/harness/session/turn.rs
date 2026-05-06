@@ -879,7 +879,9 @@ impl Agent {
             // implementation which forwards to `execute`.
             let prefer_markdown = self.context.prefer_markdown_tool_output();
             let options = ToolCallOptions { prefer_markdown };
-            let outcome = tool.execute_with_options(call.arguments.clone(), options).await;
+            let outcome = tool
+                .execute_with_options(call.arguments.clone(), options)
+                .await;
             match outcome {
                 Ok(r) => {
                     if !r.is_error {

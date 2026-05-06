@@ -670,9 +670,7 @@ async fn run_tool_call_loop_propagates_provider_errors_and_max_iteration_failure
 
 #[tokio::test]
 async fn run_tool_call_loop_aborts_when_stop_hook_returns_stop() {
-    use crate::openhuman::agent::stop_hooks::{
-        with_stop_hooks, StopDecision, StopHook, TurnState,
-    };
+    use crate::openhuman::agent::stop_hooks::{with_stop_hooks, StopDecision, StopHook, TurnState};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
@@ -745,8 +743,7 @@ async fn run_tool_call_loop_aborts_when_stop_hook_returns_stop() {
     .expect_err("stop hook should abort the loop");
 
     assert!(
-        err.to_string()
-            .contains("stopped by hook 'test-iter-cap'"),
+        err.to_string().contains("stopped by hook 'test-iter-cap'"),
         "got: {err}"
     );
     assert!(
@@ -879,9 +876,7 @@ async fn run_tool_call_loop_applies_per_tool_max_result_size_cap() {
         .find(|msg| msg.role == "user" && msg.content.contains("[Tool results]"))
         .expect("tool results should be appended to history");
     assert!(
-        tool_results
-            .content
-            .contains("[truncated by tool cap:"),
+        tool_results.content.contains("[truncated by tool cap:"),
         "expected truncation marker, got body: {}",
         &tool_results.content[..tool_results.content.len().min(200)]
     );
