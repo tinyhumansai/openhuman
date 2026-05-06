@@ -100,7 +100,7 @@ function SourceCard({ status }: SourceCardProps) {
               {FRESHNESS_LABEL[status.freshness]}
             </span>
           </div>
-          <div className="mt-1 flex items-center gap-3 text-xs text-stone-500">
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-stone-500">
             <span data-testid={`memory-sync-chunks-${status.provider}`}>
               {lifetime.toLocaleString()} chunks
             </span>
@@ -187,7 +187,7 @@ export function MemorySyncConnections({ pollIntervalMs }: MemorySyncConnectionsP
     return (
       <section className="memory-sync-connections" data-testid="memory-sync-connections">
         <h3 className="text-sm font-semibold text-stone-700">Memory sources</h3>
-        <p className="mt-2 rounded-md bg-coral-50 p-2 text-xs text-coral-800">
+        <p className="mt-2 rounded-md bg-coral-50 p-2 text-xs text-coral-800 break-words">
           Failed to load sync status: {loadError}
         </p>
       </section>
