@@ -116,9 +116,8 @@ impl WhatsAppDataStore {
             count += 1;
         }
         log::debug!(
-            "[whatsapp_data] upserted {} chats for account={}",
-            count,
-            account_id
+            "[whatsapp_data] upserted {} chats (account redacted)",
+            count
         );
         Ok(count)
     }
@@ -135,10 +134,11 @@ impl WhatsAppDataStore {
             if m.message_id.is_empty() || m.chat_id.is_empty() {
                 continue;
             }
+            // Persist all messages, including non-text ones (stickers, images,
+            // system events).  Dropping empty-body rows biases message_count
+            // and last_message_ts to text-only messages, making active chats
+            // look stale whenever the latest event has no body.
             let body = m.body.as_deref().unwrap_or("");
-            if body.is_empty() {
-                continue; // skip messages without body text
-            }
             let ts = m.timestamp.unwrap_or(0);
             let from_me = m.from_me.unwrap_or(false) as i64;
             conn.execute(
@@ -185,9 +185,11 @@ impl WhatsAppDataStore {
                  SET message_count   = (SELECT COUNT(*) FROM wa_messages
                                         WHERE wa_messages.account_id = wa_chats.account_id
                                           AND wa_messages.chat_id    = wa_chats.chat_id),
-                     last_message_ts = (SELECT MAX(timestamp) FROM wa_messages
-                                        WHERE wa_messages.account_id = wa_chats.account_id
-                                          AND wa_messages.chat_id    = wa_chats.chat_id),
+                     last_message_ts = COALESCE(
+                                         (SELECT MAX(timestamp) FROM wa_messages
+                                          WHERE wa_messages.account_id = wa_chats.account_id
+                                            AND wa_messages.chat_id    = wa_chats.chat_id),
+                                         last_message_ts),
                      updated_at      = ?1
                  WHERE account_id = ?2",
                 rusqlite::params![now, account_id],
@@ -196,27 +198,62 @@ impl WhatsAppDataStore {
         }
 
         log::debug!(
-            "[whatsapp_data] upserted {} messages for account={}",
-            count,
-            account_id
+            "[whatsapp_data] upserted {} messages (account redacted)",
+            count
         );
         Ok(count)
     }
 
     /// Delete messages older than `cutoff_ts` (Unix seconds). Returns the count removed.
+    ///
+    /// After the delete, refreshes `wa_chats.message_count` and
+    /// `last_message_ts` for every chat that lost rows, so `list_chats`
+    /// returns accurate counts and ordering immediately.
     pub fn prune_old_messages(&self, cutoff_ts: i64) -> Result<u64> {
         let conn = self.open_conn()?;
+        let now = Self::now_secs();
+
+        // Collect affected (account_id, chat_id) pairs before deleting.
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT account_id, chat_id FROM wa_messages
+             WHERE timestamp > 0 AND timestamp < ?1",
+        )?;
+        let affected: Vec<(String, String)> = stmt
+            .query_map(params![cutoff_ts], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()
+            .context("collect affected chats for prune")?;
+
         let changed = conn
             .execute(
                 "DELETE FROM wa_messages WHERE timestamp > 0 AND timestamp < ?1",
                 params![cutoff_ts],
             )
             .context("prune old wa_messages")?;
+
+        // Refresh aggregate stats for every affected chat so list_chats
+        // reflects the post-prune state immediately.
         if changed > 0 {
+            for (acct, chat_id) in &affected {
+                conn.execute(
+                    "UPDATE wa_chats
+                     SET message_count   = (SELECT COUNT(*) FROM wa_messages
+                                            WHERE account_id = wa_chats.account_id
+                                              AND chat_id    = wa_chats.chat_id),
+                         last_message_ts = COALESCE(
+                                             (SELECT MAX(timestamp) FROM wa_messages
+                                              WHERE account_id = wa_chats.account_id
+                                                AND chat_id    = wa_chats.chat_id),
+                                             last_message_ts),
+                         updated_at      = ?3
+                     WHERE account_id = ?1 AND chat_id = ?2",
+                    params![acct, chat_id, now],
+                )
+                .with_context(|| format!("refresh chat stats after prune: {chat_id}"))?;
+            }
             log::debug!(
-                "[whatsapp_data] pruned {} messages older than ts={}",
+                "[whatsapp_data] pruned {} messages (affected {} chats)",
                 changed,
-                cutoff_ts
+                affected.len()
             );
         }
         Ok(changed as u64)
@@ -309,8 +346,7 @@ impl WhatsAppDataStore {
             rows
         };
         log::debug!(
-            "[whatsapp_data] list_messages chat={} returned {} rows",
-            req.chat_id,
+            "[whatsapp_data] list_messages returned {} rows (chat/account redacted)",
             msgs.len()
         );
         Ok(msgs)
@@ -395,8 +431,7 @@ impl WhatsAppDataStore {
             }
         };
         log::debug!(
-            "[whatsapp_data] search_messages query={:?} returned {} rows",
-            req.query,
+            "[whatsapp_data] search_messages returned {} rows (query/account redacted)",
             msgs.len()
         );
         Ok(msgs)

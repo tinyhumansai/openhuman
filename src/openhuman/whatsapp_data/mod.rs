@@ -7,11 +7,13 @@
 //! **Data locality**: all data remains on-device in `whatsapp_data.db`; it is
 //! never transmitted to any external service.
 //!
-//! ## RPC methods
-//! - `openhuman.whatsapp_data_ingest` — scanner writes data here
+//! ## Agent-facing RPC methods (read-only)
 //! - `openhuman.whatsapp_data_list_chats`
 //! - `openhuman.whatsapp_data_list_messages`
 //! - `openhuman.whatsapp_data_search_messages`
+//!
+//! ## Internal-only RPC method (write, scanner-side)
+//! - `openhuman.whatsapp_data_ingest` — NOT exposed via agent tool listings
 
 pub mod global;
 pub mod ops;
@@ -22,5 +24,6 @@ pub mod types;
 
 pub use schemas::{
     all_controller_schemas as all_whatsapp_data_controller_schemas,
+    all_internal_controllers as all_whatsapp_data_internal_controllers,
     all_registered_controllers as all_whatsapp_data_registered_controllers,
 };

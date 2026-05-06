@@ -1,14 +1,15 @@
 //! Controller schemas and handler dispatch for the `whatsapp_data` namespace.
 //!
-//! Registered RPC methods:
-//!   - `openhuman.whatsapp_data_ingest`
+//! Agent-facing (read-only) RPC methods:
 //!   - `openhuman.whatsapp_data_list_chats`
 //!   - `openhuman.whatsapp_data_list_messages`
 //!   - `openhuman.whatsapp_data_search_messages`
 //!
-//! All tools are always registered. When no WhatsApp session is active the
-//! handlers return an actionable "not connected" error so the agent can
-//! surface a useful message to the user.
+//! Internal write path (NOT exposed to the agent controller registry):
+//!   - `openhuman.whatsapp_data_ingest` — called by the Tauri scanner only
+//!
+//! Keeping ingest off the agent-facing registry prevents an agent from
+//! mutating or poisoning the local WhatsApp store directly.
 
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -17,21 +18,22 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::rpc::RpcOutcome;
 
+/// Returns controller schemas advertised to the agent (read-only subset).
+/// The ingest schema is intentionally excluded — it is an internal write path
+/// called by the scanner, not something the agent should be able to invoke.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
-        schemas("ingest"),
         schemas("list_chats"),
         schemas("list_messages"),
         schemas("search_messages"),
     ]
 }
 
+/// Returns registered controllers for the agent-facing dispatcher (read-only).
+/// The ingest handler is registered separately via `all_internal_controllers()`
+/// and wired by the scanner — not through the agent controller registry.
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
-        RegisteredController {
-            schema: schemas("ingest"),
-            handler: handle_ingest,
-        },
         RegisteredController {
             schema: schemas("list_chats"),
             handler: handle_list_chats,
@@ -45,6 +47,21 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_search_messages,
         },
     ]
+}
+
+/// Returns the full controller set including the internal ingest handler.
+/// Used by the core RPC dispatcher so the scanner can call
+/// `openhuman.whatsapp_data_ingest` over JSON-RPC without exposing it to agents.
+pub fn all_internal_controllers() -> Vec<RegisteredController> {
+    let mut controllers = all_registered_controllers();
+    controllers.insert(
+        0,
+        RegisteredController {
+            schema: schemas("ingest"),
+            handler: handle_ingest,
+        },
+    );
+    controllers
 }
 
 pub fn schemas(function: &str) -> ControllerSchema {

@@ -34,8 +34,7 @@ fn require_store() -> Result<global::WhatsAppDataStoreRef, String> {
 /// Called by the Tauri whatsapp_scanner after each full CDP scan tick.
 pub async fn whatsapp_data_ingest(req: IngestRequest) -> Result<RpcOutcome<IngestResult>, String> {
     log::debug!(
-        "[whatsapp_data][rpc] ingest enter account={} chats={} messages={}",
-        req.account_id,
+        "[whatsapp_data][rpc] ingest enter chats={} messages={} (account redacted)",
         req.chats.len(),
         req.messages.len()
     );
@@ -61,8 +60,8 @@ pub async fn whatsapp_data_list_chats(
     req: ListChatsRequest,
 ) -> Result<RpcOutcome<Vec<WhatsAppChat>>, String> {
     log::debug!(
-        "[whatsapp_data][rpc] list_chats enter account={:?} limit={:?} offset={:?}",
-        req.account_id,
+        "[whatsapp_data][rpc] list_chats enter has_account={} limit={:?} offset={:?}",
+        req.account_id.is_some(),
         req.limit,
         req.offset
     );
@@ -83,9 +82,8 @@ pub async fn whatsapp_data_list_messages(
     req: ListMessagesRequest,
 ) -> Result<RpcOutcome<Vec<WhatsAppMessage>>, String> {
     log::debug!(
-        "[whatsapp_data][rpc] list_messages enter chat={} account={:?}",
-        req.chat_id,
-        req.account_id
+        "[whatsapp_data][rpc] list_messages enter has_account={} (chat redacted)",
+        req.account_id.is_some()
     );
     let store = require_store()?;
     let msgs = ops::list_messages(&store, req).map_err(|e| {
@@ -104,9 +102,9 @@ pub async fn whatsapp_data_search_messages(
     req: SearchMessagesRequest,
 ) -> Result<RpcOutcome<Vec<WhatsAppMessage>>, String> {
     log::debug!(
-        "[whatsapp_data][rpc] search_messages enter query={:?} account={:?}",
-        req.query,
-        req.account_id
+        "[whatsapp_data][rpc] search_messages enter has_account={} has_chat={} (query/identifiers redacted)",
+        req.account_id.is_some(),
+        req.chat_id.is_some()
     );
     let store = require_store()?;
     let results = ops::search_messages(&store, req).map_err(|e| {

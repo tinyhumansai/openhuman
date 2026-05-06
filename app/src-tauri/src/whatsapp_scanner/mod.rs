@@ -863,21 +863,26 @@ fn emit_grouped_whatsapp<R: Runtime>(
         let acct = account_id.to_string();
         let chats_value = Value::Object(chats.clone());
         // Build normalized message array for the structured ingest.
+        // Handles both full IDB-scan shape (chatId, timestamp, from/fromName,
+        // type) and fast DOM-only rows (author, preTimestamp, dataId).
         let msgs_for_ingest: Vec<Value> = messages
             .iter()
             .filter_map(|m| {
-                let chat_id = m.get("chatId").and_then(|v| v.as_str())?.to_string();
-                if chat_id.is_empty() {
-                    return None;
-                }
+                // Accept chatId from full-scan or chat/chat_id fallbacks on DOM rows.
+                let chat_id = m
+                    .get("chatId")
+                    .or_else(|| m.get("chat"))
+                    .or_else(|| m.get("chat_id"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())?
+                    .to_string();
                 let body = m
                     .get("body")
                     .and_then(|v| v.as_str())
                     .map(|s| s.trim())
                     .unwrap_or("");
-                if body.is_empty() {
-                    return None;
-                }
+                // Include non-text messages (stickers/images) so message_count
+                // and last_message_ts stay accurate. Empty body is allowed.
                 let msg_id = m
                     .get("id")
                     .cloned()
@@ -887,16 +892,32 @@ fn emit_grouped_whatsapp<R: Runtime>(
                 if msg_id.is_empty() {
                     return None;
                 }
+                // Resolve sender: full-scan uses fromName/from; DOM rows use author.
+                let sender = m
+                    .get("fromName")
+                    .cloned()
+                    .or_else(|| m.get("from").cloned())
+                    .or_else(|| m.get("author").cloned());
+                let sender_jid = m
+                    .get("from")
+                    .cloned()
+                    .or_else(|| m.get("author").cloned())
+                    .or_else(|| m.get("participant").cloned());
+                // Resolve timestamp: full-scan has numeric timestamp;
+                // DOM rows may carry a string preTimestamp that needs parsing.
+                let timestamp = m
+                    .get("timestamp")
+                    .and_then(|v| v.as_i64())
+                    .or_else(|| m.get("preTimestamp").and_then(|v| v.as_i64()))
+                    .unwrap_or(0);
                 Some(json!({
                     "message_id": msg_id,
                     "chat_id": chat_id,
-                    "sender": m.get("fromName").cloned()
-                        .or_else(|| m.get("from").cloned())
-                        .unwrap_or(Value::Null),
-                    "sender_jid": m.get("from").cloned().unwrap_or(Value::Null),
+                    "sender": sender.unwrap_or(Value::Null),
+                    "sender_jid": sender_jid.unwrap_or(Value::Null),
                     "from_me": m.get("fromMe").and_then(|v| v.as_bool()).unwrap_or(false),
                     "body": body,
-                    "timestamp": m.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0),
+                    "timestamp": timestamp,
                     "message_type": m.get("type").cloned().unwrap_or(Value::Null),
                     "source": source,
                 }))
@@ -1073,17 +1094,30 @@ async fn post_whatsapp_data_ingest(
         source
     );
 
-    // Convert chats map values from {name: ..., ...} to {name: string|null}.
+    // Convert chats map values to {name: string|null}.
+    // The scanner passes chats as either:
+    //   - Value::String(display_name) — contact-cache format
+    //   - Value::Object({name: ..., ...}) — full IDB scan format
     let chats_param: serde_json::Map<String, Value> = chats
         .as_object()
         .map(|o| {
             o.iter()
                 .map(|(jid, v)| {
-                    let name = v
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .map(|s| Value::String(s.to_string()))
-                        .unwrap_or(Value::Null);
+                    let name = if let Some(s) = v.as_str() {
+                        // String-valued entry from contact cache: value IS the name.
+                        if s.is_empty() {
+                            Value::Null
+                        } else {
+                            Value::String(s.to_string())
+                        }
+                    } else {
+                        // Object entry: look for a "name" field.
+                        v.get("name")
+                            .and_then(|n| n.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| Value::String(s.to_string()))
+                            .unwrap_or(Value::Null)
+                    };
                     (jid.clone(), json!({ "name": name }))
                 })
                 .collect()

@@ -22,8 +22,7 @@ const PRUNE_HORIZON_SECS: i64 = 90 * 24 * 60 * 60;
 /// Returns counts for observability / logging at the RPC layer.
 pub fn ingest(store: &WhatsAppDataStore, req: IngestRequest) -> Result<IngestResult> {
     log::debug!(
-        "[whatsapp_data] ingest start account={} chats={} messages={}",
-        req.account_id,
+        "[whatsapp_data] ingest start chats={} messages={} (account redacted)",
         req.chats.len(),
         req.messages.len()
     );
@@ -44,8 +43,7 @@ pub fn ingest(store: &WhatsAppDataStore, req: IngestRequest) -> Result<IngestRes
         messages_pruned,
     };
     log::debug!(
-        "[whatsapp_data] ingest done account={} chats_upserted={} messages_upserted={} pruned={}",
-        req.account_id,
+        "[whatsapp_data] ingest done chats_upserted={} messages_upserted={} pruned={} (account redacted)",
         result.chats_upserted,
         result.messages_upserted,
         result.messages_pruned
@@ -56,8 +54,8 @@ pub fn ingest(store: &WhatsAppDataStore, req: IngestRequest) -> Result<IngestRes
 /// Return chats from the local store, optionally filtered by account.
 pub fn list_chats(store: &WhatsAppDataStore, req: ListChatsRequest) -> Result<Vec<WhatsAppChat>> {
     log::debug!(
-        "[whatsapp_data] list_chats account={:?} limit={:?} offset={:?}",
-        req.account_id,
+        "[whatsapp_data] list_chats has_account={} limit={:?} offset={:?}",
+        req.account_id.is_some(),
         req.limit,
         req.offset
     );
@@ -70,9 +68,8 @@ pub fn list_messages(
     req: ListMessagesRequest,
 ) -> Result<Vec<WhatsAppMessage>> {
     log::debug!(
-        "[whatsapp_data] list_messages chat={} account={:?}",
-        req.chat_id,
-        req.account_id
+        "[whatsapp_data] list_messages has_account={} (chat/account redacted)",
+        req.account_id.is_some()
     );
     store.list_messages(&req)
 }
@@ -83,9 +80,9 @@ pub fn search_messages(
     req: SearchMessagesRequest,
 ) -> Result<Vec<WhatsAppMessage>> {
     log::debug!(
-        "[whatsapp_data] search_messages query={:?} account={:?}",
-        req.query,
-        req.account_id
+        "[whatsapp_data] search_messages has_account={} has_chat={} (query/identifiers redacted)",
+        req.account_id.is_some(),
+        req.chat_id.is_some()
     );
     store.search_messages(&req)
 }

@@ -3589,6 +3589,69 @@ async fn whatsapp_data_ingest_and_query_e2e() {
         "search result body should contain 'umbrella': {found_body}"
     );
 
+    // ── 5. account isolation — search scoped to first account only ────────────
+    // Ingest a second account with a message that also contains "umbrella" to
+    // verify that account_id filtering prevents cross-account leakage.
+    let second_ingest = post_json_rpc(
+        &rpc_base,
+        9005,
+        "openhuman.whatsapp_data_ingest",
+        json!({
+            "account_id": "other-acct@c.us",
+            "chats": {
+                "contact@c.us": { "name": "Other Contact" }
+            },
+            "messages": [
+                {
+                    "message_id": "other-msg-1",
+                    "chat_id": "contact@c.us",
+                    "sender": "Other Contact",
+                    "sender_jid": "contact@c.us",
+                    "from_me": false,
+                    "body": "Can you bring the umbrella?",
+                    "timestamp": now_ts - 1000,
+                    "message_type": "chat",
+                    "source": "cdp-dom"
+                }
+            ]
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&second_ingest, "whatsapp_data_ingest (second account)");
+
+    // search scoped to first account should still return exactly 1 message and
+    // that message's account_id must be from the first account.
+    let scoped_search = post_json_rpc(
+        &rpc_base,
+        9006,
+        "openhuman.whatsapp_data_search_messages",
+        json!({
+            "query": "umbrella",
+            "account_id": "e2e-acct@c.us"
+        }),
+    )
+    .await;
+    let scoped_result =
+        assert_no_jsonrpc_error(&scoped_search, "whatsapp_data_search_messages (scoped)");
+    let scoped_inner = scoped_result.get("result").unwrap_or(scoped_result);
+    let scoped_arr = scoped_inner
+        .as_array()
+        .or_else(|| scoped_inner.get("messages").and_then(Value::as_array))
+        .unwrap_or_else(|| panic!("expected messages array from scoped search: {scoped_result}"));
+    assert_eq!(
+        scoped_arr.len(),
+        1,
+        "account-scoped search should return exactly 1 umbrella message: {scoped_result}"
+    );
+    // Every result must belong to the queried account.
+    for msg in scoped_arr {
+        let msg_acct = msg.get("account_id").and_then(Value::as_str).unwrap_or("");
+        assert_eq!(
+            msg_acct, "e2e-acct@c.us",
+            "scoped search returned message from wrong account: {msg}"
+        );
+    }
+
     mock_join.abort();
     rpc_join.abort();
 }
