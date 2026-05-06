@@ -3655,3 +3655,106 @@ async fn whatsapp_data_ingest_and_query_e2e() {
     mock_join.abort();
     rpc_join.abort();
 }
+
+#[tokio::test]
+async fn whatsapp_memory_doc_ingest_e2e() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    // Disable strict embedding so ingest falls back to the Inert
+    // (zero-vector) embedder when no Ollama endpoint is reachable. CI
+    // has no local Ollama; without this the memory_doc_ingest call
+    // would fail at the chunk-embedding step.
+    let _embed_strict_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "false");
+    let _embed_endpoint_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", "");
+    let _embed_model_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", "");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── 1. Ingest a WhatsApp-shaped memory document ───────────────────────────
+    let ingest = post_json_rpc(
+        &rpc_base,
+        9101,
+        "openhuman.memory_doc_ingest",
+        json!({
+            "namespace": "whatsapp-web:test-acct@c.us",
+            "key": "alice@c.us:2026-05-07",
+            "title": "WhatsApp: Alice (2026-05-07)",
+            "content": "[10:00] Alice: Hey!\n[10:01] me: Hi there!\n[10:02] Alice: How are you?",
+            "source_type": "whatsapp-web",
+            "tags": ["whatsapp", "chat"],
+            "metadata": {
+                "chat_id": "alice@c.us",
+                "account_id": "test-acct@c.us"
+            }
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&ingest, "memory_doc_ingest");
+
+    // ── 2. List documents scoped to the WhatsApp namespace ───────────────────
+    let doc_list = post_json_rpc(
+        &rpc_base,
+        9102,
+        "openhuman.memory_doc_list",
+        json!({ "namespace": "whatsapp-web:test-acct@c.us" }),
+    )
+    .await;
+    let doc_list_result = assert_no_jsonrpc_error(&doc_list, "memory_doc_list");
+
+    // The result may be wrapped in a logs envelope {result: ..., logs: [...]}
+    // or returned bare depending on whether logs are present.
+    let doc_list_inner = doc_list_result.get("result").unwrap_or(doc_list_result);
+
+    // The doc_list response can be:
+    //   - an array directly
+    //   - { documents: [...], count: N }
+    //   - { result: [...] }
+    let docs_arr = doc_list_inner
+        .as_array()
+        .or_else(|| doc_list_inner.get("documents").and_then(Value::as_array))
+        .or_else(|| doc_list_inner.get("items").and_then(Value::as_array))
+        .unwrap_or_else(|| {
+            panic!("memory_doc_list: expected documents array in result: {doc_list_result}")
+        });
+
+    assert!(
+        !docs_arr.is_empty(),
+        "memory_doc_list should return at least 1 document after ingest: {doc_list_result}"
+    );
+
+    // ── 3. Verify the ingested document has the correct key and namespace ─────
+    let found = docs_arr.iter().find(|doc| {
+        let key_match = doc
+            .get("key")
+            .and_then(Value::as_str)
+            .map(|k| k == "alice@c.us:2026-05-07")
+            .unwrap_or(false);
+        let ns_match = doc
+            .get("namespace")
+            .and_then(Value::as_str)
+            .map(|n| n == "whatsapp-web:test-acct@c.us")
+            .unwrap_or(false);
+        key_match || ns_match
+    });
+    assert!(
+        found.is_some(),
+        "ingested document with key 'alice@c.us:2026-05-07' not found in doc_list; \
+         docs: {docs_arr:?}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
