@@ -171,9 +171,14 @@ async fn ingestion_worker(
                 true
             }
             Err(e) => {
-                log::error!(
-                    "[memory:ingestion_queue] extraction failed namespace={namespace} \
-                     doc_id={document_id} title={title}: {e}",
+                crate::core::observability::report_error(
+                    &e,
+                    "memory",
+                    "ingestion_extract",
+                    &[
+                        ("namespace", namespace.as_str()),
+                        ("doc_id", document_id.as_str()),
+                    ],
                 );
                 false
             }

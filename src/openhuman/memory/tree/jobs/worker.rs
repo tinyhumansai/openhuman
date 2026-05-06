@@ -65,7 +65,12 @@ pub fn start(config: Config) {
                             }
                         }
                         Err(err) => {
-                            log::error!("[memory_tree::jobs] worker={} loop error: {:#}", idx, err);
+                            crate::core::observability::report_error(
+                                &err,
+                                "memory",
+                                "tree_jobs_worker",
+                                &[("worker_idx", &idx.to_string())],
+                            );
                             tokio::time::sleep(Duration::from_secs(1)).await;
                         }
                     }
