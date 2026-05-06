@@ -1295,6 +1295,14 @@ pub struct OpenArgs {
     /// Optional URL override (debug tooling) — falls back to `provider_url`.
     pub url: Option<String>,
     pub bounds: Option<Bounds>,
+    /// Issue #1233 — when true, spawn the webview off-screen and route the
+    /// load through the prewarm-suppression path. The full handler/scanner/
+    /// notification setup is identical to a normal cold open; only the
+    /// initial position and the load-event emit are different. Defaults
+    /// to false so the field is forwards-compatible with frontends that
+    /// don't pass it.
+    #[serde(default)]
+    pub prewarm: bool,
 }
 
 /// Issue #1233 — args for the background `webview_account_prewarm` command.
@@ -1691,6 +1699,19 @@ pub async fn webview_account_open<R: Runtime>(
         if let Some(existing_label) = map.get(&args.account_id).cloned() {
             drop(map);
             if let Some(existing) = app.get_webview(&existing_label) {
+                // Issue #1233 — when this is a prewarm call landing on an
+                // already-prewarmed account, do nothing: the webview is
+                // already off-screen, the CDP session is already attached,
+                // and the prewarm flag should stay set so the eventual
+                // user-initiated open can promote it. Just return the label.
+                if args.prewarm {
+                    log::debug!(
+                        "[webview-accounts] prewarm idempotent skip: account={} already warm label={}",
+                        args.account_id,
+                        existing_label
+                    );
+                    return Ok(existing_label);
+                }
                 // Issue #1233 — a prewarmed webview is reaching its first
                 // user-initiated open. Clear the prewarm flag BEFORE we
                 // resize/reveal so any in-flight CDP load event still
@@ -2167,8 +2188,6 @@ pub async fn webview_account_open<R: Runtime>(
     // placeholder's loading spinner is not covered by the native CEF subview.
     // `webview_account_reveal` (invoked from the frontend after the load event
     // arrives, or by the 15 s watchdog) moves it back to `bounds` + shows it.
-    // We use positive coords well below the parent window rather than large
-    // negative values so multi-monitor layouts stay well-defined.
     //
     // Warm-open reuse (when a webview already exists for this account) earlier
     // in this function returns before we get here, so existing webviews keep
@@ -2186,23 +2205,48 @@ pub async fn webview_account_open<R: Runtime>(
     // that repaint edge case while still keeping the webview visually
     // hidden (1 px under the overlay) during load.
     //
-    // Warm-open reuse returned earlier in this function, so this only
-    // affects the first cold spawn.
-    let initial_size = if skip_cdp_for_debug {
-        LogicalSize::new(bounds.width, bounds.height)
+    // Issue #1233 — when `args.prewarm == true`, the frontend has not asked
+    // for a visible rect (the user hasn't clicked the rail icon yet). Spawn
+    // the webview at a fixed off-screen position with size 1×1 so it never
+    // paints anywhere on screen until the eventual user-initiated open
+    // promotes it via the warm-reopen branch above.
+    let (initial_position, initial_size) = if args.prewarm {
+        (
+            LogicalPosition::new(PREWARM_OFFSCREEN_X, PREWARM_OFFSCREEN_Y),
+            LogicalSize::new(1.0, 1.0),
+        )
+    } else if skip_cdp_for_debug {
+        (
+            LogicalPosition::new(bounds.x, bounds.y),
+            LogicalSize::new(bounds.width, bounds.height),
+        )
     } else {
-        LogicalSize::new(1.0, 1.0)
+        (
+            LogicalPosition::new(bounds.x, bounds.y),
+            LogicalSize::new(1.0, 1.0),
+        )
     };
-    let initial_position = LogicalPosition::new(bounds.x, bounds.y);
 
-    // Remember the bounds the frontend wanted so `webview_account_reveal` has a
-    // rect to restore to even if the frontend's bounds cache is empty (e.g.
-    // after a page reload races the load event).
-    state
-        .requested_bounds
-        .lock()
-        .unwrap()
-        .insert(args.account_id.clone(), bounds);
+    // Issue #1233 — only remember `requested_bounds` for non-prewarm opens.
+    // Prewarm doesn't have a visible rect to restore to; the user-initiated
+    // open later supplies the bounds via the warm-reopen branch.
+    if !args.prewarm {
+        state
+            .requested_bounds
+            .lock()
+            .unwrap()
+            .insert(args.account_id.clone(), bounds);
+    }
+    // Issue #1233 — mark the account as prewarmed BEFORE add_child so the
+    // load-event suppression in `emit_load_finished` is in place by the time
+    // the CDP session or native on_page_load fires.
+    if args.prewarm {
+        state
+            .prewarm_accounts
+            .lock()
+            .unwrap()
+            .insert(args.account_id.clone());
+    }
     // Defensive reset: if a prior close/purge was raced by a stale emit we
     // could still have the account marked as "already loaded". Clear here so
     // the fresh spawn is allowed to fire the first event again.
@@ -2397,14 +2441,21 @@ pub async fn webview_account_open<R: Runtime>(
 /// Off-screen position used for the prewarmed webview. Same magnitude as
 /// the [`super::lib::CEF_PREWARM_LABEL`] warmup placeholder so the native
 /// view is well outside any plausible monitor layout. Issue #1233.
-const PREWARM_OFFSCREEN_X: f64 = -20_000.0;
-const PREWARM_OFFSCREEN_Y: f64 = -20_000.0;
+pub(crate) const PREWARM_OFFSCREEN_X: f64 = -20_000.0;
+pub(crate) const PREWARM_OFFSCREEN_Y: f64 = -20_000.0;
 
 /// Issue #1233 — spawn a hidden 1×1 webview for `account_id` so its CEF
 /// profile and provider page are warm before the user clicks the rail icon.
 /// On the user's first click, the existing `webview_account_open` warm-reopen
 /// branch reuses the prewarmed webview and emits `state:"reused"` so the React
 /// loading overlay never has to wait for a cold load.
+///
+/// Implemented as a thin delegate to `webview_account_open` with
+/// `prewarm: true`. Sharing the cold-open code path means the prewarmed
+/// webview gets the full handler suite (`on_navigation`, `on_new_window`,
+/// `on_page_load`), the per-provider scanner bootstrap, and the CEF
+/// notification registration — none of which can be retroactively wired
+/// when the warm-reopen branch later returns early.
 ///
 /// Idempotent — calling for an already-warm account is a no-op. Best-effort —
 /// the frontend can safely fire-and-forget; on failure the worst case is a
@@ -2420,130 +2471,16 @@ pub async fn webview_account_prewarm<R: Runtime>(
         args.account_id,
         args.provider
     );
-
-    if !provider_is_supported(&args.provider) {
-        return Err(format!("unknown provider: {}", args.provider));
-    }
-
-    // Idempotent — skip if already opened or prewarmed.
-    if state.inner.lock().unwrap().contains_key(&args.account_id) {
-        log::debug!(
-            "[webview-accounts] prewarm skip: account={} already has webview",
-            args.account_id
-        );
-        return Ok(());
-    }
-
-    let real_url_str = args
-        .url
-        .as_deref()
-        .or_else(|| provider_url(&args.provider))
-        .ok_or_else(|| format!("no url for provider: {}", args.provider))?
-        .to_string();
-    let _real_url: Url = real_url_str
-        .parse()
-        .map_err(|e| format!("invalid provider url {real_url_str}: {e}"))?;
-
-    let initial_url_str = cdp::placeholder_url(&args.account_id);
-    let initial_url: Url = initial_url_str
-        .parse()
-        .map_err(|e| format!("invalid initial url {initial_url_str}: {e}"))?;
-
-    let parent_window = app
-        .get_window("main")
-        .ok_or_else(|| "main window not found".to_string())?;
-
-    let data_dir = data_directory_for(&app, &args.account_id)?;
-    if let Err(err) = std::fs::create_dir_all(&data_dir) {
-        log::warn!(
-            "[webview-accounts] prewarm: failed to create data dir {}: {}",
-            data_dir.display(),
-            err
-        );
-    }
-
-    let label = label_for(&args.account_id);
-    let init_script = build_init_script(&args.account_id, &args.provider);
-
-    let mut builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(initial_url))
-        .data_directory(data_dir);
-    if !init_script.is_empty() {
-        builder = builder.initialization_script(&init_script);
-    }
-    if cfg!(debug_assertions) {
-        builder = builder.devtools(true);
-    }
-    // No on_navigation / on_new_window / on_page_load handlers wired here.
-    // The CDP session below drives Page.navigate to the real URL; load
-    // events flow through `emit_load_finished` which short-circuits while
-    // the account is in the prewarm set.
-
-    // Mark prewarmed BEFORE add_child so the load-event suppression in
-    // `emit_load_finished` is in place by the time the CDP session fires.
-    state
-        .prewarm_accounts
-        .lock()
-        .unwrap()
-        .insert(args.account_id.clone());
-    state
-        .loaded_accounts
-        .lock()
-        .unwrap()
-        .remove(&args.account_id);
-
-    let initial_position = LogicalPosition::new(PREWARM_OFFSCREEN_X, PREWARM_OFFSCREEN_Y);
-    let initial_size = LogicalSize::new(1.0, 1.0);
-
-    let webview = match parent_window.add_child(builder, initial_position, initial_size) {
-        Ok(wv) => wv,
-        Err(e) => {
-            // Clean up the prewarm flag so a subsequent retry can
-            // re-attempt without being shadowed by stale state.
-            state
-                .prewarm_accounts
-                .lock()
-                .unwrap()
-                .remove(&args.account_id);
-            return Err(format!("prewarm add_child failed: {e}"));
-        }
+    let open_args = OpenArgs {
+        account_id: args.account_id,
+        provider: args.provider,
+        url: args.url,
+        bounds: None,
+        prewarm: true,
     };
-
-    log::info!(
-        "[webview-accounts] prewarm spawned label={} offscreen=({},{})",
-        webview.label(),
-        PREWARM_OFFSCREEN_X,
-        PREWARM_OFFSCREEN_Y
-    );
-
-    state
-        .inner
-        .lock()
-        .unwrap()
-        .insert(args.account_id.clone(), label.clone());
-
-    // CDP session navigates the placeholder to the real provider URL.
-    // Load events emit through `emit_load_finished` which suppresses while
-    // `prewarm_accounts` contains the id.
-    let cdp::SpawnedSession { session, watchdog } =
-        cdp::spawn_session(app.clone(), args.account_id.clone(), real_url_str.clone());
-    if let Some(old) = state
-        .cdp_sessions
-        .lock()
-        .unwrap()
-        .insert(args.account_id.clone(), session)
-    {
-        old.abort();
-    }
-    if let Some(old) = state
-        .load_watchdogs
-        .lock()
-        .unwrap()
-        .insert(args.account_id.clone(), watchdog)
-    {
-        old.abort();
-    }
-
-    Ok(())
+    webview_account_open(app, state, open_args)
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]

@@ -1426,6 +1426,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1469,6 +1470,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1512,6 +1514,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1570,6 +1573,7 @@ pub fn run() {
                                 width: w,
                                 height: h,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
