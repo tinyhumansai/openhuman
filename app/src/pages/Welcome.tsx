@@ -3,7 +3,7 @@ import { useState } from 'react';
 import OAuthProviderButton from '../components/oauth/OAuthProviderButton';
 import { oauthProviderConfigs } from '../components/oauth/providerConfigs';
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
-import { clearCoreRpcUrlCache, getCoreRpcToken } from '../services/coreRpcClient';
+import { clearCoreRpcUrlCache, testCoreRpcConnection } from '../services/coreRpcClient';
 import { useDeepLinkAuthState } from '../store/deepLinkAuthState';
 import {
   clearStoredRpcUrl,
@@ -65,20 +65,7 @@ const Welcome = () => {
     setRpcUrlError(null);
 
     try {
-      // Include the per-process bearer token so the embedded core's auth
-      // middleware accepts the ping. Without this header the request is
-      // rejected with 401 even when the URL is correct, surfacing as a
-      // misleading "Connection failed" to the user.
-      const token = await getCoreRpcToken();
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-      const response = await fetch(normalized, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'openhuman.ping', params: {} }),
-      });
+      const response = await testCoreRpcConnection(normalized);
 
       if (response.ok || response.status === 405) {
         setSaveSuccess(true);
