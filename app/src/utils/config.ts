@@ -86,8 +86,10 @@ export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
  *
  * **Not runtime-authoritative in Tauri.** In the desktop app, `getBackendUrl()`
  * (in `services/backendUrl.ts`) asks the core sidecar for the live API URL via
- * `openhuman.config_resolve_api_url`; this constant is only consulted in web
- * mode (no sidecar) or as an emergency fallback when the RPC call fails.
+ * `openhuman.config_resolve_api_url`. If that call fails or returns an empty
+ * URL, `getBackendUrl()` **throws** — it does not fall back to this constant.
+ * This constant is only used in web/non-Tauri mode (where the sidecar is not
+ * present).
  *
  * Override at build time via `VITE_BACKEND_URL`.
  */

@@ -395,7 +395,7 @@ describe('Welcome — Test Connection button', () => {
     );
   });
 
-  it('successful probe stores the URL and clears the RPC URL cache', async () => {
+  it('successful probe stores the URL and clears both the RPC and backend URL caches', async () => {
     vi.mocked(testCoreRpcConnection).mockResolvedValueOnce({ ok: true, status: 200 } as Response);
 
     render(<Welcome />);
@@ -405,6 +405,7 @@ describe('Welcome — Test Connection button', () => {
     await waitFor(() => {
       expect(storeRpcUrl).toHaveBeenCalledWith('http://127.0.0.1:7788/rpc');
       expect(clearCoreRpcUrlCache).toHaveBeenCalledTimes(1);
+      expect(clearBackendUrlCache).toHaveBeenCalledTimes(1);
     });
   });
 });

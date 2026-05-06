@@ -254,14 +254,14 @@ describe('configPersistence', () => {
 
   describe('getStoredRpcUrl — localStorage unavailable', () => {
     it('returns the default URL when localStorage throws', () => {
-      const original = localStorage.getItem.bind(localStorage);
-      vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
+      const getItemSpy = vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
         throw new Error('Storage unavailable');
       });
-
-      expect(getStoredRpcUrl()).toBe('http://127.0.0.1:7788/rpc');
-
-      vi.spyOn(localStorage, 'getItem').mockImplementation(original);
+      try {
+        expect(getStoredRpcUrl()).toBe('http://127.0.0.1:7788/rpc');
+      } finally {
+        getItemSpy.mockRestore();
+      }
     });
   });
 });

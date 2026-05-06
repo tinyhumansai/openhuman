@@ -74,6 +74,7 @@ const Welcome = () => {
         setSaveSuccess(true);
         storeRpcUrl(normalized);
         clearCoreRpcUrlCache();
+        clearBackendUrlCache();
       } else {
         setRpcUrlError(`Connection failed: ${response.status} ${response.statusText}`);
       }

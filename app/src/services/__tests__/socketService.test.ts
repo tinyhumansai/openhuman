@@ -42,8 +42,29 @@ vi.mock('../../lib/coreState/store', () => ({
   getCoreStateSnapshot: vi.fn(() => ({ snapshot: { sessionToken: null } })),
 }));
 
-// Mock MCP — must be a newable constructor
-vi.mock('../../lib/mcp', () => ({ SocketIOMCPTransportImpl: vi.fn(() => ({})) }));
+// Mock MCP as a class so `new SocketIOMCPTransportImpl(...)` works at runtime.
+// Arrow functions cannot be used as constructors, so we wrap in a class here.
+class MockMCPTransport {}
+vi.mock('../../lib/mcp', () => ({ SocketIOMCPTransportImpl: MockMCPTransport }));
+
+/**
+ * Poll `check` up to `maxMs` ms (default 500) in 10 ms increments.
+ * Resolves when `check()` returns without throwing; rejects on timeout.
+ * Used instead of `setTimeout(0)` sleeps to deterministically wait for
+ * the observable side-effect of an async operation.
+ */
+async function pollUntil(check: () => void, maxMs = 500): Promise<void> {
+  const deadline = Date.now() + maxMs;
+  while (true) {
+    try {
+      check();
+      return;
+    } catch {
+      if (Date.now() >= deadline) throw new Error(`pollUntil timed out after ${maxMs}ms`);
+      await new Promise(r => setTimeout(r, 10));
+    }
+  }
+}
 
 // Hoist getCoreRpcUrl mock so it is available before the module is loaded
 const hoisted = vi.hoisted(() => ({ getCoreRpcUrlMock: vi.fn<() => Promise<string>>() }));
@@ -65,10 +86,8 @@ describe('socketService — resolveCoreSocketBaseUrl uses getCoreRpcUrl', () => 
     const { socketService } = await import('../socketService');
     socketService.connect('mock-jwt-token');
 
-    // Give the async connectAsync a tick to run
-    await new Promise(resolve => setTimeout(resolve, 0));
-
-    expect(hoisted.getCoreRpcUrlMock).toHaveBeenCalled();
+    // Wait until getCoreRpcUrl has actually been invoked (deterministic, no sleep)
+    await pollUntil(() => expect(hoisted.getCoreRpcUrlMock).toHaveBeenCalled());
   });
 
   it('strips /rpc suffix from the resolved RPC URL to derive the socket base', async () => {
@@ -81,7 +100,7 @@ describe('socketService — resolveCoreSocketBaseUrl uses getCoreRpcUrl', () => 
     const { socketService } = await import('../socketService');
     socketService.connect('mock-jwt-token-2');
 
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await pollUntil(() => expect(hoisted.getCoreRpcUrlMock).toHaveBeenCalled());
 
     if (ioMock.mock.calls.length > 0) {
       const connectedUrl = ioMock.mock.calls[ioMock.mock.calls.length - 1][0];
@@ -105,10 +124,8 @@ describe('socketService — resolveCoreSocketBaseUrl uses getCoreRpcUrl', () => 
     socketService.disconnect();
     socketService.connect('mock-jwt-token-3');
 
-    await new Promise(resolve => setTimeout(resolve, 0));
-
-    // getCoreRpcUrl must have been consulted
-    expect(hoisted.getCoreRpcUrlMock).toHaveBeenCalled();
+    // getCoreRpcUrl must have been consulted (wait deterministically)
+    await pollUntil(() => expect(hoisted.getCoreRpcUrlMock).toHaveBeenCalled());
 
     if (ioMock.mock.calls.length > 0) {
       const connectedUrl = ioMock.mock.calls[ioMock.mock.calls.length - 1][0];
@@ -128,9 +145,7 @@ describe('socketService — resolveCoreSocketBaseUrl uses getCoreRpcUrl', () => 
     socketService.disconnect();
     socketService.connect('mock-jwt-token-custom');
 
-    await new Promise(resolve => setTimeout(resolve, 0));
-
-    expect(hoisted.getCoreRpcUrlMock).toHaveBeenCalled();
+    await pollUntil(() => expect(hoisted.getCoreRpcUrlMock).toHaveBeenCalled());
 
     if (ioMock.mock.calls.length > 0) {
       const connectedUrl = ioMock.mock.calls[ioMock.mock.calls.length - 1][0];

@@ -5,6 +5,13 @@ import { callCoreRpc } from './coreRpcClient';
 
 let resolvedBackendUrl: string | null = null;
 let resolvingBackendUrl: Promise<string> | null = null;
+/**
+ * Monotonically-increasing generation counter. Incremented on every
+ * `clearBackendUrlCache()` call so that any in-flight `getBackendUrl()`
+ * resolution started before the clear does not repopulate the cache with a
+ * stale value after the user changes their RPC endpoint.
+ */
+let backendUrlGeneration = 0;
 
 /**
  * Invalidate the cached backend URL so the next call to getBackendUrl()
@@ -13,6 +20,7 @@ let resolvingBackendUrl: Promise<string> | null = null;
  * URL is recomputed from the updated core endpoint.
  */
 export function clearBackendUrlCache(): void {
+  backendUrlGeneration += 1;
   resolvedBackendUrl = null;
   resolvingBackendUrl = null;
 }
@@ -46,6 +54,7 @@ export async function getBackendUrl(): Promise<string> {
     return resolvingBackendUrl;
   }
 
+  const generation = backendUrlGeneration;
   resolvingBackendUrl = (async () => {
     const response = await callCoreRpc<{ api_url?: string; apiUrl?: string }>({
       method: 'openhuman.config_resolve_api_url',
@@ -54,10 +63,15 @@ export async function getBackendUrl(): Promise<string> {
     if (!resolved) {
       throw new Error('Core returned an empty backend URL');
     }
-    resolvedBackendUrl = normalizeBaseUrl(resolved);
-    return resolvedBackendUrl;
+    const normalized = normalizeBaseUrl(resolved);
+    if (generation === backendUrlGeneration) {
+      resolvedBackendUrl = normalized;
+    }
+    return normalized;
   })().finally(() => {
-    resolvingBackendUrl = null;
+    if (generation === backendUrlGeneration) {
+      resolvingBackendUrl = null;
+    }
   });
 
   return resolvingBackendUrl;

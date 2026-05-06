@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { BACKEND_URL } from '../../utils/config';
+
 // Global test setup mocks `services/backendUrl` so consumers get a fixed URL
 // without RPC. To exercise the real implementation in this file, opt out.
 vi.unmock('../backendUrl');
@@ -111,12 +113,11 @@ describe('getBackendUrl', () => {
 
     // Should not have attempted an RPC call in non-Tauri mode
     expect(hoisted.callCoreRpcMock).not.toHaveBeenCalled();
-    // Should return a non-empty string
-    expect(typeof url).toBe('string');
-    expect(url.length).toBeGreaterThan(0);
+    // Should return the configured fallback constant
+    expect(url).toBe(BACKEND_URL);
   });
 
-  test('graceful fallback to VITE_BACKEND_URL when core RPC throws', async () => {
+  test('propagates RPC errors in Tauri mode (no silent fallback)', async () => {
     hoisted.isTauriMock.mockReturnValue(true);
     hoisted.callCoreRpcMock.mockRejectedValue(new Error('RPC unavailable'));
 
