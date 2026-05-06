@@ -179,9 +179,16 @@ async fn run_session_forever<R: Runtime>(app: AppHandle<R>, account_id: String, 
     // `sleep(500ms)` warmup. Try at t=0 (often succeeds when the target was
     // already up via CEF prewarm), then escalate quickly. Each schedule slot
     // sleeps THEN tries, so a target up at t≈0ms attaches without waiting
-    // for the old 500ms grace. If all four tight attempts fail we fall
-    // through to the existing 2s backoff loop below, preserving the
-    // long-haul reconnect behaviour for flaky / slow CEF spinups.
+    // for the old 500ms grace.
+    //
+    // The steady-state reconnect loop below sleeps `ATTACH_BACKOFF` BEFORE
+    // each attempt. That ordering matters: it means an exhausted initial
+    // schedule (all four attach attempts failed) gets a proper 2s backoff
+    // before the fifth attempt, instead of the original "drop straight in
+    // and try immediately" bug that effectively fired five back-to-back
+    // attaches in <1s and then waited 2s. After a successful session that
+    // ends cleanly we also wait the backoff before reconnecting so we
+    // don't tight-loop against a target that just torched its renderer.
     for (idx, delay) in INITIAL_ATTACH_SCHEDULE.iter().enumerate() {
         sleep(*delay).await;
         match run_session_cycle(&app, &account_id, &real_url).await {
@@ -205,6 +212,7 @@ async fn run_session_forever<R: Runtime>(app: AppHandle<R>, account_id: String, 
         }
     }
     loop {
+        sleep(ATTACH_BACKOFF).await;
         match run_session_cycle(&app, &account_id, &real_url).await {
             Ok(()) => {
                 log::info!(
@@ -216,7 +224,6 @@ async fn run_session_forever<R: Runtime>(app: AppHandle<R>, account_id: String, 
                 log::debug!("[cdp-session][{}] cycle failed: {}", account_id, e);
             }
         }
-        sleep(ATTACH_BACKOFF).await;
     }
 }
 
