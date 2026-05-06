@@ -3768,3 +3768,84 @@ async fn whatsapp_memory_doc_ingest_e2e() {
     mock_join.abort();
     rpc_join.abort();
 }
+
+/// Regression guard for issue #1289: `openhuman.voice_cloud_transcribe`
+/// must stay registered in the controller registry and reachable via
+/// JSON-RPC dispatch.
+///
+/// The user-visible symptom was "Voice transcription failed: unknown
+/// method: openhuman.voice_cloud_transcribe" — the frontend (mascot
+/// mic-only composer) was calling a method that wasn't reachable.
+/// This test pins both ends:
+///
+/// 1. `/schema` exposes `openhuman.voice_cloud_transcribe` so the
+///    discovery surface stays in sync with the live registry.
+/// 2. Calling the method over RPC does NOT hit the dispatcher's
+///    unknown-method branch (`Err("unknown method: …")`). The call may
+///    still fail downstream (missing audio, unauthenticated, missing
+///    upstream STT key) — but it must reach the registered handler,
+///    which proves the method is wired all the way through.
+#[tokio::test]
+async fn voice_cloud_transcribe_registered_e2e() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── 1. /schema must list openhuman.voice_cloud_transcribe ───────────────
+    let schema = reqwest::get(format!("{rpc_base}/schema"))
+        .await
+        .expect("GET /schema")
+        .json::<Value>()
+        .await
+        .expect("schema json");
+    let methods = schema["methods"]
+        .as_array()
+        .unwrap_or_else(|| panic!("/schema must expose methods array: {schema}"));
+    let names: Vec<&str> = methods
+        .iter()
+        .filter_map(|m| m.get("method").and_then(Value::as_str))
+        .collect();
+    assert!(
+        names.contains(&"openhuman.voice_cloud_transcribe"),
+        "voice_cloud_transcribe must appear in /schema dump (got {} methods)",
+        names.len()
+    );
+
+    // ── 2. RPC dispatch must NOT return "unknown method" ───────────────────
+    // Send a minimal payload — it'll fail downstream (no upstream STT
+    // configured in the mock), but the dispatcher should reach the
+    // handler, not the unknown-method branch.
+    let resp = post_json_rpc(
+        &rpc_base,
+        9101,
+        "openhuman.voice_cloud_transcribe",
+        json!({ "audio_base64": "" }),
+    )
+    .await;
+    let err_msg = resp
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        !err_msg.contains("unknown method"),
+        "voice_cloud_transcribe must be a known method (got: {err_msg:?}); full response: {resp}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
