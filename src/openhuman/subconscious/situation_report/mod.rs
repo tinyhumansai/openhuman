@@ -30,7 +30,7 @@ use super::reflection::Reflection;
 mod digest;
 mod hotness;
 mod query_window;
-mod reflections;
+pub(crate) mod reflections;
 mod summaries;
 
 /// Rough chars-per-token estimate for budget enforcement.

@@ -71,10 +71,19 @@ pub struct TaskEvaluation {
     pub reason: String,
 }
 
-/// Full evaluation response from the local model.
+/// Full evaluation response from the per-tick LLM.
+///
+/// `evaluations` covers the task-bound layer (act/escalate/noop per
+/// existing task). `reflections` (#623) covers the proactive layer —
+/// LLM-emitted observations grounded in memory-tree signals. The two
+/// are independent: a tick may produce only one, the other, or both.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluationResponse {
     pub evaluations: Vec<TaskEvaluation>,
+    /// Proactive-layer reflections (#623). Defaults to empty so older
+    /// LLM payloads remain forward-compatible.
+    #[serde(default)]
+    pub reflections: Vec<super::reflection::ReflectionDraft>,
 }
 
 // ── Execution types ──────────────────────────────────────────────────────────

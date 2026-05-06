@@ -8,13 +8,19 @@
 //! while the old one is in-flight, the old tick's in_progress entries are
 //! marked as cancelled and its results are discarded.
 
+use super::conversation_post;
 use super::executor;
 use super::prompt;
+use super::reflection::{apply_cap, hydrate_draft, Disposition, Reflection, ReflectionDraft};
+use super::reflection_store;
 use super::situation_report::build_situation_report;
 use super::store;
 use super::types::{
     EscalationPriority, EvaluationResponse, SubconsciousStatus, SubconsciousTask, TaskEvaluation,
     TaskRecurrence, TaskSource, TickDecision, TickResult,
+};
+use crate::openhuman::memory::tree::chat::{
+    build_chat_provider, ChatConsumer, ChatPrompt, ChatProvider,
 };
 use crate::openhuman::memory::MemoryClientRef;
 use anyhow::Result;
@@ -22,6 +28,7 @@ use executor::ExecutionOutcome;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
@@ -226,8 +233,10 @@ impl SubconsciousEngine {
         // Release lock during LLM calls
         drop(state);
 
-        // 5. Evaluate tasks with local model
-        let evaluations = self.evaluate_tasks(&due_tasks, &report, &identity).await;
+        // 5. Evaluate tasks + emit reflections via cloud chat (#623).
+        let (evaluations, reflection_drafts) = self
+            .evaluate_tasks_and_reflections(&due_tasks, &report, &identity)
+            .await;
 
         // Check if we were superseded by a newer tick
         if self.tick_generation.load(Ordering::SeqCst) != my_generation {
@@ -255,6 +264,14 @@ impl SubconsciousEngine {
         let evaluation_failed = evaluations.iter().all(|e| {
             e.decision == TickDecision::Noop && e.reason.starts_with("Evaluation failed:")
         }) && !evaluations.is_empty();
+
+        // 6a. Persist reflections + post Notify ones (#623). Skipped on
+        //     evaluation failure since the LLM didn't produce useful
+        //     output anyway. We do NOT advance `last_tick_at` on
+        //     failure, so the next tick sees the same window.
+        if !evaluation_failed && !reflection_drafts.is_empty() {
+            persist_and_surface_reflections(&self.workspace_dir, reflection_drafts, tick_at).await;
+        }
 
         // 7. Execute based on decisions, updating log entries in place
         let mut executed = 0;
@@ -455,77 +472,97 @@ impl SubconsciousEngine {
         }
     }
 
-    async fn evaluate_tasks(
+    /// Run the per-tick LLM call. Routes to cloud `summarization-v1` via
+    /// the memory_tree chat provider (#623). On failure returns
+    /// `(empty_evaluations, empty_drafts)` so `last_tick_at` is NOT
+    /// advanced — the next tick re-fetches from the same point.
+    async fn evaluate_tasks_and_reflections(
         &self,
         tasks: &[SubconsciousTask],
         report: &str,
         identity: &str,
-    ) -> Vec<TaskEvaluation> {
+    ) -> (Vec<TaskEvaluation>, Vec<ReflectionDraft>) {
         let prompt_text = prompt::build_evaluation_prompt(tasks, report, identity);
 
         let config = match crate::openhuman::config::Config::load_or_init().await {
             Ok(c) => c,
             Err(e) => {
                 warn!("[subconscious] config load failed: {e}");
-                return tasks
-                    .iter()
-                    .map(|t| TaskEvaluation {
-                        task_id: t.id.clone(),
-                        decision: TickDecision::Noop,
-                        reason: format!("Config load failed: {e}"),
-                    })
-                    .collect();
+                return (
+                    tasks
+                        .iter()
+                        .map(|t| TaskEvaluation {
+                            task_id: t.id.clone(),
+                            decision: TickDecision::Noop,
+                            reason: format!("Evaluation failed: config load: {e}"),
+                        })
+                        .collect(),
+                    vec![],
+                );
             }
         };
 
-        // Gate: subconscious evaluation via local AI requires the per-feature flag.
-        // When off, all tasks resolve to Noop rather than erroring.
-        // TODO: wire a cloud fallback here when use_local_for_subconscious is false.
-        if !config.local_ai.use_local_for_subconscious() {
-            tracing::info!(
-                "[subconscious] local_ai.usage.subconscious not enabled — \
-                 skipping local evaluation, all tasks → Noop (no cloud fallback configured)"
-            );
-            // Use the `Evaluation failed:` prefix so the tick-level
-            // `evaluation_failed` detector treats this exactly like an LLM
-            // failure: don't advance `last_tick_at`, don't mark anything as
-            // executed. Silent success-shaped Noop here would otherwise let
-            // the tick clock advance past unevaluated tasks.
-            return tasks
-                .iter()
-                .map(|t| TaskEvaluation {
-                    task_id: t.id.clone(),
-                    decision: TickDecision::Noop,
-                    reason: "Evaluation failed: local_ai.usage.subconscious not enabled \
-                             (no cloud fallback configured)"
-                        .to_string(),
-                })
-                .collect();
-        }
+        // Build the cloud chat provider. The subconscious tick uses
+        // `ChatConsumer::Summarise` because the per-tick payload is
+        // closer in shape to a structured-summary call than a per-chunk
+        // entity extraction. No local fallback (per #623): if cloud is
+        // unreachable, return empty results so the tick is treated as a
+        // skip rather than a malformed advance.
+        let provider: Arc<dyn ChatProvider> =
+            match build_chat_provider(&config, ChatConsumer::Summarise) {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("[subconscious] cloud chat provider init failed: {e}");
+                    return (
+                        tasks
+                            .iter()
+                            .map(|t| TaskEvaluation {
+                                task_id: t.id.clone(),
+                                decision: TickDecision::Noop,
+                                reason: format!("Evaluation failed: provider init: {e}"),
+                            })
+                            .collect(),
+                        vec![],
+                    );
+                }
+            };
 
-        let messages = vec![
-            crate::openhuman::local_ai::ops::LocalAiChatMessage {
-                role: "system".to_string(),
-                content: prompt_text,
-            },
-            crate::openhuman::local_ai::ops::LocalAiChatMessage {
-                role: "user".to_string(),
-                content: "Evaluate the due tasks. Reply with JSON only.".to_string(),
-            },
-        ];
+        let chat_prompt = ChatPrompt {
+            system: prompt_text,
+            user: "Evaluate the due tasks and surface reflections. Reply with JSON only."
+                .to_string(),
+            temperature: 0.0,
+            kind: "subconscious_tick",
+        };
 
-        match crate::openhuman::local_ai::ops::local_ai_chat(&config, messages, None).await {
-            Ok(outcome) => parse_evaluations(&outcome.value, tasks),
+        debug!(
+            "[subconscious] cloud chat call provider={} tasks={}",
+            provider.name(),
+            tasks.len()
+        );
+        match provider.chat_for_json(&chat_prompt).await {
+            Ok(raw) => {
+                let (evals, drafts) = parse_response(&raw, tasks);
+                debug!(
+                    "[subconscious] cloud chat parsed evals={} drafts={}",
+                    evals.len(),
+                    drafts.len()
+                );
+                (evals, drafts)
+            }
             Err(e) => {
-                warn!("[subconscious] evaluation failed: {e}");
-                tasks
-                    .iter()
-                    .map(|t| TaskEvaluation {
-                        task_id: t.id.clone(),
-                        decision: TickDecision::Noop,
-                        reason: format!("Evaluation failed: {e}"),
-                    })
-                    .collect()
+                warn!("[subconscious] cloud chat failed (no local fallback): {e}");
+                (
+                    tasks
+                        .iter()
+                        .map(|t| TaskEvaluation {
+                            task_id: t.id.clone(),
+                            decision: TickDecision::Noop,
+                            reason: format!("Evaluation failed: cloud chat: {e}"),
+                        })
+                        .collect(),
+                    vec![],
+                )
             }
         }
     }
@@ -711,33 +748,138 @@ impl SubconsciousEngine {
     }
 }
 
-/// Parse the local model's evaluation response into per-task decisions.
-fn parse_evaluations(text: &str, tasks: &[SubconsciousTask]) -> Vec<TaskEvaluation> {
+/// Parse the per-tick LLM response into evaluations + reflection drafts.
+///
+/// Best-effort: if the JSON has only `evaluations`, `reflections` is
+/// empty; if it's a bare evaluations array, `reflections` is empty. If
+/// nothing parses, all tasks default to Noop (with a parse-failure
+/// reason) and `reflections` is empty.
+fn parse_response(
+    text: &str,
+    tasks: &[SubconsciousTask],
+) -> (Vec<TaskEvaluation>, Vec<ReflectionDraft>) {
     let json_text = extract_json(text);
 
-    // Try parsing as EvaluationResponse
+    // 1. Full envelope (preferred).
     if let Ok(response) = serde_json::from_str::<EvaluationResponse>(json_text) {
-        if !response.evaluations.is_empty() {
-            return response.evaluations;
-        }
+        let evals = if response.evaluations.is_empty() {
+            // The LLM returned only reflections — fall through to the
+            // default-noop branch for tasks but keep reflections.
+            tasks
+                .iter()
+                .map(|t| TaskEvaluation {
+                    task_id: t.id.clone(),
+                    decision: TickDecision::Noop,
+                    reason: "No evaluation returned by model".to_string(),
+                })
+                .collect()
+        } else {
+            response.evaluations
+        };
+        return (evals, response.reflections);
     }
 
-    // Try parsing as a bare array of evaluations
+    // 2. Bare evaluations array (legacy shape pre-#623).
     if let Ok(evals) = serde_json::from_str::<Vec<TaskEvaluation>>(json_text) {
         if !evals.is_empty() {
-            return evals;
+            return (evals, vec![]);
         }
     }
 
-    warn!("[subconscious] could not parse evaluation response, defaulting all to noop");
-    tasks
+    warn!("[subconscious] could not parse LLM response, defaulting all tasks to noop");
+    let evals = tasks
         .iter()
         .map(|t| TaskEvaluation {
             task_id: t.id.clone(),
             decision: TickDecision::Noop,
             reason: "Unparseable evaluation response".to_string(),
         })
-        .collect()
+        .collect();
+    (evals, vec![])
+}
+
+/// Persist a batch of LLM-emitted reflection drafts and post any
+/// `Notify`-disposition entries into the `system:subconscious` thread.
+///
+/// Caps to `MAX_REFLECTIONS_PER_TICK`. Failures on individual writes
+/// are logged but do not abort the rest — the tick must finish even if
+/// one row trips an I/O error.
+async fn persist_and_surface_reflections(
+    workspace_dir: &PathBuf,
+    drafts: Vec<ReflectionDraft>,
+    now: f64,
+) -> Vec<Reflection> {
+    let (drafts, dropped) = apply_cap(drafts);
+    if dropped > 0 {
+        debug!(
+            "[subconscious] reflections cap dropped {} excess (kept {})",
+            dropped,
+            drafts.len()
+        );
+    }
+    if drafts.is_empty() {
+        return vec![];
+    }
+
+    // Hydrate drafts into full reflections with fresh ids.
+    let reflections: Vec<Reflection> = drafts
+        .into_iter()
+        .map(|d| hydrate_draft(d, uuid::Uuid::new_v4().to_string(), now))
+        .collect();
+
+    // Persist all reflections in one connection. Idempotent inserts —
+    // duplicate ids cannot occur here because we just generated them,
+    // but the IGNORE clause makes a future retry safe.
+    if let Err(e) = store::with_connection(workspace_dir, |conn| {
+        for r in &reflections {
+            if let Err(e) = reflection_store::add_reflection(conn, r) {
+                warn!("[subconscious] reflection persist failed id={}: {e}", r.id);
+            }
+        }
+        Ok(())
+    }) {
+        warn!("[subconscious] reflection batch persist failed: {e}");
+    }
+
+    // For Notify reflections, also ensure the thread + post the message.
+    let notify_count = reflections
+        .iter()
+        .filter(|r| r.disposition == Disposition::Notify)
+        .count();
+    if notify_count == 0 {
+        return reflections;
+    }
+    debug!("[subconscious] surfacing {notify_count} Notify reflections to system:subconscious");
+
+    let now_iso = chrono::Utc::now().to_rfc3339();
+    if let Err(e) =
+        conversation_post::ensure_subconscious_thread(workspace_dir.clone(), now_iso.clone())
+    {
+        warn!("[subconscious] ensure_subconscious_thread failed: {e}");
+        // Don't return — persistence still happened; just no surfacing.
+        return reflections;
+    }
+
+    for r in &reflections {
+        if r.disposition != Disposition::Notify {
+            continue;
+        }
+        match conversation_post::post_reflection(workspace_dir.clone(), r) {
+            Ok(_msg) => {
+                if let Err(e) = store::with_connection(workspace_dir, |conn| {
+                    reflection_store::mark_surfaced(conn, &r.id, now)
+                        .map_err(anyhow::Error::from)
+                }) {
+                    warn!("[subconscious] mark_surfaced failed id={}: {e}", r.id);
+                }
+            }
+            Err(e) => {
+                warn!("[subconscious] post_reflection failed id={}: {e}", r.id);
+            }
+        }
+    }
+
+    reflections
 }
 
 fn extract_json(text: &str) -> &str {
