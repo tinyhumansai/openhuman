@@ -36,11 +36,7 @@ describe('tauriCommands/config', () => {
         result: { config: {}, workspace_dir: '/tmp', config_path: '/tmp/cfg.toml' },
         logs: [],
       });
-      const patch = {
-        runtime_enabled: true,
-        usage_embeddings: true,
-        usage_subconscious: false,
-      };
+      const patch = { runtime_enabled: true, usage_embeddings: true, usage_subconscious: false };
       await openhumanUpdateLocalAiSettings(patch);
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
         method: 'openhuman.update_local_ai_settings',
