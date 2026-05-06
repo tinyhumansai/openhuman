@@ -1,6 +1,7 @@
 use crate::openhuman::agent::cost::TurnCost;
 use crate::openhuman::agent::multimodal;
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent::stop_hooks::{current_stop_hooks, StopDecision, TurnState};
 use crate::openhuman::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
 use crate::openhuman::providers::{
     ChatMessage, ChatRequest, Provider, ProviderCapabilityError, ProviderDelta,
@@ -165,6 +166,7 @@ pub(crate) async fn run_tool_call_loop(
         }
     }
 
+    let stop_hooks = current_stop_hooks();
     for iteration in 0..max_iterations {
         if let Some(ref sink) = on_progress {
             if let Err(e) = sink
@@ -177,6 +179,34 @@ pub(crate) async fn run_tool_call_loop(
                 log::warn!("[agent_loop] progress sink closed at IterationStarted: {e}");
             }
         }
+
+        // ── Stop hooks: policy check before the next LLM call ──
+        if !stop_hooks.is_empty() {
+            let state = TurnState {
+                iteration: (iteration + 1) as u32,
+                max_iterations: max_iterations as u32,
+                cost: &turn_cost,
+                model,
+            };
+            for hook in &stop_hooks {
+                match hook.check(&state).await {
+                    StopDecision::Continue => {}
+                    StopDecision::Stop { reason } => {
+                        tracing::warn!(
+                            iteration = (iteration + 1),
+                            hook = hook.name(),
+                            reason = %reason,
+                            "[agent_loop] stop hook triggered — aborting turn"
+                        );
+                        anyhow::bail!(
+                            "Agent turn stopped by hook '{}': {reason}",
+                            hook.name()
+                        );
+                    }
+                }
+            }
+        }
+
         // ── Context guard: check utilization before each LLM call ──
         match context_guard.check() {
             ContextCheckResult::Ok => {}

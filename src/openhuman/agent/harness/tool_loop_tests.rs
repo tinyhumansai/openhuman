@@ -667,3 +667,132 @@ async fn run_tool_call_loop_propagates_provider_errors_and_max_iteration_failure
         .to_string()
         .contains("Agent exceeded maximum tool iterations (1)"));
 }
+
+#[tokio::test]
+async fn run_tool_call_loop_aborts_when_stop_hook_returns_stop() {
+    use crate::openhuman::agent::stop_hooks::{
+        with_stop_hooks, StopDecision, StopHook, TurnState,
+    };
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    /// Stops the loop on the second iteration (1-based).
+    struct StopOnIteration(Arc<AtomicU32>);
+
+    #[async_trait]
+    impl StopHook for StopOnIteration {
+        fn name(&self) -> &str {
+            "test-iter-cap"
+        }
+        async fn check(&self, ctx: &TurnState<'_>) -> StopDecision {
+            self.0.store(ctx.iteration, Ordering::Relaxed);
+            if ctx.iteration >= 2 {
+                StopDecision::Stop {
+                    reason: "tripped on iter 2".into(),
+                }
+            } else {
+                StopDecision::Continue
+            }
+        }
+    }
+
+    // Provider would happily loop forever — first response asks for a
+    // tool, second response would too (we never reach it because the
+    // stop hook fires at the top of iteration 2).
+    let provider = ScriptedProvider {
+        responses: Mutex::new(vec![
+            Ok(ChatResponse {
+                text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
+                tool_calls: vec![],
+                usage: None,
+            }),
+            Ok(ChatResponse {
+                text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
+                tool_calls: vec![],
+                usage: None,
+            }),
+        ]),
+        native_tools: false,
+        vision: false,
+    };
+    let mut history = vec![ChatMessage::user("loop me")];
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
+    let last_seen = Arc::new(AtomicU32::new(0));
+    let hook: Arc<dyn StopHook> = Arc::new(StopOnIteration(last_seen.clone()));
+
+    let err = with_stop_hooks(vec![hook], async {
+        run_tool_call_loop(
+            &provider,
+            &mut history,
+            &tools,
+            "test-provider",
+            "model",
+            0.0,
+            true,
+            None,
+            "channel",
+            &crate::openhuman::config::MultimodalConfig::default(),
+            10,
+            None,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+    })
+    .await
+    .expect_err("stop hook should abort the loop");
+
+    assert!(
+        err.to_string()
+            .contains("stopped by hook 'test-iter-cap'"),
+        "got: {err}"
+    );
+    assert!(
+        err.to_string().contains("tripped on iter 2"),
+        "stop reason should be propagated, got: {err}"
+    );
+    assert_eq!(
+        last_seen.load(Ordering::Relaxed),
+        2,
+        "hook should have observed iteration 2"
+    );
+}
+
+#[tokio::test]
+async fn run_tool_call_loop_runs_unchanged_when_no_stop_hooks_installed() {
+    // Sanity: with no `with_stop_hooks` scope, the loop behaves
+    // identically to before this feature landed.
+    let provider = ScriptedProvider {
+        responses: Mutex::new(vec![Ok(ChatResponse {
+            text: Some("done".into()),
+            tool_calls: vec![],
+            usage: None,
+        })]),
+        native_tools: false,
+        vision: false,
+    };
+    let mut history = vec![ChatMessage::user("hi")];
+    let result = run_tool_call_loop(
+        &provider,
+        &mut history,
+        &[],
+        "test-provider",
+        "model",
+        0.0,
+        true,
+        None,
+        "channel",
+        &crate::openhuman::config::MultimodalConfig::default(),
+        1,
+        None,
+        None,
+        &[],
+        None,
+        None,
+    )
+    .await
+    .expect("loop should succeed without stop hooks");
+    assert_eq!(result, "done");
+}

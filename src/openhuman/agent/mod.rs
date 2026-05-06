@@ -31,6 +31,7 @@ pub mod memory_loader;
 pub mod multimodal;
 pub mod pformat;
 pub mod progress;
+pub mod stop_hooks;
 /// Prompt plumbing — types, section builders, and
 /// [`SystemPromptBuilder`](prompts::SystemPromptBuilder). Moved from
 /// `openhuman::context::prompt` so prompt rendering lives next to the
