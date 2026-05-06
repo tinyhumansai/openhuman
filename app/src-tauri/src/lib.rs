@@ -236,6 +236,33 @@ async fn restart_core_process(
     state.inner().restart().await
 }
 
+/// Start the embedded core process on demand.
+///
+/// Called by the BootCheckGate (Local mode) before the version check.  The
+/// core no longer auto-spawns at Tauri setup — the UI is responsible for
+/// driving the lifecycle so it can surface startup failures and version
+/// mismatches to the user.
+///
+/// Idempotent: `ensure_running` is a no-op if the core is already up.
+#[tauri::command]
+async fn start_core_process(
+    state: tauri::State<'_, core_process::CoreProcessHandle>,
+) -> Result<(), String> {
+    log::info!("[core] start_core_process: command invoked from frontend");
+    state.inner().ensure_running().await
+}
+
+/// Cleanly exit the application.
+///
+/// Called by the BootCheckGate "Quit" button when the core is unreachable and
+/// the user chooses to close the app rather than switch modes.
+#[tauri::command]
+async fn app_quit(app: tauri::AppHandle<AppRuntime>) -> Result<(), String> {
+    log::info!("[app] app_quit: quit requested from frontend");
+    app.exit(0);
+    Ok(())
+}
+
 #[tauri::command]
 async fn restart_app(app: tauri::AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[app] restart_app invoked from frontend");
@@ -1287,7 +1314,6 @@ pub fn run() {
                 return Err("webview_apis bridge failed to start — aborting setup".into());
             }
 
-            let _ = daemon_mode;
             let core_handle =
                 core_process::CoreProcessHandle::new(core_process::default_core_port());
             std::env::set_var("OPENHUMAN_CORE_RPC_URL", core_handle.rpc_url());
@@ -1312,13 +1338,23 @@ pub fn run() {
             }
 
             app.manage(core_handle.clone());
-            tauri::async_runtime::spawn(async move {
-                if let Err(err) = core_handle.ensure_running().await {
-                    log::error!("[core] failed to start embedded core: {err}");
-                    return;
-                }
-                log::info!("[core] embedded core ready");
-            });
+            // NOTE: the core is NOT auto-spawned here. The BootCheckGate UI
+            // calls `start_core_process` (Local mode) after the user picks a
+            // mode, which lets the frontend surface startup failures and
+            // version mismatches before the rest of the app mounts.
+            //
+            // In daemon mode (headless) we spawn immediately so the tray
+            // agent is available without waiting for a UI interaction.
+            if daemon_mode {
+                let core_handle_daemon = core_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = core_handle_daemon.ensure_running().await {
+                        log::error!("[core] daemon_mode — failed to start embedded core: {err}");
+                        return;
+                    }
+                    log::info!("[core] daemon_mode — embedded core ready");
+                });
+            }
 
             // Restore last-known window position+size before showing the
             // window so the user's first paint after a restart-driven flow
@@ -1625,6 +1661,8 @@ pub fn run() {
             download_app_update,
             install_app_update,
             restart_core_process,
+            start_core_process,
+            app_quit,
             restart_app,
             get_active_user_id,
             schedule_cef_profile_purge,

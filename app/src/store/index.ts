@@ -10,11 +10,13 @@ import {
   REGISTER,
   REHYDRATE,
 } from 'redux-persist';
+import defaultStorage from 'redux-persist/lib/storage';
 
 import { IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
+import coreModeReducer from './coreModeSlice';
 import notificationReducer from './notificationSlice';
 import providerSurfacesReducer from './providerSurfaceSlice';
 import socketReducer from './socketSlice';
@@ -25,6 +27,11 @@ import { userScopedStorage } from './userScopedStorage';
 // lives at `${userId}:persist:<key>` instead of a single per-device blob
 // that leaks across users on logout/login (#900).
 const storage = userScopedStorage;
+
+// coreMode is pre-login and not user-scoped — use plain localStorage so the
+// setting survives across user switches without leaking per-user state.
+const coreModePersistConfig = { key: 'coreMode', storage: defaultStorage, whitelist: ['mode'] };
+const persistedCoreModeReducer = persistReducer(coreModePersistConfig, coreModeReducer);
 
 const channelConnectionsPersistConfig = {
   key: 'channelConnections',
@@ -68,6 +75,7 @@ export const store = configureStore({
     accounts: persistedAccountsReducer,
     notifications: persistedNotificationReducer,
     providerSurfaces: providerSurfacesReducer,
+    coreMode: persistedCoreModeReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({
