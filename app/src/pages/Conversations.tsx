@@ -495,6 +495,10 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
 
   const handleSendMessage = async (text?: string) => {
     const normalized = text ?? inputValue;
+    const trimmedInput = normalized.trim();
+
+    if (handleSlashCommand(trimmedInput)) return;
+
     const sendDecision = evaluateComposerSend({
       rawText: normalized,
       selectedThreadId,
@@ -511,8 +515,6 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     ) {
       return;
     }
-
-    if (handleSlashCommand(trimmed)) return;
 
     const promptGuard = checkPromptInjection(trimmed);
     if (promptGuard.verdict === 'review' || promptGuard.verdict === 'block') {

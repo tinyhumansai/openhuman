@@ -13,6 +13,8 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { threadApi } from '../../services/api/threadApi';
+import { chatSend } from '../../services/chatService';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
 import threadReducer from '../../store/threadSlice';
@@ -416,7 +418,6 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     // createNewThread was called — verifies line 919 callback executed
-    const { threadApi } = await import('../../services/api/threadApi');
     expect(threadApi.createNewThread).toHaveBeenCalled();
   });
 
@@ -440,7 +441,6 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     // createNewThread was called — verifies line 1061 callback executed
-    const { threadApi } = await import('../../services/api/threadApi');
     expect(threadApi.createNewThread).toHaveBeenCalled();
   });
 
@@ -622,10 +622,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(screen.getByText(/10-hour rate limit reached/i)).toBeInTheDocument();
   });
 
-  it('handles /new from the composer without sending chat text', async () => {
-    const { textarea } = await renderSelectedConversation();
-    const { chatSend } = await import('../../services/chatService');
-    const { threadApi } = await import('../../services/api/threadApi');
+  it('handles /new from the composer without a selected thread or sending chat text', async () => {
+    mockGetThreads.mockReturnValue(new Promise(() => {}));
+
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState, socket: socketState('connected') });
+    });
+    const textarea = await screen.findByPlaceholderText('Type a message...');
+    vi.mocked(threadApi.createNewThread).mockClear();
+    vi.mocked(chatSend).mockClear();
 
     await submitComposerText(textarea, '/new');
 
@@ -638,7 +643,6 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
 
   it('shows the usage-limit modal instead of sending when the account is at limit', async () => {
     const { textarea } = await renderSelectedConversation({ isAtLimit: true });
-    const { chatSend } = await import('../../services/chatService');
 
     await submitComposerText(textarea, 'hello at limit');
 
@@ -651,8 +655,6 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
 
   it('persists a local user message and sends through chat service for valid input', async () => {
     const { textarea, thread } = await renderSelectedConversation();
-    const { chatSend } = await import('../../services/chatService');
-    const { threadApi } = await import('../../services/api/threadApi');
 
     await submitComposerText(textarea, ' hello cloud ');
 
