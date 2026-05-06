@@ -96,26 +96,34 @@ if ! command -v cl.exe >/dev/null 2>&1; then
     exit 1
   fi
   echo "[run-dev-win] MSVC env loaded (cl.exe at $(command -v cl.exe))"
-  # Pin the linker by absolute path. PATH ordering alone isn't reliable here:
-  # the bash-side reorder doesn't always survive into the Windows-side %PATH%
-  # that rustc sees when it resolves `link.exe`, so it can still find Git's
-  # `C:\Program Files\Git\usr\bin\link.exe` (GNU coreutils symlink utility)
-  # first and produce `/usr/bin/link: extra operand '...rcgu.o'`. Setting
-  # `CARGO_TARGET_<TRIPLE>_LINKER` makes cargo pass `-C linker=<path>` to
-  # rustc directly, no PATH lookup involved.
-  msvc_cl_dir="$(dirname "$(command -v cl.exe)")"
-  msvc_link_unix="$msvc_cl_dir/link.exe"
-  if [[ ! -x "$msvc_link_unix" ]]; then
-    echo "[run-dev-win] expected link.exe alongside cl.exe at $msvc_link_unix" >&2
-    exit 1
-  fi
-  msvc_link_win="$(cygpath -w "$msvc_link_unix")"
-  export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER="$msvc_link_win"
-  # Also push MSVC bin to the front of PATH so any other tool that bare-resolves
-  # `link.exe` (CMake-driven builds, etc.) hits MSVC's, not Git's.
-  export PATH="$msvc_cl_dir:$PATH"
-  echo "[run-dev-win] linker pinned: $msvc_link_win"
 fi
+
+# Pin the linker by absolute path — runs whether or not we just bootstrapped
+# the MSVC env. PATH ordering alone isn't reliable: the bash-side reorder
+# doesn't always survive into the Windows-side %PATH% that rustc sees when
+# it resolves `link.exe`, so it can still find Git's
+# `C:\Program Files\Git\usr\bin\link.exe` (GNU coreutils symlink utility)
+# first and produce `/usr/bin/link: extra operand '...rcgu.o'`. Setting
+# `CARGO_TARGET_<TRIPLE>_LINKER` makes cargo pass `-C linker=<path>` to
+# rustc directly, no PATH lookup involved.
+#
+# This block sits outside the bootstrap `if` so the pin still runs when
+# the user launches from a shell that already has `cl.exe` on PATH (e.g.
+# the "x64 Native Tools Command Prompt for VS 2022"). Without that, a
+# ready-to-go MSVC shell would skip the linker pin and fall back to PATH
+# resolution, where Git's coreutils `link.exe` can still win.
+msvc_cl_dir="$(dirname "$(command -v cl.exe)")"
+msvc_link_unix="$msvc_cl_dir/link.exe"
+if [[ ! -x "$msvc_link_unix" ]]; then
+  echo "[run-dev-win] expected link.exe alongside cl.exe at $msvc_link_unix" >&2
+  exit 1
+fi
+msvc_link_win="$(cygpath -w "$msvc_link_unix")"
+export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER="$msvc_link_win"
+# Also push MSVC bin to the front of PATH so any other tool that bare-resolves
+# `link.exe` (CMake-driven builds, etc.) hits MSVC's, not Git's.
+export PATH="$msvc_cl_dir:$PATH"
+echo "[run-dev-win] linker pinned: $msvc_link_win"
 
 # Pin Ninja as the CMake generator end-to-end. The default on Windows would be
 # the Visual Studio generator, which produces .sln/.vcxproj files; if anything
