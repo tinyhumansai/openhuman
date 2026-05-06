@@ -8,6 +8,8 @@
 	<string>OpenHuman uses the camera for video calls and huddles inside embedded apps (Google Meet, Discord, Slack).</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>OpenHuman uses Apple Events to read the focused text field for inline autocomplete suggestions and to detect the active app for context-aware features. You can manage this in System Settings &gt; Privacy &amp; Security &gt; Automation.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>OpenHuman uses Bluetooth for cross-device passkey sign-in (for example, when signing in to Google with your phone as an authenticator) and to detect connected audio devices (AirPods, headsets) in voice and video calls inside embedded apps (Google Meet, Discord, Slack).</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
