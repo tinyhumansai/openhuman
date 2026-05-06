@@ -197,8 +197,23 @@ fn clipboard_save_osascript() -> Option<String> {
 /// Fallback insertion: direct AXValue write via AppleScript.
 /// Reads `AXSelectedTextRange` to insert at the cursor position rather than
 /// always appending to the end of the field.
+///
+/// Short-circuits when `automation_state::system_events_denied()` is
+/// set. Same reasoning as `focus::focused_text_via_osascript`: the
+/// AppleScript here also does `tell application "System Events"`, so
+/// re-firing it after a prior `(-1743)` denial would re-popup the
+/// macOS consent dialog. The clipboard set/get osascript calls in
+/// tiers 1-2 use AppleScript's built-in clipboard verbs (no `tell
+/// application`), so they remain ungated.
 #[cfg(target_os = "macos")]
 fn apply_text_via_axvalue(text: &str) -> Result<(), String> {
+    if super::automation_state::system_events_denied() {
+        return Err(
+            "apply_text_via_axvalue skipped: System Events automation previously denied (-1743)"
+                .to_string(),
+        );
+    }
+
     let escaped = text
         .replace('\\', "\\\\")
         .replace('\"', "\\\"")

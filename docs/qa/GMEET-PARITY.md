@@ -34,7 +34,7 @@
 | 12 | **Session persistence** — close + reopen webview tab without sign-out; account stays active | ✅ pass | CEF profile persistence behaves identically to gmail/slack. | — |
 | 13 | **Captions ingestion → memory** — `meet_captions` rows + `meet_call_ended` lifecycle event flush a transcript document via `openhuman.memory_doc_ingest` | ⏭️ deferred to #1052 | Current handler at `webview_accounts/mod.rs:2219-2247` is log-only. Not a regression — recipe.js has been log-only since inception. Filed as **feature** at #1052 with module sketch (`google_meet/` mirroring `gmail/` shape, persistent `MeetingTranscriptStore`, opt-in toggle for the privacy-sensitive transcript). | Out of scope for this PR. |
 | 14 | **Hangup return UX** — leaving the call returns to a recognizable state (rejoin / 5-star review prompt) | ✅ pass | Behavior is identical to stock Chrome — rejoin button + 5-star review with 60s auto-dismiss. | — |
-| 15 | **Background effects** — virtual background / blur applies without breaking the camera | ❌ deferred to #1053 | Selecting a virtual background turns the camera off and Gmeet shows a "something went wrong" toast. Hypothesis: Chromium runtime gates absent in the vendored CEF build (insertable streams `MediaStreamTrackProcessor` / `MediaStreamTrackGenerator`, MediaPipe segmentation requiring SharedArrayBuffer + COOP/COEP cross-origin isolation, HW accel). | Filed as **bug** at #1053 with investigation sketch. Out of scope for this PR — needs CEF runtime-flag tuning, separate from the `webview_accounts` parity work. |
+| 15 | **Background effects** — virtual background / blur applies without breaking the camera | ⚠️ partial — static effects work, dynamic (video) effects fail | **Phase A diagnostic 2026-05-05** ruled out the original hypothesis. Probe results inside an active Meet call: `crossOriginIsolated:false` (irrelevant — SAB is exposed via the existing `--enable-features=SharedArrayBuffer` flag), `hasSAB:true`, `hasInsertableStreams:true` (MediaStreamTrackProcessor/Generator both present), `hasWebGL2:true`, `hasWebGPU:true`, `hasAtomics:true`. **Static backgrounds (blur, classroom, library, etc.) WORK** — verified live. **Dynamic (video) backgrounds fail** with `MEDIA_ERR_SRC_NOT_SUPPORTED: PipelineStatus::DEMUXER_ERROR_NO_SUPPORTED_STREAMS: FFmpegDemuxer: no supported streams` when fetching `https://www.gstatic.com/video_effects/assets/<bg>.mp4`. Real root cause: vendored CEF ships the standard distribution (no proprietary codecs), so H.264-in-MP4 dynamic-bg assets can't be demuxed. Not a Chromium runtime gap. Memory `feedback_cef_runtime_gaps.md` gap #3 reclassified accordingly. | Reclassified — needs proprietary codec build of vendored `tauri-cef`. Will file follow-up against `tinyhumansai/tauri-cef` to switch CEF binary distribution to a Chrome-branded build (or document as won't-fix per license). Out of scope for openhuman code. |
 
 ## Smoke run procedure
 
@@ -72,8 +72,8 @@ The legacy `recipe.js` polls the call DOM for caption rows. A future epic should
 ## Sign-off
 
 - Tester: oxoxDev
-- Result: 11 ✅ / 0 ⚠️ / 2 ❌ (one blocked on #1046, one deferred to #1053) / 1 ⏭️ deferred to #1052 / 1 ❌ blocked on #1046
-- Date: 2026-04-30
+- Result: 12 ✅ / 1 ⚠️ partial (#1053 row 15 — CEF codec gap, not a runtime gap) / 1 ❌ blocked on #1046 (row 1) / 1 ⏭️ deferred to #1052 (row 13)
+- Date: 2026-04-30 (row 15 reclassified 2026-05-05 after Phase A diagnostic)
 - Action items:
   - Land #1046 (gmail PR) → rebase this branch → row #1 Auth flips ✅
   - Track #1052 (caption ingest feature) and #1053 (background effects CEF gap) as follow-up issues

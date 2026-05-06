@@ -47,6 +47,10 @@ impl LocalAiService {
             return Err("no valid image payloads were provided".to_string());
         }
 
+        // Vision generation is background LLM-bound work; gate it through
+        // the scheduler's global LLM permit.
+        let _gate_permit = crate::openhuman::scheduler_gate::wait_for_capacity().await;
+
         let body = OllamaGenerateRequest {
             model: vision_model,
             prompt: prompt.trim().to_string(),
@@ -146,6 +150,11 @@ impl LocalAiService {
         let embedding_model = model_ids::effective_embedding_model_id(config);
         self.ensure_ollama_model_available(&embedding_model, "embedding")
             .await?;
+
+        // Embeds are bge-m3 calls (8K context, ~1.3 GB resident) — the
+        // single concurrent embed that has historically crashed the
+        // user's laptop when stacked with other Ollama work. Gate it.
+        let _gate_permit = crate::openhuman::scheduler_gate::wait_for_capacity().await;
 
         let response = self
             .http

@@ -155,6 +155,15 @@ impl ReflectionHook {
     async fn run_reflection(&self, prompt: &str) -> anyhow::Result<String> {
         match self.config.reflection_source {
             ReflectionSource::Local => {
+                // Local reflection acquires the scheduler_gate LLM
+                // permit transitively through `service.prompt` →
+                // `inference_with_temperature_internal`. Cloud
+                // reflection skips the gate (#1073 intentionally
+                // gates only local routes; cloud rate limiting is
+                // tracked separately).
+                log::debug!(
+                    "[learning::reflection] local route — gate permit acquired via LocalAiService"
+                );
                 let service = crate::openhuman::local_ai::global(&self.full_config);
                 service
                     .prompt(&self.full_config, prompt, Some(512), true)

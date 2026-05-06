@@ -132,6 +132,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::migration::all_migration_registered_controllers());
     // Local AI model management and inference
     controllers.extend(crate::openhuman::local_ai::all_local_ai_registered_controllers());
+    // People resolution and interaction scoring
+    controllers.extend(crate::openhuman::people::all_people_registered_controllers());
     // Screen capture and UI analysis
     controllers.extend(
         crate::openhuman::screen_intelligence::all_screen_intelligence_registered_controllers(),
@@ -152,6 +154,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::memory::all_retrieval_registered_controllers());
     // Slack → memory-tree ingestion engine (backfill + poll + 6hr bucket flush)
     controllers.extend(crate::openhuman::memory::all_slack_ingestion_registered_controllers());
+    // Per-connection memory sync status, controls, and progress (#1136)
+    controllers.extend(crate::openhuman::memory::all_memory_sync_status_registered_controllers());
     // Link shortener for long tracking URLs — saves LLM tokens
     controllers
         .extend(crate::openhuman::redirect_links::all_redirect_links_registered_controllers());
@@ -218,6 +222,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::service::all_service_controller_schemas());
     schemas.extend(crate::openhuman::migration::all_migration_controller_schemas());
     schemas.extend(crate::openhuman::local_ai::all_local_ai_controller_schemas());
+    schemas.extend(crate::openhuman::people::all_people_controller_schemas());
     schemas.extend(
         crate::openhuman::screen_intelligence::all_screen_intelligence_controller_schemas(),
     );
@@ -229,6 +234,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::memory::all_memory_tree_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_retrieval_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_slack_ingestion_controller_schemas());
+    schemas.extend(crate::openhuman::memory::all_memory_sync_status_controller_schemas());
     schemas.extend(crate::openhuman::redirect_links::all_redirect_links_controller_schemas());
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
@@ -297,6 +303,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "memory_tree" => Some(
             "Canonical chunk ingestion, provenance capture, and chunk retrieval for source-grounded memory.",
         ),
+        "memory_sync" => Some(
+            "Per-connection memory sync status, user enable toggle, and live progress for the desktop UI.",
+        ),
         "redirect_links" => Some(
             "Shorten long tracking URLs to `openhuman://link/<id>` placeholders (SQLite-backed) to save tokens in prompts, with round-trip rewrite helpers.",
         ),
@@ -324,6 +333,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "learning" => Some(
             "User context enrichment — LinkedIn profile scraping and onboarding intelligence.",
         ),
+        "people" => {
+            Some("Contact resolution and recency × frequency × reciprocity × depth scoring.")
+        },
         "notification" => Some(
             "Integration notification ingest, triage scoring, listing, read-state, \
              and per-provider routing settings.",

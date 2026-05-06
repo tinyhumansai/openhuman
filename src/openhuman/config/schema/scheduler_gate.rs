@@ -58,6 +58,26 @@ pub struct SchedulerGateConfig {
     /// 60_000 (60s).
     #[serde(default = "default_paused_poll_ms")]
     pub paused_poll_ms: u64,
+
+    /// Hard CPU ceiling (recent global usage, 0..100). When the host CPU
+    /// climbs above this in `auto` mode, the gate flips to
+    /// `Paused { CpuPressure }` rather than just `Throttled` — every
+    /// background LLM call is held until the host calms down. Distinct
+    /// from `cpu_busy_threshold_pct`, which only triggers `Throttled`.
+    /// Default: 95.0.
+    #[serde(default = "default_cpu_severe_pct")]
+    pub cpu_severe_pct: f32,
+
+    /// When `true`, `auto` mode only runs background LLM work while the
+    /// laptop is on AC power. On battery the gate flips to
+    /// `Paused { OnBattery }` — no background inference at all,
+    /// regardless of charge level.
+    ///
+    /// Default `false` to preserve the prior behavior (battery-floor
+    /// based throttling). Power-conscious users who never want
+    /// background inference on battery can flip this on.
+    #[serde(default)]
+    pub require_ac_power: bool,
 }
 
 fn default_battery_floor() -> f32 {
@@ -72,6 +92,9 @@ fn default_throttled_backoff_ms() -> u64 {
 fn default_paused_poll_ms() -> u64 {
     60_000
 }
+fn default_cpu_severe_pct() -> f32 {
+    95.0
+}
 
 impl Default for SchedulerGateConfig {
     fn default() -> Self {
@@ -81,6 +104,8 @@ impl Default for SchedulerGateConfig {
             cpu_busy_threshold_pct: default_cpu_busy_threshold(),
             throttled_backoff_ms: default_throttled_backoff_ms(),
             paused_poll_ms: default_paused_poll_ms(),
+            cpu_severe_pct: default_cpu_severe_pct(),
+            require_ac_power: false,
         }
     }
 }

@@ -2,6 +2,9 @@
 workflow
 create_issue
 
+# Diagnostic harness output (scripts/diagnose-cef-runtime.mjs)
+diagnosis-*.json
+
 # Logs
 logs
 *.log

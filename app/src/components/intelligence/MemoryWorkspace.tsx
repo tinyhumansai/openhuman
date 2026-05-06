@@ -38,6 +38,7 @@ import { MemoryChunkDetail } from './MemoryChunkDetail';
 import { MemoryEmptyPlaceholder } from './MemoryEmptyPlaceholder';
 import { MemoryNavigator, type NavigatorSelection } from './MemoryNavigator';
 import { MemoryResultList } from './MemoryResultList';
+import { MemorySyncConnections } from './MemorySyncConnections';
 
 interface MemoryWorkspaceProps {
   onToast?: (toast: Omit<ToastNotification, 'id'>) => void;
@@ -214,89 +215,95 @@ export function MemoryWorkspace({ onToast: _onToast }: MemoryWorkspaceProps) {
 
   if (isEmpty) {
     return (
-      <div className="flex min-h-[40vh] items-center justify-center">
-        <MemoryEmptyPlaceholder />
+      <div className="space-y-4">
+        <MemorySyncConnections pollIntervalMs={5000} />
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <MemoryEmptyPlaceholder />
+        </div>
       </div>
     );
   }
 
   return (
-    <section
-      className="memory-workspace-root relative flex"
-      style={{ height: 'calc(100vh - 16rem)' }}
-      data-testid="memory-workspace">
-      {/* 2-pane base */}
-      <aside
-        className="w-60 shrink-0 overflow-y-auto border-r border-stone-100 bg-stone-50/60"
-        aria-label="Memory navigator">
-        <MemoryNavigator
-          chunks={allChunks}
-          sources={sources}
-          topPeople={topPeople}
-          topTopics={topTopics}
-          selection={selection}
-          onSelectionChange={handleSelectionChange}
-          searchQuery={searchQuery}
-          onSearchChange={handleSearchChange}
-        />
-      </aside>
+    <div className="space-y-4">
+      <MemorySyncConnections pollIntervalMs={5000} />
+      <section
+        className="memory-workspace-root relative flex"
+        style={{ height: 'calc(100vh - 16rem)' }}
+        data-testid="memory-workspace">
+        {/* 2-pane base */}
+        <aside
+          className="w-60 shrink-0 overflow-y-auto border-r border-stone-100 bg-stone-50/60"
+          aria-label="Memory navigator">
+          <MemoryNavigator
+            chunks={allChunks}
+            sources={sources}
+            topPeople={topPeople}
+            topTopics={topTopics}
+            selection={selection}
+            onSelectionChange={handleSelectionChange}
+            searchQuery={searchQuery}
+            onSearchChange={handleSearchChange}
+          />
+        </aside>
 
-      <main className="flex-1 overflow-y-auto bg-white" aria-label="Result list">
-        <MemoryResultList
-          chunks={filteredChunks}
-          selectedChunkId={selectedChunkId}
-          onSelectChunk={handleSelectChunk}
-        />
-      </main>
+        <main className="flex-1 overflow-y-auto bg-white" aria-label="Result list">
+          <MemoryResultList
+            chunks={filteredChunks}
+            selectedChunkId={selectedChunkId}
+            onSelectChunk={handleSelectChunk}
+          />
+        </main>
 
-      {/* Detail overlay — fills the entire workspace card */}
-      {selectedChunk && (
-        <div
-          className="absolute inset-0 z-10 flex flex-col bg-canvas-50/95 backdrop-blur-sm
+        {/* Detail overlay — fills the entire workspace card */}
+        {selectedChunk && (
+          <div
+            className="absolute inset-0 z-10 flex flex-col bg-canvas-50/95 backdrop-blur-sm
                      duration-150 motion-safe:animate-fade-in"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Chunk detail">
-          <header
-            className="sticky top-0 z-10 flex items-center justify-between gap-4
+            role="dialog"
+            aria-modal="true"
+            aria-label="Chunk detail">
+            <header
+              className="sticky top-0 z-10 flex items-center justify-between gap-4
                        border-b border-stone-100 bg-white/90 px-6 py-3 backdrop-blur">
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-mono text-xs text-stone-500">
-                <span className="text-stone-400">{selectedChunk.source_kind}</span>
-                {' · '}
-                {selectedChunk.source_id}
-              </p>
-            </div>
-            <button
-              onClick={handleCloseDetail}
-              aria-label="Close detail (Esc)"
-              title="Close (Esc)"
-              className="rounded-lg p-1.5 text-stone-500 transition-colors
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-mono text-xs text-stone-500">
+                  <span className="text-stone-400">{selectedChunk.source_kind}</span>
+                  {' · '}
+                  {selectedChunk.source_id}
+                </p>
+              </div>
+              <button
+                onClick={handleCloseDetail}
+                aria-label="Close detail (Esc)"
+                title="Close (Esc)"
+                className="rounded-lg p-1.5 text-stone-500 transition-colors
                          hover:bg-stone-100 hover:text-stone-900
                          focus:outline-none focus:ring-2 focus:ring-ocean-200">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true">
-                <path d="M18 6L6 18" />
-                <path d="M6 6l12 12" />
-              </svg>
-            </button>
-          </header>
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true">
+                  <path d="M18 6L6 18" />
+                  <path d="M6 6l12 12" />
+                </svg>
+              </button>
+            </header>
 
-          <div className="flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-4xl px-8 py-6">
-              <MemoryChunkDetail chunk={selectedChunk} onSelectEntity={handleSelectEntity} />
+            <div className="flex-1 overflow-y-auto">
+              <div className="mx-auto max-w-4xl px-8 py-6">
+                <MemoryChunkDetail chunk={selectedChunk} onSelectEntity={handleSelectEntity} />
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </section>
+        )}
+      </section>
+    </div>
   );
 }

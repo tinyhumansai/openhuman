@@ -45,6 +45,19 @@ struct TtsParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct CloudTranscribeParams {
+    audio_base64: String,
+    #[serde(default)]
+    mime_type: Option<String>,
+    #[serde(default)]
+    file_name: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ReplySynthesizeParams {
     text: String,
     #[serde(default)]
@@ -84,6 +97,7 @@ pub fn all_voice_controller_schemas() -> Vec<ControllerSchema> {
         voice_schemas("voice_transcribe_bytes"),
         voice_schemas("voice_tts"),
         voice_schemas("voice_reply_synthesize"),
+        voice_schemas("voice_cloud_transcribe"),
         voice_schemas("voice_server_start"),
         voice_schemas("voice_server_stop"),
         voice_schemas("voice_server_status"),
@@ -112,6 +126,10 @@ pub fn all_voice_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: voice_schemas("voice_reply_synthesize"),
             handler: handle_voice_reply_synthesize,
+        },
+        RegisteredController {
+            schema: voice_schemas("voice_cloud_transcribe"),
+            handler: handle_voice_cloud_transcribe,
         },
         RegisteredController {
             schema: voice_schemas("voice_server_start"),
@@ -212,6 +230,24 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
                 "reply",
                 "ReplySpeechResult: { audio_base64, audio_mime, visemes, alignment? }.",
             )],
+        },
+        "voice_cloud_transcribe" => ControllerSchema {
+            namespace: "voice",
+            function: "cloud_transcribe",
+            description:
+                "Transcribe audio bytes via the hosted backend's STT endpoint. Used by the \
+                 mascot's mic-only composer so we don't ship a provider API key in the desktop app.",
+            inputs: vec![
+                required_string(
+                    "audio_base64",
+                    "Base64-encoded audio bytes (e.g. webm/opus from MediaRecorder).",
+                ),
+                optional_string("mime_type", "Audio MIME type (default: audio/webm)."),
+                optional_string("file_name", "Original filename hint (default: audio.webm)."),
+                optional_string("model", "Backend STT model id (default: whisper-v1)."),
+                optional_string("language", "BCP-47 language hint, e.g. 'en'."),
+            ],
+            outputs: vec![json_output("result", "CloudTranscribeResult: { text }.")],
         },
         "voice_server_start" => ControllerSchema {
             namespace: "voice",
@@ -340,6 +376,27 @@ fn handle_voice_reply_synthesize(params: Map<String, Value>) -> ControllerFuture
         to_json(
             crate::openhuman::voice::reply_speech::synthesize_reply(&config, &p.text, &opts)
                 .await?,
+        )
+    })
+}
+
+fn handle_voice_cloud_transcribe(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<CloudTranscribeParams>(params)?;
+        let opts = crate::openhuman::voice::cloud_transcribe::CloudTranscribeOptions {
+            model: p.model,
+            language: p.language,
+            mime_type: p.mime_type,
+            file_name: p.file_name,
+        };
+        to_json(
+            crate::openhuman::voice::cloud_transcribe::transcribe_cloud(
+                &config,
+                &p.audio_base64,
+                &opts,
+            )
+            .await?,
         )
     })
 }

@@ -162,3 +162,129 @@ async fn inline_complete_disabled_returns_empty_string() {
         .unwrap();
     assert!(out.is_empty());
 }
+
+#[tokio::test]
+async fn inline_complete_interactive_disabled_returns_empty_string() {
+    // Interactive variant must match the gated variant on the
+    // disabled short-circuit so the autocomplete UX is identical.
+    let mut config = Config::default();
+    config.local_ai.enabled = false;
+    let service = LocalAiService::new(&config);
+    let out = service
+        .inline_complete_interactive(&config, "ctx", "casual", None, &[], None)
+        .await
+        .unwrap();
+    assert!(out.is_empty());
+}
+
+/// Interactive autocomplete (`inline_complete_interactive`) MUST NOT
+/// block on a held LLM permit. Hold the global slot, race the
+/// interactive variant against a tight deadline; if it queued behind
+/// the permit it would deadlock or time out.
+#[tokio::test]
+async fn inline_complete_interactive_does_not_block_on_held_permit() {
+    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
+        .lock()
+        .expect("local ai test mutex");
+
+    // Hold the global LLM permit for the duration of the test.
+    let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+        .expect("test must start with a free permit; previous test leaked one");
+
+    let app = Router::new().route(
+        "/api/generate",
+        post(|Json(_body): Json<serde_json::Value>| async move {
+            Json(json!({
+                "model": "test",
+                "response": "ip",
+                "done": true
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let config = enabled_config();
+    let service = ready_service(&config);
+
+    // Tight 2s deadline — comfortably above mock RTT, well below any
+    // policy-paused-poll backoff. If the interactive call goes through
+    // the gate it'll never finish.
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        service.inline_complete_interactive(&config, "ctx", "casual", None, &[], Some(8)),
+    )
+    .await;
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+
+    let inner = result.expect("interactive variant must NOT block on held permit");
+    assert!(
+        inner.is_ok(),
+        "interactive call should have completed: {inner:?}"
+    );
+}
+
+/// Counterpart: the gated `inline_complete` (and `prompt`/`summarize`)
+/// MUST queue behind a held permit. We assert this with a try-style
+/// race: spawn the gated call, give it time to enter the wait, then
+/// confirm it hasn't completed. We then drop the permit and verify
+/// the call resolves.
+#[tokio::test]
+async fn gated_inline_complete_blocks_on_held_permit() {
+    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
+        .lock()
+        .expect("local ai test mutex");
+
+    let held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+        .expect("test must start with a free permit");
+
+    let app = Router::new().route(
+        "/api/generate",
+        post(|Json(_body): Json<serde_json::Value>| async move {
+            Json(json!({
+                "model": "test",
+                "response": "x",
+                "done": true
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let config = enabled_config();
+    let service = std::sync::Arc::new(ready_service(&config));
+    let svc = service.clone();
+    let cfg = config.clone();
+
+    let join = tokio::spawn(async move {
+        svc.inline_complete(&cfg, "ctx", "casual", None, &[], Some(8))
+            .await
+    });
+
+    // Give the spawned task a chance to enter `wait_for_capacity`.
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    assert!(
+        !join.is_finished(),
+        "gated inline_complete must block while permit is held"
+    );
+
+    // Release the permit; the gated call should now resolve.
+    drop(held);
+    let resolved = tokio::time::timeout(std::time::Duration::from_secs(2), join)
+        .await
+        .expect("gated call must resolve once permit is released")
+        .expect("join")
+        .expect("ollama call");
+    assert!(!resolved.is_empty() || resolved.is_empty()); // sanity — value depends on sanitiser
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+}

@@ -1,0 +1,13 @@
+{
+  "version": "0.0.0-test",
+  "platforms": {
+    "linux-x86_64": {
+      "url": "https://example.invalid/openhuman_0.0.0-test_amd64.AppImage",
+      "signature": ""
+    },
+    "darwin-aarch64": {
+      "url": "https://example.invalid/openhuman_0.0.0-test_aarch64.dmg",
+      "signature": ""
+    }
+  }
+}
