@@ -55,7 +55,22 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                 .into_response()
         }
         Err(message) => {
-            tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, message);
+            // Session-expired bubbles up as an "error" but is an expected
+            // boundary condition (auth handler clears the local token and the
+            // UI re-auths). Don't spam Sentry with it.
+            if !is_session_expired_error(&message) {
+                crate::core::observability::report_error(
+                    message.as_str(),
+                    "rpc",
+                    "invoke_method",
+                    &[
+                        ("method", method.as_str()),
+                        ("elapsed_ms", &ms.to_string()),
+                    ],
+                );
+            } else {
+                tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, message);
+            }
             (
                 StatusCode::OK,
                 Json(RpcFailure {

@@ -191,26 +191,44 @@ pub(crate) async fn run_tool_call_loop(
                 utilization_pct,
                 reason,
             } => {
-                tracing::error!(
-                    iteration,
-                    utilization_pct,
-                    "[agent_loop] context exhausted, aborting: {reason}"
+                let msg = format!(
+                    "Context window exhausted ({utilization_pct}% full): {reason}"
                 );
-                anyhow::bail!("Context window exhausted ({utilization_pct}% full): {reason}");
+                crate::core::observability::report_error(
+                    msg.as_str(),
+                    "agent",
+                    "context_exhausted",
+                    &[
+                        ("provider", provider_name),
+                        ("model", model),
+                        ("utilization_pct", &utilization_pct.to_string()),
+                    ],
+                );
+                anyhow::bail!(msg);
             }
         }
 
         tracing::debug!(iteration, "[agent_loop] sending LLM request");
         let image_marker_count = multimodal::count_image_markers(history);
         if image_marker_count > 0 && !provider.supports_vision() {
-            return Err(ProviderCapabilityError {
+            let cap_err = ProviderCapabilityError {
                 provider: provider_name.to_string(),
                 capability: "vision".to_string(),
                 message: format!(
                     "received {image_marker_count} image marker(s), but this provider does not support vision input"
                 ),
-            }
-            .into());
+            };
+            crate::core::observability::report_error(
+                &cap_err,
+                "agent",
+                "provider_capability",
+                &[
+                    ("provider", provider_name),
+                    ("capability", "vision"),
+                    ("model", model),
+                ],
+            );
+            return Err(cap_err.into());
         }
 
         let prepared_messages =
@@ -346,6 +364,16 @@ pub(crate) async fn run_tool_call_loop(
                     )
                 }
                 Err(e) => {
+                    crate::core::observability::report_error(
+                        &e,
+                        "agent",
+                        "provider_chat",
+                        &[
+                            ("provider", provider_name),
+                            ("model", model),
+                            ("iteration", &(iteration + 1).to_string()),
+                        ],
+                    );
                     return Err(e);
                 }
             };
@@ -626,19 +654,33 @@ pub(crate) async fn run_tool_call_loop(
                         }
                     }
                     Ok(Err(e)) => {
-                        tracing::error!(
-                            iteration,
-                            tool = call.name.as_str(),
-                            "[agent_loop] tool execution failed: {e}"
+                        crate::core::observability::report_error(
+                            &e,
+                            "tool",
+                            "execute",
+                            &[
+                                ("tool", call.name.as_str()),
+                                ("outcome", "failed"),
+                                ("iteration", &(iteration + 1).to_string()),
+                            ],
                         );
                         (format!("Error executing {}: {e}", call.name), false)
                     }
                     Err(_) => {
-                        tracing::error!(
-                            iteration,
-                            tool = call.name.as_str(),
-                            secs = timeout_secs,
-                            "[agent_loop] tool execution timed out"
+                        let msg = format!(
+                            "tool '{}' timed out after {} seconds",
+                            call.name, timeout_secs
+                        );
+                        crate::core::observability::report_error(
+                            msg.as_str(),
+                            "tool",
+                            "execute",
+                            &[
+                                ("tool", call.name.as_str()),
+                                ("outcome", "timeout"),
+                                ("timeout_secs", &timeout_secs.to_string()),
+                                ("iteration", &(iteration + 1).to_string()),
+                            ],
                         );
                         (
                             format!(
