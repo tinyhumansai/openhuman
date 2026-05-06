@@ -219,7 +219,11 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
               data-testid={`webview-loading-${accountId}`}
               className="flex flex-col items-center gap-2">
               <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-300 border-t-stone-600" />
-              <LoadingPhaseHint accountId={accountId} />
+              {/* Issue #1233 — `key={accountId}` forces React to unmount the
+                  hint when the user switches between two still-loading
+                  accounts so the elapsed counter doesn't carry the
+                  previous account's progress into the new one. */}
+              <LoadingPhaseHint key={accountId} accountId={accountId} />
             </div>
           ) : null}
         </div>
