@@ -7,6 +7,7 @@ import type {
   SubconsciousStatus,
   SubconsciousTask,
 } from '../../utils/tauriCommands/subconscious';
+import SubconsciousReflectionCards from './SubconsciousReflectionCards';
 
 const SKILL_KEYWORDS =
   /\bskill\b|\boauth\b|\bnotion\b|\bgmail\b|\bintegration\b|\bdisconnect|\breconnect|\bre-?auth/i;
@@ -32,6 +33,13 @@ interface IntelligenceSubconsciousTabProps {
   triggering: boolean;
   escalations: SubconsciousEscalation[];
   loading: boolean;
+  /**
+   * The user's active orchestrator thread id (#623). Used by the
+   * reflection-cards component when the user taps a proposed action —
+   * the conversation moves into this thread, NOT the subconscious feed.
+   * `null` disables the Act button.
+   */
+  activeThreadId?: string | null;
 }
 
 export default function IntelligenceSubconsciousTab({
@@ -51,6 +59,7 @@ export default function IntelligenceSubconsciousTab({
   toggleSubconsciousTask,
   triggerTick,
   triggering,
+  activeThreadId = null,
 }: IntelligenceSubconsciousTabProps) {
   const navigate = useNavigate();
 
@@ -219,6 +228,8 @@ export default function IntelligenceSubconsciousTab({
           </button>
         </div>
       </div>
+
+      <SubconsciousReflectionCards activeThreadId={activeThreadId} pollIntervalMs={15_000} />
 
       {escalations.length > 0 && (
         <div>
