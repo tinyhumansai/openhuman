@@ -191,13 +191,32 @@ impl SubconsciousEngine {
                 Ok(ids)
             })?;
 
-        // 3. Build situation report
-        let memory_ref = self.memory.as_ref().map(|m| m.as_ref());
+        // 3. Build situation report — memory-tree-derived sections (#623).
+        let config_for_report = match crate::openhuman::config::Config::load_or_init().await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("[subconscious] config load for situation report failed: {e}");
+                // Without config we cannot read memory_tree tables — but we
+                // can still build the env+tasks+reflections sections by
+                // passing a default config. The signal sections will report
+                // themselves as unavailable.
+                crate::openhuman::config::Config::default()
+            }
+        };
+        // Fetch last 8 reflections for anti-double-emit context.
+        let recent_reflections = super::store::with_connection(&self.workspace_dir, |conn| {
+            super::reflection_store::list_recent(conn, 8, None).map_err(anyhow::Error::from)
+        })
+        .unwrap_or_else(|e| {
+            warn!("[subconscious] recent reflections load failed: {e}");
+            Vec::new()
+        });
         let report = build_situation_report(
-            memory_ref,
+            &config_for_report,
             &self.workspace_dir,
             last_tick_at,
             self.context_budget_tokens,
+            &recent_reflections,
         )
         .await;
 
@@ -357,12 +376,23 @@ impl SubconsciousEngine {
 
         // Execute the task
         let identity = prompt::load_identity_context(&self.workspace_dir);
-        let memory_ref = self.memory.as_ref().map(|m| m.as_ref());
+        let config_for_report = match crate::openhuman::config::Config::load_or_init().await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("[subconscious] approve_escalation: config load failed: {e}");
+                crate::openhuman::config::Config::default()
+            }
+        };
+        let recent_reflections = super::store::with_connection(&self.workspace_dir, |conn| {
+            super::reflection_store::list_recent(conn, 8, None).map_err(anyhow::Error::from)
+        })
+        .unwrap_or_default();
         let report = build_situation_report(
-            memory_ref,
+            &config_for_report,
             &self.workspace_dir,
             0.0, // fresh report for execution
             self.context_budget_tokens,
+            &recent_reflections,
         )
         .await;
 
