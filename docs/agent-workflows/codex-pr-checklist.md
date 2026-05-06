@@ -83,6 +83,30 @@ pnpm debug rust <test-filter>
 
 If a command cannot run because the environment lacks vendored files or system packages, do not claim it passed. Copy the exact command and blocker into the PR body.
 
+## PR Submission Checklist Preflight
+
+Before handing off an AI-authored PR, validate the PR body locally. This catches unchecked template items before the GitHub workflow reports them.
+
+For a generated PR body file:
+
+```bash
+pnpm pr:checklist /tmp/pr-body.md
+```
+
+For a generated body already loaded in an environment variable:
+
+```bash
+PR_BODY="$(cat /tmp/pr-body.md)" pnpm pr:checklist
+```
+
+For an existing GitHub PR:
+
+```bash
+gh pr view <number> --repo tinyhumansai/openhuman --json body --jq .body | pnpm pr:checklist -
+```
+
+Every checklist line must be checked. If an item does not apply, check it and include a short `N/A` reason on the same line. Do not leave `N/A` items unchecked.
+
 ## Refactor Parity Rules
 
 For behavior extraction and architecture refactors:

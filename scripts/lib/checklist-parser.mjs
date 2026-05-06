@@ -21,20 +21,21 @@ export function parseChecklist(body) {
     const naReason = naMatch ? naMatch[1].trim() || null : null;
     items.push({ checked, naReason, text });
   }
-  const totalUnchecked = items.filter((i) => !i.checked && i.naReason === null).length;
+  const totalUnchecked = items.filter((i) => !i.checked).length;
   return { items, totalUnchecked };
 }
 
 export function summarize(parsed) {
   const total = parsed.items.length;
   const naCount = parsed.items.filter((i) => i.naReason !== null).length;
-  const satisfied = parsed.items.filter((i) => i.checked || i.naReason !== null).length;
+  const satisfied = parsed.items.filter((i) => i.checked).length;
   const lines = [`Checklist: ${satisfied}/${total} items satisfied (${parsed.totalUnchecked} unchecked, ${naCount} N/A)`];
   if (parsed.totalUnchecked > 0) {
     lines.push('Unchecked items requiring action:');
     for (const item of parsed.items) {
-      if (!item.checked && item.naReason === null) {
-        lines.push(`  - ${item.text}`);
+      if (!item.checked) {
+        const suffix = item.naReason !== null ? ' (N/A items must still be checked with a reason)' : '';
+        lines.push(`  - ${item.text}${suffix}`);
       }
     }
   }
