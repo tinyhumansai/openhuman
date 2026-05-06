@@ -160,6 +160,32 @@ describe('LocalModelPanel — usage flags', () => {
     });
   });
 
+  it('surfaces an error when the initial config load fails', async () => {
+    vi.mocked(openhumanGetConfig).mockRejectedValueOnce(new Error('boom: get_config'));
+    renderWithProviders(<LocalModelPanel />, { initialEntries: ['/settings/local-model'] });
+    await screen.findByText('boom: get_config');
+  });
+
+  it('rolls state back and shows error when save fails', async () => {
+    runtime.runtime_enabled = true;
+    vi.mocked(openhumanUpdateLocalAiSettings).mockRejectedValueOnce(new Error('save: forbidden'));
+    // Initial load succeeds; the reload triggered after a save error fails
+    // too, so the error message is not immediately cleared by a successful
+    // refetch. This exercises the catch arm in `updateUsage`.
+    vi.mocked(openhumanGetConfig).mockImplementationOnce(async () => makeSnapshot(runtime));
+    vi.mocked(openhumanGetConfig).mockRejectedValueOnce(new Error('save: forbidden'));
+    renderWithProviders(<LocalModelPanel />, { initialEntries: ['/settings/local-model'] });
+
+    const heartbeatLabel = await screen.findByText('Heartbeat');
+    const cb = heartbeatLabel.closest('label')?.querySelector('input[type="checkbox"]');
+    fireEvent.click(cb as HTMLInputElement);
+
+    await waitFor(() => {
+      expect(openhumanUpdateLocalAiSettings).toHaveBeenCalledWith({ usage_heartbeat: true });
+    });
+    await screen.findByText('save: forbidden');
+  });
+
   it('persists a sub-flag toggle once master is enabled', async () => {
     runtime.runtime_enabled = true;
     renderWithProviders(<LocalModelPanel />, { initialEntries: ['/settings/local-model'] });
