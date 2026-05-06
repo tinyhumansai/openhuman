@@ -33,8 +33,8 @@ restarting | up_to_date | error`).
 
 ## User flow (Option 2: auto-download, prompt to restart)
 
-1. ~30 seconds after launch, the hook runs a silent `check_app_update`. It
-   re-checks every 4 hours.
+1. ~5 seconds after launch, the hook runs a silent `check_app_update`. It
+   re-checks every 15 minutes.
 2. If the manifest reports a newer version, the hook **automatically calls
    `download_app_update`** in the background — the user sees nothing.
 3. Once the bytes are staged, the Rust side emits `ready_to_install` and the
@@ -112,11 +112,11 @@ artifacts. Use this recipe.
    ./app/src-tauri/target/release/bundle/macos/OpenHuman.app/Contents/MacOS/OpenHuman
    ```
 
-   You should see `[app-update]` lines start to flow ~30 seconds after
+   You should see `[app-update]` lines start to flow ~5 seconds after
    launch (auto-check), or immediately after clicking
    **Settings → About → Check for updates**.
 
-4. **Trigger the check** — either wait ~30s for the auto-check, or open
+4. **Trigger the check** — either wait ~5s for the auto-check, or open
    **Settings → About** → **Check for updates**. The check is silent;
    the prompt appears only once the download has staged.
 
@@ -162,7 +162,7 @@ artifacts. Use this recipe.
   so the dev profile never produces a bundle the updater can swap in. Use
   `pnpm tauri build`.
 - **The banner never shows on first launch** — that's expected; the
-  initial probe is delayed 30s. To force it, click "Check for updates" in
+  initial probe is delayed 5s. To force it, click "Check for updates" in
   the About panel.
 
 ## Logs
