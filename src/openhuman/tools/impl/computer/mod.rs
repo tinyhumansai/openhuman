@@ -1,3 +1,4 @@
+mod human_path;
 mod keyboard;
 mod mouse;
 
