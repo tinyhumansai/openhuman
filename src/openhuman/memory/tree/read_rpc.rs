@@ -1232,9 +1232,11 @@ pub struct WipeAllResponse {
 pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>, String> {
     let cfg = config.clone();
     let resp = tokio::task::spawn_blocking(move || -> Result<WipeAllResponse> {
-        // Tables to truncate. Order doesn't strictly matter — every row
-        // is being removed — but we list dependents before parents for
-        // readability.
+        // Tables to truncate. Order matters: `mem_tree_summaries` and
+        // `mem_tree_buffers` both have `FOREIGN KEY (tree_id) REFERENCES
+        // mem_tree_trees(id)` with `PRAGMA foreign_keys = ON`, so trees
+        // must come AFTER its dependents. Every other table's order is
+        // free.
         const TABLES: &[&str] = &[
             "mem_tree_score",
             "mem_tree_entity_index",
@@ -1396,11 +1398,17 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
         // Step 1 — truncate tree state in one transaction. Chunks
         // (`mem_tree_chunks`), the entity index, score rows, and the
         // sync-state KV all stay intact.
+        //
+        // Order matters: `mem_tree_summaries` and `mem_tree_buffers`
+        // both have `FOREIGN KEY (tree_id) REFERENCES mem_tree_trees(id)`,
+        // and `PRAGMA foreign_keys = ON` is set. Trees must come last
+        // or SQLite throws "FOREIGN KEY constraint failed". `mem_tree_jobs`
+        // has no FK so its position is free.
         const TREE_TABLES: &[&str] = &[
             "mem_tree_summaries",
-            "mem_tree_trees",
             "mem_tree_buffers",
             "mem_tree_jobs",
+            "mem_tree_trees",
         ];
         let tree_rows_deleted: u64 = with_connection(&cfg, |conn| {
             let tx = conn.unchecked_transaction()?;
