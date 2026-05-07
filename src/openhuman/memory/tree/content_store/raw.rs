@@ -141,9 +141,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("<unknown>");
-            log::debug!(
-                "[content_store::raw] parent dir fsync failed dir={dir_hint} err={e}"
-            );
+            log::debug!("[content_store::raw] parent dir fsync failed dir={dir_hint} err={e}");
         }
     }
     Ok(())
