@@ -42,7 +42,7 @@ pub async fn status_list_rpc(config: &Config) -> Result<RpcOutcome<StatusListRes
     tracing::debug!("[memory_sync_status][rpc] status_list");
 
     let config = config.clone();
-    let statuses: Vec<MemorySyncStatus> = tokio::task::spawn_blocking(move || {
+    let statuses: Vec<MemorySyncStatus> = match tokio::task::spawn_blocking(move || {
         with_connection(&config, |conn| -> anyhow::Result<Vec<MemorySyncStatus>> {
             // Provider parsed from `source_id` prefix (substring before
             // first ':'); falls back to `source_kind` when no prefix.
@@ -130,8 +130,23 @@ pub async fn status_list_rpc(config: &Config) -> Result<RpcOutcome<StatusListRes
         })
     })
     .await
-    .map_err(|e| format!("spawn_blocking join failed: {e}"))?
-    .map_err(|e| format!("memory_tree DB access failed: {e:#}"))?;
+    {
+        Ok(Ok(rows)) => rows,
+        // DB unavailable (open/migration failure) or query error: return empty
+        // so the schema contract (`statuses` array) is always satisfied.
+        Ok(Err(e)) => {
+            tracing::warn!(
+                "[memory_sync_status][rpc] DB query failed, returning empty statuses: {e:#}"
+            );
+            vec![]
+        }
+        Err(e) => {
+            tracing::warn!(
+                "[memory_sync_status][rpc] spawn_blocking join error, returning empty statuses: {e}"
+            );
+            vec![]
+        }
+    };
 
     tracing::debug!(
         "[memory_sync_status][rpc] status_list returning {} row(s)",
@@ -142,4 +157,42 @@ pub async fn status_list_rpc(config: &Config) -> Result<RpcOutcome<StatusListRes
     // wraps the value in `{ result, logs }`. The frontend reads
     // `resp.statuses` directly, so any envelope here breaks parsing.
     Ok(RpcOutcome::new(StatusListResponse { statuses }, vec![]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_list_response_serializes_statuses_array() {
+        let resp = StatusListResponse { statuses: vec![] };
+        let v = serde_json::to_value(&resp).expect("serialize");
+        assert!(
+            v.get("statuses").and_then(|s| s.as_array()).is_some(),
+            "statuses must always be present as an array"
+        );
+    }
+
+    #[test]
+    fn status_list_response_empty_statuses_is_empty_array() {
+        let resp = StatusListResponse { statuses: vec![] };
+        let v = serde_json::to_value(&resp).expect("serialize");
+        let arr = v["statuses"].as_array().unwrap();
+        assert!(arr.is_empty());
+    }
+
+    #[test]
+    fn rpc_outcome_no_logs_serializes_bare_value() {
+        // Validates the wire contract: with empty logs, into_cli_compatible_json
+        // returns the value directly (not wrapped in { result, logs }).
+        let resp = StatusListResponse { statuses: vec![] };
+        let outcome = RpcOutcome::new(resp, vec![]);
+        let json = outcome.into_cli_compatible_json().expect("serialize");
+        assert!(
+            json.get("statuses").is_some(),
+            "bare value must have statuses at the top level"
+        );
+        assert!(json.get("result").is_none(), "must not be double-wrapped");
+        assert!(json.get("logs").is_none(), "must not be double-wrapped");
+    }
 }

@@ -57,8 +57,8 @@ export async function memorySyncStatusList(): Promise<MemorySyncStatus[]> {
     throw err;
   }
   if (!resp || !Array.isArray(resp.statuses)) {
-    errLog('memory_sync_status_list: malformed response (missing statuses[]): %O', resp);
-    throw new Error('Invalid response from openhuman.memory_sync_status_list: missing statuses[]');
+    errLog('memory_sync_status_list: malformed response (missing statuses[]), returning empty: %O', resp);
+    return [];
   }
   log('memory_sync_status_list: received %d row(s)', resp.statuses.length);
   return resp.statuses;
