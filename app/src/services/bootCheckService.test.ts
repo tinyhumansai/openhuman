@@ -8,9 +8,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const callCoreRpcMock = vi.fn();
-vi.mock('./coreRpcClient', () => ({
-  callCoreRpc: (req: unknown) => callCoreRpcMock(req),
-}));
+vi.mock('./coreRpcClient', () => ({ callCoreRpc: (req: unknown) => callCoreRpcMock(req) }));
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -25,10 +23,7 @@ describe('bootCheckTransport', () => {
     const result = await bootCheckTransport.callRpc<{ ok: boolean }>('openhuman.ping', { x: 1 });
 
     expect(result).toEqual({ ok: true });
-    expect(callCoreRpcMock).toHaveBeenCalledWith({
-      method: 'openhuman.ping',
-      params: { x: 1 },
-    });
+    expect(callCoreRpcMock).toHaveBeenCalledWith({ method: 'openhuman.ping', params: { x: 1 } });
   });
 
   it('invokeCmd forwards cmd+args to Tauri invoke', async () => {
