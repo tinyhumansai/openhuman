@@ -56,6 +56,44 @@ If using `delegate: Codex` as the only trigger for an integration that requires 
 - Do not open duplicate PRs for the same issue. If a retry is needed, update the existing PR branch or close the stale duplicate and state which PR is canonical.
 - PRs should target `jwalin-shah/openhuman:main` unless upstream permissions allow `tinyhumansai/openhuman:main`.
 
+## Duplicate PR Cleanup
+
+Canonical PR rule: keep the PR whose head branch is the active issue branch and whose head commit contains the intended final work. If two PRs contain equivalent work, keep the PR already linked from Linear or already carrying useful review/CI history. If neither has history, keep the older PR number to reduce churn. Do not choose by recency alone; compare the heads first and move any useful commits or PR body details onto the canonical PR before closing the duplicate.
+
+Lightweight comparison and close recipe:
+
+```bash
+BASE_REPO=tinyhumansai/openhuman # or jwalin-shah/openhuman for fork-targeted PRs
+BASE_REMOTE=upstream             # remote matching BASE_REPO
+KEEP=123                         # canonical PR number
+CLOSE=124                        # duplicate PR number
+
+gh pr view "$KEEP" --repo "$BASE_REPO" --json number,url,state,baseRefName,headRefName,headRefOid
+gh pr view "$CLOSE" --repo "$BASE_REPO" --json number,url,state,baseRefName,headRefName,headRefOid
+
+git fetch "$BASE_REMOTE" "refs/pull/$KEEP/head:refs/tmp/pr-$KEEP"
+git fetch "$BASE_REMOTE" "refs/pull/$CLOSE/head:refs/tmp/pr-$CLOSE"
+git log --oneline --left-right --cherry-pick "refs/tmp/pr-$KEEP...refs/tmp/pr-$CLOSE"
+git diff --stat "refs/tmp/pr-$KEEP...refs/tmp/pr-$CLOSE"
+git diff --name-status "refs/tmp/pr-$KEEP...refs/tmp/pr-$CLOSE"
+
+gh pr close "$CLOSE" --repo "$BASE_REPO" --comment "Closing as a duplicate of #$KEEP for <ISSUE-KEY>. Kept #$KEEP because <canonical reason>."
+
+git update-ref -d "refs/tmp/pr-$KEEP"
+git update-ref -d "refs/tmp/pr-$CLOSE"
+```
+
+If the duplicate has unique, useful commits, cherry-pick or manually port them onto the canonical branch, push that branch, then repeat the comparison before closing anything.
+
+Record the cleanup in Linear before handoff:
+
+- Canonical PR kept: `<PR URL>` with head SHA `<sha>`.
+- Duplicate PR closed: `<PR URL>` with reason.
+- Comparison evidence: command summary, for example `git log --left-right --cherry-pick` showed no unique commits in the duplicate.
+- Any moved commits or remaining blockers.
+
+Pattern from the SYM-92 incident: two agent launches produced overlapping PRs for the same Linear issue. The cleanup was to compare both heads, keep the PR that represented the active issue branch/final handoff, close the stale duplicate with a pointer to the kept PR, and record both PRs in Linear. Treat that as the reusable pattern; the kept PR is still selected by branch, head diff, and handoff evidence for the current issue.
+
 ## Validation Before PR
 
 Run the smallest checks that prove the changed surface, plus the relevant merge gates:
