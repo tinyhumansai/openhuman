@@ -64,8 +64,12 @@ function isMethodNotFound(err: unknown): boolean {
 }
 
 /**
- * Poll `core.ping` with exponential back-off until the core responds or
- * we exhaust the budget.
+ * Poll `core.ping` with exponential back-off until the core responds or we
+ * exhaust the budget. `core.ping` is a Tier-1 dispatcher method (see
+ * `src/core/dispatch.rs`) that responds before any domain controller is
+ * registered, which is exactly what we want for a liveness probe — it tells
+ * us "the HTTP server is up and the dispatcher is wired" without coupling to
+ * any specific subsystem's readiness.
  *
  * Returns true when the core is reachable, false on timeout.
  */
@@ -79,13 +83,6 @@ async function waitForCore(
     const elapsedAtStart = Date.now() - startedAt;
     try {
       log('[boot-check] ping attempt elapsed=%dms', elapsedAtStart);
-      // Method is `core.ping`, not `openhuman.ping`. The latter routes
-      // through the `openhuman.*` domain dispatcher which has no `ping`
-      // controller — the core's `GET /` endpoint even self-documents the
-      // correct invocation: `usage.jsonrpc.method = "core.ping"`. Upstream
-      // `#1316` introduced this call site with the wrong namespace; the
-      // dispatcher rejects with `unknown method: openhuman.ping` and the
-      // BootCheckGate spins until timeout.
       await callRpc('core.ping', {});
       log('[boot-check] ping succeeded elapsed=%dms', elapsedAtStart);
       return true;
@@ -138,16 +135,13 @@ type VersionCheckResult = 'match' | 'outdated' | 'noVersionMethod' | 'unreachabl
 
 async function checkVersion(callRpc: BootCheckTransport['callRpc']): Promise<VersionCheckResult> {
   try {
-    // The Rust handler at `src/openhuman/update/ops.rs:15` returns a
-    // `RpcOutcome::single_log(VersionInfo, ...)` which serializes as
-    // `{ logs: [...], result: { version, target_triple, asset_prefix } }`.
-    // After callRpc strips the JSON-RPC envelope's outer `result` field,
-    // we still need to drill through RpcOutcome's inner `result` wrapper
-    // to reach the actual VersionInfo. The upstream `#1316` PR read
-    // `.version_info.version` which doesn't exist anywhere in the
-    // response, so `coreVersion === APP_VERSION` always failed and the
-    // gate falsely reported a version mismatch even on fresh same-build
-    // runs.
+    // `openhuman.update_version` is wrapped by RpcOutcome::single_log
+    // (see src/openhuman/update/ops.rs + src/rpc/mod.rs::into_cli_compatible_json):
+    // when logs are present the response shape is `{ result: VersionInfo, logs }`,
+    // and VersionInfo is `{ version, target_triple, asset_prefix }`. Earlier
+    // attempts read `result.version_info.version` (no such field) and then
+    // `result.version` (skipped the RpcOutcome `result` wrapper) — both
+    // yielded '' and pinned every boot to "outdated local".
     const response = await callRpc<{ result?: { version?: string } }>(
       'openhuman.update_version',
       {}
@@ -181,7 +175,7 @@ async function checkVersion(callRpc: BootCheckTransport['callRpc']): Promise<Ver
  *
  * Local mode:
  *   1. Invoke `start_core_process` Tauri command to spawn the embedded core.
- *   2. Poll `openhuman.ping` until reachable (≤10 s).
+ *   2. Poll `core.ping` until reachable (≤10 s).
  *   3. Check for a legacy daemon via `service_status`.
  *   4. Version-check via `update_version`.
  *

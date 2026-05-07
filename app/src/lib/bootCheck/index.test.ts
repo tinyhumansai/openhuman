@@ -42,9 +42,9 @@ describe('runBootCheck — local mode', () => {
 
     const transport = makeTransport({
       callRpc: rpcResponder({
-        'openhuman.ping': {},
+        'core.ping': {},
         'openhuman.service_status': { installed: false, running: false },
-        'openhuman.update_version': { version_info: { version: appVersion } },
+        'openhuman.update_version': { result: { version: appVersion } },
       }),
     });
 
@@ -57,9 +57,9 @@ describe('runBootCheck — local mode', () => {
 
     const transport = makeTransport({
       callRpc: rpcResponder({
-        'openhuman.ping': {},
+        'core.ping': {},
         'openhuman.service_status': { installed: true, running: false },
-        'openhuman.update_version': { version_info: { version: appVersion } },
+        'openhuman.update_version': { result: { version: appVersion } },
       }),
     });
 
@@ -70,9 +70,9 @@ describe('runBootCheck — local mode', () => {
   it('returns daemonDetected when service_status shows running=true', async () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
-        'openhuman.ping': {},
+        'core.ping': {},
         'openhuman.service_status': { installed: false, running: true },
-        'openhuman.update_version': { version_info: { version: 'x' } },
+        'openhuman.update_version': { result: { version: 'x' } },
       }),
     });
 
@@ -83,9 +83,9 @@ describe('runBootCheck — local mode', () => {
   it('returns outdatedLocal when core version differs from app version', async () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
-        'openhuman.ping': {},
+        'core.ping': {},
         'openhuman.service_status': { installed: false, running: false },
-        'openhuman.update_version': { version_info: { version: '0.0.0-different' } },
+        'openhuman.update_version': { result: { version: '0.0.0-different' } },
       }),
     });
 
@@ -96,7 +96,7 @@ describe('runBootCheck — local mode', () => {
   it('returns noVersionMethod when update_version returns -32601', async () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
-        'openhuman.ping': {},
+        'core.ping': {},
         'openhuman.service_status': { installed: false, running: false },
         'openhuman.update_version': new Error('JSON-RPC error -32601 Method not found'),
       }),
@@ -109,7 +109,7 @@ describe('runBootCheck — local mode', () => {
   it('returns noVersionMethod on "method not found" text variant', async () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
-        'openhuman.ping': {},
+        'core.ping': {},
         'openhuman.service_status': { installed: false, running: false },
         'openhuman.update_version': new Error('method not found'),
       }),
@@ -155,9 +155,7 @@ describe('runBootCheck — cloud mode', () => {
     const appVersion = (await import('../../utils/config')).APP_VERSION;
 
     const transport = makeTransport({
-      callRpc: rpcResponder({
-        'openhuman.update_version': { version_info: { version: appVersion } },
-      }),
+      callRpc: rpcResponder({ 'openhuman.update_version': { result: { version: appVersion } } }),
     });
 
     const result = await runBootCheck(
@@ -169,9 +167,7 @@ describe('runBootCheck — cloud mode', () => {
 
   it('returns outdatedCloud when version differs', async () => {
     const transport = makeTransport({
-      callRpc: rpcResponder({
-        'openhuman.update_version': { version_info: { version: '0.0.0-old' } },
-      }),
+      callRpc: rpcResponder({ 'openhuman.update_version': { result: { version: '0.0.0-old' } } }),
     });
 
     const result = await runBootCheck(
@@ -228,9 +224,9 @@ describe('runBootCheck — error and edge branches', () => {
 
     const transport = makeTransport({
       callRpc: rpcResponder({
-        'openhuman.ping': {},
+        'core.ping': {},
         'openhuman.service_status': new Error('rpc transport blew up'),
-        'openhuman.update_version': { version_info: { version: appVersion } },
+        'openhuman.update_version': { result: { version: appVersion } },
       }),
     });
 
@@ -238,12 +234,12 @@ describe('runBootCheck — error and edge branches', () => {
     expect(result.kind).toBe('match');
   });
 
-  it('treats empty version_info.version as outdatedLocal', async () => {
+  it('treats empty version as outdatedLocal', async () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
-        'openhuman.ping': {},
+        'core.ping': {},
         'openhuman.service_status': { installed: false, running: false },
-        'openhuman.update_version': { version_info: { version: '' } },
+        'openhuman.update_version': { result: { version: '' } },
       }),
     });
 
@@ -268,7 +264,7 @@ describe('runBootCheck — error and edge branches', () => {
     let pingCalls = 0;
     const transport: BootCheckTransport = {
       callRpc: vi.fn(async (method: string) => {
-        if (method === 'openhuman.ping') {
+        if (method === 'core.ping') {
           pingCalls += 1;
           if (pingCalls === 1) return {};
           throw new Error('subsequent failure');

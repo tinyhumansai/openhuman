@@ -7,11 +7,10 @@ allow = [
     "core_rpc_url",
     "core_rpc_token",
     "restart_core_process",
-    # `start_core_process` was added in #1316 (boot-time core mode pick) but
-    # the upstream PR didn't include this allow entry, so every frontend
-    # invoke gets rejected with "Command not allowed. Command not found"
-    # even though it IS in the generate_handler! list. Adding here unblocks
-    # local boot; should be a one-line follow-up PR upstream.
+    # `start_core_process` is invoked by BootCheckGate after the user picks
+    # Local mode, before redux-persist hydrates the rest of the app (#1316).
+    # Without this allow entry the invoke is rejected with "Command not
+    # found" and the boot gate stalls.
     "start_core_process",
     # `restart_app` triggers `app.restart()` so CEF re-initializes against
     # the active user's `users/<id>/cef` profile after an identity flip
