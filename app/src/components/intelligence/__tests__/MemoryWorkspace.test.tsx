@@ -24,6 +24,12 @@ vi.mock('../../../lib/composio/composioApi', () => ({
   syncConnection: vi.fn(),
 }));
 
+// Stub `openUrl` so deep-link clicks land in a mock instead of routing
+// through `tauri-plugin-opener` (which isn't loaded in the test env).
+vi.mock('../../../utils/openUrl', () => ({
+  openUrl: vi.fn().mockResolvedValue(undefined),
+}));
+
 const { memoryTreeGraphExport, memoryTreeFlushNow } = (await import(
   '../../../utils/tauriCommands'
 )) as unknown as {
@@ -38,9 +44,15 @@ const { listConnections, syncConnection } = (await import(
   syncConnection: Mock;
 };
 
-function makeNode(partial: Partial<GraphNode>): GraphNode {
+const { openUrl } = (await import('../../../utils/openUrl')) as unknown as {
+  openUrl: Mock;
+};
+
+function makeSummary(partial: Partial<GraphNode>): GraphNode {
   return {
+    kind: 'summary',
     id: 'summary:L1:abc',
+    label: 'L1 · gmail',
     tree_id: 'tree-1',
     tree_kind: 'source',
     tree_scope: 'gmail:alice@x.com',
@@ -56,29 +68,22 @@ function makeNode(partial: Partial<GraphNode>): GraphNode {
 
 const SAMPLE_RESPONSE: GraphExportResponse = {
   content_root_abs: '/tmp/workspace/memory_tree/content',
+  edges: [],
   nodes: [
-    makeNode({ id: 'root', level: 2, parent_id: null, child_count: 2 }),
-    makeNode({ id: 'child-1', level: 1, parent_id: 'root' }),
-    makeNode({ id: 'child-2', level: 1, parent_id: 'root' }),
+    makeSummary({ id: 'root', level: 2, parent_id: null, child_count: 2 }),
+    makeSummary({ id: 'child-1', level: 1, parent_id: 'root' }),
+    makeSummary({ id: 'child-2', level: 1, parent_id: 'root' }),
   ],
 };
 
 describe('MemoryWorkspace (graph view)', () => {
-  let originalLocation: Location;
-
   beforeEach(() => {
     vi.clearAllMocks();
     memoryTreeGraphExport.mockResolvedValue(SAMPLE_RESPONSE);
     memoryTreeFlushNow.mockResolvedValue({ enqueued: true, stale_buffers: 3 });
     listConnections.mockResolvedValue({ connections: [] });
     syncConnection.mockResolvedValue({ ok: true });
-    // Stub `window.location.href` so the deep-link click is observable
-    // without actually navigating away during the test run.
-    originalLocation = window.location;
-    Object.defineProperty(window, 'location', {
-      writable: true,
-      value: { ...originalLocation, href: '' },
-    });
+    openUrl.mockResolvedValue(undefined);
   });
 
   it('renders the SVG graph once the export RPC resolves', async () => {
@@ -95,6 +100,7 @@ describe('MemoryWorkspace (graph view)', () => {
   it('shows an empty state when the tree has no sealed summaries', async () => {
     memoryTreeGraphExport.mockResolvedValueOnce({
       content_root_abs: '/tmp/workspace/memory_tree/content',
+      edges: [],
       nodes: [],
     });
     renderWithProviders(<MemoryWorkspace />);
@@ -103,28 +109,40 @@ describe('MemoryWorkspace (graph view)', () => {
     });
   });
 
-  it('"View vault in Obsidian" triggers an obsidian:// deep link to the content root', async () => {
+  it('"View vault in Obsidian" triggers the deep link via the OS opener (not the webview)', async () => {
     renderWithProviders(<MemoryWorkspace />);
     const button = await screen.findByTestId('memory-open-in-obsidian');
     fireEvent.click(button);
-    expect(window.location.href).toBe(
-      'obsidian://open?path=' +
-        encodeURIComponent('/tmp/workspace/memory_tree/content')
-    );
+    await waitFor(() => {
+      expect(openUrl).toHaveBeenCalledWith(
+        'obsidian://open?path=' +
+          encodeURIComponent('/tmp/workspace/memory_tree/content')
+      );
+    });
   });
 
-  it('clicking a graph node opens that summary in Obsidian via the deep link', async () => {
+  it('clicking a summary node opens that file in Obsidian via the deep link', async () => {
     renderWithProviders(<MemoryWorkspace />);
     const node = await screen.findByTestId('memory-graph-node-child-1');
     fireEvent.click(node);
-    // child-1 has tree_kind=source, level=1, scope=gmail:alice@x.com →
-    // slug "gmail-alice-x-com", basename "summary-L1-abc".
-    const expectedRel =
-      'summaries/source/gmail-alice-x-com/L1/summary-L1-abc.md';
+    const expectedRel = 'summaries/source/gmail-alice-x-com/L1/summary-L1-abc.md';
     const expectedAbs = '/tmp/workspace/memory_tree/content/' + expectedRel;
-    expect(window.location.href).toBe(
-      'obsidian://open?path=' + encodeURIComponent(expectedAbs)
-    );
+    await waitFor(() => {
+      expect(openUrl).toHaveBeenCalledWith(
+        'obsidian://open?path=' + encodeURIComponent(expectedAbs)
+      );
+    });
+  });
+
+  it('toggling to Contacts mode re-fetches the graph with mode=contacts', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await screen.findByTestId('memory-graph-svg');
+    expect(memoryTreeGraphExport).toHaveBeenLastCalledWith('tree');
+    const contactsTab = screen.getByTestId('memory-graph-mode-contacts');
+    fireEvent.click(contactsTab);
+    await waitFor(() => {
+      expect(memoryTreeGraphExport).toHaveBeenLastCalledWith('contacts');
+    });
   });
 
   it('"Build summary trees" calls memory_tree_flush_now and toasts the buffer count', async () => {

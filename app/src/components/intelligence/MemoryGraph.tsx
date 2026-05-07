@@ -1,27 +1,27 @@
 /**
  * Obsidian-style force-directed graph view for the memory tree.
  *
- * Reads every sealed summary via `memory_tree_graph_export` and lays them
- * out using a tiny barycentric force simulation:
+ * Two modes:
+ *   - `tree`     — sealed summary nodes connected by parent→child
+ *   - `contacts` — raw chunks linked to person entities they mention
+ *
+ * Layout: a tiny barycentric force simulation
  *   - parent → child links pull connected nodes together
  *   - all-pairs Coulomb repulsion pushes overlapping nodes apart
  *   - centring force keeps the cloud anchored in the viewport
  *
- * Trees naturally cluster by `tree_id` because edges only exist within a
- * tree — no cross-tree spaghetti. Node colour encodes `tree_kind`
- * (source / topic / global), node radius encodes `level` so roots read
- * larger than leaves at a glance.
- *
  * Click a node → opens the matching `.md` file in Obsidian via the
- * `obsidian://open?path=...` deep link. The absolute path comes from the
- * RPC response so it works regardless of where the workspace lives.
+ * `obsidian://open?path=...` deep link, dispatched through Tauri's
+ * `plugin-opener` so the OS shell handles the URL scheme. Without that
+ * shim the webview tries to navigate itself and Obsidian never opens.
  *
  * Pure SVG, no external graph dep — keeps the bundle small and the
  * rendering deterministic for tests/screenshots.
  */
 import { useMemo, useRef, useState } from 'react';
 
-import { type GraphNode } from '../../utils/tauriCommands';
+import { openUrl } from '../../utils/openUrl';
+import { type GraphEdge, type GraphMode, type GraphNode } from '../../utils/tauriCommands';
 
 interface SimNode extends GraphNode {
   x: number;
@@ -31,32 +31,45 @@ interface SimNode extends GraphNode {
 }
 
 interface MemoryGraphProps {
-  /** Pre-fetched summary nodes from `memory_tree_graph_export`. */
+  /** Pre-fetched summary / chunk / contact nodes. */
   nodes: GraphNode[];
+  /** Explicit edges (only used in contacts mode). */
+  edges: GraphEdge[];
+  /** Which graph this is — drives colour palette + click behaviour. */
+  mode: GraphMode;
   /** Absolute path to the content root, also from the RPC. */
   contentRootAbs: string;
   /** Optional override for the empty-state message. */
   emptyHint?: string;
 }
 
-const KIND_COLOR: Record<string, string> = {
-  source: '#4A83DD', // ocean
-  topic: '#E8A653', // amber
-  global: '#7BB489', // sage
+/** Per-node-kind palette. Source/topic/global preserved for tree mode. */
+const SUMMARY_TREE_COLOR: Record<string, string> = {
+  source: '#4A83DD',
+  topic: '#E8A653',
+  global: '#7BB489',
 };
-
-const KIND_LABEL: Record<string, string> = {
-  source: 'Source',
-  topic: 'Topic',
-  global: 'Global',
+const NODE_COLOR: Record<string, string> = {
+  chunk: '#4A83DD',
+  contact: '#A78BFA', // violet — matches the Obsidian button accent
 };
 
 const VIEWPORT_W = 1100;
 const VIEWPORT_H = 640;
 
-/** Radius in px for a node at the given level (roots are largest). */
-function nodeRadius(level: number): number {
-  return Math.max(4, 10 - level * 0.8);
+function nodeColor(node: GraphNode): string {
+  if (node.kind === 'summary') {
+    return SUMMARY_TREE_COLOR[node.tree_kind ?? ''] ?? '#94a3b8';
+  }
+  return NODE_COLOR[node.kind] ?? '#94a3b8';
+}
+
+function nodeRadius(node: GraphNode): number {
+  if (node.kind === 'summary') {
+    return Math.max(4, 10 - (node.level ?? 0) * 0.8);
+  }
+  if (node.kind === 'contact') return 9;
+  return 4; // chunk
 }
 
 /**
@@ -77,7 +90,6 @@ function relaxLayout(
   const cy = VIEWPORT_H / 2;
 
   for (let iter = 0; iter < iterations; iter++) {
-    // Coulomb repulsion (all pairs — fine for a few thousand nodes).
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const a = nodes[i];
@@ -95,7 +107,6 @@ function relaxLayout(
         b.vy -= fy;
       }
     }
-    // Spring attraction along edges.
     for (const [ai, bi] of edges) {
       const a = nodes[ai];
       const b = nodes[bi];
@@ -110,7 +121,6 @@ function relaxLayout(
       b.vx -= fx;
       b.vy -= fy;
     }
-    // Centring + friction + integration.
     for (const n of nodes) {
       n.vx += (cx - n.x) * CENTER_K;
       n.vy += (cy - n.y) * CENTER_K;
@@ -123,34 +133,29 @@ function relaxLayout(
 }
 
 /**
- * Open the matching `.md` file in Obsidian. We always have the absolute
- * `content_root` and the file's relative path inside it, so we use
- * `obsidian://open?path=<absolute path>` which Obsidian handles without
- * needing the vault to be pre-registered.
- *
- * The relative path matches `summary_rel_path` on the Rust side:
- *   summaries/<tree_kind>/<scope_slug>/L<level>/<basename>.md
- *
- * `tree_scope` already arrives slugified at the SQL level for source/topic
- * trees; for `global` it's the date label like `"global"` and the scope
- * directory is the date — but for the deep-link demo we accept that and
- * fall through to the content root if the rel-path can't be derived.
+ * Open a summary's `.md` file in Obsidian via the OS shell. Custom URL
+ * schemes go through `tauri-plugin-opener` so the host app handles
+ * them — `window.location.href` would route through the embedded
+ * webview's intent handler and either no-op or navigate the
+ * MemoryWorkspace away.
  */
-function openInObsidian(node: GraphNode, contentRootAbs: string): void {
-  // We only have the level and basename from the RPC; the scope slug for
-  // source/topic comes from the tree's `tree_scope` (already slugified by
-  // the slug rules in `paths::slugify_source_id`). For `global` we don't
-  // have the per-day directory in this RPC, so we fall back to opening
-  // the content root and let the user navigate.
-  const slug = slugify(node.tree_scope);
+async function openSummaryInObsidian(node: GraphNode, contentRootAbs: string): Promise<void> {
+  if (node.kind !== 'summary' || !node.tree_kind || node.level == null || !node.file_basename) {
+    return;
+  }
+  const slug = slugify(node.tree_scope ?? '');
   const rel =
     node.tree_kind === 'global'
-      ? `summaries/global` // open the directory; Obsidian will list dailies
+      ? `summaries/global`
       : `summaries/${node.tree_kind}/${slug}/L${node.level}/${node.file_basename}.md`;
   const abs = joinPath(contentRootAbs, rel);
   const url = `obsidian://open?path=${encodeURIComponent(abs)}`;
   console.debug('[memory-graph] open in Obsidian url=%s', url);
-  window.location.href = url;
+  try {
+    await openUrl(url);
+  } catch (err) {
+    console.error('[memory-graph] openUrl failed', err);
+  }
 }
 
 /** Mirror of `paths::slugify_source_id` (Rust). */
@@ -186,7 +191,13 @@ function joinPath(root: string, rel: string): string {
   return `${trimmed}/${rel}`;
 }
 
-export function MemoryGraph({ nodes, contentRootAbs, emptyHint }: MemoryGraphProps) {
+export function MemoryGraph({
+  nodes,
+  edges,
+  mode,
+  contentRootAbs,
+  emptyHint,
+}: MemoryGraphProps) {
   const [hovered, setHovered] = useState<GraphNode | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
@@ -196,7 +207,6 @@ export function MemoryGraph({ nodes, contentRootAbs, emptyHint }: MemoryGraphPro
     if (!nodes || nodes.length === 0) return null;
     const idIndex = new Map<string, number>();
     nodes.forEach((n, i) => idIndex.set(n.id, i));
-    // Seed positions in a circle so the simulation has somewhere to start.
     const sim: SimNode[] = nodes.map((n, i) => {
       const angle = (i / nodes.length) * Math.PI * 2;
       const r = 200 + (i % 7) * 12;
@@ -208,49 +218,76 @@ export function MemoryGraph({ nodes, contentRootAbs, emptyHint }: MemoryGraphPro
         vy: 0,
       };
     });
-    const edges: Array<[number, number]> = [];
-    for (const n of nodes) {
-      if (!n.parent_id) continue;
-      const childIdx = idIndex.get(n.id);
-      const parentIdx = idIndex.get(n.parent_id);
-      if (childIdx == null || parentIdx == null) continue;
-      edges.push([childIdx, parentIdx]);
+    const edgeIndices: Array<[number, number]> = [];
+    if (mode === 'tree') {
+      // Tree mode: each summary's parent_id is the edge.
+      for (const n of nodes) {
+        if (!n.parent_id) continue;
+        const childIdx = idIndex.get(n.id);
+        const parentIdx = idIndex.get(n.parent_id);
+        if (childIdx == null || parentIdx == null) continue;
+        edgeIndices.push([childIdx, parentIdx]);
+      }
+    } else {
+      for (const e of edges) {
+        const a = idIndex.get(e.from);
+        const b = idIndex.get(e.to);
+        if (a == null || b == null) continue;
+        edgeIndices.push([a, b]);
+      }
     }
-    relaxLayout(sim, edges);
-    return { sim, edges };
-  }, [nodes]);
+    relaxLayout(sim, edgeIndices);
+    return { sim, edges: edgeIndices };
+  }, [nodes, edges, mode]);
 
   if (nodes.length === 0) {
     return (
       <div
         className="flex h-[640px] items-center justify-center rounded-lg border border-stone-100 bg-stone-50/40 text-sm text-stone-500"
         data-testid="memory-graph-empty">
-        {emptyHint ?? 'No memory yet — connect a source above to start ingesting.'}
+        {emptyHint ??
+          (mode === 'contacts'
+            ? 'No contact mentions yet — sync a source and rebuild trees first.'
+            : 'No memory yet — connect a source above to start ingesting.')}
       </div>
     );
   }
 
   if (!sim) return null;
 
-  // Distinct kinds for the legend — preserves first-seen order.
-  const kindsInUse = Array.from(new Set(nodes.map(n => n.tree_kind)));
+  // Distinct legend rows for the active mode.
+  const legend =
+    mode === 'tree'
+      ? Array.from(new Set(nodes.map(n => n.tree_kind ?? '')))
+          .filter(Boolean)
+          .map(kind => ({
+            label: kind === 'source' ? 'Source' : kind === 'topic' ? 'Topic' : 'Global',
+            color: SUMMARY_TREE_COLOR[kind] ?? '#94a3b8',
+          }))
+      : [
+          { label: 'Document', color: NODE_COLOR.chunk },
+          { label: 'Contact', color: NODE_COLOR.contact },
+        ];
 
   return (
     <div className="memory-graph rounded-lg border border-stone-100 bg-white">
       <div className="flex items-center justify-between gap-4 border-b border-stone-100 px-4 py-2">
         <div className="flex items-center gap-3 text-xs text-stone-500">
-          <span>{nodes.length} summary nodes</span>
+          <span>{nodes.length} nodes</span>
           <span className="text-stone-300">·</span>
-          <span>{sim.edges.length} parent → child links</span>
+          <span>
+            {sim.edges.length} {mode === 'tree' ? 'parent → child' : 'document ↔ contact'} link
+            {sim.edges.length === 1 ? '' : 's'}
+          </span>
         </div>
         <div className="flex items-center gap-3">
-          {kindsInUse.map(kind => (
-            <span key={kind} className="flex items-center gap-1.5 text-xs text-stone-600">
+          {legend.map(item => (
+            <span key={item.label} className="flex items-center gap-1.5 text-xs text-stone-600">
               <span
                 className="inline-block h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: KIND_COLOR[kind] ?? '#94a3b8' }}
+                style={{ backgroundColor: item.color }}
               />
-              {KIND_LABEL[kind] ?? kind}
+              {item.label}
             </span>
           ))}
         </div>
@@ -261,7 +298,6 @@ export function MemoryGraph({ nodes, contentRootAbs, emptyHint }: MemoryGraphPro
         className="block w-full"
         style={{ height: 'min(640px, calc(100vh - 22rem))', cursor: 'grab' }}
         data-testid="memory-graph-svg">
-        {/* Edges first so they paint behind nodes. */}
         <g stroke="#cbd5e1" strokeWidth={0.6} opacity={0.7}>
           {sim.edges.map(([ai, bi], idx) => {
             const a = sim.sim[ai];
@@ -271,8 +307,8 @@ export function MemoryGraph({ nodes, contentRootAbs, emptyHint }: MemoryGraphPro
         </g>
         <g>
           {sim.sim.map(n => {
-            const r = nodeRadius(n.level);
-            const fill = KIND_COLOR[n.tree_kind] ?? '#94a3b8';
+            const r = nodeRadius(n);
+            const fill = nodeColor(n);
             const isHover = hovered?.id === n.id;
             return (
               <circle
@@ -286,9 +322,11 @@ export function MemoryGraph({ nodes, contentRootAbs, emptyHint }: MemoryGraphPro
                 style={{ cursor: 'pointer', transition: 'r 120ms ease' }}
                 onMouseEnter={() => setHovered(n)}
                 onMouseLeave={() => setHovered(prev => (prev?.id === n.id ? null : prev))}
-                onClick={() => openInObsidian(n, contentRootAbs)}
+                onClick={() => {
+                  if (n.kind === 'summary') void openSummaryInObsidian(n, contentRootAbs);
+                }}
                 data-testid={`memory-graph-node-${n.id}`}>
-                <title>{`L${n.level} · ${n.tree_kind} · ${n.tree_scope} · ${n.child_count} children`}</title>
+                <title>{tooltipFor(n)}</title>
               </circle>
             );
           })}
@@ -298,16 +336,38 @@ export function MemoryGraph({ nodes, contentRootAbs, emptyHint }: MemoryGraphPro
         <div
           className="border-t border-stone-100 bg-stone-50/70 px-4 py-2 text-xs text-stone-700"
           data-testid="memory-graph-tooltip">
-          <span className="font-mono">L{hovered.level}</span>
-          <span className="text-stone-400"> · </span>
-          <span className="capitalize">{hovered.tree_kind}</span>
-          <span className="text-stone-400"> · </span>
-          <span>{hovered.tree_scope}</span>
-          <span className="text-stone-400"> · </span>
-          <span>{hovered.child_count} children</span>
-          <span className="ml-3 text-stone-400">click to open in Obsidian</span>
+          {hovered.kind === 'summary' ? (
+            <>
+              <span className="font-mono">L{hovered.level ?? '?'}</span>
+              <span className="text-stone-400"> · </span>
+              <span className="capitalize">{hovered.tree_kind}</span>
+              <span className="text-stone-400"> · </span>
+              <span>{hovered.tree_scope}</span>
+              <span className="text-stone-400"> · </span>
+              <span>{hovered.child_count ?? 0} children</span>
+              <span className="ml-3 text-stone-400">click to open in Obsidian</span>
+            </>
+          ) : hovered.kind === 'contact' ? (
+            <>
+              <span className="font-medium text-violet-700">{hovered.label}</span>
+              <span className="ml-3 text-stone-400">person · canonical id {hovered.id.slice(0, 12)}…</span>
+            </>
+          ) : (
+            <>
+              <span className="font-medium">{hovered.label || 'chunk'}</span>
+              <span className="ml-3 text-stone-400">document</span>
+            </>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+function tooltipFor(n: GraphNode): string {
+  if (n.kind === 'summary') {
+    return `L${n.level ?? 0} · ${n.tree_kind} · ${n.tree_scope ?? ''} · ${n.child_count ?? 0} children`;
+  }
+  if (n.kind === 'contact') return `${n.label} (person)`;
+  return n.label || 'document';
 }

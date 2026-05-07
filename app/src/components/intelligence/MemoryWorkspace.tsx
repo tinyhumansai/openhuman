@@ -30,8 +30,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { listConnections, syncConnection } from '../../lib/composio/composioApi';
 import type { ComposioConnection } from '../../lib/composio/types';
 import type { ToastNotification } from '../../types/intelligence';
+import { openUrl } from '../../utils/openUrl';
 import {
   type GraphExportResponse,
+  type GraphMode,
   memoryTreeFlushNow,
   memoryTreeGraphExport,
 } from '../../utils/tauriCommands';
@@ -57,15 +59,25 @@ function labelFor(connection: ComposioConnection): string {
 }
 
 /**
- * Trigger the `obsidian://open?path=<abs>` deep link. Obsidian opens
- * arbitrary absolute paths without requiring the vault to be registered
- * up-front, so the same URL works on a fresh machine as long as the user
- * has Obsidian installed.
+ * Trigger the `obsidian://open?path=<abs>` deep link via the OS shell.
+ *
+ * We deliberately route through `openUrl` (which delegates to
+ * `tauri-plugin-opener`) rather than setting `window.location.href`.
+ * The webview-host intent handler intercepts in-app navigations and
+ * does NOT punt custom schemes to the OS, so a direct
+ * `window.location.href = "obsidian://…"` either no-ops or navigates
+ * the React app away from the Memory tab. The opener plugin hands the
+ * URL straight to the system handler so Obsidian launches as a
+ * separate process.
  */
-function openVaultInObsidian(contentRootAbs: string) {
+async function openVaultInObsidian(contentRootAbs: string): Promise<void> {
   const url = `obsidian://open?path=${encodeURIComponent(contentRootAbs)}`;
   console.debug('[ui-flow][memory-workspace] open vault in Obsidian url=%s', url);
-  window.location.href = url;
+  try {
+    await openUrl(url);
+  } catch (err) {
+    console.error('[ui-flow][memory-workspace] openUrl failed', err);
+  }
 }
 
 export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
@@ -74,21 +86,24 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   const [connections, setConnections] = useState<ComposioConnection[]>([]);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [building, setBuilding] = useState(false);
+  const [mode, setMode] = useState<GraphMode>('tree');
 
-  // Load both the graph and the connections list once on mount. They
-  // power separate UI rows but both fail-soft — if connections RPC
-  // fails we still render the graph, and vice versa.
+  // (Re)load the graph whenever the mode toggle flips. Connections
+  // are loaded separately in their own effect.
   useEffect(() => {
-    console.debug('[ui-flow][memory-workspace] graph load: entry');
+    console.debug('[ui-flow][memory-workspace] graph load: entry mode=%s', mode);
     let cancelled = false;
+    setError(null);
+    setGraph(null);
     void (async () => {
       try {
-        const resp = await memoryTreeGraphExport();
+        const resp = await memoryTreeGraphExport(mode);
         if (cancelled) return;
         console.debug(
-          '[ui-flow][memory-workspace] graph load: exit n=%d root=%s',
+          '[ui-flow][memory-workspace] graph load: exit mode=%s n=%d edges=%d',
+          mode,
           resp.nodes.length,
-          resp.content_root_abs
+          resp.edges.length
         );
         setGraph(resp);
       } catch (err) {
@@ -100,7 +115,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mode]);
 
   const refreshConnections = useCallback(async () => {
     try {
@@ -159,7 +174,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       setTimeout(() => {
         void (async () => {
           try {
-            const next = await memoryTreeGraphExport();
+            const next = await memoryTreeGraphExport(mode);
             setGraph(next);
           } catch (err) {
             console.warn('[ui-flow][memory-workspace] post-build graph refresh failed', err);
@@ -176,7 +191,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
     } finally {
       setBuilding(false);
     }
-  }, [onToast]);
+  }, [onToast, mode]);
 
   return (
     <div className="space-y-4" data-testid="memory-workspace">
@@ -214,11 +229,11 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                     onClick={() => handleSync(conn)}
                     disabled={isSyncing || !isActive}
                     data-testid={`memory-source-sync-${conn.toolkit}`}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-stone-200
-                               bg-white px-3 py-1.5 text-xs font-medium text-stone-700 shadow-sm
-                               transition-colors hover:bg-stone-50 disabled:cursor-not-allowed
-                               disabled:opacity-50 focus:outline-none focus:ring-2
-                               focus:ring-ocean-200">
+                    className="inline-flex items-center gap-1.5 rounded-md
+                               bg-ocean-500 px-3 py-1.5 text-xs font-semibold text-white
+                               shadow-sm transition-colors hover:bg-ocean-600
+                               disabled:cursor-not-allowed disabled:opacity-50
+                               focus:outline-none focus:ring-2 focus:ring-ocean-200">
                     {isSyncing ? (
                       <>
                         <Spinner /> Syncing…
@@ -236,20 +251,21 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
         </section>
       )}
 
-      {graph && (
-        <div
-          className="flex flex-wrap items-center justify-end gap-2"
-          data-testid="memory-actions">
+      <div
+        className="flex flex-wrap items-center justify-between gap-3"
+        data-testid="memory-actions">
+        <ModeToggle mode={mode} onChange={setMode} />
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={handleBuildTrees}
             disabled={building}
             data-testid="memory-build-trees"
-            className="inline-flex items-center gap-2 rounded-lg border border-ocean-200
-                       bg-ocean-50 px-4 py-2 text-sm font-medium text-ocean-800 shadow-sm
-                       transition-colors hover:bg-ocean-100 disabled:cursor-not-allowed
-                       disabled:opacity-50 focus:outline-none focus:ring-2
-                       focus:ring-ocean-200">
+            className="inline-flex items-center gap-2 rounded-lg
+                       bg-ocean-500 px-4 py-2 text-sm font-semibold text-white
+                       shadow-sm transition-colors hover:bg-ocean-600
+                       disabled:cursor-not-allowed disabled:opacity-50
+                       focus:outline-none focus:ring-2 focus:ring-ocean-200">
             {building ? (
               <>
                 <Spinner /> Building…
@@ -260,20 +276,22 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
               </>
             )}
           </button>
-          <button
-            type="button"
-            onClick={() => openVaultInObsidian(graph.content_root_abs)}
-            data-testid="memory-open-in-obsidian"
-            className="inline-flex items-center gap-2 rounded-lg border border-stone-200
-                       bg-white px-4 py-2 text-sm font-medium text-stone-700 shadow-sm
-                       transition-colors hover:bg-stone-50 focus:outline-none
-                       focus:ring-2 focus:ring-ocean-200"
-            title={`obsidian://open?path=${graph.content_root_abs}`}>
-            <ExternalLinkIcon />
-            View vault in Obsidian
-          </button>
+          {graph && (
+            <button
+              type="button"
+              onClick={() => void openVaultInObsidian(graph.content_root_abs)}
+              data-testid="memory-open-in-obsidian"
+              className="inline-flex items-center gap-2 rounded-lg
+                         bg-violet-500 px-4 py-2 text-sm font-semibold text-white
+                         shadow-sm transition-colors hover:bg-violet-600
+                         focus:outline-none focus:ring-2 focus:ring-violet-300"
+              title={`obsidian://open?path=${graph.content_root_abs}`}>
+              <ExternalLinkIcon />
+              View vault in Obsidian
+            </button>
+          )}
         </div>
-      )}
+      </div>
 
       {error ? (
         <div className="rounded-lg border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-800">
@@ -284,8 +302,51 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
           Loading graph…
         </div>
       ) : (
-        <MemoryGraph nodes={graph.nodes} contentRootAbs={graph.content_root_abs} />
+        <MemoryGraph
+          nodes={graph.nodes}
+          edges={graph.edges}
+          mode={mode}
+          contentRootAbs={graph.content_root_abs}
+        />
       )}
+    </div>
+  );
+}
+
+interface ModeToggleProps {
+  mode: GraphMode;
+  onChange: (next: GraphMode) => void;
+}
+
+function ModeToggle({ mode, onChange }: ModeToggleProps) {
+  const baseBtn =
+    'px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-ocean-200';
+  const active = 'bg-ocean-500 text-white shadow-sm';
+  const idle = 'bg-white text-stone-600 hover:bg-stone-50';
+  return (
+    <div
+      className="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-stone-50 p-1"
+      role="tablist"
+      aria-label="Graph view mode"
+      data-testid="memory-graph-mode-toggle">
+      <button
+        type="button"
+        onClick={() => onChange('tree')}
+        className={`${baseBtn} ${mode === 'tree' ? active : idle}`}
+        role="tab"
+        aria-selected={mode === 'tree'}
+        data-testid="memory-graph-mode-tree">
+        Trees
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange('contacts')}
+        className={`${baseBtn} ${mode === 'contacts' ? active : idle}`}
+        role="tab"
+        aria-selected={mode === 'contacts'}
+        data-testid="memory-graph-mode-contacts">
+        Contacts
+      </button>
     </div>
   );
 }

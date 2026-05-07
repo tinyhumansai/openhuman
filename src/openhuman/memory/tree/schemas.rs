@@ -568,17 +568,31 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "graph_export" => ControllerSchema {
             namespace: NAMESPACE,
             function: "graph_export",
-            description: "Dump every non-deleted summary node so the UI can lay out the \
-                          parent/child memory tree (Obsidian-style graph view). Includes \
-                          the absolute path to the on-disk content root so deep links can \
-                          point Obsidian at the same files.",
-            inputs: vec![],
+            description: "Return either the summary tree (parent→child links between sealed \
+                          summary nodes) or the document↔contact graph (chunks linked to \
+                          person entities they mention). Includes the absolute path to the \
+                          on-disk content root so deep links can point Obsidian at the same \
+                          files.",
+            inputs: vec![FieldSchema {
+                name: "mode",
+                ty: TypeSchema::Option(Box::new(TypeSchema::Enum {
+                    variants: vec!["tree", "contacts"],
+                })),
+                comment: "Which graph to return. Defaults to `tree`.",
+                required: false,
+            }],
             outputs: vec![
                 FieldSchema {
                     name: "nodes",
                     ty: TypeSchema::Array(Box::new(TypeSchema::Ref("GraphNode"))),
-                    comment: "All sealed summary nodes (across all trees), with parent_id \
-                              backlinks and a filesystem-safe basename for deep links.",
+                    comment: "Summary, chunk, or contact nodes depending on mode.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "edges",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Ref("GraphEdge"))),
+                    comment: "Explicit edges. Empty in tree mode (parent_id encodes \
+                              edges); chunk→contact mention edges in contacts mode.",
                     required: true,
                 },
                 FieldSchema {
@@ -797,10 +811,16 @@ fn handle_set_llm(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_graph_export(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_graph_export(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
+        #[derive(serde::Deserialize, Default)]
+        struct Req {
+            #[serde(default)]
+            mode: Option<read_rpc::GraphMode>,
+        }
         let config = config_rpc::load_config_with_timeout().await?;
-        to_json(read_rpc::graph_export_rpc(&config).await?)
+        let req = parse_value::<Req>(Value::Object(params)).unwrap_or_default();
+        to_json(read_rpc::graph_export_rpc(&config, req.mode.unwrap_or_default()).await?)
     })
 }
 

@@ -877,34 +877,93 @@ pub struct DeleteChunkResponse {
 
 // ── graph_export ────────────────────────────────────────────────────────
 
-/// One node in the graph export — a sealed summary in `mem_tree_summaries`.
+/// Which graph the UI is asking for.
 ///
-/// Wire shape consumed by the Memory tab's Obsidian-style graph view. Only
-/// summaries are returned (not raw chunks) — chunks would explode node
-/// count and the graph is meant for orientation, not full inspection.
+/// `Tree` returns summary nodes connected by parent_id (current
+/// Obsidian-style summary tree). `Contacts` returns raw chunks
+/// connected to the person entities they mention via the inverted
+/// `mem_tree_entity_index` — i.e. the document↔contact graph.
+///
+/// Wire shape uses lowercase strings so the UI can pass `"tree"` /
+/// `"contacts"` directly.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GraphMode {
+    #[default]
+    Tree,
+    Contacts,
+}
+
+/// One node in the graph export.
+///
+/// `kind` discriminates between the three node shapes the wire returns:
+/// - `"summary"` — sealed summary node (Tree mode)
+/// - `"chunk"`   — raw memory chunk (Contacts mode)
+/// - `"contact"` — canonical person entity (Contacts mode)
+///
+/// Optional fields are only populated when relevant to the node kind so
+/// the UI can branch on `kind` and ignore the rest.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GraphNode {
+    /// `"summary" | "chunk" | "contact"`.
+    pub kind: String,
     pub id: String,
-    pub tree_id: String,
-    /// `"source" | "topic" | "global"`.
-    pub tree_kind: String,
-    pub tree_scope: String,
-    pub level: u32,
-    /// Parent summary id (one level up). `None` for root nodes.
+    /// Display-friendly label (summary uses scope, chunk uses preview
+    /// snippet, contact uses entity surface form).
+    pub label: String,
+    /// Summary-only: source/topic/global.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_kind: Option<String>,
+    /// Summary-only: human-readable scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_scope: Option<String>,
+    /// Summary-only: tree id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_id: Option<String>,
+    /// Summary-only: level in the tree (0 = leaves, 1+ = summaries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<u32>,
+    /// Summary-only: parent summary id (None for roots). Present so
+    /// the UI draws parent→child edges directly without an explicit
+    /// edges array.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
-    pub child_count: u32,
-    pub time_range_start_ms: i64,
-    pub time_range_end_ms: i64,
-    /// Filesystem-safe basename of the summary's `.md` file (no `.md`
-    /// extension). Matches the wikilink target used by the front-matter
-    /// `children:` list — UI builds Obsidian deep links from this.
-    pub file_basename: String,
+    /// Summary-only: number of children rolled up under this node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_count: Option<u32>,
+    /// Summary/chunk: time-range start (ms since epoch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_range_start_ms: Option<i64>,
+    /// Summary/chunk: time-range end (ms since epoch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_range_end_ms: Option<i64>,
+    /// Summary-only: filesystem-safe basename of the summary's `.md`
+    /// file (used to build the Obsidian deep link).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_basename: Option<String>,
+    /// Contact-only: entity kind (`person`, `organization`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_kind: Option<String>,
+}
+
+/// One edge in the graph export. Used in Contacts mode to express
+/// chunk↔contact mentions, since those don't fit the parent/child
+/// shape encoded in `GraphNode.parent_id`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub from: String,
+    pub to: String,
 }
 
 /// Response shape for [`graph_export_rpc`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GraphExportResponse {
     pub nodes: Vec<GraphNode>,
+    /// Explicit edges. In `Tree` mode this is empty (each summary
+    /// node's `parent_id` carries the edge); in `Contacts` mode each
+    /// edge connects a `chunk` node to a `contact` node.
+    #[serde(default)]
+    pub edges: Vec<GraphEdge>,
     /// Absolute path to the on-disk `<workspace>/memory_tree/content/` root.
     /// UIs use this to open files via the `obsidian://open?path=...` deep
     /// link — Obsidian resolves arbitrary absolute paths without requiring
@@ -912,57 +971,22 @@ pub struct GraphExportResponse {
     pub content_root_abs: String,
 }
 
-/// `memory_tree_graph_export` — dump every non-deleted summary node so the
-/// UI can lay out the parent/child tree.
+/// `memory_tree_graph_export` — return either the summary tree or the
+/// document↔contact graph, depending on `mode`.
 pub async fn graph_export_rpc(
     config: &Config,
+    mode: GraphMode,
 ) -> Result<RpcOutcome<GraphExportResponse>, String> {
     let cfg = config.clone();
     let resp = tokio::task::spawn_blocking(move || -> Result<GraphExportResponse> {
         let content_root = cfg.memory_tree_content_root();
-        let nodes = with_connection(&cfg, |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT s.id, s.tree_id, s.tree_kind, t.scope, s.level, s.parent_id,
-                        s.child_ids_json, s.time_range_start_ms, s.time_range_end_ms
-                   FROM mem_tree_summaries s
-                   JOIN mem_tree_trees t ON t.id = s.tree_id
-                  WHERE s.deleted = 0
-                  ORDER BY s.tree_id, s.level, s.sealed_at_ms",
-            )?;
-            let rows = stmt
-                .query_map([], |row| {
-                    let id: String = row.get(0)?;
-                    let tree_id: String = row.get(1)?;
-                    let tree_kind: String = row.get(2)?;
-                    let tree_scope: String = row.get(3)?;
-                    let level: i64 = row.get(4)?;
-                    let parent_id: Option<String> = row.get(5)?;
-                    let child_ids_json: String = row.get(6)?;
-                    let time_range_start_ms: i64 = row.get(7)?;
-                    let time_range_end_ms: i64 = row.get(8)?;
-                    let child_count: u32 = serde_json::from_str::<Vec<String>>(&child_ids_json)
-                        .map(|v| v.len() as u32)
-                        .unwrap_or(0);
-                    let file_basename = sanitize_basename(&id);
-                    Ok(GraphNode {
-                        id,
-                        tree_id,
-                        tree_kind,
-                        tree_scope,
-                        level: level.max(0) as u32,
-                        parent_id,
-                        child_count,
-                        time_range_start_ms,
-                        time_range_end_ms,
-                        file_basename,
-                    })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .context("collect graph_export rows")?;
-            Ok(rows)
-        })?;
+        let resp = match mode {
+            GraphMode::Tree => collect_tree_graph(&cfg)?,
+            GraphMode::Contacts => collect_contacts_graph(&cfg)?,
+        };
         Ok(GraphExportResponse {
-            nodes,
+            nodes: resp.0,
+            edges: resp.1,
             content_root_abs: content_root.to_string_lossy().to_string(),
         })
     })
@@ -970,11 +994,190 @@ pub async fn graph_export_rpc(
     .map_err(|e| format!("graph_export join error: {e}"))?
     .map_err(|e| format!("graph_export: {e:#}"))?;
     let log = format!(
-        "memory_tree::read: graph_export n={} root={}",
+        "memory_tree::read: graph_export mode={:?} nodes={} edges={} root={}",
+        mode,
         resp.nodes.len(),
+        resp.edges.len(),
         resp.content_root_abs,
     );
     Ok(RpcOutcome::single_log(resp, log))
+}
+
+/// Tree mode: summary nodes joined to their owning tree for the
+/// human-readable scope. Edges are encoded implicitly via
+/// `GraphNode.parent_id`.
+fn collect_tree_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
+    let nodes = with_connection(cfg, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.tree_id, s.tree_kind, t.scope, s.level, s.parent_id,
+                    s.child_ids_json, s.time_range_start_ms, s.time_range_end_ms
+               FROM mem_tree_summaries s
+               JOIN mem_tree_trees t ON t.id = s.tree_id
+              WHERE s.deleted = 0
+              ORDER BY s.tree_id, s.level, s.sealed_at_ms",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let tree_id: String = row.get(1)?;
+                let tree_kind: String = row.get(2)?;
+                let tree_scope: String = row.get(3)?;
+                let level: i64 = row.get(4)?;
+                let parent_id: Option<String> = row.get(5)?;
+                let child_ids_json: String = row.get(6)?;
+                let time_range_start_ms: i64 = row.get(7)?;
+                let time_range_end_ms: i64 = row.get(8)?;
+                let child_count: u32 = serde_json::from_str::<Vec<String>>(&child_ids_json)
+                    .map(|v| v.len() as u32)
+                    .unwrap_or(0);
+                let file_basename = sanitize_basename(&id);
+                let label = format!("L{} · {}", level.max(0), tree_scope);
+                Ok(GraphNode {
+                    kind: "summary".into(),
+                    id,
+                    label,
+                    tree_kind: Some(tree_kind),
+                    tree_scope: Some(tree_scope),
+                    tree_id: Some(tree_id),
+                    level: Some(level.max(0) as u32),
+                    parent_id,
+                    child_count: Some(child_count),
+                    time_range_start_ms: Some(time_range_start_ms),
+                    time_range_end_ms: Some(time_range_end_ms),
+                    file_basename: Some(file_basename),
+                    entity_kind: None,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect tree-mode summary rows")?;
+        Ok(rows)
+    })?;
+    Ok((nodes, Vec::new()))
+}
+
+/// Contacts mode: every chunk that mentions a person entity, plus the
+/// distinct person entities themselves, with one edge per mention.
+///
+/// Caps applied to keep the wire payload bounded for large workspaces:
+/// at most `MAX_CHUNK_NODES` chunks (most-recent first) and at most
+/// `MAX_EDGES` mention edges. Older chunks beyond the cap are dropped
+/// — the graph is for orientation, not exhaustive inspection.
+fn collect_contacts_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
+    const MAX_CHUNK_NODES: usize = 1500;
+    const MAX_EDGES: usize = 4000;
+
+    with_connection(cfg, |conn| {
+        // Pull the chunks that have at least one person mention. The
+        // `INNER JOIN` keeps orphan chunks (no person entities) out of
+        // the contacts view — they'd be isolated nodes that add no
+        // signal.
+        let mut chunk_stmt = conn.prepare(
+            "SELECT c.id, c.timestamp_ms, c.content
+               FROM mem_tree_chunks c
+              WHERE c.id IN (
+                    SELECT DISTINCT node_id
+                      FROM mem_tree_entity_index
+                     WHERE entity_kind = 'person'
+              )
+              ORDER BY c.timestamp_ms DESC
+              LIMIT ?1",
+        )?;
+        let chunks: Vec<(String, i64, String)> = chunk_stmt
+            .query_map(params![MAX_CHUNK_NODES as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<_>>()
+            .context("collect contacts-mode chunk rows")?;
+
+        let chunk_ids: std::collections::HashSet<String> =
+            chunks.iter().map(|(id, _, _)| id.clone()).collect();
+
+        // Pull mention edges + distinct contacts. Restrict to the
+        // chunks we already kept; expanding the IN list dynamically
+        // keeps SQLite from scanning the whole index.
+        let mut mention_stmt = conn.prepare(
+            "SELECT entity_id, node_id, surface
+               FROM mem_tree_entity_index
+              WHERE entity_kind = 'person'
+              ORDER BY timestamp_ms DESC
+              LIMIT ?1",
+        )?;
+        let mention_rows: Vec<(String, String, String)> = mention_stmt
+            .query_map(params![MAX_EDGES as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<_>>()
+            .context("collect contacts-mode mentions")?;
+
+        let mut edges = Vec::with_capacity(mention_rows.len());
+        let mut contacts: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for (entity_id, node_id, surface) in mention_rows {
+            if !chunk_ids.contains(&node_id) {
+                continue;
+            }
+            // First-seen surface wins as the display label — surface
+            // forms can vary across mentions (e.g. "Alice", "Alice S.").
+            contacts.entry(entity_id.clone()).or_insert(surface);
+            edges.push(GraphEdge {
+                from: node_id,
+                to: entity_id,
+            });
+        }
+
+        let mut nodes: Vec<GraphNode> = Vec::with_capacity(chunks.len() + contacts.len());
+        for (id, ts, preview) in chunks {
+            // Trim preview to one line for graph hover legibility.
+            let label = preview
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(72)
+                .collect::<String>();
+            nodes.push(GraphNode {
+                kind: "chunk".into(),
+                id,
+                label,
+                tree_kind: None,
+                tree_scope: None,
+                tree_id: None,
+                level: None,
+                parent_id: None,
+                child_count: None,
+                time_range_start_ms: Some(ts),
+                time_range_end_ms: Some(ts),
+                file_basename: None,
+                entity_kind: None,
+            });
+        }
+        for (entity_id, surface) in contacts {
+            nodes.push(GraphNode {
+                kind: "contact".into(),
+                id: entity_id,
+                label: surface,
+                tree_kind: None,
+                tree_scope: None,
+                tree_id: None,
+                level: None,
+                parent_id: None,
+                child_count: None,
+                time_range_start_ms: None,
+                time_range_end_ms: None,
+                file_basename: None,
+                entity_kind: Some("person".into()),
+            });
+        }
+        Ok((nodes, edges))
+    })
 }
 
 /// Replicate `content_store::paths::sanitize_filename` — colons and other

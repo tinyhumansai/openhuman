@@ -419,24 +419,59 @@ export async function memoryTreeSetLlm(
 
 // ── memory_tree_graph_export ────────────────────────────────────────────
 
-/** One sealed summary node, returned by `memory_tree_graph_export`. */
+/**
+ * Discriminator for graph nodes. `"summary"` is a sealed summary tree
+ * node (Tree mode); `"chunk"` is a raw memory chunk and `"contact"`
+ * is a person entity (Contacts mode).
+ */
+export type GraphNodeKind = 'summary' | 'chunk' | 'contact';
+
+/**
+ * One node in the graph export. Optional fields are populated only
+ * when relevant to the node's `kind`; the UI branches on `kind` and
+ * ignores the rest.
+ */
 export interface GraphNode {
+  kind: GraphNodeKind;
   id: string;
-  tree_id: string;
-  /** `"source" | "topic" | "global"`. */
-  tree_kind: string;
-  tree_scope: string;
-  level: number;
-  parent_id: string | null;
-  child_count: number;
-  time_range_start_ms: number;
-  time_range_end_ms: number;
+  /** Display-friendly label (scope, preview snippet, or surface form). */
+  label: string;
+
+  // Summary-only ──
+  tree_id?: string;
+  tree_kind?: 'source' | 'topic' | 'global';
+  tree_scope?: string;
+  level?: number;
+  parent_id?: string | null;
+  child_count?: number;
   /** Filesystem-safe basename (no `.md`); used to build Obsidian deep links. */
-  file_basename: string;
+  file_basename?: string;
+
+  // Summary or chunk ──
+  time_range_start_ms?: number;
+  time_range_end_ms?: number;
+
+  // Contact-only ──
+  /** `"person" | "organization" | …`. */
+  entity_kind?: string;
 }
+
+/** One explicit edge — used in Contacts mode to link chunks to contacts. */
+export interface GraphEdge {
+  from: string;
+  to: string;
+}
+
+export type GraphMode = 'tree' | 'contacts';
 
 export interface GraphExportResponse {
   nodes: GraphNode[];
+  /**
+   * Explicit edges. Empty in `tree` mode (each summary node's
+   * `parent_id` carries the edge); chunk→contact mention edges in
+   * `contacts` mode.
+   */
+  edges: GraphEdge[];
   /** Absolute filesystem path to `<workspace>/memory_tree/content/`. */
   content_root_abs: string;
 }
@@ -471,19 +506,24 @@ export async function memoryTreeFlushNow(): Promise<FlushNowResponse> {
 }
 
 /**
- * Dump every non-deleted summary node so the UI can lay out the
- * parent/child memory tree (Obsidian-style graph view). Backed by
- * `openhuman.memory_tree_graph_export`.
+ * Return either the summary tree (parent→child links between sealed
+ * summaries) or the document↔contact graph (chunks linked to person
+ * entities they mention). Backed by `openhuman.memory_tree_graph_export`.
  */
-export async function memoryTreeGraphExport(): Promise<GraphExportResponse> {
-  console.debug('[memory-tree-rpc] memoryTreeGraphExport: entry');
+export async function memoryTreeGraphExport(
+  mode: GraphMode = 'tree'
+): Promise<GraphExportResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeGraphExport: entry mode=%s', mode);
   const resp = await callCoreRpc<GraphExportResponse | ResultEnvelope<GraphExportResponse>>({
     method: 'openhuman.memory_tree_graph_export',
+    params: { mode },
   });
   const out = unwrapResult(resp);
   console.debug(
-    '[memory-tree-rpc] memoryTreeGraphExport: exit n=%d root=%s',
+    '[memory-tree-rpc] memoryTreeGraphExport: exit mode=%s n=%d edges=%d root=%s',
+    mode,
     out.nodes?.length ?? 0,
+    out.edges?.length ?? 0,
     out.content_root_abs
   );
   return out;
