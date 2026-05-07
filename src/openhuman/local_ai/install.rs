@@ -191,12 +191,27 @@ pub(crate) fn find_system_ollama_binary() -> Option<PathBuf> {
     }
 
     if cfg!(target_os = "macos") {
-        let common = [
+        let mut candidates = vec![
             PathBuf::from("/usr/local/bin/ollama"),
             PathBuf::from("/opt/homebrew/bin/ollama"),
         ];
-        for candidate in common {
+        // Ollama.app installed in /Applications or ~/Applications ships its
+        // CLI binary inside the app bundle resources directory.
+        let bundle_rel = std::path::Path::new("Applications")
+            .join("Ollama.app")
+            .join("Contents")
+            .join("Resources")
+            .join("ollama");
+        candidates.push(PathBuf::from("/").join(&bundle_rel));
+        if let Some(home) = std::env::var_os("HOME") {
+            candidates.push(PathBuf::from(home).join(&bundle_rel));
+        }
+        for candidate in candidates {
             if candidate.is_file() {
+                log::debug!(
+                    "[local_ai] found system Ollama at macOS path: {}",
+                    candidate.display()
+                );
                 return Some(candidate);
             }
         }
@@ -325,7 +340,6 @@ mod tests {
     #[test]
     fn find_system_ollama_binary_finds_binary_via_path() {
         let _lock = env_lock();
-        // Build a fake binary and inject its directory as the first PATH entry.
         let tmp = tempfile::tempdir().unwrap();
         let binary_name = if cfg!(windows) {
             "ollama.exe"
@@ -350,5 +364,54 @@ mod tests {
             found.is_some(),
             "PATH-based lookup should succeed with a valid stub"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn find_system_ollama_binary_detects_macos_app_bundle_in_applications() {
+        let _lock = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        // Build a fake /Applications/Ollama.app/Contents/Resources/ollama tree.
+        let bundle_bin = tmp
+            .path()
+            .join("Applications")
+            .join("Ollama.app")
+            .join("Contents")
+            .join("Resources")
+            .join("ollama");
+        std::fs::create_dir_all(bundle_bin.parent().unwrap()).unwrap();
+        std::fs::write(&bundle_bin, b"stub").unwrap();
+
+        // Clear OLLAMA_BIN, clear PATH so the normal PATH lookup won't find it,
+        // and point HOME to tmp so the ~/Applications branch is exercised via a
+        // separate sub-test below.  Here we exercise /Applications by building
+        // the file at root and verifying the function returns it when the static
+        // /Applications path exists — we skip direct-path injection since the
+        // function hard-codes "/" as root and we cannot mock the filesystem.
+        // Instead verify the ~/Applications path via the HOME trick.
+        let _home_guard = EnvGuard::set("HOME", tmp.path());
+        let _bin_guard = EnvGuard::unset("OLLAMA_BIN");
+        let prev_path = std::env::var_os("PATH").unwrap_or_default();
+        let _path_guard = EnvGuard::set("PATH", "");
+
+        // ~/Applications bundle path is under HOME.
+        let home_bundle = tmp
+            .path()
+            .join("Applications")
+            .join("Ollama.app")
+            .join("Contents")
+            .join("Resources")
+            .join("ollama");
+        std::fs::create_dir_all(home_bundle.parent().unwrap()).unwrap();
+        std::fs::write(&home_bundle, b"stub").unwrap();
+
+        let found = find_system_ollama_binary();
+        assert_eq!(
+            found.as_deref(),
+            Some(home_bundle.as_path()),
+            "should find Ollama in ~/Applications bundle"
+        );
+        drop(_path_guard);
+        let _ = prev_path;
     }
 }

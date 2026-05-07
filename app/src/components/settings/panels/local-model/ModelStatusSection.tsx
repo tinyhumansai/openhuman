@@ -3,6 +3,7 @@ import type {
   LocalAiDiagnostics,
   LocalAiDownloadsProgress,
   LocalAiStatus,
+  RepairAction,
 } from '../../../../utils/tauriCommands';
 
 interface ModelStatusSectionProps {
@@ -32,7 +33,19 @@ interface ModelStatusSectionProps {
   onSetOllamaPathInput: (value: string) => void;
   onToggleErrorDetail: () => void;
   onRunDiagnostics: () => void;
+  onRepairAction?: (action: RepairAction) => void;
 }
+
+const repairActionLabel = (action: RepairAction): string => {
+  switch (action.action) {
+    case 'install_ollama':
+      return 'Install Ollama';
+    case 'start_server':
+      return 'Start Server';
+    case 'pull_model':
+      return `Pull ${action.model}`;
+  }
+};
 
 const ModelStatusSection = ({
   status,
@@ -61,6 +74,7 @@ const ModelStatusSection = ({
   onSetOllamaPathInput,
   onToggleErrorDetail,
   onRunDiagnostics,
+  onRepairAction,
 }: ModelStatusSectionProps) => {
   return (
     <>
@@ -288,13 +302,27 @@ const ModelStatusSection = ({
                     className={`mt-1 font-medium ${diagnostics.ollama_running ? 'text-green-600' : 'text-red-600'}`}>
                     {diagnostics.ollama_running ? 'Running' : 'Not running'}
                   </div>
+                  {diagnostics.ollama_base_url && (
+                    <div
+                      className="mt-0.5 text-stone-400 truncate text-[10px]"
+                      title={diagnostics.ollama_base_url}>
+                      {diagnostics.ollama_base_url}
+                    </div>
+                  )}
                 </div>
                 <div className="rounded-md border border-stone-200 p-2">
                   <div className="text-stone-400 uppercase tracking-wide text-[10px]">Binary</div>
                   <div
                     className="mt-1 text-stone-600 truncate"
-                    title={diagnostics.ollama_binary_path ?? 'Not found'}>
-                    {diagnostics.ollama_binary_path ?? 'Not found'}
+                    title={
+                      diagnostics.ollama_binary_path ??
+                      (diagnostics.ollama_running ? 'External process' : 'Not found')
+                    }>
+                    {diagnostics.ollama_binary_path === null
+                      ? diagnostics.ollama_running
+                        ? 'Running via external process'
+                        : 'Not found'
+                      : diagnostics.ollama_binary_path}
                   </div>
                 </div>
               </div>
@@ -371,6 +399,24 @@ const ModelStatusSection = ({
                       </li>
                     ))}
                   </ul>
+                </div>
+              )}
+
+              {diagnostics.repair_actions && diagnostics.repair_actions.length > 0 && (
+                <div>
+                  <div className="text-amber-700 uppercase tracking-wide text-[10px] mb-1">
+                    Suggested Fixes
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {diagnostics.repair_actions.map((action, i) => (
+                      <button
+                        key={i}
+                        onClick={() => onRepairAction?.(action)}
+                        className="px-2.5 py-1 text-xs rounded-md bg-amber-50 border border-amber-300 text-amber-800 hover:bg-amber-100 transition-colors">
+                        {repairActionLabel(action)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </>

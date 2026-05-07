@@ -579,7 +579,14 @@ impl LocalAiService {
     /// Run full diagnostics: check Ollama server health, list installed models,
     /// and verify expected models are present. Returns a JSON-serializable report.
     pub async fn diagnostics(&self, config: &Config) -> Result<serde_json::Value, String> {
+        let base_url = ollama_base_url();
         let healthy = self.ollama_healthy().await;
+
+        log::debug!(
+            "[local_ai] diagnostics: entry base_url={} healthy={}",
+            base_url,
+            healthy
+        );
 
         let (models, tags_error) = if healthy {
             match self.list_models().await {
@@ -609,20 +616,38 @@ impl LocalAiService {
         let binary_path = self.resolve_binary_path(config);
 
         let mut issues: Vec<String> = Vec::new();
+        let mut repair_actions: Vec<serde_json::Value> = Vec::new();
+
         if !healthy {
             issues.push(format!(
                 "Ollama server is not running or not reachable at {}",
-                ollama_base_url()
+                base_url
             ));
+            if binary_path.is_none() {
+                repair_actions.push(serde_json::json!({"action": "install_ollama"}));
+            } else {
+                repair_actions.push(serde_json::json!({
+                    "action": "start_server",
+                    "binary_path": binary_path,
+                }));
+            }
         }
         if healthy && !chat_found {
             issues.push(format!("Chat model `{}` is not installed", expected_chat));
+            repair_actions.push(serde_json::json!({
+                "action": "pull_model",
+                "model": expected_chat,
+            }));
         }
         if healthy && config.local_ai.preload_embedding_model && !embedding_found {
             issues.push(format!(
                 "Embedding model `{}` is not installed",
                 expected_embedding
             ));
+            repair_actions.push(serde_json::json!({
+                "action": "pull_model",
+                "model": expected_embedding,
+            }));
         }
         if healthy
             && matches!(
@@ -635,20 +660,26 @@ impl LocalAiService {
                 "Vision model `{}` is not installed",
                 expected_vision
             ));
+            repair_actions.push(serde_json::json!({
+                "action": "pull_model",
+                "model": expected_vision,
+            }));
         }
         if let Some(ref e) = tags_error {
             issues.push(format!("Failed to list models: {e}"));
         }
 
         log::debug!(
-            "[local_ai] diagnostics: healthy={} models={} issues={}",
+            "[local_ai] diagnostics: healthy={} models={} issues={} repair_actions={}",
             healthy,
             models.len(),
             issues.len(),
+            repair_actions.len(),
         );
 
         Ok(serde_json::json!({
             "ollama_running": healthy,
+            "ollama_base_url": base_url,
             "ollama_binary_path": binary_path,
             "installed_models": models,
             "vision_mode": presets::vision_mode_for_config(&config.local_ai),
@@ -661,6 +692,7 @@ impl LocalAiService {
                 "vision_found": vision_found,
             },
             "issues": issues,
+            "repair_actions": repair_actions,
             "ok": issues.is_empty(),
         }))
     }
@@ -748,16 +780,63 @@ impl LocalAiService {
     }
 
     fn resolve_binary_path(&self, config: &Config) -> Option<String> {
+        // 1. Explicit user-configured path in Settings.
         if let Some(ref custom) = config.local_ai.ollama_binary_path {
             let p = PathBuf::from(custom);
             if p.is_file() {
+                log::debug!(
+                    "[local_ai] resolve_binary_path: using configured path {}",
+                    p.display()
+                );
                 return Some(custom.clone());
             }
         }
+
+        // 2. OLLAMA_BIN env var (mirrors bootstrap detection).
+        if let Some(from_env) = std::env::var("OLLAMA_BIN")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+        {
+            let p = PathBuf::from(&from_env);
+            if p.is_file() {
+                log::debug!(
+                    "[local_ai] resolve_binary_path: using OLLAMA_BIN {}",
+                    p.display()
+                );
+                return Some(from_env);
+            }
+        }
+
+        // 3. Workspace-managed binary installed by the app.
         let workspace_bin = workspace_ollama_binary(config);
         if workspace_bin.is_file() {
+            log::debug!(
+                "[local_ai] resolve_binary_path: using workspace binary {}",
+                workspace_bin.display()
+            );
             return Some(workspace_bin.display().to_string());
         }
+
+        // 4. Bare `ollama` on PATH — same as bootstrap's `which ollama` step.
+        let binary_name = if cfg!(windows) {
+            "ollama.exe"
+        } else {
+            "ollama"
+        };
+        if let Some(path_var) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                let candidate = dir.join(binary_name);
+                if candidate.is_file() {
+                    log::debug!(
+                        "[local_ai] resolve_binary_path: found on PATH at {}",
+                        candidate.display()
+                    );
+                    return Some(candidate.display().to_string());
+                }
+            }
+        }
+
+        // 5. Platform-specific well-known locations (macOS bundles, Windows, Linux).
         crate::openhuman::local_ai::install::find_system_ollama_binary()
             .map(|p| p.display().to_string())
     }

@@ -133,6 +133,10 @@ async fn diagnostics_reports_server_unreachable_when_url_unbound() {
     let service = LocalAiService::new(&config);
     let diag = service.diagnostics(&config).await.expect("diagnostics");
     assert_eq!(diag["ollama_running"], false);
+    assert!(
+        diag["ollama_base_url"].as_str().is_some(),
+        "diagnostics must include ollama_base_url"
+    );
     let issues = diag["issues"].as_array().cloned().unwrap_or_default();
     assert!(
         !issues.is_empty(),
@@ -141,6 +145,14 @@ async fn diagnostics_reports_server_unreachable_when_url_unbound() {
     assert!(issues
         .iter()
         .any(|v| v.as_str().unwrap_or("").contains("not running")));
+    let repair_actions = diag["repair_actions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !repair_actions.is_empty(),
+        "unreachable server must produce at least one repair action"
+    );
     unsafe {
         std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
     }
@@ -162,9 +174,25 @@ async fn diagnostics_with_running_server_but_missing_models_flags_issues() {
     let service = LocalAiService::new(&config);
     let diag = service.diagnostics(&config).await.expect("diagnostics");
     assert_eq!(diag["ollama_running"], true);
+    assert_eq!(
+        diag["ollama_base_url"].as_str(),
+        Some(base.as_str()),
+        "diagnostics must echo back the base url being checked"
+    );
     // No models are installed → expected chat model issue surfaces.
     let issues = diag["issues"].as_array().cloned().unwrap_or_default();
     assert!(!issues.is_empty());
+    // Missing chat model should produce a pull_model repair action.
+    let repair_actions = diag["repair_actions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        repair_actions
+            .iter()
+            .any(|a| a["action"].as_str() == Some("pull_model")),
+        "missing models must produce pull_model repair action"
+    );
     unsafe {
         std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
     }
@@ -178,15 +206,19 @@ async fn diagnostics_ok_when_expected_models_are_present() {
 
     let config = Config::default();
     let chat = crate::openhuman::local_ai::model_ids::effective_chat_model_id(&config);
+    let embedding = crate::openhuman::local_ai::model_ids::effective_embedding_model_id(&config);
     let chat_tag = format!("{}:latest", chat);
+    let embed_tag = format!("{}:latest", embedding);
     let app = Router::new().route(
         "/api/tags",
         get(move || {
             let chat_tag = chat_tag.clone();
+            let embed_tag = embed_tag.clone();
             async move {
                 Json(json!({
                     "models": [
-                        { "name": chat_tag, "modified_at": "", "size": 1u64, "digest": "d" }
+                        { "name": chat_tag, "modified_at": "", "size": 1u64, "digest": "d" },
+                        { "name": embed_tag, "modified_at": "", "size": 2u64, "digest": "e" },
                     ]
                 }))
             }
@@ -201,6 +233,124 @@ async fn diagnostics_ok_when_expected_models_are_present() {
     let diag = service.diagnostics(&config).await.expect("diagnostics");
     assert_eq!(diag["ollama_running"], true);
     assert_eq!(diag["expected"]["chat_found"], true);
+    assert_eq!(diag["expected"]["embedding_found"], true);
+    assert!(diag["ollama_base_url"].as_str().is_some());
+    // All required models present → no issues and no repair actions.
+    let issues = diag["issues"].as_array().cloned().unwrap_or_default();
+    assert!(
+        issues.is_empty(),
+        "all models present should produce no issues, got: {:?}",
+        issues
+    );
+    let repair_actions = diag["repair_actions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        repair_actions.is_empty(),
+        "no issues should produce no repair actions"
+    );
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+}
+
+#[tokio::test]
+async fn resolve_binary_path_finds_binary_via_ollama_bin_env() {
+    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
+        .lock()
+        .expect("local ai mutex");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let fake_bin = tmp.path().join(if cfg!(windows) {
+        "ollama.exe"
+    } else {
+        "ollama"
+    });
+    std::fs::write(&fake_bin, b"stub").unwrap();
+
+    unsafe {
+        std::env::set_var("OLLAMA_BIN", fake_bin.to_str().unwrap());
+        // Point the base URL at a dead port so we don't depend on a real server.
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", "http://127.0.0.1:1");
+    }
+
+    let config = Config::default();
+    let service = LocalAiService::new(&config);
+    let diag = service.diagnostics(&config).await.expect("diagnostics");
+    assert_eq!(
+        diag["ollama_binary_path"].as_str(),
+        Some(fake_bin.to_str().unwrap()),
+        "diagnostics should resolve binary via OLLAMA_BIN"
+    );
+
+    unsafe {
+        std::env::remove_var("OLLAMA_BIN");
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+}
+
+#[tokio::test]
+async fn diagnostics_repair_actions_include_start_server_when_binary_known() {
+    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
+        .lock()
+        .expect("local ai mutex");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let fake_bin = tmp.path().join(if cfg!(windows) {
+        "ollama.exe"
+    } else {
+        "ollama"
+    });
+    std::fs::write(&fake_bin, b"stub").unwrap();
+
+    unsafe {
+        std::env::set_var("OLLAMA_BIN", fake_bin.to_str().unwrap());
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", "http://127.0.0.1:1");
+    }
+
+    let config = Config::default();
+    let service = LocalAiService::new(&config);
+    let diag = service.diagnostics(&config).await.expect("diagnostics");
+
+    assert_eq!(diag["ollama_running"], false);
+    let repair_actions = diag["repair_actions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        repair_actions
+            .iter()
+            .any(|a| a["action"].as_str() == Some("start_server")),
+        "when binary is known but server is down, repair action should be start_server"
+    );
+
+    unsafe {
+        std::env::remove_var("OLLAMA_BIN");
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+}
+
+#[tokio::test]
+async fn diagnostics_repair_actions_field_always_present() {
+    // Verifies that the "repair_actions" key is always present in the diagnostics
+    // JSON, regardless of the server state, so the UI can always iterate over it.
+    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
+        .lock()
+        .expect("local ai mutex");
+
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", "http://127.0.0.1:1");
+    }
+    let config = Config::default();
+    let service = LocalAiService::new(&config);
+    let diag = service.diagnostics(&config).await.expect("diagnostics");
+
+    assert!(
+        diag["repair_actions"].is_array(),
+        "repair_actions must always be a JSON array"
+    );
+
     unsafe {
         std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
     }

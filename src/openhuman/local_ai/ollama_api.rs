@@ -4,16 +4,35 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const DEFAULT_OLLAMA_BASE_URL: &str = "http://localhost:11434";
 
-/// Returns the effective Ollama base URL, honouring the
-/// `OPENHUMAN_OLLAMA_BASE_URL` env override so tests can point it at
-/// a local mock server. In production builds this is always
-/// [`DEFAULT_OLLAMA_BASE_URL`] unless an operator has deliberately
-/// pointed the sidecar at a remote Ollama.
+/// Returns the effective Ollama base URL.
+///
+/// Priority (highest to lowest):
+/// 1. `OPENHUMAN_OLLAMA_BASE_URL` — app-specific override, used in tests.
+/// 2. `OLLAMA_HOST` — Ollama's own env var; normalized to a full URL by
+///    prepending `http://` when no scheme is present.
+/// 3. [`DEFAULT_OLLAMA_BASE_URL`] — `http://localhost:11434`.
 pub(crate) fn ollama_base_url() -> String {
-    match std::env::var("OPENHUMAN_OLLAMA_BASE_URL") {
-        Ok(url) if !url.trim().is_empty() => url.trim().trim_end_matches('/').to_string(),
-        _ => DEFAULT_OLLAMA_BASE_URL.to_string(),
+    if let Ok(url) = std::env::var("OPENHUMAN_OLLAMA_BASE_URL") {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() {
+            return trimmed.trim_end_matches('/').to_string();
+        }
     }
+
+    if let Ok(host) = std::env::var("OLLAMA_HOST") {
+        let trimmed = host.trim().trim_end_matches('/');
+        if !trimmed.is_empty() {
+            let url = if trimmed.contains("://") {
+                trimmed.to_string()
+            } else {
+                format!("http://{trimmed}")
+            };
+            log::debug!("[local_ai] ollama_base_url: using OLLAMA_HOST -> {url}");
+            return url;
+        }
+    }
+
+    DEFAULT_OLLAMA_BASE_URL.to_string()
 }
 
 /// Back-compat constant kept at its original value for callers that
@@ -271,8 +290,10 @@ mod tests {
     // calls from other tests in the same binary.
 
     const ENV_VAR: &str = "OPENHUMAN_OLLAMA_BASE_URL";
+    const OLLAMA_HOST_VAR: &str = "OLLAMA_HOST";
 
     struct OllamaEnvGuard {
+        var: &'static str,
         prior: Option<String>,
     }
 
@@ -280,13 +301,31 @@ mod tests {
         fn clear() -> Self {
             let prior = std::env::var(ENV_VAR).ok();
             unsafe { std::env::remove_var(ENV_VAR) };
-            Self { prior }
+            Self {
+                var: ENV_VAR,
+                prior,
+            }
         }
 
         fn set(value: &str) -> Self {
             let prior = std::env::var(ENV_VAR).ok();
             unsafe { std::env::set_var(ENV_VAR, value) };
-            Self { prior }
+            Self {
+                var: ENV_VAR,
+                prior,
+            }
+        }
+
+        fn clear_var(var: &'static str) -> Self {
+            let prior = std::env::var(var).ok();
+            unsafe { std::env::remove_var(var) };
+            Self { var, prior }
+        }
+
+        fn set_var(var: &'static str, value: &str) -> Self {
+            let prior = std::env::var(var).ok();
+            unsafe { std::env::set_var(var, value) };
+            Self { var, prior }
         }
     }
 
@@ -294,8 +333,8 @@ mod tests {
         fn drop(&mut self) {
             unsafe {
                 match self.prior.take() {
-                    Some(v) => std::env::set_var(ENV_VAR, v),
-                    None => std::env::remove_var(ENV_VAR),
+                    Some(v) => std::env::set_var(self.var, v),
+                    None => std::env::remove_var(self.var),
                 }
             }
         }
@@ -346,5 +385,53 @@ mod tests {
             let _g = OllamaEnvGuard::set("   ");
             assert_eq!(ollama_base_url(), DEFAULT_OLLAMA_BASE_URL);
         }
+    }
+
+    #[test]
+    fn ollama_base_url_uses_ollama_host_when_openhuman_var_unset() {
+        let _lock = test_lock();
+        let _g1 = OllamaEnvGuard::clear();
+        let _g2 = OllamaEnvGuard::set_var(OLLAMA_HOST_VAR, "192.168.1.5:11434");
+        assert_eq!(ollama_base_url(), "http://192.168.1.5:11434");
+    }
+
+    #[test]
+    fn ollama_base_url_prepends_http_for_host_without_scheme() {
+        let _lock = test_lock();
+        let _g1 = OllamaEnvGuard::clear();
+        let _g2 = OllamaEnvGuard::set_var(OLLAMA_HOST_VAR, "myhost:11434");
+        assert_eq!(ollama_base_url(), "http://myhost:11434");
+    }
+
+    #[test]
+    fn ollama_base_url_preserves_existing_scheme_in_ollama_host() {
+        let _lock = test_lock();
+        let _g1 = OllamaEnvGuard::clear();
+        let _g2 = OllamaEnvGuard::set_var(OLLAMA_HOST_VAR, "https://remote-ollama.example.com");
+        assert_eq!(ollama_base_url(), "https://remote-ollama.example.com");
+    }
+
+    #[test]
+    fn ollama_base_url_openhuman_var_takes_priority_over_ollama_host() {
+        let _lock = test_lock();
+        let _g1 = OllamaEnvGuard::set("http://127.0.0.1:55555");
+        let _g2 = OllamaEnvGuard::set_var(OLLAMA_HOST_VAR, "192.168.1.5:11434");
+        assert_eq!(ollama_base_url(), "http://127.0.0.1:55555");
+    }
+
+    #[test]
+    fn ollama_base_url_ignores_empty_ollama_host() {
+        let _lock = test_lock();
+        let _g1 = OllamaEnvGuard::clear();
+        let _g2 = OllamaEnvGuard::set_var(OLLAMA_HOST_VAR, "   ");
+        assert_eq!(ollama_base_url(), DEFAULT_OLLAMA_BASE_URL);
+    }
+
+    #[test]
+    fn ollama_base_url_strips_trailing_slash_from_ollama_host() {
+        let _lock = test_lock();
+        let _g1 = OllamaEnvGuard::clear();
+        let _g2 = OllamaEnvGuard::set_var(OLLAMA_HOST_VAR, "myhost:11434/");
+        assert_eq!(ollama_base_url(), "http://myhost:11434");
     }
 }
