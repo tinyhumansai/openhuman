@@ -220,6 +220,11 @@ pub struct AnalyticsSettingsPatch {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct MeetSettingsPatch {
+    pub auto_orchestrator_handoff: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct LocalAiSettingsPatch {
     pub runtime_enabled: Option<bool>,
     pub usage_embeddings: Option<bool>,
@@ -485,6 +490,33 @@ pub async fn load_and_apply_analytics_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_analytics_settings(&mut config, update).await
+}
+
+/// Updates the Google Meet integration settings in the configuration.
+pub async fn apply_meet_settings(
+    config: &mut Config,
+    update: MeetSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    if let Some(enabled) = update.auto_orchestrator_handoff {
+        config.meet.auto_orchestrator_handoff = enabled;
+    }
+    config.save().await.map_err(|e| e.to_string())?;
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "meet settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+/// Loads the configuration, applies meet settings updates, and saves it.
+pub async fn load_and_apply_meet_settings(
+    update: MeetSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_meet_settings(&mut config, update).await
 }
 
 /// Loads the configuration, applies browser settings updates, and saves it.

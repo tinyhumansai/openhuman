@@ -25,7 +25,12 @@ use crate::openhuman::memory::tree::canonicalize::email::{EmailMessage, EmailThr
 use crate::openhuman::memory::tree::canonicalize::email_clean::{
     extract_email, parse_message_date,
 };
+use crate::openhuman::memory::tree::content_store::paths::slugify_source_id;
+use crate::openhuman::memory::tree::content_store::raw::{
+    self as raw_store, slug_account_email, RawItem,
+};
 use crate::openhuman::memory::tree::ingest::{ingest_email, IngestResult};
+use crate::openhuman::memory::tree::store::{set_chunk_raw_refs, RawRef};
 use crate::openhuman::memory::tree::util::redact::redact;
 
 /// Provider name embedded in the canonical email-thread header. Matches
@@ -206,12 +211,20 @@ fn parse_address_list(v: Option<&Value>) -> Vec<String> {
 /// Ingest a page of raw Gmail messages into the memory tree.
 ///
 /// Each participant-bucket (sorted set of `from` ∪ `to` email addresses)
-/// becomes one [`EmailThread`] handed to [`ingest_email`] which fans out
-/// to the chunker + scorer + source tree downstream.
+/// becomes one [`EmailThread`] handed to [`ingest_email`]. Every bucket
+/// emits the **same** `source_id` keyed on the connection's account
+/// email, so all of an account's correspondence rolls up under a single
+/// memory source — `gmail:{slug(account_email)}` (e.g.
+/// `gmail:stevent95-at-gmail-dot-com`). When the caller can't supply
+/// an `account_email` (legacy `gmail-backfill-3d` CLI runs, missing
+/// profile fetch), we fall back to the per-participant `gmail:{participants}`
+/// shape so older invocations don't lose their stable bucketing.
 ///
-/// `source_id` = `"gmail:{participants}"` where participants is
-/// `addr1|addr2|...` (sorted, deduped, lowercased). This groups all
-/// correspondence between the same people into one path subtree.
+/// In addition to the chunked content_store output, we mirror every
+/// admitted message as a verbatim `.md` under
+/// `<content_root>/raw/<source_slug>/<created_at_ms>_<message_id>.md`.
+/// Useful for debugging, Obsidian browsing, and as a stable archive
+/// independent of the chunker / summariser.
 ///
 /// Returns the total number of chunks written across all buckets so
 /// callers can surface counts in logs / outcomes. Per-bucket errors are
@@ -220,11 +233,48 @@ fn parse_address_list(v: Option<&Value>) -> Vec<String> {
 pub async fn ingest_page_into_memory_tree(
     config: &Config,
     owner: &str,
+    account_email: Option<&str>,
     page_messages: &[Value],
 ) -> Result<usize> {
     if page_messages.is_empty() {
         return Ok(0);
     }
+    let account_source_id = account_email
+        .filter(|e| !e.trim().is_empty())
+        .map(|email| format!("gmail:{}", slug_account_email(email)));
+
+    // Best-effort raw archive — runs once per page, before chunking, so
+    // a chunker bug doesn't block us from capturing the source bytes.
+    if let Some(ref source_id) = account_source_id {
+        if let Err(e) = write_raw_archive(config, source_id, page_messages) {
+            log::warn!(
+                "[composio:gmail][ingest] raw archive write failed source_id_hash={} err={:#}",
+                redact(source_id),
+                e
+            );
+        }
+    }
+
+    // Per-account ingest path: one ingest call per upstream message so
+    // each resulting chunk has a clean 1:1 (or 1:few-for-oversize)
+    // mapping to a single raw archive file. Each chunk's body is then
+    // reconstructed at read time from `raw_refs_json` rather than
+    // duplicated in the SQL `content` column. Falls back to the
+    // legacy participant-bucket path when we can't derive an
+    // account-scoped source id (CLI runs / missing profile fetch).
+    if let Some(ref source_id) = account_source_id {
+        let total_chunks = ingest_per_message(config, source_id, owner, page_messages).await;
+        log::info!(
+            "[composio:gmail][ingest] page_done owner_hash={} chunks={total_chunks} mode=per-account",
+            redact(owner),
+        );
+        return Ok(total_chunks);
+    }
+
+    // Legacy fallback: participant-bucketed thread ingest. No
+    // raw_refs_json — read paths fall through to the SQL `content`
+    // preview or `content_path` if a chunk file is staged. Only used
+    // by the CLI backfill binary today.
     let buckets = bucket_by_participants(page_messages);
     let mut total_chunks = 0usize;
     let mut total_buckets = 0usize;
@@ -240,16 +290,8 @@ pub async fn ingest_page_into_memory_tree(
             );
             continue;
         }
-        // source_id encodes participants so every unique conversation set
-        // lands in its own path subtree.
         let source_id = format!("gmail:{}", participants);
         let thread_subject = pick_thread_subject(&messages);
-        log::info!(
-            "[composio:gmail][ingest] bucket participants_hash={} messages={} source_id_hash={}",
-            redact(participants),
-            messages.len(),
-            redact(&source_id)
-        );
         let thread = EmailThread {
             provider: GMAIL_PROVIDER.to_string(),
             thread_subject,
@@ -272,10 +314,194 @@ pub async fn ingest_page_into_memory_tree(
         }
     }
     log::info!(
-        "[composio:gmail][ingest] page_done owner_hash={} buckets={total_buckets} chunks={total_chunks}",
-        redact(owner)
+        "[composio:gmail][ingest] page_done owner_hash={} buckets={total_buckets} chunks={total_chunks} mode=per-participants",
+        redact(owner),
     );
     Ok(total_chunks)
+}
+
+/// Per-account ingest: one `ingest_email` call per upstream message.
+///
+/// Each call produces 1 chunk for normal messages or N chunks for
+/// oversize messages (≥`DEFAULT_CHUNK_MAX_TOKENS`). After the ingest
+/// we tag every resulting chunk with a `RawRef` pointing at the raw
+/// archive file we wrote during `write_raw_archive`, so
+/// `read_chunk_body` can reconstruct full bodies without duplicating
+/// bytes in the SQL `content` column.
+async fn ingest_per_message(
+    config: &Config,
+    source_id: &str,
+    owner: &str,
+    page_messages: &[Value],
+) -> usize {
+    let source_slug = slugify_source_id(source_id);
+    let mut total_chunks = 0usize;
+    for raw in page_messages {
+        let id = raw
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        let Some(msg_id) = id else { continue };
+        let Some(sent_at) = parse_message_date(raw) else {
+            continue;
+        };
+        let Some(message) = raw_to_email_message(raw) else {
+            continue;
+        };
+
+        let raw_path = format!(
+            "raw/{}/{}_{}.md",
+            source_slug,
+            sent_at.timestamp_millis(),
+            sanitize_uid_for_path(msg_id)
+        );
+
+        let thread_subject = pick_thread_subject(std::slice::from_ref(&message));
+        let thread = EmailThread {
+            provider: GMAIL_PROVIDER.to_string(),
+            thread_subject,
+            messages: vec![message],
+        };
+        let tags = DEFAULT_TAGS.iter().map(|s| (*s).to_string()).collect();
+        match ingest_email(config, source_id, owner, tags, thread).await {
+            Ok(result) => {
+                total_chunks += result.chunks_written;
+                let refs = vec![RawRef {
+                    path: raw_path.clone(),
+                    start: 0,
+                    end: None,
+                }];
+                for chunk_id in &result.chunk_ids {
+                    if let Err(e) = set_chunk_raw_refs(config, chunk_id, &refs) {
+                        log::warn!(
+                            "[composio:gmail][ingest] set_chunk_raw_refs failed chunk_id={} err={:#}",
+                            chunk_id,
+                            e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "[composio:gmail][ingest] per-message ingest_email failed msg_id_hash={} err={:#}",
+                    redact(msg_id),
+                    e
+                );
+            }
+        }
+    }
+    total_chunks
+}
+
+/// Same character map the raw-archive writer uses for filenames.
+/// Mirrors `raw_store::write_raw_items::sanitize_uid` but local so a
+/// future rule change on either side stays decoupled.
+fn sanitize_uid_for_path(uid: &str) -> String {
+    let cleaned: String = uid
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | ' ' => '-',
+            other => other,
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "unknown".into()
+    } else {
+        cleaned
+    }
+}
+
+/// Mirror a page of raw Gmail messages into the on-disk raw archive.
+///
+/// Files land under `<content_root>/raw/<source_slug>/<ts_ms>_<msg_id>.md`.
+/// We write the **backend-produced markdown verbatim** — the
+/// `markdown` field on each message is the per-message slice of the
+/// response-level `markdownFormatted`, pinned by
+/// [`super::post_process::apply_response_level_markdown`] before the
+/// reshape runs. That backend rendering already handles HTML
+/// stripping, URL shortening / unwrapping, entity decoding, and
+/// whitespace collapse — all the cleanup the user is going to read
+/// in Obsidian. Re-running the chunker's `email_clean::clean_body`
+/// on top would strip reply chains and footers (useful for LLM
+/// chunks, *not* for an as-shipped archive) and risks chopping real
+/// content that happens to contain a "view in browser" link.
+///
+/// A tiny header (`From:` / `Subject:` / `Date:`) is prepended so
+/// the file is self-describing when opened standalone — the post-
+/// processed markdown body itself contains only the message text.
+///
+/// Messages without a parseable date or id are skipped (they'd
+/// produce non-stable filenames).
+fn write_raw_archive(config: &Config, source_id: &str, page: &[Value]) -> Result<usize> {
+    let content_root = config.memory_tree_content_root();
+    let mut bodies: Vec<(String, i64, String)> = Vec::with_capacity(page.len());
+
+    for raw in page {
+        let id = raw
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let Some(id) = id else { continue };
+        let Some(sent_at) = parse_message_date(raw) else {
+            continue;
+        };
+
+        // Pull the post-processed markdown straight off the upstream
+        // page. Falls back to an empty body if the post-processor
+        // didn't run (extremely unlikely — provider.sync() always
+        // calls `post_process_action_result` before this point).
+        let markdown_body = raw
+            .get("markdown")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if markdown_body.is_empty() {
+            log::debug!(
+                "[composio:gmail][raw] empty markdown body id_hash={} — skipping",
+                redact(&id)
+            );
+            continue;
+        }
+        let from = raw
+            .get("from")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let subject = raw
+            .get("subject")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+
+        let mut composed = String::with_capacity(markdown_body.len() + 256);
+        if !from.is_empty() {
+            composed.push_str(&format!("**From:** {from}\n"));
+        }
+        if !subject.is_empty() {
+            composed.push_str(&format!("**Subject:** {subject}\n"));
+        }
+        composed.push_str(&format!("**Date:** {}\n\n", sent_at.to_rfc3339()));
+        composed.push_str(markdown_body);
+
+        bodies.push((id, sent_at.timestamp_millis(), composed));
+    }
+
+    let items: Vec<RawItem<'_>> = bodies
+        .iter()
+        .map(|(id, ts, md)| RawItem {
+            uid: id,
+            created_at_ms: *ts,
+            markdown: md.as_str(),
+        })
+        .collect();
+
+    let n = raw_store::write_raw_items(&content_root, source_id, &items)?;
+    log::debug!(
+        "[composio:gmail][raw] archived {n} messages source_id_hash={}",
+        redact(source_id)
+    );
+    Ok(n)
 }
 
 /// Strip "Re:" / "Fwd:" prefixes from the head message's subject so

@@ -16,7 +16,8 @@ describe('ModelCatalog', () => {
     // Each id from RECOMMENDED_MODEL_CATALOG appears as a row title.
     expect(screen.getByText('qwen2.5:0.5b')).toBeInTheDocument();
     expect(screen.getByText('gemma3:1b-it-qat')).toBeInTheDocument();
-    expect(screen.getByText('llama3.1:8b')).toBeInTheDocument();
+    expect(screen.getByText('gemma3:4b')).toBeInTheDocument();
+    expect(screen.getByText('gemma3:12b-it-qat')).toBeInTheDocument();
     expect(screen.getByText('bge-m3')).toBeInTheDocument();
   });
 
@@ -29,8 +30,8 @@ describe('ModelCatalog', () => {
         onUse={vi.fn()}
       />
     );
-    // Four models, all available → four Download buttons.
-    expect(screen.getAllByRole('button', { name: /download/i })).toHaveLength(4);
+    // Five models, all available → five Download buttons.
+    expect(screen.getAllByRole('button', { name: /download/i })).toHaveLength(5);
     expect(screen.getAllByText('not downloaded').length).toBeGreaterThan(0);
   });
 
@@ -69,7 +70,7 @@ describe('ModelCatalog', () => {
     const onUse = vi.fn();
     render(
       <ModelCatalog
-        installedModelIds={['llama3.1:8b']}
+        installedModelIds={['gemma3:4b']}
         activeModelIds={[]}
         onDownload={vi.fn()}
         onUse={onUse}
@@ -77,13 +78,13 @@ describe('ModelCatalog', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Use' }));
     expect(onUse).toHaveBeenCalledTimes(1);
-    expect(onUse.mock.calls[0][0]).toMatchObject({ id: 'llama3.1:8b' });
+    expect(onUse.mock.calls[0][0]).toMatchObject({ id: 'gemma3:4b' });
   });
 
   it('renders Delete buttons only when onDelete is provided', () => {
     const { rerender } = render(
       <ModelCatalog
-        installedModelIds={['llama3.1:8b']}
+        installedModelIds={['gemma3:4b']}
         activeModelIds={[]}
         onDownload={vi.fn()}
         onUse={vi.fn()}
@@ -93,7 +94,7 @@ describe('ModelCatalog', () => {
 
     rerender(
       <ModelCatalog
-        installedModelIds={['llama3.1:8b']}
+        installedModelIds={['gemma3:4b']}
         activeModelIds={[]}
         onDownload={vi.fn()}
         onUse={vi.fn()}

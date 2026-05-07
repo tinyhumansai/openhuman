@@ -182,14 +182,18 @@ pub struct MemoryTreeConfig {
     pub embedding_strict: bool,
 
     /// Ollama endpoint for the LLM entity extractor
-    /// (`memory::tree::score::extract::llm::LlmEntityExtractor`). When
-    /// unset, ingest uses the regex-only extractor — no LLM call. Soft
-    /// failures in the LLM path fall back to regex-only for that chunk.
+    /// (`memory::tree::score::extract::llm::LlmEntityExtractor`).
+    /// Defaults to `Some("http://localhost:11434")` — the standard
+    /// Ollama listener — see [`default_memory_tree_llm_endpoint`].
+    /// Soft failures in the LLM path fall back to regex-only for
+    /// that chunk.
     #[serde(default = "default_memory_tree_llm_endpoint")]
     pub llm_extractor_endpoint: Option<String>,
 
-    /// Model name for the entity extractor (e.g. `qwen2.5:0.5b`).
-    #[serde(default = "default_memory_tree_llm_endpoint")]
+    /// Model name for the entity extractor. Defaults to `gemma3:4b`
+    /// (see [`default_memory_tree_llm_model`] for the rationale);
+    /// override to a smaller model on resource-constrained hosts.
+    #[serde(default = "default_memory_tree_llm_model")]
     pub llm_extractor_model: Option<String>,
 
     /// Per-request timeout for the LLM extractor, in milliseconds.
@@ -198,16 +202,17 @@ pub struct MemoryTreeConfig {
 
     /// Ollama endpoint for the summariser
     /// (`memory::tree::tree_source::summariser::llm::LlmSummariser`).
-    /// When unset, bucket-seal cascades use `InertSummariser` — sealed
-    /// nodes contain concatenated+truncated child text instead of a
-    /// real LLM summary. Soft failures fall back to inert per seal.
+    /// Defaults to `Some("http://localhost:11434")` — see
+    /// [`default_memory_tree_llm_endpoint`]. Soft failures fall back
+    /// to `InertSummariser` per seal.
     #[serde(default = "default_memory_tree_llm_endpoint")]
     pub llm_summariser_endpoint: Option<String>,
 
-    /// Model name for the summariser. Larger models produce better
-    /// summaries at higher latency; `llama3.1:8b` is a reasonable
-    /// default for production.
-    #[serde(default = "default_memory_tree_llm_endpoint")]
+    /// Model name for the summariser. Defaults to `gemma3:4b` —
+    /// larger Gemma tiers (`gemma3:12b-it-qat`, `gemma3:27b`) produce
+    /// more coherent abstractive summaries at higher latency. See
+    /// [`default_memory_tree_llm_model`].
+    #[serde(default = "default_memory_tree_llm_model")]
     pub llm_summariser_model: Option<String>,
 
     /// Per-request timeout for the summariser, in milliseconds. Default
@@ -273,9 +278,22 @@ fn default_memory_tree_embedding_strict() -> bool {
 
 /// Shared `None` default for the LLM-path fields (extractor + summariser
 /// endpoints + models). Keeping the same function for all of them makes
-/// the intent explicit: nothing here auto-enables Ollama.
+/// the intent explicit.
+///
+/// Default points at the standard Ollama localhost listener. A user
+/// who sets `llm_backend = "local"` plus a `_model` is clearly opting
+/// into Ollama, and forcing them to also specify the endpoint just to
+/// hit `localhost:11434` was a stealth foot-gun: the
+/// `OllamaChatProvider` returned an error on an empty endpoint, which
+/// the summariser silently swallowed into its `InertSummariser`
+/// fallback — producing concat-and-truncate "summaries" that looked
+/// correct but didn't run any LLM at all. With a default endpoint in
+/// place, the only signal needed to enable a local LLM seal is a
+/// non-empty `_model`. Override via TOML or
+/// `OPENHUMAN_MEMORY_TREE_LLM_*_ENDPOINT` to point at a different
+/// Ollama host.
 fn default_memory_tree_llm_endpoint() -> Option<String> {
-    None
+    Some("http://localhost:11434".to_string())
 }
 
 fn default_memory_tree_llm_extractor_timeout_ms() -> Option<u64> {
@@ -296,6 +314,26 @@ fn default_memory_tree_content_dir() -> Option<PathBuf> {
     None
 }
 
+/// Default Ollama model for the memory-tree LLMs (extractor + summariser).
+///
+/// `gemma3:4b` is in the Gemma 3 family (Gemma 4 isn't released yet)
+/// and sits between the 1B compact tier and the 12B/27B large tiers.
+/// At ~3 GB on disk and ~8 GB RAM at inference it stays inside the
+/// envelope of a typical laptop and produces coherent abstractive
+/// summaries on real Gmail inboxes — smaller models (≤1.5B) regress
+/// to "the email says X, the email says Y" enumeration that's barely
+/// better than the InertSummariser concat fallback.
+///
+/// Override via `memory_tree.llm_summariser_model` /
+/// `llm_extractor_model` in TOML (or `OPENHUMAN_MEMORY_TREE_LLM_*_MODEL`
+/// env vars) to scale up (`gemma3:12b-it-qat`, `llama3.1:8b`) or down
+/// (`gemma3:1b-it-qat`) for the host's headroom. The frontend
+/// `ModelCatalog` lists the curated picks the UI offers as
+/// downloadable presets.
+fn default_memory_tree_llm_model() -> Option<String> {
+    Some("gemma3:4b".to_string())
+}
+
 impl Default for MemoryTreeConfig {
     fn default() -> Self {
         Self {
@@ -304,10 +342,10 @@ impl Default for MemoryTreeConfig {
             embedding_timeout_ms: default_memory_tree_embedding_timeout_ms(),
             embedding_strict: default_memory_tree_embedding_strict(),
             llm_extractor_endpoint: default_memory_tree_llm_endpoint(),
-            llm_extractor_model: default_memory_tree_llm_endpoint(),
+            llm_extractor_model: default_memory_tree_llm_model(),
             llm_extractor_timeout_ms: default_memory_tree_llm_extractor_timeout_ms(),
             llm_summariser_endpoint: default_memory_tree_llm_endpoint(),
-            llm_summariser_model: default_memory_tree_llm_endpoint(),
+            llm_summariser_model: default_memory_tree_llm_model(),
             llm_summariser_timeout_ms: default_memory_tree_llm_summariser_timeout_ms(),
             content_dir: default_memory_tree_content_dir(),
             llm_backend: default_llm_backend(),

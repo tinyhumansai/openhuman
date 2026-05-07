@@ -40,6 +40,10 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("delete_chunk"),
         schemas("get_llm"),
         schemas("set_llm"),
+        schemas("graph_export"),
+        schemas("flush_now"),
+        schemas("wipe_all"),
+        schemas("reset_tree"),
     ]
 }
 
@@ -102,6 +106,22 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("set_llm"),
             handler: handle_set_llm,
+        },
+        RegisteredController {
+            schema: schemas("graph_export"),
+            handler: handle_graph_export,
+        },
+        RegisteredController {
+            schema: schemas("flush_now"),
+            handler: handle_flush_now,
+        },
+        RegisteredController {
+            schema: schemas("wipe_all"),
+            handler: handle_wipe_all,
+        },
+        RegisteredController {
+            schema: schemas("reset_tree"),
+            handler: handle_reset_tree,
         },
     ]
 }
@@ -530,6 +550,130 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "wipe_all" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "wipe_all",
+            description: "Destructive reset: truncate every mem_tree_* table, remove the \
+                          on-disk content folders (raw / wiki / email / chat / document / \
+                          legacy summaries) under the workspace memory_tree content root, \
+                          and clear every Composio sync-state KV row so the next sync \
+                          re-fetches all upstream items. Used by the Memory tab's 'Reset \
+                          memory' button.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "rows_deleted",
+                    ty: TypeSchema::U64,
+                    comment: "Total mem_tree_* rows removed across all tables.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "dirs_removed",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "Top-level directories under content_root that were deleted.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "sync_state_cleared",
+                    ty: TypeSchema::U64,
+                    comment: "Composio sync-state KV rows deleted (cursors + synced-id sets).",
+                    required: true,
+                },
+            ],
+        },
+        "reset_tree" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "reset_tree",
+            description: "Wipe summary-tree state but keep chunks + raw archive + sync state, \
+                          then re-enqueue every chunk through the extraction pipeline so the \
+                          tree rebuilds from scratch. Useful after changing the summariser \
+                          backend (e.g. enabling a local LLM) without paying the upstream \
+                          re-sync cost.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "tree_rows_deleted",
+                    ty: TypeSchema::U64,
+                    comment: "Tree-state rows removed (summaries + trees + buffers + jobs).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "chunks_requeued",
+                    ty: TypeSchema::U64,
+                    comment: "Chunks reset to lifecycle_status = 'pending_extraction'.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "jobs_enqueued",
+                    ty: TypeSchema::U64,
+                    comment: "extract_chunk jobs enqueued (one per chunk).",
+                    required: true,
+                },
+            ],
+        },
+        "flush_now" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "flush_now",
+            description: "Manually trigger the summary-tree build. Enqueues a flush_stale \
+                          job with max_age_secs=0 so every L0 buffer force-seals immediately; \
+                          the seal worker runs each through the configured (cloud or local) \
+                          summariser. Idempotent — same UTC-day dedupe key as the scheduled \
+                          flush so spamming the button is safe.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "enqueued",
+                    ty: TypeSchema::Bool,
+                    comment: "True when a fresh job row was inserted; false when an active \
+                              flush job already exists for today.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "stale_buffers",
+                    ty: TypeSchema::U64,
+                    comment: "Count of L0 buffers that currently qualify for force-seal.",
+                    required: true,
+                },
+            ],
+        },
+        "graph_export" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "graph_export",
+            description: "Return either the summary tree (parent→child links between sealed \
+                          summary nodes) or the document↔contact graph (chunks linked to \
+                          person entities they mention). Includes the absolute path to the \
+                          on-disk content root so deep links can point Obsidian at the same \
+                          files.",
+            inputs: vec![FieldSchema {
+                name: "mode",
+                ty: TypeSchema::Option(Box::new(TypeSchema::Enum {
+                    variants: vec!["tree", "contacts"],
+                })),
+                comment: "Which graph to return. Defaults to `tree`.",
+                required: false,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "nodes",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Ref("GraphNode"))),
+                    comment: "Summary, chunk, or contact nodes depending on mode.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "edges",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Ref("GraphEdge"))),
+                    comment: "Explicit edges. Empty in tree mode (parent_id encodes \
+                              edges); chunk→contact mention edges in contacts mode.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "content_root_abs",
+                    ty: TypeSchema::String,
+                    comment: "Absolute path to <workspace>/memory_tree/content/.",
+                    required: true,
+                },
+            ],
+        },
         "trigger_digest" => ControllerSchema {
             namespace: NAMESPACE,
             function: "trigger_digest",
@@ -735,6 +879,40 @@ fn handle_set_llm(params: Map<String, Value>) -> ControllerFuture {
         let mut config = config_rpc::load_config_with_timeout().await?;
         let req = parse_value::<read_rpc::SetLlmRequest>(Value::Object(params))?;
         to_json(read_rpc::set_llm_rpc(&mut config, req).await?)
+    })
+}
+
+fn handle_graph_export(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize, Default)]
+        struct Req {
+            #[serde(default)]
+            mode: Option<read_rpc::GraphMode>,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params)).unwrap_or_default();
+        to_json(read_rpc::graph_export_rpc(&config, req.mode.unwrap_or_default()).await?)
+    })
+}
+
+fn handle_flush_now(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(read_rpc::flush_now_rpc(&config).await?)
+    })
+}
+
+fn handle_wipe_all(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(read_rpc::wipe_all_rpc(&config).await?)
+    })
+}
+
+fn handle_reset_tree(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(read_rpc::reset_tree_rpc(&config).await?)
     })
 }
 

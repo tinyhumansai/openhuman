@@ -875,6 +875,723 @@ pub struct DeleteChunkResponse {
     pub entity_index_rows_removed: u32,
 }
 
+// ── graph_export ────────────────────────────────────────────────────────
+
+/// Which graph the UI is asking for.
+///
+/// `Tree` returns summary nodes connected by parent_id (current
+/// Obsidian-style summary tree). `Contacts` returns raw chunks
+/// connected to the person entities they mention via the inverted
+/// `mem_tree_entity_index` — i.e. the document↔contact graph.
+///
+/// Wire shape uses lowercase strings so the UI can pass `"tree"` /
+/// `"contacts"` directly.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GraphMode {
+    #[default]
+    Tree,
+    Contacts,
+}
+
+/// One node in the graph export.
+///
+/// `kind` discriminates between the three node shapes the wire returns:
+/// - `"summary"` — sealed summary node (Tree mode)
+/// - `"chunk"`   — raw memory chunk (Contacts mode)
+/// - `"contact"` — canonical person entity (Contacts mode)
+///
+/// Optional fields are only populated when relevant to the node kind so
+/// the UI can branch on `kind` and ignore the rest.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GraphNode {
+    /// `"summary" | "chunk" | "contact"`.
+    pub kind: String,
+    pub id: String,
+    /// Display-friendly label (summary uses scope, chunk uses preview
+    /// snippet, contact uses entity surface form).
+    pub label: String,
+    /// Summary-only: source/topic/global.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_kind: Option<String>,
+    /// Summary-only: human-readable scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_scope: Option<String>,
+    /// Summary-only: tree id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_id: Option<String>,
+    /// Summary-only: level in the tree (0 = leaves, 1+ = summaries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<u32>,
+    /// Summary-only: parent summary id (None for roots). Present so
+    /// the UI draws parent→child edges directly without an explicit
+    /// edges array.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// Summary-only: number of children rolled up under this node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_count: Option<u32>,
+    /// Summary/chunk: time-range start (ms since epoch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_range_start_ms: Option<i64>,
+    /// Summary/chunk: time-range end (ms since epoch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_range_end_ms: Option<i64>,
+    /// Summary-only: filesystem-safe basename of the summary's `.md`
+    /// file (used to build the Obsidian deep link).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_basename: Option<String>,
+    /// Contact-only: entity kind (`person`, `organization`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_kind: Option<String>,
+}
+
+/// One edge in the graph export. Used in Contacts mode to express
+/// chunk↔contact mentions, since those don't fit the parent/child
+/// shape encoded in `GraphNode.parent_id`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub from: String,
+    pub to: String,
+}
+
+/// Response shape for [`graph_export_rpc`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GraphExportResponse {
+    pub nodes: Vec<GraphNode>,
+    /// Explicit edges. In `Tree` mode this is empty (each summary
+    /// node's `parent_id` carries the edge); in `Contacts` mode each
+    /// edge connects a `chunk` node to a `contact` node.
+    #[serde(default)]
+    pub edges: Vec<GraphEdge>,
+    /// Absolute path to the on-disk `<workspace>/memory_tree/content/` root.
+    /// UIs use this to open files via the `obsidian://open?path=...` deep
+    /// link — Obsidian resolves arbitrary absolute paths without requiring
+    /// the vault to be registered.
+    pub content_root_abs: String,
+}
+
+/// `memory_tree_graph_export` — return either the summary tree or the
+/// document↔contact graph, depending on `mode`.
+pub async fn graph_export_rpc(
+    config: &Config,
+    mode: GraphMode,
+) -> Result<RpcOutcome<GraphExportResponse>, String> {
+    let cfg = config.clone();
+    let resp = tokio::task::spawn_blocking(move || -> Result<GraphExportResponse> {
+        let content_root = cfg.memory_tree_content_root();
+        let resp = match mode {
+            GraphMode::Tree => collect_tree_graph(&cfg)?,
+            GraphMode::Contacts => collect_contacts_graph(&cfg)?,
+        };
+        Ok(GraphExportResponse {
+            nodes: resp.0,
+            edges: resp.1,
+            content_root_abs: content_root.to_string_lossy().to_string(),
+        })
+    })
+    .await
+    .map_err(|e| format!("graph_export join error: {e}"))?
+    .map_err(|e| format!("graph_export: {e:#}"))?;
+    // Hash the content root rather than logging the absolute path —
+    // it embeds the user's home / username, which we don't want in
+    // tail-sampled debug streams or bug reports.
+    let log = format!(
+        "memory_tree::read: graph_export mode={:?} nodes={} edges={} root_hash={}",
+        mode,
+        resp.nodes.len(),
+        resp.edges.len(),
+        crate::openhuman::memory::tree::util::redact::redact(&resp.content_root_abs),
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
+/// Tree mode: summary nodes joined to their owning tree for the
+/// human-readable scope. Edges are encoded implicitly via
+/// `GraphNode.parent_id`.
+fn collect_tree_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
+    let nodes = with_connection(cfg, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.tree_id, s.tree_kind, t.scope, s.level, s.parent_id,
+                    s.child_ids_json, s.time_range_start_ms, s.time_range_end_ms
+               FROM mem_tree_summaries s
+               JOIN mem_tree_trees t ON t.id = s.tree_id
+              WHERE s.deleted = 0
+              ORDER BY s.tree_id, s.level, s.sealed_at_ms",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let tree_id: String = row.get(1)?;
+                let tree_kind: String = row.get(2)?;
+                let tree_scope: String = row.get(3)?;
+                let level: i64 = row.get(4)?;
+                let parent_id: Option<String> = row.get(5)?;
+                let child_ids_json: String = row.get(6)?;
+                let time_range_start_ms: i64 = row.get(7)?;
+                let time_range_end_ms: i64 = row.get(8)?;
+                let child_count: u32 = serde_json::from_str::<Vec<String>>(&child_ids_json)
+                    .map(|v| v.len() as u32)
+                    .unwrap_or(0);
+                let file_basename = sanitize_basename(&id);
+                let label = format!("L{} · {}", level.max(0), tree_scope);
+                Ok(GraphNode {
+                    kind: "summary".into(),
+                    id,
+                    label,
+                    tree_kind: Some(tree_kind),
+                    tree_scope: Some(tree_scope),
+                    tree_id: Some(tree_id),
+                    level: Some(level.max(0) as u32),
+                    parent_id,
+                    child_count: Some(child_count),
+                    time_range_start_ms: Some(time_range_start_ms),
+                    time_range_end_ms: Some(time_range_end_ms),
+                    file_basename: Some(file_basename),
+                    entity_kind: None,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect tree-mode summary rows")?;
+        Ok(rows)
+    })?;
+    Ok((nodes, Vec::new()))
+}
+
+/// Contacts mode: every chunk that mentions a person entity, plus the
+/// distinct person entities themselves, with one edge per mention.
+///
+/// Caps applied to keep the wire payload bounded for large workspaces:
+/// at most `MAX_CHUNK_NODES` chunks (most-recent first) and at most
+/// `MAX_EDGES` mention edges. Older chunks beyond the cap are dropped
+/// — the graph is for orientation, not exhaustive inspection.
+fn collect_contacts_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
+    const MAX_CHUNK_NODES: usize = 1500;
+    const MAX_EDGES: usize = 4000;
+
+    with_connection(cfg, |conn| {
+        // Pull the chunks that have at least one person mention. The
+        // `INNER JOIN` keeps orphan chunks (no person entities) out of
+        // the contacts view — they'd be isolated nodes that add no
+        // signal.
+        let mut chunk_stmt = conn.prepare(
+            "SELECT c.id, c.timestamp_ms, c.content
+               FROM mem_tree_chunks c
+              WHERE c.id IN (
+                    SELECT DISTINCT node_id
+                      FROM mem_tree_entity_index
+                     WHERE entity_kind = 'person'
+              )
+              ORDER BY c.timestamp_ms DESC
+              LIMIT ?1",
+        )?;
+        let chunks: Vec<(String, i64, String)> = chunk_stmt
+            .query_map(params![MAX_CHUNK_NODES as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<_>>()
+            .context("collect contacts-mode chunk rows")?;
+
+        let chunk_ids: Vec<String> = chunks.iter().map(|(id, _, _)| id.clone()).collect();
+
+        // Pull mention edges + distinct contacts, scoped to the
+        // chunks we already kept and to leaf rows only. Filtering in
+        // SQL (rather than after a global `LIMIT`) is essential: in a
+        // busy workspace, unrelated `mem_tree_entity_index` rows
+        // would otherwise consume the entire `MAX_EDGES` window and
+        // leave kept chunks with zero contact edges. We build the
+        // `IN (?, ?, …)` placeholder list dynamically so SQLite can
+        // index-narrow the search to just the kept chunks before
+        // applying the cap.
+        let edges: Vec<(String, String, String)> = if chunk_ids.is_empty() {
+            Vec::new()
+        } else {
+            let placeholders = std::iter::repeat("?")
+                .take(chunk_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT entity_id, node_id, surface
+                   FROM mem_tree_entity_index
+                  WHERE entity_kind = 'person'
+                    AND node_kind = 'leaf'
+                    AND node_id IN ({placeholders})
+                  ORDER BY timestamp_ms DESC
+                  LIMIT ?"
+            );
+            // Bind chunk ids first, then MAX_EDGES last.
+            let mut bind: Vec<rusqlite::types::Value> = chunk_ids
+                .iter()
+                .map(|s| rusqlite::types::Value::Text(s.clone()))
+                .collect();
+            bind.push(rusqlite::types::Value::Integer(MAX_EDGES as i64));
+            let mut mention_stmt = conn.prepare(&sql)?;
+            let rows = mention_stmt
+                .query_map(rusqlite::params_from_iter(bind), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("collect contacts-mode mentions")?;
+            rows
+        };
+
+        let mut edges_out: Vec<GraphEdge> = Vec::with_capacity(edges.len());
+        let mut contacts: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for (entity_id, node_id, surface) in edges {
+            // First-seen surface wins as the display label — surface
+            // forms can vary across mentions (e.g. "Alice", "Alice S.").
+            contacts.entry(entity_id.clone()).or_insert(surface);
+            edges_out.push(GraphEdge {
+                from: node_id,
+                to: entity_id,
+            });
+        }
+
+        let mut nodes: Vec<GraphNode> = Vec::with_capacity(chunks.len() + contacts.len());
+        for (id, ts, preview) in chunks {
+            // Trim preview to one line for graph hover legibility.
+            let label = preview
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(72)
+                .collect::<String>();
+            nodes.push(GraphNode {
+                kind: "chunk".into(),
+                id,
+                label,
+                tree_kind: None,
+                tree_scope: None,
+                tree_id: None,
+                level: None,
+                parent_id: None,
+                child_count: None,
+                time_range_start_ms: Some(ts),
+                time_range_end_ms: Some(ts),
+                file_basename: None,
+                entity_kind: None,
+            });
+        }
+        for (entity_id, surface) in contacts {
+            nodes.push(GraphNode {
+                kind: "contact".into(),
+                id: entity_id,
+                label: surface,
+                tree_kind: None,
+                tree_scope: None,
+                tree_id: None,
+                level: None,
+                parent_id: None,
+                child_count: None,
+                time_range_start_ms: None,
+                time_range_end_ms: None,
+                file_basename: None,
+                entity_kind: Some("person".into()),
+            });
+        }
+        Ok((nodes, edges_out))
+    })
+}
+
+/// Replicate `content_store::paths::sanitize_filename` — colons and other
+/// Windows-illegal characters become `-` so the basename matches the
+/// on-disk `.md` filename Obsidian needs to open via deep link.
+fn sanitize_basename(id: &str) -> String {
+    id.chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            other => other,
+        })
+        .collect()
+}
+
+// ── wipe_all (destructive "reset memory" trigger) ───────────────────────
+
+/// Response shape for [`wipe_all_rpc`]. Counts everything we touched
+/// so the UI can confirm something actually happened.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WipeAllResponse {
+    /// Number of mem_tree_* SQLite rows deleted across all tables.
+    pub rows_deleted: u64,
+    /// Top-level on-disk directories under `<content_root>/` that we
+    /// removed (e.g. `["raw", "wiki", "email", "chat", "document",
+    /// "summaries"]`).
+    pub dirs_removed: Vec<String>,
+    /// Composio sync-state KV rows deleted from the unified memory
+    /// store. Clearing these is what lets the next sync re-fetch
+    /// every upstream item instead of skipping ones the dedup set
+    /// already saw.
+    pub sync_state_cleared: u64,
+}
+
+/// `memory_tree_wipe_all` — destructive reset of every memory-tree
+/// artefact owned by this workspace.
+///
+/// Three things get wiped, in this order:
+///   1. Every `mem_tree_*` SQLite table (chunks, summaries, trees,
+///      buffers, score, entity_index, entity_hotness, jobs).
+///   2. The on-disk content folders under `<content_root>/`
+///      (`raw`, `wiki`, plus the legacy `email` / `chat` / `document`
+///      / `summaries` paths).
+///   3. The Composio sync-state KV rows under the
+///      `composio-sync-state` namespace in the unified memory store.
+///      These hold each provider's per-connection cursor +
+///      `synced_ids` dedup set — clearing them is what lets the next
+///      sync re-fetch every upstream item instead of skipping the
+///      ones it's already seen.
+///
+/// Used by the "Reset memory" button in the Memory tab so the user
+/// can re-sync from scratch without leaving the app.
+pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>, String> {
+    let cfg = config.clone();
+    let resp = tokio::task::spawn_blocking(move || -> Result<WipeAllResponse> {
+        // Tables to truncate. Order matters: `mem_tree_summaries` and
+        // `mem_tree_buffers` both have `FOREIGN KEY (tree_id) REFERENCES
+        // mem_tree_trees(id)` with `PRAGMA foreign_keys = ON`, so trees
+        // must come AFTER its dependents. Every other table's order is
+        // free.
+        const TABLES: &[&str] = &[
+            "mem_tree_score",
+            "mem_tree_entity_index",
+            "mem_tree_entity_hotness",
+            "mem_tree_jobs",
+            "mem_tree_buffers",
+            "mem_tree_summaries",
+            "mem_tree_trees",
+            "mem_tree_chunks",
+        ];
+        let rows_deleted: u64 = with_connection(&cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            let mut total: u64 = 0;
+            for table in TABLES {
+                let n = tx
+                    .execute(&format!("DELETE FROM {table}"), [])
+                    .with_context(|| format!("delete from {table}"))?;
+                total += n as u64;
+            }
+            tx.commit()?;
+            Ok(total)
+        })?;
+
+        // Filesystem cleanup. Each directory is best-effort: if one
+        // fails (permission denied, path doesn't exist) we keep going
+        // and report what we managed to remove. `email/` and the
+        // legacy bare `summaries/` are listed for back-compat —
+        // workspaces ingested before the raw-archive + wiki/ moves
+        // still have files there. Fresh installs only ever populate
+        // `raw/`, `wiki/`, `chat/`, and `document/`.
+        const DIRS: &[&str] = &["raw", "wiki", "chat", "document", "email", "summaries"];
+        let content_root = cfg.memory_tree_content_root();
+        let mut dirs_removed: Vec<String> = Vec::new();
+        for dir in DIRS {
+            let path = content_root.join(dir);
+            match std::fs::remove_dir_all(&path) {
+                Ok(()) => dirs_removed.push((*dir).to_string()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    // Logical name (raw / wiki / chat / ...) is enough
+                    // signal — the absolute path embeds the user's
+                    // home directory.
+                    log::warn!(
+                        "[memory_tree::read::wipe] failed to remove dir={} err={e}",
+                        dir
+                    );
+                }
+            }
+        }
+
+        // Composio sync-state lives in the unified memory store
+        // (`<workspace>/memory/memory.db`). Open it directly and
+        // delete every key in the `composio-sync-state` namespace —
+        // this clears each provider's `cursor` + `synced_ids` set so
+        // the next sync re-fetches from the beginning.
+        //
+        // We do **not** swallow clear failures into `0`: callers (and
+        // the frontend `sync_state_cleared` contract) need to
+        // distinguish "nothing to clear" from "failed to clear, so
+        // the next sync may still be incremental." A missing DB is
+        // legitimately "nothing to clear"; a SQLite error is a
+        // failed wipe and propagates.
+        let sync_state_cleared: u64 = {
+            let unified_db = cfg.workspace_dir.join("memory").join("memory.db");
+            if !unified_db.exists() {
+                log::debug!(
+                    "[memory_tree::read::wipe] unified memory DB not present — skipping sync-state clear"
+                );
+                0
+            } else {
+                clear_composio_sync_state(&unified_db)
+                    .context("clear composio-sync-state during wipe_all")?
+            }
+        };
+
+        Ok(WipeAllResponse {
+            rows_deleted,
+            dirs_removed,
+            sync_state_cleared,
+        })
+    })
+    .await
+    .map_err(|e| format!("wipe_all join error: {e}"))?
+    .map_err(|e| format!("wipe_all: {e:#}"))?;
+
+    let log = format!(
+        "memory_tree::read: wipe_all rows={} dirs={:?} sync_state={}",
+        resp.rows_deleted, resp.dirs_removed, resp.sync_state_cleared
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
+/// Drop every row in the unified memory store's `kv_namespace` table
+/// keyed under [`crate::openhuman::composio::providers::sync_state::KV_NAMESPACE`].
+///
+/// We open the SQLite file directly rather than going through
+/// [`crate::openhuman::memory::store::client::MemoryClientRef`] so
+/// `wipe_all` stays a pure synchronous operation runnable from
+/// `spawn_blocking` without dragging in the full memory-store init
+/// path. The `kv_namespace` table is created up-front by
+/// `UnifiedMemory::new`, so the DELETE is a no-op on a fresh DB
+/// rather than an error.
+fn clear_composio_sync_state(db_path: &std::path::Path) -> Result<u64> {
+    use crate::openhuman::composio::providers::sync_state::KV_NAMESPACE;
+    let conn = rusqlite::Connection::open(db_path)
+        .with_context(|| format!("open unified memory db {}", db_path.display()))?;
+    let n = conn
+        .execute(
+            "DELETE FROM kv_namespace WHERE namespace = ?1",
+            params![KV_NAMESPACE],
+        )
+        .context("delete composio-sync-state rows")?;
+    Ok(n as u64)
+}
+
+// ── reset_tree (rebuild summary tree from existing chunks) ──────────────
+
+/// Response shape for [`reset_tree_rpc`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResetTreeResponse {
+    /// Tree-state SQLite rows deleted (summaries + trees + buffers + jobs).
+    pub tree_rows_deleted: u64,
+    /// Number of `mem_tree_chunks` whose lifecycle_status was reset to
+    /// `pending_extraction` (i.e. the chunks that will re-enter the
+    /// extract → score → embed → buffer → seal pipeline).
+    pub chunks_requeued: u64,
+    /// Number of `extract_chunk` jobs enqueued (one per chunk in
+    /// `chunks_requeued`). The job worker picks these up and drives
+    /// each chunk back through the pipeline; downstream seals
+    /// happen automatically as L0 buffers fill.
+    pub jobs_enqueued: u64,
+}
+
+/// `memory_tree_reset_tree` — wipe summary-tree state but keep chunks
+/// + raw archive + sync state, then re-enqueue every chunk through
+/// the extraction pipeline so the tree rebuilds from scratch.
+///
+/// Useful when you've changed the LLM summariser (e.g. flipped from
+/// inert fallback to a real Ollama model) and want to re-summarise
+/// existing data without paying the upstream sync cost again.
+///
+/// Three steps, each in its own SQL pass:
+///   1. Truncate `mem_tree_summaries`, `mem_tree_trees`,
+///      `mem_tree_buffers`, `mem_tree_jobs`. The tree schema is
+///      derived state — chunks are the source of truth.
+///   2. Remove `<content_root>/wiki/summaries/` on disk so stale
+///      `.md` files don't drift from the SQL truth.
+///   3. Reset every chunk's `lifecycle_status` to
+///      `'pending_extraction'` and enqueue an `extract_chunk` job
+///      keyed on the chunk id. The async worker picks each up and
+///      re-runs entity extract → score → embed → append-to-buffer.
+///      Seals happen automatically as L0 buffers cross the gate.
+pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeResponse>, String> {
+    use crate::openhuman::memory::tree::jobs::store as jobs_store;
+    use crate::openhuman::memory::tree::jobs::types::{ExtractChunkPayload, NewJob};
+
+    let cfg = config.clone();
+    let resp = tokio::task::spawn_blocking(move || -> Result<ResetTreeResponse> {
+        // Step 1 — truncate tree state in one transaction. Chunks
+        // (`mem_tree_chunks`), the entity index, score rows, and the
+        // sync-state KV all stay intact.
+        //
+        // Order matters: `mem_tree_summaries` and `mem_tree_buffers`
+        // both have `FOREIGN KEY (tree_id) REFERENCES mem_tree_trees(id)`,
+        // and `PRAGMA foreign_keys = ON` is set. Trees must come last
+        // or SQLite throws "FOREIGN KEY constraint failed". `mem_tree_jobs`
+        // has no FK so its position is free.
+        // `mem_tree_entity_index` holds both leaf (chunk) and summary
+        // entity rows. Clearing it on reset prevents `top_entities`
+        // from counting orphan rows pointing at deleted summaries;
+        // the leaf rows get rebuilt naturally when the requeued
+        // `extract_chunk` jobs run for every chunk.
+        const TREE_TABLES: &[&str] = &[
+            "mem_tree_summaries",
+            "mem_tree_buffers",
+            "mem_tree_jobs",
+            "mem_tree_entity_index",
+            "mem_tree_trees",
+        ];
+        let tree_rows_deleted: u64 = with_connection(&cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            let mut total: u64 = 0;
+            for table in TREE_TABLES {
+                let n = tx
+                    .execute(&format!("DELETE FROM {table}"), [])
+                    .with_context(|| format!("delete from {table}"))?;
+                total += n as u64;
+            }
+            tx.commit()?;
+            Ok(total)
+        })?;
+
+        // Step 2 — wipe the on-disk wiki/summaries tree. Best-effort:
+        // a missing folder is fine (fresh workspace). Other errors
+        // log + carry on — the SQL truth is what the rebuild relies on.
+        let summaries_dir = cfg
+            .memory_tree_content_root()
+            .join("wiki")
+            .join("summaries");
+        match std::fs::remove_dir_all(&summaries_dir) {
+            Ok(()) => log::debug!("[memory_tree::read::reset_tree] removed wiki/summaries"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                log::warn!("[memory_tree::read::reset_tree] failed to remove wiki/summaries: {e}")
+            }
+        }
+
+        // Step 3 — flip every chunk back to `pending_extraction` and
+        // enqueue an `extract_chunk` job per id. Done in a single
+        // transaction so partial state is impossible: either the
+        // whole queue is in flight or nothing is. We use a chunked
+        // SELECT so very large workspaces don't materialise the
+        // entire id list in memory.
+        let (chunks_requeued, jobs_enqueued) =
+            with_connection(&cfg, |conn| -> anyhow::Result<(u64, u64)> {
+                let tx = conn.unchecked_transaction()?;
+                let chunks_requeued = tx.execute(
+                    "UPDATE mem_tree_chunks SET lifecycle_status = 'pending_extraction'",
+                    [],
+                )? as u64;
+                let chunk_ids: Vec<String> = {
+                    let mut stmt = tx.prepare("SELECT id FROM mem_tree_chunks")?;
+                    let rows = stmt
+                        .query_map([], |r| r.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                        .context("collect chunk ids")?;
+                    rows
+                };
+                let mut jobs_enqueued: u64 = 0;
+                for id in &chunk_ids {
+                    let payload = ExtractChunkPayload {
+                        chunk_id: id.clone(),
+                    };
+                    let job =
+                        NewJob::extract_chunk(&payload).context("build extract_chunk NewJob")?;
+                    if jobs_store::enqueue_tx(&tx, &job)
+                        .context("enqueue extract_chunk")?
+                        .is_some()
+                    {
+                        jobs_enqueued += 1;
+                    }
+                }
+                tx.commit()?;
+                Ok((chunks_requeued, jobs_enqueued))
+            })?;
+
+        // Wake the worker pool so the freshly-enqueued jobs start
+        // running immediately rather than waiting for the next
+        // periodic poll.
+        crate::openhuman::memory::tree::jobs::wake_workers();
+
+        Ok(ResetTreeResponse {
+            tree_rows_deleted,
+            chunks_requeued,
+            jobs_enqueued,
+        })
+    })
+    .await
+    .map_err(|e| format!("reset_tree join error: {e}"))?
+    .map_err(|e| format!("reset_tree: {e:#}"))?;
+
+    let log = format!(
+        "memory_tree::read: reset_tree tree_rows={} chunks={} jobs={}",
+        resp.tree_rows_deleted, resp.chunks_requeued, resp.jobs_enqueued
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
+// ── flush_now (manual "Build summary trees" trigger) ────────────────────
+
+/// Response shape for [`flush_now_rpc`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FlushNowResponse {
+    /// `true` when a fresh job row was inserted; `false` when the
+    /// dedupe key already had an active flush job for today (the
+    /// existing job will pick up the same buffers).
+    pub enqueued: bool,
+    /// Number of L0 buffers that currently qualify for force-seal under
+    /// `max_age_secs = 0` — i.e. every non-empty L0 buffer in the
+    /// workspace. Echoed back so the UI can show "Sealing N buffers…"
+    /// without waiting for the worker to drain.
+    pub stale_buffers: u32,
+}
+
+/// `memory_tree_flush_now` — UI-facing "Build summary trees" trigger.
+///
+/// Enqueues a `flush_stale` job with `max_age_secs = 0` so every L0
+/// buffer (raw-leaf frontier of every source tree) gets force-sealed
+/// regardless of its age. The seal worker picks up the new summary
+/// nodes, runs them through the configured summariser (cloud or local
+/// depending on `memory_tree.llm_backend`), and persists the new L1+
+/// summaries — i.e. the tree gets built using the user's chosen AI.
+///
+/// Idempotent: the dedupe key is `flush_stale:<UTC date>`, so spamming
+/// the button doesn't queue duplicates.
+pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowResponse>, String> {
+    use crate::openhuman::memory::tree::jobs::store as jobs_store;
+    use crate::openhuman::memory::tree::jobs::types::{FlushStalePayload, NewJob};
+    use crate::openhuman::memory::tree::tree_source::store as tree_store;
+
+    let cfg = config.clone();
+    let resp = tokio::task::spawn_blocking(move || -> Result<FlushNowResponse> {
+        // Probe how many L0 buffers currently qualify (cutoff "now" =
+        // every buffer with at least one item) for the response payload.
+        let stale = tree_store::list_stale_buffers(&cfg, chrono::Utc::now())
+            .context("list stale buffers")?;
+        let stale_buffers = stale.len() as u32;
+
+        let payload = FlushStalePayload {
+            max_age_secs: Some(0),
+        };
+        let date_iso = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let job = NewJob::flush_stale(&payload, &date_iso).context("build flush_stale NewJob")?;
+        let enqueued = jobs_store::enqueue(&cfg, &job)
+            .context("enqueue flush_stale job")?
+            .is_some();
+        Ok(FlushNowResponse {
+            enqueued,
+            stale_buffers,
+        })
+    })
+    .await
+    .map_err(|e| format!("flush_now join error: {e}"))?
+    .map_err(|e| format!("flush_now: {e:#}"))?;
+
+    let log = format!(
+        "memory_tree::read: flush_now enqueued={} stale_buffers={}",
+        resp.enqueued, resp.stale_buffers
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
 // ── llm get/set ─────────────────────────────────────────────────────────
 
 /// Response shape for [`get_llm_rpc`] / [`set_llm_rpc`].

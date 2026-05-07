@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
 import { isTauri } from './common';
-import { memoryLearnAll, memorySyncAll, memorySyncChannel } from './memory';
+import { aiListMemoryFiles, memoryLearnAll, memorySyncAll, memorySyncChannel } from './memory';
 
 vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 vi.mock('./common', () => ({ isTauri: vi.fn(() => true) }));
@@ -107,5 +107,46 @@ describe('memoryLearnAll', () => {
     const errEntry = result.results.find(r => r.status === 'error');
     expect(errEntry?.namespace).toBe('ns-b');
     expect(errEntry?.error).toContain('local AI');
+  });
+});
+
+describe('aiListMemoryFiles', () => {
+  test('defaults relative_dir to empty string (list memory root)', async () => {
+    // Regression guard: the wrapper used to default to 'memory', and
+    // the Rust resolver joined that onto `<workspace>/memory/`,
+    // producing the doomed `<workspace>/memory/memory` path. Empty
+    // string is the resolver's "the memory root" sentinel.
+    mockCallCoreRpc.mockResolvedValueOnce({ data: { files: ['a.md', 'b.md'] } });
+
+    const files = await aiListMemoryFiles();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.memory_list_files',
+      params: { relative_dir: '' },
+    });
+    expect(files).toEqual(['a.md', 'b.md']);
+  });
+
+  test('forwards an explicit relativeDir verbatim', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ files: ['nested.md'] });
+    const files = await aiListMemoryFiles('subdir');
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.memory_list_files',
+      params: { relative_dir: 'subdir' },
+    });
+    expect(files).toEqual(['nested.md']);
+  });
+
+  test('returns [] when the response has no recognisable files array', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce(null);
+    expect(await aiListMemoryFiles()).toEqual([]);
+
+    mockCallCoreRpc.mockResolvedValueOnce({ unrelated: 'shape' });
+    expect(await aiListMemoryFiles()).toEqual([]);
+  });
+
+  test('throws when not running in Tauri', async () => {
+    mockIsTauri.mockReturnValue(false);
+    await expect(aiListMemoryFiles()).rejects.toThrow(/Not running in Tauri/);
   });
 });

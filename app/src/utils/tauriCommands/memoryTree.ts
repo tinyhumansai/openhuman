@@ -416,3 +416,190 @@ export async function memoryTreeSetLlm(
   console.debug('[memory-tree-rpc] memoryTreeSetLlm: exit current=%s', out?.current);
   return out;
 }
+
+// ── memory_tree_graph_export ────────────────────────────────────────────
+
+/**
+ * Discriminator for graph nodes. `"summary"` is a sealed summary tree
+ * node (Tree mode); `"chunk"` is a raw memory chunk and `"contact"`
+ * is a person entity (Contacts mode).
+ */
+export type GraphNodeKind = 'summary' | 'chunk' | 'contact';
+
+/**
+ * One node in the graph export. Optional fields are populated only
+ * when relevant to the node's `kind`; the UI branches on `kind` and
+ * ignores the rest.
+ */
+export interface GraphNode {
+  kind: GraphNodeKind;
+  id: string;
+  /** Display-friendly label (scope, preview snippet, or surface form). */
+  label: string;
+
+  // Summary-only ──
+  tree_id?: string;
+  tree_kind?: 'source' | 'topic' | 'global';
+  tree_scope?: string;
+  level?: number;
+  parent_id?: string | null;
+  child_count?: number;
+  /** Filesystem-safe basename (no `.md`); used to build Obsidian deep links. */
+  file_basename?: string;
+
+  // Summary or chunk ──
+  time_range_start_ms?: number;
+  time_range_end_ms?: number;
+
+  // Contact-only ──
+  /** `"person" | "organization" | …`. */
+  entity_kind?: string;
+}
+
+/** One explicit edge — used in Contacts mode to link chunks to contacts. */
+export interface GraphEdge {
+  from: string;
+  to: string;
+}
+
+export type GraphMode = 'tree' | 'contacts';
+
+export interface GraphExportResponse {
+  nodes: GraphNode[];
+  /**
+   * Explicit edges. Empty in `tree` mode (each summary node's
+   * `parent_id` carries the edge); chunk→contact mention edges in
+   * `contacts` mode.
+   */
+  edges: GraphEdge[];
+  /** Absolute filesystem path to `<workspace>/memory_tree/content/`. */
+  content_root_abs: string;
+}
+
+/** Response shape for `memory_tree_wipe_all`. */
+export interface WipeAllResponse {
+  rows_deleted: number;
+  dirs_removed: string[];
+  /**
+   * Composio sync-state KV rows deleted. Clearing these (per-connection
+   * cursors + synced-id dedup sets) is what lets the next sync re-fetch
+   * every upstream item instead of skipping ones it's already seen.
+   */
+  sync_state_cleared: number;
+}
+
+/**
+ * Destructive reset: truncate every `mem_tree_*` table, remove the
+ * on-disk chunk-store directories under the workspace content root,
+ * **and** clear the `composio-sync-state` KV namespace so the next
+ * sync re-fetches every upstream item from scratch (no
+ * synced-id-dedup carry-over). Backed by
+ * `openhuman.memory_tree_wipe_all`.
+ *
+ * Callers can rely on `sync_state_cleared` in the response — a
+ * positive count means the next sync will be a full re-fetch; `0`
+ * means there were no live cursors to drop (e.g. fresh workspace).
+ */
+export async function memoryTreeWipeAll(): Promise<WipeAllResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeWipeAll: entry');
+  const resp = await callCoreRpc<WipeAllResponse | ResultEnvelope<WipeAllResponse>>({
+    method: 'openhuman.memory_tree_wipe_all',
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeWipeAll: exit rows=%d dirs=%o',
+    out.rows_deleted,
+    out.dirs_removed
+  );
+  return out;
+}
+
+/** Response shape for `memory_tree_reset_tree`. */
+export interface ResetTreeResponse {
+  /** Tree-state SQLite rows deleted (summaries + trees + buffers + jobs). */
+  tree_rows_deleted: number;
+  /** Chunks reset to lifecycle_status = 'pending_extraction'. */
+  chunks_requeued: number;
+  /** `extract_chunk` jobs enqueued (one per chunk). */
+  jobs_enqueued: number;
+}
+
+/**
+ * Wipe summary-tree state but keep chunks, raw archive, and sync
+ * state — then re-enqueue every chunk through extraction so the
+ * tree rebuilds without a fresh upstream sync. Backed by
+ * `openhuman.memory_tree_reset_tree`.
+ *
+ * Use after changing the summariser backend (e.g. flipping inert
+ * → real local LLM) to re-summarise existing data on the new
+ * model.
+ */
+export async function memoryTreeResetTree(): Promise<ResetTreeResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeResetTree: entry');
+  const resp = await callCoreRpc<ResetTreeResponse | ResultEnvelope<ResetTreeResponse>>({
+    method: 'openhuman.memory_tree_reset_tree',
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeResetTree: exit tree_rows=%d chunks=%d jobs=%d',
+    out.tree_rows_deleted,
+    out.chunks_requeued,
+    out.jobs_enqueued
+  );
+  return out;
+}
+
+/** Response shape for `memory_tree_flush_now`. */
+export interface FlushNowResponse {
+  enqueued: boolean;
+  stale_buffers: number;
+}
+
+/**
+ * Manually trigger the summary-tree build. Enqueues a `flush_stale` job
+ * with `max_age_secs=0` so every L0 buffer force-seals immediately; the
+ * seal worker runs each through the configured cloud or local
+ * summariser. Backed by `openhuman.memory_tree_flush_now`.
+ *
+ * Safe to spam — same UTC-day dedupe key as the scheduled flush, so
+ * duplicate clicks return `enqueued=false` rather than queuing twice.
+ */
+export async function memoryTreeFlushNow(): Promise<FlushNowResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeFlushNow: entry');
+  const resp = await callCoreRpc<FlushNowResponse | ResultEnvelope<FlushNowResponse>>({
+    method: 'openhuman.memory_tree_flush_now',
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeFlushNow: exit enqueued=%s stale_buffers=%d',
+    out.enqueued,
+    out.stale_buffers
+  );
+  return out;
+}
+
+/**
+ * Return either the summary tree (parent→child links between sealed
+ * summaries) or the document↔contact graph (chunks linked to person
+ * entities they mention). Backed by `openhuman.memory_tree_graph_export`.
+ */
+export async function memoryTreeGraphExport(
+  mode: GraphMode = 'tree'
+): Promise<GraphExportResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeGraphExport: entry mode=%s', mode);
+  const resp = await callCoreRpc<GraphExportResponse | ResultEnvelope<GraphExportResponse>>({
+    method: 'openhuman.memory_tree_graph_export',
+    params: { mode },
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    // Don't log the absolute content root — it embeds the user's
+    // home directory + username and shows up in console logs / bug
+    // reports. The path is still returned to the caller.
+    '[memory-tree-rpc] memoryTreeGraphExport: exit mode=%s n=%d edges=%d',
+    mode,
+    out.nodes?.length ?? 0,
+    out.edges?.length ?? 0
+  );
+  return out;
+}

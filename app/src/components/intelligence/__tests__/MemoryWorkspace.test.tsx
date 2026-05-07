@@ -2,278 +2,290 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../test/test-utils';
-import type { Chunk, EntityRef, ScoreBreakdown, Source } from '../../../utils/tauriCommands';
+import type { GraphExportResponse, GraphNode } from '../../../utils/tauriCommands';
 import { MemoryWorkspace } from '../MemoryWorkspace';
 
-// The MemoryWorkspace orchestrator + its detail-pane child both fan out
-// to the `memory_tree_*` JSON-RPC wrappers. The setup.ts global mock
-// stubs auth helpers; we extend it here with the read-side surface so
-// the workspace can render against a deterministic fixture set.
+// The graph workspace pulls every sealed summary through one RPC call —
+// `memory_tree_graph_export`. The MemorySyncConnections poll is mocked
+// out separately so the workspace mounts cleanly without hitting the
+// network.
 vi.mock('../../../utils/tauriCommands', () => ({
   isTauri: vi.fn(() => true),
-  memoryTreeListChunks: vi.fn(),
-  memoryTreeListSources: vi.fn(),
-  memoryTreeTopEntities: vi.fn(),
-  memoryTreeEntityIndexFor: vi.fn(),
-  memoryTreeChunkScore: vi.fn(),
+  memoryTreeGraphExport: vi.fn(),
+  memoryTreeFlushNow: vi.fn(),
+  memoryTreeWipeAll: vi.fn(),
+  memoryTreeResetTree: vi.fn(),
 }));
 
-const {
-  memoryTreeListChunks,
-  memoryTreeListSources,
-  memoryTreeTopEntities,
-  memoryTreeEntityIndexFor,
-  memoryTreeChunkScore,
-} = (await import('../../../utils/tauriCommands')) as unknown as {
-  memoryTreeListChunks: Mock;
-  memoryTreeListSources: Mock;
-  memoryTreeTopEntities: Mock;
-  memoryTreeEntityIndexFor: Mock;
-  memoryTreeChunkScore: Mock;
-};
+vi.mock('../../../services/memorySyncService', () => ({
+  memorySyncStatusList: vi.fn().mockResolvedValue([]),
+}));
 
-// ── Fixtures — small but realistic ───────────────────────────────────────
+vi.mock('../../../lib/composio/composioApi', () => ({
+  listConnections: vi.fn().mockResolvedValue({ connections: [] }),
+  syncConnection: vi.fn(),
+}));
 
-const NOW_MS = Date.UTC(2026, 4, 4, 9, 14, 0);
-const HOUR = 60 * 60 * 1000;
+// Stub `openUrl` so deep-link clicks land in a mock instead of routing
+// through `tauri-plugin-opener` (which isn't loaded in the test env).
+vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 
-const FIXTURE_CHUNKS: Chunk[] = [
-  {
-    id: 'chunk-today-01',
-    source_kind: 'email',
-    source_id: 'gmail:enamakel@mail.tinyhumans.ai|sanil@vezures.xyz',
-    source_ref: 'gmail://msg/aaa',
-    owner: 'sanil@vezures.xyz',
-    timestamp_ms: NOW_MS,
-    token_count: 312,
-    lifecycle_status: 'admitted',
-    content_preview:
-      'welcome to the future of ai assistants — openhuman. hey hey Sanil Jain! steve here.',
-    has_embedding: true,
-    tags: ['person/Steven-Enamakel', 'organization/TinyHumans', 'product/openhuman'],
-  },
-  {
-    id: 'chunk-today-02',
-    source_kind: 'email',
-    source_id: 'gmail:notifications@github.com|sanil@vezures.xyz',
-    source_ref: 'gmail://msg/bbb',
-    owner: 'sanil@vezures.xyz',
-    timestamp_ms: NOW_MS - 90 * 60 * 1000,
-    token_count: 94,
-    lifecycle_status: 'admitted',
-    content_preview: '[tinyhumansai/openhuman] PR #1175 merged.',
-    has_embedding: true,
-    tags: ['organization/GitHub', 'product/openhuman', 'event/pr-merged'],
-  },
-  {
-    id: 'chunk-today-03',
-    source_kind: 'chat',
-    source_id: 'slack:T0123|C-engineering',
-    source_ref: 'slack://channel/eng/p1',
-    owner: 'sanil@vezures.xyz',
-    timestamp_ms: NOW_MS - 3 * HOUR,
-    token_count: 47,
-    lifecycle_status: 'admitted',
-    content_preview: 'maya patel: pushed the staging chart fix',
-    has_embedding: true,
-    tags: ['person/Maya-Patel', 'organization/TinyHumans'],
-  },
-];
+const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll, memoryTreeResetTree } =
+  (await import('../../../utils/tauriCommands')) as unknown as {
+    memoryTreeGraphExport: Mock;
+    memoryTreeFlushNow: Mock;
+    memoryTreeWipeAll: Mock;
+    memoryTreeResetTree: Mock;
+  };
 
-const FIXTURE_SOURCES: Source[] = [
-  {
-    source_id: 'gmail:enamakel@mail.tinyhumans.ai|sanil@vezures.xyz',
-    display_name: 'Steven Enamakel',
-    source_kind: 'email',
-    chunk_count: 1,
-    most_recent_ms: NOW_MS,
-    lifecycle_status: 'admitted',
-  },
-  {
-    source_id: 'gmail:notifications@github.com|sanil@vezures.xyz',
-    display_name: 'GitHub notifications',
-    source_kind: 'email',
-    chunk_count: 1,
-    most_recent_ms: NOW_MS - 90 * 60 * 1000,
-    lifecycle_status: 'admitted',
-  },
-  {
-    source_id: 'slack:T0123|C-engineering',
-    display_name: 'Slack: #engineering',
-    source_kind: 'chat',
-    chunk_count: 1,
-    most_recent_ms: NOW_MS - 3 * HOUR,
-    lifecycle_status: 'admitted',
-  },
-];
+const { listConnections, syncConnection } =
+  (await import('../../../lib/composio/composioApi')) as unknown as {
+    listConnections: Mock;
+    syncConnection: Mock;
+  };
 
-const FIXTURE_PEOPLE: EntityRef[] = [
-  { entity_id: 'person:Steven Enamakel', kind: 'person', surface: 'Steven Enamakel', count: 2 },
-  { entity_id: 'person:Maya Patel', kind: 'person', surface: 'Maya Patel', count: 1 },
-];
+const { openUrl } = (await import('../../../utils/openUrl')) as unknown as { openUrl: Mock };
 
-const FIXTURE_TOPICS: EntityRef[] = [
-  { entity_id: 'product:openhuman', kind: 'product', surface: 'openhuman', count: 3 },
-  { entity_id: 'event:pr-merged', kind: 'event', surface: 'pr-merged', count: 1 },
-];
+function makeSummary(partial: Partial<GraphNode>): GraphNode {
+  return {
+    kind: 'summary',
+    id: 'summary:L1:abc',
+    label: 'L1 · gmail',
+    tree_id: 'tree-1',
+    tree_kind: 'source',
+    tree_scope: 'gmail:alice@x.com',
+    level: 1,
+    parent_id: null,
+    child_count: 4,
+    time_range_start_ms: 0,
+    time_range_end_ms: 0,
+    file_basename: 'summary-L1-abc',
+    ...partial,
+  };
+}
 
-const FIXTURE_SCORE: ScoreBreakdown = {
-  signals: [
-    { name: 'source', weight: 0.3, value: 0.8 },
-    { name: 'entities', weight: 0.4, value: 0.7 },
-    { name: 'recency', weight: 0.3, value: 0.9 },
+const SAMPLE_RESPONSE: GraphExportResponse = {
+  content_root_abs: '/tmp/workspace/memory_tree/content',
+  edges: [],
+  nodes: [
+    makeSummary({ id: 'root', level: 2, parent_id: null, child_count: 2 }),
+    makeSummary({ id: 'child-1', level: 1, parent_id: 'root' }),
+    makeSummary({ id: 'child-2', level: 1, parent_id: 'root' }),
   ],
-  total: 0.79,
-  threshold: 0.85,
-  kept: true,
-  llm_consulted: false,
 };
 
-beforeEach(() => {
-  memoryTreeListChunks.mockReset();
-  memoryTreeListSources.mockReset();
-  memoryTreeTopEntities.mockReset();
-  memoryTreeEntityIndexFor.mockReset();
-  memoryTreeChunkScore.mockReset();
-
-  memoryTreeListChunks.mockResolvedValue({ chunks: FIXTURE_CHUNKS, total: FIXTURE_CHUNKS.length });
-  memoryTreeListSources.mockResolvedValue(FIXTURE_SOURCES);
-  // The workspace calls topEntities twice: ('person', 12) and (undefined, 40).
-  memoryTreeTopEntities.mockImplementation((kind?: string) => {
-    if (kind === 'person') return Promise.resolve(FIXTURE_PEOPLE);
-    return Promise.resolve([...FIXTURE_PEOPLE, ...FIXTURE_TOPICS]);
-  });
-  memoryTreeEntityIndexFor.mockResolvedValue([
-    { entity_id: 'person:Steven Enamakel', kind: 'person', surface: 'Steven Enamakel', count: 1 },
-    { entity_id: 'organization:TinyHumans', kind: 'organization', surface: 'TinyHumans', count: 1 },
-  ]);
-  memoryTreeChunkScore.mockResolvedValue(FIXTURE_SCORE);
-});
-
-describe('MemoryWorkspace — 2-pane + overlay browser', () => {
-  it('renders the navigator + result list scaffold and the search box', async () => {
-    renderWithProviders(<MemoryWorkspace />);
-    // Workspace renders the empty placeholder until the first fixture
-    // round-trip lands — the full 2-pane shell only mounts once allChunks
-    // is populated. Wait for the post-load state, then assert all four
-    // anchors exist together.
-    await waitFor(() => {
-      expect(screen.getByTestId('memory-workspace')).toBeInTheDocument();
+describe('MemoryWorkspace (graph view)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    memoryTreeGraphExport.mockResolvedValue(SAMPLE_RESPONSE);
+    memoryTreeFlushNow.mockResolvedValue({ enqueued: true, stale_buffers: 3 });
+    memoryTreeWipeAll.mockResolvedValue({
+      rows_deleted: 42,
+      dirs_removed: ['raw', 'wiki', 'email'],
+      sync_state_cleared: 1,
     });
-    expect(screen.getByTestId('memory-navigator')).toBeInTheDocument();
-    expect(screen.getByTestId('memory-result-list')).toBeInTheDocument();
-    expect(screen.getByLabelText('Search memory')).toBeInTheDocument();
+    memoryTreeResetTree.mockResolvedValue({
+      tree_rows_deleted: 12,
+      chunks_requeued: 7,
+      jobs_enqueued: 7,
+    });
+    listConnections.mockResolvedValue({ connections: [] });
+    syncConnection.mockResolvedValue({ ok: true });
+    openUrl.mockResolvedValue(undefined);
   });
 
-  it('calls the canonical memory_tree_* RPCs on mount', async () => {
+  it('renders the SVG graph once the export RPC resolves', async () => {
     renderWithProviders(<MemoryWorkspace />);
     await waitFor(() => {
-      expect(memoryTreeListChunks).toHaveBeenCalledWith({ limit: 500 });
-      expect(memoryTreeListSources).toHaveBeenCalled();
-      expect(memoryTreeTopEntities).toHaveBeenCalledWith('person', 12);
-      expect(memoryTreeTopEntities).toHaveBeenCalledWith(undefined, 40);
+      expect(screen.getByTestId('memory-graph-svg')).toBeInTheDocument();
+    });
+    // Three nodes → three circle elements with stable testids.
+    expect(screen.getByTestId('memory-graph-node-root')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-graph-node-child-1')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-graph-node-child-2')).toBeInTheDocument();
+  });
+
+  it('shows an empty state when the tree has no sealed summaries', async () => {
+    memoryTreeGraphExport.mockResolvedValueOnce({
+      content_root_abs: '/tmp/workspace/memory_tree/content',
+      edges: [],
+      nodes: [],
+    });
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-graph-empty')).toBeInTheDocument();
     });
   });
 
-  it('renders navigator section headings (recent, sources, people, topics)', async () => {
+  it('"View vault in Obsidian" triggers the deep link via the OS opener (not the webview)', async () => {
     renderWithProviders(<MemoryWorkspace />);
+    const button = await screen.findByTestId('memory-open-in-obsidian');
+    fireEvent.click(button);
     await waitFor(() => {
-      expect(screen.getByText('recent')).toBeInTheDocument();
-    });
-    expect(screen.getByText('sources')).toBeInTheDocument();
-    expect(screen.getByText('people')).toBeInTheDocument();
-    expect(screen.getByText('topics')).toBeInTheDocument();
-  });
-
-  it('does NOT auto-open the detail overlay on mount (2-pane is the default rest state)', async () => {
-    renderWithProviders(<MemoryWorkspace />);
-    // Wait for fixtures to land so we know the workspace is fully rendered.
-    await waitFor(() => screen.getByTestId('memory-result-list'));
-    // The new layout opens detail only on row click; no overlay until then.
-    expect(screen.queryByTestId('memory-chunk-detail')).toBeNull();
-  });
-
-  it('renders the Sources section count + per-kind nesting after the load resolves', async () => {
-    renderWithProviders(<MemoryWorkspace />);
-    // Inside the Sources NavSection, fixtures group into Email (2) + Chat (1).
-    // Each per-kind sub-section is rendered as its own NavSection — closed by
-    // default, but the labels are visible.
-    await waitFor(() => {
-      expect(screen.getByText('Email')).toBeInTheDocument();
-      expect(screen.getByText('Chat')).toBeInTheDocument();
-    });
-    // Person entities (from FIXTURE_PEOPLE) ARE visible by default — the
-    // people NavSection is `defaultOpen`.
-    expect(screen.getAllByText('Steven Enamakel').length).toBeGreaterThan(0);
-    expect(screen.getByText('Maya Patel')).toBeInTheDocument();
-  });
-
-  it('typing in the search box narrows the result-list rows', async () => {
-    renderWithProviders(<MemoryWorkspace />);
-    await waitFor(() => {
-      const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
-      expect(rows.length).toBe(FIXTURE_CHUNKS.length);
-    });
-
-    const search = screen.getByLabelText('Search memory') as HTMLInputElement;
-    fireEvent.change(search, { target: { value: 'PR #1175' } });
-
-    await waitFor(() => {
-      const visible = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
-      expect(visible.length).toBe(1);
-      expect(visible[0]?.textContent ?? '').toMatch(/PR #1175|github/i);
+      expect(openUrl).toHaveBeenCalledWith(
+        'obsidian://open?path=' + encodeURIComponent('/tmp/workspace/memory_tree/content')
+      );
     });
   });
 
-  it('opens the detail overlay when a result row is clicked', async () => {
+  it('clicking a summary node opens that file in Obsidian via the deep link', async () => {
     renderWithProviders(<MemoryWorkspace />);
+    const node = await screen.findByTestId('memory-graph-node-child-1');
+    fireEvent.click(node);
+    const expectedRel = 'wiki/summaries/source-gmail-alice-x-com/L1/summary-L1-abc.md';
+    const expectedAbs = '/tmp/workspace/memory_tree/content/' + expectedRel;
     await waitFor(() => {
-      const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
-      expect(rows.length).toBeGreaterThan(0);
-    });
-
-    const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
-    fireEvent.click(rows[0]!);
-
-    await waitFor(() => {
-      // Detail overlay mounts the ChunkDetail (data-testid="memory-chunk-detail")
-      // along with the letterhead — both show only after a row click in the
-      // 2-pane + overlay layout.
-      expect(screen.getByTestId('memory-chunk-detail')).toBeInTheDocument();
-      expect(screen.getByTestId('memory-chunk-letterhead')).toBeInTheDocument();
+      expect(openUrl).toHaveBeenCalledWith(
+        'obsidian://open?path=' + encodeURIComponent(expectedAbs)
+      );
     });
   });
 
-  it('closes the detail overlay on Escape key', async () => {
-    renderWithProviders(<MemoryWorkspace />);
-    await waitFor(() => {
-      const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
-      expect(rows.length).toBeGreaterThan(0);
+  it('hides toolkits without a memory-tree ingest provider entirely', async () => {
+    listConnections.mockResolvedValue({
+      connections: [
+        { id: 'conn-gmail', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'a@x' },
+        { id: 'conn-slack', toolkit: 'slack', status: 'ACTIVE', workspace: 'acme' },
+        { id: 'conn-notion', toolkit: 'notion', status: 'ACTIVE' },
+      ],
     });
+    renderWithProviders(<MemoryWorkspace />);
+    // Gmail row exists with a working Sync button.
+    expect(await screen.findByTestId('memory-source-sync-gmail')).toBeInTheDocument();
+    // Non-syncable toolkits are filtered out completely — neither
+    // the row nor the Sync button render. Cleaner than a "no sync
+    // yet" placeholder for an action the user can't take.
+    expect(screen.queryByTestId('memory-source-row-slack')).toBeNull();
+    expect(screen.queryByTestId('memory-source-row-notion')).toBeNull();
+    expect(screen.queryByTestId('memory-source-sync-slack')).toBeNull();
+    expect(screen.queryByTestId('memory-source-sync-notion')).toBeNull();
+  });
 
-    const rows = screen.getAllByRole('button').filter(b => b.dataset.chunkId);
-    fireEvent.click(rows[0]!);
-    await waitFor(() => screen.getByTestId('memory-chunk-detail'));
-
-    fireEvent.keyDown(window, { key: 'Escape' });
-
+  it('toggling to Contacts mode re-fetches the graph with mode=contacts', async () => {
+    renderWithProviders(<MemoryWorkspace />);
+    await screen.findByTestId('memory-graph-svg');
+    expect(memoryTreeGraphExport).toHaveBeenLastCalledWith('tree');
+    const contactsTab = screen.getByTestId('memory-graph-mode-contacts');
+    fireEvent.click(contactsTab);
     await waitFor(() => {
-      expect(screen.queryByTestId('memory-chunk-detail')).toBeNull();
+      expect(memoryTreeGraphExport).toHaveBeenLastCalledWith('contacts');
     });
   });
-});
 
-describe('MemoryWorkspace — empty state', () => {
-  it('renders the empty placeholder when the core returns zero chunks', async () => {
-    memoryTreeListChunks.mockResolvedValueOnce({ chunks: [], total: 0 });
-    memoryTreeListSources.mockResolvedValueOnce([]);
-    memoryTreeTopEntities.mockResolvedValue([]);
-
-    renderWithProviders(<MemoryWorkspace />);
-
+  it('"Reset memory" requires a confirm and then dispatches memory_tree_wipe_all', async () => {
+    const onToast = vi.fn();
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    // First click — user cancels the confirm dialog → no RPC call.
+    confirmSpy.mockReturnValueOnce(false);
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    const button = await screen.findByTestId('memory-wipe-all');
+    fireEvent.click(button);
     await waitFor(() => {
-      expect(screen.getByTestId('memory-empty-placeholder')).toBeInTheDocument();
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
     });
-    expect(screen.getByText('Nothing yet.')).toBeInTheDocument();
+    expect(memoryTreeWipeAll).not.toHaveBeenCalled();
+
+    // Second click — user accepts. RPC fires, success toast carries
+    // the rows count, and the graph re-fetches.
+    confirmSpy.mockReturnValueOnce(true);
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(memoryTreeWipeAll).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'success',
+          title: 'Memory wiped',
+          message: expect.stringContaining('42'),
+        })
+      );
+    });
+    confirmSpy.mockRestore();
+  });
+
+  it('"Reset memory tree" requires a confirm and dispatches memory_tree_reset_tree', async () => {
+    const onToast = vi.fn();
+    const confirmSpy = vi.spyOn(window, 'confirm');
+
+    // Cancel first → no RPC call.
+    confirmSpy.mockReturnValueOnce(false);
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    const button = await screen.findByTestId('memory-reset-tree');
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(memoryTreeResetTree).not.toHaveBeenCalled();
+
+    // Accept → RPC fires, success toast carries the chunk + job counts.
+    confirmSpy.mockReturnValueOnce(true);
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(memoryTreeResetTree).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'success',
+          title: 'Memory tree rebuilding',
+          message: expect.stringContaining('7'),
+        })
+      );
+    });
+    confirmSpy.mockRestore();
+  });
+
+  it('"Build summary trees" calls memory_tree_flush_now and toasts the buffer count', async () => {
+    const onToast = vi.fn();
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    const button = await screen.findByTestId('memory-build-trees');
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(memoryTreeFlushNow).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'success', title: expect.stringContaining('3 buffer') })
+      );
+    });
+  });
+
+  it('per-connection Sync button dispatches composio.sync with the connection id', async () => {
+    listConnections.mockResolvedValue({
+      connections: [
+        {
+          id: 'conn-gmail-001',
+          toolkit: 'gmail',
+          status: 'ACTIVE',
+          accountEmail: 'alice@example.com',
+        },
+      ],
+    });
+    const onToast = vi.fn();
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    const button = await screen.findByTestId('memory-source-sync-gmail');
+    // Source row title surfaces the account identity, not just the toolkit.
+    expect(button.closest('li')).toHaveTextContent(/Gmail · alice@example\.com/);
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(syncConnection).toHaveBeenCalledWith('conn-gmail-001', 'manual');
+    });
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'success',
+          title: expect.stringContaining('alice@example.com'),
+        })
+      );
+    });
+  });
+
+  it('surfaces an error message when the export RPC rejects', async () => {
+    memoryTreeGraphExport.mockRejectedValueOnce(new Error('boom'));
+    renderWithProviders(<MemoryWorkspace />);
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to load memory graph/)).toBeInTheDocument();
+    });
   });
 });

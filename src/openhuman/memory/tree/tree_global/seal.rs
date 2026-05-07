@@ -254,6 +254,7 @@ async fn seal_one_level(
         tree_scope: &tree.scope,
         level: node.level,
         child_ids: &node.child_ids,
+        child_basenames: None,
         child_count: node.child_ids.len(),
         time_range_start: node.time_range_start,
         time_range_end: node.time_range_end,

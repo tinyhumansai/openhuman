@@ -20,6 +20,10 @@
     "notification:allow-request-permission",
     "notification:allow-notify",
     "opener:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "obsidian://open*" }]
+    },
     "updater:default",
     "allow-core-process",
     "allow-app-update"

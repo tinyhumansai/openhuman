@@ -218,7 +218,10 @@ async fn main() -> Result<()> {
             break;
         }
 
-        let chunks_this_page = ingest_page_into_memory_tree(&config, &owner, &messages).await?;
+        // CLI runs don't fetch the user profile, so pass `None` and
+        // let the ingest fall back to per-participants source ids.
+        let chunks_this_page =
+            ingest_page_into_memory_tree(&config, &owner, None, &messages).await?;
         total_chunks += chunks_this_page;
         total_pages += 1;
 

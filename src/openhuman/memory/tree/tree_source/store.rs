@@ -469,8 +469,16 @@ pub(crate) fn clear_buffer_tx(tx: &Transaction<'_>, tree_id: &str, level: u32) -
     upsert_buffer_tx(tx, &empty)
 }
 
-/// List all non-empty buffers ordered by `oldest_at_ms ASC`. Used by the
+/// List stale **L0** buffers ordered by `oldest_at_ms ASC`. Used by the
 /// time-based flush pass.
+///
+/// Only L0 (raw-leaf) buffers are returned. Force-sealing an L≥1 buffer
+/// that hasn't met the [`SUMMARY_FANOUT`](super::types::SUMMARY_FANOUT)
+/// gate produces a degenerate single-child summary that wraps exactly the
+/// same content as its only child — repeated flush cycles cascade these
+/// no-op promotions up the tree and collapse the upper levels into a
+/// 1:1:1 chain. Upper-level buffers must seal only when their fan-in
+/// gate is naturally met.
 pub fn list_stale_buffers(config: &Config, older_than: DateTime<Utc>) -> Result<Vec<Buffer>> {
     with_connection(config, |conn| {
         let mut stmt = conn.prepare(
@@ -478,6 +486,7 @@ pub fn list_stale_buffers(config: &Config, older_than: DateTime<Utc>) -> Result<
                FROM mem_tree_buffers
               WHERE oldest_at_ms IS NOT NULL
                 AND oldest_at_ms <= ?1
+                AND level = 0
               ORDER BY oldest_at_ms ASC",
         )?;
         let rows = stmt

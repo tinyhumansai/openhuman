@@ -11,13 +11,17 @@ import {
   memoryTreeChunkScore,
   memoryTreeDeleteChunk,
   memoryTreeEntityIndexFor,
+  memoryTreeFlushNow,
   memoryTreeGetLlm,
+  memoryTreeGraphExport,
   memoryTreeListChunks,
   memoryTreeListSources,
   memoryTreeRecall,
+  memoryTreeResetTree,
   memoryTreeSearch,
   memoryTreeSetLlm,
   memoryTreeTopEntities,
+  memoryTreeWipeAll,
 } from './memoryTree';
 
 vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
@@ -256,5 +260,98 @@ describe('memoryTreeGetLlm / memoryTreeSetLlm', () => {
       method: 'openhuman.memory_tree_set_llm',
       params: { backend: 'cloud', cloud_model: 'summarizer-v2' },
     });
+  });
+});
+
+describe('memoryTreeFlushNow', () => {
+  test('dispatches flush_now and returns the unwrapped envelope', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      result: { enqueued: true, stale_buffers: 4 },
+      logs: ['stub'],
+    });
+
+    const out = await memoryTreeFlushNow();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.memory_tree_flush_now' });
+    expect(out).toEqual({ enqueued: true, stale_buffers: 4 });
+  });
+
+  test('passes through bare-shape responses (no envelope) unchanged', async () => {
+    // Defensive path: if a future Rust handler stops emitting logs the
+    // bare value flows through `unwrapResult` unchanged.
+    mockCallCoreRpc.mockResolvedValueOnce({ enqueued: false, stale_buffers: 0 });
+
+    const out = await memoryTreeFlushNow();
+
+    expect(out).toEqual({ enqueued: false, stale_buffers: 0 });
+  });
+});
+
+describe('memoryTreeWipeAll', () => {
+  test('dispatches wipe_all and returns the unwrapped envelope', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      result: { rows_deleted: 12, dirs_removed: ['raw', 'wiki'], sync_state_cleared: 1 },
+      logs: ['stub'],
+    });
+
+    const out = await memoryTreeWipeAll();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.memory_tree_wipe_all' });
+    expect(out.rows_deleted).toBe(12);
+    expect(out.dirs_removed).toEqual(['raw', 'wiki']);
+    expect(out.sync_state_cleared).toBe(1);
+  });
+});
+
+describe('memoryTreeResetTree', () => {
+  test('dispatches reset_tree and returns the unwrapped envelope', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      result: { tree_rows_deleted: 8, chunks_requeued: 5, jobs_enqueued: 5 },
+      logs: ['stub'],
+    });
+
+    const out = await memoryTreeResetTree();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.memory_tree_reset_tree' });
+    expect(out).toEqual({ tree_rows_deleted: 8, chunks_requeued: 5, jobs_enqueued: 5 });
+  });
+});
+
+describe('memoryTreeGraphExport', () => {
+  test('defaults to mode=tree and returns the unwrapped envelope', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      result: { nodes: [], edges: [], content_root_abs: '/tmp/workspace/memory_tree/content' },
+      logs: ['stub'],
+    });
+
+    const out = await memoryTreeGraphExport();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.memory_tree_graph_export',
+      params: { mode: 'tree' },
+    });
+    expect(out.nodes).toEqual([]);
+    expect(out.edges).toEqual([]);
+    expect(out.content_root_abs).toBe('/tmp/workspace/memory_tree/content');
+  });
+
+  test('forwards explicit mode=contacts to the wire params', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      result: {
+        nodes: [{ kind: 'chunk', id: 'c1', label: 'one' }],
+        edges: [{ from: 'c1', to: 'p1' }],
+        content_root_abs: '/tmp/x',
+      },
+      logs: ['stub'],
+    });
+
+    const out = await memoryTreeGraphExport('contacts');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.memory_tree_graph_export',
+      params: { mode: 'contacts' },
+    });
+    expect(out.nodes).toHaveLength(1);
+    expect(out.edges).toHaveLength(1);
   });
 });

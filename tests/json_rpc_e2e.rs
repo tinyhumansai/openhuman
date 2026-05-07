@@ -1835,6 +1835,16 @@ async fn json_rpc_app_state_snapshot_returns_runtime_shape() {
         Some(true),
         "expected chatOnboardingCompleted=true from test config: {body}"
     );
+    // #1299 — Meet auto-orchestrator handoff is the privacy gate that
+    // controls whether ending a Meet call hands the transcript to the
+    // orchestrator agent. Default is OFF on a fresh config so meeting
+    // notes never auto-broadcast to Slack #general etc. without consent.
+    assert_eq!(
+        body.get("meetAutoOrchestratorHandoff")
+            .and_then(Value::as_bool),
+        Some(false),
+        "expected meetAutoOrchestratorHandoff=false default: {body}"
+    );
 
     let runtime = body.get("runtime").expect("expected runtime object");
     assert!(

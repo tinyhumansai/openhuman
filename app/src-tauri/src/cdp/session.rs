@@ -22,7 +22,7 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
 use super::{browser_ws_url, find_page_target_where, CdpConn};
-use crate::webview_accounts::emit_load_finished;
+use crate::webview_accounts::{emit_load_finished, RevealTrigger};
 
 /// Backoff between failed attach attempts / reconnects. Intentionally
 /// short — once the webview is open, the target usually shows up within
@@ -161,7 +161,13 @@ pub fn spawn_session<R: Runtime>(
         let real_url = real_url.clone();
         tokio::spawn(async move {
             sleep(LOAD_TIMEOUT).await;
-            emit_load_finished(&app, &account_id, "timeout", &real_url);
+            emit_load_finished(
+                &app,
+                &account_id,
+                "timeout",
+                &real_url,
+                RevealTrigger::Watchdog,
+            );
         })
     };
     let session = tokio::spawn(async move { run_session_forever(app, account_id, real_url).await });
@@ -449,7 +455,13 @@ async fn run_session_cycle<R: Runtime>(
     let cb_real_url = real_url.to_string();
     cdp.pump_events(&session_id, move |method, _params| {
         if method == "Page.loadEventFired" {
-            emit_load_finished(&cb_app, &cb_account_id, "finished", &cb_real_url);
+            emit_load_finished(
+                &cb_app,
+                &cb_account_id,
+                "finished",
+                &cb_real_url,
+                RevealTrigger::Load,
+            );
         }
     })
     .await

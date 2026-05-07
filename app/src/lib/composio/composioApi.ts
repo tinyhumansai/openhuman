@@ -157,6 +157,44 @@ export async function execute(
   return unwrapCliEnvelope<ComposioExecuteResponse>(raw);
 }
 
+/**
+ * Run a sync pass for a Composio connection by dispatching to the
+ * toolkit's native provider implementation (Gmail, Slack, Notion, …).
+ * Persists the fetched items into the memory layer — chunks land in
+ * `mem_tree_chunks` and the source-tree pipeline picks them up on the
+ * next flush. Wraps `openhuman.composio_sync`.
+ *
+ * `reason` defaults to `"manual"` server-side when omitted.
+ */
+export async function syncConnection(
+  connectionId: string,
+  reason: 'manual' | 'periodic' | 'connection_created' = 'manual'
+): Promise<unknown> {
+  console.debug(
+    '[composio][sync] → openhuman.composio_sync conn=%s reason=%s',
+    connectionId,
+    reason
+  );
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.composio_sync',
+    params: { connection_id: connectionId, reason },
+  });
+  const outcome = unwrapCliEnvelope<unknown>(raw);
+  // Avoid logging the raw outcome — provider sync responses can carry
+  // message-level PII (subjects, sender addresses, body excerpts).
+  // Surface a sanitised shape (top-level keys + payload type) instead.
+  const outcomeShape =
+    outcome && typeof outcome === 'object'
+      ? { keys: Object.keys(outcome as Record<string, unknown>).slice(0, 10) }
+      : { type: typeof outcome };
+  console.debug(
+    '[composio][sync] ← openhuman.composio_sync conn=%s outcome_shape=%o',
+    connectionId,
+    outcomeShape
+  );
+  return outcome;
+}
+
 // ── Trigger management ────────────────────────────────────────────
 
 /**
