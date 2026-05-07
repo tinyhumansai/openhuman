@@ -23,12 +23,19 @@ use crate::openhuman::memory::tree::jobs::store::{
 /// Number of concurrent job-worker tasks. Each worker claims one job
 /// at a time via `claim_next` (atomic UPDATE under SQLite WAL with
 /// `locked_until_ms` + status='running'), so multiple workers
-/// parallelize independent jobs without double-claim risk. On cloud
-/// backends, LLM-bound jobs additionally drop the global LLM permit
-/// (see `run_once`) so all 4 workers can run extract/summarise calls
-/// in parallel; on local backends the single LLM slot still
-/// serialises Ollama calls for laptop-RAM safety, leaving non-LLM
-/// jobs to use the extra workers.
+/// parallelize independent jobs without double-claim risk.
+///
+/// On cloud backends, LLM-bound jobs drop the global LLM permit
+/// after claim (see `run_once`) so all 4 workers can run cloud
+/// extract/summarise calls in parallel.
+///
+/// On local backends, the single global LLM slot still serialises
+/// Ollama calls for laptop-RAM safety. Note that `wait_for_capacity`
+/// is acquired **before** `claim_next`, so non-LLM jobs (AppendBuffer,
+/// FlushStale, TopicRoute) also block on the gate when an LLM job
+/// holds the permit — they only run in parallel with each other while
+/// no LLM job is in flight. Bumping `WORKER_COUNT` therefore helps
+/// throughput most when local LLM calls are sparse.
 const WORKER_COUNT: usize = 4;
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 

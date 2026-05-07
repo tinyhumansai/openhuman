@@ -84,15 +84,21 @@ fn new_tree_id(kind: TreeKind) -> String {
 }
 
 /// Public id generator for summary nodes — exported so `bucket_seal` can
-/// share the same format. Embeds the current Unix-ms timestamp so ids
-/// sort lexicographically in seal order (`ORDER BY id` ≈ chronological);
-/// a 4-hex random tail disambiguates seals that fire in the same
-/// millisecond (file-system + Obsidian wikilinks need uniqueness).
+/// share the same format. The Unix-ms timestamp is the leading sort
+/// key so `ORDER BY id` is globally chronological across all levels
+/// (a level-first layout grouped L1, L2, … together, breaking that).
+/// `:013` zero-pads the millisecond field to 13 digits so the
+/// lexicographic order matches numeric order through year 2286 — well
+/// outside any reasonable retention window. Level is suffixed for
+/// filter-by-level queries (`LIKE '%:L1-%'`). 8-hex of `u32` entropy
+/// shrinks same-millisecond collision probability to ~2⁻³² per pair,
+/// sized for uniqueness across the file-system and Obsidian wikilink
+/// namespaces.
 pub fn new_summary_id(level: u32) -> String {
     use rand::Rng;
-    let ms = chrono::Utc::now().timestamp_millis();
-    let rand_tail: u16 = rand::thread_rng().gen();
-    format!("summary:L{}:{}-{:04x}", level, ms, rand_tail)
+    let ms = chrono::Utc::now().timestamp_millis() as u64;
+    let rand_tail: u32 = rand::thread_rng().gen();
+    format!("summary:{:013}:L{}-{:08x}", ms, level, rand_tail)
 }
 
 #[cfg(test)]
@@ -131,19 +137,45 @@ mod tests {
         let id = new_tree_id(TreeKind::Source);
         assert!(id.starts_with("source:"));
         let sum_id = new_summary_id(3);
-        assert!(sum_id.starts_with("summary:L3:"));
+        assert!(sum_id.starts_with("summary:"));
+        // Time-first layout: the segment after `summary:` is a 13-digit
+        // zero-padded ms timestamp, then `:L<level>-<8hex>`.
+        assert!(
+            sum_id.contains(":L3-"),
+            "expected level suffix in {sum_id}"
+        );
     }
 
     #[test]
-    fn summary_ids_sort_chronologically() {
-        // Two summary ids generated in seal order must sort by their
-        // unix-ms prefix so `ORDER BY id` ≈ sealed-at order.
-        let earlier = new_summary_id(1);
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        let later = new_summary_id(1);
+    fn summary_id_format_is_lexicographically_chronological() {
+        // The prefix `summary:` is identical across all ids, so the
+        // first character that differs is in the 13-digit ms field.
+        // Comparing two synthesised ids built around the same ms +/- a
+        // step proves the format sorts by time without depending on
+        // wall-clock granularity in the test runner. We verify the
+        // generator's _format_ (the contract), not the system clock.
+        let earlier_ms: u64 = 1_700_000_000_000;
+        let later_ms: u64 = 1_700_000_000_001;
+        // Use a max-tail rand for the earlier id to prove the
+        // millisecond field dominates over the random suffix.
+        let earlier = format!("summary:{:013}:L1-{:08x}", earlier_ms, u32::MAX);
+        let later = format!("summary:{:013}:L9-{:08x}", later_ms, 0u32);
         assert!(
             earlier < later,
-            "expected {earlier} < {later} after a 2ms gap"
+            "expected {earlier} < {later} (ms must outrank level + tail)"
+        );
+
+        // Sanity: a real id from the live generator parses with the
+        // same prefix shape so the contract above maps onto runtime
+        // values, not just synthesised strings.
+        let live = new_summary_id(2);
+        assert!(live.starts_with("summary:"), "live: {live}");
+        let rest = &live["summary:".len()..];
+        let ms_part = rest.split(':').next().expect("ms segment");
+        assert_eq!(ms_part.len(), 13, "ms must be 13 digits in {live}");
+        assert!(
+            ms_part.chars().all(|c| c.is_ascii_digit()),
+            "ms must be all digits in {live}"
         );
     }
 

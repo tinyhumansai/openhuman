@@ -523,16 +523,28 @@ pub(crate) async fn seal_one_level(
                 // takes the sanitised-id fallback) but a warn log
                 // makes the SQL error visible for diagnosis.
                 match crate::openhuman::memory::tree::store::get_chunk_raw_refs(config, chunk_id) {
-                    Ok(refs_opt) => {
-                        refs_opt.and_then(|refs| refs.into_iter().next()).map(|r| {
-                            // RawRef::path is a forward-slash
-                            // relative path under content_root,
-                            // e.g.
-                            // "raw/gmail-…/1700000_msg-id.md".
-                            // Strip `.md` for Obsidian's
-                            // extension-less wikilink convention.
-                            r.path.strip_suffix(".md").unwrap_or(&r.path).to_string()
-                        })
+                    Ok(Some(refs)) if !refs.is_empty() => {
+                        // RawRef::path is a forward-slash relative path
+                        // under content_root, e.g.
+                        // "raw/gmail-…/1700000_msg-id.md". Strip `.md`
+                        // for Obsidian's extension-less wikilink
+                        // convention.
+                        let r = refs.into_iter().next().expect("non-empty");
+                        Some(r.path.strip_suffix(".md").unwrap_or(&r.path).to_string())
+                    }
+                    Ok(_) => {
+                        // No raw_refs persisted for this chunk — most
+                        // commonly slack chunks (we only stage raw
+                        // archive files for gmail today). The wikilink
+                        // falls back to `sanitize_filename(chunk_id)`,
+                        // which produces a deliberately-unresolved
+                        // Obsidian link. Log so the silent-degradation
+                        // path stays visible during diagnosis.
+                        log::debug!(
+                            "[tree_source::bucket_seal] no raw_refs for chunk_id={chunk_id} \
+                             — wikilink will fall back to sanitised chunk id"
+                        );
+                        None
                     }
                     Err(e) => {
                         log::warn!(

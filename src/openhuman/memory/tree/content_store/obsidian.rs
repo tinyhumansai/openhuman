@@ -45,11 +45,29 @@ pub fn ensure_obsidian_defaults(content_root: &Path) -> Result<()> {
 }
 
 fn write_default_if_missing(obsidian_dir: &Path, name: &str, body: &str) {
+    use std::io::{ErrorKind, Write};
     let target = obsidian_dir.join(name);
-    if target.exists() {
-        return;
-    }
-    match std::fs::write(&target, body) {
+    // `create_new(true)` makes existence-check + create atomic at the
+    // OS level, so a concurrent staging from another process can't
+    // race past `target.exists()` and clobber the winner. The
+    // AlreadyExists branch is the steady-state idempotent no-op.
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+    {
+        Ok(f) => f,
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => return,
+        Err(err) => {
+            log::warn!(
+                "[content_store::obsidian] create default {} failed at {:?}: {err:#}",
+                name,
+                target
+            );
+            return;
+        }
+    };
+    match file.write_all(body.as_bytes()) {
         Ok(()) => log::info!(
             "[content_store::obsidian] staged default {} at {}",
             name,
