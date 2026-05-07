@@ -1,0 +1,10 @@
+{
+  "types": {
+    "aliases": "aliases",
+    "cssclasses": "multitext",
+    "tags": "tags",
+    "time_range_end": "date",
+    "time_range_start": "date",
+    "sealed_at": "datetime"
+  }
+}

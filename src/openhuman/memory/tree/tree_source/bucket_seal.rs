@@ -568,6 +568,20 @@ pub(crate) async fn seal_one_level(
     // content_path = NULL. The buffer stays unsealed and the job-retry path
     // will re-attempt the file write on next execution.
     let content_root = config.memory_tree_content_root();
+    // Drop the bundled `.obsidian/` defaults (graph + types) so a user
+    // opening the vault gets the intended graph-view colour mapping
+    // without manual configuration. Best-effort and idempotent — never
+    // overwrites an existing file.
+    if let Err(err) =
+        crate::openhuman::memory::tree::content_store::obsidian::ensure_obsidian_defaults(
+            &content_root,
+        )
+    {
+        log::warn!(
+            "[tree_source::bucket_seal] ensure_obsidian_defaults failed: {err:#} — \
+             continuing seal without vault defaults"
+        );
+    }
     let staged =
         stage_summary(&content_root, &compose_input, &scope_slug, None).with_context(|| {
             format!(
