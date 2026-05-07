@@ -1434,7 +1434,7 @@ pub struct WebviewEvent {
 /// OAuth callback codes, sometimes session tokens) and we don't want those
 /// to land in the long-lived shell log file. Returns the original input on
 /// parse failure so we still surface *something* useful for debugging.
-fn redact_url_for_log(raw: &str) -> String {
+pub(crate) fn redact_url_for_log(raw: &str) -> String {
     match Url::parse(raw) {
         Ok(mut u) => {
             u.set_query(None);

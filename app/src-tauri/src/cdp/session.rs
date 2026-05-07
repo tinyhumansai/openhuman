@@ -25,7 +25,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep, Instant};
 
 use super::{browser_ws_url, find_page_target_where, CdpConn};
-use crate::webview_accounts::{emit_load_finished, RevealTrigger};
+use crate::webview_accounts::{emit_load_finished, redact_url_for_log, RevealTrigger};
 
 /// Backoff between failed attach attempts / reconnects. Intentionally
 /// short — once the webview is open, the target usually shows up within
@@ -173,8 +173,14 @@ pub fn spawn_session<R: Runtime>(
     // 64 is generous — pump_events processes events one at a time, so a
     // backlog only builds if the watchdog itself is starved. We use
     // `try_send` on the producer side so a hypothetical full channel never
-    // blocks the CDP event loop.
+    // blocks the CDP event loop. The sender is held inside an
+    // `Arc<Mutex<Option<_>>>` slot so the pump_events callback can drop it
+    // on terminal `Page.loadEventFired` — once the slot is `None` no other
+    // sender clones exist anywhere in the session pipeline, the channel
+    // closes, and the watchdog exits via `WatchdogOutcome::SenderDropped`
+    // instead of waiting out the idle budget after a successful load.
     let (progress_tx, progress_rx) = mpsc::channel::<()>(64);
+    let progress_slot: ProgressSlot = std::sync::Arc::new(std::sync::Mutex::new(Some(progress_tx)));
 
     let watchdog = {
         let app = app.clone();
@@ -186,7 +192,7 @@ pub fn spawn_session<R: Runtime>(
                 account_id,
                 IDLE_BUDGET,
                 HARD_CEILING,
-                real_url
+                redact_url_for_log(&real_url)
             );
             let outcome = run_idle_watchdog(progress_rx, IDLE_BUDGET, HARD_CEILING).await;
             match outcome {
@@ -195,7 +201,7 @@ pub fn spawn_session<R: Runtime>(
                         "[cdp-session][{}][watchdog] firing timeout reason={} url={}",
                         account_id,
                         outcome.reason_str(),
-                        real_url
+                        redact_url_for_log(&real_url)
                     );
                     // `emit_load_finished` dedups timeouts that arrive after a
                     // terminal `finished` event — see `loaded_accounts` in
@@ -213,7 +219,7 @@ pub fn spawn_session<R: Runtime>(
                     log::debug!(
                         "[cdp-session][{}][watchdog] clean exit reason=sender_dropped url={}",
                         account_id,
-                        real_url
+                        redact_url_for_log(&real_url)
                     );
                 }
             }
@@ -222,11 +228,16 @@ pub fn spawn_session<R: Runtime>(
 
     let session =
         tokio::spawn(
-            async move { run_session_forever(app, account_id, real_url, progress_tx).await },
+            async move { run_session_forever(app, account_id, real_url, progress_slot).await },
         );
 
     SpawnedSession { session, watchdog }
 }
+
+/// Slot for the progress-channel sender, shared between `run_session_forever`,
+/// `run_session_cycle`, and the `pump_events` callback. `take()`-on-terminal-load
+/// drops the sender so the watchdog can exit clean — see issue #1213.
+type ProgressSlot = std::sync::Arc<std::sync::Mutex<Option<mpsc::Sender<()>>>>;
 
 /// Returns `true` for CDP method names we treat as "the page is still
 /// making progress" — i.e. a signal that the watchdog's idle timer should
@@ -336,7 +347,7 @@ async fn run_session_forever<R: Runtime>(
     app: AppHandle<R>,
     account_id: String,
     real_url: String,
-    progress_tx: mpsc::Sender<()>,
+    progress_slot: ProgressSlot,
 ) {
     log::info!(
         "[cdp-session][{}] up real_url={} marker={}",
@@ -360,7 +371,7 @@ async fn run_session_forever<R: Runtime>(
     // don't tight-loop against a target that just torched its renderer.
     for (idx, delay) in INITIAL_ATTACH_SCHEDULE.iter().enumerate() {
         sleep(*delay).await;
-        match run_session_cycle(&app, &account_id, &real_url, &progress_tx).await {
+        match run_session_cycle(&app, &account_id, &real_url, &progress_slot).await {
             Ok(()) => {
                 log::info!(
                     "[cdp-session][{}] initial session ended cleanly attempt={} reconnecting",
@@ -382,7 +393,7 @@ async fn run_session_forever<R: Runtime>(
     }
     loop {
         sleep(ATTACH_BACKOFF).await;
-        match run_session_cycle(&app, &account_id, &real_url, &progress_tx).await {
+        match run_session_cycle(&app, &account_id, &real_url, &progress_slot).await {
             Ok(()) => {
                 log::info!(
                     "[cdp-session][{}] session ended cleanly, reconnecting",
@@ -400,7 +411,7 @@ async fn run_session_cycle<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
     real_url: &str,
-    progress_tx: &mpsc::Sender<()>,
+    progress_slot: &ProgressSlot,
 ) -> Result<(), String> {
     let browser_ws = browser_ws_url().await?;
     let mut cdp = CdpConn::open(&browser_ws).await?;
@@ -638,13 +649,17 @@ async fn run_session_cycle<R: Runtime>(
     let cb_app = app.clone();
     let cb_account_id = account_id.to_string();
     let cb_real_url = real_url.to_string();
-    let cb_progress_tx = progress_tx.clone();
+    let cb_progress_slot = progress_slot.clone();
     cdp.pump_events(&session_id, move |method, _params| {
         // Keep the idle-watchdog (#1213) alive on every progress signal.
         // `try_send` so a hypothetical full channel never blocks the CDP
         // event loop — pings are fungible, dropping one is fine.
         if is_progress_signal(method) {
-            let _ = cb_progress_tx.try_send(());
+            if let Ok(guard) = cb_progress_slot.lock() {
+                if let Some(tx) = guard.as_ref() {
+                    let _ = tx.try_send(());
+                }
+            }
         }
         if method == "Page.loadEventFired" {
             emit_load_finished(
@@ -654,6 +669,17 @@ async fn run_session_cycle<R: Runtime>(
                 &cb_real_url,
                 RevealTrigger::Load,
             );
+            // Terminal load: drop the watchdog's sender so it exits
+            // immediately via SenderDropped instead of waiting out the
+            // full idle budget. The sender lives ONLY inside this slot
+            // (the original Sender from `spawn_session` was moved in at
+            // construction), so `take()` here closes the channel for the
+            // receiver — there are no other Sender clones outstanding.
+            // `take()` is idempotent — repeat fires (e.g. SPA route
+            // changes after the first load) leave the slot at `None`.
+            if let Ok(mut guard) = cb_progress_slot.lock() {
+                guard.take();
+            }
         }
     })
     .await
