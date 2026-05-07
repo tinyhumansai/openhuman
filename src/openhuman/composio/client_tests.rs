@@ -482,5 +482,39 @@ async fn disable_trigger_surfaces_non_2xx_status() {
     let base = start_mock_backend(app).await;
     let client = build_client_for(base);
     let err = client.disable_trigger("ti_x").await.unwrap_err();
-    assert!(err.to_string().contains("404"), "unexpected: {err}");
+    let msg = err.to_string();
+    assert!(msg.contains("404"), "expected status 404, got: {msg}");
+    // Phase A (#1296): raw_delete must propagate the envelope's `error`
+    // field so callers can tell *why* the backend rejected the call.
+    assert!(
+        msg.contains("no"),
+        "expected envelope error detail in message, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn delete_connection_surfaces_envelope_error_detail() {
+    // Direct cover of the `raw_delete` envelope-error path used by
+    // `delete_connection` — proves the backend message ("Connection
+    // not found") makes it into the propagated bail message rather
+    // than being discarded with the body. Mirror of the `post`/`get`
+    // envelope tests in `integrations/client_tests.rs`.
+    let app = Router::new().route(
+        "/agent-integrations/composio/connections/{id}",
+        axum::routing::delete(|Path(_id): Path<String>| async move {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"success": false, "error": "Connection not found"})),
+            )
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let err = client.delete_connection("missing-id").await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Connection not found"),
+        "expected backend error detail in message, got: {msg}"
+    );
+    assert!(msg.contains("400"), "expected status 400, got: {msg}");
 }
