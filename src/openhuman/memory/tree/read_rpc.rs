@@ -1096,41 +1096,61 @@ fn collect_contacts_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge
             .collect::<rusqlite::Result<_>>()
             .context("collect contacts-mode chunk rows")?;
 
-        let chunk_ids: std::collections::HashSet<String> =
-            chunks.iter().map(|(id, _, _)| id.clone()).collect();
+        let chunk_ids: Vec<String> = chunks.iter().map(|(id, _, _)| id.clone()).collect();
 
-        // Pull mention edges + distinct contacts. Restrict to the
-        // chunks we already kept; expanding the IN list dynamically
-        // keeps SQLite from scanning the whole index.
-        let mut mention_stmt = conn.prepare(
-            "SELECT entity_id, node_id, surface
-               FROM mem_tree_entity_index
-              WHERE entity_kind = 'person'
-              ORDER BY timestamp_ms DESC
-              LIMIT ?1",
-        )?;
-        let mention_rows: Vec<(String, String, String)> = mention_stmt
-            .query_map(params![MAX_EDGES as i64], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })?
-            .collect::<rusqlite::Result<_>>()
-            .context("collect contacts-mode mentions")?;
+        // Pull mention edges + distinct contacts, scoped to the
+        // chunks we already kept and to leaf rows only. Filtering in
+        // SQL (rather than after a global `LIMIT`) is essential: in a
+        // busy workspace, unrelated `mem_tree_entity_index` rows
+        // would otherwise consume the entire `MAX_EDGES` window and
+        // leave kept chunks with zero contact edges. We build the
+        // `IN (?, ?, …)` placeholder list dynamically so SQLite can
+        // index-narrow the search to just the kept chunks before
+        // applying the cap.
+        let edges: Vec<(String, String, String)> = if chunk_ids.is_empty() {
+            Vec::new()
+        } else {
+            let placeholders = std::iter::repeat("?")
+                .take(chunk_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT entity_id, node_id, surface
+                   FROM mem_tree_entity_index
+                  WHERE entity_kind = 'person'
+                    AND node_kind = 'leaf'
+                    AND node_id IN ({placeholders})
+                  ORDER BY timestamp_ms DESC
+                  LIMIT ?"
+            );
+            // Bind chunk ids first, then MAX_EDGES last.
+            let mut bind: Vec<rusqlite::types::Value> = chunk_ids
+                .iter()
+                .map(|s| rusqlite::types::Value::Text(s.clone()))
+                .collect();
+            bind.push(rusqlite::types::Value::Integer(MAX_EDGES as i64));
+            let mut mention_stmt = conn.prepare(&sql)?;
+            let rows = mention_stmt
+                .query_map(rusqlite::params_from_iter(bind), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("collect contacts-mode mentions")?;
+            rows
+        };
 
-        let mut edges = Vec::with_capacity(mention_rows.len());
+        let mut edges_out: Vec<GraphEdge> = Vec::with_capacity(edges.len());
         let mut contacts: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
-        for (entity_id, node_id, surface) in mention_rows {
-            if !chunk_ids.contains(&node_id) {
-                continue;
-            }
+        for (entity_id, node_id, surface) in edges {
             // First-seen surface wins as the display label — surface
             // forms can vary across mentions (e.g. "Alice", "Alice S.").
             contacts.entry(entity_id.clone()).or_insert(surface);
-            edges.push(GraphEdge {
+            edges_out.push(GraphEdge {
                 from: node_id,
                 to: entity_id,
             });
@@ -1179,7 +1199,7 @@ fn collect_contacts_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge
                 entity_kind: Some("person".into()),
             });
         }
-        Ok((nodes, edges))
+        Ok((nodes, edges_out))
     })
 }
 
@@ -1294,28 +1314,24 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
         // (`<workspace>/memory/memory.db`). Open it directly and
         // delete every key in the `composio-sync-state` namespace —
         // this clears each provider's `cursor` + `synced_ids` set so
-        // the next sync re-fetches from the beginning. Best-effort:
-        // if the unified DB is missing (fresh workspace, never set
-        // up) we log and report 0 cleared.
+        // the next sync re-fetches from the beginning.
+        //
+        // We do **not** swallow clear failures into `0`: callers (and
+        // the frontend `sync_state_cleared` contract) need to
+        // distinguish "nothing to clear" from "failed to clear, so
+        // the next sync may still be incremental." A missing DB is
+        // legitimately "nothing to clear"; a SQLite error is a
+        // failed wipe and propagates.
         let sync_state_cleared: u64 = {
             let unified_db = cfg.workspace_dir.join("memory").join("memory.db");
             if !unified_db.exists() {
-                // No path interpolation — operators just need to
-                // know the unified DB is absent on this workspace.
                 log::debug!(
                     "[memory_tree::read::wipe] unified memory DB not present — skipping sync-state clear"
                 );
                 0
             } else {
-                match clear_composio_sync_state(&unified_db) {
-                    Ok(n) => n,
-                    Err(e) => {
-                        log::warn!(
-                            "[memory_tree::read::wipe] failed to clear composio-sync-state: {e}"
-                        );
-                        0
-                    }
-                }
+                clear_composio_sync_state(&unified_db)
+                    .context("clear composio-sync-state during wipe_all")?
             }
         };
 

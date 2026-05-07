@@ -134,9 +134,15 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     // not a failure), but operators want visibility when it happens.
     if let Ok(dir_handle) = fs::File::open(parent) {
         if let Err(e) = dir_handle.sync_all() {
+            // Avoid logging the absolute path (embeds workspace /
+            // home directory). The basename is enough signal for
+            // operators to correlate with the source slug.
+            let dir_hint = parent
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("<unknown>");
             log::debug!(
-                "[content_store::raw] parent dir fsync failed path={} err={e}",
-                parent.display()
+                "[content_store::raw] parent dir fsync failed dir={dir_hint} err={e}"
             );
         }
     }
