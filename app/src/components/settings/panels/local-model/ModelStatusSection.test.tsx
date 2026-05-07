@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LocalAiDiagnostics, RepairAction } from '../../../../utils/tauriCommands';
@@ -176,21 +176,13 @@ describe('ModelStatusSection diagnostics', () => {
 
   it('does not render repair actions section when repair_actions is empty', () => {
     render(
-      <ModelStatusSection
-        {...defaultProps}
-        diagnostics={makeDiagnostics({ repair_actions: [] })}
-      />
+      <ModelStatusSection {...defaultProps} diagnostics={makeDiagnostics({ repair_actions: [] })} />
     );
     expect(screen.queryByText('Suggested Fixes')).toBeNull();
   });
 
   it('shows all checks passed when ok is true', () => {
-    render(
-      <ModelStatusSection
-        {...defaultProps}
-        diagnostics={makeDiagnostics({ ok: true })}
-      />
-    );
+    render(<ModelStatusSection {...defaultProps} diagnostics={makeDiagnostics({ ok: true })} />);
     expect(screen.getByText('All checks passed')).toBeTruthy();
   });
 
