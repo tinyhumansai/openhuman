@@ -105,15 +105,26 @@ pub async fn run_subagent(
     .await?;
 
     // Truncate result to the definition's cap if set.
+    // Use char-count (not byte-length) to avoid panicking on multi-byte
+    // UTF-8 sequences at the truncation boundary.
     if let Some(cap) = definition.max_result_chars {
-        if outcome.output.len() > cap {
+        let original_chars = outcome.output.chars().count();
+        if original_chars > cap {
             tracing::debug!(
                 agent_id = %definition.id,
-                original_chars = outcome.output.len(),
+                original_chars,
                 cap,
                 "[subagent_runner] truncating oversized result to max_result_chars cap"
             );
-            outcome.output.truncate(cap);
+            // Find the byte offset of the cap-th character boundary so
+            // `truncate` never lands mid-codepoint.
+            let byte_offset = outcome
+                .output
+                .char_indices()
+                .nth(cap)
+                .map(|(i, _)| i)
+                .unwrap_or(outcome.output.len());
+            outcome.output.truncate(byte_offset);
             outcome.output.push_str("\n[...truncated]");
         }
     }
