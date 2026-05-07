@@ -18,19 +18,25 @@ const ComposioTriagePanel = () => {
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
     openhumanGetComposioTriggerSettings()
       .then(res => {
+        if (!isMounted) return;
         const settings = res.result;
         if (!settings) return;
         setTriageDisabled(settings.triage_disabled ?? false);
         setDisabledToolkits((settings.triage_disabled_toolkits ?? []).join(', '));
       })
       .catch(err => {
+        if (!isMounted) return;
         console.warn('[ComposioTriagePanel] failed to load settings:', err);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
 
     return () => {
+      isMounted = false;
       if (saveStatusTimer.current !== null) {
         clearTimeout(saveStatusTimer.current);
       }
@@ -90,7 +96,9 @@ const ComposioTriagePanel = () => {
         <p className="text-sm text-stone-500">
           When active, each incoming Composio trigger runs through an AI triage step that classifies
           the event and may kick off automated actions — one local LLM turn per trigger. Disable
-          globally or per integration if you prefer manual review.
+          globally or per integration if you prefer manual review. If the environment variable{' '}
+          <span className="font-mono">OPENHUMAN_TRIGGER_TRIAGE_DISABLED</span> is set, it overrides
+          these settings and disables triage for all triggers.
         </p>
 
         {/* Global toggle */}
