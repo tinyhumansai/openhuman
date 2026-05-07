@@ -34,6 +34,7 @@ import {
   type GraphMode,
   memoryTreeFlushNow,
   memoryTreeGraphExport,
+  memoryTreeWipeAll,
 } from '../../utils/tauriCommands';
 import { MemoryGraph } from './MemoryGraph';
 import { MemorySources } from './MemorySources';
@@ -81,6 +82,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   const [graph, setGraph] = useState<GraphExportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [building, setBuilding] = useState(false);
+  const [wiping, setWiping] = useState(false);
   const [mode, setMode] = useState<GraphMode>('tree');
 
   // (Re)load the graph whenever the mode toggle flips. The Memory
@@ -111,6 +113,43 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       cancelled = true;
     };
   }, [mode]);
+
+  const handleWipe = useCallback(async () => {
+    // Two-step confirm so accidental clicks can't nuke a workspace.
+    const ok = window.confirm(
+      'This deletes every chunk, summary, and raw markdown file in this workspace. ' +
+        'Re-syncing afterwards will re-ingest from upstream. Continue?'
+    );
+    if (!ok) return;
+    setWiping(true);
+    try {
+      const resp = await memoryTreeWipeAll();
+      onToast?.({
+        type: 'success',
+        title: 'Memory wiped',
+        message: `Removed ${resp.rows_deleted.toLocaleString()} row(s) and ${
+          resp.dirs_removed.length
+        } folder(s). Click Sync on a connected source to repopulate.`,
+      });
+      // Re-fetch the (now empty) graph immediately so the canvas
+      // reflects the wipe instead of staying frozen on stale data.
+      try {
+        const next = await memoryTreeGraphExport(mode);
+        setGraph(next);
+      } catch (err) {
+        console.warn('[ui-flow][memory-workspace] post-wipe graph refresh failed', err);
+      }
+    } catch (err) {
+      console.error('[ui-flow][memory-workspace] wipe_all failed', err);
+      onToast?.({
+        type: 'error',
+        title: 'Reset failed',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setWiping(false);
+    }
+  }, [onToast, mode]);
 
   const handleBuildTrees = useCallback(async () => {
     setBuilding(true);
@@ -164,6 +203,27 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
         data-testid="memory-actions">
         <ModeToggle mode={mode} onChange={setMode} />
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleWipe}
+            disabled={wiping || building}
+            data-testid="memory-wipe-all"
+            className="inline-flex items-center gap-2 rounded-lg
+                       border border-coral-200 bg-white px-4 py-2 text-sm font-semibold
+                       text-coral-700 shadow-sm transition-colors hover:bg-coral-50
+                       disabled:cursor-not-allowed disabled:opacity-50
+                       focus:outline-none focus:ring-2 focus:ring-coral-200"
+            title="Delete every chunk, summary, and raw file in this workspace">
+            {wiping ? (
+              <>
+                <Spinner /> Resetting…
+              </>
+            ) : (
+              <>
+                <TrashIcon /> Reset memory
+              </>
+            )}
+          </button>
           <button
             type="button"
             onClick={handleBuildTrees}
@@ -260,6 +320,27 @@ function ModeToggle({ mode, onChange }: ModeToggleProps) {
 }
 
 // ── Tiny inline icons (no extra dep) ────────────────────────────────────
+
+function TrashIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  );
+}
 
 function BrainIcon() {
   return (

@@ -1192,6 +1192,101 @@ fn sanitize_basename(id: &str) -> String {
         .collect()
 }
 
+// ── wipe_all (destructive "reset memory" trigger) ───────────────────────
+
+/// Response shape for [`wipe_all_rpc`]. Counts everything we touched
+/// so the UI can confirm something actually happened.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WipeAllResponse {
+    /// Number of mem_tree_* SQLite rows deleted across all tables.
+    pub rows_deleted: u64,
+    /// Top-level on-disk directories under `<content_root>/` that we
+    /// removed (e.g. `["raw", "wiki", "email", "chat", "document",
+    /// "summaries"]`).
+    pub dirs_removed: Vec<String>,
+}
+
+/// `memory_tree_wipe_all` — destructive reset of every memory-tree
+/// artefact owned by this workspace.
+///
+/// Truncates every `mem_tree_*` table and removes the on-disk content
+/// folders under `<content_root>/`. Used by the "Reset memory" button
+/// in the Memory tab so the user can re-sync from scratch (or wipe a
+/// botched run) without leaving the app.
+///
+/// Out of scope: Composio sync-state KV (lives in the unified memory
+/// store, separate DB). Re-syncing after a wipe will re-ingest any
+/// content the upstream provider still has, but the per-connection
+/// dedup set will skip messages it's already seen — to force a true
+/// re-fetch the caller should also delete + re-authorize the
+/// Composio connection.
+pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>, String> {
+    let cfg = config.clone();
+    let resp = tokio::task::spawn_blocking(move || -> Result<WipeAllResponse> {
+        // Tables to truncate. Order doesn't strictly matter — every row
+        // is being removed — but we list dependents before parents for
+        // readability.
+        const TABLES: &[&str] = &[
+            "mem_tree_score",
+            "mem_tree_entity_index",
+            "mem_tree_entity_hotness",
+            "mem_tree_jobs",
+            "mem_tree_buffers",
+            "mem_tree_summaries",
+            "mem_tree_trees",
+            "mem_tree_chunks",
+        ];
+        let rows_deleted: u64 = with_connection(&cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            let mut total: u64 = 0;
+            for table in TABLES {
+                let n = tx
+                    .execute(&format!("DELETE FROM {table}"), [])
+                    .with_context(|| format!("delete from {table}"))?;
+                total += n as u64;
+            }
+            tx.commit()?;
+            Ok(total)
+        })?;
+
+        // Filesystem cleanup. Each directory is best-effort: if one
+        // fails (permission denied, path doesn't exist) we keep going
+        // and report what we managed to remove. `summaries/` is
+        // covered by the legacy pre-`wiki/` layout and is harmless to
+        // attempt removing on a fresh install.
+        const DIRS: &[&str] = &["raw", "wiki", "email", "chat", "document", "summaries"];
+        let content_root = cfg.memory_tree_content_root();
+        let mut dirs_removed: Vec<String> = Vec::new();
+        for dir in DIRS {
+            let path = content_root.join(dir);
+            match std::fs::remove_dir_all(&path) {
+                Ok(()) => dirs_removed.push((*dir).to_string()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    log::warn!(
+                        "[memory_tree::read::wipe] failed to remove {}: {e}",
+                        path.display()
+                    );
+                }
+            }
+        }
+
+        Ok(WipeAllResponse {
+            rows_deleted,
+            dirs_removed,
+        })
+    })
+    .await
+    .map_err(|e| format!("wipe_all join error: {e}"))?
+    .map_err(|e| format!("wipe_all: {e:#}"))?;
+
+    let log = format!(
+        "memory_tree::read: wipe_all rows={} dirs={:?}",
+        resp.rows_deleted, resp.dirs_removed
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
 // ── flush_now (manual "Build summary trees" trigger) ────────────────────
 
 /// Response shape for [`flush_now_rpc`].

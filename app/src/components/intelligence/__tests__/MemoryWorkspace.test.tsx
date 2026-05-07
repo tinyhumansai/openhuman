@@ -13,6 +13,7 @@ vi.mock('../../../utils/tauriCommands', () => ({
   isTauri: vi.fn(() => true),
   memoryTreeGraphExport: vi.fn(),
   memoryTreeFlushNow: vi.fn(),
+  memoryTreeWipeAll: vi.fn(),
 }));
 
 vi.mock('../../../services/memorySyncService', () => ({
@@ -30,11 +31,12 @@ vi.mock('../../../utils/openUrl', () => ({
   openUrl: vi.fn().mockResolvedValue(undefined),
 }));
 
-const { memoryTreeGraphExport, memoryTreeFlushNow } = (await import(
+const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll } = (await import(
   '../../../utils/tauriCommands'
 )) as unknown as {
   memoryTreeGraphExport: Mock;
   memoryTreeFlushNow: Mock;
+  memoryTreeWipeAll: Mock;
 };
 
 const { listConnections, syncConnection } = (await import(
@@ -81,6 +83,10 @@ describe('MemoryWorkspace (graph view)', () => {
     vi.clearAllMocks();
     memoryTreeGraphExport.mockResolvedValue(SAMPLE_RESPONSE);
     memoryTreeFlushNow.mockResolvedValue({ enqueued: true, stale_buffers: 3 });
+    memoryTreeWipeAll.mockResolvedValue({
+      rows_deleted: 42,
+      dirs_removed: ['raw', 'wiki', 'email'],
+    });
     listConnections.mockResolvedValue({ connections: [] });
     syncConnection.mockResolvedValue({ ok: true });
     openUrl.mockResolvedValue(undefined);
@@ -163,6 +169,38 @@ describe('MemoryWorkspace (graph view)', () => {
     await waitFor(() => {
       expect(memoryTreeGraphExport).toHaveBeenLastCalledWith('contacts');
     });
+  });
+
+  it('"Reset memory" requires a confirm and then dispatches memory_tree_wipe_all', async () => {
+    const onToast = vi.fn();
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    // First click — user cancels the confirm dialog → no RPC call.
+    confirmSpy.mockReturnValueOnce(false);
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    const button = await screen.findByTestId('memory-wipe-all');
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(memoryTreeWipeAll).not.toHaveBeenCalled();
+
+    // Second click — user accepts. RPC fires, success toast carries
+    // the rows count, and the graph re-fetches.
+    confirmSpy.mockReturnValueOnce(true);
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(memoryTreeWipeAll).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'success',
+          title: 'Memory wiped',
+          message: expect.stringContaining('42'),
+        })
+      );
+    });
+    confirmSpy.mockRestore();
   });
 
   it('"Build summary trees" calls memory_tree_flush_now and toasts the buffer count', async () => {

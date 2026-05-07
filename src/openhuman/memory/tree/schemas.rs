@@ -42,6 +42,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("set_llm"),
         schemas("graph_export"),
         schemas("flush_now"),
+        schemas("wipe_all"),
     ]
 }
 
@@ -112,6 +113,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("flush_now"),
             handler: handle_flush_now,
+        },
+        RegisteredController {
+            schema: schemas("wipe_all"),
+            handler: handle_wipe_all,
         },
     ]
 }
@@ -540,6 +545,31 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "wipe_all" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "wipe_all",
+            description: "Destructive reset: truncate every mem_tree_* table and remove the \
+                          on-disk content folders (raw / wiki / email / chat / document / \
+                          legacy summaries) under the workspace memory_tree content root. \
+                          Used by the Memory tab's 'Reset memory' button. Composio sync \
+                          state is *not* cleared — re-authorize the connection to force a \
+                          full re-fetch.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "rows_deleted",
+                    ty: TypeSchema::U64,
+                    comment: "Total mem_tree_* rows removed across all tables.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "dirs_removed",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "Top-level directories under content_root that were deleted.",
+                    required: true,
+                },
+            ],
+        },
         "flush_now" => ControllerSchema {
             namespace: NAMESPACE,
             function: "flush_now",
@@ -828,6 +858,13 @@ fn handle_flush_now(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(read_rpc::flush_now_rpc(&config).await?)
+    })
+}
+
+fn handle_wipe_all(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(read_rpc::wipe_all_rpc(&config).await?)
     })
 }
 

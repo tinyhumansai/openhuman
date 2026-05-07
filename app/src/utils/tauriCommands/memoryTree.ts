@@ -476,6 +476,36 @@ export interface GraphExportResponse {
   content_root_abs: string;
 }
 
+/** Response shape for `memory_tree_wipe_all`. */
+export interface WipeAllResponse {
+  rows_deleted: number;
+  dirs_removed: string[];
+}
+
+/**
+ * Destructive reset: truncate every `mem_tree_*` table and remove the
+ * on-disk chunk-store directories under the workspace content root.
+ * Backed by `openhuman.memory_tree_wipe_all`.
+ *
+ * Composio sync state is **not** cleared by this call — to force a
+ * full upstream re-fetch, the caller must also delete + re-authorize
+ * the affected Composio connection. See the Rust handler doc for
+ * the rationale.
+ */
+export async function memoryTreeWipeAll(): Promise<WipeAllResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeWipeAll: entry');
+  const resp = await callCoreRpc<WipeAllResponse | ResultEnvelope<WipeAllResponse>>({
+    method: 'openhuman.memory_tree_wipe_all',
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeWipeAll: exit rows=%d dirs=%o',
+    out.rows_deleted,
+    out.dirs_removed
+  );
+  return out;
+}
+
 /** Response shape for `memory_tree_flush_now`. */
 export interface FlushNowResponse {
   enqueued: boolean;
