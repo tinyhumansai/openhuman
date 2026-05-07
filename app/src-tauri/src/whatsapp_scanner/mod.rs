@@ -490,11 +490,11 @@ impl CdpConn {
 fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSnapshot) {
     if !snap.ok {
         log::warn!(
-            "[wa][{}] snapshot not ok, error={:?}",
+            "[wa][{}] snapshot not ok (idb walk failed: {:?}) — falling through with dom-only data",
             account_id,
             snap.error
         );
-        return;
+        // Fall through so DOM messages still reach the structured store.
     }
     // Resolve the active chat's JID from its display name (parsed from the
     // conversation header). Modern WhatsApp Web doesn't put the chat JID
@@ -1055,15 +1055,8 @@ async fn post_whatsapp_data_ingest(
     if messages.is_empty() && chats.as_object().map(|o| o.is_empty()).unwrap_or(true) {
         return Ok(());
     }
-    log::debug!(
-        "[wa][{}] whatsapp_data_ingest chats={} messages={} source={}",
-        account_id,
-        chats.as_object().map(|o| o.len()).unwrap_or(0),
-        messages.len(),
-        source
-    );
 
-    // Convert chats map values to {name: string|null}.
+    // Convert chats map values to {name: string|null} once, before batching.
     // The scanner passes chats as either:
     //   - Value::String(display_name) — contact-cache format
     //   - Value::Object({name: ..., ...}) — full IDB scan format
@@ -1073,14 +1066,12 @@ async fn post_whatsapp_data_ingest(
             o.iter()
                 .map(|(jid, v)| {
                     let name = if let Some(s) = v.as_str() {
-                        // String-valued entry from contact cache: value IS the name.
                         if s.is_empty() {
                             Value::Null
                         } else {
                             Value::String(s.to_string())
                         }
                     } else {
-                        // Object entry: look for a "name" field.
                         v.get("name")
                             .and_then(|n| n.as_str())
                             .filter(|s| !s.is_empty())
@@ -1093,44 +1084,99 @@ async fn post_whatsapp_data_ingest(
         })
         .unwrap_or_default();
 
-    let params = json!({
-        "account_id": account_id,
-        "chats": Value::Object(chats_param),
-        "messages": messages,
-    });
-    let body = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "openhuman.whatsapp_data_ingest",
-        "params": params,
-    });
-
+    // Split messages into chunks to stay well under the HTTP body size limit.
+    // Chats are sent only with the first batch (upserts are idempotent).
+    const BATCH_SIZE: usize = 500;
+    let empty_chats = Value::Object(serde_json::Map::new());
     let url = crate::core_rpc::core_rpc_url_value();
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
-    let req = crate::core_rpc::apply_auth(client.post(&url))
-        .map_err(|e| format!("prepare {url}: {e}"))?;
-    let resp = req
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("POST {url}: {e}"))?;
-    let status = resp.status();
-    if !status.is_success() {
-        let body_text = resp.text().await.unwrap_or_default();
-        return Err(format!("{status}: {body_text}"));
-    }
-    let v: Value = resp.json().await.map_err(|e| format!("decode: {e}"))?;
-    if let Some(err) = v.get("error") {
-        return Err(format!("rpc error: {err}"));
-    }
+
+    // Build at least one batch even when messages is empty (chats-only upsert).
+    let chunks: Vec<&[Value]> = if messages.is_empty() {
+        vec![&[]]
+    } else {
+        messages.chunks(BATCH_SIZE).collect()
+    };
+
+    let total_batches = chunks.len();
     log::debug!(
-        "[wa][{}] whatsapp_data_ingest ok account={} messages={}",
+        "[wa][{}] whatsapp_data_ingest chats={} messages={} batches={} source={}",
         account_id,
+        chats_param.len(),
+        messages.len(),
+        total_batches,
+        source
+    );
+
+    for (batch_idx, chunk) in chunks.iter().enumerate() {
+        let batch_chats = if batch_idx == 0 {
+            Value::Object(chats_param.clone())
+        } else {
+            empty_chats.clone()
+        };
+        let params = json!({
+            "account_id": account_id,
+            "chats": batch_chats,
+            "messages": chunk,
+        });
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "openhuman.whatsapp_data_ingest",
+            "params": params,
+        });
+
+        let mut last_err = String::new();
+        let mut succeeded = false;
+        for attempt in 1u8..=2 {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .map_err(|e| format!("http client: {e}"))?;
+            let req = crate::core_rpc::apply_auth(client.post(&url))
+                .map_err(|e| format!("prepare {url}: {e}"))?;
+            let send_result = req.json(&body).send().await;
+            match send_result {
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    last_err = format!("POST {url}: {e}");
+                    if attempt < 2 {
+                        log::debug!(
+                            "[wa][{}] whatsapp_data_ingest connect error batch={}/{} attempt {}: {}",
+                            account_id,
+                            batch_idx + 1,
+                            total_batches,
+                            attempt,
+                            last_err
+                        );
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                    continue;
+                }
+                Err(e) => return Err(format!("POST {url}: {e}")),
+                Ok(resp) => {
+                    let status = resp.status();
+                    if !status.is_success() {
+                        let body_text = resp.text().await.unwrap_or_default();
+                        return Err(format!("{status}: {body_text}"));
+                    }
+                    let v: Value = resp.json().await.map_err(|e| format!("decode: {e}"))?;
+                    if let Some(err) = v.get("error") {
+                        return Err(format!("rpc error: {err}"));
+                    }
+                    succeeded = true;
+                    break;
+                }
+            }
+        }
+        if !succeeded {
+            return Err(last_err);
+        }
+    }
+
+    log::debug!(
+        "[wa][{}] whatsapp_data_ingest ok messages={} batches={}",
         account_id,
-        messages.len()
+        messages.len(),
+        total_batches,
     );
     Ok(())
 }

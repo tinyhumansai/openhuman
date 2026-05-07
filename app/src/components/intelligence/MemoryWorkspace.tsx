@@ -39,6 +39,7 @@ import {
 } from '../../utils/tauriCommands';
 import { MemoryGraph } from './MemoryGraph';
 import { MemorySources } from './MemorySources';
+import { WhatsAppMemorySection } from './WhatsAppMemorySection';
 
 interface MemoryWorkspaceProps {
   onToast?: (toast: Omit<ToastNotification, 'id'>) => void;
@@ -241,6 +242,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   return (
     <div className="space-y-4" data-testid="memory-workspace">
       <MemorySources syncableToolkits={SYNCABLE_TOOLKITS} pollIntervalMs={5000} onToast={onToast} />
+      <WhatsAppMemorySection />
 
       <div
         className="flex flex-wrap items-center justify-between gap-3"

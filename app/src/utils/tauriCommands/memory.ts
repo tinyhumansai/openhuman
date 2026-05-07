@@ -351,3 +351,56 @@ export async function memoryLearnAll(namespaces?: string[]): Promise<MemoryLearn
   console.debug('[memory.learn] memoryLearnAll: exit processed=%d', resp?.namespaces_processed);
   return resp;
 }
+
+/** A WhatsApp chat record from the local whatsapp_data store. */
+export interface WhatsAppChat {
+  chat_id: string;
+  display_name: string;
+  is_group: boolean;
+  account_id: string;
+  last_message_ts: number;
+  message_count: number;
+  updated_at: number;
+}
+
+/** A WhatsApp message record from the local whatsapp_data store. */
+export interface WhatsAppMessage {
+  message_id: string;
+  chat_id: string;
+  sender: string;
+  sender_jid?: string;
+  from_me: boolean;
+  body: string;
+  timestamp: number;
+  message_type?: string;
+  account_id: string;
+  source: string;
+}
+
+/** List WhatsApp chats from the local store (scanner-populated). */
+export async function whatsappListChats(params?: {
+  account_id?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<WhatsAppChat[]> {
+  const resp = await callCoreRpc<{ result?: WhatsAppChat[]; logs?: string[] } | WhatsAppChat[]>({
+    method: 'openhuman.whatsapp_data_list_chats',
+    params: params ?? {},
+  });
+  if (Array.isArray(resp)) return resp;
+  return (resp as { result?: WhatsAppChat[] }).result ?? [];
+}
+
+/** List messages for a chat from the local store. */
+export async function whatsappListMessages(params: {
+  chat_id: string;
+  account_id?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<WhatsAppMessage[]> {
+  const resp = await callCoreRpc<
+    { result?: WhatsAppMessage[]; logs?: string[] } | WhatsAppMessage[]
+  >({ method: 'openhuman.whatsapp_data_list_messages', params });
+  if (Array.isArray(resp)) return resp;
+  return (resp as { result?: WhatsAppMessage[] }).result ?? [];
+}
