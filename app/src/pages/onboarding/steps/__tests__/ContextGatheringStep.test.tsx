@@ -124,13 +124,12 @@ describe('ContextGatheringStep', () => {
     await waitFor(() => expect(onNext).toHaveBeenCalled(), { timeout: 5000 });
   });
 
-  describe('background continuation link', () => {
+  describe('non-blocking continuation', () => {
     afterEach(() => {
       vi.useRealTimers();
     });
 
-    it('does not show background link before 10s threshold', async () => {
-      vi.useFakeTimers();
+    it('lets users continue to chat immediately while integration work is slow', async () => {
       let resolveGmail!: (v: unknown) => void;
       callCoreRpc.mockImplementation(
         () =>
@@ -143,45 +142,14 @@ describe('ContextGatheringStep', () => {
         <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
       );
 
-      await act(async () => {
-        vi.advanceTimersByTime(9_999);
-      });
-      expect(screen.queryByText(/keep building in background/i)).not.toBeInTheDocument();
-
-      // Cleanup
-      await act(async () => {
-        resolveGmail({ successful: true, data: { messages: [] } });
-      });
-    });
-
-    it('shows background link after 10s with fade-in animation', async () => {
-      vi.useFakeTimers();
-      let resolveGmail!: (v: unknown) => void;
-      callCoreRpc.mockImplementation(
-        () =>
-          new Promise(res => {
-            resolveGmail = res;
-          })
-      );
-
-      renderWithProviders(
-        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
-      );
-
-      await act(async () => {
-        vi.advanceTimersByTime(10_000);
-      });
-      const link = screen.getByText(/keep building in background/i);
-      expect(link).toBeInTheDocument();
-      expect(link.className).toContain('animate-fade-in');
+      expect(screen.getByRole('button', { name: /continue to chat/i })).toBeInTheDocument();
 
       await act(async () => {
         resolveGmail({ successful: true, data: { messages: [] } });
       });
     });
 
-    it('clicking background link calls onNext to complete onboarding', async () => {
-      vi.useFakeTimers();
+    it('clicking continue calls onNext before the pipeline finishes', async () => {
       let resolveGmail!: (v: unknown) => void;
       callCoreRpc.mockImplementation(
         () =>
@@ -195,10 +163,7 @@ describe('ContextGatheringStep', () => {
         <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
       );
 
-      await act(async () => {
-        vi.advanceTimersByTime(10_000);
-      });
-      fireEvent.click(screen.getByText(/keep building in background/i));
+      fireEvent.click(screen.getByRole('button', { name: /continue to chat/i }));
       expect(onNext).toHaveBeenCalledTimes(1);
 
       await act(async () => {
@@ -206,8 +171,7 @@ describe('ContextGatheringStep', () => {
       });
     });
 
-    it('does not show background link if pipeline finishes within 10s', async () => {
-      vi.useFakeTimers();
+    it('hides the manual continue button if the pipeline finishes quickly', async () => {
       callCoreRpc.mockResolvedValue({ successful: true, data: { messages: [] } });
 
       renderWithProviders(
@@ -219,15 +183,10 @@ describe('ContextGatheringStep', () => {
         await Promise.resolve();
       });
 
-      // Advance past 10s — link should still not appear since finished is true
-      await act(async () => {
-        vi.advanceTimersByTime(11_000);
-      });
-      expect(screen.queryByText(/keep building in background/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /continue to chat/i })).not.toBeInTheDocument();
     });
 
-    it('pipeline saves profile even after user clicks background link and component unmounts', async () => {
-      vi.useFakeTimers();
+    it('pipeline saves profile even after user continues and component unmounts', async () => {
       let resolveScrape!: (v: unknown) => void;
       let resolveSave!: (v: unknown) => void;
 
@@ -262,13 +221,8 @@ describe('ContextGatheringStep', () => {
         await Promise.resolve();
       });
 
-      // Show background link after 10s
-      await act(async () => {
-        vi.advanceTimersByTime(10_000);
-      });
-
-      // User clicks background link → onNext called, then unmount
-      fireEvent.click(screen.getByText(/keep building in background/i));
+      // User continues while the scrape is still running, then the route unmounts.
+      fireEvent.click(screen.getByRole('button', { name: /continue to chat/i }));
       expect(onNext).toHaveBeenCalled();
       unmount();
 
@@ -290,6 +244,29 @@ describe('ContextGatheringStep', () => {
       );
       expect(saveCalls.length).toBe(1);
     });
+  });
+
+  it('treats Gmail insufficient-scope failures as recoverable and non-blocking', async () => {
+    const onNext = vi.fn().mockResolvedValue(undefined);
+    callCoreRpc.mockResolvedValueOnce({
+      successful: false,
+      data: null,
+      error: 'Request had insufficient authentication scopes.',
+    });
+
+    renderWithProviders(
+      <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/we couldn't build your full profile right now/i)
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /continue to chat/i }));
+    expect(onNext).toHaveBeenCalledTimes(1);
+    expect(callCoreRpc).toHaveBeenCalledTimes(1);
   });
 
   it('shows friendly error message when learning_save_profile rejects', async () => {
@@ -320,7 +297,7 @@ describe('ContextGatheringStep', () => {
       ).toBeInTheDocument();
     });
 
-    expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /continue to chat/i })).toBeInTheDocument();
     expect(screen.queryByText('disk full')).not.toBeInTheDocument();
 
     // fireEvent not needed — onNext is available via the button but user can also

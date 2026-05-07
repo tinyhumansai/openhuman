@@ -59,6 +59,20 @@ function canonicalLinkedInUrl(slug: string): string {
   return `https://www.linkedin.com/in/${slug}`;
 }
 
+function stageNow(): number {
+  return globalThis.performance?.now() ?? Date.now();
+}
+
+function durationMs(startedAt: number): number {
+  return Math.round(stageNow() - startedAt);
+}
+
+function errorReason(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === 'string' && error.trim()) return error;
+  return 'unknown';
+}
+
 /** URL-safe base64 → utf-8 string (Gmail body parts arrive in this form). */
 function decodeBase64Url(s: string): string {
   try {
@@ -153,71 +167,120 @@ const ContextGatheringStep = ({
   );
   const [finished, setFinished] = useState(false);
   const [hasError, setHasError] = useState(false);
-  const [showBackgroundLink, setShowBackgroundLink] = useState(false);
   const backgroundClickedRef = useRef(false);
   const ranRef = useRef(false);
 
   const hasGmail = connectedSources.some(s => s.includes('gmail'));
 
-  const setStage = (id: Stage['id'], status: StageStatus) => {
+  const setStage = (id: Stage['id'], status: StageStatus, duration?: number, reason?: string) => {
     stageStatusesRef.current = { ...stageStatusesRef.current, [id]: status };
+    console.debug('[onboarding:context] stage status', {
+      stage: id,
+      status,
+      durationMs: duration,
+      reason,
+    });
   };
 
   async function runPipeline() {
-    console.debug('[onboarding:context] runPipeline started');
+    const pipelineStartedAt = stageNow();
+    console.debug('[onboarding:context] pipeline started');
 
     // Stage 1 — Gmail
+    const gmailStartedAt = stageNow();
     setStage('gmail-search', 'active');
     let profileUrl: string | null;
     try {
       profileUrl = await findLinkedInUrlViaComposio();
       if (profileUrl) {
-        setStage('gmail-search', 'done');
+        setStage('gmail-search', 'done', durationMs(gmailStartedAt));
       } else {
-        setStage('gmail-search', 'skipped');
+        setStage('gmail-search', 'skipped', durationMs(gmailStartedAt), 'no_linkedin_url');
         setStage('linkedin-scrape', 'skipped');
         setStage('build-profile', 'skipped');
+        console.debug('[onboarding:context] pipeline finished', {
+          durationMs: durationMs(pipelineStartedAt),
+          result: 'no_profile_url',
+        });
         setFinished(true);
         return;
       }
     } catch (e) {
-      console.warn('[onboarding:context] gmail stage failed', e);
-      setStage('gmail-search', 'error');
+      const reason = errorReason(e);
+      console.warn('[onboarding:context] gmail stage failed', {
+        durationMs: durationMs(gmailStartedAt),
+        reason,
+      });
+      setStage('gmail-search', 'error', durationMs(gmailStartedAt), reason);
       setStage('linkedin-scrape', 'skipped');
       setStage('build-profile', 'skipped');
+      console.debug('[onboarding:context] pipeline finished', {
+        durationMs: durationMs(pipelineStartedAt),
+        result: 'gmail_error',
+        reason,
+      });
       setHasError(true);
       setFinished(true);
       return;
     }
 
     // Stage 2 — Apify LinkedIn scrape
+    const scrapeStartedAt = stageNow();
     setStage('linkedin-scrape', 'active');
     let scrapedMarkdown = '';
     try {
       scrapedMarkdown = await apifyScrapeLinkedIn(profileUrl);
-      setStage('linkedin-scrape', scrapedMarkdown.trim() ? 'done' : 'skipped');
+      setStage(
+        'linkedin-scrape',
+        scrapedMarkdown.trim() ? 'done' : 'skipped',
+        durationMs(scrapeStartedAt),
+        scrapedMarkdown.trim() ? undefined : 'empty_markdown'
+      );
     } catch (e) {
-      console.warn('[onboarding:context] apify_linkedin_scrape stage failed', e);
-      setStage('linkedin-scrape', 'error');
+      const reason = errorReason(e);
+      console.warn('[onboarding:context] apify_linkedin_scrape stage failed', {
+        durationMs: durationMs(scrapeStartedAt),
+        reason,
+      });
+      setStage('linkedin-scrape', 'error', durationMs(scrapeStartedAt), reason);
       // Continue — save_profile can still write a URL-only file.
     }
 
     // Stage 3 — summarize + persist via core LLM compressor
+    const profileStartedAt = stageNow();
     setStage('build-profile', 'active');
     try {
       const body = scrapedMarkdown.trim()
         ? scrapedMarkdown
         : `# User Profile\n\nLinkedIn: ${profileUrl}\n\n_Scrape returned no data._`;
       await saveProfile(body);
-      setStage('build-profile', 'done');
+      setStage('build-profile', 'done', durationMs(profileStartedAt));
     } catch (e) {
-      console.warn('[onboarding:context] save_profile failed', e);
-      setStage('build-profile', 'error');
+      const reason = errorReason(e);
+      console.warn('[onboarding:context] save_profile failed', {
+        durationMs: durationMs(profileStartedAt),
+        reason,
+      });
+      setStage('build-profile', 'error', durationMs(profileStartedAt), reason);
       setHasError(true);
     }
 
+    console.debug('[onboarding:context] pipeline finished', {
+      durationMs: durationMs(pipelineStartedAt),
+      result: stageStatusesRef.current['build-profile'] === 'error' ? 'profile_error' : 'completed',
+    });
     setFinished(true);
   }
+
+  const continueToChat = () => {
+    backgroundClickedRef.current = true;
+    console.debug('[onboarding:context] user continued before pipeline completion', {
+      finished,
+      hasError,
+      stages: stageStatusesRef.current,
+    });
+    void onNext();
+  };
 
   // Auto-start pipeline on mount
   useEffect(() => {
@@ -247,13 +310,6 @@ const ContextGatheringStep = ({
     }
   }, [finished, hasError, onNext]);
 
-  // Show "Keep building in background" link after 10s
-  useEffect(() => {
-    if (!hasGmail || finished) return;
-    const t = setTimeout(() => setShowBackgroundLink(true), 10_000);
-    return () => clearTimeout(t);
-  }, [hasGmail, finished]);
-
   if (finished && hasError) {
     return (
       <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
@@ -263,7 +319,7 @@ const ContextGatheringStep = ({
             We couldn&apos;t build your full profile right now, but that&apos;s okay — you can
             always update it later.
           </p>
-          <OnboardingNextButton label="Continue" onClick={() => void onNext()} />
+          <OnboardingNextButton label="Continue to chat" onClick={continueToChat} />
         </div>
       </div>
     );
@@ -286,16 +342,8 @@ const ContextGatheringStep = ({
           <div className="h-3 w-1/2 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer [animation-delay:300ms]" />
         </div>
 
-        {showBackgroundLink && (
-          <button
-            type="button"
-            className="animate-fade-in text-sm text-ocean-600 hover:text-ocean-700 underline underline-offset-2 transition-colors mt-2"
-            onClick={() => {
-              backgroundClickedRef.current = true;
-              void onNext();
-            }}>
-            Keep building in background &amp; continue
-          </button>
+        {hasGmail && !finished && (
+          <OnboardingNextButton label="Continue to chat" onClick={continueToChat} />
         )}
       </div>
     </div>
