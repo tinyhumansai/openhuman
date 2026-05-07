@@ -1354,6 +1354,54 @@ pub fn run() {
                 return Err("webview_apis bridge failed to start — aborting setup".into());
             }
 
+            // Purge stray LaunchAgent left over from a prior worktree's
+            // `service install`. KeepAlive=true on the plist re-spawns the
+            // daemon after every SIGKILL, fighting `ensure_running`'s
+            // stale-listener takeover and re-binding port 7788 on cold boot.
+            // (Symptom: "Failed to start local core: signaled pid <X> but
+            // port 7788 remained bound after 5000ms".) Detach from launchd
+            // first, then unlink the plist so a reboot can't reload it.
+            #[cfg(target_os = "macos")]
+            {
+                const STALE_LABEL: &str = "com.openhuman.core";
+
+                if let Ok(home) = std::env::var("HOME") {
+                    let plist = std::path::PathBuf::from(&home)
+                        .join("Library")
+                        .join("LaunchAgents")
+                        .join(format!("{STALE_LABEL}.plist"));
+
+                    let uid = std::process::Command::new("id")
+                        .arg("-u")
+                        .output()
+                        .ok()
+                        .and_then(|o| String::from_utf8(o.stdout).ok())
+                        .map(|s| s.trim().to_string());
+
+                    if let Some(uid) = uid {
+                        let target = format!("gui/{uid}/{STALE_LABEL}");
+                        let _ = std::process::Command::new("launchctl")
+                            .arg("bootout")
+                            .arg(&target)
+                            .status();
+                    }
+
+                    if plist.exists() {
+                        match std::fs::remove_file(&plist) {
+                            Ok(()) => log::warn!(
+                                "[boot] removed stale LaunchAgent plist at {} \
+                                 (left over from a prior worktree's `service install`)",
+                                plist.display()
+                            ),
+                            Err(err) => log::warn!(
+                                "[boot] failed to remove stale LaunchAgent plist {}: {err}",
+                                plist.display()
+                            ),
+                        }
+                    }
+                }
+            }
+
             let core_handle =
                 core_process::CoreProcessHandle::new(core_process::default_core_port());
             std::env::set_var("OPENHUMAN_CORE_RPC_URL", core_handle.rpc_url());

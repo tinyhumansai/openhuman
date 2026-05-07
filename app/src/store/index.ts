@@ -10,8 +10,6 @@ import {
   REGISTER,
   REHYDRATE,
 } from 'redux-persist';
-import defaultStorage from 'redux-persist/lib/storage';
-
 import { IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
@@ -30,7 +28,46 @@ const storage = userScopedStorage;
 
 // coreMode is pre-login and not user-scoped — use plain localStorage so the
 // setting survives across user switches without leaking per-user state.
-const coreModePersistConfig = { key: 'coreMode', storage: defaultStorage, whitelist: ['mode'] };
+// Inline adapter rather than `redux-persist/lib/storage`'s default export,
+// which Vite's CJS dep-pre-bundling can resolve to the module namespace
+// (then `storage.getItem` is undefined and rehydrate throws on cold boot).
+const localStorageAdapter = {
+  getItem: (key: string) =>
+    Promise.resolve(
+      (() => {
+        try {
+          return localStorage.getItem(key);
+        } catch {
+          return null;
+        }
+      })()
+    ),
+  setItem: (key: string, value: string) =>
+    Promise.resolve(
+      (() => {
+        try {
+          localStorage.setItem(key, value);
+        } catch {
+          /* ignore quota / unavailable */
+        }
+      })()
+    ),
+  removeItem: (key: string) =>
+    Promise.resolve(
+      (() => {
+        try {
+          localStorage.removeItem(key);
+        } catch {
+          /* ignore */
+        }
+      })()
+    ),
+};
+const coreModePersistConfig = {
+  key: 'coreMode',
+  storage: localStorageAdapter,
+  whitelist: ['mode'],
+};
 const persistedCoreModeReducer = persistReducer(coreModePersistConfig, coreModeReducer);
 
 const channelConnectionsPersistConfig = {
