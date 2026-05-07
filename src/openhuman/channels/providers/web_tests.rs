@@ -8,6 +8,18 @@ use super::{
 use crate::core::TypeSchema;
 use tokio::time::{timeout, Duration};
 
+/// Ensures the test-only forced run_chat_task failure toggle is always reset,
+/// even if the test panics before reaching explicit cleanup code.
+struct TestForcedRunChatTaskErrorGuard;
+
+impl Drop for TestForcedRunChatTaskErrorGuard {
+    fn drop(&mut self) {
+        tokio::spawn(async {
+            set_test_forced_run_chat_task_error(None).await;
+        });
+    }
+}
+
 #[tokio::test]
 async fn start_chat_validates_required_fields() {
     let err = start_chat("", "thread", "hello", None, None)
@@ -65,6 +77,7 @@ async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
         "error sending request for url (https://staging-api.alphahuman.xyz/openai/v1/chat/completions)",
     ))
     .await;
+    let _forced_error_guard = TestForcedRunChatTaskErrorGuard;
 
     let mut rx = subscribe_web_channel_events();
     let request_id = start_chat(
@@ -99,9 +112,6 @@ async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
         !message.contains("error sending request for url"),
         "chat error payload must not expose raw transport details"
     );
-
-    // Defensive cleanup so later tests cannot inherit forced failure state.
-    set_test_forced_run_chat_task_error(None).await;
 }
 
 #[test]

@@ -85,15 +85,22 @@ async fn execute_job_with_retry(
     job: &CronJob,
 ) -> (bool, String) {
     let mut last_output = String::new();
+    let mut last_agent_error: Option<String> = None;
     let retries = config.reliability.scheduler_retries;
     let mut backoff_ms = config.reliability.provider_backoff_ms.max(200);
 
     for attempt in 0..=retries {
-        let (success, output) = match job.job_type {
-            JobType::Shell => run_job_command(config, security, job).await,
+        let (success, output, agent_error) = match job.job_type {
+            JobType::Shell => {
+                let (success, output) = run_job_command(config, security, job).await;
+                (success, output, None)
+            }
             JobType::Agent => run_agent_job(config, job).await,
         };
         last_output = output;
+        if agent_error.is_some() {
+            last_agent_error = agent_error;
+        }
 
         if success {
             return (true, last_output);
@@ -112,8 +119,11 @@ async fn execute_job_with_retry(
     }
 
     if matches!(job.job_type, JobType::Agent) {
+        let report_message = last_agent_error
+            .as_deref()
+            .unwrap_or_else(|| last_output.as_str());
         crate::core::observability::report_error(
-            last_output.as_str(),
+            report_message,
             "cron",
             "agent_job",
             &[
@@ -195,7 +205,7 @@ async fn execute_and_persist_job(
     (job.id.clone(), success, failure_message)
 }
 
-async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String) {
+async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<String>) {
     use crate::openhuman::agent::Agent;
 
     let name = job.name.clone().unwrap_or_else(|| "cron-job".to_string());
@@ -274,8 +284,13 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String) {
             } else {
                 response
             },
+            None,
         ),
-        Err(_) => (false, AGENT_JOB_USER_FAILURE_MESSAGE.to_string()),
+        Err(e) => (
+            false,
+            AGENT_JOB_USER_FAILURE_MESSAGE.to_string(),
+            Some(e.to_string()),
+        ),
     }
 }
 
