@@ -135,13 +135,18 @@ type VersionCheckResult = 'match' | 'outdated' | 'noVersionMethod' | 'unreachabl
 
 async function checkVersion(callRpc: BootCheckTransport['callRpc']): Promise<VersionCheckResult> {
   try {
-    // `openhuman.update_version` returns a flat VersionInfo
-    // ({ version, target_triple, asset_prefix }) — see
-    // src/openhuman/update/ops.rs::update_version. The previous reader
-    // looked under a `version_info` wrapper that doesn't exist, so
-    // coreVersion was always '' and every boot reported "outdated local".
-    const result = await callRpc<{ version?: string }>('openhuman.update_version', {});
-    const coreVersion = result?.version ?? '';
+    // `openhuman.update_version` is wrapped by RpcOutcome::single_log
+    // (see src/openhuman/update/ops.rs + src/rpc/mod.rs::into_cli_compatible_json):
+    // when logs are present the response shape is `{ result: VersionInfo, logs }`,
+    // and VersionInfo is `{ version, target_triple, asset_prefix }`. Earlier
+    // attempts read `result.version_info.version` (no such field) and then
+    // `result.version` (skipped the RpcOutcome `result` wrapper) — both
+    // yielded '' and pinned every boot to "outdated local".
+    const response = await callRpc<{ result?: { version?: string } }>(
+      'openhuman.update_version',
+      {}
+    );
+    const coreVersion = response?.result?.version ?? '';
     log('[boot-check] version_check app=%s core=%s', APP_VERSION, coreVersion);
 
     if (!coreVersion) {

@@ -44,7 +44,7 @@ describe('runBootCheck — local mode', () => {
       callRpc: rpcResponder({
         'core.ping': {},
         'openhuman.service_status': { installed: false, running: false },
-        'openhuman.update_version': { version: appVersion },
+        'openhuman.update_version': { result: { version: appVersion } },
       }),
     });
 
@@ -59,7 +59,7 @@ describe('runBootCheck — local mode', () => {
       callRpc: rpcResponder({
         'core.ping': {},
         'openhuman.service_status': { installed: true, running: false },
-        'openhuman.update_version': { version: appVersion },
+        'openhuman.update_version': { result: { version: appVersion } },
       }),
     });
 
@@ -72,7 +72,7 @@ describe('runBootCheck — local mode', () => {
       callRpc: rpcResponder({
         'core.ping': {},
         'openhuman.service_status': { installed: false, running: true },
-        'openhuman.update_version': { version: 'x' },
+        'openhuman.update_version': { result: { version: 'x' } },
       }),
     });
 
@@ -85,7 +85,7 @@ describe('runBootCheck — local mode', () => {
       callRpc: rpcResponder({
         'core.ping': {},
         'openhuman.service_status': { installed: false, running: false },
-        'openhuman.update_version': { version: '0.0.0-different' },
+        'openhuman.update_version': { result: { version: '0.0.0-different' } },
       }),
     });
 
@@ -156,7 +156,7 @@ describe('runBootCheck — cloud mode', () => {
 
     const transport = makeTransport({
       callRpc: rpcResponder({
-        'openhuman.update_version': { version: appVersion },
+        'openhuman.update_version': { result: { version: appVersion } },
       }),
     });
 
@@ -170,7 +170,7 @@ describe('runBootCheck — cloud mode', () => {
   it('returns outdatedCloud when version differs', async () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
-        'openhuman.update_version': { version: '0.0.0-old' },
+        'openhuman.update_version': { result: { version: '0.0.0-old' } },
       }),
     });
 
@@ -230,7 +230,7 @@ describe('runBootCheck — error and edge branches', () => {
       callRpc: rpcResponder({
         'core.ping': {},
         'openhuman.service_status': new Error('rpc transport blew up'),
-        'openhuman.update_version': { version: appVersion },
+        'openhuman.update_version': { result: { version: appVersion } },
       }),
     });
 
@@ -243,7 +243,7 @@ describe('runBootCheck — error and edge branches', () => {
       callRpc: rpcResponder({
         'core.ping': {},
         'openhuman.service_status': { installed: false, running: false },
-        'openhuman.update_version': { version: '' },
+        'openhuman.update_version': { result: { version: '' } },
       }),
     });
 
