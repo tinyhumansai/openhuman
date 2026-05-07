@@ -55,6 +55,21 @@ import { NewMascotCupHolding } from "./Mascot/NewMascotCupHolding";
 import { NewMascotBobateaHolding } from "./Mascot/NewMascotBobateaHolding";
 import { NewMascotSyicSmile } from "./Mascot/NewMascotSyicSmile";
 import { NewMascotSyicSmileSlow } from "./Mascot/NewMascotSyicSmileSlow";
+import { BlackMascotIdle } from "./Mascot/black-MascotIdle";
+import { BlackMascotRecording } from "./Mascot/black-MascotRecording";
+import { BlackMascotLoading } from "./Mascot/black-MascotLoading";
+import { BlackMascotPickup } from "./Mascot/black-MascotPickup";
+import { BlackMascotTalking } from "./Mascot/black-MascotTalking";
+import { BlackMascotThinking } from "./Mascot/black-MascotThinking";
+import { BlackMascotSleep } from "./Mascot/black-MascotSleep";
+import { BlackMascotLove } from "./Mascot/black-MascotLove";
+import { BlackMascotWave } from "./Mascot/black-MascotWave";
+import { BlackMascotListening } from "./Mascot/black-MascotListening";
+import { BlackMascotCrying } from "./Mascot/black-MascotCrying";
+import { BlackMascotWink } from "./Mascot/black-MascotWink";
+import { BlackMascotCelebrate } from "./Mascot/black-MascotCelebrate";
+import { BlackMascotHatWithBag } from "./Mascot/black-MascotHatWithBag";
+import { BlackMascotLaughing } from "./Mascot/black-MascotLaughing";
 
 export const RemotionRoot: React.FC = () => {
   const staticFiles = getStaticFiles();
@@ -389,6 +404,141 @@ export const RemotionRoot: React.FC = () => {
       <Composition
         id="new-MascotLaughing"
         component={NewMascotLaughing}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotIdle"
+        component={BlackMascotIdle}
+        durationInFrames={180}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotRecording"
+        component={BlackMascotRecording}
+        durationInFrames={180}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotLoading"
+        component={BlackMascotLoading}
+        durationInFrames={Math.round(30 * 1.4 * 3)}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotPickup"
+        component={BlackMascotPickup}
+        durationInFrames={Math.round(30 * 4)}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotTalking"
+        component={BlackMascotTalking}
+        durationInFrames={180}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotThinking"
+        component={BlackMascotThinking}
+        durationInFrames={Math.round(30 * 6)}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotSleep"
+        component={BlackMascotSleep}
+        durationInFrames={Math.round(30 * 10)}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotLove"
+        component={BlackMascotLove}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotWave"
+        component={BlackMascotWave}
+        durationInFrames={180}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotListening"
+        component={BlackMascotListening}
+        durationInFrames={180}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotCrying"
+        component={BlackMascotCrying}
+        durationInFrames={300}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotWink"
+        component={BlackMascotWink}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotCelebrate"
+        component={BlackMascotCelebrate}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotHatWithBag"
+        component={BlackMascotHatWithBag}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="black-MascotLaughing"
+        component={BlackMascotLaughing}
         durationInFrames={270}
         fps={30}
         width={1080}
