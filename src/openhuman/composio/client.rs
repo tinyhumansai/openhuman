@@ -321,11 +321,16 @@ impl ComposioClient {
                 &body_text,
                 crate::openhuman::integrations::client::MAX_ERROR_BODY_LEN,
             );
+            // Use the same UTF-8-safe truncation for the debug-log preview
+            // — direct byte-slicing (`&body_text[..len.min(300)]`) panics
+            // when the cutoff lands inside a multibyte codepoint.
+            let logged_body =
+                crate::openhuman::integrations::client::extract_error_detail(&body_text, 300);
             tracing::debug!(
                 "[composio] DELETE {} → {} body={}",
                 url,
                 status,
-                &body_text[..body_text.len().min(300)]
+                logged_body
             );
             let status_str = status.as_u16().to_string();
             crate::core::observability::report_error(
