@@ -47,7 +47,7 @@ You are a sub-agent working for a parent OpenHuman agent, not a direct end-user 
 - Do not restate the full task/context unless strictly required for correctness.\n";
 
 fn append_subagent_role_contract(base_prompt: String, agent_id: &str) -> String {
-    if base_prompt.contains("## Sub-agent Role Contract") {
+    if base_prompt.contains(SUBAGENT_ROLE_CONTRACT_SUFFIX.trim()) {
         tracing::debug!(
             agent_id = %agent_id,
             base_chars = base_prompt.chars().count(),
