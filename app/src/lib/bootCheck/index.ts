@@ -11,9 +11,10 @@
  *  - Injectable transport (callRpc / invokeCmd) for hermetic unit tests.
  *  - All branches emit [boot-check] prefixed debug logs.
  */
+import { invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
 
-import { clearCoreRpcUrlCache } from '../../services/coreRpcClient';
+import { callCoreRpc, clearCoreRpcUrlCache } from '../../services/coreRpcClient';
 import type { CoreMode } from '../../store/coreModeSlice';
 import { APP_VERSION } from '../../utils/config';
 import { storeRpcUrl } from '../../utils/configPersistence';
@@ -49,14 +50,10 @@ export interface BootCheckTransport {
 // ---------------------------------------------------------------------------
 
 async function defaultCallRpc<T>(method: string, params?: Record<string, unknown>): Promise<T> {
-  // Imported lazily via the default-real path so the module can be used in
-  // non-Tauri test environments without side-effects.
-  const { callCoreRpc } = await import('../../services/coreRpcClient');
   return callCoreRpc<T>({ method, params });
 }
 
 async function defaultInvokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const { invoke } = await import('@tauri-apps/api/core');
   return invoke<T>(cmd, args);
 }
 
@@ -90,21 +87,24 @@ async function waitForCore(
   callRpc: BootCheckTransport['callRpc'],
   maxMs = 10_000
 ): Promise<boolean> {
-  const delays = [200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000];
-  let elapsed = 0;
-  for (const delay of delays) {
+  const startedAt = Date.now();
+  let delay = 200;
+  while (Date.now() - startedAt < maxMs) {
+    const elapsedAtStart = Date.now() - startedAt;
     try {
-      log('[boot-check] ping attempt elapsed=%dms', elapsed);
+      log('[boot-check] ping attempt elapsed=%dms', elapsedAtStart);
       await callRpc('openhuman.ping', {});
-      log('[boot-check] ping succeeded elapsed=%dms', elapsed);
+      log('[boot-check] ping succeeded elapsed=%dms', elapsedAtStart);
       return true;
     } catch {
-      elapsed += delay;
-      if (elapsed >= maxMs) break;
-      await new Promise(r => setTimeout(r, delay));
+      const remaining = maxMs - (Date.now() - startedAt);
+      if (remaining <= 0) break;
+      const sleepMs = Math.min(delay, remaining);
+      await new Promise(r => setTimeout(r, sleepMs));
+      delay = Math.min(delay * 2, 1000);
     }
   }
-  logError('[boot-check] ping timed out after %dms', elapsed);
+  logError('[boot-check] ping timed out after %dms', Date.now() - startedAt);
   return false;
 }
 
