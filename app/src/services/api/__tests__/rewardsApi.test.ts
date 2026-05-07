@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { normalizeRewardsSnapshot, rewardsApi } from '../rewardsApi';
 
 vi.mock('../../apiClient', () => ({ apiClient: { get: vi.fn() } }));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe('normalizeRewardsSnapshot', () => {
   it('normalizes a backend rewards payload', () => {
@@ -101,7 +105,7 @@ describe('rewardsApi', () => {
 
     const snapshot = await rewardsApi.getMyRewards();
 
-    expect(apiClient.get).toHaveBeenCalledWith('/rewards/me');
+    expect(apiClient.get).toHaveBeenCalledWith('/rewards/me', { timeout: 15_000 });
     expect(snapshot.discord.membershipStatus).toBe('not_linked');
     expect(snapshot.summary.totalCount).toBe(8);
   });
@@ -116,6 +120,19 @@ describe('rewardsApi', () => {
 
     await expect(rewardsApi.getMyRewards()).rejects.toMatchObject({
       error: 'Rewards service unavailable',
+    });
+  });
+
+  it('returns an actionable quiet error when /rewards/me times out', async () => {
+    const { apiClient } = await import('../../apiClient');
+    vi.mocked(apiClient.get).mockRejectedValueOnce({
+      success: false,
+      error: 'Failed to load resource: net::ERR_TIMED_OUT',
+    });
+
+    await expect(rewardsApi.getMyRewards()).rejects.toMatchObject({
+      success: false,
+      error: 'Rewards request timed out. Please check your connection and try again.',
     });
   });
 });

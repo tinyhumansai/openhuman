@@ -2,6 +2,10 @@ import type { ApiResponse } from '../../types/api';
 import type { RewardsAchievement, RewardsSnapshot } from '../../types/rewards';
 import { apiClient } from '../apiClient';
 
+const REWARDS_REQUEST_TIMEOUT_MS = 15_000;
+const REWARDS_TIMEOUT_MESSAGE =
+  'Rewards request timed out. Please check your connection and try again.';
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -32,6 +36,24 @@ function asFiniteNumberOrNull(value: unknown): number | null {
   }
 
   return null;
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  const raw = asRecord(error);
+  const value = raw?.error ?? raw?.message ?? raw?.code;
+  return typeof value === 'string' ? value : '';
+}
+
+function isTimeoutError(error: unknown): boolean {
+  const text = errorText(error).toLowerCase();
+  return (
+    text.includes('timed out') ||
+    text.includes('timeout') ||
+    text.includes('err_timed_out') ||
+    text.includes('aborterror') ||
+    text.includes('aborted')
+  );
 }
 
 function normalizeAchievement(value: unknown): RewardsAchievement {
@@ -106,12 +128,23 @@ export function normalizeRewardsSnapshot(payload: unknown): RewardsSnapshot {
 
 export const rewardsApi = {
   async getMyRewards(): Promise<RewardsSnapshot> {
-    const response = await apiClient.get<ApiResponse<unknown>>('/rewards/me');
-    if (!response.success) {
-      throw {
-        success: false,
-        error: response.error ?? response.message ?? 'Unable to load rewards',
-      };
+    let response: ApiResponse<unknown>;
+    try {
+      response = await apiClient.get<ApiResponse<unknown>>('/rewards/me', {
+        timeout: REWARDS_REQUEST_TIMEOUT_MS,
+      });
+      if (!response.success) {
+        throw {
+          success: false,
+          error: response.error ?? response.message ?? 'Unable to load rewards',
+        };
+      }
+    } catch (error) {
+      const message = isTimeoutError(error)
+        ? REWARDS_TIMEOUT_MESSAGE
+        : errorText(error) || 'Unable to load rewards';
+      console.debug('[rewards] backend snapshot unavailable', { message });
+      throw { success: false, error: message };
     }
 
     console.debug('[rewards] loaded backend snapshot', {
