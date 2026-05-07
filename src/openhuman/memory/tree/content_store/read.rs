@@ -152,17 +152,13 @@ pub fn read_chunk_body(
         )
     })?;
     let (rel_path, expected_sha256) = pointers;
-    // Email chunks are no longer mirrored on disk under `email/<scope>/`
-    // — their full body lives in `raw/<source>/<ts>_<id>.md`. The
-    // staged row carries an empty path; the chunker's preview in the
-    // SQL `content` column is the fallback for read paths that
-    // bypass the raw archive.
+    // Email chunks aren't mirrored on disk under `email/<scope>/` —
+    // they're stored full-fidelity in the SQL `content` column instead
+    // (see `upsert_staged_chunks_tx`). For those rows, return the SQL
+    // body directly so downstream workers (extract, embed, summariser)
+    // get the full text without paying a filesystem hop.
     if rel_path.is_empty() {
-        return Err(anyhow::anyhow!(
-            "[content_store::read] empty content_path for chunk_id={} (chunk file not staged on disk; \
-             read the SQL `content` preview or the raw archive instead)",
-            chunk_id
-        ));
+        return read_chunk_content_from_sql(config, chunk_id);
     }
 
     let content_root = config.memory_tree_content_root();
@@ -209,6 +205,36 @@ pub fn read_chunk_body(
 }
 
 use anyhow::Context as _;
+
+/// Fetch a chunk's body straight from the SQL `content` column.
+///
+/// Used for chunks that aren't mirrored on disk (today: email — the
+/// raw archive holds the verbatim message bytes, and `mem_tree_chunks`
+/// keeps the canonical chunk body in `content` rather than as a
+/// truncated preview). No SHA verification — the SQL row itself is
+/// the source of truth, written transactionally with the chunk's id.
+fn read_chunk_content_from_sql(
+    config: &crate::openhuman::config::Config,
+    chunk_id: &str,
+) -> anyhow::Result<String> {
+    use crate::openhuman::memory::tree::store::with_connection;
+    use rusqlite::{params, OptionalExtension};
+    let body: Option<String> = with_connection(config, |conn| {
+        conn.query_row(
+            "SELECT content FROM mem_tree_chunks WHERE id = ?1",
+            params![chunk_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(anyhow::Error::from)
+    })?;
+    body.ok_or_else(|| {
+        anyhow::anyhow!(
+            "[content_store::read] no SQL content for chunk_id={} (chunk row missing)",
+            chunk_id
+        )
+    })
+}
 
 /// Read the full body of a summary `.md` file by its summary id.
 ///

@@ -327,8 +327,19 @@ pub(crate) fn upsert_staged_chunks_tx(
     )?;
     for s in staged {
         let chunk = &s.chunk;
-        // Store a ≤500-char preview in the `content` column; full body is on disk.
-        let preview: String = chunk.content.chars().take(500).collect();
+        // Two-mode `content` column:
+        //   - On-disk staged chunks (chat / document) store a ≤500-char
+        //     preview here; the full body lives at `content_path`.
+        //   - Email chunks no longer get an on-disk file (their bytes
+        //     live in `raw/<source>/<ts>_<id>.md`); for those we store
+        //     the **full body** here so the extract / score / embed
+        //     workers can read it via `read_chunk_body` without
+        //     touching the filesystem at all.
+        let content_for_db: String = if s.content_path.is_empty() {
+            chunk.content.clone()
+        } else {
+            chunk.content.chars().take(500).collect()
+        };
         stmt.execute(params![
             chunk.id,
             chunk.metadata.source_kind.as_str(),
@@ -339,7 +350,7 @@ pub(crate) fn upsert_staged_chunks_tx(
             chunk.metadata.time_range.0.timestamp_millis(),
             chunk.metadata.time_range.1.timestamp_millis(),
             serde_json::to_string(&chunk.metadata.tags)?,
-            preview,
+            content_for_db,
             chunk.token_count,
             chunk.seq_in_source,
             chunk.created_at.timestamp_millis(),
