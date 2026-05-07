@@ -310,27 +310,26 @@ pub async fn ingest_page_into_memory_tree(
 /// Mirror a page of raw Gmail messages into the on-disk raw archive.
 ///
 /// Files land under `<content_root>/raw/<source_slug>/<ts_ms>_<msg_id>.md`.
-/// We write each message through the existing backend rendering
-/// pipeline rather than building a wrapper here:
+/// We write the **backend-produced markdown verbatim** — the
+/// `markdown` field on each message is what
+/// [`super::post_process::post_process`] populates via
+/// `extract_markdown_body` / `html_email_to_markdown` /
+/// `normalize_markdownish_text`. That pipeline already handles HTML
+/// stripping, URL shortening / unwrapping, entity decoding, and
+/// whitespace collapse — all the cleanup the user is going to read
+/// in Obsidian. Re-running the chunker's `email_clean::clean_body`
+/// on top would strip reply chains and footers (useful for LLM
+/// chunks, *not* for an as-shipped archive) and risks chopping real
+/// content that happens to contain a "view in browser" link.
 ///
-///  1. The Composio post-processor (`gmail::post_process`) has already
-///     populated `raw["markdown"]` with a normalised, HTML-stripped
-///     markdown body via `extract_markdown_body` /
-///     `html_email_to_markdown`.
-///  2. We then run that through `canonicalize::email::canonicalise`
-///     for a single-message [`EmailThread`], so the per-message
-///     header block (`---\nFrom:/To:/Subject:/Date:` + cleaned body)
-///     matches exactly what the chunker sees. No bespoke YAML or
-///     header composition lives here.
+/// A tiny header (`From:` / `Subject:` / `Date:`) is prepended so
+/// the file is self-describing when opened standalone — the post-
+/// processed markdown body itself contains only the message text.
 ///
 /// Messages without a parseable date or id are skipped (they'd
-/// produce non-stable filenames). Per-message render failures log
-/// and are skipped rather than aborting the whole page.
+/// produce non-stable filenames).
 fn write_raw_archive(config: &Config, source_id: &str, page: &[Value]) -> Result<usize> {
-    use crate::openhuman::memory::tree::canonicalize::email as canonicalize_email;
-
     let content_root = config.memory_tree_content_root();
-    // Keep bodies alive — `RawItem.markdown` is a borrowed slice.
     let mut bodies: Vec<(String, i64, String)> = Vec::with_capacity(page.len());
 
     for raw in page {
@@ -341,31 +340,37 @@ fn write_raw_archive(config: &Config, source_id: &str, page: &[Value]) -> Result
             .map(|s| s.to_string());
         let Some(id) = id else { continue };
         let Some(sent_at) = parse_message_date(raw) else { continue };
-        let Some(message) = raw_to_email_message(raw) else { continue };
 
-        // Single-message thread → canonicalise → take the rendered
-        // markdown verbatim. The thread wrapper produces exactly the
-        // per-message format the chunker emits, so the raw archive
-        // stays in lock-step with the canonical view.
-        let thread = canonicalize_email::EmailThread {
-            provider: GMAIL_PROVIDER.to_string(),
-            thread_subject: message.subject.clone(),
-            messages: vec![message],
-        };
-        let rendered = match canonicalize_email::canonicalise(source_id, "raw-archive", &[], thread)
-        {
-            Ok(Some(canonical)) => canonical.markdown,
-            Ok(None) => continue,
-            Err(e) => {
-                log::warn!(
-                    "[composio:gmail][raw] canonicalise failed id_hash={} err={}",
-                    redact(&id),
-                    e
-                );
-                continue;
-            }
-        };
-        bodies.push((id, sent_at.timestamp_millis(), rendered));
+        // Pull the post-processed markdown straight off the upstream
+        // page. Falls back to an empty body if the post-processor
+        // didn't run (extremely unlikely — provider.sync() always
+        // calls `post_process_action_result` before this point).
+        let markdown_body = raw
+            .get("markdown")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if markdown_body.is_empty() {
+            log::debug!(
+                "[composio:gmail][raw] empty markdown body id_hash={} — skipping",
+                redact(&id)
+            );
+            continue;
+        }
+        let from = raw.get("from").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let subject = raw.get("subject").and_then(|v| v.as_str()).unwrap_or("").trim();
+
+        let mut composed = String::with_capacity(markdown_body.len() + 256);
+        if !from.is_empty() {
+            composed.push_str(&format!("**From:** {from}\n"));
+        }
+        if !subject.is_empty() {
+            composed.push_str(&format!("**Subject:** {subject}\n"));
+        }
+        composed.push_str(&format!("**Date:** {}\n\n", sent_at.to_rfc3339()));
+        composed.push_str(markdown_body);
+
+        bodies.push((id, sent_at.timestamp_millis(), composed));
     }
 
     let items: Vec<RawItem<'_>> = bodies
