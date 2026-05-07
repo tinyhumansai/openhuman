@@ -441,6 +441,35 @@ export interface GraphExportResponse {
   content_root_abs: string;
 }
 
+/** Response shape for `memory_tree_flush_now`. */
+export interface FlushNowResponse {
+  enqueued: boolean;
+  stale_buffers: number;
+}
+
+/**
+ * Manually trigger the summary-tree build. Enqueues a `flush_stale` job
+ * with `max_age_secs=0` so every L0 buffer force-seals immediately; the
+ * seal worker runs each through the configured cloud or local
+ * summariser. Backed by `openhuman.memory_tree_flush_now`.
+ *
+ * Safe to spam — same UTC-day dedupe key as the scheduled flush, so
+ * duplicate clicks return `enqueued=false` rather than queuing twice.
+ */
+export async function memoryTreeFlushNow(): Promise<FlushNowResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeFlushNow: entry');
+  const resp = await callCoreRpc<FlushNowResponse | ResultEnvelope<FlushNowResponse>>({
+    method: 'openhuman.memory_tree_flush_now',
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeFlushNow: exit enqueued=%s stale_buffers=%d',
+    out.enqueued,
+    out.stale_buffers
+  );
+  return out;
+}
+
 /**
  * Dump every non-deleted summary node so the UI can lay out the
  * parent/child memory tree (Obsidian-style graph view). Backed by

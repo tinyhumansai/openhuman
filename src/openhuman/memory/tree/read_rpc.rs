@@ -989,6 +989,71 @@ fn sanitize_basename(id: &str) -> String {
         .collect()
 }
 
+// ── flush_now (manual "Build summary trees" trigger) ────────────────────
+
+/// Response shape for [`flush_now_rpc`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FlushNowResponse {
+    /// `true` when a fresh job row was inserted; `false` when the
+    /// dedupe key already had an active flush job for today (the
+    /// existing job will pick up the same buffers).
+    pub enqueued: bool,
+    /// Number of L0 buffers that currently qualify for force-seal under
+    /// `max_age_secs = 0` — i.e. every non-empty L0 buffer in the
+    /// workspace. Echoed back so the UI can show "Sealing N buffers…"
+    /// without waiting for the worker to drain.
+    pub stale_buffers: u32,
+}
+
+/// `memory_tree_flush_now` — UI-facing "Build summary trees" trigger.
+///
+/// Enqueues a `flush_stale` job with `max_age_secs = 0` so every L0
+/// buffer (raw-leaf frontier of every source tree) gets force-sealed
+/// regardless of its age. The seal worker picks up the new summary
+/// nodes, runs them through the configured summariser (cloud or local
+/// depending on `memory_tree.llm_backend`), and persists the new L1+
+/// summaries — i.e. the tree gets built using the user's chosen AI.
+///
+/// Idempotent: the dedupe key is `flush_stale:<UTC date>`, so spamming
+/// the button doesn't queue duplicates.
+pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowResponse>, String> {
+    use crate::openhuman::memory::tree::jobs::store as jobs_store;
+    use crate::openhuman::memory::tree::jobs::types::{FlushStalePayload, NewJob};
+    use crate::openhuman::memory::tree::tree_source::store as tree_store;
+
+    let cfg = config.clone();
+    let resp = tokio::task::spawn_blocking(move || -> Result<FlushNowResponse> {
+        // Probe how many L0 buffers currently qualify (cutoff "now" =
+        // every buffer with at least one item) for the response payload.
+        let stale = tree_store::list_stale_buffers(&cfg, chrono::Utc::now())
+            .context("list stale buffers")?;
+        let stale_buffers = stale.len() as u32;
+
+        let payload = FlushStalePayload {
+            max_age_secs: Some(0),
+        };
+        let date_iso = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let job = NewJob::flush_stale(&payload, &date_iso)
+            .context("build flush_stale NewJob")?;
+        let enqueued = jobs_store::enqueue(&cfg, &job)
+            .context("enqueue flush_stale job")?
+            .is_some();
+        Ok(FlushNowResponse {
+            enqueued,
+            stale_buffers,
+        })
+    })
+    .await
+    .map_err(|e| format!("flush_now join error: {e}"))?
+    .map_err(|e| format!("flush_now: {e:#}"))?;
+
+    let log = format!(
+        "memory_tree::read: flush_now enqueued={} stale_buffers={}",
+        resp.enqueued, resp.stale_buffers
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
 // ── llm get/set ─────────────────────────────────────────────────────────
 
 /// Response shape for [`get_llm_rpc`] / [`set_llm_rpc`].

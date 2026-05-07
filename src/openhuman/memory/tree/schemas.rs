@@ -41,6 +41,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_llm"),
         schemas("set_llm"),
         schemas("graph_export"),
+        schemas("flush_now"),
     ]
 }
 
@@ -107,6 +108,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("graph_export"),
             handler: handle_graph_export,
+        },
+        RegisteredController {
+            schema: schemas("flush_now"),
+            handler: handle_flush_now,
         },
     ]
 }
@@ -535,6 +540,31 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "flush_now" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "flush_now",
+            description: "Manually trigger the summary-tree build. Enqueues a flush_stale \
+                          job with max_age_secs=0 so every L0 buffer force-seals immediately; \
+                          the seal worker runs each through the configured (cloud or local) \
+                          summariser. Idempotent — same UTC-day dedupe key as the scheduled \
+                          flush so spamming the button is safe.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "enqueued",
+                    ty: TypeSchema::Bool,
+                    comment: "True when a fresh job row was inserted; false when an active \
+                              flush job already exists for today.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "stale_buffers",
+                    ty: TypeSchema::U64,
+                    comment: "Count of L0 buffers that currently qualify for force-seal.",
+                    required: true,
+                },
+            ],
+        },
         "graph_export" => ControllerSchema {
             namespace: NAMESPACE,
             function: "graph_export",
@@ -771,6 +801,13 @@ fn handle_graph_export(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(read_rpc::graph_export_rpc(&config).await?)
+    })
+}
+
+fn handle_flush_now(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(read_rpc::flush_now_rpc(&config).await?)
     })
 }
 

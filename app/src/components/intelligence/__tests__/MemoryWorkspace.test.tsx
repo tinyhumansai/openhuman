@@ -12,16 +12,30 @@ import { MemoryWorkspace } from '../MemoryWorkspace';
 vi.mock('../../../utils/tauriCommands', () => ({
   isTauri: vi.fn(() => true),
   memoryTreeGraphExport: vi.fn(),
+  memoryTreeFlushNow: vi.fn(),
 }));
 
 vi.mock('../../../services/memorySyncService', () => ({
   memorySyncStatusList: vi.fn().mockResolvedValue([]),
 }));
 
-const { memoryTreeGraphExport } = (await import(
+vi.mock('../../../lib/composio/composioApi', () => ({
+  listConnections: vi.fn().mockResolvedValue({ connections: [] }),
+  syncConnection: vi.fn(),
+}));
+
+const { memoryTreeGraphExport, memoryTreeFlushNow } = (await import(
   '../../../utils/tauriCommands'
 )) as unknown as {
   memoryTreeGraphExport: Mock;
+  memoryTreeFlushNow: Mock;
+};
+
+const { listConnections, syncConnection } = (await import(
+  '../../../lib/composio/composioApi'
+)) as unknown as {
+  listConnections: Mock;
+  syncConnection: Mock;
 };
 
 function makeNode(partial: Partial<GraphNode>): GraphNode {
@@ -55,6 +69,9 @@ describe('MemoryWorkspace (graph view)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     memoryTreeGraphExport.mockResolvedValue(SAMPLE_RESPONSE);
+    memoryTreeFlushNow.mockResolvedValue({ enqueued: true, stale_buffers: 3 });
+    listConnections.mockResolvedValue({ connections: [] });
+    syncConnection.mockResolvedValue({ ok: true });
     // Stub `window.location.href` so the deep-link click is observable
     // without actually navigating away during the test run.
     originalLocation = window.location;
@@ -108,6 +125,52 @@ describe('MemoryWorkspace (graph view)', () => {
     expect(window.location.href).toBe(
       'obsidian://open?path=' + encodeURIComponent(expectedAbs)
     );
+  });
+
+  it('"Build summary trees" calls memory_tree_flush_now and toasts the buffer count', async () => {
+    const onToast = vi.fn();
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    const button = await screen.findByTestId('memory-build-trees');
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(memoryTreeFlushNow).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'success',
+          title: expect.stringContaining('3 buffer'),
+        })
+      );
+    });
+  });
+
+  it('per-connection Sync button dispatches composio.sync with the connection id', async () => {
+    listConnections.mockResolvedValue({
+      connections: [
+        {
+          id: 'conn-gmail-001',
+          toolkit: 'gmail',
+          status: 'ACTIVE',
+          accountEmail: 'alice@example.com',
+        },
+      ],
+    });
+    const onToast = vi.fn();
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    const button = await screen.findByTestId('memory-source-sync-gmail');
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(syncConnection).toHaveBeenCalledWith('conn-gmail-001', 'manual');
+    });
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'success',
+          title: expect.stringContaining('Gmail'),
+        })
+      );
+    });
   });
 
   it('surfaces an error message when the export RPC rejects', async () => {
