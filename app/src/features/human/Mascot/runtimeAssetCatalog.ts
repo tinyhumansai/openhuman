@@ -68,6 +68,6 @@ export function selectYellowMascotAsset(
   return {
     profile,
     variant,
-    relativePath: `generated/remotion/${profile}/${mascotColor}/${variant}.webp`,
+    relativePath: `generated/remotion/${profile}/${mascotColor}/${variant}.png`,
   };
 }

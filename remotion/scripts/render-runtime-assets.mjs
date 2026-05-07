@@ -72,7 +72,7 @@ function renderMov(composition, destination, props) {
   run(remotionBinary, args, remotionRoot);
 }
 
-function transcodeWebp(inputMov, outputWebp) {
+function transcodeApng(inputMov, outputPng) {
   run(
     'ffmpeg',
     [
@@ -80,17 +80,13 @@ function transcodeWebp(inputMov, outputWebp) {
       '-i',
       inputMov,
       '-an',
-      '-vcodec',
-      'libwebp',
-      '-quality',
-      '82',
-      '-compression_level',
-      '6',
-      '-loop',
+      '-plays',
       '0',
       '-pix_fmt',
-      'yuva420p',
-      outputWebp,
+      'rgba',
+      '-f',
+      'apng',
+      outputPng,
     ],
     remotionRoot
   );
@@ -101,7 +97,7 @@ ensureCleanDir(tempRoot);
 
 const manifest = {
   generatedAt: new Date().toISOString(),
-  format: 'image/webp',
+  format: 'image/png',
   variants: [],
 };
 
@@ -112,19 +108,19 @@ for (const variant of variants) {
   mkdirSync(tempProfileDir, { recursive: true });
 
   const movPath = join(tempProfileDir, `${variant.composition}.mov`);
-  const webpPath = join(profileDir, `${variant.composition}.webp`);
+  const pngPath = join(profileDir, `${variant.composition}.png`);
 
   console.log(
     `[remotion-runtime-assets] rendering ${variant.profile}/${variant.color}/${variant.composition}`
   );
   renderMov(variant.composition, movPath, variant.props);
-  transcodeWebp(movPath, webpPath);
+  transcodeApng(movPath, pngPath);
 
   manifest.variants.push({
     color: variant.color,
     composition: variant.composition,
     profile: variant.profile,
-    path: `${variant.profile}/${variant.color}/${variant.composition}.webp`,
+    path: `${variant.profile}/${variant.color}/${variant.composition}.png`,
     props: variant.props,
   });
 }

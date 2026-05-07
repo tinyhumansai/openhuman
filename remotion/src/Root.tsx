@@ -1,10 +1,5 @@
 import "./index.css";
-import { Composition, getStaticFiles } from "remotion";
-import { AIVideo, aiVideoSchema } from "./components/AIVideo";
-import { MascotWave } from "./components/MascotWave";
-import { MascotHi } from "./components/MascotHi";
-import { FPS, INTRO_DURATION } from "./lib/constants";
-import { getTimelinePath, loadTimelineFromFile } from "./lib/utils";
+import { Composition } from "remotion";
 import { Ghosty, ghostySchema } from "./Ghosty/Ghosty";
 import { GhostyIdle, ghostyIdleSchema } from "./Ghosty/GhostyIdle";
 import {
@@ -72,11 +67,6 @@ import { BlackMascotHatWithBag } from "./Mascot/black-MascotHatWithBag";
 import { BlackMascotLaughing } from "./Mascot/black-MascotLaughing";
 
 export const RemotionRoot: React.FC = () => {
-  const staticFiles = getStaticFiles();
-  const timelines = staticFiles
-    .filter((file) => file.name.endsWith("timeline.json"))
-    .map((file) => file.name.split("/")[1]);
-
   const GHOSTY_SHARED = { fps: 30, width: 1080, height: 1080 } as const;
   const GHOSTY_DEFAULTS = {
     bodyColor: "#1a1a1a" as const,
@@ -184,6 +174,7 @@ export const RemotionRoot: React.FC = () => {
           sleeping: false,
           thinking: false,
           greeting: false,
+          mascotColor: "yellow" as const,
           recordingColor: "#ff3b30",
           loadingColor: "#ffffff",
         }}
@@ -203,6 +194,7 @@ export const RemotionRoot: React.FC = () => {
           sleeping: false,
           thinking: false,
           greeting: false,
+          mascotColor: "yellow" as const,
           recordingColor: "#ff3b30",
           loadingColor: "#ffffff",
         }}
@@ -222,6 +214,7 @@ export const RemotionRoot: React.FC = () => {
           sleeping: false,
           thinking: false,
           greeting: false,
+          mascotColor: "yellow" as const,
           recordingColor: "#ff3b30",
           loadingColor: "#ffffff",
         }}
@@ -241,6 +234,7 @@ export const RemotionRoot: React.FC = () => {
           sleeping: false,
           thinking: false,
           greeting: false,
+          mascotColor: "yellow" as const,
           recordingColor: "#ff3b30",
           loadingColor: "#ffffff",
         }}
@@ -260,6 +254,7 @@ export const RemotionRoot: React.FC = () => {
           sleeping: false,
           thinking: false,
           greeting: false,
+          mascotColor: "yellow" as const,
           recordingColor: "#ff3b30",
           loadingColor: "#ffffff",
         }}
@@ -279,6 +274,7 @@ export const RemotionRoot: React.FC = () => {
           sleeping: false,
           thinking: true,
           greeting: false,
+          mascotColor: "yellow" as const,
           recordingColor: "#ff3b30",
           loadingColor: "#ffffff",
         }}
@@ -298,6 +294,7 @@ export const RemotionRoot: React.FC = () => {
           sleeping: true,
           thinking: false,
           greeting: false,
+          mascotColor: "yellow" as const,
           recordingColor: "#ff3b30",
           loadingColor: "#ffffff",
         }}
@@ -545,32 +542,6 @@ export const RemotionRoot: React.FC = () => {
         height={1080}
         defaultProps={{}}
       />
-      {timelines.map((storyName) => (
-        <Composition
-          id={storyName}
-          component={AIVideo}
-          fps={FPS}
-          width={1080}
-          height={1920}
-          schema={aiVideoSchema}
-          defaultProps={{
-            timeline: null,
-          }}
-          calculateMetadata={async ({ props }) => {
-            const { lengthFrames, timeline } = await loadTimelineFromFile(
-              getTimelinePath(storyName),
-            );
-
-            return {
-              durationInFrames: lengthFrames + INTRO_DURATION,
-              props: {
-                ...props,
-                timeline,
-              },
-            };
-          }}
-        />
-      ))}
     </>
   );
 };
