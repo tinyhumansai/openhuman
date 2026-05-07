@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   openhumanGetComposioTriggerSettings,
@@ -15,13 +15,13 @@ const ComposioTriagePanel = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+  const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     openhumanGetComposioTriggerSettings()
       .then(res => {
-        const settings =
-          res.result ??
-          (res as unknown as { triage_disabled: boolean; triage_disabled_toolkits: string[] });
+        const settings = res.result;
+        if (!settings) return;
         setTriageDisabled(settings.triage_disabled ?? false);
         setDisabledToolkits((settings.triage_disabled_toolkits ?? []).join(', '));
       })
@@ -29,6 +29,12 @@ const ComposioTriagePanel = () => {
         console.warn('[ComposioTriagePanel] failed to load settings:', err);
       })
       .finally(() => setLoading(false));
+
+    return () => {
+      if (saveStatusTimer.current !== null) {
+        clearTimeout(saveStatusTimer.current);
+      }
+    };
   }, []);
 
   const handleSave = async () => {
@@ -43,7 +49,7 @@ const ComposioTriagePanel = () => {
         triage_disabled_toolkits: toolkitList,
       });
       setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 3000);
+      saveStatusTimer.current = setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (err) {
       console.warn('[ComposioTriagePanel] failed to save settings:', err);
       setSaveStatus('error');
@@ -126,7 +132,8 @@ const ComposioTriagePanel = () => {
             value={disabledToolkits}
             onChange={e => setDisabledToolkits(e.target.value)}
             placeholder="gmail, slack, ..."
-            className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            disabled={triageDisabled}
+            className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400 disabled:cursor-not-allowed"
           />
         </div>
 
