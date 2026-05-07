@@ -103,7 +103,7 @@ pub struct StagedSummary {
     /// Identifier of the summary that was staged.
     pub summary_id: String,
     /// Relative content path (forward-slash, e.g.
-    /// `"wiki/summaries/source/slug/L1/id.md"`).
+    /// `"wiki/summaries/source-slug/L1/id.md"`).
     pub content_path: String,
     /// SHA-256 hex digest over the **body bytes** only (front-matter excluded).
     pub content_sha256: String,
@@ -299,7 +299,7 @@ mod tests {
         );
         let staged = stage_summary(dir.path(), &input, "gmail-alice-x-com", None).unwrap();
         assert_eq!(staged.summary_id, "summary:L1:test1");
-        assert!(staged.content_path.starts_with("wiki/summaries/source/"));
+        assert!(staged.content_path.starts_with("wiki/summaries/source-"));
         assert!(staged.content_path.ends_with(".md"));
         assert_eq!(staged.content_sha256.len(), 64);
 

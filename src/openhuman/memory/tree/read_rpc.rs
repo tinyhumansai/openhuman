@@ -1260,10 +1260,12 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
 
         // Filesystem cleanup. Each directory is best-effort: if one
         // fails (permission denied, path doesn't exist) we keep going
-        // and report what we managed to remove. `summaries/` is
-        // covered by the legacy pre-`wiki/` layout and is harmless to
-        // attempt removing on a fresh install.
-        const DIRS: &[&str] = &["raw", "wiki", "email", "chat", "document", "summaries"];
+        // and report what we managed to remove. `email/` and the
+        // legacy bare `summaries/` are listed for back-compat —
+        // workspaces ingested before the raw-archive + wiki/ moves
+        // still have files there. Fresh installs only ever populate
+        // `raw/`, `wiki/`, `chat/`, and `document/`.
+        const DIRS: &[&str] = &["raw", "wiki", "chat", "document", "email", "summaries"];
         let content_root = cfg.memory_tree_content_root();
         let mut dirs_removed: Vec<String> = Vec::new();
         for dir in DIRS {

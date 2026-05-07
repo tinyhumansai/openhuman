@@ -152,6 +152,18 @@ pub fn read_chunk_body(
         )
     })?;
     let (rel_path, expected_sha256) = pointers;
+    // Email chunks are no longer mirrored on disk under `email/<scope>/`
+    // — their full body lives in `raw/<source>/<ts>_<id>.md`. The
+    // staged row carries an empty path; the chunker's preview in the
+    // SQL `content` column is the fallback for read paths that
+    // bypass the raw archive.
+    if rel_path.is_empty() {
+        return Err(anyhow::anyhow!(
+            "[content_store::read] empty content_path for chunk_id={} (chunk file not staged on disk; \
+             read the SQL `content` preview or the raw archive instead)",
+            chunk_id
+        ));
+    }
 
     let content_root = config.memory_tree_content_root();
     // Reconstruct the absolute path from the stored relative forward-slash path.

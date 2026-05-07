@@ -132,7 +132,7 @@ describe('MemoryWorkspace (graph view)', () => {
     renderWithProviders(<MemoryWorkspace />);
     const node = await screen.findByTestId('memory-graph-node-child-1');
     fireEvent.click(node);
-    const expectedRel = 'wiki/summaries/source/gmail-alice-x-com/L1/summary-L1-abc.md';
+    const expectedRel = 'wiki/summaries/source-gmail-alice-x-com/L1/summary-L1-abc.md';
     const expectedAbs = '/tmp/workspace/memory_tree/content/' + expectedRel;
     await waitFor(() => {
       expect(openUrl).toHaveBeenCalledWith(
