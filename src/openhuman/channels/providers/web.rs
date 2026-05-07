@@ -1088,8 +1088,7 @@ fn build_session_agent(
     // the chunks-aware constructor so the orchestrator's system prompt
     // carries the same memory context the reflection-LLM cited. For
     // regular threads this is a no-op (chunks=None, normal path).
-    let reflection_chunks =
-        load_reflection_chunks_for_thread(&effective.workspace_dir, thread_id);
+    let reflection_chunks = load_reflection_chunks_for_thread(&effective.workspace_dir, thread_id);
 
     let agent_result = match reflection_chunks {
         Some(chunks) if !chunks.is_empty() => {
@@ -1098,11 +1097,7 @@ fn build_session_agent(
                 thread_id,
                 chunks.len()
             );
-            Agent::from_config_for_agent_with_reflection_chunks(
-                &effective,
-                target_agent_id,
-                chunks,
-            )
+            Agent::from_config_for_agent_with_reflection_chunks(&effective, target_agent_id, chunks)
         }
         _ => Agent::from_config_for_agent(&effective, target_agent_id),
     };
@@ -1155,17 +1150,12 @@ fn load_reflection_chunks_for_thread(
         .get("reflection_id")
         .and_then(|v| v.as_str())?
         .to_string();
-    let reflection = crate::openhuman::subconscious::store::with_connection(
-        workspace_dir,
-        |conn| {
-            crate::openhuman::subconscious::reflection_store::get_reflection(
-                conn,
-                &reflection_id,
-            )
-        },
-    )
-    .ok()
-    .flatten()?;
+    let reflection =
+        crate::openhuman::subconscious::store::with_connection(workspace_dir, |conn| {
+            crate::openhuman::subconscious::reflection_store::get_reflection(conn, &reflection_id)
+        })
+        .ok()
+        .flatten()?;
     Some(reflection.source_chunks)
 }
 

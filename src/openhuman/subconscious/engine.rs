@@ -11,9 +11,9 @@
 use super::executor;
 use super::prompt;
 use super::reflection::{apply_cap, hydrate_draft, Reflection, ReflectionDraft};
-use super::source_chunk::resolve_chunks;
 use super::reflection_store;
 use super::situation_report::build_situation_report;
+use super::source_chunk::resolve_chunks;
 use super::store;
 use super::types::{
     EscalationPriority, EvaluationResponse, SubconsciousStatus, SubconsciousTask, TaskEvaluation,

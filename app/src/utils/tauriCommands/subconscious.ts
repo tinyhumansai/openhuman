@@ -246,9 +246,7 @@ export async function actOnReflection(
   reflectionId: string
 ): Promise<CommandResponse<{ reflection_id: string; thread_id: string }>> {
   if (!isTauri()) throw new Error('Not running in Tauri');
-  return await callCoreRpc<
-    CommandResponse<{ reflection_id: string; thread_id: string }>
-  >({
+  return await callCoreRpc<CommandResponse<{ reflection_id: string; thread_id: string }>>({
     method: 'openhuman.subconscious_reflections_act',
     params: { reflection_id: reflectionId },
   });

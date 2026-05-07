@@ -184,9 +184,7 @@ export default function SubconsciousReflectionCards({
   // without it, `flex-1` children with overflow won't actually shrink to
   // the parent's height and the inner scrollbar never engages.
   return (
-    <div
-      data-testid="reflection-cards"
-      className="flex flex-col h-full min-h-0 overflow-hidden">
+    <div data-testid="reflection-cards" className="flex flex-col h-full min-h-0 overflow-hidden">
       <div className="shrink-0 pb-3">
         <h3 className="text-sm font-semibold text-stone-900 flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-primary-400" />
@@ -236,9 +234,7 @@ export default function SubconsciousReflectionCards({
                     {formatRelativeTime(r.created_at)}
                   </span>
                 </div>
-                <p className="text-sm text-stone-900 whitespace-pre-line break-words">
-                  {r.body}
-                </p>
+                <p className="text-sm text-stone-900 whitespace-pre-line break-words">{r.body}</p>
                 {r.proposed_action && (
                   <p className="text-xs text-stone-500 mt-2">
                     <em>Proposed action:</em> {r.proposed_action}

@@ -5,9 +5,7 @@
 //! validates CRUD + idempotency + ordering.
 
 use super::*;
-use crate::openhuman::subconscious::reflection::{
-    hydrate_draft, ReflectionDraft, ReflectionKind,
-};
+use crate::openhuman::subconscious::reflection::{hydrate_draft, ReflectionDraft, ReflectionKind};
 use rusqlite::Connection;
 
 fn fresh_conn() -> Connection {

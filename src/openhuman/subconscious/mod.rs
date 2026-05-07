@@ -18,11 +18,11 @@ mod integration_test;
 
 pub use engine::SubconsciousEngine;
 pub use reflection::{Reflection, ReflectionKind, MAX_REFLECTIONS_PER_TICK};
-pub use source_chunk::SourceChunk;
 pub use schemas::{
     all_controller_schemas as all_subconscious_controller_schemas,
     all_registered_controllers as all_subconscious_registered_controllers,
 };
+pub use source_chunk::SourceChunk;
 pub use types::{
     Escalation, EscalationStatus, SubconsciousLogEntry, SubconsciousStatus, SubconsciousTask,
     TaskRecurrence, TaskSource, TickDecision, TickResult,

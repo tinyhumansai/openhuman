@@ -100,10 +100,7 @@ pub fn resolve_chunks(
         .collect()
 }
 
-fn resolve_one(
-    config: &crate::openhuman::config::Config,
-    raw: &str,
-) -> SourceChunk {
+fn resolve_one(config: &crate::openhuman::config::Config, raw: &str) -> SourceChunk {
     let (kind, _id_after_colon) = parse_ref(raw);
     // Important: the DB primary keys for summaries and entities INCLUDE the
     // kind prefix as part of the id — `mem_tree_summaries.id` looks like
@@ -144,10 +141,7 @@ fn resolve_one(
 /// degrade to an empty-content chunk with a `resolver_status` metadata
 /// field set so consumers can distinguish "not yet resolved" from
 /// "looked up and got nothing."
-fn resolve_summary(
-    config: &crate::openhuman::config::Config,
-    raw: &str,
-) -> SourceChunk {
+fn resolve_summary(config: &crate::openhuman::config::Config, raw: &str) -> SourceChunk {
     // The DB primary key for `mem_tree_summaries.id` IS the full prefixed
     // string the LLM cites — e.g. `summary:L0:<uuid>` — because the
     // situation report's summaries section renders `s.id` verbatim and
@@ -193,9 +187,7 @@ fn resolve_summary(
             }),
         },
         Err(e) => {
-            log::debug!(
-                "[subconscious::source_chunk] resolve_summary db error for {raw}: {e}"
-            );
+            log::debug!("[subconscious::source_chunk] resolve_summary db error for {raw}: {e}");
             SourceChunk {
                 ref_id: raw.to_string(),
                 kind: "summary".to_string(),
@@ -214,10 +206,7 @@ fn resolve_summary(
 /// scoring representative surface, then enriches with the score from
 /// `mem_tree_entity_hotness` when available. Same best-effort error
 /// behaviour as [`resolve_summary`].
-fn resolve_entity(
-    config: &crate::openhuman::config::Config,
-    raw: &str,
-) -> SourceChunk {
+fn resolve_entity(config: &crate::openhuman::config::Config, raw: &str) -> SourceChunk {
     // Same key convention as summaries — `mem_tree_entity_index.entity_id`
     // is the full kind-prefixed string (`artifact:"foo"`, `person:bar`,
     // etc.). Match against the raw ref verbatim.
@@ -296,9 +285,7 @@ fn resolve_entity(
             }),
         },
         Err(e) => {
-            log::debug!(
-                "[subconscious::source_chunk] resolve_entity db error for {raw}: {e}"
-            );
+            log::debug!("[subconscious::source_chunk] resolve_entity db error for {raw}: {e}");
             SourceChunk {
                 ref_id: raw.to_string(),
                 kind: original_kind.clone(),
@@ -338,5 +325,4 @@ mod tests {
         assert_eq!(out.chars().count(), PREVIEW_MAX_CHARS + 1);
         assert!(out.ends_with('…'));
     }
-
 }
