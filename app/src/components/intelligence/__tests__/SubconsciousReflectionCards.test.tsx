@@ -134,4 +134,49 @@ describe('SubconsciousReflectionCards', () => {
       expect(screen.getByTestId('reflection-card-fetched')).toBeTruthy();
     });
   });
+
+  it('shows the error banner when listReflections rejects', async () => {
+    mockedListReflections.mockRejectedValueOnce(new Error('boom: rpc unreachable'));
+    renderWithProviders(<SubconsciousReflectionCards />);
+    await waitFor(() => {
+      expect(screen.getByTestId('reflection-cards-error')).toBeTruthy();
+    });
+    expect(screen.getByTestId('reflection-cards-error').textContent).toContain(
+      'boom: rpc unreachable'
+    );
+  });
+
+  it('rolls the optimistic dismiss back when dismissReflection rejects', async () => {
+    mockedDismissReflection.mockRejectedValueOnce(new Error('rpc denied'));
+    renderWithProviders(<SubconsciousReflectionCards initialReflections={[refl()]} />);
+    fireEvent.click(screen.getByTestId('reflection-dismiss-r-1'));
+    // First the card disappears (optimistic), then it comes back when the
+    // rejection lands in the catch handler — the rollback path is what
+    // bumps coverage on the otherwise-untested catch branch.
+    await waitFor(() => {
+      expect(screen.queryByTestId('reflection-card-r-1')).toBeNull();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('reflection-card-r-1')).toBeTruthy();
+    });
+  });
+
+  it('surfaces the error banner when actOnReflection rejects', async () => {
+    mockedActOnReflection.mockRejectedValueOnce(new Error('act failed'));
+    const onNavigateToThread = vi.fn();
+    renderWithProviders(
+      <SubconsciousReflectionCards
+        initialReflections={[refl()]}
+        onNavigateToThread={onNavigateToThread}
+      />
+    );
+    fireEvent.click(screen.getByTestId('reflection-act-r-1'));
+    await waitFor(() => {
+      expect(screen.getByTestId('reflection-cards-error')).toBeTruthy();
+    });
+    // Card stays visible (act failed → no optimistic hide finalises) and
+    // the navigate callback is *not* fired.
+    expect(screen.getByTestId('reflection-card-r-1')).toBeTruthy();
+    expect(onNavigateToThread).not.toHaveBeenCalled();
+  });
 });
