@@ -445,9 +445,7 @@ mod tests {
     async fn provider_summary_response_is_used_and_clamped() {
         // Provider returns plain text; summariser uses it verbatim
         // (after trim) and clamps to the budget.
-        let provider = std::sync::Arc::new(StubProvider::ok(
-            "alice decided to ship friday\n",
-        ));
+        let provider = std::sync::Arc::new(StubProvider::ok("alice decided to ship friday\n"));
         let s = LlmSummariser::new(LlmSummariserConfig::default(), provider.clone());
         let inputs = vec![sample_input("a", "alice ships friday")];
         let out = s.summarise(&inputs, &test_ctx()).await.unwrap();

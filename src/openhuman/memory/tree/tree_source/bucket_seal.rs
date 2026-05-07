@@ -313,8 +313,7 @@ pub(crate) fn should_seal(buf: &Buffer) -> bool {
         return false;
     }
     if buf.level == 0 {
-        buf.token_sum >= INPUT_TOKEN_BUDGET as i64
-            || (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
+        buf.token_sum >= INPUT_TOKEN_BUDGET as i64 || (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
     } else {
         (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
     }
@@ -525,20 +524,15 @@ pub(crate) async fn seal_one_level(
                 // makes the SQL error visible for diagnosis.
                 match crate::openhuman::memory::tree::store::get_chunk_raw_refs(config, chunk_id) {
                     Ok(refs_opt) => {
-                        refs_opt
-                            .and_then(|refs| refs.into_iter().next())
-                            .map(|r| {
-                                // RawRef::path is a forward-slash
-                                // relative path under content_root,
-                                // e.g.
-                                // "raw/gmail-…/1700000_msg-id.md".
-                                // Strip `.md` for Obsidian's
-                                // extension-less wikilink convention.
-                                r.path
-                                    .strip_suffix(".md")
-                                    .unwrap_or(&r.path)
-                                    .to_string()
-                            })
+                        refs_opt.and_then(|refs| refs.into_iter().next()).map(|r| {
+                            // RawRef::path is a forward-slash
+                            // relative path under content_root,
+                            // e.g.
+                            // "raw/gmail-…/1700000_msg-id.md".
+                            // Strip `.md` for Obsidian's
+                            // extension-less wikilink convention.
+                            r.path.strip_suffix(".md").unwrap_or(&r.path).to_string()
+                        })
                     }
                     Err(e) => {
                         log::warn!(
