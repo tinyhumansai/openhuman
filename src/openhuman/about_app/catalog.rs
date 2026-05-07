@@ -859,6 +859,24 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     // ── Update ──────────────────────────────────────────────────────────────
+    // ── Meet ────────────────────────────────────────────────────────────────
+    Capability {
+        id: "meet.join_call",
+        name: "Join Google Meet Calls",
+        domain: "meet",
+        category: CapabilityCategory::Channels,
+        description: "Join a Google Meet call as an anonymous guest in a dedicated CEF webview \
+                      window with an isolated profile. The host admits the agent from the \
+                      Meet waiting room.",
+        how_to: "Intelligence > Calls",
+        status: CapabilityStatus::Beta,
+        privacy: Some(CapabilityPrivacy {
+            leaves_device: true,
+            data_kind: PrivacyDataKind::Metadata,
+            destinations: &["Google Meet"],
+        }),
+    },
+    // ── Update ──────────────────────────────────────────────────────────────
     Capability {
         id: "update.check",
         name: "Check for Core Updates",

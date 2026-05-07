@@ -14,6 +14,7 @@ mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+mod meet_call;
 mod native_notifications;
 mod notification_settings;
 mod process_kill;
@@ -1319,6 +1320,7 @@ pub fn run() {
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
     let builder = builder.manage(telegram_scanner::ScannerRegistry::new());
     let builder = builder.manage(screen_capture::ScreenShareState::new());
+    let builder = builder.manage(meet_call::MeetCallState::new());
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -1809,7 +1811,9 @@ pub fn run() {
             mascot_window_show,
             mascot_window_hide,
             file_logging::reveal_logs_folder,
-            file_logging::logs_folder_path
+            file_logging::logs_folder_path,
+            meet_call::meet_call_open_window,
+            meet_call::meet_call_close_window
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

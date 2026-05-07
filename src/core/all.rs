@@ -207,6 +207,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     );
     // Integration notification ingest, triage, and per-provider settings
     controllers.extend(crate::openhuman::notifications::all_notifications_registered_controllers());
+    // Google Meet call-join request validation (shell handles the webview)
+    controllers.extend(crate::openhuman::meet::all_meet_registered_controllers());
     // Structured WhatsApp Web data — agent-facing read-only controllers (list/search).
     // The write-path ingest controller is registered separately in build_internal_only_controllers.
     controllers.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_registered_controllers());
@@ -285,6 +287,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     );
     // Integration notification ingest, triage, and per-provider settings
     schemas.extend(crate::openhuman::notifications::all_notifications_controller_schemas());
+    // Google Meet call-join request validation
+    schemas.extend(crate::openhuman::meet::all_meet_controller_schemas());
     // Structured WhatsApp Web data — local SQLite store, agent-queryable
     schemas.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_controller_schemas());
     schemas
@@ -372,6 +376,10 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "notification" => Some(
             "Integration notification ingest, triage scoring, listing, read-state, \
              and per-provider routing settings.",
+        ),
+        "meet" => Some(
+            "Validate Google Meet call-join requests and mint a request_id; the desktop \
+             shell opens the embedded CEF webview that joins the call as an anonymous guest.",
         ),
         "whatsapp_data" => Some(
             "Structured WhatsApp conversation and message store — list chats, read messages, and search across WhatsApp Web data.",

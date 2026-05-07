@@ -3852,3 +3852,78 @@ async fn voice_cloud_transcribe_registered_e2e() {
     mock_join.abort();
     rpc_join.abort();
 }
+
+#[tokio::test]
+async fn json_rpc_meet_join_call_validates_and_returns_request_id() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // --- happy path: validates, returns ok + request_id + normalized echo ---
+    let ok = post_json_rpc(
+        &rpc_base,
+        9001,
+        "openhuman.meet_join_call",
+        json!({
+            "meet_url": "https://meet.google.com/abc-defg-hij",
+            "display_name": "  Agent Alice  "
+        }),
+    )
+    .await;
+    let result = assert_no_jsonrpc_error(&ok, "meet_join_call ok");
+    let body = result.get("result").unwrap_or(result);
+    assert_eq!(body.get("ok"), Some(&json!(true)));
+    let request_id = body
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .expect("request_id present");
+    assert!(!request_id.is_empty(), "request_id must not be empty");
+    assert_eq!(
+        body.get("meet_url").and_then(|v| v.as_str()),
+        Some("https://meet.google.com/abc-defg-hij"),
+        "echoed meet_url should be the normalized URL"
+    );
+    assert_eq!(
+        body.get("display_name").and_then(|v| v.as_str()),
+        Some("Agent Alice"),
+        "display_name should be trimmed before echo"
+    );
+
+    // --- bad host: rejected as JSON-RPC error ---
+    let bad_host = post_json_rpc(
+        &rpc_base,
+        9002,
+        "openhuman.meet_join_call",
+        json!({
+            "meet_url": "https://example.com/abc-defg-hij",
+            "display_name": "Agent"
+        }),
+    )
+    .await;
+    assert_jsonrpc_error(&bad_host, "meet_join_call bad_host");
+
+    // --- empty display name: rejected ---
+    let bad_name = post_json_rpc(
+        &rpc_base,
+        9003,
+        "openhuman.meet_join_call",
+        json!({
+            "meet_url": "https://meet.google.com/abc-defg-hij",
+            "display_name": "   "
+        }),
+    )
+    .await;
+    assert_jsonrpc_error(&bad_name, "meet_join_call bad_name");
+
+    rpc_join.abort();
+}
