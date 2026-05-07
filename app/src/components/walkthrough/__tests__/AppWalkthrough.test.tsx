@@ -1,6 +1,7 @@
 /**
  * Tests for the Joyride walkthrough components introduced in #1123,
- * extended in #1212 for multi-page guided tour.
+ * extended in #1212 for multi-page guided tour,
+ * extended in #1215 for interactive gate support.
  *
  * Verifies:
  *  - isWalkthroughPending / setWalkthroughPending / markWalkthroughComplete helpers
@@ -12,6 +13,8 @@
  *  - createWalkthroughSteps: 9 steps, cross-page steps have before functions
  *  - waitForTarget: resolves when element added, rejects on timeout
  *  - WalkthroughTooltip renders step title, content, and navigation buttons
+ *  - Gate-aware step index persistence (resume support)
+ *  - Gate data attached to steps 3 and 4
  */
 import { act, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -22,6 +25,7 @@ import {
   markWalkthroughComplete,
   resetWalkthrough,
   setWalkthroughPending,
+  WALKTHROUGH_STEP_KEY,
 } from '../AppWalkthrough';
 import { createWalkthroughSteps, waitForTarget } from '../walkthroughSteps';
 // ── WalkthroughTooltip rendering tests ───────────────────────────────────
@@ -31,6 +35,7 @@ import WalkthroughTooltip from '../WalkthroughTooltip';
 vi.mock('../../../store', () => ({
   store: {
     dispatch: vi.fn(() => ({ unwrap: vi.fn().mockResolvedValue({ id: 'thread-welcome-123' }) })),
+    getState: vi.fn(() => ({ accounts: { order: [] }, thread: { messagesByThreadId: {} } })),
   },
 }));
 
@@ -40,24 +45,45 @@ vi.mock('../../../store/threadSlice', () => ({
   addMessageLocal: vi.fn(() => ({ type: 'thread/addMessageLocal' })),
 }));
 
+// ── Mock interactiveGates and useGatePoller so tooltip tests are isolated ──
+
+vi.mock('../interactiveGates', () => ({
+  getStepGate: vi.fn(() => null),
+  GATE_CONNECT_SKILL: { id: 'connect-skill', label: '', skipLabel: '', isComplete: () => false },
+  GATE_SEND_MESSAGE: { id: 'send-message', label: '', skipLabel: '', isComplete: () => false },
+  GATES: {},
+}));
+
+vi.mock('../useGatePoller', () => ({ useGatePoller: vi.fn(() => true) }));
+
 // ── Mock react-joyride so tests don't need a real DOM with
 //    positioned elements for each step target. ─────────────────────────────
-//    The mock captures the `onEvent` callback so individual tests can
-//    simulate tour events (TOUR_END with FINISHED / SKIPPED status).
+//    The mock captures the `onEvent` callback and `stepIndex` so individual
+//    tests can simulate tour events and verify controlled-mode props.
 
 type JoyrideMockProps = {
   run: boolean;
-  onEvent?: (data: { type: string; status: string; index: number }) => void;
+  stepIndex?: number;
+  onEvent?: (
+    data: { type: string; status: string; index: number },
+    controls: { next: () => void; go: (n: number) => void }
+  ) => void;
 };
 
 let capturedOnEvent: JoyrideMockProps['onEvent'] | undefined;
 
 vi.mock('react-joyride', () => ({
-  Joyride: ({ run, onEvent }: JoyrideMockProps) => {
+  Joyride: ({ run, onEvent, stepIndex }: JoyrideMockProps) => {
     capturedOnEvent = onEvent;
-    return <div data-testid="joyride-mock" data-run={String(run)} />;
+    return (
+      <div
+        data-testid="joyride-mock"
+        data-run={String(run)}
+        data-step-index={String(stepIndex ?? '')}
+      />
+    );
   },
-  EVENTS: { TOUR_END: 'tour:end' },
+  EVENTS: { TOUR_END: 'tour:end', STEP_BEFORE: 'step:before', STEP_AFTER: 'step:after' },
   STATUS: { FINISHED: 'finished', SKIPPED: 'skipped' },
 }));
 
@@ -142,6 +168,12 @@ describe('markWalkthroughComplete', () => {
     expect(localStorage.getItem(WALKTHROUGH_PENDING_KEY)).toBeNull();
   });
 
+  it('clears step index key when marking complete', () => {
+    localStorage.setItem(WALKTHROUGH_STEP_KEY, '5');
+    markWalkthroughComplete();
+    expect(localStorage.getItem(WALKTHROUGH_STEP_KEY)).toBeNull();
+  });
+
   it('swallows error when localStorage.setItem throws (SecurityError / quota)', () => {
     // Temporarily replace localStorage with a broken implementation to trigger
     // the catch block at line 61 in markWalkthroughComplete.
@@ -210,6 +242,12 @@ describe('resetWalkthrough', () => {
 
     expect(localStorage.getItem(WALKTHROUGH_KEY)).toBeNull();
     expect(localStorage.getItem(WALKTHROUGH_PENDING_KEY)).toBe('true');
+  });
+
+  it('clears step index key on reset', () => {
+    localStorage.setItem(WALKTHROUGH_STEP_KEY, '5');
+    resetWalkthrough();
+    expect(localStorage.getItem(WALKTHROUGH_STEP_KEY)).toBeNull();
   });
 
   it('dispatches walkthrough:restart CustomEvent on window', () => {
@@ -318,7 +356,10 @@ describe('AppWalkthrough component', () => {
 
     // Simulate TOUR_END with FINISHED status
     await act(async () => {
-      capturedOnEvent?.({ type: 'tour:end', status: 'finished', index: 8 });
+      capturedOnEvent?.(
+        { type: 'tour:end', status: 'finished', index: 8 },
+        { next: vi.fn(), go: vi.fn() }
+      );
     });
 
     // Walkthrough should be marked complete in localStorage
@@ -340,7 +381,10 @@ describe('AppWalkthrough component', () => {
 
     // Simulate TOUR_END with SKIPPED status
     await act(async () => {
-      capturedOnEvent?.({ type: 'tour:end', status: 'skipped', index: 1 });
+      capturedOnEvent?.(
+        { type: 'tour:end', status: 'skipped', index: 1 },
+        { next: vi.fn(), go: vi.fn() }
+      );
     });
 
     expect(localStorage.getItem(WALKTHROUGH_KEY)).toBe('true');
@@ -359,7 +403,10 @@ describe('AppWalkthrough component', () => {
 
     // Simulate a step:after event (not tour:end)
     await act(async () => {
-      capturedOnEvent?.({ type: 'step:after', status: 'running', index: 0 });
+      capturedOnEvent?.(
+        { type: 'step:after', status: 'running', index: 0 },
+        { next: vi.fn(), go: vi.fn() }
+      );
     });
 
     // Should NOT have marked complete
@@ -392,6 +439,139 @@ describe('AppWalkthrough component', () => {
     // Component should now render the Joyride instance.
     expect(screen.getByTestId('joyride-mock')).toBeInTheDocument();
   });
+
+  it('starts at saved step index when resuming', async () => {
+    setWalkthroughPending();
+    localStorage.setItem(WALKTHROUGH_STEP_KEY, '4');
+
+    const { default: AppWalkthrough } = await import('../AppWalkthrough');
+    render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByTestId('joyride-mock').getAttribute('data-step-index')).toBe('4');
+  });
+
+  it('saves step index to localStorage on STEP_AFTER', async () => {
+    setWalkthroughPending();
+
+    const { default: AppWalkthrough } = await import('../AppWalkthrough');
+    render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
+
+    const mockControls = { next: vi.fn(), go: vi.fn() };
+    await act(async () => {
+      capturedOnEvent?.({ type: 'step:after', status: 'running', index: 2 }, mockControls);
+    });
+
+    expect(localStorage.getItem(WALKTHROUGH_STEP_KEY)).toBe('3');
+  });
+
+  it('clears step index on tour completion', async () => {
+    setWalkthroughPending();
+    localStorage.setItem(WALKTHROUGH_STEP_KEY, '5');
+
+    const { default: AppWalkthrough } = await import('../AppWalkthrough');
+    render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
+
+    const mockControls = { next: vi.fn(), go: vi.fn() };
+    await act(async () => {
+      capturedOnEvent?.({ type: 'tour:end', status: 'finished', index: 9 }, mockControls);
+    });
+
+    expect(localStorage.getItem(WALKTHROUGH_STEP_KEY)).toBeNull();
+  });
+
+  it('auto-skips a gated step when the gate is already complete on STEP_BEFORE', async () => {
+    vi.useFakeTimers();
+    setWalkthroughPending();
+
+    // Make getStepGate return a completed gate for any step
+    const { getStepGate } = await import('../interactiveGates');
+    vi.mocked(getStepGate).mockReturnValue({
+      id: 'test-gate',
+      label: 'Do it',
+      skipLabel: 'Skip',
+      isComplete: () => true,
+    });
+
+    const { default: AppWalkthrough } = await import('../AppWalkthrough');
+    render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
+
+    const mockControls = { next: vi.fn(), go: vi.fn() };
+    await act(async () => {
+      capturedOnEvent?.({ type: 'step:before', status: 'running', index: 2 }, mockControls);
+    });
+
+    // controls.next() is called via setTimeout
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+
+    expect(mockControls.next).toHaveBeenCalledTimes(1);
+
+    vi.mocked(getStepGate).mockReturnValue(null);
+    vi.useRealTimers();
+  });
+
+  it('does not auto-skip when gate is incomplete on STEP_BEFORE', async () => {
+    setWalkthroughPending();
+
+    const { getStepGate } = await import('../interactiveGates');
+    vi.mocked(getStepGate).mockReturnValue({
+      id: 'test-gate',
+      label: 'Do it',
+      skipLabel: 'Skip',
+      isComplete: () => false,
+    });
+
+    const { default: AppWalkthrough } = await import('../AppWalkthrough');
+    render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
+
+    const mockControls = { next: vi.fn(), go: vi.fn() };
+    await act(async () => {
+      capturedOnEvent?.({ type: 'step:before', status: 'running', index: 2 }, mockControls);
+    });
+
+    expect(mockControls.next).not.toHaveBeenCalled();
+
+    vi.mocked(getStepGate).mockReturnValue(null);
+  });
+
+  it('resets step index to 0 on walkthrough:restart', async () => {
+    setWalkthroughPending();
+    localStorage.setItem(WALKTHROUGH_STEP_KEY, '7');
+
+    const { default: AppWalkthrough } = await import('../AppWalkthrough');
+    render(
+      <MemoryRouter>
+        <AppWalkthrough />
+      </MemoryRouter>
+    );
+
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('walkthrough:restart'));
+    });
+
+    expect(localStorage.getItem(WALKTHROUGH_STEP_KEY)).toBeNull();
+  });
 });
 
 /** Build the minimal props required by WalkthroughTooltip without fighting the full TooltipRenderProps type. */
@@ -403,6 +583,7 @@ function makeTooltipProps(
     continuous?: boolean;
     title?: string;
     content?: string;
+    data?: Record<string, unknown>;
   } = {}
 ) {
   const {
@@ -412,6 +593,7 @@ function makeTooltipProps(
     continuous = true,
     title = 'Step title',
     content = 'Step content',
+    data,
   } = overrides;
   // Cast to unknown then to the component's expected props to avoid fighting
   // the exhaustive TooltipRenderProps type in test code.
@@ -420,7 +602,7 @@ function makeTooltipProps(
     index,
     size,
     isLastStep,
-    step: { title, content, target: 'body' },
+    step: { title, content, target: 'body', data },
     backProps: {
       'aria-label': 'Back',
       onClick: vi.fn(),
@@ -516,6 +698,76 @@ describe('WalkthroughTooltip', () => {
   });
 });
 
+// ── WalkthroughTooltip gate behavior tests ────────────────────────────────
+
+describe('WalkthroughTooltip — gate behavior', () => {
+  it('shows gate label and skip button when gate is blocking', async () => {
+    const { getStepGate } = await import('../interactiveGates');
+    const { useGatePoller } = await import('../useGatePoller');
+
+    vi.mocked(getStepGate).mockReturnValue({
+      id: 'test-gate',
+      label: 'Do the thing to continue',
+      skipLabel: 'Skip — later',
+      isComplete: () => false,
+    });
+    vi.mocked(useGatePoller).mockReturnValue(false);
+
+    render(<WalkthroughTooltip {...makeTooltipProps()} />);
+
+    expect(screen.getByText('Do the thing to continue')).toBeInTheDocument();
+    expect(screen.getByText('Skip — later')).toBeInTheDocument();
+  });
+
+  it('shows done indicator when gate is complete', async () => {
+    const { getStepGate } = await import('../interactiveGates');
+    const { useGatePoller } = await import('../useGatePoller');
+
+    vi.mocked(getStepGate).mockReturnValue({
+      id: 'test-gate',
+      label: 'Do the thing',
+      skipLabel: 'Skip',
+      isComplete: () => true,
+    });
+    vi.mocked(useGatePoller).mockReturnValue(true);
+
+    render(<WalkthroughTooltip {...makeTooltipProps()} />);
+
+    expect(screen.getByText('✓ Done!')).toBeInTheDocument();
+  });
+
+  it('disables Next button when gate is blocking', async () => {
+    const { getStepGate } = await import('../interactiveGates');
+    const { useGatePoller } = await import('../useGatePoller');
+
+    vi.mocked(getStepGate).mockReturnValue({
+      id: 'test-gate',
+      label: 'Do it',
+      skipLabel: 'Skip',
+      isComplete: () => false,
+    });
+    vi.mocked(useGatePoller).mockReturnValue(false);
+
+    render(<WalkthroughTooltip {...makeTooltipProps()} />);
+
+    const nextButton = screen.getByText('Next →');
+    expect(nextButton).toBeDisabled();
+  });
+
+  it('enables Next button when no gate', async () => {
+    const { getStepGate } = await import('../interactiveGates');
+    const { useGatePoller } = await import('../useGatePoller');
+
+    vi.mocked(getStepGate).mockReturnValue(null);
+    vi.mocked(useGatePoller).mockReturnValue(true);
+
+    render(<WalkthroughTooltip {...makeTooltipProps()} />);
+
+    const nextButton = screen.getByText('Next →');
+    expect(nextButton).not.toBeDisabled();
+  });
+});
+
 // ── createWalkthroughSteps tests ──────────────────────────────────────────
 
 describe('createWalkthroughSteps', () => {
@@ -567,6 +819,18 @@ describe('createWalkthroughSteps', () => {
     for (const idx of homeOnlyIndices) {
       expect(steps[idx].before, `step[${idx}] should not have a before fn`).toBeUndefined();
     }
+  });
+
+  it('step 3 (chat) has send-message gate', () => {
+    const navigate = vi.fn();
+    const steps = createWalkthroughSteps(navigate);
+    expect((steps[2] as any).data?.gateId).toBe('send-message');
+  });
+
+  it('step 4 (skills) has connect-skill gate', () => {
+    const navigate = vi.fn();
+    const steps = createWalkthroughSteps(navigate);
+    expect((steps[3] as any).data?.gateId).toBe('connect-skill');
   });
 
   it.each([

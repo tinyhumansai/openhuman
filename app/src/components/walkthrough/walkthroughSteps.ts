@@ -80,6 +80,7 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
       content:
         'This is where conversations happen. Ask questions, get summaries, or brainstorm. Everything stays searchable.',
       placement: 'bottom',
+      data: { gateId: 'send-message' },
       skipBeacon: true,
       before: async () => {
         navigate('/chat');
@@ -94,6 +95,7 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
       content:
         'Gmail, Slack, WhatsApp, and more — each connection gives your assistant superpowers.',
       placement: 'top',
+      data: { gateId: 'connect-skill' },
       skipBeacon: true,
       before: async () => {
         navigate('/skills');
