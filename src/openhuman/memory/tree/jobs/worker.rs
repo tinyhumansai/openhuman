@@ -123,6 +123,11 @@ pub async fn run_once(config: &Config) -> Result<bool> {
 
     match result {
         Ok(JobOutcome::Done) => {
+            log::debug!(
+                "[memory_tree::jobs] done id={} kind={}",
+                job.id,
+                job.kind.as_str()
+            );
             mark_done(config, &job)?;
         }
         Ok(JobOutcome::Defer { until_ms, reason }) => {
