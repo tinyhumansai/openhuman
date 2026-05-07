@@ -237,17 +237,19 @@ export async function runBootCheck(
   // Cloud mode
   // ------------------------------------------------------------------
   let safeUrl: string | null = null;
+  let safeOrigin: string | null = null;
   try {
     const parsed = new URL(mode.url);
+    safeOrigin = parsed.origin;
     safeUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
   } catch {
-    // safeUrl stays null
+    // safeUrl/safeOrigin stay null
   }
   if (!safeUrl) {
     logError('[boot-check] cloud mode — invalid URL, refusing to persist');
     return { kind: 'unreachable', reason: 'Configured cloud URL is not a valid URL' };
   }
-  log('[boot-check] cloud mode — url=%s', safeUrl);
+  log('[boot-check] cloud mode — origin=%s', safeOrigin ?? '<invalid-origin>');
   storeRpcUrl(safeUrl);
   clearCoreRpcUrlCache();
   log('[boot-check] cloud RPC URL stored and cache cleared');
