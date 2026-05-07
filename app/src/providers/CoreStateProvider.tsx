@@ -45,6 +45,14 @@ const log = debugFactory('core-state');
 const POLL_MS = 2000;
 const MAX_BOOTSTRAP_RETRIES = 5;
 
+export function shouldWarnForBootstrapFailure(failureCount: number): boolean {
+  return (
+    failureCount === 1 ||
+    failureCount === MAX_BOOTSTRAP_RETRIES ||
+    (failureCount > MAX_BOOTSTRAP_RETRIES && failureCount % MAX_BOOTSTRAP_RETRIES === 0)
+  );
+}
+
 /** Extract only non-sensitive fields from an RPC/fetch error. */
 function sanitizeError(error: unknown): { message?: string; code?: string; status?: number } {
   if (error instanceof Error) {
@@ -377,10 +385,12 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
             MAX_BOOTSTRAP_RETRIES,
             safe
           );
-          console.warn(
-            `[core-state] poll failed (attempt ${bootstrapFailCountRef.current}/${MAX_BOOTSTRAP_RETRIES}):`,
-            safe
-          );
+          if (shouldWarnForBootstrapFailure(bootstrapFailCountRef.current)) {
+            console.warn(
+              `[core-state] poll failed (attempt ${bootstrapFailCountRef.current}/${MAX_BOOTSTRAP_RETRIES}):`,
+              safe
+            );
+          }
           if (bootstrapFailCountRef.current >= MAX_BOOTSTRAP_RETRIES) {
             commitState(previous => {
               if (previous.isBootstrapping) {

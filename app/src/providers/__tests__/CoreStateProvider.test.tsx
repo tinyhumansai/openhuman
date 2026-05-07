@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as coreStateApi from '../../services/coreStateApi';
 import * as tauriCommands from '../../utils/tauriCommands';
 import { setCoreStateSnapshot } from '../../lib/coreState/store';
-import CoreStateProvider, { useCoreState } from '../CoreStateProvider';
+import CoreStateProvider, {
+  shouldWarnForBootstrapFailure,
+  useCoreState,
+} from '../CoreStateProvider';
 
 vi.mock('../../services/coreStateApi');
 vi.mock('../../services/analytics', () => ({ syncAnalyticsConsent: vi.fn() }));
@@ -214,6 +217,14 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
 
     expect(screen.getByTestId('ready').textContent).toBe('boot');
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+  });
+
+  it('rate-limits repeated bootstrap poll warnings to useful checkpoints', () => {
+    const warnedAttempts = Array.from({ length: 12 }, (_, index) => index + 1).filter(
+      shouldWarnForBootstrapFailure
+    );
+
+    expect(warnedAttempts).toEqual([1, 5, 10]);
   });
 
   it('backfills snapshot.currentUser from auth.user when currentUser is missing', async () => {
