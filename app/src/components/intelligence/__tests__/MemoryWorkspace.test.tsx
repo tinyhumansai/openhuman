@@ -86,6 +86,7 @@ describe('MemoryWorkspace (graph view)', () => {
     memoryTreeWipeAll.mockResolvedValue({
       rows_deleted: 42,
       dirs_removed: ['raw', 'wiki', 'email'],
+      sync_state_cleared: 1,
     });
     listConnections.mockResolvedValue({ connections: [] });
     syncConnection.mockResolvedValue({ ok: true });

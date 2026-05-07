@@ -127,9 +127,11 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       onToast?.({
         type: 'success',
         title: 'Memory wiped',
-        message: `Removed ${resp.rows_deleted.toLocaleString()} row(s) and ${
-          resp.dirs_removed.length
-        } folder(s). Click Sync on a connected source to repopulate.`,
+        message:
+          `Removed ${resp.rows_deleted.toLocaleString()} row(s) and ` +
+          `${resp.dirs_removed.length} folder(s); cleared ` +
+          `${resp.sync_state_cleared.toLocaleString()} sync-state cursor(s). ` +
+          `Click Sync on a connected source to repopulate.`,
       });
       // Re-fetch the (now empty) graph immediately so the canvas
       // reflects the wipe instead of staying frozen on stale data.

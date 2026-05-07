@@ -1204,22 +1204,31 @@ pub struct WipeAllResponse {
     /// removed (e.g. `["raw", "wiki", "email", "chat", "document",
     /// "summaries"]`).
     pub dirs_removed: Vec<String>,
+    /// Composio sync-state KV rows deleted from the unified memory
+    /// store. Clearing these is what lets the next sync re-fetch
+    /// every upstream item instead of skipping ones the dedup set
+    /// already saw.
+    pub sync_state_cleared: u64,
 }
 
 /// `memory_tree_wipe_all` — destructive reset of every memory-tree
 /// artefact owned by this workspace.
 ///
-/// Truncates every `mem_tree_*` table and removes the on-disk content
-/// folders under `<content_root>/`. Used by the "Reset memory" button
-/// in the Memory tab so the user can re-sync from scratch (or wipe a
-/// botched run) without leaving the app.
+/// Three things get wiped, in this order:
+///   1. Every `mem_tree_*` SQLite table (chunks, summaries, trees,
+///      buffers, score, entity_index, entity_hotness, jobs).
+///   2. The on-disk content folders under `<content_root>/`
+///      (`raw`, `wiki`, plus the legacy `email` / `chat` / `document`
+///      / `summaries` paths).
+///   3. The Composio sync-state KV rows under the
+///      `composio-sync-state` namespace in the unified memory store.
+///      These hold each provider's per-connection cursor +
+///      `synced_ids` dedup set — clearing them is what lets the next
+///      sync re-fetch every upstream item instead of skipping the
+///      ones it's already seen.
 ///
-/// Out of scope: Composio sync-state KV (lives in the unified memory
-/// store, separate DB). Re-syncing after a wipe will re-ingest any
-/// content the upstream provider still has, but the per-connection
-/// dedup set will skip messages it's already seen — to force a true
-/// re-fetch the caller should also delete + re-authorize the
-/// Composio connection.
+/// Used by the "Reset memory" button in the Memory tab so the user
+/// can re-sync from scratch without leaving the app.
 pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>, String> {
     let cfg = config.clone();
     let resp = tokio::task::spawn_blocking(move || -> Result<WipeAllResponse> {
@@ -1271,9 +1280,38 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
             }
         }
 
+        // Composio sync-state lives in the unified memory store
+        // (`<workspace>/memory/memory.db`). Open it directly and
+        // delete every key in the `composio-sync-state` namespace —
+        // this clears each provider's `cursor` + `synced_ids` set so
+        // the next sync re-fetches from the beginning. Best-effort:
+        // if the unified DB is missing (fresh workspace, never set
+        // up) we log and report 0 cleared.
+        let sync_state_cleared: u64 = {
+            let unified_db = cfg.workspace_dir.join("memory").join("memory.db");
+            if !unified_db.exists() {
+                log::debug!(
+                    "[memory_tree::read::wipe] unified memory DB not present at {} — skipping sync-state clear",
+                    unified_db.display()
+                );
+                0
+            } else {
+                match clear_composio_sync_state(&unified_db) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        log::warn!(
+                            "[memory_tree::read::wipe] failed to clear composio-sync-state: {e}"
+                        );
+                        0
+                    }
+                }
+            }
+        };
+
         Ok(WipeAllResponse {
             rows_deleted,
             dirs_removed,
+            sync_state_cleared,
         })
     })
     .await
@@ -1281,10 +1319,33 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
     .map_err(|e| format!("wipe_all: {e:#}"))?;
 
     let log = format!(
-        "memory_tree::read: wipe_all rows={} dirs={:?}",
-        resp.rows_deleted, resp.dirs_removed
+        "memory_tree::read: wipe_all rows={} dirs={:?} sync_state={}",
+        resp.rows_deleted, resp.dirs_removed, resp.sync_state_cleared
     );
     Ok(RpcOutcome::single_log(resp, log))
+}
+
+/// Drop every row in the unified memory store's `kv_namespace` table
+/// keyed under [`crate::openhuman::composio::providers::sync_state::KV_NAMESPACE`].
+///
+/// We open the SQLite file directly rather than going through
+/// [`crate::openhuman::memory::store::client::MemoryClientRef`] so
+/// `wipe_all` stays a pure synchronous operation runnable from
+/// `spawn_blocking` without dragging in the full memory-store init
+/// path. The `kv_namespace` table is created up-front by
+/// `UnifiedMemory::new`, so the DELETE is a no-op on a fresh DB
+/// rather than an error.
+fn clear_composio_sync_state(db_path: &std::path::Path) -> Result<u64> {
+    use crate::openhuman::composio::providers::sync_state::KV_NAMESPACE;
+    let conn = rusqlite::Connection::open(db_path)
+        .with_context(|| format!("open unified memory db {}", db_path.display()))?;
+    let n = conn
+        .execute(
+            "DELETE FROM kv_namespace WHERE namespace = ?1",
+            params![KV_NAMESPACE],
+        )
+        .context("delete composio-sync-state rows")?;
+    Ok(n as u64)
 }
 
 // ── flush_now (manual "Build summary trees" trigger) ────────────────────

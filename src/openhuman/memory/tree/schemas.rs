@@ -548,12 +548,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "wipe_all" => ControllerSchema {
             namespace: NAMESPACE,
             function: "wipe_all",
-            description: "Destructive reset: truncate every mem_tree_* table and remove the \
+            description: "Destructive reset: truncate every mem_tree_* table, remove the \
                           on-disk content folders (raw / wiki / email / chat / document / \
-                          legacy summaries) under the workspace memory_tree content root. \
-                          Used by the Memory tab's 'Reset memory' button. Composio sync \
-                          state is *not* cleared — re-authorize the connection to force a \
-                          full re-fetch.",
+                          legacy summaries) under the workspace memory_tree content root, \
+                          and clear every Composio sync-state KV row so the next sync \
+                          re-fetches all upstream items. Used by the Memory tab's 'Reset \
+                          memory' button.",
             inputs: vec![],
             outputs: vec![
                 FieldSchema {
@@ -566,6 +566,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "dirs_removed",
                     ty: TypeSchema::Array(Box::new(TypeSchema::String)),
                     comment: "Top-level directories under content_root that were deleted.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "sync_state_cleared",
+                    ty: TypeSchema::U64,
+                    comment: "Composio sync-state KV rows deleted (cursors + synced-id sets).",
                     required: true,
                 },
             ],

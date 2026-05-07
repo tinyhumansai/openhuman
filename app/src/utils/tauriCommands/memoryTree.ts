@@ -480,6 +480,12 @@ export interface GraphExportResponse {
 export interface WipeAllResponse {
   rows_deleted: number;
   dirs_removed: string[];
+  /**
+   * Composio sync-state KV rows deleted. Clearing these (per-connection
+   * cursors + synced-id dedup sets) is what lets the next sync re-fetch
+   * every upstream item instead of skipping ones it's already seen.
+   */
+  sync_state_cleared: number;
 }
 
 /**

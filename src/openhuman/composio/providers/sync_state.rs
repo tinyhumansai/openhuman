@@ -33,7 +33,7 @@ pub const DEFAULT_DAILY_REQUEST_LIMIT: u32 = 500;
 
 /// KV namespace under which all sync state keys live. Separate from the
 /// memory document namespaces (`skill-gmail`, etc.) to avoid collisions.
-const KV_NAMESPACE: &str = "composio-sync-state";
+pub const KV_NAMESPACE: &str = "composio-sync-state";
 
 /// Persistent sync state for one `(toolkit, connection_id)` pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
