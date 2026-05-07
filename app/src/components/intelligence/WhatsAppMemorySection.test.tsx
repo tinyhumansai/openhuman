@@ -48,9 +48,7 @@ describe('<WhatsAppMemorySection />', () => {
   it('calls whatsappListChats with limit:200', async () => {
     mockWhatsappListChats.mockResolvedValueOnce([]);
     render(<WhatsAppMemorySection pollIntervalMs={0} />);
-    await waitFor(() =>
-      expect(mockWhatsappListChats).toHaveBeenCalledWith({ limit: 200 })
-    );
+    await waitFor(() => expect(mockWhatsappListChats).toHaveBeenCalledWith({ limit: 200 }));
   });
 
   it('renders section and plural "chats" when multiple chats load', async () => {
@@ -134,13 +132,19 @@ describe('<WhatsAppMemorySection />', () => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let resolveSync!: (v: any) => void;
-    mockWhatsappListChats.mockReturnValueOnce(new Promise(r => { resolveSync = r; }));
+    mockWhatsappListChats.mockReturnValueOnce(
+      new Promise(r => {
+        resolveSync = r;
+      })
+    );
     fireEvent.click(screen.getByRole('button'));
 
     await waitFor(() => screen.getByText('Syncing…'));
     expect(screen.getByRole('button')).toBeDisabled();
 
-    await act(async () => { resolveSync([makeChat()]); });
+    await act(async () => {
+      resolveSync([makeChat()]);
+    });
     await waitFor(() => screen.getByText('Sync'));
   });
 });
