@@ -73,11 +73,25 @@ fn write_default_if_missing(obsidian_dir: &Path, name: &str, body: &str) {
             name,
             target.display()
         ),
-        Err(err) => log::warn!(
-            "[content_store::obsidian] write default {} failed at {:?}: {err:#}",
-            name,
-            target
-        ),
+        Err(err) => {
+            // `create_new` already produced an empty file at `target`;
+            // a write_all failure (disk full, transient I/O) leaves a
+            // truncated remnant. Without cleanup, the next call hits
+            // the AlreadyExists fast-path and never repairs the bad
+            // file. Remove it so the next call retries cleanly.
+            if let Err(cleanup_err) = std::fs::remove_file(&target) {
+                log::warn!(
+                    "[content_store::obsidian] cleanup partial default {} failed at {:?}: {cleanup_err:#}",
+                    name,
+                    target
+                );
+            }
+            log::warn!(
+                "[content_store::obsidian] write default {} failed at {:?}: {err:#}",
+                name,
+                target
+            );
+        }
     }
 }
 
