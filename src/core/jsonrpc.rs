@@ -674,6 +674,15 @@ async fn run_server_inner(
             ),
             Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
         }
+        // Initialize the WhatsApp data store so scanner ingest calls
+        // can write data without requiring a lazy-init fallback.
+        match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
+            Ok(_) => log::info!(
+                "[boot] whatsapp_data::global initialized (workspace={})",
+                cfg.workspace_dir.display()
+            ),
+            Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
+        }
     }
 
     let (resolved_port, port_source) = match port {

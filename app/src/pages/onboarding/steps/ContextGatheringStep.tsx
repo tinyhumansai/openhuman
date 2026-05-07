@@ -153,6 +153,8 @@ const ContextGatheringStep = ({
   );
   const [finished, setFinished] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [showBackgroundLink, setShowBackgroundLink] = useState(false);
+  const backgroundClickedRef = useRef(false);
   const ranRef = useRef(false);
 
   const hasGmail = connectedSources.some(s => s.includes('gmail'));
@@ -232,9 +234,9 @@ const ContextGatheringStep = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-navigate on successful completion
+  // Auto-navigate on successful completion (skip if user already clicked background link)
   useEffect(() => {
-    if (finished && !hasError) {
+    if (finished && !hasError && !backgroundClickedRef.current) {
       const t = setTimeout(() => {
         void Promise.resolve(onNext()).catch(e => {
           console.warn('[onboarding:context] auto-advance failed', e);
@@ -244,6 +246,13 @@ const ContextGatheringStep = ({
       return () => clearTimeout(t);
     }
   }, [finished, hasError, onNext]);
+
+  // Show "Keep building in background" link after 10s
+  useEffect(() => {
+    if (!hasGmail || finished) return;
+    const t = setTimeout(() => setShowBackgroundLink(true), 10_000);
+    return () => clearTimeout(t);
+  }, [hasGmail, finished]);
 
   if (finished && hasError) {
     return (
@@ -276,6 +285,18 @@ const ContextGatheringStep = ({
           <div className="h-3 w-3/4 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer [animation-delay:150ms]" />
           <div className="h-3 w-1/2 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer [animation-delay:300ms]" />
         </div>
+
+        {showBackgroundLink && (
+          <button
+            type="button"
+            className="animate-fade-in text-sm text-ocean-600 hover:text-ocean-700 underline underline-offset-2 transition-colors mt-2"
+            onClick={() => {
+              backgroundClickedRef.current = true;
+              void onNext();
+            }}>
+            Keep building in background &amp; continue
+          </button>
+        )}
       </div>
     </div>
   );

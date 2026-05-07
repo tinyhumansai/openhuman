@@ -9,6 +9,7 @@ mod core_process;
 mod core_rpc;
 mod dictation_hotkeys;
 mod discord_scanner;
+mod file_logging;
 mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
@@ -234,6 +235,33 @@ async fn restart_core_process(
     let _guard = state.inner().restart_lock().await;
     log::debug!("[core] restart_core_process: acquired restart lock");
     state.inner().restart().await
+}
+
+/// Start the embedded core process on demand.
+///
+/// Called by the BootCheckGate (Local mode) before the version check.  The
+/// core no longer auto-spawns at Tauri setup — the UI is responsible for
+/// driving the lifecycle so it can surface startup failures and version
+/// mismatches to the user.
+///
+/// Idempotent: `ensure_running` is a no-op if the core is already up.
+#[tauri::command]
+async fn start_core_process(
+    state: tauri::State<'_, core_process::CoreProcessHandle>,
+) -> Result<(), String> {
+    log::info!("[core] start_core_process: command invoked from frontend");
+    state.inner().ensure_running().await
+}
+
+/// Cleanly exit the application.
+///
+/// Called by the BootCheckGate "Quit" button when the core is unreachable and
+/// the user chooses to close the app rather than switch modes.
+#[tauri::command]
+async fn app_quit(app: tauri::AppHandle<AppRuntime>) -> Result<(), String> {
+    log::info!("[app] app_quit: quit requested from frontend");
+    app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1097,6 +1125,17 @@ pub fn run() {
         sample_rate: 1.0,
         ..sentry::ClientOptions::default()
     });
+    // Tag every Sentry event with CPU architecture and OS so Intel-specific
+    // crashes (issue #1012 — SIGABRT in CrBrowserMain on x86_64 macOS) are
+    // clearly identified without needing a separate build identifier.
+    sentry::configure_scope(|scope| {
+        scope.set_tag("cpu_arch", std::env::consts::ARCH);
+        scope.set_tag("os_name", std::env::consts::OS);
+        #[cfg(target_os = "macos")]
+        if let Some(ver) = macos_os_version() {
+            scope.set_tag("os_version", ver);
+        }
+    });
 
     // Optional smoke trigger for verifying the Sentry pipeline end-to-end.
     // Run with `OPENHUMAN_TAURI_SENTRY_TEST=panic` to fire a panic, or
@@ -1119,10 +1158,26 @@ pub fn run() {
 
     let daemon_mode = is_daemon_mode();
 
-    let default_filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
-    let _ = env_logger::Builder::new()
-        .parse_filters(&default_filter)
-        .try_init();
+    // Install the unified tracing subscriber + daily-rotated file appender
+    // before any other startup work so CEF preflight failures, sentry
+    // smoke-test events, and the rest of `run()` are captured in
+    // `<data_dir>/logs/openhuman-YYYY-MM-DD.log`. The shell's `log::*` calls
+    // are bridged into the same subscriber via `tracing_log::LogTracer`,
+    // replacing the previous stderr-only `env_logger`.
+    file_logging::init();
+
+    // Log platform identity early so every log session is tagged with arch
+    // and OS version — essential for reproducing and triaging Intel-only
+    // crashes like issue #1012 (SIGABRT in CrBrowserMain on x86_64 macOS).
+    {
+        let arch = std::env::consts::ARCH;
+        let os = std::env::consts::OS;
+        #[cfg(target_os = "macos")]
+        let os_ver = macos_os_version().unwrap_or_else(|| "unknown".to_string());
+        #[cfg(not(target_os = "macos"))]
+        let os_ver = "n/a".to_string();
+        log::info!("[startup] platform: arch={arch} os={os} os_version={os_ver}");
+    }
 
     // The vendored tauri-cef dev-server proxy builds a reqwest 0.13 client
     // (see vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) which calls
@@ -1209,6 +1264,18 @@ pub fn run() {
         // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
         // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
         args.push(("--remote-debugging-port", Some("19222")));
+        // Issue #1012 — Intel macOS (x86_64) crashes with EXC_CRASH (SIGABRT)
+        // inside CrBrowserMain when CEF 146 tries to use GPU compositing via
+        // Metal on Intel GPU hardware/drivers. Disable GPU compositing on
+        // x86_64 macOS so the browser process falls back to software
+        // compositing instead of aborting. This flag is a no-op on Apple
+        // Silicon (arm64) and on non-macOS targets; all other GPU paths
+        // (WebGL, video decode) remain unaffected.
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        {
+            args.push(("--disable-gpu-compositing", None));
+            log::info!("[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)");
+        }
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
 
@@ -1287,7 +1354,6 @@ pub fn run() {
                 return Err("webview_apis bridge failed to start — aborting setup".into());
             }
 
-            let _ = daemon_mode;
             let core_handle =
                 core_process::CoreProcessHandle::new(core_process::default_core_port());
             std::env::set_var("OPENHUMAN_CORE_RPC_URL", core_handle.rpc_url());
@@ -1312,13 +1378,23 @@ pub fn run() {
             }
 
             app.manage(core_handle.clone());
-            tauri::async_runtime::spawn(async move {
-                if let Err(err) = core_handle.ensure_running().await {
-                    log::error!("[core] failed to start embedded core: {err}");
-                    return;
-                }
-                log::info!("[core] embedded core ready");
-            });
+            // NOTE: the core is NOT auto-spawned here. The BootCheckGate UI
+            // calls `start_core_process` (Local mode) after the user picks a
+            // mode, which lets the frontend surface startup failures and
+            // version mismatches before the rest of the app mounts.
+            //
+            // In daemon mode (headless) we spawn immediately so the tray
+            // agent is available without waiting for a UI interaction.
+            if daemon_mode {
+                let core_handle_daemon = core_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = core_handle_daemon.ensure_running().await {
+                        log::error!("[core] daemon_mode — failed to start embedded core: {err}");
+                        return;
+                    }
+                    log::info!("[core] daemon_mode — embedded core ready");
+                });
+            }
 
             // Restore last-known window position+size before showing the
             // window so the user's first paint after a restart-driven flow
@@ -1426,6 +1502,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1469,6 +1546,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1512,6 +1590,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1570,6 +1649,7 @@ pub fn run() {
                                 width: w,
                                 height: h,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1621,12 +1701,15 @@ pub fn run() {
             download_app_update,
             install_app_update,
             restart_core_process,
+            start_core_process,
+            app_quit,
             restart_app,
             get_active_user_id,
             schedule_cef_profile_purge,
             register_dictation_hotkey,
             unregister_dictation_hotkey,
             webview_accounts::webview_account_open,
+            webview_accounts::webview_account_prewarm,
             webview_accounts::webview_account_close,
             webview_accounts::webview_account_purge,
             webview_accounts::webview_account_bounds,
@@ -1650,7 +1733,9 @@ pub fn run() {
             activate_main_window,
             native_notifications::show_native_notification,
             mascot_window_show,
-            mascot_window_hide
+            mascot_window_hide,
+            file_logging::reveal_logs_folder,
+            file_logging::logs_folder_path
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1773,6 +1858,23 @@ fn resolve_sentry_environment() -> String {
         }
     }
     "production".to_string()
+}
+
+/// Returns the macOS product version string (e.g. `"14.5"`) by reading
+/// `sw_vers -productVersion`. Returns `None` on non-macOS targets or when
+/// the command is unavailable. Used to tag Sentry events and startup logs
+/// with OS version so Intel-specific crashes (issue #1012) can be filtered
+/// by macOS release.
+#[cfg(target_os = "macos")]
+fn macos_os_version() -> Option<String> {
+    std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]

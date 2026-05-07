@@ -6,6 +6,7 @@ import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
 import AppUpdatePrompt from './components/AppUpdatePrompt';
+import BootCheckGate from './components/BootCheckGate/BootCheckGate';
 import BottomTabBar from './components/BottomTabBar';
 import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
@@ -49,22 +50,24 @@ function App() {
       )}>
       <Provider store={store}>
         <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
-          <CoreStateProvider>
-            <SocketProvider>
-              <ChatRuntimeProvider>
-                <Router>
-                  <CommandProvider>
-                    <ServiceBlockingGate>
-                      <AppShell />
-                      <DictationHotkeyManager />
-                      <LocalAIDownloadSnackbar />
-                      <AppUpdatePrompt />
-                    </ServiceBlockingGate>
-                  </CommandProvider>
-                </Router>
-              </ChatRuntimeProvider>
-            </SocketProvider>
-          </CoreStateProvider>
+          <BootCheckGate>
+            <CoreStateProvider>
+              <SocketProvider>
+                <ChatRuntimeProvider>
+                  <Router>
+                    <CommandProvider>
+                      <ServiceBlockingGate>
+                        <AppShell />
+                        <DictationHotkeyManager />
+                        <LocalAIDownloadSnackbar />
+                        <AppUpdatePrompt />
+                      </ServiceBlockingGate>
+                    </CommandProvider>
+                  </Router>
+                </ChatRuntimeProvider>
+              </SocketProvider>
+            </CoreStateProvider>
+          </BootCheckGate>
         </PersistGate>
       </Provider>
     </Sentry.ErrorBoundary>

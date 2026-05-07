@@ -8,13 +8,19 @@ import WebviewHost from '../components/accounts/WebviewHost';
 // import { isWelcomeLocked } from '../lib/coreState/store';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { useCoreState } from '../providers/CoreStateProvider';
+import { usePrewarmMostRecentAccount } from '../hooks/usePrewarmMostRecentAccount';
 import {
   hideWebviewAccount,
   purgeWebviewAccount,
   showWebviewAccount,
   startWebviewAccountService,
 } from '../services/webviewAccountService';
-import { addAccount, removeAccount, setActiveAccount } from '../store/accountsSlice';
+import {
+  addAccount,
+  removeAccount,
+  setActiveAccount,
+  setLastActiveAccount,
+} from '../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { fetchRespondQueue } from '../store/providerSurfaceSlice';
 import type { Account, AccountProvider, ProviderDescriptor } from '../types/accounts';
@@ -53,7 +59,15 @@ const RailButton = ({
   <button
     onClick={onClick}
     onContextMenu={onContextMenu}
-    className={`group relative flex h-11 w-11 items-center justify-center rounded-xl transition-all ${
+    // Issue #1284 — `hover:z-50` lifts the entire button (and its tooltip
+    // child) above sibling rail buttons during hover. Without it, the
+    // `hover:scale-105` transform on a non-active button establishes its
+    // own stacking context that traps the tooltip's `z-50` inside it,
+    // and a later sibling button (next in DOM order) paints over the
+    // tooltip rectangle. Belt-and-suspenders for the active-button case
+    // too, where ring-2 + bg-primary-50 don't transform but the lifted
+    // z still helps tooltips render cleanly above neighbours.
+    className={`group relative flex h-11 w-11 items-center justify-center rounded-xl transition-all hover:z-50 ${
       active ? 'bg-primary-50 ring-2 ring-primary-500' : 'hover:bg-stone-100 hover:scale-105'
     }`}
     aria-label={tooltip}>
@@ -63,7 +77,15 @@ const RailButton = ({
         {badge > 99 ? '99+' : badge}
       </span>
     ) : null}
-    <span className="pointer-events-none absolute left-full ml-3 whitespace-nowrap rounded-md bg-stone-900 px-2 py-1 text-xs text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 z-50">
+    {/* Issue #1284 — tooltip sits BELOW the icon (`top-full`) so it stays
+        inside the HTML-only rail region. The native CEF webview is
+        composited above the HTML layer to the right of the rail, so a
+        right-anchored tooltip is hidden behind the webview the moment a
+        provider is open and DOM z-index can't lift it. Below-icon keeps
+        the tooltip near the cursor and never blocks the icon being
+        hovered (it briefly overlays the next icon down, which clears as
+        soon as the user moves the cursor). */}
+    <span className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-stone-900 px-2 py-1 text-xs text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 z-50">
       {tooltip}
     </span>
   </button>
@@ -97,6 +119,16 @@ const Accounts = () => {
     startWebviewAccountService();
   }, []);
 
+  // Issue #1233 — prewarm the MRU account once on mount so its CEF profile
+  // and provider page are warm before the user actually clicks the rail.
+  // Skipped for power users with many accounts to bound the spawn cost.
+  // The accounts array snapshot is captured by the hook at first render.
+  const accounts: Account[] = useMemo(
+    () => order.map(id => accountsById[id]).filter((a): a is Account => Boolean(a)),
+    [order, accountsById]
+  );
+  usePrewarmMostRecentAccount({ accounts, accountsById, activeAccountId });
+
   // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
   // Welcome lockdown (#883) — force the Agent pane while the welcome
   // conversation is in progress so the user cannot jump to a connected
@@ -115,11 +147,6 @@ const Accounts = () => {
     }, 10_000);
     return () => window.clearInterval(id);
   }, [dispatch]);
-
-  const accounts: Account[] = useMemo(
-    () => order.map(id => accountsById[id]).filter((a): a is Account => Boolean(a)),
-    [order, accountsById]
-  );
 
   const connectedProviders = useMemo(
     () => new Set<AccountProvider>(accounts.map(a => a.provider)),
@@ -164,10 +191,17 @@ const Accounts = () => {
     };
     dispatch(addAccount(acct));
     dispatch(setActiveAccount(id));
+    // Issue #1233 — record this real-account selection in the persisted
+    // MRU pointer so the next session can prewarm it. Agent selections
+    // never reach this code path (separate `selectAgent` callback below).
+    dispatch(setLastActiveAccount(id));
   };
 
   const selectAgent = () => dispatch(setActiveAccount(AGENT_ID));
-  const selectAccount = (id: string) => dispatch(setActiveAccount(id));
+  const selectAccount = (id: string) => {
+    dispatch(setActiveAccount(id));
+    dispatch(setLastActiveAccount(id));
+  };
 
   const openContextMenu = (accountId: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -223,12 +257,14 @@ const Accounts = () => {
 
         <button
           onClick={() => setAddOpen(true)}
-          className="group relative mt-2 flex h-11 w-11 items-center justify-center rounded-xl border border-dashed border-stone-300 text-stone-400 hover:bg-stone-50 hover:text-stone-600"
+          className="group relative mt-2 flex h-11 w-11 items-center justify-center rounded-xl border border-dashed border-stone-300 text-stone-400 hover:z-50 hover:bg-stone-50 hover:text-stone-600"
           aria-label="Add app">
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
-          <span className="pointer-events-none absolute left-full ml-3 whitespace-nowrap rounded-md bg-stone-900 px-2 py-1 text-xs text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 z-50">
+          {/* Issue #1284 — see RailButton for why the tooltip sits below
+              the icon instead of to the right. */}
+          <span className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-stone-900 px-2 py-1 text-xs text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 z-50">
             Add app
           </span>
         </button>

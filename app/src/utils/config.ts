@@ -7,6 +7,17 @@ const APP_ENV = (import.meta.env.VITE_OPENHUMAN_APP_ENV as string | undefined)
 const DEFAULT_BACKEND_URL =
   APP_ENV === 'staging' ? 'https://staging-api.tinyhumans.ai' : 'https://api.tinyhumans.ai';
 
+/**
+ * Build-time fallback for the Core JSON-RPC endpoint URL.
+ *
+ * **Not runtime-authoritative.** At runtime `getCoreRpcUrl()` (in
+ * `services/coreRpcClient.ts`) is the source of truth: it first checks for a
+ * URL stored by the user via the Welcome screen (`configPersistence`), then
+ * falls back to this constant. Never read this constant directly from product
+ * code that needs the live endpoint — call `getCoreRpcUrl()` instead.
+ *
+ * Override at build time via `VITE_OPENHUMAN_CORE_RPC_URL`.
+ */
 export const CORE_RPC_URL =
   import.meta.env.VITE_OPENHUMAN_CORE_RPC_URL || 'http://127.0.0.1:7788/rpc';
 
@@ -70,7 +81,18 @@ export const SKILLS_GITHUB_REPO =
 /** Sentry DSN for error reporting. Leave blank to disable. */
 export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
 
-/** Backend API URL (web fallback when core RPC is unavailable). */
+/**
+ * Build-time fallback for the backend API base URL.
+ *
+ * **Not runtime-authoritative in Tauri.** In the desktop app, `getBackendUrl()`
+ * (in `services/backendUrl.ts`) asks the core sidecar for the live API URL via
+ * `openhuman.config_resolve_api_url`. If that call fails or returns an empty
+ * URL, `getBackendUrl()` **throws** — it does not fall back to this constant.
+ * This constant is only used in web/non-Tauri mode (where the sidecar is not
+ * present).
+ *
+ * Override at build time via `VITE_BACKEND_URL`.
+ */
 export const BACKEND_URL =
   (import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim() || DEFAULT_BACKEND_URL;
 

@@ -356,6 +356,48 @@ async fn apply_analytics_settings_updates_enabled() {
 }
 
 #[tokio::test]
+async fn apply_meet_settings_updates_handoff_flag() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    // Default is OFF for a fresh config (issue #1299).
+    assert!(
+        !cfg.meet.auto_orchestrator_handoff,
+        "fresh config must start with auto_orchestrator_handoff=false"
+    );
+    // Flip ON.
+    let _ = apply_meet_settings(
+        &mut cfg,
+        MeetSettingsPatch {
+            auto_orchestrator_handoff: Some(true),
+        },
+    )
+    .await
+    .expect("apply on");
+    assert!(cfg.meet.auto_orchestrator_handoff);
+    // Flip OFF again — covers the off-after-on path.
+    let _ = apply_meet_settings(
+        &mut cfg,
+        MeetSettingsPatch {
+            auto_orchestrator_handoff: Some(false),
+        },
+    )
+    .await
+    .expect("apply off");
+    assert!(!cfg.meet.auto_orchestrator_handoff);
+    // No-op patch must not change the flag.
+    let prior = cfg.meet.auto_orchestrator_handoff;
+    let _ = apply_meet_settings(
+        &mut cfg,
+        MeetSettingsPatch {
+            auto_orchestrator_handoff: None,
+        },
+    )
+    .await
+    .expect("apply noop");
+    assert_eq!(prior, cfg.meet.auto_orchestrator_handoff);
+}
+
+#[tokio::test]
 async fn get_config_snapshot_wraps_snapshot_in_rpc_outcome() {
     let tmp = tempdir().unwrap();
     let cfg = tmp_config(&tmp);

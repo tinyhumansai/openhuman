@@ -137,7 +137,7 @@ const MemoryWindowControl = ({ onError, onSaved }: Props) => {
       <div
         role="radiogroup"
         aria-label="Long-term memory window"
-        className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+        className="grid grid-cols-2 gap-2">
         {MEMORY_CONTEXT_WINDOWS.map(option => {
           const optionMeta = MEMORY_WINDOW_PRESET_META[option];
           const isActive = activeForUi === option;
@@ -154,9 +154,9 @@ const MemoryWindowControl = ({ onError, onSaved }: Props) => {
               className={`text-left rounded-md border px-3 py-2 transition-colors ${
                 isActive ? 'border-primary bg-primary/10' : 'border-border hover:bg-accent/40'
               } disabled:opacity-60 disabled:cursor-not-allowed`}>
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{optionMeta.label}</span>
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              <div className="flex items-center justify-between gap-1 min-w-0">
+                <span className="font-medium truncate">{optionMeta.label}</span>
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0 whitespace-nowrap">
                   {optionMeta.badge}
                 </span>
               </div>

@@ -167,6 +167,30 @@ async function getCoreRpcToken(): Promise<string | null> {
   return resolvingCoreRpcToken;
 }
 
+/**
+ * Probe an arbitrary core RPC URL with `openhuman.ping`. Used by the
+ * Welcome page's "Test Connection" affordance to validate a user-entered
+ * RPC URL without going through the cached `getCoreRpcUrl` resolution.
+ *
+ * Encapsulates the bearer-token + JSON-RPC envelope assembly that would
+ * otherwise sit in the calling component, keeping all RPC client behavior
+ * inside the service per the project guideline ("Keep Tauri IPC and RPC
+ * client calls localized to services … do not scatter `invoke()` or
+ * direct RPC calls throughout components").
+ */
+export async function testCoreRpcConnection(url: string): Promise<Response> {
+  const token = await getCoreRpcToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'openhuman.ping', params: {} }),
+  });
+}
+
 export async function getCoreHttpBaseUrl(): Promise<string> {
   const rpcUrl = await getCoreRpcUrl();
   const url = new URL(rpcUrl);

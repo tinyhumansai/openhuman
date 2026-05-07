@@ -33,6 +33,13 @@ interface AppStateSnapshotResult {
   onboardingCompleted: boolean;
   chatOnboardingCompleted: boolean;
   analyticsEnabled: boolean;
+  /**
+   * Mirror of `Config::meet.auto_orchestrator_handoff` (#1299). Older
+   * core builds may omit the field on the wire — `fetchCoreAppSnapshot`
+   * normalises the missing case to `false` before returning so callers
+   * never observe `undefined` here.
+   */
+  meetAutoOrchestratorHandoff?: boolean;
   localState: {
     encryptionKey?: string | null;
     primaryWalletAddress?: string | null;
@@ -50,7 +57,13 @@ export const fetchCoreAppSnapshot = async (): Promise<AppStateSnapshotResult> =>
   const response = await callCoreRpc<{ result: AppStateSnapshotResult }>({
     method: 'openhuman.app_state_snapshot',
   });
-  return response.result;
+  // Normalise the optional #1299 field at the API boundary so older core
+  // builds without `meetAutoOrchestratorHandoff` still surface the
+  // privacy-conservative `false` to callers (e.g. CoreStateProvider).
+  return {
+    ...response.result,
+    meetAutoOrchestratorHandoff: response.result.meetAutoOrchestratorHandoff ?? false,
+  };
 };
 
 export const updateCoreLocalState = async (params: UpdateCoreLocalStateParams): Promise<void> => {

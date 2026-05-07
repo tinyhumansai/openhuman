@@ -22,12 +22,26 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
 use super::{browser_ws_url, find_page_target_where, CdpConn};
-use crate::webview_accounts::emit_load_finished;
+use crate::webview_accounts::{emit_load_finished, RevealTrigger};
 
 /// Backoff between failed attach attempts / reconnects. Intentionally
 /// short — once the webview is open, the target usually shows up within
 /// 500ms.
 const ATTACH_BACKOFF: Duration = Duration::from_secs(2);
+
+/// Retry schedule used on the very first attach pass after the webview is
+/// spawned. The target usually appears almost immediately, but the CEF
+/// browser host can take a few hundred ms on cold start. We try at t=0
+/// (in case the target is already up — common after the CEF prewarm), then
+/// escalate quickly so the worst case before the [`ATTACH_BACKOFF`] kicks
+/// in is ~600ms — saving ~500ms on the warm path versus the previous fixed
+/// `sleep(500ms)`. Issue #1233.
+const INITIAL_ATTACH_SCHEDULE: [Duration; 4] = [
+    Duration::from_millis(0),
+    Duration::from_millis(50),
+    Duration::from_millis(150),
+    Duration::from_millis(400),
+];
 
 /// Watchdog budget before we synthesise a `webview-account:load` event with
 /// `state: "timeout"` so the frontend can switch from an empty loading state
@@ -147,7 +161,13 @@ pub fn spawn_session<R: Runtime>(
         let real_url = real_url.clone();
         tokio::spawn(async move {
             sleep(LOAD_TIMEOUT).await;
-            emit_load_finished(&app, &account_id, "timeout", &real_url);
+            emit_load_finished(
+                &app,
+                &account_id,
+                "timeout",
+                &real_url,
+                RevealTrigger::Watchdog,
+            );
         })
     };
     let session = tokio::spawn(async move { run_session_forever(app, account_id, real_url).await });
@@ -161,10 +181,44 @@ async fn run_session_forever<R: Runtime>(app: AppHandle<R>, account_id: String, 
         real_url,
         placeholder_marker(&account_id)
     );
-    // Let the webview's target appear in CDP before we start hammering
-    // `/json/version`. The placeholder URL is trivial so this is quick.
-    sleep(Duration::from_millis(500)).await;
+    // Issue #1233 — first-pass retry schedule replaces the previous fixed
+    // `sleep(500ms)` warmup. Try at t=0 (often succeeds when the target was
+    // already up via CEF prewarm), then escalate quickly. Each schedule slot
+    // sleeps THEN tries, so a target up at t≈0ms attaches without waiting
+    // for the old 500ms grace.
+    //
+    // The steady-state reconnect loop below sleeps `ATTACH_BACKOFF` BEFORE
+    // each attempt. That ordering matters: it means an exhausted initial
+    // schedule (all four attach attempts failed) gets a proper 2s backoff
+    // before the fifth attempt, instead of the original "drop straight in
+    // and try immediately" bug that effectively fired five back-to-back
+    // attaches in <1s and then waited 2s. After a successful session that
+    // ends cleanly we also wait the backoff before reconnecting so we
+    // don't tight-loop against a target that just torched its renderer.
+    for (idx, delay) in INITIAL_ATTACH_SCHEDULE.iter().enumerate() {
+        sleep(*delay).await;
+        match run_session_cycle(&app, &account_id, &real_url).await {
+            Ok(()) => {
+                log::info!(
+                    "[cdp-session][{}] initial session ended cleanly attempt={} reconnecting",
+                    account_id,
+                    idx
+                );
+                break;
+            }
+            Err(e) => {
+                log::debug!(
+                    "[cdp-session][{}] initial attach attempt={} delay={:?} failed: {}",
+                    account_id,
+                    idx,
+                    delay,
+                    e
+                );
+            }
+        }
+    }
     loop {
+        sleep(ATTACH_BACKOFF).await;
         match run_session_cycle(&app, &account_id, &real_url).await {
             Ok(()) => {
                 log::info!(
@@ -176,7 +230,6 @@ async fn run_session_forever<R: Runtime>(app: AppHandle<R>, account_id: String, 
                 log::debug!("[cdp-session][{}] cycle failed: {}", account_id, e);
             }
         }
-        sleep(ATTACH_BACKOFF).await;
     }
 }
 
@@ -402,7 +455,13 @@ async fn run_session_cycle<R: Runtime>(
     let cb_real_url = real_url.to_string();
     cdp.pump_events(&session_id, move |method, _params| {
         if method == "Page.loadEventFired" {
-            emit_load_finished(&cb_app, &cb_account_id, "finished", &cb_real_url);
+            emit_load_finished(
+                &cb_app,
+                &cb_account_id,
+                "finished",
+                &cb_real_url,
+                RevealTrigger::Load,
+            );
         }
     })
     .await
@@ -534,5 +593,29 @@ mod tests {
             "https://discord.com/channels/@me#openhuman-account-acct-420",
             "acct-42"
         ));
+    }
+
+    /// Issue #1233 — initial attach retry schedule must finish well under
+    /// the previous fixed 500ms warmup so the warm path saves wall-clock
+    /// on cold opens. Locked at 4 attempts summing to ≤ 600ms.
+    #[test]
+    fn initial_attach_schedule_under_600ms_total() {
+        let total: Duration = INITIAL_ATTACH_SCHEDULE.iter().sum();
+        assert_eq!(
+            INITIAL_ATTACH_SCHEDULE.len(),
+            4,
+            "schedule should have 4 attempts; got {:?}",
+            INITIAL_ATTACH_SCHEDULE
+        );
+        assert!(
+            total <= Duration::from_millis(600),
+            "schedule total {:?} exceeds 600ms budget",
+            total
+        );
+        assert_eq!(
+            INITIAL_ATTACH_SCHEDULE[0],
+            Duration::ZERO,
+            "first attempt must run immediately (CEF prewarm hits)",
+        );
     }
 }

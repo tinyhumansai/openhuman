@@ -10,6 +10,7 @@
     "compile": "pnpm --filter openhuman-app compile",
     "dev": "pnpm --filter openhuman-app dev",
     "dev:app": "pnpm --filter openhuman-app dev:app",
+    "dev:app:win": "pnpm --filter openhuman-app dev:app:win",
     "dev:cef": "pnpm --filter openhuman-app dev:cef",
     "format": "pnpm --filter openhuman-app format",
     "format:check": "pnpm --filter openhuman-app format:check",

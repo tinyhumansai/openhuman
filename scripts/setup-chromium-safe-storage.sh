@@ -5,6 +5,17 @@
 # Idempotent: if the entry already exists, leaves the encryption key alone
 # (so existing cookies/IndexedDB stay decryptable) and only re-applies the
 # permissive ACL via partition-list.
+#
+# macOS-only: the `security` CLI and the "Chromium Safe Storage" keychain
+# entry are macOS Keychain concepts. On Linux Chromium uses kwallet/gnome
+# keyring (or the basic password store via `--password-store=basic`, which
+# the Tauri shell sets unconditionally), and on Windows it uses DPAPI. We
+# no-op on every non-Darwin platform so this script can sit unconditionally
+# in the cross-platform `dev:app` pipeline.
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  exit 0
+fi
+
 set -euo pipefail
 
 SVC="Chromium Safe Storage"

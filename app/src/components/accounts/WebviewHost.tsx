@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   hideWebviewAccount,
@@ -9,6 +9,7 @@ import {
 } from '../../services/webviewAccountService';
 import { useAppSelector } from '../../store/hooks';
 import type { AccountProvider, AccountStatus } from '../../types/accounts';
+import { ProviderIcon } from './providerIcons';
 
 const log = debug('webview-accounts:host');
 
@@ -30,6 +31,49 @@ const PROVIDER_COPY: Record<AccountProvider, string> = {
   browserscan: 'BrowserScan',
 };
 
+// Phase-hint thresholds for slow loads. Most cold opens finish well under
+// 5s; the hints only render when something is actually taking a while so
+// the wording never feels patronising on the happy path.
+const PHASE_HINT_AT_MS = 5_000;
+const PHASE_HINT_LATE_MS = 10_000;
+
+/**
+ * Counter-driven phase hint that escalates after 5s/10s of loading.
+ *
+ * Lives in its own component so the elapsed counter resets purely via
+ * mount/unmount: `WebviewHost` only renders this child while the account
+ * is in a loading state, so flipping out of `'loading'` unmounts it and
+ * the next loading run starts fresh from zero. Keeps `WebviewHost`'s
+ * effects free of synchronous `setState` calls (lint rule
+ * `react-hooks/set-state-in-effect`) while preserving deterministic
+ * fake-timer behaviour for tests — counter is incremented by an interval
+ * tick rather than diffing `Date.now()`.
+ */
+const LoadingPhaseHint = ({ accountId }: { accountId: string }) => {
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    const tickMs = 500;
+    const id = window.setInterval(() => {
+      setElapsedMs(prev => prev + tickMs);
+    }, tickMs);
+    return () => window.clearInterval(id);
+  }, []);
+  const text =
+    elapsedMs >= PHASE_HINT_LATE_MS
+      ? 'Almost ready...'
+      : elapsedMs >= PHASE_HINT_AT_MS
+        ? 'Restoring session...'
+        : null;
+  if (!text) return null;
+  return (
+    <span
+      data-testid={`webview-loading-hint-${accountId}`}
+      className="text-[11px] font-medium text-stone-400">
+      {text}
+    </span>
+  );
+};
+
 /**
  * Reserves a rectangular slot in the React layout that the native child
  * webview is glued to. We measure the placeholder's bounding rect and
@@ -41,6 +85,12 @@ const PROVIDER_COPY: Record<AccountProvider, string> = {
  * the React loading overlay below isn't covered by an empty native view. The
  * overlay is dismissed when the `webview-account:load` event flips the account
  * status out of `pending`/`loading`.
+ *
+ * Issue #1233 — to eliminate the perceived blank-screen gap before the
+ * webview paints, the host always renders a branded placeholder (provider
+ * icon + name) immediately on mount, with a spinner overlay while the
+ * account is in a loading state. After 5s/10s the spinner adds a phase
+ * hint so the user gets feedback that something is still happening.
  */
 const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -49,13 +99,12 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
   );
   const openedRef = useRef(false);
   const status = useAppSelector(s => s.accounts.accounts[accountId]?.status);
-  // Only render the spinner when the account is *actively* loading. We used
-  // to also treat `status === undefined` as loading, but that meant a host
-  // mounted for an account that's not in the store (e.g. a render race with
-  // `addAccount`) would spin forever. The brief microtask between mount and
-  // the `setAccountStatus('pending')` dispatch in `openWebviewAccount` is
-  // visually indistinguishable from no overlay, so this is safe.
-  const isLoading = status !== undefined && LOADING_STATUSES.has(status);
+  // Treat an unknown account status as "still loading" so the spinner is
+  // visible from frame 1, even before the openWebviewAccount thunk has
+  // dispatched setAccountStatus('pending'). The status flips out of the
+  // loading set on the first 'open'/'timeout'/'closed' transition, so the
+  // overlay never sticks beyond the actual load.
+  const isLoading = status === undefined || LOADING_STATUSES.has(status);
   const isTimeout = status === 'timeout';
   const providerName = PROVIDER_COPY[provider] ?? 'app';
 
@@ -139,15 +188,44 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
       ref={ref}
       className="relative h-full w-full overflow-hidden rounded-2xl border border-stone-200/70 bg-stone-100 shadow-soft"
       aria-label={`webview host for account ${accountId}`}>
-      {isLoading ? (
+      {/* Branded placeholder + (optional) loading overlay collapsed into a
+          single absolute container so we never paint two stacked / offset
+          flex columns when the spinner is on top of the placeholder.
+          - Placeholder always rendered (icon + provider name) so the host
+            area is never a blank stone-100 rectangle.
+          - When loading: spinner + "Loading {Provider}..." appended below
+            the same icon, plus the elapsed phase hint past 5s/10s.
+          - Native CEF view composites above this on reveal, so the
+            placeholder is only visible during the loading window. */}
+      {!isTimeout ? (
         <div
-          data-testid={`webview-loading-${accountId}`}
-          className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 text-stone-500"
-          role="status"
-          aria-live="polite"
-          aria-label="Loading account">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-300 border-t-stone-600" />
-          <span className="text-xs font-medium tracking-wide">{`Loading ${providerName}...`}</span>
+          data-testid={`webview-placeholder-${accountId}`}
+          className={`pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 ${
+            isLoading ? 'text-stone-500' : 'text-stone-400'
+          }`}
+          role={isLoading ? 'status' : undefined}
+          aria-live={isLoading ? 'polite' : undefined}
+          aria-label={isLoading ? 'Loading account' : undefined}>
+          <ProviderIcon
+            provider={provider}
+            className={`h-12 w-12 ${isLoading ? '' : 'opacity-70'}`}
+          />
+          <span
+            className={`text-xs font-medium tracking-wide ${isLoading ? '' : 'text-stone-500'}`}>
+            {isLoading ? `Loading ${providerName}...` : providerName}
+          </span>
+          {isLoading ? (
+            <div
+              data-testid={`webview-loading-${accountId}`}
+              className="flex flex-col items-center gap-2">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-300 border-t-stone-600" />
+              {/* Issue #1233 — `key={accountId}` forces React to unmount the
+                  hint when the user switches between two still-loading
+                  accounts so the elapsed counter doesn't carry the
+                  previous account's progress into the new one. */}
+              <LoadingPhaseHint key={accountId} accountId={accountId} />
+            </div>
+          ) : null}
         </div>
       ) : null}
 

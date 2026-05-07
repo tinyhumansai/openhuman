@@ -8,6 +8,20 @@
 	<string>OpenHuman uses the camera for video calls and huddles inside embedded apps (Google Meet, Discord, Slack).</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>OpenHuman uses Apple Events to read the focused text field for inline autocomplete suggestions and to detect the active app for context-aware features. You can manage this in System Settings &gt; Privacy &amp; Security &gt; Automation.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>OpenHuman uses Bluetooth for cross-device passkey sign-in (for example, when signing in to Google with your phone as an authenticator) and to detect connected audio devices (AirPods, headsets) in voice and video calls inside embedded apps (Google Meet, Discord, Slack).</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>OpenHuman shares your approximate location only when an embedded app (Google Meet, Discord) requests it — for example, to suggest nearby meeting rooms or set a default region. You can deny this without affecting other features.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>OpenHuman accesses the Documents folder only when you pick or save a file there from inside an embedded app (Slack, Discord, Telegram).</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>OpenHuman accesses the Downloads folder only when you pick or save a file there from inside an embedded app (Slack, Discord, Telegram).</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>OpenHuman accesses the Desktop folder only when you pick or save a file there from inside an embedded app (Slack, Discord, Telegram).</string>
+	<key>NSContactsUsageDescription</key>
+	<string>OpenHuman accesses Contacts only when an embedded app (Slack, Google Meet) explicitly asks to import or invite people from your address book.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>OpenHuman accesses your calendar only when an embedded app (Google Meet) asks to read or create events on your behalf.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

@@ -1,5 +1,5 @@
-import { act, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
 import ContextGatheringStep from '../ContextGatheringStep';
@@ -122,6 +122,174 @@ describe('ContextGatheringStep', () => {
 
     await waitFor(() => expect(callCoreRpc).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(onNext).toHaveBeenCalled(), { timeout: 5000 });
+  });
+
+  describe('background continuation link', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('does not show background link before 10s threshold', async () => {
+      vi.useFakeTimers();
+      let resolveGmail!: (v: unknown) => void;
+      callCoreRpc.mockImplementation(
+        () =>
+          new Promise(res => {
+            resolveGmail = res;
+          })
+      );
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
+      );
+
+      await act(async () => {
+        vi.advanceTimersByTime(9_999);
+      });
+      expect(screen.queryByText(/keep building in background/i)).not.toBeInTheDocument();
+
+      // Cleanup
+      await act(async () => {
+        resolveGmail({ successful: true, data: { messages: [] } });
+      });
+    });
+
+    it('shows background link after 10s with fade-in animation', async () => {
+      vi.useFakeTimers();
+      let resolveGmail!: (v: unknown) => void;
+      callCoreRpc.mockImplementation(
+        () =>
+          new Promise(res => {
+            resolveGmail = res;
+          })
+      );
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
+      );
+
+      await act(async () => {
+        vi.advanceTimersByTime(10_000);
+      });
+      const link = screen.getByText(/keep building in background/i);
+      expect(link).toBeInTheDocument();
+      expect(link.className).toContain('animate-fade-in');
+
+      await act(async () => {
+        resolveGmail({ successful: true, data: { messages: [] } });
+      });
+    });
+
+    it('clicking background link calls onNext to complete onboarding', async () => {
+      vi.useFakeTimers();
+      let resolveGmail!: (v: unknown) => void;
+      callCoreRpc.mockImplementation(
+        () =>
+          new Promise(res => {
+            resolveGmail = res;
+          })
+      );
+      const onNext = vi.fn().mockResolvedValue(undefined);
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
+      );
+
+      await act(async () => {
+        vi.advanceTimersByTime(10_000);
+      });
+      fireEvent.click(screen.getByText(/keep building in background/i));
+      expect(onNext).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        resolveGmail({ successful: true, data: { messages: [] } });
+      });
+    });
+
+    it('does not show background link if pipeline finishes within 10s', async () => {
+      vi.useFakeTimers();
+      callCoreRpc.mockResolvedValue({ successful: true, data: { messages: [] } });
+
+      renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={vi.fn()} />
+      );
+
+      // Let pipeline resolve (microtasks)
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Advance past 10s — link should still not appear since finished is true
+      await act(async () => {
+        vi.advanceTimersByTime(11_000);
+      });
+      expect(screen.queryByText(/keep building in background/i)).not.toBeInTheDocument();
+    });
+
+    it('pipeline saves profile even after user clicks background link and component unmounts', async () => {
+      vi.useFakeTimers();
+      let resolveScrape!: (v: unknown) => void;
+      let resolveSave!: (v: unknown) => void;
+
+      callCoreRpc.mockImplementation(async (req: { method: string }) => {
+        if (req.method === 'openhuman.tools_composio_execute') {
+          return {
+            successful: true,
+            data: { messages: [{ messageText: 'https://www.linkedin.com/in/test-user' }] },
+          };
+        }
+        if (req.method === 'openhuman.tools_apify_linkedin_scrape') {
+          return new Promise(res => {
+            resolveScrape = res;
+          });
+        }
+        if (req.method === 'openhuman.learning_save_profile') {
+          return new Promise(res => {
+            resolveSave = res;
+          });
+        }
+        throw new Error(`unexpected RPC ${req.method}`);
+      });
+
+      const onNext = vi.fn().mockResolvedValue(undefined);
+      const { unmount } = renderWithProviders(
+        <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
+      );
+
+      // Wait for Gmail stage to complete and scrape to start
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      // Show background link after 10s
+      await act(async () => {
+        vi.advanceTimersByTime(10_000);
+      });
+
+      // User clicks background link → onNext called, then unmount
+      fireEvent.click(screen.getByText(/keep building in background/i));
+      expect(onNext).toHaveBeenCalled();
+      unmount();
+
+      // Resolve remaining pipeline stages after unmount
+      await act(async () => {
+        resolveScrape({ data: {}, markdown: '# Test User' });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        resolveSave({ path: '/tmp/PROFILE.md', bytes: 128 });
+        await Promise.resolve();
+      });
+
+      // Verify save_profile was called — pipeline continued after unmount
+      const saveCalls = callCoreRpc.mock.calls.filter(
+        (c: Array<{ method: string }>) => c[0].method === 'openhuman.learning_save_profile'
+      );
+      expect(saveCalls.length).toBe(1);
+    });
   });
 
   it('shows friendly error message when learning_save_profile rejects', async () => {

@@ -58,6 +58,11 @@ struct AnalyticsSettingsUpdate {
 }
 
 #[derive(Debug, Deserialize)]
+struct MeetSettingsUpdate {
+    auto_orchestrator_handoff: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 struct LocalAiSettingsUpdate {
     runtime_enabled: Option<bool>,
     usage_embeddings: Option<bool>,
@@ -125,6 +130,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("workspace_onboarding_flag_set"),
         schemas("update_analytics_settings"),
         schemas("get_analytics_settings"),
+        schemas("update_meet_settings"),
+        schemas("get_meet_settings"),
         schemas("agent_server_status"),
         schemas("reset_local_data"),
         schemas("get_onboarding_completed"),
@@ -197,6 +204,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get_analytics_settings"),
             handler: handle_get_analytics_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_meet_settings"),
+            handler: handle_update_meet_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_meet_settings"),
+            handler: handle_get_meet_settings,
         },
         RegisteredController {
             schema: schemas("agent_server_status"),
@@ -507,6 +522,29 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "update_meet_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_meet_settings",
+            description:
+                "Update Google Meet integration settings (currently the auto-orchestrator-handoff privacy gate).",
+            inputs: vec![optional_bool(
+                "auto_orchestrator_handoff",
+                "When true, ending a Meet call hands the transcript to the orchestrator for proactive follow-up actions.",
+            )],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
+        "get_meet_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_meet_settings",
+            description: "Read current Google Meet integration settings.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "auto_orchestrator_handoff",
+                ty: TypeSchema::Bool,
+                comment: "Whether the orchestrator handoff fires on Meet call end.",
+                required: true,
+            }],
+        },
         "agent_server_status" => ControllerSchema {
             namespace: "config",
             function: "agent_server_status",
@@ -792,6 +830,60 @@ fn handle_get_analytics_settings(_params: Map<String, Value>) -> ControllerFutur
         to_json(RpcOutcome::new(
             result,
             vec!["analytics settings read".to_string()],
+        ))
+    })
+}
+
+fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("[config][rpc] update_meet_settings enter");
+        let update = match deserialize_params::<MeetSettingsUpdate>(params) {
+            Ok(u) => u,
+            Err(err) => {
+                log::warn!("[config][rpc] update_meet_settings invalid params: {err}");
+                return Err(err);
+            }
+        };
+        log::debug!(
+            "[config][rpc] update_meet_settings patch auto_orchestrator_handoff={:?}",
+            update.auto_orchestrator_handoff
+        );
+        let patch = config_rpc::MeetSettingsPatch {
+            auto_orchestrator_handoff: update.auto_orchestrator_handoff,
+        };
+        match config_rpc::load_and_apply_meet_settings(patch).await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] update_meet_settings ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] update_meet_settings failed: {err}");
+                Err(err)
+            }
+        }
+    })
+}
+
+fn handle_get_meet_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        log::debug!("[config][rpc] get_meet_settings enter");
+        let config = match config_rpc::load_config_with_timeout().await {
+            Ok(c) => c,
+            Err(err) => {
+                log::warn!("[config][rpc] get_meet_settings load failed: {err}");
+                return Err(err);
+            }
+        };
+        let auto_orchestrator_handoff = config.meet.auto_orchestrator_handoff;
+        log::debug!(
+            "[config][rpc] get_meet_settings ok auto_orchestrator_handoff={auto_orchestrator_handoff}"
+        );
+        let result = serde_json::json!({
+            "auto_orchestrator_handoff": auto_orchestrator_handoff,
+        });
+        to_json(RpcOutcome::new(
+            result,
+            vec!["meet settings read".to_string()],
         ))
     })
 }
