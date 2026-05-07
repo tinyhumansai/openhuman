@@ -51,6 +51,19 @@ const TOOLKIT_LABEL: Record<string, string> = {
   github: 'GitHub',
 };
 
+/**
+ * Toolkits that have a memory-tree-ingesting sync implementation on the
+ * Rust side. Only these get a Sync button — clicking it on a toolkit
+ * that lacks an ingest path would just churn the worker without
+ * adding chunks to the memory tree.
+ *
+ * Source of truth: providers under
+ * `src/openhuman/composio/providers/<toolkit>/` that call
+ * `ingest_page_into_memory_tree`. Today that's gmail. Add a slug here
+ * when a new provider lands a memory-tree ingest path.
+ */
+const SYNCABLE_TOOLKITS = new Set<string>(['gmail']);
+
 function labelFor(connection: ComposioConnection): string {
   const base = TOOLKIT_LABEL[connection.toolkit] ?? connection.toolkit;
   const identity =
@@ -210,6 +223,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
               const isSyncing = syncingId === conn.id;
               const isActive =
                 conn.status === 'ACTIVE' || conn.status === 'CONNECTED';
+              const isSyncable = SYNCABLE_TOOLKITS.has(conn.toolkit);
               return (
                 <li
                   key={conn.id}
@@ -224,26 +238,35 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                       {conn.createdAt ? ` · added ${conn.createdAt.slice(0, 10)}` : ''}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleSync(conn)}
-                    disabled={isSyncing || !isActive}
-                    data-testid={`memory-source-sync-${conn.toolkit}`}
-                    className="inline-flex items-center gap-1.5 rounded-md
-                               bg-ocean-500 px-3 py-1.5 text-xs font-semibold text-white
-                               shadow-sm transition-colors hover:bg-ocean-600
-                               disabled:cursor-not-allowed disabled:opacity-50
-                               focus:outline-none focus:ring-2 focus:ring-ocean-200">
-                    {isSyncing ? (
-                      <>
-                        <Spinner /> Syncing…
-                      </>
-                    ) : (
-                      <>
-                        <SyncIcon /> Sync
-                      </>
-                    )}
-                  </button>
+                  {isSyncable ? (
+                    <button
+                      type="button"
+                      onClick={() => handleSync(conn)}
+                      disabled={isSyncing || !isActive}
+                      data-testid={`memory-source-sync-${conn.toolkit}`}
+                      className="inline-flex items-center gap-1.5 rounded-md
+                                 bg-ocean-500 px-3 py-1.5 text-xs font-semibold text-white
+                                 shadow-sm transition-colors hover:bg-ocean-600
+                                 disabled:cursor-not-allowed disabled:opacity-50
+                                 focus:outline-none focus:ring-2 focus:ring-ocean-200">
+                      {isSyncing ? (
+                        <>
+                          <Spinner /> Syncing…
+                        </>
+                      ) : (
+                        <>
+                          <SyncIcon /> Sync
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <span
+                      className="text-xs italic text-stone-400"
+                      data-testid={`memory-source-no-sync-${conn.toolkit}`}
+                      title="No memory-tree sync provider for this toolkit yet">
+                      no sync yet
+                    </span>
+                  )}
                 </li>
               );
             })}

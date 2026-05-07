@@ -134,6 +134,24 @@ describe('MemoryWorkspace (graph view)', () => {
     });
   });
 
+  it('hides the Sync button for toolkits without a memory-tree ingest provider', async () => {
+    listConnections.mockResolvedValue({
+      connections: [
+        { id: 'conn-gmail', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'a@x' },
+        { id: 'conn-slack', toolkit: 'slack', status: 'ACTIVE', workspace: 'acme' },
+        { id: 'conn-notion', toolkit: 'notion', status: 'ACTIVE' },
+      ],
+    });
+    renderWithProviders(<MemoryWorkspace />);
+    expect(await screen.findByTestId('memory-source-sync-gmail')).toBeInTheDocument();
+    expect(screen.queryByTestId('memory-source-sync-slack')).toBeNull();
+    expect(screen.queryByTestId('memory-source-sync-notion')).toBeNull();
+    // Non-syncable toolkits still appear in the list with a plain
+    // "no sync yet" hint so the user knows the connection exists.
+    expect(screen.getByTestId('memory-source-no-sync-slack')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-source-no-sync-notion')).toBeInTheDocument();
+  });
+
   it('toggling to Contacts mode re-fetches the graph with mode=contacts', async () => {
     renderWithProviders(<MemoryWorkspace />);
     await screen.findByTestId('memory-graph-svg');
