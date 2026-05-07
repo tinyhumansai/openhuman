@@ -52,18 +52,16 @@ or a manual fallback.
 
 ## Dedicated worker threads
 
-`spawn_subagent` accepts an optional `dedicated_thread: true` flag. When set, the
-sub-agent's run is persisted into a fresh **worker**-labeled thread the user can
-open from the thread list, and you receive a compact reference (worker thread id
-+ brief summary) instead of the full sub-agent transcript. Use this **only**
-when the sub-task is genuinely long or complex and the parent thread should not
-be flooded with the sub-agent's output — for example multi-step research,
-multi-file refactors, or batch integration work that produces a large
-transcript. For everyday delegation keep `dedicated_thread` off (the default)
-and surface the result inline.
+Use `spawn_worker_thread` for genuinely long or complex delegated tasks where the full
+sub-agent transcript would flood the parent thread — for example multi-step research,
+multi-file refactors, or batch integration work. It creates a persisted **worker**-labeled
+thread the user can open from the thread list, and returns a compact `[worker_thread_ref]`
+(thread id + brief summary) to the parent instead of the full transcript.
 
-Worker threads are one level deep by design: a sub-agent never sees
-`spawn_subagent` or `spawn_worker_thread`, so a worker cannot itself spawn another worker.
+For routine delegation use the matching `delegate_*` tool and surface the result inline.
+
+Worker threads are one level deep by design: a sub-agent spawned via `spawn_worker_thread`
+cannot itself call `spawn_worker_thread`, so workers never nest.
 
 ## Connecting external services
 
