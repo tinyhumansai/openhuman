@@ -10,7 +10,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type { BootCheckTransport } from '../lib/bootCheck';
-
 import { callCoreRpc } from './coreRpcClient';
 
 async function callRpc<T>(method: string, params?: Record<string, unknown>): Promise<T> {
@@ -21,7 +20,4 @@ async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promis
   return invoke<T>(cmd, args);
 }
 
-export const bootCheckTransport: BootCheckTransport = {
-  callRpc,
-  invokeCmd,
-};
+export const bootCheckTransport: BootCheckTransport = { callRpc, invokeCmd };
