@@ -18,6 +18,7 @@ use axum::{extract::Request, Json, Router};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::core::all;
 use crate::core::types::{AppState, RpcError, RpcFailure, RpcRequest, RpcSuccess};
@@ -55,7 +56,19 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                 .into_response()
         }
         Err(message) => {
-            tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, message);
+            // Session-expired bubbles up as an "error" but is an expected
+            // boundary condition (auth handler clears the local token and the
+            // UI re-auths). Don't spam Sentry with it.
+            if !is_session_expired_error(&message) {
+                crate::core::observability::report_error(
+                    message.as_str(),
+                    "rpc",
+                    "invoke_method",
+                    &[("method", method.as_str()), ("elapsed_ms", &ms.to_string())],
+                );
+            } else {
+                tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, message);
+            }
             (
                 StatusCode::OK,
                 Json(RpcFailure {
@@ -596,7 +609,7 @@ pub async fn run_server(
     port: Option<u16>,
     socketio_enabled: bool,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, false).await
+    run_server_inner(host, port, socketio_enabled, false, None).await
 }
 
 /// Like [`run_server`] but marks the instance as embedded.
@@ -604,8 +617,9 @@ pub async fn run_server_embedded(
     host: Option<&str>,
     port: Option<u16>,
     socketio_enabled: bool,
+    shutdown_token: CancellationToken,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, true).await
+    run_server_inner(host, port, socketio_enabled, true, Some(shutdown_token)).await
 }
 
 /// Internal server entrypoint.
@@ -614,6 +628,7 @@ async fn run_server_inner(
     port: Option<u16>,
     socketio_enabled: bool,
     embedded_core: bool,
+    shutdown_token: Option<CancellationToken>,
 ) -> anyhow::Result<()> {
     // Ensure all controllers are registered before starting.
     let _ = all::all_registered_controllers();
@@ -658,6 +673,15 @@ async fn run_server_inner(
                 cfg.workspace_dir.display()
             ),
             Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
+        }
+        // Initialize the WhatsApp data store so scanner ingest calls
+        // can write data without requiring a lazy-init fallback.
+        match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
+            Ok(_) => log::info!(
+                "[boot] whatsapp_data::global initialized (workspace={})",
+                cfg.workspace_dir.display()
+            ),
+            Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
         }
     }
 
@@ -705,7 +729,7 @@ async fn run_server_inner(
     let app = build_core_http_router(socketio_enabled);
 
     // --- Skill runtime bootstrap -------------------------------------------
-    bootstrap_skill_runtime().await;
+    bootstrap_skill_runtime(embedded_core).await;
 
     log::info!(
         "[core] OpenHuman core is ready — listening on http://{bind_addr} (version {})",
@@ -847,9 +871,18 @@ async fn run_server_inner(
         log::info!("[channels] OPENHUMAN_DISABLE_CHANNEL_LISTENERS set — skipping start_channels");
     }
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(crate::core::shutdown::signal())
-        .await?;
+    if let Some(shutdown_token) = shutdown_token {
+        log::info!("[core] embedded server waiting on cancellation token for graceful shutdown");
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                shutdown_token.cancelled().await;
+            })
+            .await?;
+    } else {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(crate::core::shutdown::signal())
+            .await?;
+    }
     Ok(())
 }
 
@@ -860,6 +893,7 @@ async fn run_server_inner(
 fn register_domain_subscribers(
     workspace_dir: std::path::PathBuf,
     config: crate::openhuman::config::Config,
+    embedded_core: bool,
 ) {
     use std::sync::{Arc, Once};
 
@@ -905,9 +939,15 @@ fn register_domain_subscribers(
         // Restart requests go through a subscriber so every trigger path shares
         // the same respawn logic.
         crate::openhuman::service::bus::register_restart_subscriber();
-        // Shutdown requests use the same pattern; the subscriber exits the
-        // current process after a short grace period.
-        crate::openhuman::service::bus::register_shutdown_subscriber();
+        if embedded_core {
+            log::info!(
+                "[event_bus] embedded core: service shutdown subscriber not registered; Tauri cancellation token owns shutdown"
+            );
+        } else {
+            // Shutdown requests use the same pattern; the standalone CLI
+            // subscriber exits the current process after a short grace period.
+            crate::openhuman::service::bus::register_shutdown_subscriber();
+        }
 
         // Proactive message subscriber (web-only in the desktop runtime —
         // no external channel instances are registered here). Uses a
@@ -926,7 +966,7 @@ fn register_domain_subscribers(
 }
 
 /// Initializes long-lived socket/event-bus infrastructure.
-pub async fn bootstrap_skill_runtime() {
+pub async fn bootstrap_skill_runtime(embedded_core: bool) {
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
     let cfg = match crate::openhuman::config::Config::load_or_init().await {
@@ -944,7 +984,7 @@ pub async fn bootstrap_skill_runtime() {
     // Register domain subscribers for cross-module event handling.
     // Uses a Once guard so repeated calls to bootstrap_skill_runtime()
     // cannot double-subscribe.
-    register_domain_subscribers(workspace_dir.clone(), cfg.clone());
+    register_domain_subscribers(workspace_dir.clone(), cfg.clone(), embedded_core);
 
     // --- Turn-state recovery -------------------------------------------
     // Any per-thread turn snapshots left on disk from a previous process

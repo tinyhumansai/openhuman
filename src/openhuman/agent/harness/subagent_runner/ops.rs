@@ -1,22 +1,17 @@
 //! Sub-agent execution entry points and the inner tool-call loop.
 //!
 //! The public runner lives in [`run_subagent`]. It dispatches to
-//! [`run_typed_mode`] (narrow prompt + filtered tools) or
-//! [`run_fork_mode`] (prefix-replay) depending on the
-//! [`super::types::SubagentMode`] implied by the
-//! [`crate::openhuman::agent::harness::definition::AgentDefinition`].
-//!
-//! Both modes delegate to [`run_inner_loop`] which drives provider
-//! calls and tool execution until the model returns without further
-//! tool calls (or the iteration budget is exhausted).
+//! [`run_typed_mode`] (narrow prompt + filtered tools) which builds a
+//! brand-new system prompt and a filtered tool list for the requested
+//! archetype, then drives provider calls and tool execution until the
+//! model returns without further tool calls (or the iteration budget
+//! is exhausted).
 
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::super::fork_context::{
-    current_fork, current_parent, ForkContext, ParentExecutionContext,
-};
+use super::super::fork_context::{current_parent, ParentExecutionContext};
 use super::super::session::transcript;
 use super::extract_tool::ExtractFromResultTool;
 use super::handoff::{
@@ -74,7 +69,7 @@ impl LazyToolkitResolver {
 /// This is the primary entry point for agent delegation. It performs the following:
 /// 1. Resolves the [`ParentExecutionContext`] task-local.
 /// 2. Generates a unique `task_id` if one wasn't provided.
-/// 3. Dispatches to either `run_fork_mode` or `run_typed_mode` based on the definition.
+/// 3. Dispatches to `run_typed_mode`.
 ///
 /// On success returns a [`SubagentRunOutcome`] whose `output` is the
 /// final assistant text. On failure the error is suitable for stringifying
@@ -105,12 +100,7 @@ pub async fn run_subagent(
     // Write/Admin slugs under `ReadOnly`) read it via
     // `current_sandbox_mode()`; tools that don't care just ignore it.
     let outcome = with_current_sandbox_mode(definition.sandbox_mode, async {
-        if definition.uses_fork_context {
-            let fork = current_fork().ok_or(SubagentRunError::NoForkContext)?;
-            run_fork_mode(definition, task_prompt, &options, &parent, &fork, &task_id).await
-        } else {
-            run_typed_mode(definition, task_prompt, &options, &parent, &task_id).await
-        }
+        run_typed_mode(definition, task_prompt, &options, &parent, &task_id).await
     })
     .await?;
 
@@ -756,112 +746,6 @@ async fn run_typed_mode(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fork mode — replay parent's bytes for prefix-cache reuse
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Execute a sub-agent in "Fork" mode.
-///
-/// This mode is an optimization. It replays the parent's EXACT rendered prompt
-/// and history prefix up to the point of delegation. This allows the inference
-/// server to reuse its existing KV-cache for the prefix, drastically reducing
-/// first-token latency and token costs for parallel delegation.
-async fn run_fork_mode(
-    definition: &AgentDefinition,
-    _task_prompt: &str,
-    _options: &SubagentRunOptions,
-    parent: &ParentExecutionContext,
-    fork: &ForkContext,
-    task_id: &str,
-) -> Result<SubagentRunOutcome, SubagentRunError> {
-    let started = Instant::now();
-
-    // The fork's task prompt comes from the ForkContext (set by the
-    // parent's tool-dispatch site), not from the spawn_subagent args
-    // directly. This guarantees the bytes the parent committed to are
-    // what the child sees.
-    let fork_task_prompt = fork.fork_task_prompt.clone();
-
-    tracing::debug!(
-        agent_id = %definition.id,
-        prefix_len = fork.message_prefix.len(),
-        "[subagent_runner:fork] replaying parent prefix"
-    );
-
-    // History = parent's exact prefix (which already starts with the
-    // parent's system message), then the new fork directive as a user
-    // message. The system_prompt arc is unused here because the prefix
-    // already contains the system message at index 0 — but we sanity-
-    // check that invariant.
-    debug_assert!(
-        fork.message_prefix
-            .first()
-            .map(|m| m.role == "system")
-            .unwrap_or(false),
-        "fork message_prefix must start with the parent's system message"
-    );
-    let mut history: Vec<ChatMessage> = (*fork.message_prefix).clone();
-    history.push(ChatMessage::user(fork_task_prompt));
-
-    // Fork mode keeps the parent's exact tool schema snapshot so the
-    // request body matches the prefix the backend has already cached.
-    // Runtime execution still resolves against the parent's live tool
-    // registry.
-    //
-    // Sub-agents (including fork-mode ones) must not spawn their own
-    // sub-agents — the rule that applies in `run_typed_mode`'s filter
-    // applies here too. We keep `spawn_subagent` / `delegate_*` in
-    // `fork.tool_specs` so the prefix bytes still match the parent's
-    // cached body (mutating the specs would defeat the whole point of
-    // fork mode), and instead drop them from `allowed_names` so the
-    // runtime rejects any attempt to call them with the usual
-    // "not in allowlist" path.
-    let allowed_names: HashSet<String> = parent
-        .all_tools
-        .iter()
-        .map(|t| t.name().to_string())
-        .filter(|name| !is_subagent_spawn_tool(name) && name != "spawn_worker_thread")
-        .collect();
-
-    let model = parent.model_name.clone();
-    let temperature = parent.temperature;
-    // Use the parent's iteration cap, not the synthetic fork definition's.
-    let max_iterations = parent.agent_config.max_tool_iterations.max(1);
-
-    // Fork mode replays the parent's exact tool list — no dynamic
-    // toolkit-scoped tools, so `extra_tools` is empty.
-    let fork_extra_tools: Vec<Box<dyn Tool>> = Vec::new();
-    // Transcript persistence happens per-iteration inside
-    // `run_inner_loop`; no post-loop write needed.
-    let (output, iterations, _agg_usage) = run_inner_loop(
-        parent.provider.as_ref(),
-        &mut history,
-        &parent.all_tools,
-        fork_extra_tools,
-        fork.tool_specs.as_slice(),
-        allowed_names,
-        None,
-        &model,
-        temperature,
-        max_iterations,
-        task_id,
-        &definition.id,
-        None,
-        None,
-        parent,
-    )
-    .await?;
-
-    Ok(SubagentRunOutcome {
-        task_id: task_id.to_string(),
-        agent_id: definition.id.clone(),
-        output,
-        iterations,
-        elapsed: started.elapsed(),
-        mode: SubagentMode::Fork,
-    })
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Inner tool-call loop (slim version of agent::loop_::tool_loop)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -986,7 +870,7 @@ async fn run_inner_loop(
     if force_text_mode {
         // Append the XML tool protocol + available-tool list to the
         // existing system prompt. `history[0]` is the system message
-        // built by `run_typed_mode` / `run_fork_mode` upstream; we
+        // built by `run_typed_mode` upstream; we
         // augment it in-place so the model learns the call format for
         // this session without an extra message round-trip.
         if let Some(sys) = history.iter_mut().find(|m| m.role == "system") {

@@ -16,6 +16,7 @@ pub mod event_bus;
 pub mod jsonrpc;
 pub mod logging;
 pub mod memory_cli;
+pub mod observability;
 pub mod rpc_log;
 pub mod shutdown;
 pub mod socketio;

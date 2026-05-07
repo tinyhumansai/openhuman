@@ -166,17 +166,25 @@ impl EmbeddingProvider for OllamaEmbedding {
             .send()
             .await
             .map_err(|e| {
-                anyhow::anyhow!(
+                let message = format!(
                     "ollama embed request failed (is Ollama running at {}?): {e}",
                     self.base_url
-                )
+                );
+                crate::core::observability::report_error(
+                    message.as_str(),
+                    "embeddings",
+                    "ollama_embed",
+                    &[("model", self.model.as_str()), ("failure", "transport")],
+                );
+                anyhow::anyhow!(message)
             })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
+            let status_str = status.as_u16().to_string();
             let body = resp.text().await.unwrap_or_default();
             let detail = body.trim();
-            anyhow::bail!(
+            let message = format!(
                 "ollama embed failed with status {status}{}",
                 if detail.is_empty() {
                     String::new()
@@ -184,6 +192,17 @@ impl EmbeddingProvider for OllamaEmbedding {
                     format!(": {detail}")
                 }
             );
+            crate::core::observability::report_error(
+                message.as_str(),
+                "embeddings",
+                "ollama_embed",
+                &[
+                    ("model", self.model.as_str()),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+            anyhow::bail!(message);
         }
 
         let payload: OllamaEmbedResponse = resp

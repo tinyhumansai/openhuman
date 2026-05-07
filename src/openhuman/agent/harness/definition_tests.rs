@@ -22,7 +22,6 @@ fn make_def(id: &str) -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
-        uses_fork_context: false,
         subagents: vec![],
         delegate_name: None,
         source: DefinitionSource::Builtin,

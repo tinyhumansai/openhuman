@@ -29,6 +29,9 @@ Applies to every release, all platforms.
 - [ ] **Input Monitoring prompt fires on first hotkey use** — Press the registered global hotkey for the first time. Expected: `Input Monitoring` prompt; granting it makes the hotkey trigger; denying it does not crash the app.
 - [ ] **Screen Recording prompt fires on first screen-share** — Use the screen-share skill or `getDisplayMedia` shim. Expected: `Screen Recording` prompt; granted → picker shows windows + screens; denied → in-app message explaining the requirement.
 - [ ] **Microphone prompt fires on first voice capture** — Start a voice session. Expected: standard mic prompt; granted → capture begins; denied → fallback message, no panic.
+- [ ] **Bluetooth prompt fires on first Gmeet call (regression watch — see #1288)** — Open the Google Meet webview account and join a meeting from a fresh install. Expected: macOS prompts `OpenHuman would like to use Bluetooth` the first time the device picker enumerates audio peripherals; granted → AirPods/headsets appear in the picker; denied → fallback to built-in mic, no crash. Hard fail mode (key absent) is a SIGABRT before the prompt can render.
+- [ ] **Location prompt does not crash on Gmeet room-finder probe** — If Gmeet surfaces nearby-room suggestions, the first probe should trigger `OpenHuman would like to use your current location`; granting or denying must NOT crash the app. (Probe path is webview-driven; only verify the no-crash invariant here.)
+- [ ] **File picker does not crash on Documents/Downloads/Desktop selections** — From an embedded app (Slack, Discord, Telegram), trigger a file upload and pick a file from `Documents`, `Downloads`, and `Desktop` in turn. Expected: macOS prompts `OpenHuman would like to access files in your <Folder> folder` the first time per folder; deny + retry must not crash.
 
 ### Windows
 

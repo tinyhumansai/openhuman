@@ -13,11 +13,22 @@ FROM rust:1.93-bookworm AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System dependencies required for compilation
+# System dependencies required for compilation.
+#
+# ALSA / X11 / input headers are needed because `cpal`, `enigo`, `arboard`,
+# and `rdev` are unconditional dependencies of the core crate (used by the
+# voice, autocomplete, and clipboard subsystems). They link against system
+# libraries even when the corresponding features are disabled at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    cmake \
     pkg-config \
     libssl-dev \
+    libasound2-dev \
+    libxdo-dev \
+    libxtst-dev \
+    libx11-dev \
+    libevdev-dev \
     clang \
     mold \
     ca-certificates \
@@ -51,6 +62,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
+    libasound2 \
+    libxdo3 \
+    libxtst6 \
+    libx11-6 \
+    libevdev2 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

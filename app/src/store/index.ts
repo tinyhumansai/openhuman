@@ -41,7 +41,7 @@ const persistedChannelConnectionsReducer = persistReducer(
 const accountsPersistConfig = {
   key: 'accounts',
   storage,
-  whitelist: ['accounts', 'order', 'activeAccountId'],
+  whitelist: ['accounts', 'order', 'activeAccountId', 'lastActiveAccountId'],
 };
 const persistedAccountsReducer = persistReducer(accountsPersistConfig, accountsReducer);
 

@@ -3,7 +3,8 @@ import { useState } from 'react';
 import OAuthProviderButton from '../components/oauth/OAuthProviderButton';
 import { oauthProviderConfigs } from '../components/oauth/providerConfigs';
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
-import { clearCoreRpcUrlCache } from '../services/coreRpcClient';
+import { clearBackendUrlCache } from '../services/backendUrl';
+import { clearCoreRpcUrlCache, testCoreRpcConnection } from '../services/coreRpcClient';
 import { useDeepLinkAuthState } from '../store/deepLinkAuthState';
 import {
   clearStoredRpcUrl,
@@ -39,6 +40,7 @@ const Welcome = () => {
 
     storeRpcUrl(normalized);
     clearCoreRpcUrlCache();
+    clearBackendUrlCache();
     setRpcUrlError(null);
     setSaveSuccess(true);
 
@@ -48,6 +50,7 @@ const Welcome = () => {
   const handleResetRpcUrl = () => {
     clearStoredRpcUrl();
     clearCoreRpcUrlCache();
+    clearBackendUrlCache();
     setRpcUrl(getDefaultRpcUrl());
     setRpcUrlError(null);
     setSaveSuccess(false);
@@ -65,16 +68,13 @@ const Welcome = () => {
     setRpcUrlError(null);
 
     try {
-      const response = await fetch(normalized, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'openhuman.ping', params: {} }),
-      });
+      const response = await testCoreRpcConnection(normalized);
 
       if (response.ok || response.status === 405) {
         setSaveSuccess(true);
         storeRpcUrl(normalized);
         clearCoreRpcUrlCache();
+        clearBackendUrlCache();
       } else {
         setRpcUrlError(`Connection failed: ${response.status} ${response.statusText}`);
       }

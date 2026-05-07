@@ -382,14 +382,44 @@ impl BackendOAuthClient {
             request = request.json(&body);
         }
 
-        let response = request
-            .send()
-            .await
-            .with_context(|| format!("backend request {} {}", method.as_str(), url.path()))?;
+        let response = request.send().await.map_err(|e| {
+            crate::core::observability::report_error(
+                e.to_string().as_str(),
+                "backend_api",
+                "authed_json",
+                &[
+                    ("method", method.as_str()),
+                    ("path", url.path()),
+                    ("failure", "transport"),
+                ],
+            );
+            anyhow::Error::new(e).context(format!(
+                "backend request {} {}",
+                method.as_str(),
+                url.path()
+            ))
+        })?;
 
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         if !status.is_success() {
+            let status_str = status.as_u16().to_string();
+            crate::core::observability::report_error(
+                format!(
+                    "{} {} failed ({status}): {text}",
+                    method.as_str(),
+                    url.path()
+                )
+                .as_str(),
+                "backend_api",
+                "authed_json",
+                &[
+                    ("method", method.as_str()),
+                    ("path", url.path()),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
             anyhow::bail!(
                 "{} {} failed ({status}): {text}",
                 method.as_str(),

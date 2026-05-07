@@ -411,7 +411,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                  current_tier (string), selected_tier (string | null), device (DeviceProfile), \
                  recommend_disabled (boolean — true when the device is below the RAM floor and \
                  cloud fallback is the recommended default), local_ai_enabled (boolean — mirrors \
-                 config.local_ai.enabled so the UI can render the active state when disabled).",
+                 config.local_ai.runtime_enabled so the UI can render the active state when disabled).",
             )],
         },
         "local_ai_apply_preset" => ControllerSchema {
@@ -729,7 +729,7 @@ fn handle_local_ai_presets(_params: Map<String, Value>) -> ControllerFuture {
             "selected_tier": selected_tier,
             "device": device,
             "recommend_disabled": recommend_disabled,
-            "local_ai_enabled": config.local_ai.enabled,
+            "local_ai_enabled": config.local_ai.runtime_enabled,
         });
         Ok(value)
     })
@@ -744,7 +744,7 @@ fn handle_local_ai_apply_preset(params: Map<String, Value>) -> ControllerFuture 
         // Special "disabled" tier: turn local_ai off and route AI to cloud.
         if tier_str == "disabled" {
             let mut config = config_rpc::load_config_with_timeout().await?;
-            config.local_ai.enabled = false;
+            config.local_ai.runtime_enabled = false;
             config.local_ai.selected_tier = Some("disabled".to_string());
             // Explicit opt-out also clears the MVP opt-in marker so bootstrap
             // keeps local AI off across restarts.
@@ -781,7 +781,7 @@ fn handle_local_ai_apply_preset(params: Map<String, Value>) -> ControllerFuture 
         let mut config = config_rpc::load_config_with_timeout().await?;
         // Re-enable local AI in case it was previously disabled via the
         // "disabled" tier, so the user can switch back to local inference.
-        config.local_ai.enabled = true;
+        config.local_ai.runtime_enabled = true;
         // Explicit tier selection is the MVP opt-in — flip the marker so
         // `config_with_recommended_tier_if_unselected` stops hard-overriding
         // to disabled on subsequent boots.

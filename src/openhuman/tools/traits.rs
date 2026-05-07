@@ -170,6 +170,48 @@ pub trait Tool: Send + Sync {
         ToolCategory::System
     }
 
+    /// Whether two concurrent invocations of this tool are safe to
+    /// run in parallel inside a single LLM iteration.
+    ///
+    /// Read-only tools that touch no shared mutable state should
+    /// return `true` (the agent's tool loop can then `join_all` a
+    /// batch of read calls instead of awaiting them serially). Tools
+    /// that mutate the workspace, write to disk, or interact with
+    /// external services that throttle by caller should leave the
+    /// default `false`.
+    ///
+    /// The argument is provided so a tool can refine the answer per
+    /// call (e.g. a generic `bash` tool could allow parallel `ls` /
+    /// `cat` invocations and reject parallel `npm install`s) — most
+    /// tools will ignore it.
+    ///
+    /// **Wiring note:** the parallel dispatcher in
+    /// `harness::tool_loop` currently runs tool calls serially
+    /// regardless of this flag. Annotating tools is still load-
+    /// bearing: it lets the dispatch refactor land without
+    /// coordinating with every tool author. See the parallel-tool
+    /// dispatch follow-up issue.
+    fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
+        false
+    }
+
+    /// Per-tool cap on the character length of the result body sent
+    /// back to the model.
+    ///
+    /// When `Some(cap)` and the tool's `output_for_llm` exceeds it,
+    /// the agent's tool loop truncates the body and appends a marker
+    /// before threading the value into history — protecting the
+    /// context window from one chatty tool. When `None` (the
+    /// default), no per-tool cap applies and the global
+    /// `PayloadSummarizer` (if any) handles oversize bodies.
+    ///
+    /// Set this on tools whose output is *bounded but unpredictable*
+    /// (`bash`, `web_fetch`, etc.); leave it unset on tools where
+    /// callers genuinely want full content (`read_file`, `grep`).
+    fn max_result_size_chars(&self) -> Option<usize> {
+        None
+    }
+
     /// Get the full spec for LLM registration
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -267,6 +309,18 @@ mod tests {
     fn default_category_is_system() {
         let tool = DummyTool;
         assert_eq!(tool.category(), ToolCategory::System);
+    }
+
+    #[test]
+    fn default_is_concurrency_safe_is_false() {
+        let tool = DummyTool;
+        assert!(!tool.is_concurrency_safe(&serde_json::Value::Null));
+    }
+
+    #[test]
+    fn default_max_result_size_chars_is_none() {
+        let tool = DummyTool;
+        assert!(tool.max_result_size_chars().is_none());
     }
 
     // ── PermissionLevel ordering ───────────────────────────────────

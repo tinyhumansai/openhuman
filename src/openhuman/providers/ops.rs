@@ -137,14 +137,30 @@ pub fn format_anyhow_chain(err: &anyhow::Error) -> String {
 }
 
 /// Build a sanitized provider error from a failed HTTP response.
+///
+/// Also reports the failure to Sentry with `provider` and `status` tags so
+/// upstream LLM errors are visible in observability without every call-site
+/// having to remember to log.
 pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
+    let status_str = status.as_u16().to_string();
     let body = response
         .text()
         .await
         .unwrap_or_else(|_| "<failed to read provider error body>".to_string());
     let sanitized = sanitize_api_error(&body);
-    anyhow::anyhow!("{provider} API error ({status}): {sanitized}")
+    let message = format!("{provider} API error ({status}): {sanitized}");
+    crate::core::observability::report_error(
+        message.as_str(),
+        "llm_provider",
+        "api_error",
+        &[
+            ("provider", provider),
+            ("status", status_str.as_str()),
+            ("failure", "non_2xx"),
+        ],
+    );
+    anyhow::anyhow!(message)
 }
 
 /// Create the OpenHuman backend inference client (session JWT only).
@@ -271,7 +287,7 @@ pub fn create_routed_provider_with_options(
 
 /// Create a provider with intelligent local/remote routing.
 ///
-/// When `config.local_ai.enabled` is `true` and Ollama is reachable,
+/// When `config.local_ai.runtime_enabled` is `true` and Ollama is reachable,
 /// lightweight and medium tasks (e.g. `hint:reaction`, `hint:summarize`) are
 /// served by the local model. Heavy tasks (`hint:reasoning`, `hint:agentic`,
 /// `hint:coding`) always go to the remote backend. A health-gated fallback

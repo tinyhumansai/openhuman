@@ -1,4 +1,3 @@
-import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
 import { io, Socket } from 'socket.io-client';
 
@@ -8,8 +7,9 @@ import { store } from '../store';
 import { upsertChannelConnection } from '../store/channelConnectionsSlice';
 import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/socketSlice';
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
-import { CORE_RPC_URL, IS_DEV } from '../utils/config';
+import { IS_DEV } from '../utils/config';
 import { createSafeLogData, sanitizeError } from '../utils/sanitize';
+import { getCoreRpcUrl } from './coreRpcClient';
 
 // Socket service logger using debug package
 // Enable logging by setting DEBUG=socket* in environment or localStorage
@@ -27,17 +27,15 @@ function coreSocketBaseFromRpcUrl(rpcUrl: string): string {
   return trimmed.endsWith('/rpc') ? trimmed.slice(0, -4) : trimmed;
 }
 
+/**
+ * Resolve the Socket.IO base URL from the user's stored RPC URL preference.
+ * Delegates to getCoreRpcUrl() so the stored preference (set on the Welcome
+ * screen) is always honoured — previously this called invoke('core_rpc_url')
+ * directly, which ignored the user's stored override.
+ */
 async function resolveCoreSocketBaseUrl(): Promise<string> {
-  if (!coreIsTauri()) {
-    return coreSocketBaseFromRpcUrl(CORE_RPC_URL);
-  }
-
-  try {
-    const rpcUrl = await invoke<string>('core_rpc_url');
-    return coreSocketBaseFromRpcUrl(String(rpcUrl || CORE_RPC_URL));
-  } catch {
-    return coreSocketBaseFromRpcUrl(CORE_RPC_URL);
-  }
+  const rpcUrl = await getCoreRpcUrl();
+  return coreSocketBaseFromRpcUrl(rpcUrl);
 }
 
 interface JwtPayload {

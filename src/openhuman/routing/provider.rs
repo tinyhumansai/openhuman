@@ -71,7 +71,7 @@ pub struct IntelligentRoutingProvider {
     local_model: String,
     /// Model string sent to remote on fallback (e.g. configured default model).
     remote_fallback_model: String,
-    /// Mirrors `config.local_ai.enabled`.
+    /// Mirrors `config.local_ai.runtime_enabled`.
     local_enabled: bool,
     health: Arc<LocalHealthChecker>,
     /// Global routing hints (privacy, latency, cost).

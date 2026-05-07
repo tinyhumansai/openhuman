@@ -316,6 +316,14 @@ impl TurnStateMirror {
                 }
                 true
             }
+            AgentProgress::TurnCostUpdated { .. } => {
+                // Cost updates don't change the turn-state snapshot
+                // shape (lifecycle / phase / active tool / etc.), so
+                // we just acknowledge them without flushing. Surfacing
+                // cost in the persisted snapshot would force a disk
+                // flush per LLM call — not worth it for telemetry.
+                false
+            }
         }
     }
 

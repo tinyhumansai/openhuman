@@ -110,6 +110,11 @@ pub async fn execute_approved_write(
 }
 
 /// Execute a text-only task using the local Ollama model.
+///
+/// Gated by `local_ai.usage.subconscious`. When the flag is off (or
+/// `runtime_enabled` is off), returns `Err` so callers don't mistake a
+/// disabled subsystem for a successfully-completed empty execution.
+/// TODO: wire a cloud fallback here when use_local_for_subconscious is false.
 async fn execute_with_local_model(
     task: &SubconsciousTask,
     situation_report: &str,
@@ -118,6 +123,22 @@ async fn execute_with_local_model(
     let config = crate::openhuman::config::Config::load_or_init()
         .await
         .map_err(|e| format!("config load: {e}"))?;
+
+    if !config.local_ai.use_local_for_subconscious() {
+        // Fail fast rather than returning Ok("") — upstream code uses an
+        // empty string as a normal "task ran but produced no output"
+        // signal, so a silent skip would mask a disabled subsystem as a
+        // completed action. Surface the gate state so callers can
+        // distinguish "skipped" from "succeeded with empty output".
+        tracing::info!(
+            "[subconscious:executor] local_ai.usage.subconscious not enabled — \
+             refusing to execute task '{}' (no cloud fallback configured)",
+            task.title
+        );
+        return Err(
+            "local_ai.usage.subconscious not enabled (no cloud fallback configured)".to_string(),
+        );
+    }
 
     let prompt_text = prompt::build_text_execution_prompt(task, situation_report, identity_context);
 

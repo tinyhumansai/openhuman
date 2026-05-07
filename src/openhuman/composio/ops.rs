@@ -143,6 +143,18 @@ pub async fn composio_delete_connection(
             facets_deleted = deleted,
             "[composio] deleted connected identity facets after connection removal"
         );
+        if let Err(e) = super::providers::profile_md::remove_provider_from_profile_md(
+            &config.workspace_dir,
+            toolkit,
+            connection_id,
+        ) {
+            tracing::warn!(
+                toolkit = %toolkit,
+                connection_id = %connection_id,
+                error = %e,
+                "[composio] PROFILE.md bullet removal failed (non-fatal)"
+            );
+        }
     }
     crate::core::event_bus::publish_global(
         crate::core::event_bus::DomainEvent::ComposioConnectionDeleted {

@@ -254,7 +254,7 @@ impl LocalAiService {
     }
 
     pub async fn download_all_models(&self, config: &Config) -> Result<(), String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
         let _guard = self.bootstrap_lock.lock().await;
@@ -334,7 +334,7 @@ impl LocalAiService {
         config: &Config,
         capability: &str,
     ) -> Result<LocalAiAssetsStatus, String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
         let _guard = self.bootstrap_lock.lock().await;

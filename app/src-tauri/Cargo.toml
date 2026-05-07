@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.53.17"
+version = "0.53.18"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -60,6 +60,7 @@ directories = "5"
 # but we opt into the feature to stay robust against unexpected responses.
 base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "process", "sync", "time", "net"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 # WebSocket client + server for two uses:
 # - Client: Chrome DevTools Protocol connections to the embedded CEF
 #   instance over `--remote-debugging-port=9222` (IndexedDB reads,

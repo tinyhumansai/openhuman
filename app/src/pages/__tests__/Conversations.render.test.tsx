@@ -13,6 +13,8 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { threadApi } from '../../services/api/threadApi';
+import { chatSend } from '../../services/chatService';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
 import threadReducer from '../../store/threadSlice';
@@ -73,6 +75,11 @@ vi.mock('../../services/api/threadApi', () => ({
 }));
 
 vi.mock('../../hooks/useUsageState', () => ({ useUsageState: mockUseUsageState }));
+
+vi.mock('../../store/socketSelectors', () => ({
+  selectSocketStatus: (state: { socket?: { byUser?: Record<string, { status: string }> } }) =>
+    state.socket?.byUser?.__pending__?.status ?? 'disconnected',
+}));
 
 // useStickToBottom returns refs; mock it so layout-effects don't fire in jsdom.
 vi.mock('../../hooks/useStickToBottom', () => ({
@@ -161,6 +168,69 @@ const emptyThreadState = {
   isLoadingMessages: false,
   messagesError: null,
 };
+
+function selectedThreadState(thread: Thread) {
+  return {
+    ...emptyThreadState,
+    threads: [thread],
+    selectedThreadId: thread.id,
+    messagesByThreadId: { [thread.id]: [] },
+    messages: [],
+  };
+}
+
+function socketState(status: 'connected' | 'disconnected') {
+  return {
+    byUser: { __pending__: { status, socketId: status === 'connected' ? 'socket-1' : null } },
+  };
+}
+
+async function renderSelectedConversation(
+  options: { isAtLimit?: boolean; socketStatus?: 'connected' | 'disconnected' } = {}
+) {
+  const thread = makeThread({ id: 'send-thread', title: 'Send Thread' });
+  mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+  mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  mockUseUsageState.mockReturnValue({
+    teamUsage: null,
+    currentPlan: null,
+    currentTier: 'FREE' as const,
+    isFreeTier: true,
+    usagePct10h: options.isAtLimit ? 1 : 0,
+    usagePct7d: options.isAtLimit ? 1 : 0,
+    isNearLimit: Boolean(options.isAtLimit),
+    isAtLimit: Boolean(options.isAtLimit),
+    isRateLimited: Boolean(options.isAtLimit),
+    isBudgetExhausted: false,
+    shouldShowBudgetCompletedMessage: false,
+    isLoading: false,
+    refresh: vi.fn(),
+  });
+
+  let renderedStore: ReturnType<typeof buildStore> | undefined;
+  await act(async () => {
+    renderedStore = await renderConversations({
+      thread: selectedThreadState(thread),
+      socket: socketState(options.socketStatus ?? 'connected'),
+    });
+  });
+
+  const textarea = await screen.findByPlaceholderText('Type a message...');
+  return { store: renderedStore, textarea, thread };
+}
+
+async function submitComposerText(textarea: HTMLElement, text: string) {
+  await act(async () => {
+    fireEvent.change(textarea, { target: { value: text } });
+  });
+  await waitFor(() => {
+    expect(textarea).toHaveValue(text);
+    expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+  });
+}
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
@@ -348,7 +418,6 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     // createNewThread was called — verifies line 919 callback executed
-    const { threadApi } = await import('../../services/api/threadApi');
     expect(threadApi.createNewThread).toHaveBeenCalled();
   });
 
@@ -372,7 +441,6 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     // createNewThread was called — verifies line 1061 callback executed
-    const { threadApi } = await import('../../services/api/threadApi');
     expect(threadApi.createNewThread).toHaveBeenCalled();
   });
 
@@ -552,5 +620,54 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
 
     // isRateLimited=true, shouldShowBudgetCompletedMessage=false → rate-limit branch (line 1437)
     expect(screen.getByText(/10-hour rate limit reached/i)).toBeInTheDocument();
+  });
+
+  it('handles /new from the composer without a selected thread or sending chat text', async () => {
+    mockGetThreads.mockReturnValue(new Promise(() => {}));
+
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState, socket: socketState('connected') });
+    });
+    const textarea = await screen.findByPlaceholderText('Type a message...');
+    vi.mocked(threadApi.createNewThread).mockClear();
+    vi.mocked(chatSend).mockClear();
+
+    await submitComposerText(textarea, '/new');
+
+    await waitFor(() => {
+      expect(threadApi.createNewThread).toHaveBeenCalled();
+    });
+    expect(chatSend).not.toHaveBeenCalled();
+    expect(textarea).toHaveValue('');
+  });
+
+  it('shows the usage-limit modal instead of sending when the account is at limit', async () => {
+    const { textarea } = await renderSelectedConversation({ isAtLimit: true });
+
+    await submitComposerText(textarea, 'hello at limit');
+
+    await waitFor(() => {
+      expect(screen.getByText('Usage Limit Reached')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Usage limit reached/i)).toBeInTheDocument();
+    expect(chatSend).not.toHaveBeenCalled();
+  });
+
+  it('persists a local user message and sends through chat service for valid input', async () => {
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await submitComposerText(textarea, ' hello cloud ');
+
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({ content: 'hello cloud', sender: 'user', type: 'text' })
+      );
+    });
+    expect(chatSend).toHaveBeenCalledWith({
+      threadId: thread.id,
+      message: 'hello cloud',
+      model: 'reasoning-v1',
+    });
   });
 });

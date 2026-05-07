@@ -44,7 +44,7 @@ pub use dictation::{DictationActivationMode, DictationConfig};
 pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
 pub use identity_cost::{CostConfig, ModelPricing};
 pub use learning::{LearningConfig, ReflectionSource};
-pub use local_ai::LocalAiConfig;
+pub use local_ai::{LocalAiConfig, LocalAiUsage};
 pub use node::NodeConfig;
 pub use observability::ObservabilityConfig;
 pub use proxy::{

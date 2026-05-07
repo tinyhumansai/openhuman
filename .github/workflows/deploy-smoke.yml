@@ -1,0 +1,123 @@
+---
+name: Deploy Smoke
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker-compose.yml
+      - .do/app.yaml
+      - docs/CLOUD_DEPLOY.md
+      - .github/workflows/deploy-smoke.yml
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - src/**
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker-compose.yml
+      - .do/app.yaml
+      - docs/CLOUD_DEPLOY.md
+      - .github/workflows/deploy-smoke.yml
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - src/**
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  cancel-in-progress: true
+jobs:
+  docker-image:
+    name: Build & smoke-test core image
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build openhuman-core image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: openhuman-core:smoke
+          cache-from: type=gha,scope=deploy-smoke
+          cache-to: type=gha,scope=deploy-smoke,mode=max
+
+      - name: Run container
+        run: |
+          docker run -d \
+            --name oh-smoke \
+            -p 7788:7788 \
+            -e OPENHUMAN_CORE_TOKEN=ci-smoke-token \
+            -e OPENHUMAN_APP_ENV=staging \
+            -e BACKEND_URL=https://staging-api.tinyhumans.ai \
+            openhuman-core:smoke
+
+      - name: Wait for /health
+        run: |
+          set -e
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:7788/health > /tmp/health.json; then
+              echo "Healthy on attempt $i"
+              cat /tmp/health.json
+              exit 0
+            fi
+            echo "attempt $i: not ready, sleeping..."
+            sleep 2
+          done
+          echo "Container never became healthy. Logs:"
+          docker logs oh-smoke || true
+          exit 1
+
+      - name: Verify /rpc rejects without bearer token
+        run: |
+          set -e
+          status=$(curl -s -o /tmp/rpc.json -w "%{http_code}" \
+            -X POST http://localhost:7788/rpc \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"openhuman.about_app_list","params":{}}')
+          if [ "$status" != "401" ]; then
+            echo "Expected 401 from /rpc without token, got $status"
+            cat /tmp/rpc.json
+            docker logs oh-smoke || true
+            exit 1
+          fi
+
+      - name: Verify /rpc accepts the configured bearer token
+        run: |
+          set -e
+          status=$(curl -s -o /tmp/rpc-ok.json -w "%{http_code}" \
+            -X POST http://localhost:7788/rpc \
+            -H 'Content-Type: application/json' \
+            -H 'Authorization: Bearer ci-smoke-token' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"openhuman.about_app_list","params":{}}')
+          if [ "$status" != "200" ]; then
+            echo "Expected 200 from authenticated /rpc, got $status"
+            cat /tmp/rpc-ok.json
+            docker logs oh-smoke || true
+            exit 1
+          fi
+          cat /tmp/rpc-ok.json
+
+      - name: Container logs (always)
+        if: always()
+        run: docker logs oh-smoke || true
+
+      - name: Tear down
+        if: always()
+        run: docker rm -f oh-smoke || true

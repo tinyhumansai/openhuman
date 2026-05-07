@@ -94,6 +94,11 @@ pub async fn drill_down(
 /// Rerank hits by cosine similarity to the query embedding. Mirrors the
 /// pattern used by `query_source` / `query_topic`. Legacy rows without
 /// embeddings land at the end in BFS order.
+///
+/// On any error (embedder build failure or embedding inference failure) we log
+/// a warning and return hits in BFS order rather than bubbling the error up
+/// through the chat turn. This ensures local AI unavailability never surfaces
+/// as a visible error to the user.
 async fn rerank_by_semantic_similarity(
     config: &Config,
     query: &str,
@@ -101,8 +106,22 @@ async fn rerank_by_semantic_similarity(
     embeddings: Vec<Option<Vec<f32>>>,
 ) -> Result<Vec<RetrievalHit>> {
     debug_assert_eq!(hits.len(), embeddings.len());
-    let embedder = build_embedder_from_config(config)?;
-    let query_vec = embedder.embed(query).await?;
+    let embedder = match build_embedder_from_config(config) {
+        Ok(e) => e,
+        Err(err) => {
+            log::warn!(
+                "[retrieval::drill_down] embedder build failed — returning BFS order: {err}"
+            );
+            return Ok(hits);
+        }
+    };
+    let query_vec = match embedder.embed(query).await {
+        Ok(v) => v,
+        Err(err) => {
+            log::warn!("[retrieval::drill_down] embed query failed — returning BFS order: {err}");
+            return Ok(hits);
+        }
+    };
     log::debug!(
         "[retrieval::drill_down] query embedded provider={} hits_to_rerank={}",
         embedder.name(),

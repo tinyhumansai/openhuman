@@ -9,12 +9,15 @@ mod core_process;
 mod core_rpc;
 mod dictation_hotkeys;
 mod discord_scanner;
+mod file_logging;
 mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
 mod native_notifications;
 mod notification_settings;
+mod process_kill;
+mod process_recovery;
 mod screen_capture;
 mod slack_scanner;
 mod telegram_scanner;
@@ -72,6 +75,23 @@ fn overlay_parent_rpc_url() -> Option<String> {
         return None;
     }
     Some(trimmed.to_string())
+}
+
+#[tauri::command]
+fn process_diagnostics_list_owned() -> Result<Vec<process_recovery::ProcessInfo>, String> {
+    match process_recovery::enumerate_openhuman_processes() {
+        Ok(processes) => {
+            log::info!(
+                "[startup-recovery] diagnostics listed {} owned OpenHuman processes",
+                processes.len()
+            );
+            Ok(processes)
+        }
+        Err(err) => {
+            log::warn!("[startup-recovery] diagnostics process enumeration failed: {err}");
+            Err(err)
+        }
+    }
 }
 
 #[allow(dead_code)] // Overlay disabled in tauri.conf.json; helper kept for future re-enable.
@@ -1078,6 +1098,17 @@ pub fn run() {
         sample_rate: 1.0,
         ..sentry::ClientOptions::default()
     });
+    // Tag every Sentry event with CPU architecture and OS so Intel-specific
+    // crashes (issue #1012 — SIGABRT in CrBrowserMain on x86_64 macOS) are
+    // clearly identified without needing a separate build identifier.
+    sentry::configure_scope(|scope| {
+        scope.set_tag("cpu_arch", std::env::consts::ARCH);
+        scope.set_tag("os_name", std::env::consts::OS);
+        #[cfg(target_os = "macos")]
+        if let Some(ver) = macos_os_version() {
+            scope.set_tag("os_version", ver);
+        }
+    });
 
     // Optional smoke trigger for verifying the Sentry pipeline end-to-end.
     // Run with `OPENHUMAN_TAURI_SENTRY_TEST=panic` to fire a panic, or
@@ -1100,10 +1131,26 @@ pub fn run() {
 
     let daemon_mode = is_daemon_mode();
 
-    let default_filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
-    let _ = env_logger::Builder::new()
-        .parse_filters(&default_filter)
-        .try_init();
+    // Install the unified tracing subscriber + daily-rotated file appender
+    // before any other startup work so CEF preflight failures, sentry
+    // smoke-test events, and the rest of `run()` are captured in
+    // `<data_dir>/logs/openhuman-YYYY-MM-DD.log`. The shell's `log::*` calls
+    // are bridged into the same subscriber via `tracing_log::LogTracer`,
+    // replacing the previous stderr-only `env_logger`.
+    file_logging::init();
+
+    // Log platform identity early so every log session is tagged with arch
+    // and OS version — essential for reproducing and triaging Intel-only
+    // crashes like issue #1012 (SIGABRT in CrBrowserMain on x86_64 macOS).
+    {
+        let arch = std::env::consts::ARCH;
+        let os = std::env::consts::OS;
+        #[cfg(target_os = "macos")]
+        let os_ver = macos_os_version().unwrap_or_else(|| "unknown".to_string());
+        #[cfg(not(target_os = "macos"))]
+        let os_ver = "n/a".to_string();
+        log::info!("[startup] platform: arch={arch} os={os} os_version={os_ver}");
+    }
 
     // The vendored tauri-cef dev-server proxy builds a reqwest 0.13 client
     // (see vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) which calls
@@ -1129,6 +1176,9 @@ pub fn run() {
             std::process::exit(1);
         }
     }
+
+    #[cfg(target_os = "macos")]
+    process_recovery::reap_stale_openhuman_processes();
 
     #[cfg(target_os = "macos")]
     if let Err(e) = cef_preflight::check_default_cache() {
@@ -1187,6 +1237,18 @@ pub fn run() {
         // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
         // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
         args.push(("--remote-debugging-port", Some("19222")));
+        // Issue #1012 — Intel macOS (x86_64) crashes with EXC_CRASH (SIGABRT)
+        // inside CrBrowserMain when CEF 146 tries to use GPU compositing via
+        // Metal on Intel GPU hardware/drivers. Disable GPU compositing on
+        // x86_64 macOS so the browser process falls back to software
+        // compositing instead of aborting. This flag is a no-op on Apple
+        // Silicon (arm64) and on non-macOS targets; all other GPU paths
+        // (WebGL, video decode) remain unaffected.
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        {
+            args.push(("--disable-gpu-compositing", None));
+            log::info!("[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)");
+        }
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
 
@@ -1404,6 +1466,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1447,6 +1510,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1490,6 +1554,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1548,6 +1613,7 @@ pub fn run() {
                                 width: w,
                                 height: h,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1591,6 +1657,7 @@ pub fn run() {
             core_rpc_url,
             core_rpc_token,
             overlay_parent_rpc_url,
+            process_diagnostics_list_owned,
             check_core_update,
             apply_core_update,
             check_app_update,
@@ -1604,6 +1671,7 @@ pub fn run() {
             register_dictation_hotkey,
             unregister_dictation_hotkey,
             webview_accounts::webview_account_open,
+            webview_accounts::webview_account_prewarm,
             webview_accounts::webview_account_close,
             webview_accounts::webview_account_purge,
             webview_accounts::webview_account_bounds,
@@ -1627,7 +1695,9 @@ pub fn run() {
             activate_main_window,
             native_notifications::show_native_notification,
             mascot_window_show,
-            mascot_window_hide
+            mascot_window_hide,
+            file_logging::reveal_logs_folder,
+            file_logging::logs_folder_path
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1692,46 +1762,14 @@ pub fn run() {
     // operation every CEF helper (GPU / Network / Utility / Renderer) is
     // gone by now. If anything is still alive — e.g. a renderer that was
     // mid-spawn when the user quit — it would otherwise be re-parented to
-    // launchd on macOS / init on Linux and survive the GUI exit. SIGTERM
-    // its children before this process actually exits.
+    // launchd on macOS / init on Linux and survive the GUI exit. Sweep its
+    // children before this process actually exits.
     //
     // We don't `wait()` on them: the kernel will reap them as our exit
-    // unwinds, and any helper that ignores SIGTERM is a CEF bug we'd
-    // rather see in Activity Monitor than silently SIGKILL.
-    sweep_orphan_children();
-}
-
-/// Send SIGTERM to every direct child of the current process. No-op on
-/// non-Unix platforms (Windows job objects already kill CEF helpers when
-/// the parent exits).
-fn sweep_orphan_children() {
-    #[cfg(unix)]
-    {
-        let pid = std::process::id();
-        match std::process::Command::new("pkill")
-            .args(["-TERM", "-P", &pid.to_string()])
-            .status()
-        {
-            Ok(status) => {
-                // pkill exits 0 if it killed at least one process, 1 if no
-                // matches (the healthy case after cef::shutdown), 2/3 on
-                // error. Both 0 and 1 are expected; log 0 loudly so we
-                // notice when the safety net actually catches something.
-                match status.code() {
-                    Some(0) => log::warn!(
-                        "[app] sweep: SIGTERM'd leftover child processes after cef::shutdown"
-                    ),
-                    Some(1) => log::info!("[app] sweep: no leftover children (clean exit)"),
-                    other => log::warn!("[app] sweep: pkill exited with {:?}", other),
-                }
-            }
-            Err(e) => log::warn!("[app] sweep: failed to invoke pkill: {e}"),
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        log::debug!("[app] sweep: skipped on non-unix platform");
-    }
+    // unwinds. Give stubborn helpers a short grace period, then force-kill
+    // anything still parented to us so the GUI exit leaves no background
+    // processes behind.
+    process_kill::sweep_orphan_children();
 }
 
 pub fn run_core_from_args(args: &[String]) -> Result<(), String> {
@@ -1782,6 +1820,23 @@ fn resolve_sentry_environment() -> String {
         }
     }
     "production".to_string()
+}
+
+/// Returns the macOS product version string (e.g. `"14.5"`) by reading
+/// `sw_vers -productVersion`. Returns `None` on non-macOS targets or when
+/// the command is unavailable. Used to tag Sentry events and startup logs
+/// with OS version so Intel-specific crashes (issue #1012) can be filtered
+/// by macOS release.
+#[cfg(target_os = "macos")]
+fn macos_os_version() -> Option<String> {
+    std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]

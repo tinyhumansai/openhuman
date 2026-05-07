@@ -58,6 +58,11 @@ impl Tool for GlobTool {
         PermissionLevel::ReadOnly
     }
 
+    /// Pure read — safe to fan out across parallel `glob` calls.
+    fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
+        true
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let pattern_str = args
             .get("pattern")

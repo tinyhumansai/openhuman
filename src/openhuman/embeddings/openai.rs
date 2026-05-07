@@ -118,12 +118,24 @@ impl EmbeddingProvider for OpenAiEmbedding {
 
         if !resp.status().is_success() {
             let status = resp.status();
+            let status_str = status.as_u16().to_string();
             let text = resp.text().await.unwrap_or_default();
             tracing::debug!(
                 target: "openai::embed",
                 "[openai] embed error: status={status}, body={text}"
             );
-            anyhow::bail!("Embedding API error {status}: {text}");
+            let message = format!("Embedding API error {status}: {text}");
+            crate::core::observability::report_error(
+                message.as_str(),
+                "embeddings",
+                "openai_embed",
+                &[
+                    ("model", self.model.as_str()),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+            anyhow::bail!(message);
         }
 
         let json: serde_json::Value = resp.json().await?;

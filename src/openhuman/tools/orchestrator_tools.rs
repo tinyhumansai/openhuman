@@ -216,7 +216,6 @@ mod tests {
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
             background: false,
-            uses_fork_context: false,
             subagents: vec![],
             delegate_name: delegate_name.map(String::from),
             source: DefinitionSource::Builtin,

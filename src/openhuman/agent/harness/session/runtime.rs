@@ -461,6 +461,21 @@ impl Agent {
                     "Prompt flagged for security review and was not processed."
                 }
             };
+            let action_tag = match guard.action {
+                PromptEnforcementAction::Allow => "allow",
+                PromptEnforcementAction::Blocked => "blocked",
+                PromptEnforcementAction::ReviewBlocked => "review_blocked",
+            };
+            crate::core::observability::report_error(
+                user_message,
+                "agent",
+                "prompt_injection_blocked",
+                &[
+                    ("session_id", self.event_session_id()),
+                    ("channel", self.event_channel()),
+                    ("action", action_tag),
+                ],
+            );
             publish_global(DomainEvent::AgentError {
                 session_id: self.event_session_id().to_string(),
                 message: user_message.to_string(),
@@ -487,6 +502,16 @@ impl Agent {
             }
             Err(err) => {
                 let sanitized_message = Self::sanitize_event_error_message(&err);
+                crate::core::observability::report_error(
+                    &err,
+                    "agent",
+                    "run_single",
+                    &[
+                        ("session_id", self.event_session_id()),
+                        ("channel", self.event_channel()),
+                        ("error_kind", sanitized_message.as_str()),
+                    ],
+                );
                 publish_global(DomainEvent::AgentError {
                     session_id: self.event_session_id().to_string(),
                     message: sanitized_message,

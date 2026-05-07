@@ -37,7 +37,7 @@ impl LocalAiService {
         initial_prompt: Option<&str>,
     ) -> Result<LocalAiSpeechResult, String> {
         let started = Instant::now();
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
 
@@ -192,7 +192,7 @@ impl LocalAiService {
         text: &str,
         output_path: Option<&str>,
     ) -> Result<LocalAiTtsResult, String> {
-        if !config.local_ai.enabled {
+        if !config.local_ai.runtime_enabled {
             return Err("local ai is disabled".to_string());
         }
         let piper_bin = resolve_piper_binary()

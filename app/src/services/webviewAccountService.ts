@@ -67,6 +67,9 @@ interface WebviewAccountLoadPayload {
   // `'timeout'`  — 15 s watchdog elapsed; keep hidden and show retry UI
   // `'reused'`   — warm re-open of already-loaded account; reveal synchronously
   state: 'finished' | 'timeout' | 'reused' | string;
+  // `'load'`     — native/CDP load signal caused this event
+  // `'watchdog'` — fallback watchdog caused this event
+  trigger?: 'load' | 'watchdog' | string;
   url: string;
 }
 
@@ -181,7 +184,13 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
     errLog('webview-account:load missing account_id — ignoring: %o', payload);
     return;
   }
-  log('load event account=%s state=%s url=%s', accountId, payload.state, payload.url);
+  log(
+    'load event account=%s state=%s trigger=%s url=%s',
+    accountId,
+    payload.state,
+    payload.trigger,
+    payload.url
+  );
   loadingAccounts.delete(accountId);
 
   const timeoutLike =
@@ -213,8 +222,9 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
   // the webview will have been positioned server-side by `emit_load_finished`.
   const bounds = lastBoundsByAccount.get(accountId);
   log('load finished account=%s state=%s reveal=%s', accountId, payload.state, Boolean(bounds));
+  const trigger = payload.trigger === 'watchdog' ? 'watchdog' : 'load';
   if (bounds) {
-    invoke('webview_account_reveal', { args: { account_id: accountId, bounds } })
+    invoke('webview_account_reveal', { args: { account_id: accountId, bounds, trigger } })
       .catch(err => {
         errLog('webview_account_reveal failed account=%s: %o', accountId, err);
       })
@@ -870,6 +880,40 @@ export async function retryWebviewAccountLoad(
   }
   log('retry load account=%s provider=%s', accountId, provider);
   await openWebviewAccount({ accountId, provider, bounds });
+}
+
+/**
+ * Spawn a hidden webview for an account so its CEF profile and provider
+ * page are warm by the time the user actually clicks the rail icon.
+ *
+ * Rust spawns the prewarm webview off-screen at 1×1, attaches CDP, navigates
+ * to the real provider URL, and registers it in the same `inner` map as a
+ * regular open. When the user later clicks the account, `webview_account_open`
+ * hits the warm-reopen branch and emits `state:"reused"` synchronously — no
+ * cold spinner.
+ *
+ * Idempotent — calling again for an already-warm account is a Rust-side no-op.
+ * Best-effort — any error is logged and swallowed; the worst case is a normal
+ * cold open later.
+ */
+export async function prewarmWebviewAccount(
+  accountId: string,
+  provider: AccountProvider
+): Promise<void> {
+  if (!isTauri()) return;
+  log('[webview-accounts] prewarm dispatch account=%s provider=%s', accountId, provider);
+  try {
+    await invoke('webview_account_prewarm', { args: { account_id: accountId, provider } });
+  } catch (err) {
+    // Don't surface to the user — prewarm failure means we fall back to the
+    // normal cold-open path on click. Logged for diagnosis.
+    errLog(
+      '[webview-accounts] prewarm failed account=%s provider=%s: %o',
+      accountId,
+      provider,
+      err
+    );
+  }
 }
 
 export async function setWebviewAccountBounds(

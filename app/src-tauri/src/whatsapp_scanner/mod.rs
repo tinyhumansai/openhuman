@@ -529,7 +529,17 @@ fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSn
             (1, _, _) => Some(exact[0].to_string()),
             (0, 1, _) => Some(ci[0].to_string()),
             (0, 0, 1) => Some(substring[0].to_string()),
-            _ => None,
+            (e, c, s) => {
+                let count = e + c + s;
+                if count > 1 {
+                    log::warn!(
+                        "[whatsapp_scanner] ambiguous active-chat resolution: {} candidates for '{}' — skipping backfill",
+                        count,
+                        name
+                    );
+                }
+                None
+            }
         }
     });
     log::info!(
@@ -543,113 +553,14 @@ fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSn
     // caches decrypted bodies in memory, so IndexedDB gives us metadata and
     // the DOM gives us text for currently-rendered chats — unioning them
     // here gives downstream consumers a single message list.
-    let mut messages = snap.messages.clone();
-    if !snap.dom_messages.is_empty() {
-        use std::collections::{HashMap, HashSet};
-        // Index DOM rows by BOTH full `data-id` ("true_chatId_msgId") AND
-        // bare msgId — IDB's `_serialized` matches data-id but some paths
-        // use just the msgId. Each map entry keeps its source dataId so a
-        // patch via either key only consumes the row once.
-        let mut by_msg_id: HashMap<String, (String, Value)> = HashMap::new();
-        for dm in &snap.dom_messages {
-            let did = dm
-                .get("dataId")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if did.is_empty() {
-                continue;
-            }
-            by_msg_id.insert(did.clone(), (did.clone(), dm.clone()));
-            if let Some(mid) = dm.get("msgId").and_then(|v| v.as_str()) {
-                by_msg_id
-                    .entry(mid.to_string())
-                    .or_insert_with(|| (did.clone(), dm.clone()));
-            }
-        }
-        let mut consumed: HashSet<String> = HashSet::new();
-        let mut patched = 0usize;
-        for m in messages.iter_mut() {
-            let mid_opt = m.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let has_body = m
-                .get("body")
-                .and_then(|v| v.as_str())
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
-            if has_body {
-                continue;
-            }
-            if let Some(mid) = mid_opt {
-                // Try the full IDB id first (legacy compound `"true_chat_msg"`),
-                // then fall back to the bare msgId tail. Current WhatsApp Web
-                // (observed 2026-04-30) emits only the bare msgId on DOM rows
-                // while IDB still keys by the compound `_serialized` form, so
-                // the tail is the only segment that matches across both
-                // sources. `splitn` keeps the msgId intact when it contains
-                // underscores (legacy edge case).
-                let bare_mid = mid.rsplitn(2, '_').next().map(str::to_string);
-                let lookup = by_msg_id
-                    .get(&mid)
-                    .cloned()
-                    .or_else(|| bare_mid.as_deref().and_then(|b| by_msg_id.get(b).cloned()));
-                if let Some((did, dm)) = lookup {
-                    if consumed.contains(&did) {
-                        continue;
-                    }
-                    if let Some(body) = dm.get("body").and_then(|v| v.as_str()) {
-                        if let Some(obj) = m.as_object_mut() {
-                            obj.insert("body".to_string(), json!(body));
-                            obj.insert("bodySource".to_string(), json!("dom"));
-                            patched += 1;
-                            consumed.insert(did);
-                        }
-                    }
-                }
-            }
-        }
-        // Unmatched DOM rows with a body get appended (dedup by dataId).
-        let mut appended = 0usize;
-        let mut appended_dids: HashSet<String> = HashSet::new();
-        for (_key, (did, dm)) in by_msg_id {
-            if consumed.contains(&did) || appended_dids.contains(&did) {
-                continue;
-            }
-            if dm
-                .get("body")
-                .and_then(|v| v.as_str())
-                .map(|s| !s.is_empty())
-                .unwrap_or(false)
-            {
-                // Modern WhatsApp Web's DOM rows don't carry chatId. Fall
-                // back to the active conversation's JID (resolved above
-                // from the conversation header). Without this stamp,
-                // emit_grouped_whatsapp drops the row at its non-empty
-                // chat_id check (line ~643), so memory ingest stays empty
-                // even though we have decrypted body text in hand. Group
-                // chats are still tricky here — `from_me`/`author` come
-                // from the per-row data-pre-plain-text — but the chatId
-                // (group JID) is whatever the user has open, which is the
-                // common case for an active scanner tick.
-                let dom_chat_id = dm
-                    .get("chatId")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| Value::String(s.to_string()))
-                    .or_else(|| active_chat_jid.clone().map(Value::String))
-                    .unwrap_or(Value::Null);
-                messages.push(json!({
-                    "id": dm.get("dataId").cloned().unwrap_or(Value::Null),
-                    "chatId": dom_chat_id,
-                    "fromMe": dm.get("fromMe").cloned().unwrap_or(Value::Null),
-                    "body": dm.get("body").cloned().unwrap_or(Value::Null),
-                    "author": dm.get("author").cloned().unwrap_or(Value::Null),
-                    "preTimestamp": dm.get("preTimestamp").cloned().unwrap_or(Value::Null),
-                    "bodySource": "dom-only",
-                }));
-                appended += 1;
-                appended_dids.insert(did);
-            }
-        }
+    // The merge logic lives in `merge_dom_into_snapshot` so it can be
+    // exercised independently in unit tests.
+    let (messages, patched, appended) = merge_dom_into_snapshot(
+        &snap.messages,
+        &snap.dom_messages,
+        active_chat_jid.as_deref(),
+    );
+    if patched > 0 || appended > 0 {
         log::info!(
             "[wa][{}] dom-merge patched={} appended={} total={}",
             account_id,
@@ -855,13 +766,96 @@ fn emit_grouped_whatsapp<R: Runtime>(
             source
         );
     }
+
+    // Dual-write: also persist structured chat+message data via the
+    // dedicated whatsapp_data store. Fire-and-forget alongside the existing
+    // memory doc ingest path — does not affect scanner tick timing.
+    {
+        let acct = account_id.to_string();
+        let chats_value = Value::Object(chats.clone());
+        // Build normalized message array for the structured ingest.
+        // Handles both full IDB-scan shape (chatId, timestamp, from/fromName,
+        // type) and fast DOM-only rows (author, preTimestamp, dataId).
+        let msgs_for_ingest: Vec<Value> = messages
+            .iter()
+            .filter_map(|m| {
+                // Accept chatId from full-scan or chat/chat_id fallbacks on DOM rows.
+                let chat_id = m
+                    .get("chatId")
+                    .or_else(|| m.get("chat"))
+                    .or_else(|| m.get("chat_id"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())?
+                    .to_string();
+                let body = m
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim())
+                    .unwrap_or("");
+                // Include non-text messages (stickers/images) so message_count
+                // and last_message_ts stay accurate. Empty body is allowed.
+                let msg_id = m
+                    .get("id")
+                    .cloned()
+                    .or_else(|| m.get("dataId").cloned())
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+                    .unwrap_or_default();
+                if msg_id.is_empty() {
+                    return None;
+                }
+                // Resolve sender: full-scan uses fromName/from; DOM rows use author.
+                let sender = m
+                    .get("fromName")
+                    .cloned()
+                    .or_else(|| m.get("from").cloned())
+                    .or_else(|| m.get("author").cloned());
+                let sender_jid = m
+                    .get("from")
+                    .cloned()
+                    .or_else(|| m.get("author").cloned())
+                    .or_else(|| m.get("participant").cloned());
+                // Resolve timestamp: full-scan has numeric timestamp;
+                // DOM rows may carry a string preTimestamp that needs parsing.
+                let timestamp = m
+                    .get("timestamp")
+                    .and_then(|v| v.as_i64())
+                    .or_else(|| m.get("preTimestamp").and_then(|v| v.as_i64()))
+                    .unwrap_or(0);
+                Some(json!({
+                    "message_id": msg_id,
+                    "chat_id": chat_id,
+                    "sender": sender.unwrap_or(Value::Null),
+                    "sender_jid": sender_jid.unwrap_or(Value::Null),
+                    "from_me": m.get("fromMe").and_then(|v| v.as_bool()).unwrap_or(false),
+                    "body": body,
+                    "timestamp": timestamp,
+                    "message_type": m.get("type").cloned().unwrap_or(Value::Null),
+                    "source": source,
+                }))
+            })
+            .collect();
+        let src = source.to_string();
+        tokio::spawn(async move {
+            if let Err(e) =
+                post_whatsapp_data_ingest(&acct, &chats_value, &msgs_for_ingest, &src).await
+            {
+                log::warn!(
+                    "[wa][{}] whatsapp_data structured ingest failed: {}",
+                    acct,
+                    e
+                );
+            }
+        });
+    }
 }
 
-/// Build the `openhuman.memory_doc_ingest` payload for a single
-/// (chatId, day) group and POST it directly to the core. The shape
-/// mirrors `persistWhatsappChatDay` on the React side so the memory docs
-/// line up whether the scanner or the UI drove the ingest.
-async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), String> {
+/// Build the JSON-RPC `params` object for `openhuman.memory_doc_ingest`
+/// from a single (chatId, day) ingest payload. Extracted as a pure
+/// function so it can be tested independently of the HTTP layer.
+///
+/// Returns `None` when the payload is missing required fields (chatId, day,
+/// or a non-empty messages array) — callers should skip the HTTP call.
+fn build_doc_ingest_params(account_id: &str, ingest: &Value) -> Option<Value> {
     let chat_id = ingest
         .get("chatId")
         .and_then(|v| v.as_str())
@@ -880,7 +874,7 @@ async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), 
         .and_then(|v| v.as_array())
         .unwrap_or(&empty);
     if chat_id.is_empty() || day.is_empty() || msgs.is_empty() {
-        return Ok(());
+        return None;
     }
 
     // Build a stable transcript — sorted by timestamp, one line per msg.
@@ -935,7 +929,7 @@ async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), 
     let key = format!("{chat_id}:{day}");
     let title = format!("WhatsApp · {chat_name} · {day}");
 
-    let params = json!({
+    Some(json!({
         "namespace": namespace,
         "key": key,
         "title": title,
@@ -952,11 +946,162 @@ async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), 
             "message_count": sorted.len(),
         },
         "category": "core",
-    });
+    }))
+}
+
+/// Build the `openhuman.memory_doc_ingest` payload for a single
+/// (chatId, day) group and POST it directly to the core. The shape
+/// mirrors `persistWhatsappChatDay` on the React side so the memory docs
+/// line up whether the scanner or the UI drove the ingest.
+///
+/// Retries once (after 500ms) on connection errors so the scanner isn't
+/// silently dropped when the core sidecar isn't ready yet at startup.
+async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), String> {
+    let params = match build_doc_ingest_params(account_id, ingest) {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+
+    // Extract namespace/key for the success log from the built params.
+    let namespace = params
+        .get("namespace")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let key = params
+        .get("key")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let msg_count = params
+        .get("metadata")
+        .and_then(|m| m.get("message_count"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
     let body = json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "openhuman.memory_doc_ingest",
+        "params": params,
+    });
+
+    let url = crate::core_rpc::core_rpc_url_value();
+
+    // Retry up to 2 attempts with 500ms delay on connection errors (e.g.
+    // core sidecar not yet ready at scanner startup). HTTP-level errors
+    // (non-2xx responses, JSON-RPC errors) are not retried — they indicate
+    // a real problem rather than a startup race.
+    let mut last_err = String::new();
+    for attempt in 1u8..=2 {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .map_err(|e| format!("http client: {e}"))?;
+        let req = crate::core_rpc::apply_auth(client.post(&url))
+            .map_err(|e| format!("prepare {url}: {e}"))?;
+        let send_result = req.json(&body).send().await;
+        match send_result {
+            Err(e) if e.is_connect() || e.is_timeout() => {
+                last_err = format!("POST {url}: {e}");
+                if attempt < 2 {
+                    log::debug!(
+                        "[wa][{}] memory ingest connect error (attempt {}), retrying in 500ms: {}",
+                        account_id,
+                        attempt,
+                        e
+                    );
+                    sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+                return Err(last_err);
+            }
+            Err(e) => return Err(format!("POST {url}: {e}")),
+            Ok(resp) => {
+                let status = resp.status();
+                if !status.is_success() {
+                    let body_text = resp.text().await.unwrap_or_default();
+                    return Err(format!("{status}: {body_text}"));
+                }
+                let v: Value = resp.json().await.map_err(|e| format!("decode: {e}"))?;
+                if let Some(err) = v.get("error") {
+                    return Err(format!("rpc error: {err}"));
+                }
+                log::info!(
+                    "[wa][{}] memory upsert ok namespace={} key={} msgs={}",
+                    account_id,
+                    namespace,
+                    key,
+                    msg_count
+                );
+                return Ok(());
+            }
+        }
+    }
+    Err(last_err)
+}
+
+/// POST a structured `openhuman.whatsapp_data_ingest` payload to the core.
+///
+/// This is the dual-write path alongside `post_memory_doc_ingest`. It
+/// persists chats and messages into the dedicated `whatsapp_data.db` SQLite
+/// store so the agent can query them via structured RPC tools.
+async fn post_whatsapp_data_ingest(
+    account_id: &str,
+    chats: &Value,
+    messages: &[Value],
+    source: &str,
+) -> Result<(), String> {
+    if messages.is_empty() && chats.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        return Ok(());
+    }
+    log::debug!(
+        "[wa][{}] whatsapp_data_ingest chats={} messages={} source={}",
+        account_id,
+        chats.as_object().map(|o| o.len()).unwrap_or(0),
+        messages.len(),
+        source
+    );
+
+    // Convert chats map values to {name: string|null}.
+    // The scanner passes chats as either:
+    //   - Value::String(display_name) — contact-cache format
+    //   - Value::Object({name: ..., ...}) — full IDB scan format
+    let chats_param: serde_json::Map<String, Value> = chats
+        .as_object()
+        .map(|o| {
+            o.iter()
+                .map(|(jid, v)| {
+                    let name = if let Some(s) = v.as_str() {
+                        // String-valued entry from contact cache: value IS the name.
+                        if s.is_empty() {
+                            Value::Null
+                        } else {
+                            Value::String(s.to_string())
+                        }
+                    } else {
+                        // Object entry: look for a "name" field.
+                        v.get("name")
+                            .and_then(|n| n.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| Value::String(s.to_string()))
+                            .unwrap_or(Value::Null)
+                    };
+                    (jid.clone(), json!({ "name": name }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let params = json!({
+        "account_id": account_id,
+        "chats": Value::Object(chats_param),
+        "messages": messages,
+    });
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "openhuman.whatsapp_data_ingest",
         "params": params,
     });
 
@@ -974,21 +1119,138 @@ async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), 
         .map_err(|e| format!("POST {url}: {e}"))?;
     let status = resp.status();
     if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("{status}: {body}"));
+        let body_text = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body_text}"));
     }
     let v: Value = resp.json().await.map_err(|e| format!("decode: {e}"))?;
     if let Some(err) = v.get("error") {
         return Err(format!("rpc error: {err}"));
     }
-    log::info!(
-        "[wa][{}] memory upsert ok namespace={} key={} msgs={}",
+    log::debug!(
+        "[wa][{}] whatsapp_data_ingest ok account={} messages={}",
         account_id,
-        namespace,
-        key,
-        sorted.len()
+        account_id,
+        messages.len()
     );
     Ok(())
+}
+
+/// Merge DOM-scraped rows into an IDB-sourced message list.
+///
+/// Extracted from `emit_snapshot` so the merge logic can be tested
+/// independently of the Tauri `AppHandle`. Behaviour:
+///
+/// 1. Build an index of DOM rows keyed by both their full `dataId` and bare
+///    `msgId` (the current WA Web format emits only the bare hex id).
+/// 2. Patch IDB messages that have an empty `body` with the DOM row's body;
+///    mark the DOM row as consumed.
+/// 3. Append unmatched DOM rows that have a non-empty body, stamping
+///    `chatId` from `active_chat_jid` when the row lacks one.
+///
+/// Returns the merged message list along with patch/append counts for
+/// diagnostic logging.
+fn merge_dom_into_snapshot(
+    idb_messages: &[Value],
+    dom_messages: &[Value],
+    active_chat_jid: Option<&str>,
+) -> (Vec<Value>, usize, usize) {
+    use std::collections::{HashMap, HashSet};
+
+    let mut messages = idb_messages.to_vec();
+
+    if dom_messages.is_empty() {
+        return (messages, 0, 0);
+    }
+
+    // Index DOM rows by full dataId and bare msgId.
+    let mut by_msg_id: HashMap<String, (String, Value)> = HashMap::new();
+    for dm in dom_messages {
+        let did = dm
+            .get("dataId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if did.is_empty() {
+            continue;
+        }
+        by_msg_id.insert(did.clone(), (did.clone(), dm.clone()));
+        if let Some(mid) = dm.get("msgId").and_then(|v| v.as_str()) {
+            by_msg_id
+                .entry(mid.to_string())
+                .or_insert_with(|| (did.clone(), dm.clone()));
+        }
+    }
+
+    let mut consumed: HashSet<String> = HashSet::new();
+    let mut patched = 0usize;
+
+    for m in messages.iter_mut() {
+        let mid_opt = m.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let has_body = m
+            .get("body")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        if has_body {
+            continue;
+        }
+        if let Some(mid) = mid_opt {
+            let bare_mid = mid.rsplitn(2, '_').next().map(str::to_string);
+            let lookup = by_msg_id
+                .get(&mid)
+                .cloned()
+                .or_else(|| bare_mid.as_deref().and_then(|b| by_msg_id.get(b).cloned()));
+            if let Some((did, dm)) = lookup {
+                if consumed.contains(&did) {
+                    continue;
+                }
+                if let Some(body) = dm.get("body").and_then(|v| v.as_str()) {
+                    if let Some(obj) = m.as_object_mut() {
+                        obj.insert("body".to_string(), json!(body));
+                        obj.insert("bodySource".to_string(), json!("dom"));
+                        patched += 1;
+                        consumed.insert(did);
+                    }
+                }
+            }
+        }
+    }
+
+    // Append unmatched DOM rows that have a body.
+    let mut appended = 0usize;
+    let mut appended_dids: HashSet<String> = HashSet::new();
+    for (_key, (did, dm)) in by_msg_id {
+        if consumed.contains(&did) || appended_dids.contains(&did) {
+            continue;
+        }
+        if dm
+            .get("body")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+        {
+            let dom_chat_id = dm
+                .get("chatId")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| Value::String(s.to_string()))
+                .or_else(|| active_chat_jid.map(|j| Value::String(j.to_string())))
+                .unwrap_or(Value::Null);
+            messages.push(json!({
+                "id": dm.get("dataId").cloned().unwrap_or(Value::Null),
+                "chatId": dom_chat_id,
+                "fromMe": dm.get("fromMe").cloned().unwrap_or(Value::Null),
+                "body": dm.get("body").cloned().unwrap_or(Value::Null),
+                "author": dm.get("author").cloned().unwrap_or(Value::Null),
+                "preTimestamp": dm.get("preTimestamp").cloned().unwrap_or(Value::Null),
+                "bodySource": "dom-only",
+            }));
+            appended += 1;
+            appended_dids.insert(did);
+        }
+    }
+
+    (messages, patched, appended)
 }
 
 /// Track which (account_id, provider) pairs we've already started a scanner
@@ -1153,5 +1415,470 @@ mod tests {
 
         assert!(registry.started.lock().is_empty());
         assert_all_cancelled(tasks).await;
+    }
+
+    // ── seconds_to_ymd ────────────────────────────────────────────────────────
+
+    #[test]
+    fn seconds_to_ymd_known_timestamp() {
+        // Unix timestamp 1_700_000_000 = 2023-11-14 (UTC).
+        assert_eq!(seconds_to_ymd(1_700_000_000), "2023-11-14");
+    }
+
+    #[test]
+    fn seconds_to_ymd_epoch_zero() {
+        // Unix epoch origin = 1970-01-01.
+        assert_eq!(seconds_to_ymd(0), "1970-01-01");
+    }
+
+    #[test]
+    fn seconds_to_ymd_output_format_is_yyyy_mm_dd() {
+        let s = seconds_to_ymd(1_700_000_000);
+        // Must match YYYY-MM-DD: 10 chars, digit/digit/digit/digit-...-...
+        assert_eq!(s.len(), 10, "expected 10-char date string, got: {s}");
+        let parts: Vec<&str> = s.split('-').collect();
+        assert_eq!(parts.len(), 3, "expected 3 dash-separated parts: {s}");
+        assert_eq!(parts[0].len(), 4, "year must be 4 digits: {s}");
+        assert_eq!(parts[1].len(), 2, "month must be 2 digits: {s}");
+        assert_eq!(parts[2].len(), 2, "day must be 2 digits: {s}");
+        assert!(
+            parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit())),
+            "all parts must be numeric: {s}"
+        );
+    }
+
+    // ── parse_pre_timestamp_ymd ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_pre_timestamp_ymd_valid_wa_format() {
+        // WhatsApp Web format: "4:53 AM, 7/5/2025"
+        let result = parse_pre_timestamp_ymd("4:53 AM, 7/5/2025");
+        assert_eq!(result.as_deref(), Some("2025-07-05"));
+    }
+
+    #[test]
+    fn parse_pre_timestamp_ymd_another_valid_date() {
+        // "10:01 PM, 11/14/2023" — matches our known ts
+        let result = parse_pre_timestamp_ymd("10:01 PM, 11/14/2023");
+        assert_eq!(result.as_deref(), Some("2023-11-14"));
+    }
+
+    #[test]
+    fn parse_pre_timestamp_ymd_empty_string_returns_none() {
+        assert!(parse_pre_timestamp_ymd("").is_none());
+    }
+
+    #[test]
+    fn parse_pre_timestamp_ymd_no_comma_returns_none() {
+        assert!(parse_pre_timestamp_ymd("4:53 AM 7/5/2025").is_none());
+    }
+
+    #[test]
+    fn parse_pre_timestamp_ymd_invalid_date_parts_return_none() {
+        // Month 13 is out of range.
+        assert!(parse_pre_timestamp_ymd("10:00 AM, 13/5/2025").is_none());
+        // Day 32 is out of range.
+        assert!(parse_pre_timestamp_ymd("10:00 AM, 1/32/2025").is_none());
+    }
+
+    #[test]
+    fn parse_pre_timestamp_ymd_garbage_returns_none() {
+        assert!(parse_pre_timestamp_ymd("not a timestamp at all").is_none());
+    }
+
+    // ── emit_grouped_whatsapp grouping ────────────────────────────────────────
+
+    /// Build a minimal message Value that `emit_grouped_whatsapp` will accept.
+    fn make_msg(chat_id: &str, ts: i64, body: &str, from_me: bool) -> Value {
+        json!({
+            "chatId": chat_id,
+            "body": body,
+            "timestamp": ts,
+            "fromMe": from_me,
+            "from": if from_me { "me" } else { chat_id },
+        })
+    }
+
+    #[test]
+    fn grouping_produces_correct_group_count_and_keys() {
+        use std::collections::HashMap;
+
+        // 3 messages in alice@c.us on day 2023-11-14 (ts ≈ 1_700_000_000).
+        // 2 messages in group@g.us on a different day (ts ≈ 1_700_100_000 =
+        // 2023-11-15 UTC).
+        let day1_ts = 1_700_000_000i64; // 2023-11-14
+        let day2_ts = 1_700_100_000i64; // 2023-11-15
+
+        let messages = vec![
+            make_msg("alice@c.us", day1_ts, "Hello", false),
+            make_msg("alice@c.us", day1_ts + 60, "How are you?", false),
+            make_msg("alice@c.us", day1_ts + 120, "Fine thanks", true),
+            make_msg("group@g.us", day2_ts, "Meeting at 3pm", false),
+            make_msg("group@g.us", day2_ts + 30, "Got it", true),
+        ];
+
+        // Collect groups the same way emit_grouped_whatsapp does it.
+        let empty_chats = serde_json::Map::new();
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let mut groups: HashMap<(String, String), Vec<Value>> = HashMap::new();
+        for m in &messages {
+            let chat_id = match m.get("chatId").and_then(|v| v.as_str()) {
+                Some(s) if !s.is_empty() => s.to_string(),
+                _ => continue,
+            };
+            let body = m
+                .get("body")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+            if body.is_empty() {
+                continue;
+            }
+            let day: String = if let Some(t) = m.get("timestamp").and_then(|v| v.as_i64()) {
+                seconds_to_ymd(t)
+            } else {
+                seconds_to_ymd(now_secs)
+            };
+            let _ = &empty_chats;
+            groups.entry((chat_id, day)).or_default().push(m.clone());
+        }
+
+        assert_eq!(groups.len(), 2, "expected exactly 2 (chatId, day) groups");
+
+        let alice_day = seconds_to_ymd(day1_ts);
+        let group_day = seconds_to_ymd(day2_ts);
+
+        let alice_key = ("alice@c.us".to_string(), alice_day.clone());
+        let group_key = ("group@g.us".to_string(), group_day.clone());
+
+        assert!(
+            groups.contains_key(&alice_key),
+            "alice group missing; groups: {groups:?}"
+        );
+        assert!(
+            groups.contains_key(&group_key),
+            "group@g.us group missing; groups: {groups:?}"
+        );
+
+        assert_eq!(
+            groups[&alice_key].len(),
+            3,
+            "alice chat should have 3 messages"
+        );
+        assert_eq!(
+            groups[&group_key].len(),
+            2,
+            "group chat should have 2 messages"
+        );
+    }
+
+    // ── transcript format ─────────────────────────────────────────────────────
+
+    #[test]
+    fn build_doc_ingest_params_transcript_contains_senders_and_bodies() {
+        let day_ts = 1_700_000_000i64; // 2023-11-14
+        let ingest = json!({
+            "chatId": "alice@c.us",
+            "chatName": "Alice",
+            "day": seconds_to_ymd(day_ts),
+            "messages": [
+                {
+                    "chatId": "alice@c.us",
+                    "fromMe": false,
+                    "from": "alice@c.us",
+                    "fromName": "Alice",
+                    "body": "Hey there!",
+                    "timestamp": day_ts,
+                },
+                {
+                    "chatId": "alice@c.us",
+                    "fromMe": true,
+                    "from": "me",
+                    "fromName": null,
+                    "body": "Hi Alice!",
+                    "timestamp": day_ts + 60,
+                },
+                {
+                    "chatId": "alice@c.us",
+                    "fromMe": false,
+                    "from": "alice@c.us",
+                    "fromName": "Alice",
+                    "body": "How are you?",
+                    "timestamp": day_ts + 120,
+                },
+            ],
+        });
+
+        let params = build_doc_ingest_params("test-acct@c.us", &ingest)
+            .expect("should build params for valid ingest");
+
+        let content = params
+            .get("content")
+            .and_then(|v| v.as_str())
+            .expect("content must be present");
+
+        // Senders should appear in the transcript.
+        assert!(
+            content.contains("Alice"),
+            "transcript must contain sender name 'Alice'; content:\n{content}"
+        );
+        assert!(
+            content.contains("me"),
+            "transcript must contain 'me' for self-sent messages; content:\n{content}"
+        );
+
+        // Bodies must be present.
+        assert!(
+            content.contains("Hey there!"),
+            "transcript must contain first message body; content:\n{content}"
+        );
+        assert!(
+            content.contains("Hi Alice!"),
+            "transcript must contain second message body; content:\n{content}"
+        );
+        assert!(
+            content.contains("How are you?"),
+            "transcript must contain third message body; content:\n{content}"
+        );
+
+        // Lines must appear in ascending timestamp order — verify by position.
+        let pos_hey = content.find("Hey there!").expect("Hey there not found");
+        let pos_hi = content.find("Hi Alice!").expect("Hi Alice not found");
+        let pos_how = content.find("How are you?").expect("How are you not found");
+        assert!(
+            pos_hey < pos_hi && pos_hi < pos_how,
+            "transcript lines must be in timestamp order"
+        );
+    }
+
+    // ── build_doc_ingest_params payload shape ─────────────────────────────────
+
+    #[test]
+    fn build_doc_ingest_params_namespace_and_key_format() {
+        let day = "2023-11-14";
+        let ingest = json!({
+            "chatId": "alice@c.us",
+            "chatName": "Alice",
+            "day": day,
+            "messages": [
+                { "chatId": "alice@c.us", "fromMe": false, "from": "alice@c.us",
+                  "fromName": "Alice", "body": "Hello", "timestamp": 1_700_000_000i64 }
+            ],
+        });
+
+        let params =
+            build_doc_ingest_params("test-acct@c.us", &ingest).expect("should build params");
+
+        assert_eq!(
+            params.get("namespace").and_then(|v| v.as_str()),
+            Some("whatsapp-web:test-acct@c.us"),
+            "namespace must be 'whatsapp-web:<account_id>'"
+        );
+        assert_eq!(
+            params.get("key").and_then(|v| v.as_str()),
+            Some("alice@c.us:2023-11-14"),
+            "key must be '<chat_id>:<day>'"
+        );
+        assert_eq!(
+            params.get("source_type").and_then(|v| v.as_str()),
+            Some("whatsapp-web"),
+            "source_type must be 'whatsapp-web'"
+        );
+
+        // Content must be non-empty and contain the body.
+        let content = params
+            .get("content")
+            .and_then(|v| v.as_str())
+            .expect("content must be present");
+        assert!(!content.is_empty(), "content must not be empty");
+        assert!(
+            content.contains("Hello"),
+            "content must contain message body; got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn build_doc_ingest_params_missing_chat_id_returns_none() {
+        let ingest = json!({
+            "chatName": "Alice",
+            "day": "2023-11-14",
+            "messages": [
+                { "chatId": "alice@c.us", "fromMe": false, "body": "Hello", "timestamp": 1i64 }
+            ],
+        });
+        assert!(
+            build_doc_ingest_params("acct", &ingest).is_none(),
+            "missing chatId must return None"
+        );
+    }
+
+    #[test]
+    fn build_doc_ingest_params_empty_messages_returns_none() {
+        let ingest = json!({
+            "chatId": "alice@c.us",
+            "chatName": "Alice",
+            "day": "2023-11-14",
+            "messages": [],
+        });
+        assert!(
+            build_doc_ingest_params("acct", &ingest).is_none(),
+            "empty messages must return None"
+        );
+    }
+
+    // ── DOM-IDB merge ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn merge_dom_patches_empty_body_from_idb_message() {
+        // IDB message with empty body; matching DOM row has the decrypted body.
+        let idb = vec![json!({
+            "id": "abc123",
+            "chatId": "alice@c.us",
+            "fromMe": false,
+            "body": "",
+        })];
+        let dom = vec![json!({
+            "dataId": "abc123",
+            "msgId": "abc123",
+            "chatId": "alice@c.us",
+            "fromMe": false,
+            "body": "Hello",
+            "author": "Alice",
+            "preTimestamp": null,
+        })];
+
+        let (merged, patched, appended) = merge_dom_into_snapshot(&idb, &dom, None);
+
+        assert_eq!(patched, 1, "one message should be patched");
+        assert_eq!(appended, 0, "no messages should be appended");
+        assert_eq!(merged.len(), 1, "still one message in merged list");
+
+        let body = merged[0]
+            .get("body")
+            .and_then(|v| v.as_str())
+            .expect("body must be present");
+        assert_eq!(body, "Hello", "patched body must equal DOM body");
+
+        let source = merged[0]
+            .get("bodySource")
+            .and_then(|v| v.as_str())
+            .expect("bodySource must be present");
+        assert_eq!(source, "dom", "bodySource must be 'dom' after patching");
+    }
+
+    #[test]
+    fn merge_dom_appends_unmatched_row_with_active_chat_backfill() {
+        // No IDB messages; DOM has a row with no chatId.  active_chat_jid
+        // should be stamped onto the appended message.
+        let idb: Vec<Value> = vec![];
+        let dom = vec![json!({
+            "dataId": "newrow1",
+            "msgId": "newrow1",
+            "chatId": "",   // empty — needs backfill
+            "fromMe": false,
+            "body": "Hey from active chat",
+            "author": "Bob",
+            "preTimestamp": null,
+        })];
+
+        let (merged, patched, appended) = merge_dom_into_snapshot(&idb, &dom, Some("bob@c.us"));
+
+        assert_eq!(patched, 0, "nothing to patch");
+        assert_eq!(appended, 1, "one row should be appended");
+        assert_eq!(merged.len(), 1, "merged list should have 1 entry");
+
+        let chat_id = merged[0]
+            .get("chatId")
+            .and_then(|v| v.as_str())
+            .expect("chatId must be present");
+        assert_eq!(
+            chat_id, "bob@c.us",
+            "chatId should be backfilled from active_chat_jid"
+        );
+
+        let body_source = merged[0]
+            .get("bodySource")
+            .and_then(|v| v.as_str())
+            .expect("bodySource must be present");
+        assert_eq!(body_source, "dom-only");
+    }
+
+    #[test]
+    fn merge_dom_does_not_append_row_without_body() {
+        // DOM rows without a body should be silently skipped.
+        let idb: Vec<Value> = vec![];
+        let dom = vec![json!({
+            "dataId": "empty1",
+            "msgId": "empty1",
+            "chatId": "alice@c.us",
+            "fromMe": false,
+            "body": "",
+        })];
+
+        let (merged, patched, appended) = merge_dom_into_snapshot(&idb, &dom, None);
+
+        assert_eq!(patched, 0);
+        assert_eq!(appended, 0, "empty-body DOM rows must not be appended");
+        assert!(
+            merged.is_empty(),
+            "no messages should appear in merged list"
+        );
+    }
+
+    #[test]
+    fn merge_dom_does_not_consume_row_twice() {
+        // Two IDB messages with the same bare msgId; only the first match
+        // should consume the DOM row.
+        let idb = vec![
+            json!({ "id": "chat_abc", "chatId": "alice@c.us", "fromMe": false, "body": "" }),
+            json!({ "id": "chat_abc_2", "chatId": "alice@c.us", "fromMe": true, "body": "" }),
+        ];
+        // DOM row keyed only by bare msgId "abc".
+        let dom = vec![json!({
+            "dataId": "abc",
+            "msgId": "abc",
+            "chatId": "alice@c.us",
+            "fromMe": false,
+            "body": "Only once",
+        })];
+
+        let (merged, patched, _appended) = merge_dom_into_snapshot(&idb, &dom, None);
+
+        // Exactly one of the two IDB messages should be patched.
+        assert_eq!(patched, 1, "DOM row must be consumed at most once");
+        assert_eq!(merged.len(), 2, "both IDB messages must survive merge");
+        let patched_bodies: Vec<&str> = merged
+            .iter()
+            .filter_map(|m| m.get("body").and_then(|v| v.as_str()))
+            .filter(|b| *b == "Only once")
+            .collect();
+        assert_eq!(
+            patched_bodies.len(),
+            1,
+            "body 'Only once' must appear exactly once in merged list"
+        );
+    }
+
+    #[test]
+    fn merge_dom_empty_dom_returns_idb_messages_unchanged() {
+        let idb = vec![
+            json!({ "id": "m1", "chatId": "a@c.us", "body": "hello" }),
+            json!({ "id": "m2", "chatId": "a@c.us", "body": "" }),
+        ];
+        let dom: Vec<Value> = vec![];
+
+        let (merged, patched, appended) = merge_dom_into_snapshot(&idb, &dom, None);
+
+        assert_eq!(patched, 0);
+        assert_eq!(appended, 0);
+        assert_eq!(merged.len(), 2, "IDB messages must be returned unchanged");
+        assert_eq!(
+            merged[0].get("body").and_then(|v| v.as_str()),
+            Some("hello")
+        );
     }
 }

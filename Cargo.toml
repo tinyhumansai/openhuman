@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.53.17"
+version = "0.53.18"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -78,6 +78,7 @@ schemars = "1.2"
 tracing = { version = "0.1", default-features = false }
 tracing-log = "0.2"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "env-filter"] }
+tracing-appender = "0.2"
 prometheus = { version = "0.14", default-features = false }
 urlencoding = "2.1"
 thiserror = "2.0"

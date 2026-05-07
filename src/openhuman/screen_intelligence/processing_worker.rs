@@ -211,9 +211,10 @@ pub(crate) async fn analyze_frame(
     let config = Config::load_or_init()
         .await
         .map_err(|e| format!("failed to load config: {e}"))?;
-    if !config.local_ai.enabled {
+    if !config.local_ai.runtime_enabled {
         return Err(
-            "screen intelligence vision requires local_ai.enabled=true in config".to_string(),
+            "screen intelligence vision requires local_ai.runtime_enabled=true in config"
+                .to_string(),
         );
     }
     let provider = config.local_ai.provider.trim().to_ascii_lowercase();
