@@ -84,10 +84,15 @@ fn new_tree_id(kind: TreeKind) -> String {
 }
 
 /// Public id generator for summary nodes — exported so `bucket_seal` can
-/// share the same format (kept separate for readability; both use UUID v4
-/// suffixes to keep ids short but unambiguous).
+/// share the same format. Embeds the current Unix-ms timestamp so ids
+/// sort lexicographically in seal order (`ORDER BY id` ≈ chronological);
+/// a 4-hex random tail disambiguates seals that fire in the same
+/// millisecond (file-system + Obsidian wikilinks need uniqueness).
 pub fn new_summary_id(level: u32) -> String {
-    format!("summary:L{}:{}", level, Uuid::new_v4())
+    use rand::Rng;
+    let ms = chrono::Utc::now().timestamp_millis();
+    let rand_tail: u16 = rand::thread_rng().gen();
+    format!("summary:L{}:{}-{:04x}", level, ms, rand_tail)
 }
 
 #[cfg(test)]
@@ -127,6 +132,19 @@ mod tests {
         assert!(id.starts_with("source:"));
         let sum_id = new_summary_id(3);
         assert!(sum_id.starts_with("summary:L3:"));
+    }
+
+    #[test]
+    fn summary_ids_sort_chronologically() {
+        // Two summary ids generated in seal order must sort by their
+        // unix-ms prefix so `ORDER BY id` ≈ sealed-at order.
+        let earlier = new_summary_id(1);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let later = new_summary_id(1);
+        assert!(
+            earlier < later,
+            "expected {earlier} < {later} after a 2ms gap"
+        );
     }
 
     #[test]

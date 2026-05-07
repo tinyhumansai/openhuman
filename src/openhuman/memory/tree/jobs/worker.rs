@@ -23,9 +23,12 @@ use crate::openhuman::memory::tree::jobs::store::{
 /// Number of concurrent job-worker tasks. Each worker claims one job
 /// at a time via `claim_next` (atomic UPDATE under SQLite WAL with
 /// `locked_until_ms` + status='running'), so multiple workers
-/// parallelize independent jobs without double-claim risk. 4 trades
-/// cloud-LLM throughput for politeness on the backend; bump higher
-/// only after confirming the upstream rate limit can absorb it.
+/// parallelize independent jobs without double-claim risk. On cloud
+/// backends, LLM-bound jobs additionally drop the global LLM permit
+/// (see `run_once`) so all 4 workers can run extract/summarise calls
+/// in parallel; on local backends the single LLM slot still
+/// serialises Ollama calls for laptop-RAM safety, leaving non-LLM
+/// jobs to use the extra workers.
 const WORKER_COUNT: usize = 4;
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -114,7 +117,19 @@ pub async fn run_once(config: &Config) -> Result<bool> {
     };
 
     let llm_permit = if job.kind.is_llm_bound() {
-        gate_permit
+        // Local Ollama loads ~1.3 GB resident per concurrent call —
+        // hold the gate to enforce process-wide single-slot RAM
+        // safety. Cloud calls are bandwidth-bound, not RAM-bound:
+        // drop the permit so multiple workers can run cloud
+        // extract/summarise calls in parallel (the worker pool
+        // itself, sized to `WORKER_COUNT`, is the upstream bound).
+        match config.memory_tree.llm_backend {
+            crate::openhuman::config::LlmBackend::Local => gate_permit,
+            crate::openhuman::config::LlmBackend::Cloud => {
+                drop(gate_permit);
+                None
+            }
+        }
     } else {
         // Non-LLM jobs don't need the global slot; release it so an
         // LLM-bound caller waiting elsewhere in the process can run.
