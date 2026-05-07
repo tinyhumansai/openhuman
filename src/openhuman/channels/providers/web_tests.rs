@@ -3,7 +3,7 @@ use super::{
     event_session_id_for, generic_inference_error_user_message,
     inference_budget_exceeded_user_message, is_inference_budget_exceeded_error, json_output,
     key_for, normalize_model_override, optional_f64, optional_string, required_string, schemas,
-    start_chat, subscribe_web_channel_events,
+    set_test_forced_run_chat_task_error, start_chat, subscribe_web_channel_events,
 };
 use crate::core::TypeSchema;
 use tokio::time::{timeout, Duration};
@@ -61,6 +61,11 @@ async fn cancel_chat_validates_required_fields() {
 
 #[tokio::test]
 async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
+    set_test_forced_run_chat_task_error(Some(
+        "error sending request for url (https://staging-api.alphahuman.xyz/openai/v1/chat/completions)",
+    ))
+    .await;
+
     let mut rx = subscribe_web_channel_events();
     let request_id = start_chat(
         "coverage-client",
@@ -94,6 +99,9 @@ async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
         !message.contains("error sending request for url"),
         "chat error payload must not expose raw transport details"
     );
+
+    // Defensive cleanup so later tests cannot inherit forced failure state.
+    set_test_forced_run_chat_task_error(None).await;
 }
 
 #[test]

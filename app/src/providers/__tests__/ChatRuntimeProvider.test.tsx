@@ -429,16 +429,17 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         });
       });
 
-      await new Promise(resolve => setTimeout(resolve, 0));
-      const matchingCalls = vi
-        .mocked(threadApi.appendMessage)
-        .mock.calls.filter(
-          call =>
-            call[0] === 't-err-dedupe' &&
-            typeof call[1]?.content === 'string' &&
-            call[1].content.includes('Something went wrong. Please try again.')
-        );
-      expect(matchingCalls).toHaveLength(1);
+      await waitFor(() => {
+        const matchingCalls = vi
+          .mocked(threadApi.appendMessage)
+          .mock.calls.filter(
+            call =>
+              call[0] === 't-err-dedupe' &&
+              typeof call[1]?.content === 'string' &&
+              call[1].content.includes('Something went wrong. Please try again.')
+          );
+        expect(matchingCalls).toHaveLength(1);
+      });
     });
   });
 

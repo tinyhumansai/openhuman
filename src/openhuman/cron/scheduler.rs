@@ -111,6 +111,23 @@ async fn execute_job_with_retry(
         }
     }
 
+    if matches!(job.job_type, JobType::Agent) {
+        crate::core::observability::report_error(
+            last_output.as_str(),
+            "cron",
+            "agent_job",
+            &[
+                ("job_id", job.id.as_str()),
+                ("agent_id", job.agent_id.as_deref().unwrap_or("none")),
+                (
+                    "session_target",
+                    agent_session_target_tag(&job.session_target),
+                ),
+                ("failure", "retries_exhausted"),
+            ],
+        );
+    }
+
     (false, last_output)
 }
 
@@ -258,23 +275,7 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String) {
                 response
             },
         ),
-        Err(e) => {
-            crate::core::observability::report_error(
-                &e,
-                "cron",
-                "agent_job",
-                &[
-                    ("job_id", job.id.as_str()),
-                    ("agent_id", job.agent_id.as_deref().unwrap_or("none")),
-                    (
-                        "session_target",
-                        agent_session_target_tag(&job.session_target),
-                    ),
-                    ("failure", "execution"),
-                ],
-            );
-            (false, AGENT_JOB_USER_FAILURE_MESSAGE.to_string())
-        }
+        Err(_) => (false, AGENT_JOB_USER_FAILURE_MESSAGE.to_string()),
     }
 }
 
