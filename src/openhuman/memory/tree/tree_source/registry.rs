@@ -140,10 +140,7 @@ mod tests {
         assert!(sum_id.starts_with("summary:"));
         // Time-first layout: the segment after `summary:` is a 13-digit
         // zero-padded ms timestamp, then `:L<level>-<8hex>`.
-        assert!(
-            sum_id.contains(":L3-"),
-            "expected level suffix in {sum_id}"
-        );
+        assert!(sum_id.contains(":L3-"), "expected level suffix in {sum_id}");
     }
 
     #[test]
