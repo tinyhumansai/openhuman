@@ -91,9 +91,14 @@ fn alice_phoenix_thread() -> EmailThread {
 #[test]
 fn orchestrator_lists_memory_tree_tools() {
     let toml = include_str!("../src/openhuman/agent/agents/orchestrator/agent.toml");
+    // Exact entry match — substring match would also hit comments or prefixed names.
+    let has_memory_tree_entry = toml
+        .lines()
+        .map(str::trim)
+        .any(|line| line == "\"memory_tree\"" || line == "\"memory_tree\",");
     assert!(
-        toml.contains("memory_tree"),
-        "orchestrator agent.toml must list 'memory_tree' so the LLM can call it"
+        has_memory_tree_entry,
+        "orchestrator agent.toml must list 'memory_tree' as a named tool entry"
     );
     // Verify the old individual tool names are gone — they were removed in #1141
     // when all 6 were consolidated into the single `memory_tree` dispatcher.
@@ -105,8 +110,14 @@ fn orchestrator_lists_memory_tree_tools() {
         "memory_tree_drill_down",
         "memory_tree_fetch_leaves",
     ] {
+        let entry = format!("\"{old_name}\"");
+        let entry_comma = format!("\"{old_name}\",");
+        let old_tool_present = toml
+            .lines()
+            .map(str::trim)
+            .any(|line| line == entry || line == entry_comma);
         assert!(
-            !toml.contains(old_name),
+            !old_tool_present,
             "orchestrator agent.toml must NOT list '{old_name}' — removed in #1141 (use 'memory_tree' with mode= dispatch)"
         );
     }

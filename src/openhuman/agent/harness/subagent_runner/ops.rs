@@ -1344,3 +1344,7 @@ fn parse_tool_arguments(arguments: &str) -> serde_json::Value {
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ops_truncation_tests.rs"]
+mod truncation_tests;
