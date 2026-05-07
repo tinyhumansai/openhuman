@@ -135,11 +135,13 @@ type VersionCheckResult = 'match' | 'outdated' | 'noVersionMethod' | 'unreachabl
 
 async function checkVersion(callRpc: BootCheckTransport['callRpc']): Promise<VersionCheckResult> {
   try {
-    const result = await callRpc<{ version_info?: { version?: string } }>(
-      'openhuman.update_version',
-      {}
-    );
-    const coreVersion = result?.version_info?.version ?? '';
+    // `openhuman.update_version` returns a flat VersionInfo
+    // ({ version, target_triple, asset_prefix }) — see
+    // src/openhuman/update/ops.rs::update_version. The previous reader
+    // looked under a `version_info` wrapper that doesn't exist, so
+    // coreVersion was always '' and every boot reported "outdated local".
+    const result = await callRpc<{ version?: string }>('openhuman.update_version', {});
+    const coreVersion = result?.version ?? '';
     log('[boot-check] version_check app=%s core=%s', APP_VERSION, coreVersion);
 
     if (!coreVersion) {
