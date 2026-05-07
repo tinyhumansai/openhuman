@@ -27,6 +27,8 @@ const stubProvider = {
   showOnWelcome: true,
 };
 
+const twitterProvider = { ...stubProvider, id: 'twitter' as const, name: 'Twitter' };
+
 describe('OAuthProviderButton', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -169,5 +171,34 @@ describe('OAuthProviderButton', () => {
 
     expect(getBackendUrl).toHaveBeenCalledTimes(1);
     expect(openUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows actionable Twitter diagnostics when OAuth startup fails', async () => {
+    vi.mocked(openUrl).mockRejectedValue(
+      new Error('failed to open openhuman://oauth/error?provider=twitter&token=secret')
+    );
+
+    render(<OAuthProviderButton provider={twitterProvider} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Twitter' }));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Twitter/X sign-in could not start. Check that the Twitter OAuth app callback URL, client ID/secret, and requested scopes match the OpenHuman backend, then try again.'
+    );
+    expect(screen.getByRole('button', { name: 'Twitter' })).toBeEnabled();
+    expect(console.error).toHaveBeenCalledWith(
+      '[oauth-button][twitter] OAuth startup failed',
+      expect.objectContaining({
+        provider: 'twitter',
+        providerName: 'Twitter',
+        guidance: expect.stringContaining('Twitter/X sign-in could not start'),
+        reason: expect.not.stringContaining('token=secret'),
+      })
+    );
   });
 });

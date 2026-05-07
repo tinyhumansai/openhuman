@@ -19,6 +19,28 @@ interface OAuthProviderButtonProps {
 // redirect fails so the `openhuman://` deep link never fires.
 const OAUTH_LOADING_TIMEOUT_MS = 90_000;
 
+const getOAuthStartupFailureMessage = (provider: OAuthProviderConfig): string => {
+  if (provider.id === 'twitter') {
+    return 'Twitter/X sign-in could not start. Check that the Twitter OAuth app callback URL, client ID/secret, and requested scopes match the OpenHuman backend, then try again.';
+  }
+
+  return `${provider.name} sign-in could not start. Please try again.`;
+};
+
+const summarizeOAuthStartupError = (error: unknown): string => {
+  if (!(error instanceof Error)) {
+    return typeof error;
+  }
+
+  // Keep diagnostics useful without leaking URLs or query parameters from host
+  // opener errors.
+  const redactedMessage = error.message
+    .replace(/https?:\/\/\S+/g, '[redacted-url]')
+    .replace(/openhuman:\/\/\S+/g, '[redacted-deep-link]');
+
+  return `${error.name}: ${redactedMessage.slice(0, 160)}`;
+};
+
 const OAuthProviderButton = ({
   provider,
   className = '',
@@ -26,6 +48,7 @@ const OAuthProviderButton = ({
   onClickOverride,
 }: OAuthProviderButtonProps) => {
   const [isLoading, setIsLoading] = useState(false);
+  const [startupError, setStartupError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoading) return;
@@ -86,6 +109,7 @@ const OAuthProviderButton = ({
 
     console.debug(`[oauth-button][${provider.id}] starting OAuth login (isTauri=${isTauri()})`);
 
+    setStartupError(null);
     setIsLoading(true);
 
     try {
@@ -108,7 +132,14 @@ const OAuthProviderButton = ({
         window.location.href = loginUrl;
       }
     } catch (error) {
-      console.error(`Failed to initiate ${provider.name} OAuth login:`, error);
+      const message = getOAuthStartupFailureMessage(provider);
+      console.error(`[oauth-button][${provider.id}] OAuth startup failed`, {
+        provider: provider.id,
+        providerName: provider.name,
+        reason: summarizeOAuthStartupError(error),
+        guidance: message,
+      });
+      setStartupError(message);
       setIsLoading(false);
     }
   };
@@ -117,17 +148,24 @@ const OAuthProviderButton = ({
   const IconComponent = provider.icon;
 
   return (
-    <button
-      onClick={handleOAuthLogin}
-      disabled={isDisabled}
-      className={`flex min-w-0 items-center justify-center space-x-3 ${provider.color} ${provider.hoverColor} text-sm font-medium py-2.5 px-4 rounded-xl transition-all duration-300 hover:shadow-medium hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}>
-      {isLoading ? (
-        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-current"></div>
-      ) : (
-        <IconComponent className="w-5 h-5" />
-      )}
-      <span className={provider.textColor}>{isLoading ? 'Connecting...' : provider.name}</span>
-    </button>
+    <div className="min-w-0">
+      <button
+        onClick={handleOAuthLogin}
+        disabled={isDisabled}
+        className={`flex min-w-0 items-center justify-center space-x-3 ${provider.color} ${provider.hoverColor} text-sm font-medium py-2.5 px-4 rounded-xl transition-all duration-300 hover:shadow-medium hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}>
+        {isLoading ? (
+          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-current"></div>
+        ) : (
+          <IconComponent className="w-5 h-5" />
+        )}
+        <span className={provider.textColor}>{isLoading ? 'Connecting...' : provider.name}</span>
+      </button>
+      {startupError ? (
+        <p role="alert" className="mt-2 text-xs leading-5 text-red-600">
+          {startupError}
+        </p>
+      ) : null}
+    </div>
   );
 };
 

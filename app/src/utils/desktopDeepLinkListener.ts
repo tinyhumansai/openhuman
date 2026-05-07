@@ -17,6 +17,49 @@ import { storeSession } from './tauriCommands';
 
 const SESSION_TOKEN_UPDATED_EVENT = 'core-state:session-token-updated';
 
+const sanitizeOAuthDiagnosticValue = (
+  value: string | null,
+  fallback: string,
+  maxLength = 80
+): string => {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+
+  const safe = normalized.replace(/[^a-z0-9._-]/g, '_').slice(0, maxLength);
+  return safe || fallback;
+};
+
+const getOAuthErrorMessage = (provider: string, errorCode: string): string => {
+  if (provider === 'twitter') {
+    if (errorCode === 'access_denied' || errorCode === 'user_denied') {
+      return 'Twitter/X sign-in was cancelled. Try again and approve access to continue.';
+    }
+
+    return 'Twitter/X sign-in failed before OpenHuman received authorization. Check the Twitter Developer Portal app settings: OAuth 2.0 must be enabled, callback URL must match the backend redirect URL exactly, and the client ID, client secret, and requested scopes must match the OpenHuman backend configuration.';
+  }
+
+  if (errorCode === 'access_denied' || errorCode === 'user_denied') {
+    return 'Sign-in was cancelled. Try again and approve access to continue.';
+  }
+
+  return 'OAuth sign-in failed before OpenHuman received authorization. Check the provider app settings and try again.';
+};
+
+const emitOAuthError = (provider: string, errorCode: string, message: string) => {
+  console.warn('[DeepLink][oauth:error] OAuth provider returned an error', {
+    provider,
+    errorCode,
+    message,
+  });
+
+  failDeepLinkAuthProcessing(message);
+  window.dispatchEvent(
+    new CustomEvent('oauth:error', { detail: { provider, errorCode, message } })
+  );
+};
+
 const focusMainWindow = async () => {
   try {
     const window = getCurrentWindow();
@@ -187,9 +230,17 @@ const handleOAuthDeepLink = async (parsed: URL) => {
     window.dispatchEvent(new CustomEvent('oauth:success', { detail: { integrationId, toolkit } }));
     window.location.hash = '/skills';
   } else if (path === 'error') {
-    const error = parsed.searchParams.get('error') ?? 'Unknown error';
-    const provider = parsed.searchParams.get('provider') ?? 'unknown';
-    console.error(`[DeepLink] OAuth error for provider=${provider}: ${error}`);
+    const provider = sanitizeOAuthDiagnosticValue(
+      parsed.searchParams.get('provider'),
+      'unknown',
+      32
+    );
+    const errorCode = sanitizeOAuthDiagnosticValue(
+      parsed.searchParams.get('error') || parsed.searchParams.get('error_code'),
+      'unknown_error'
+    );
+    const message = getOAuthErrorMessage(provider, errorCode);
+    emitOAuthError(provider, errorCode, message);
   } else {
     console.warn('[DeepLink] Unknown OAuth path:', path);
   }
