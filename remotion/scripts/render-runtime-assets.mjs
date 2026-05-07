@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,6 +9,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const remotionRoot = resolve(__dirname, '..');
 const outputRoot = resolve(remotionRoot, '..', 'app', 'public', 'generated', 'remotion');
 const tempRoot = resolve(remotionRoot, 'out', 'runtime-assets');
+const remotionBinary = join(remotionRoot, 'node_modules', '.bin', 'remotion');
 
 const colors = ['yellow', 'burgundy', 'black', 'navy', 'green'];
 const baseVariants = [
@@ -53,9 +54,11 @@ function ensureCleanDir(dir) {
 }
 
 function renderMov(composition, destination, props) {
+  if (!existsSync(remotionBinary)) {
+    throw new Error(`remotion CLI missing at ${remotionBinary}; run pnpm install in remotion/ first`);
+  }
+
   const args = [
-    'exec',
-    'remotion',
     'render',
     composition,
     destination,
@@ -66,7 +69,7 @@ function renderMov(composition, destination, props) {
   if (Object.keys(props).length > 0) {
     args.push('--props', JSON.stringify(props));
   }
-  run('pnpm', args, remotionRoot);
+  run(remotionBinary, args, remotionRoot);
 }
 
 function transcodeWebp(inputMov, outputWebp) {

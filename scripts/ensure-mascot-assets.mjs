@@ -66,7 +66,7 @@ if (assetsExist()) {
 
 if (!existsSync(remotionNodeModules)) {
   console.log('[ensure-mascot-assets] installing remotion workspace dependencies');
-  run('pnpm', ['install', '--frozen-lockfile'], remotionRoot);
+  run('pnpm', ['install', '--ignore-workspace', '--frozen-lockfile'], remotionRoot);
 }
 
 console.log('[ensure-mascot-assets] generating mascot asset cache');
