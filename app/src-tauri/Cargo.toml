@@ -177,7 +177,9 @@ tauri-plugin-global-shortcut = { git = "https://github.com/tauri-apps/plugins-wo
 tauri-plugin-notification = { path = "vendor/tauri-plugin-notification" }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt"] }
+# `test-util` enables `#[tokio::test(start_paused = true)]` for the
+# idle-watchdog unit tests in `cdp/session.rs` (#1213).
+tokio = { version = "1", features = ["macros", "rt", "test-util"] }
 tempfile = "3"
 
 # Emit just enough DWARF in release builds for Sentry to symbolicate Rust
