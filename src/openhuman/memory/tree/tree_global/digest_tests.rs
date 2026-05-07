@@ -61,7 +61,7 @@ async fn seed_source_tree_with_sealed_l1(cfg: &Config, scope: &str, ts: DateTime
             tags: vec![],
             source_ref: Some(SourceRef::new("slack://x")),
         },
-        token_count: 6_000,
+        token_count: 30_000,
         seq_in_source: 0,
         created_at: ts,
         partial_message: false,
@@ -78,7 +78,7 @@ async fn seed_source_tree_with_sealed_l1(cfg: &Config, scope: &str, ts: DateTime
             tags: vec![],
             source_ref: Some(SourceRef::new("slack://y")),
         },
-        token_count: 6_000,
+        token_count: 30_000,
         seq_in_source: 1,
         created_at: ts,
         partial_message: false,
@@ -88,7 +88,7 @@ async fn seed_source_tree_with_sealed_l1(cfg: &Config, scope: &str, ts: DateTime
 
     let leaf1 = LeafRef {
         chunk_id: c1.id.clone(),
-        token_count: 6_000,
+        token_count: 30_000,
         timestamp: ts,
         content: c1.content.clone(),
         entities: vec![],
@@ -97,7 +97,7 @@ async fn seed_source_tree_with_sealed_l1(cfg: &Config, scope: &str, ts: DateTime
     };
     let leaf2 = LeafRef {
         chunk_id: c2.id.clone(),
-        token_count: 6_000,
+        token_count: 30_000,
         timestamp: ts,
         content: c2.content.clone(),
         entities: vec![],
@@ -281,7 +281,7 @@ async fn seed_source_tree_with_labeled_l1(
                 tags: topics.clone(),
                 source_ref: Some(SourceRef::new(format!("slack://{scope}/{seq}"))),
             },
-            token_count: 6_000,
+            token_count: 30_000,
             seq_in_source: seq,
             created_at: ts,
             partial_message: false,
@@ -326,7 +326,7 @@ async fn seed_source_tree_with_labeled_l1(
     for chunk in &chunks {
         let leaf = LeafRef {
             chunk_id: chunk.id.clone(),
-            token_count: 6_000,
+            token_count: 30_000,
             timestamp: ts,
             content: chunk.content.clone(),
             entities: entities.clone(),

@@ -62,6 +62,18 @@ impl ChatProvider for OllamaChatProvider {
     }
 
     async fn chat_for_json(&self, prompt: &ChatPrompt) -> Result<String> {
+        self.run_chat(prompt, "json").await
+    }
+
+    async fn chat_for_text(&self, prompt: &ChatPrompt) -> Result<String> {
+        // Empty `format` tells Ollama to emit free-form text — the
+        // summariser doesn't want a JSON envelope around its output.
+        self.run_chat(prompt, "").await
+    }
+}
+
+impl OllamaChatProvider {
+    async fn run_chat(&self, prompt: &ChatPrompt, format: &str) -> Result<String> {
         if self.endpoint.is_empty() || self.model.is_empty() {
             return Err(anyhow!(
                 "[memory_tree::chat::local] Ollama endpoint or model not configured \
@@ -84,7 +96,7 @@ impl ChatProvider for OllamaChatProvider {
                     content: prompt.user.clone(),
                 },
             ],
-            format: "json".to_string(),
+            format: format.to_string(),
             stream: false,
             options: OllamaOptions {
                 temperature: prompt.temperature as f32,

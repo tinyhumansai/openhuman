@@ -3,7 +3,7 @@
 //! `append_leaf` pushes a persisted chunk into the L0 buffer of a tree.
 //! Seal gates differ by level:
 //!
-//! - **L0 (leaves → L1)**: seal when `token_sum >= TOKEN_BUDGET`. Bounds
+//! - **L0 (leaves → L1)**: seal when `token_sum >= INPUT_TOKEN_BUDGET`. Bounds
 //!   the summariser's raw input.
 //! - **L≥1 (summaries → next level)**: seal when `item_ids.len() >=
 //!   SUMMARY_FANOUT`. Per-summary token size depends on summariser
@@ -47,7 +47,7 @@ use crate::openhuman::memory::tree::tree_source::summariser::{
     Summariser, SummaryContext, SummaryInput,
 };
 use crate::openhuman::memory::tree::tree_source::types::{
-    Buffer, SummaryNode, Tree, TreeKind, SUMMARY_FANOUT, TOKEN_BUDGET,
+    Buffer, SummaryNode, Tree, TreeKind, INPUT_TOKEN_BUDGET, OUTPUT_TOKEN_BUDGET, SUMMARY_FANOUT,
 };
 
 /// Hard cap on cascade depth — prevents runaway loops if token accounting
@@ -298,18 +298,23 @@ pub async fn cascade_all_from(
 
 /// Level-aware seal gate.
 ///
-/// L0 buffers (raw leaves) gate on `token_sum` so the summariser's input
-/// stays bounded. L≥1 buffers gate on sibling count so the tree's
+/// L0 buffers gate on **either** `token_sum >= INPUT_TOKEN_BUDGET`
+/// (so the summariser's input stays bounded) **or** sibling count
+/// `>= SUMMARY_FANOUT` (so leaves form predictably for sources whose
+/// chunks are individually small — without the count fallback,
+/// hundreds of tiny emails can sit unsealed waiting to hit 50k
+/// tokens). L≥1 buffers gate on sibling count alone so the tree's
 /// fan-in is independent of per-summary token size — without this,
 /// summarisers that emit at the full token budget (e.g. the inert
-/// fallback) collapse the cascade into a 1:1:1 chain instead of a real
-/// tree.
+/// fallback) collapse the cascade into a 1:1:1 chain instead of a
+/// real tree.
 pub(crate) fn should_seal(buf: &Buffer) -> bool {
     if buf.is_empty() {
         return false;
     }
     if buf.level == 0 {
-        buf.token_sum >= TOKEN_BUDGET as i64
+        buf.token_sum >= INPUT_TOKEN_BUDGET as i64
+            || (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
     } else {
         (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
     }
@@ -378,7 +383,7 @@ pub(crate) async fn seal_one_level(
         tree_id: &tree.id,
         tree_kind: tree.kind,
         target_level,
-        token_budget: TOKEN_BUDGET,
+        token_budget: OUTPUT_TOKEN_BUDGET,
     };
     let output = summariser
         .summarise(&inputs, &ctx)
@@ -399,11 +404,10 @@ pub(crate) async fn seal_one_level(
     //
     // Embedder context-window guard: `nomic-embed-text-v1.5` accepts
     // up to 8192 tokens of input. Summary content is bounded by
-    // `ctx.token_budget = TOKEN_BUDGET = 10_000` so a worst-case
-    // summary overshoots the embedder. We truncate the input passed
-    // to `embed()` to fit (the persisted summary content stays full;
-    // only the embedding's "view" of it is clamped). 6000 tokens
-    // leaves headroom for tokenizer differences across embedders.
+    // `ctx.token_budget = OUTPUT_TOKEN_BUDGET = 5_000` which fits, but
+    // we still truncate the input passed to `embed()` to leave
+    // headroom for tokenizer drift (the persisted summary content
+    // stays full; only the embedding's "view" of it is clamped).
     let embedder = build_embedder_from_config(config).context("build embedder during seal")?;
     // Conservative cap. Slack-style chat content (URLs, mentions,
     // emoji) tokenizes 2-4× higher than the 4-chars/token heuristic.
@@ -501,11 +505,13 @@ pub(crate) async fn seal_one_level(
     // the raw archive file the chunk's body lives in — the email
     // chunk-store path `email/<scope>/<chunk_id>.md` no longer
     // exists, so `[[<chunk_id>]]` would be an unresolved Obsidian
-    // link. The raw file basename `<ts_ms>_<msg_id>` matches what
-    // `raw_store::write_raw_items` writes. L≥2 children are
-    // summary ids whose default `sanitize_filename` resolves to
-    // existing `wiki/summaries/...md` files — leave overrides
-    // unset there.
+    // link. We emit the relative path under content_root (with `.md`
+    // stripped) so the wikilink resolves unambiguously even outside
+    // Obsidian's unique-basename heuristic — e.g.
+    // `[[raw/gmail-stevent95-at-gmail-dot-com/<ts_ms>_<msg_id>]]`.
+    // L≥2 children are summary ids whose default `sanitize_filename`
+    // resolves to existing `wiki/summaries/...md` files — leave
+    // overrides unset there.
     let child_basename_overrides: Option<Vec<Option<String>>> = if node.level == 1 {
         let overrides: Vec<Option<String>> = node
             .child_ids
@@ -521,11 +527,17 @@ pub(crate) async fn seal_one_level(
                     Ok(refs_opt) => {
                         refs_opt
                             .and_then(|refs| refs.into_iter().next())
-                            .and_then(|r| {
-                                std::path::Path::new(&r.path)
-                                    .file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .map(|s| s.to_string())
+                            .map(|r| {
+                                // RawRef::path is a forward-slash
+                                // relative path under content_root,
+                                // e.g.
+                                // "raw/gmail-…/1700000_msg-id.md".
+                                // Strip `.md` for Obsidian's
+                                // extension-less wikilink convention.
+                                r.path
+                                    .strip_suffix(".md")
+                                    .unwrap_or(&r.path)
+                                    .to_string()
                             })
                     }
                     Err(e) => {

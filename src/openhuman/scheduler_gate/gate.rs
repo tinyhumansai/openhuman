@@ -14,24 +14,35 @@ use crate::openhuman::config::{Config, SchedulerGateConfig};
 use crate::openhuman::scheduler_gate::policy::{decide, Policy};
 use crate::openhuman::scheduler_gate::signals::Signals;
 
-/// Process-wide ceiling on concurrent LLM-bound work.
+/// Process-wide ceiling on concurrent LLM-bound work for the local
+/// backend.
 ///
-/// Held at 1 to keep concurrent local-Ollama / bge-m3 calls (8K context,
-/// ~1.3 GB resident each) from saturating local RAM. The cloud path
-/// itself is bandwidth-bound but the gate also fronts triage and
-/// reflection turns that fan out to `agent.run_turn`, where every local
-/// route loads the same Ollama model — so a single global slot is the
-/// safest contract until #1064 (per-toolkit triage toggle) and the
-/// cloud-side rate limiter ship.
-///
-/// See `feedback_local_llm_load.md` — backfills with multiple
+/// Held at 1 to keep concurrent local-Ollama / bge-m3 calls (8K
+/// context, ~1.3 GB resident each) from saturating local RAM. See
+/// `feedback_local_llm_load.md` — backfills with multiple
 /// simultaneous Ollama requests have crashed the user's laptop twice.
-const LLM_SLOTS: usize = 1;
+const LLM_SLOTS_LOCAL: usize = 1;
+
+/// Process-wide ceiling on concurrent LLM-bound work for the cloud
+/// backend.
+///
+/// Cloud calls are bandwidth-bound, not RAM-bound — the local-RAM
+/// rationale that pins `LLM_SLOTS_LOCAL` to 1 doesn't apply. Sized
+/// to match the memory_tree job-worker pool so extract/summarise
+/// cloud calls actually parallelise instead of serialising on this
+/// gate. Bump only after confirming the upstream rate limit can
+/// absorb it.
+const LLM_SLOTS_CLOUD: usize = 4;
+
+/// Conservative fallback before [`init_global`] runs (no config
+/// available yet). Anything that calls into the gate before init
+/// gets the safe local-sized slot count.
+const LLM_SLOTS_FALLBACK: usize = LLM_SLOTS_LOCAL;
 
 static LLM_PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 fn llm_permits() -> &'static Arc<Semaphore> {
-    LLM_PERMITS.get_or_init(|| Arc::new(Semaphore::new(LLM_SLOTS)))
+    LLM_PERMITS.get_or_init(|| Arc::new(Semaphore::new(LLM_SLOTS_FALLBACK)))
 }
 
 /// RAII guard returned by [`wait_for_capacity`] / [`acquire_llm_permit`].
@@ -71,17 +82,29 @@ const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
 /// reloads should call [`update_config`] instead.
 pub fn init_global(config: &Config) {
     let cfg = config.scheduler_gate.clone();
+    // Size the LLM permit semaphore based on the active backend:
+    // cloud calls are bandwidth-bound and can run in parallel; local
+    // Ollama loads ~1.3 GB resident per concurrent call and stays
+    // serialised. Configured here (not at first `llm_permits()`
+    // touch) so the choice always reflects current config rather
+    // than whatever code path raced to populate the OnceLock first.
+    let slots = match config.memory_tree.llm_backend {
+        crate::openhuman::config::LlmBackend::Cloud => LLM_SLOTS_CLOUD,
+        crate::openhuman::config::LlmBackend::Local => LLM_SLOTS_LOCAL,
+    };
+    let _ = LLM_PERMITS.set(Arc::new(Semaphore::new(slots)));
     STARTED.call_once(|| {
         let signals = Signals::sample();
         let policy = decide(&signals, &cfg);
         log::info!(
-            "[scheduler_gate] startup policy={} mode={} on_ac={} charge={:?} cpu={:.1}% server={}",
+            "[scheduler_gate] startup policy={} mode={} on_ac={} charge={:?} cpu={:.1}% server={} llm_slots={}",
             policy.as_str(),
             cfg.mode.as_str(),
             signals.on_ac_power,
             signals.battery_charge,
             signals.cpu_usage_pct,
             signals.server_mode,
+            slots,
         );
         let state = Arc::new(RwLock::new(State {
             cfg,

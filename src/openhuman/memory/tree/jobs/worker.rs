@@ -20,7 +20,13 @@ use crate::openhuman::memory::tree::jobs::store::{
     claim_next, mark_done, mark_failed, recover_stale_locks, DEFAULT_LOCK_DURATION_MS,
 };
 
-const WORKER_COUNT: usize = 1;
+/// Number of concurrent job-worker tasks. Each worker claims one job
+/// at a time via `claim_next` (atomic UPDATE under SQLite WAL with
+/// `locked_until_ms` + status='running'), so multiple workers
+/// parallelize independent jobs without double-claim risk. 4 trades
+/// cloud-LLM throughput for politeness on the backend; bump higher
+/// only after confirming the upstream rate limit can absorb it.
+const WORKER_COUNT: usize = 4;
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 static WORKER_NOTIFY: OnceLock<Arc<Notify>> = OnceLock::new();

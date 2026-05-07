@@ -282,7 +282,7 @@ mod tests {
         drain_until_idle(&cfg).await.unwrap();
 
         // Final lifecycle is `buffered`: extract → admitted → append_buffer → buffered.
-        // The single packed chunk does not cross TOKEN_BUDGET so no seal fires.
+        // The single packed chunk does not cross INPUT_TOKEN_BUDGET so no seal fires.
         assert_eq!(
             count_chunks_by_lifecycle_status(&cfg, CHUNK_STATUS_BUFFERED).unwrap(),
             1

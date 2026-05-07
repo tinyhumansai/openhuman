@@ -301,7 +301,7 @@ mod tests {
                     tags: vec![],
                     source_ref: Some(SourceRef::new("slack://x")),
                 },
-                token_count: crate::openhuman::memory::tree::tree_source::types::TOKEN_BUDGET * 6
+                token_count: crate::openhuman::memory::tree::tree_source::types::INPUT_TOKEN_BUDGET * 6
                     / 10,
                 seq_in_source: seq,
                 created_at: ts,
@@ -324,7 +324,7 @@ mod tests {
                 &tree,
                 &LeafRef {
                     chunk_id: c.id.clone(),
-                    token_count: crate::openhuman::memory::tree::tree_source::types::TOKEN_BUDGET
+                    token_count: crate::openhuman::memory::tree::tree_source::types::INPUT_TOKEN_BUDGET
                         * 6
                         / 10,
                     timestamp: ts,

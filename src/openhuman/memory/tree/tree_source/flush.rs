@@ -1,6 +1,6 @@
 //! Time-based buffer flush for source trees (#709).
 //!
-//! The bucket-seal path only fires when a buffer crosses `TOKEN_BUDGET`.
+//! The bucket-seal path only fires when a buffer crosses `INPUT_TOKEN_BUDGET`.
 //! Low-volume sources (e.g. an email account with two threads a week) can
 //! otherwise leave leaves parked in the L0 buffer indefinitely, which
 //! hurts recall. `flush_stale_buffers` force-seals any buffer whose

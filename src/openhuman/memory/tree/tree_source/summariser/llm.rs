@@ -38,7 +38,6 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::Deserialize;
 use std::sync::Arc;
 
 use super::inert::InertSummariser;
@@ -48,37 +47,28 @@ use crate::openhuman::memory::tree::types::approx_token_count;
 
 /// Hard cap on summariser output length (in approximate tokens).
 ///
-/// Two constraints set this:
-///
-/// 1. The downstream embedder (`nomic-embed-text-v1.5`) accepts up to
-///    8192 tokens, and Phase 4 (`tree_source::bucket_seal`) embeds the
-///    summary right after we produce it. An overshoot returns HTTP 500
-///    and rolls back the whole seal transaction.
-/// 2. Empirically, small instruction-tuned models running locally
-///    degrade quickly past ~3500 tokens — they drift, hallucinate, or
-///    produce repetitive boilerplate as they extend toward longer
-///    targets. Keeping the cap below that breakeven keeps output
-///    quality stable on local Ollama deployments.
-///
-/// 3500 sits comfortably under the embedder ceiling AND below the local
-/// LLM quality cliff. The post-generation [`clamp_to_budget`] enforces
-/// this regardless of what the model produces.
-const MAX_SUMMARY_OUTPUT_TOKENS: u32 = 3_500;
+/// Sized to fit the downstream embedder (`nomic-embed-text-v1.5`,
+/// 8192-token input ceiling) with headroom for tokenizer drift between
+/// our 4-chars/token heuristic and the embedder's real tokenizer. The
+/// post-generation [`clamp_to_budget`] enforces this regardless of what
+/// the model produces.
+const MAX_SUMMARY_OUTPUT_TOKENS: u32 = 5_000;
 
-/// Context window assumed for the model. Used as the divisor in the
-/// per-input clamp so the joined prompt body stays under this even at
-/// upper-level seals where SUMMARY_FANOUT children each near
-/// MAX_SUMMARY_OUTPUT_TOKENS would otherwise overflow. Conservative —
-/// real cloud models have larger contexts; smaller local models may
-/// truncate, but the post-generation `clamp_to_budget` ensures output
-/// fits the embedder regardless.
-const NUM_CTX_TOKENS: u32 = 16_384;
+/// Context window assumed for the model. Sized for the cloud
+/// summariser's 120k-token window with comfortable headroom — leaves
+/// room for the joined L0 input batch (up to `INPUT_TOKEN_BUDGET = 50k`),
+/// the requested output budget, the system prompt, and tokenizer drift.
+/// Used as the divisor in the per-input clamp so the joined prompt body
+/// stays under this even at upper-level seals where many children fold
+/// together.
+const NUM_CTX_TOKENS: u32 = 60_000;
 
-/// Tokens reserved for the system prompt, JSON wrapper, and tokenizer
-/// drift between our 4-chars/token heuristic and the model's tokenizer.
-/// Trades a small loss of input capacity for a guarantee that the
-/// prompt body + output budget never exceeds `num_ctx`.
-const OVERHEAD_RESERVE_TOKENS: u32 = 512;
+/// Tokens reserved for the system prompt, message-envelope overhead,
+/// and tokenizer drift between our 4-chars/token heuristic and the
+/// model's tokenizer. Trades a small loss of input capacity for a
+/// guarantee that the prompt body + output budget never exceeds
+/// `num_ctx`.
+const OVERHEAD_RESERVE_TOKENS: u32 = 2_048;
 
 /// Configuration for [`LlmSummariser`]. Threaded down to the chat
 /// provider for diagnostic logging — model selection at the wire level
@@ -189,7 +179,7 @@ impl Summariser for LlmSummariser {
             ctx.token_budget
         );
 
-        let raw = match self.provider.chat_for_json(&prompt).await {
+        let raw = match self.provider.chat_for_text(&prompt).await {
             Ok(v) => v,
             Err(e) => {
                 log::warn!(
@@ -203,19 +193,7 @@ impl Summariser for LlmSummariser {
             }
         };
 
-        let parsed: LlmSummaryOutput = match serde_json::from_str(&raw) {
-            Ok(v) => v,
-            Err(e) => {
-                log::warn!(
-                    "[tree_source::summariser::llm] model returned non-JSON or wrong-shape \
-                     body: {e}; content was: {} — falling back to inert",
-                    truncate_for_log(&raw, 400)
-                );
-                return self.fallback.summarise(inputs, ctx).await;
-            }
-        };
-
-        let (content, token_count) = clamp_to_budget(&parsed.summary, effective_budget);
+        let (content, token_count) = clamp_to_budget(raw.trim(), effective_budget);
         log::debug!(
             "[tree_source::summariser::llm] sealed tree_id={} level={} inputs={} tokens={}",
             ctx.tree_id,
@@ -257,7 +235,7 @@ fn build_user_prompt(inputs: &[SummaryInput], per_input_cap_tokens: u32) -> Stri
     out
 }
 
-/// System prompt. Length isn't templated in — empirically, telling small
+/// System prompt. Length isn't templated in — empirically, telling
 /// instruction-tuned models "stay under N tokens" makes them produce
 /// curt, generic output even when the input has plenty of substance.
 /// Output is clamped post-generation by [`clamp_to_budget`] in the
@@ -267,11 +245,9 @@ fn system_prompt(_budget: u32) -> String {
      single cohesive passage that preserves concrete facts, decisions, \
      and temporal ordering. Do not invent facts.\n\
      \n\
-     Return JSON only — no prose, no markdown, no commentary. Schema:\n\
-     {\n\
-     \x20 \"summary\": \"<summary body>\"\n\
-     }"
-    .to_string()
+     Return only the summary text. No commentary, no preamble, no headings, \
+     no markdown wrappers, no JSON — just the prose summary."
+        .to_string()
 }
 
 /// Truncate to the caller's token budget using the same ~4 chars/token
@@ -285,22 +261,6 @@ fn clamp_to_budget(text: &str, budget: u32) -> (String, u32) {
     let truncated: String = text.chars().take(char_ceiling).collect();
     let tokens = approx_token_count(&truncated);
     (truncated, tokens)
-}
-
-fn truncate_for_log(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        return s.to_string();
-    }
-    let truncated: String = s.chars().take(max_chars).collect();
-    format!("{truncated}…")
-}
-
-// ── LLM JSON output ──────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct LlmSummaryOutput {
-    #[serde(default)]
-    summary: String,
 }
 
 #[cfg(test)]
@@ -385,16 +345,17 @@ mod tests {
     }
 
     #[test]
-    fn system_prompt_describes_schema() {
-        // Budget is no longer templated into the prompt — small models
+    fn system_prompt_describes_plain_text_output() {
+        // Budget is no longer templated into the prompt — models
         // produced overly curt output when told to "stay under N tokens".
         // The clamp in `clamp_to_budget` handles enforcement instead.
         let p = system_prompt(4096);
         assert!(!p.contains("4096"));
         assert!(!p.contains("Stay well under"));
-        assert!(p.contains("\"summary\""));
-        assert!(!p.contains("\"entities\""));
-        assert!(!p.contains("\"topics\""));
+        // Output is plain prose, not JSON.
+        assert!(!p.contains("\"summary\""));
+        assert!(p.to_lowercase().contains("no commentary"));
+        assert!(p.to_lowercase().contains("no json"));
     }
 
     #[test]
@@ -410,19 +371,6 @@ mod tests {
         let (out, t) = clamp_to_budget(&long, 5);
         assert!(out.len() < long.len());
         assert!(t <= 6);
-    }
-
-    #[test]
-    fn truncate_for_log_short_input_unchanged() {
-        assert_eq!(truncate_for_log("hi", 10), "hi");
-    }
-
-    #[test]
-    fn truncate_for_log_long_input_appends_ellipsis() {
-        let long = "x".repeat(500);
-        let out = truncate_for_log(&long, 10);
-        assert_eq!(out.chars().count(), 11);
-        assert!(out.ends_with('…'));
     }
 
     /// Mock chat provider that lets us assert prompt shape and stub responses
@@ -494,34 +442,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_response_falls_back_to_inert() {
-        // Provider returns garbage → parse fails → fallback to inert.
-        let provider = std::sync::Arc::new(StubProvider::ok("not json"));
-        let s = LlmSummariser::new(LlmSummariserConfig::default(), provider);
-        let inputs = vec![sample_input("a", "alice ships friday")];
-        let out = s.summarise(&inputs, &test_ctx()).await.unwrap();
-        // Inert fallback content includes the original input.
-        assert!(out.content.contains("alice"));
-    }
-
-    #[tokio::test]
     async fn provider_summary_response_is_used_and_clamped() {
-        // Provider returns valid JSON; summariser parses it and clamps to
-        // the budget.
+        // Provider returns plain text; summariser uses it verbatim
+        // (after trim) and clamps to the budget.
         let provider = std::sync::Arc::new(StubProvider::ok(
-            r#"{"summary":"alice decided to ship friday"}"#,
+            "alice decided to ship friday\n",
         ));
         let s = LlmSummariser::new(LlmSummariserConfig::default(), provider.clone());
         let inputs = vec![sample_input("a", "alice ships friday")];
         let out = s.summarise(&inputs, &test_ctx()).await.unwrap();
-        assert!(out.content.contains("alice decided to ship"));
+        assert_eq!(out.content, "alice decided to ship friday");
         assert!(out.token_count > 0);
         assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]
     fn build_prompt_carries_body_and_kind_tag() {
-        let provider = std::sync::Arc::new(StubProvider::ok("{}"));
+        let provider = std::sync::Arc::new(StubProvider::ok("hi"));
         let s = LlmSummariser::new(
             LlmSummariserConfig {
                 model: "llama3.1:8b".into(),
@@ -529,26 +466,10 @@ mod tests {
             provider,
         );
         let prompt = s.build_prompt("body", 2048);
-        assert!(prompt.system.contains("\"summary\""));
-        assert!(!prompt.system.contains("\"entities\""));
+        assert!(prompt.system.to_lowercase().contains("no commentary"));
+        assert!(!prompt.system.contains("\"summary\""));
         assert_eq!(prompt.user, "body");
         assert_eq!(prompt.temperature, 0.0);
         assert_eq!(prompt.kind, "memory_tree::summarise");
-    }
-
-    #[test]
-    fn llm_output_deserialises_with_only_summary() {
-        let v: LlmSummaryOutput = serde_json::from_str(r#"{"summary":"hi"}"#).unwrap();
-        assert_eq!(v.summary, "hi");
-    }
-
-    #[test]
-    fn llm_output_ignores_extraneous_fields() {
-        // Prompt no longer asks for entities/topics, but if the model
-        // emits them anyway we should still parse `summary` cleanly.
-        let v: LlmSummaryOutput =
-            serde_json::from_str(r#"{"summary":"hi","entities":["Alice"],"topics":["x"]}"#)
-                .unwrap();
-        assert_eq!(v.summary, "hi");
     }
 }
