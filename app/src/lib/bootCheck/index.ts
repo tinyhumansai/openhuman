@@ -64,8 +64,12 @@ function isMethodNotFound(err: unknown): boolean {
 }
 
 /**
- * Poll `openhuman.ping` with exponential back-off until the core responds or
- * we exhaust the budget.
+ * Poll `core.ping` with exponential back-off until the core responds or we
+ * exhaust the budget. `core.ping` is a Tier-1 dispatcher method (see
+ * `src/core/dispatch.rs`) that responds before any domain controller is
+ * registered, which is exactly what we want for a liveness probe — it tells
+ * us "the HTTP server is up and the dispatcher is wired" without coupling to
+ * any specific subsystem's readiness.
  *
  * Returns true when the core is reachable, false on timeout.
  */
@@ -79,7 +83,7 @@ async function waitForCore(
     const elapsedAtStart = Date.now() - startedAt;
     try {
       log('[boot-check] ping attempt elapsed=%dms', elapsedAtStart);
-      await callRpc('openhuman.ping', {});
+      await callRpc('core.ping', {});
       log('[boot-check] ping succeeded elapsed=%dms', elapsedAtStart);
       return true;
     } catch {
@@ -164,7 +168,7 @@ async function checkVersion(callRpc: BootCheckTransport['callRpc']): Promise<Ver
  *
  * Local mode:
  *   1. Invoke `start_core_process` Tauri command to spawn the embedded core.
- *   2. Poll `openhuman.ping` until reachable (≤10 s).
+ *   2. Poll `core.ping` until reachable (≤10 s).
  *   3. Check for a legacy daemon via `service_status`.
  *   4. Version-check via `update_version`.
  *

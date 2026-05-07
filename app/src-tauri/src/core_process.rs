@@ -104,6 +104,27 @@ impl CoreProcessHandle {
     }
 
     pub async fn ensure_running(&self) -> Result<(), String> {
+        // Idempotent fast path: if we already spawned the embedded server in
+        // *this* process and it's still alive on the port, the listener is
+        // us — return Ok without identifying or taking over. Without this,
+        // a second `start_core_process` call (e.g. HMR re-mounting the boot
+        // gate) sees its own port as bound, classifies the listener as
+        // "stale OpenHuman", and walks into the SIGTERM/SIGKILL takeover
+        // path against itself. (#1130 takeover is meant to recover from
+        // *external* leftover binaries, not our own in-process spawn.)
+        {
+            let guard = self.task.lock().await;
+            if let Some(task) = guard.as_ref() {
+                if !task.is_finished() && self.is_rpc_port_open().await {
+                    log::debug!(
+                        "[core] ensure_running: embedded task already running on port {} — no-op",
+                        self.port
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
         if self.is_rpc_port_open().await {
             if reuse_existing_listener_enabled() {
                 log::warn!(
