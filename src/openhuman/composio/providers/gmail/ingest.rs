@@ -412,10 +412,10 @@ fn sanitize_uid_for_path(uid: &str) -> String {
 ///
 /// Files land under `<content_root>/raw/<source_slug>/<ts_ms>_<msg_id>.md`.
 /// We write the **backend-produced markdown verbatim** — the
-/// `markdown` field on each message is what
-/// [`super::post_process::post_process`] populates via
-/// `extract_markdown_body` / `html_email_to_markdown` /
-/// `normalize_markdownish_text`. That pipeline already handles HTML
+/// `markdown` field on each message is the per-message slice of the
+/// response-level `markdownFormatted`, pinned by
+/// [`super::post_process::apply_response_level_markdown`] before the
+/// reshape runs. That backend rendering already handles HTML
 /// stripping, URL shortening / unwrapping, entity decoding, and
 /// whitespace collapse — all the cleanup the user is going to read
 /// in Obsidian. Re-running the chunker's `email_clean::clean_body`
