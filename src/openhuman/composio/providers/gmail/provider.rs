@@ -301,9 +301,21 @@ impl ComposioProvider for GmailProvider {
                 ));
             }
 
-            // ── Step 4: post-process the page (HTML→md, normalise, sanitise)
-            //    so chunk content is clean before ingest. Same pipeline the
-            //    standalone gmail-backfill-3d binary runs.
+            // ── Step 4: pull the backend's pre-rendered `markdownFormatted`
+            //    onto each message so the raw archive sees URL-shortened,
+            //    footer-stripped output. Done BEFORE post_process so the
+            //    reshape can pick up the per-message field. Then run the
+            //    usual post-process which slims the envelope and feeds
+            //    `extract_markdown_body` (which now prefers
+            //    `markdownFormatted` per message).
+            if let Some(top_md) = resp
+                .markdown_formatted
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                super::post_process::apply_response_level_markdown(&mut resp.data, top_md);
+            }
             self.post_process_action_result(ACTION_FETCH_EMAILS, Some(&args), &mut resp.data);
 
             let messages = sync::extract_messages(&resp.data);

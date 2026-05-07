@@ -438,6 +438,122 @@ fn empty_markdown_formatted_falls_through_to_message_text() {
 }
 
 #[test]
+fn split_response_markdown_uses_horizontal_rule_marker() {
+    // The confirmed backend marker is `\n---\n`. Three messages →
+    // expect three slices when there's no preamble.
+    let md = "## Alice's update\n\nbody A with https://gh.io/abc\n---\n## Bob's reply\n\nbody B\n---\n## Carol\n\nbody C";
+    let slices = super::split_response_markdown_per_message(md, 3).unwrap();
+    assert_eq!(slices.len(), 3);
+    assert!(slices[0].contains("Alice's update"));
+    assert!(slices[1].contains("Bob's reply"));
+    assert!(slices[2].contains("Carol"));
+    // The `---\n` prefix is preserved on every-but-the-first segment
+    // so the section break survives the round-trip.
+    assert!(slices[1].starts_with("---\n"));
+    assert!(slices[2].starts_with("---\n"));
+}
+
+#[test]
+fn split_response_markdown_drops_preamble() {
+    // When a preamble like `# Inbox` precedes the first marker, we
+    // see N+1 parts after split — the preamble must be dropped.
+    let md = "# Inbox (2 messages)\n---\n## A\n\nbody A\n---\n## B\n\nbody B";
+    let slices = super::split_response_markdown_per_message(md, 2).unwrap();
+    assert_eq!(slices.len(), 2);
+    assert!(slices[0].contains("body A"));
+    assert!(slices[1].contains("body B"));
+    // Both segments should carry the prefix when preamble was dropped.
+    assert!(slices[0].starts_with("---\n"));
+    assert!(slices[1].starts_with("---\n"));
+}
+
+#[test]
+fn split_response_markdown_falls_back_to_h2_marker() {
+    // No `---` rules — backend used h2 headings as boundaries.
+    let md = "## Alice\n\nbody A\n\n## Bob\n\nbody B";
+    let slices = super::split_response_markdown_per_message(md, 2).unwrap();
+    assert_eq!(slices.len(), 2);
+    assert!(slices[0].contains("body A"));
+    assert!(slices[1].contains("body B"));
+}
+
+#[test]
+fn split_response_markdown_returns_none_on_count_mismatch() {
+    // 3 messages expected but split yields a different number — the
+    // format isn't recognized; caller falls back to MIME decode.
+    let md = "## only one section here";
+    assert!(super::split_response_markdown_per_message(md, 3).is_none());
+}
+
+#[test]
+fn split_response_markdown_single_message_returns_whole_input() {
+    let md = "## solo\n\nthe whole body";
+    let slices = super::split_response_markdown_per_message(md, 1).unwrap();
+    assert_eq!(slices, vec![md.to_string()]);
+}
+
+#[test]
+fn split_with_hint_rejects_when_subjects_dont_match() {
+    // Backend marker yields the right count but the segments don't
+    // mention the subjects from the JSON — alignment must be wrong,
+    // so we refuse the split rather than ship a swapped raw archive.
+    let md = "## Foo\nbody1\n---\n## Bar\nbody2";
+    let hints = vec![
+        json!({"subject": "Completely different subject A"}),
+        json!({"subject": "Completely different subject B"}),
+    ];
+    let out = super::split_response_markdown_per_message_with_hint(md, 2, Some(&hints));
+    assert!(out.is_none(), "subject mismatch must force fallback");
+}
+
+#[test]
+fn split_with_hint_accepts_when_subjects_match() {
+    let md = "## Welcome to Gmail\nbody1\n---\n## Your invoice\nbody2";
+    let hints = vec![
+        json!({"subject": "Welcome to Gmail"}),
+        json!({"subject": "Your invoice"}),
+    ];
+    let slices =
+        super::split_response_markdown_per_message_with_hint(md, 2, Some(&hints)).unwrap();
+    assert_eq!(slices.len(), 2);
+    assert!(slices[0].contains("Welcome to Gmail"));
+    assert!(slices[1].contains("Your invoice"));
+}
+
+#[test]
+fn split_with_hint_skips_messages_with_blank_subject() {
+    // Notification mails with empty subjects should not block the
+    // split — only non-empty subjects gate validation.
+    let md = "## A\nbody1\n---\n## B\nbody2";
+    let hints = vec![json!({"subject": "A"}), json!({"subject": ""})];
+    let slices =
+        super::split_response_markdown_per_message_with_hint(md, 2, Some(&hints)).unwrap();
+    assert_eq!(slices.len(), 2);
+}
+
+#[test]
+fn apply_response_level_markdown_stashes_per_message_field() {
+    // Integration: a real-shape response with N messages + a
+    // top-level markdownFormatted gets per-message slices stashed
+    // onto each message map, ready for `extract_markdown_body` to
+    // pick up.
+    let mut data = json!({
+        "messages": [
+            {"messageId": "m1", "subject": "Hello"},
+            {"messageId": "m2", "subject": "World"},
+        ]
+    });
+    let top_md = "## Hello\nbody A — link https://gh.io/abc\n---\n## World\nbody B";
+    super::apply_response_level_markdown(&mut data, top_md);
+    let m1 = data["messages"][0]["markdownFormatted"].as_str().unwrap();
+    let m2 = data["messages"][1]["markdownFormatted"].as_str().unwrap();
+    assert!(m1.contains("Hello"));
+    assert!(m1.contains("https://gh.io/abc"), "shortened URL must survive");
+    assert!(m2.contains("World"));
+    assert!(!m1.contains("World"), "no cross-message bleed");
+}
+
+#[test]
 fn html_in_message_text_is_converted() {
     let mut v = json!({
         "messages": [{

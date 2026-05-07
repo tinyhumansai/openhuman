@@ -71,6 +71,198 @@ pub fn post_process(slug: &str, arguments: Option<&Value>, data: &mut Value) {
     }
 }
 
+/// Stash per-message slices of the response-level `markdownFormatted`
+/// onto the corresponding entries inside `data.messages[]`.
+///
+/// The Composio backend (tinyhumansai/backend#683) ships ONE
+/// `markdownFormatted` string per tool call covering all messages —
+/// already URL-shortened, footer-stripped, and whitespace-normalised.
+/// To get per-email files in the raw archive we split that string
+/// along section boundaries (`## ` headings or `---` rules) and pin
+/// each slice to the message at the same index. `extract_markdown_body`
+/// then prefers `msg.markdownFormatted` over re-decoding the MIME
+/// tree.
+///
+/// **Must be called BEFORE [`post_process`]** because `post_process`
+/// reshapes `data` into the slim envelope; once `messages[]` carries
+/// our slim shape the upstream message ordering is already locked in
+/// but we may have lost original ordering signals if any.
+///
+/// No-op when the slice count doesn't match `messages.len()` — we
+/// can't safely align segments to messages without an exact match,
+/// so we let `extract_markdown_body` fall through to its MIME path.
+pub fn apply_response_level_markdown(data: &mut Value, top_md: &str) {
+    let trimmed = top_md.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let container = match data.get_mut("messages") {
+        Some(_) => data,
+        None => match data.get_mut("data").and_then(|v| v.as_object_mut()) {
+            Some(_) => data.get_mut("data").unwrap(),
+            None => {
+                tracing::debug!(
+                    "[composio:gmail][post-process] apply_response_level_markdown: \
+                     no messages container in response — skipping"
+                );
+                return;
+            }
+        },
+    };
+    let Some(messages) = container
+        .get_mut("messages")
+        .and_then(|v| v.as_array_mut())
+    else {
+        return;
+    };
+    let count = messages.len();
+    if count == 0 {
+        return;
+    }
+    // Clone hints out of the messages array so the slice borrows
+    // don't conflict with the upcoming `messages.iter_mut()` mutation.
+    let hints: Vec<Value> = messages.clone();
+    let Some(slices) =
+        split_response_markdown_per_message_with_hint(trimmed, count, Some(&hints))
+    else {
+        tracing::debug!(
+            messages = count,
+            md_len = trimmed.len(),
+            "[composio:gmail][post-process] could not split response-level markdownFormatted \
+             into {count} slices — falling back to per-message MIME decode"
+        );
+        return;
+    };
+    for (msg, slice) in messages.iter_mut().zip(slices.into_iter()) {
+        if let Some(obj) = msg.as_object_mut() {
+            obj.insert(
+                "markdownFormatted".to_string(),
+                Value::String(slice),
+            );
+        }
+    }
+    tracing::debug!(
+        messages = count,
+        "[composio:gmail][post-process] stashed per-message markdownFormatted slices"
+    );
+}
+
+/// Split a top-level `markdownFormatted` string into per-message
+/// segments. Returns `Some(slices)` only when the split yields
+/// exactly `expected_count` entries — otherwise the format isn't one
+/// of the patterns we know about and we let the caller fall back.
+///
+/// Primary boundary is the `\n---\n` horizontal rule the backend
+/// emits between messages (confirmed against real
+/// `GMAIL_FETCH_EMAILS` output). H2/H3 headings are kept as
+/// fallbacks for older renderings. The preamble (`# Inbox (N
+/// messages)`-style intro, if present) is dropped — we accept
+/// either `expected` parts (no preamble) or `expected + 1`
+/// (preamble + N messages).
+///
+/// `messages_hint` is the slim message array from the same response
+/// — when present we use the per-message `subject` field to verify
+/// each segment really does belong to the message at the same index.
+/// Mismatches force a fallback so we never write a wrong-message body
+/// to the raw archive.
+pub(crate) fn split_response_markdown_per_message(
+    md: &str,
+    expected_count: usize,
+) -> Option<Vec<String>> {
+    split_response_markdown_per_message_with_hint(md, expected_count, None)
+}
+
+pub(crate) fn split_response_markdown_per_message_with_hint(
+    md: &str,
+    expected_count: usize,
+    messages_hint: Option<&[Value]>,
+) -> Option<Vec<String>> {
+    if expected_count == 0 {
+        return None;
+    }
+    if expected_count == 1 {
+        return Some(vec![md.to_string()]);
+    }
+
+    // Boundary patterns to try, in priority order. `\n---\n` is the
+    // confirmed marker; the heading variants stay as belt-and-braces
+    // for older / variant backend renderings.
+    let candidates: &[(&str, &str)] = &[
+        ("\n---\n", "---\n"),
+        ("\n\n## ", "## "),
+        ("\n\n### ", "### "),
+        ("\n\n# ", "# "),
+        ("\n***\n", "***\n"),
+    ];
+
+    for (sep, prefix) in candidates {
+        let parts: Vec<&str> = md.split(sep).collect();
+        let (drop_preamble, prepend_first) = if parts.len() == expected_count {
+            (false, false) // no preamble; first segment had no prefix
+        } else if parts.len() == expected_count + 1 {
+            (true, true) // preamble dropped; every kept segment had a prefix
+        } else {
+            continue;
+        };
+        let segments: Vec<String> = parts
+            .into_iter()
+            .skip(if drop_preamble { 1 } else { 0 })
+            .enumerate()
+            .map(|(i, s)| {
+                if i == 0 && !prepend_first {
+                    s.to_string()
+                } else {
+                    format!("{prefix}{s}")
+                }
+            })
+            .collect();
+
+        // Validate alignment against the JSON message array: every
+        // segment whose corresponding message has a non-empty subject
+        // must mention that subject somewhere in its body. If a single
+        // pair fails, we treat the split as unreliable and try the
+        // next pattern. Empty / null subjects skip validation (e.g.
+        // notification mails where the subject is "").
+        if let Some(hints) = messages_hint {
+            if !validate_segments_against_hints(&segments, hints) {
+                tracing::debug!(
+                    expected = expected_count,
+                    sep = sep,
+                    "[composio:gmail][post-process] split candidate failed subject check"
+                );
+                continue;
+            }
+        }
+        return Some(segments);
+    }
+    None
+}
+
+/// True if every (segment, message) pair where the message has a
+/// non-empty subject contains that subject somewhere in the segment
+/// (case-insensitive substring match — a defensive heuristic, not a
+/// strict equality check, since the backend may format subjects
+/// inside markdown links or with surrounding decoration).
+fn validate_segments_against_hints(segments: &[String], hints: &[Value]) -> bool {
+    if segments.len() != hints.len() {
+        return false;
+    }
+    for (seg, hint) in segments.iter().zip(hints.iter()) {
+        let subject = hint
+            .get("subject")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if subject.is_empty() {
+            continue;
+        }
+        if !seg.to_ascii_lowercase().contains(&subject.to_ascii_lowercase()) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Returns true when the caller explicitly set `raw_html: true` (or the
 /// camelCase `rawHtml: true`) in the `arguments` object.
 fn is_raw_html_flag_set(arguments: Option<&Value>) -> bool {
