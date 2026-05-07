@@ -15,6 +15,14 @@ use tokio::time::{self, Duration};
 
 const MIN_POLL_SECONDS: u64 = 5;
 const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
+const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>";
+
+fn agent_session_target_tag(target: &SessionTarget) -> &'static str {
+    match target {
+        SessionTarget::Main => "main",
+        SessionTarget::Isolated => "isolated",
+    }
+}
 
 pub async fn run(config: Config) -> Result<()> {
     // Ensure the global event bus is initialized so cron delivery events
@@ -250,7 +258,23 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String) {
                 response
             },
         ),
-        Err(e) => (false, format!("agent job failed: {e}")),
+        Err(e) => {
+            crate::core::observability::report_error(
+                &e,
+                "cron",
+                "agent_job",
+                &[
+                    ("job_id", job.id.as_str()),
+                    ("agent_id", job.agent_id.as_deref().unwrap_or("none")),
+                    (
+                        "session_target",
+                        agent_session_target_tag(&job.session_target),
+                    ),
+                    ("failure", "execution"),
+                ],
+            );
+            (false, AGENT_JOB_USER_FAILURE_MESSAGE.to_string())
+        }
     }
 }
 

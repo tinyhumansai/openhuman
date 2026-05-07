@@ -41,6 +41,8 @@ import { IS_PROD } from '../utils/config';
 import { formatTimelineEntry, promptFromArgsBuffer } from '../utils/toolTimelineFormatting';
 
 const logChatRuntime = debug('openhuman:chat-runtime');
+const USER_FACING_AGENT_ERROR_MESSAGE =
+  'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord">Report on Discord</openhuman-link>';
 
 function rtLog(message: string, fields?: Record<string, string | number | null | undefined>) {
   if (IS_PROD) return;
@@ -718,14 +720,11 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           const threadMessages = currentState.thread.messagesByThreadId[event.thread_id] ?? [];
           const lastMsg = threadMessages[threadMessages.length - 1];
           if (
-            !(
-              lastMsg?.sender === 'agent' &&
-              lastMsg?.content === 'Something went wrong — please try again.'
-            )
+            !(lastMsg?.sender === 'agent' && lastMsg?.content === USER_FACING_AGENT_ERROR_MESSAGE)
           ) {
             void dispatch(
               addInferenceResponse({
-                content: 'Something went wrong — please try again.',
+                content: USER_FACING_AGENT_ERROR_MESSAGE,
                 threadId: event.thread_id,
               })
             );

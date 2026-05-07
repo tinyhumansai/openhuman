@@ -1,9 +1,9 @@
 use super::{
     all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
-    event_session_id_for, inference_budget_exceeded_user_message,
-    is_inference_budget_exceeded_error, json_output, key_for, normalize_model_override,
-    optional_f64, optional_string, required_string, schemas, start_chat,
-    subscribe_web_channel_events,
+    event_session_id_for, generic_inference_error_user_message,
+    inference_budget_exceeded_user_message, is_inference_budget_exceeded_error, json_output,
+    key_for, normalize_model_override, optional_f64, optional_string, required_string, schemas,
+    start_chat, subscribe_web_channel_events,
 };
 use crate::core::TypeSchema;
 
@@ -76,6 +76,15 @@ fn budget_exceeded_copy_mentions_top_up() {
     let message = inference_budget_exceeded_user_message();
     assert!(message.contains("top up"));
     assert!(message.contains("credits"));
+}
+
+#[test]
+fn generic_error_copy_is_sanitized_and_has_discord_report_action() {
+    let message = generic_inference_error_user_message();
+    assert!(message.contains("Something went wrong. Please try again."));
+    assert!(message.contains("This error has been reported."));
+    assert!(message
+        .contains("<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>"));
 }
 
 // ── Schema catalog ────────────────────────────────────────────

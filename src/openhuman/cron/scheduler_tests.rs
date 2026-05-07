@@ -205,9 +205,12 @@ async fn run_agent_job_returns_error_without_provider_key() {
 
     let (success, output) = run_agent_job(&config, &job).await;
     assert!(!success, "Agent job without provider key should fail");
+    assert!(output.contains("Something went wrong. Please try again."));
+    assert!(output.contains("This error has been reported."));
+    assert!(output.contains("Report on Discord"));
     assert!(
-        !output.is_empty(),
-        "Expected non-empty error output from failed agent job"
+        !output.contains("error sending request for url"),
+        "Expected sanitized output without raw transport details"
     );
 }
 

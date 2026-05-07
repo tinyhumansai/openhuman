@@ -123,6 +123,10 @@ fn inference_budget_exceeded_user_message() -> &'static str {
     "I don't have any budget available right now. Please top up your credits or choose a plan to continue."
 }
 
+fn generic_inference_error_user_message() -> &'static str {
+    "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>"
+}
+
 fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
     match action {
         PromptEnforcementAction::Allow => "Message accepted.",
@@ -263,13 +267,23 @@ pub async fn start_chat(
                     request_id_task,
                     err
                 );
+                let detailed = format!(
+                    "run_chat_task failed client_id={} thread_id={} request_id={} error={}",
+                    client_id_task, thread_id_task, request_id_task, err
+                );
+                crate::core::observability::report_error(
+                    detailed.as_str(),
+                    "web_channel",
+                    "run_chat_task",
+                    &[("channel", "web"), ("error_type", "inference")],
+                );
                 publish_web_channel_event(WebChannelEvent {
                     event: "chat_error".to_string(),
                     client_id: client_id_task.clone(),
                     thread_id: thread_id_task.clone(),
                     request_id: request_id_task.clone(),
                     full_response: None,
-                    message: Some(err),
+                    message: Some(generic_inference_error_user_message().to_string()),
                     error_type: Some("inference".to_string()),
                     tool_name: None,
                     skill_id: None,

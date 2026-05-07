@@ -357,6 +357,45 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(timeline[0]?.status).toBe('error');
       expect(store.getState().chatRuntime.inferenceStatusByThread['t-err']).toBeUndefined();
     });
+
+    it('adds a sanitized user-facing error bubble with Discord report action on chat_error', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onError?.({
+          thread_id: 't-err-sanitized',
+          request_id: 'r1',
+          message:
+            'agent job failed: error sending request for url (https://staging-api.alphahuman.xyz/openai/v1/chat/completions)',
+          error_type: 'inference',
+          round: 0,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-err-sanitized',
+          expect.objectContaining({
+            sender: 'agent',
+            content: expect.stringContaining('Something went wrong. Please try again.'),
+          })
+        )
+      );
+      expect(threadApi.appendMessage).toHaveBeenCalledWith(
+        't-err-sanitized',
+        expect.objectContaining({
+          content: expect.stringContaining(
+            '<openhuman-link path="community/discord">Report on Discord</openhuman-link>'
+          ),
+        })
+      );
+      expect(threadApi.appendMessage).not.toHaveBeenCalledWith(
+        't-err-sanitized',
+        expect.objectContaining({
+          content: expect.stringContaining('https://staging-api.alphahuman.xyz'),
+        })
+      );
+    });
   });
 
   // Live subagent activity (#1122) — the parent thread surfaces a
