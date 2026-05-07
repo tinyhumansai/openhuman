@@ -416,3 +416,46 @@ export async function memoryTreeSetLlm(
   console.debug('[memory-tree-rpc] memoryTreeSetLlm: exit current=%s', out?.current);
   return out;
 }
+
+// ── memory_tree_graph_export ────────────────────────────────────────────
+
+/** One sealed summary node, returned by `memory_tree_graph_export`. */
+export interface GraphNode {
+  id: string;
+  tree_id: string;
+  /** `"source" | "topic" | "global"`. */
+  tree_kind: string;
+  tree_scope: string;
+  level: number;
+  parent_id: string | null;
+  child_count: number;
+  time_range_start_ms: number;
+  time_range_end_ms: number;
+  /** Filesystem-safe basename (no `.md`); used to build Obsidian deep links. */
+  file_basename: string;
+}
+
+export interface GraphExportResponse {
+  nodes: GraphNode[];
+  /** Absolute filesystem path to `<workspace>/memory_tree/content/`. */
+  content_root_abs: string;
+}
+
+/**
+ * Dump every non-deleted summary node so the UI can lay out the
+ * parent/child memory tree (Obsidian-style graph view). Backed by
+ * `openhuman.memory_tree_graph_export`.
+ */
+export async function memoryTreeGraphExport(): Promise<GraphExportResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeGraphExport: entry');
+  const resp = await callCoreRpc<GraphExportResponse | ResultEnvelope<GraphExportResponse>>({
+    method: 'openhuman.memory_tree_graph_export',
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeGraphExport: exit n=%d root=%s',
+    out.nodes?.length ?? 0,
+    out.content_root_abs
+  );
+  return out;
+}

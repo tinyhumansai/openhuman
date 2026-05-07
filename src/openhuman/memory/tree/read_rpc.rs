@@ -875,6 +875,120 @@ pub struct DeleteChunkResponse {
     pub entity_index_rows_removed: u32,
 }
 
+// ── graph_export ────────────────────────────────────────────────────────
+
+/// One node in the graph export — a sealed summary in `mem_tree_summaries`.
+///
+/// Wire shape consumed by the Memory tab's Obsidian-style graph view. Only
+/// summaries are returned (not raw chunks) — chunks would explode node
+/// count and the graph is meant for orientation, not full inspection.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub tree_id: String,
+    /// `"source" | "topic" | "global"`.
+    pub tree_kind: String,
+    pub tree_scope: String,
+    pub level: u32,
+    /// Parent summary id (one level up). `None` for root nodes.
+    pub parent_id: Option<String>,
+    pub child_count: u32,
+    pub time_range_start_ms: i64,
+    pub time_range_end_ms: i64,
+    /// Filesystem-safe basename of the summary's `.md` file (no `.md`
+    /// extension). Matches the wikilink target used by the front-matter
+    /// `children:` list — UI builds Obsidian deep links from this.
+    pub file_basename: String,
+}
+
+/// Response shape for [`graph_export_rpc`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GraphExportResponse {
+    pub nodes: Vec<GraphNode>,
+    /// Absolute path to the on-disk `<workspace>/memory_tree/content/` root.
+    /// UIs use this to open files via the `obsidian://open?path=...` deep
+    /// link — Obsidian resolves arbitrary absolute paths without requiring
+    /// the vault to be registered.
+    pub content_root_abs: String,
+}
+
+/// `memory_tree_graph_export` — dump every non-deleted summary node so the
+/// UI can lay out the parent/child tree.
+pub async fn graph_export_rpc(
+    config: &Config,
+) -> Result<RpcOutcome<GraphExportResponse>, String> {
+    let cfg = config.clone();
+    let resp = tokio::task::spawn_blocking(move || -> Result<GraphExportResponse> {
+        let content_root = cfg.memory_tree_content_root();
+        let nodes = with_connection(&cfg, |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT s.id, s.tree_id, s.tree_kind, t.scope, s.level, s.parent_id,
+                        s.child_ids_json, s.time_range_start_ms, s.time_range_end_ms
+                   FROM mem_tree_summaries s
+                   JOIN mem_tree_trees t ON t.id = s.tree_id
+                  WHERE s.deleted = 0
+                  ORDER BY s.tree_id, s.level, s.sealed_at_ms",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    let id: String = row.get(0)?;
+                    let tree_id: String = row.get(1)?;
+                    let tree_kind: String = row.get(2)?;
+                    let tree_scope: String = row.get(3)?;
+                    let level: i64 = row.get(4)?;
+                    let parent_id: Option<String> = row.get(5)?;
+                    let child_ids_json: String = row.get(6)?;
+                    let time_range_start_ms: i64 = row.get(7)?;
+                    let time_range_end_ms: i64 = row.get(8)?;
+                    let child_count: u32 = serde_json::from_str::<Vec<String>>(&child_ids_json)
+                        .map(|v| v.len() as u32)
+                        .unwrap_or(0);
+                    let file_basename = sanitize_basename(&id);
+                    Ok(GraphNode {
+                        id,
+                        tree_id,
+                        tree_kind,
+                        tree_scope,
+                        level: level.max(0) as u32,
+                        parent_id,
+                        child_count,
+                        time_range_start_ms,
+                        time_range_end_ms,
+                        file_basename,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("collect graph_export rows")?;
+            Ok(rows)
+        })?;
+        Ok(GraphExportResponse {
+            nodes,
+            content_root_abs: content_root.to_string_lossy().to_string(),
+        })
+    })
+    .await
+    .map_err(|e| format!("graph_export join error: {e}"))?
+    .map_err(|e| format!("graph_export: {e:#}"))?;
+    let log = format!(
+        "memory_tree::read: graph_export n={} root={}",
+        resp.nodes.len(),
+        resp.content_root_abs,
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
+/// Replicate `content_store::paths::sanitize_filename` — colons and other
+/// Windows-illegal characters become `-` so the basename matches the
+/// on-disk `.md` filename Obsidian needs to open via deep link.
+fn sanitize_basename(id: &str) -> String {
+    id.chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            other => other,
+        })
+        .collect()
+}
+
 // ── llm get/set ─────────────────────────────────────────────────────────
 
 /// Response shape for [`get_llm_rpc`] / [`set_llm_rpc`].

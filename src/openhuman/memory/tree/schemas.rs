@@ -40,6 +40,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("delete_chunk"),
         schemas("get_llm"),
         schemas("set_llm"),
+        schemas("graph_export"),
     ]
 }
 
@@ -102,6 +103,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("set_llm"),
             handler: handle_set_llm,
+        },
+        RegisteredController {
+            schema: schemas("graph_export"),
+            handler: handle_graph_export,
         },
     ]
 }
@@ -530,6 +535,30 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "graph_export" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "graph_export",
+            description: "Dump every non-deleted summary node so the UI can lay out the \
+                          parent/child memory tree (Obsidian-style graph view). Includes \
+                          the absolute path to the on-disk content root so deep links can \
+                          point Obsidian at the same files.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "nodes",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Ref("GraphNode"))),
+                    comment: "All sealed summary nodes (across all trees), with parent_id \
+                              backlinks and a filesystem-safe basename for deep links.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "content_root_abs",
+                    ty: TypeSchema::String,
+                    comment: "Absolute path to <workspace>/memory_tree/content/.",
+                    required: true,
+                },
+            ],
+        },
         "trigger_digest" => ControllerSchema {
             namespace: NAMESPACE,
             function: "trigger_digest",
@@ -735,6 +764,13 @@ fn handle_set_llm(params: Map<String, Value>) -> ControllerFuture {
         let mut config = config_rpc::load_config_with_timeout().await?;
         let req = parse_value::<read_rpc::SetLlmRequest>(Value::Object(params))?;
         to_json(read_rpc::set_llm_rpc(&mut config, req).await?)
+    })
+}
+
+fn handle_graph_export(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(read_rpc::graph_export_rpc(&config).await?)
     })
 }
 
