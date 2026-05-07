@@ -10,6 +10,7 @@ import {
   REGISTER,
   REHYDRATE,
 } from 'redux-persist';
+
 import { IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';

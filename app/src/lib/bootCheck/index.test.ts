@@ -155,9 +155,7 @@ describe('runBootCheck — cloud mode', () => {
     const appVersion = (await import('../../utils/config')).APP_VERSION;
 
     const transport = makeTransport({
-      callRpc: rpcResponder({
-        'openhuman.update_version': { result: { version: appVersion } },
-      }),
+      callRpc: rpcResponder({ 'openhuman.update_version': { result: { version: appVersion } } }),
     });
 
     const result = await runBootCheck(
@@ -169,9 +167,7 @@ describe('runBootCheck — cloud mode', () => {
 
   it('returns outdatedCloud when version differs', async () => {
     const transport = makeTransport({
-      callRpc: rpcResponder({
-        'openhuman.update_version': { result: { version: '0.0.0-old' } },
-      }),
+      callRpc: rpcResponder({ 'openhuman.update_version': { result: { version: '0.0.0-old' } } }),
     });
 
     const result = await runBootCheck(
