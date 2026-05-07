@@ -80,13 +80,24 @@ fn alice_phoenix_thread() -> EmailThread {
     }
 }
 
-/// The orchestrator definition must list every memory-tree tool name so
-/// the bus filter actually exposes them to the LLM. A wired-up wrapper
-/// that's invisible to the orchestrator is dead code.
+/// The orchestrator definition must list the consolidated `memory_tree` tool
+/// so the bus filter exposes it to the LLM. A wired-up wrapper that's
+/// invisible to the orchestrator is dead code.
+///
+/// NOTE: #1141 consolidated the 6 individual `memory_tree_*` tools
+/// (`memory_tree_search_entities`, `memory_tree_query_topic`, etc.) into a
+/// single `memory_tree` tool with a `mode` dispatch parameter. The orchestrator
+/// TOML was updated accordingly.
 #[test]
 fn orchestrator_lists_memory_tree_tools() {
     let toml = include_str!("../src/openhuman/agent/agents/orchestrator/agent.toml");
-    for name in [
+    assert!(
+        toml.contains("memory_tree"),
+        "orchestrator agent.toml must list 'memory_tree' so the LLM can call it"
+    );
+    // Verify the old individual tool names are gone — they were removed in #1141
+    // when all 6 were consolidated into the single `memory_tree` dispatcher.
+    for old_name in [
         "memory_tree_search_entities",
         "memory_tree_query_topic",
         "memory_tree_query_source",
@@ -95,8 +106,8 @@ fn orchestrator_lists_memory_tree_tools() {
         "memory_tree_fetch_leaves",
     ] {
         assert!(
-            toml.contains(name),
-            "orchestrator agent.toml must list '{name}' so the LLM can call it"
+            !toml.contains(old_name),
+            "orchestrator agent.toml must NOT list '{old_name}' — removed in #1141 (use 'memory_tree' with mode= dispatch)"
         );
     }
 }
