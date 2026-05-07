@@ -49,13 +49,29 @@ export async function joinMeetCall(input: MeetJoinCallInput): Promise<MeetJoinCa
     );
   }
 
-  const windowLabel = await invoke<string>('meet_call_open_window', {
-    args: {
-      request_id: rpcResult.request_id,
-      meet_url: rpcResult.meet_url,
-      display_name: rpcResult.display_name,
-    },
-  });
+  let windowLabel: string;
+  try {
+    windowLabel = await invoke<string>('meet_call_open_window', {
+      args: {
+        request_id: rpcResult.request_id,
+        meet_url: rpcResult.meet_url,
+        display_name: rpcResult.display_name,
+      },
+    });
+  } catch (err) {
+    // Tauri v2 rejects with a String (the Err side of `Result<_, String>`),
+    // not a JS Error. Wrap so the UI catch block — which checks
+    // `instanceof Error` — surfaces the real reason instead of a fallback.
+    const reason =
+      err instanceof Error
+        ? err.message
+        : typeof err === 'string'
+          ? err
+          : JSON.stringify(err);
+    // eslint-disable-next-line no-console
+    console.error('[meet-call] meet_call_open_window invoke rejected:', err);
+    throw new Error(`meet_call_open_window failed: ${reason}`);
+  }
 
   return {
     requestId: rpcResult.request_id,
