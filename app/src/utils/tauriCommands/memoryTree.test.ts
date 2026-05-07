@@ -272,9 +272,7 @@ describe('memoryTreeFlushNow', () => {
 
     const out = await memoryTreeFlushNow();
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.memory_tree_flush_now',
-    });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.memory_tree_flush_now' });
     expect(out).toEqual({ enqueued: true, stale_buffers: 4 });
   });
 
@@ -292,19 +290,13 @@ describe('memoryTreeFlushNow', () => {
 describe('memoryTreeWipeAll', () => {
   test('dispatches wipe_all and returns the unwrapped envelope', async () => {
     mockCallCoreRpc.mockResolvedValueOnce({
-      result: {
-        rows_deleted: 12,
-        dirs_removed: ['raw', 'wiki'],
-        sync_state_cleared: 1,
-      },
+      result: { rows_deleted: 12, dirs_removed: ['raw', 'wiki'], sync_state_cleared: 1 },
       logs: ['stub'],
     });
 
     const out = await memoryTreeWipeAll();
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.memory_tree_wipe_all',
-    });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.memory_tree_wipe_all' });
     expect(out.rows_deleted).toBe(12);
     expect(out.dirs_removed).toEqual(['raw', 'wiki']);
     expect(out.sync_state_cleared).toBe(1);
@@ -314,35 +306,21 @@ describe('memoryTreeWipeAll', () => {
 describe('memoryTreeResetTree', () => {
   test('dispatches reset_tree and returns the unwrapped envelope', async () => {
     mockCallCoreRpc.mockResolvedValueOnce({
-      result: {
-        tree_rows_deleted: 8,
-        chunks_requeued: 5,
-        jobs_enqueued: 5,
-      },
+      result: { tree_rows_deleted: 8, chunks_requeued: 5, jobs_enqueued: 5 },
       logs: ['stub'],
     });
 
     const out = await memoryTreeResetTree();
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.memory_tree_reset_tree',
-    });
-    expect(out).toEqual({
-      tree_rows_deleted: 8,
-      chunks_requeued: 5,
-      jobs_enqueued: 5,
-    });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.memory_tree_reset_tree' });
+    expect(out).toEqual({ tree_rows_deleted: 8, chunks_requeued: 5, jobs_enqueued: 5 });
   });
 });
 
 describe('memoryTreeGraphExport', () => {
   test('defaults to mode=tree and returns the unwrapped envelope', async () => {
     mockCallCoreRpc.mockResolvedValueOnce({
-      result: {
-        nodes: [],
-        edges: [],
-        content_root_abs: '/tmp/workspace/memory_tree/content',
-      },
+      result: { nodes: [], edges: [], content_root_abs: '/tmp/workspace/memory_tree/content' },
       logs: ['stub'],
     });
 

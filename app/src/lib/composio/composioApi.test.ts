@@ -108,11 +108,7 @@ describe('syncConnection', () => {
 
   it('dispatches composio_sync with the connection id and default reason=manual', async () => {
     mockCallCoreRpc.mockResolvedValue({
-      result: {
-        toolkit: 'gmail',
-        connectionId: 'conn-1',
-        items_ingested: 4,
-      },
+      result: { toolkit: 'gmail', connectionId: 'conn-1', items_ingested: 4 },
       logs: ['stub'],
     });
 

@@ -5,12 +5,7 @@ import { beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
 import { isTauri } from './common';
-import {
-  aiListMemoryFiles,
-  memoryLearnAll,
-  memorySyncAll,
-  memorySyncChannel,
-} from './memory';
+import { aiListMemoryFiles, memoryLearnAll, memorySyncAll, memorySyncChannel } from './memory';
 
 vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 vi.mock('./common', () => ({ isTauri: vi.fn(() => true) }));

@@ -8,13 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vite
 const isTauriMock = vi.fn();
 const tauriOpenUrlMock = vi.fn();
 
-vi.mock('@tauri-apps/api/core', () => ({
-  isTauri: () => isTauriMock(),
-}));
+vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => isTauriMock() }));
 
-vi.mock('@tauri-apps/plugin-opener', () => ({
-  openUrl: (url: string) => tauriOpenUrlMock(url),
-}));
+vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (url: string) => tauriOpenUrlMock(url) }));
 
 describe('openUrl', () => {
   let originalWindowOpen: typeof window.open;
