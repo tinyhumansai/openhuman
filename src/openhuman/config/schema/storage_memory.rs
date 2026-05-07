@@ -273,9 +273,22 @@ fn default_memory_tree_embedding_strict() -> bool {
 
 /// Shared `None` default for the LLM-path fields (extractor + summariser
 /// endpoints + models). Keeping the same function for all of them makes
-/// the intent explicit: nothing here auto-enables Ollama.
+/// the intent explicit.
+///
+/// Default points at the standard Ollama localhost listener. A user
+/// who sets `llm_backend = "local"` plus a `_model` is clearly opting
+/// into Ollama, and forcing them to also specify the endpoint just to
+/// hit `localhost:11434` was a stealth foot-gun: the
+/// `OllamaChatProvider` returned an error on an empty endpoint, which
+/// the summariser silently swallowed into its `InertSummariser`
+/// fallback — producing concat-and-truncate "summaries" that looked
+/// correct but didn't run any LLM at all. With a default endpoint in
+/// place, the only signal needed to enable a local LLM seal is a
+/// non-empty `_model`. Override via TOML or
+/// `OPENHUMAN_MEMORY_TREE_LLM_*_ENDPOINT` to point at a different
+/// Ollama host.
 fn default_memory_tree_llm_endpoint() -> Option<String> {
-    None
+    Some("http://localhost:11434".to_string())
 }
 
 fn default_memory_tree_llm_extractor_timeout_ms() -> Option<u64> {
