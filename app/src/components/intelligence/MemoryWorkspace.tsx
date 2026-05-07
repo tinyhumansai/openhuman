@@ -27,8 +27,6 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
-import { listConnections, syncConnection } from '../../lib/composio/composioApi';
-import type { ComposioConnection } from '../../lib/composio/types';
 import type { ToastNotification } from '../../types/intelligence';
 import { openUrl } from '../../utils/openUrl';
 import {
@@ -38,18 +36,11 @@ import {
   memoryTreeGraphExport,
 } from '../../utils/tauriCommands';
 import { MemoryGraph } from './MemoryGraph';
-import { MemorySyncConnections } from './MemorySyncConnections';
+import { MemorySources } from './MemorySources';
 
 interface MemoryWorkspaceProps {
   onToast?: (toast: Omit<ToastNotification, 'id'>) => void;
 }
-
-const TOOLKIT_LABEL: Record<string, string> = {
-  gmail: 'Gmail',
-  slack: 'Slack',
-  notion: 'Notion',
-  github: 'GitHub',
-};
 
 /**
  * Toolkits that have a memory-tree-ingesting sync implementation on the
@@ -62,14 +53,7 @@ const TOOLKIT_LABEL: Record<string, string> = {
  * `ingest_page_into_memory_tree`. Today that's gmail. Add a slug here
  * when a new provider lands a memory-tree ingest path.
  */
-const SYNCABLE_TOOLKITS = new Set<string>(['gmail']);
-
-function labelFor(connection: ComposioConnection): string {
-  const base = TOOLKIT_LABEL[connection.toolkit] ?? connection.toolkit;
-  const identity =
-    connection.accountEmail ?? connection.workspace ?? connection.username ?? null;
-  return identity ? `${base} · ${identity}` : base;
-}
+const SYNCABLE_TOOLKITS: ReadonlySet<string> = new Set(['gmail']);
 
 /**
  * Trigger the `obsidian://open?path=<abs>` deep link via the OS shell.
@@ -96,13 +80,11 @@ async function openVaultInObsidian(contentRootAbs: string): Promise<void> {
 export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   const [graph, setGraph] = useState<GraphExportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [connections, setConnections] = useState<ComposioConnection[]>([]);
-  const [syncingId, setSyncingId] = useState<string | null>(null);
   const [building, setBuilding] = useState(false);
   const [mode, setMode] = useState<GraphMode>('tree');
 
-  // (Re)load the graph whenever the mode toggle flips. Connections
-  // are loaded separately in their own effect.
+  // (Re)load the graph whenever the mode toggle flips. The Memory
+  // sources panel manages its own polling.
   useEffect(() => {
     console.debug('[ui-flow][memory-workspace] graph load: entry mode=%s', mode);
     let cancelled = false;
@@ -129,43 +111,6 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       cancelled = true;
     };
   }, [mode]);
-
-  const refreshConnections = useCallback(async () => {
-    try {
-      const { connections: list } = await listConnections();
-      setConnections(list);
-    } catch (err) {
-      console.error('[ui-flow][memory-workspace] list_connections failed', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshConnections();
-  }, [refreshConnections]);
-
-  const handleSync = useCallback(
-    async (connection: ComposioConnection) => {
-      setSyncingId(connection.id);
-      try {
-        await syncConnection(connection.id, 'manual');
-        onToast?.({
-          type: 'success',
-          title: `Synced ${labelFor(connection)}`,
-          message: 'New raw items will be admitted into the memory tree shortly.',
-        });
-      } catch (err) {
-        console.error('[ui-flow][memory-workspace] sync failed conn=%s', connection.id, err);
-        onToast?.({
-          type: 'error',
-          title: `Sync failed: ${labelFor(connection)}`,
-          message: err instanceof Error ? err.message : String(err),
-        });
-      } finally {
-        setSyncingId(prev => (prev === connection.id ? null : prev));
-      }
-    },
-    [onToast]
-  );
 
   const handleBuildTrees = useCallback(async () => {
     setBuilding(true);
@@ -208,71 +153,11 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
 
   return (
     <div className="space-y-4" data-testid="memory-workspace">
-      <MemorySyncConnections pollIntervalMs={5000} />
-
-      {connections.length > 0 && (
-        <section
-          className="rounded-lg border border-stone-100 bg-white p-4"
-          data-testid="memory-source-connections">
-          <header className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-medium text-stone-700">Connected sources</h3>
-            <span className="text-xs text-stone-400">click sync to download new items</span>
-          </header>
-          <ul className="divide-y divide-stone-100">
-            {connections.map(conn => {
-              const isSyncing = syncingId === conn.id;
-              const isActive =
-                conn.status === 'ACTIVE' || conn.status === 'CONNECTED';
-              const isSyncable = SYNCABLE_TOOLKITS.has(conn.toolkit);
-              return (
-                <li
-                  key={conn.id}
-                  className="flex items-center justify-between gap-3 py-2"
-                  data-testid={`memory-source-row-${conn.toolkit}`}>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-stone-800">
-                      {labelFor(conn)}
-                    </p>
-                    <p className="truncate font-mono text-xs text-stone-400">
-                      {conn.status}
-                      {conn.createdAt ? ` · added ${conn.createdAt.slice(0, 10)}` : ''}
-                    </p>
-                  </div>
-                  {isSyncable ? (
-                    <button
-                      type="button"
-                      onClick={() => handleSync(conn)}
-                      disabled={isSyncing || !isActive}
-                      data-testid={`memory-source-sync-${conn.toolkit}`}
-                      className="inline-flex items-center gap-1.5 rounded-md
-                                 bg-primary-500 px-3 py-1.5 text-xs font-semibold text-white
-                                 shadow-sm transition-colors hover:bg-primary-600
-                                 disabled:cursor-not-allowed disabled:opacity-50
-                                 focus:outline-none focus:ring-2 focus:ring-primary-200">
-                      {isSyncing ? (
-                        <>
-                          <Spinner /> Syncing…
-                        </>
-                      ) : (
-                        <>
-                          <SyncIcon /> Sync
-                        </>
-                      )}
-                    </button>
-                  ) : (
-                    <span
-                      className="text-xs italic text-stone-400"
-                      data-testid={`memory-source-no-sync-${conn.toolkit}`}
-                      title="No memory-tree sync provider for this toolkit yet">
-                      no sync yet
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
+      <MemorySources
+        syncableToolkits={SYNCABLE_TOOLKITS}
+        pollIntervalMs={5000}
+        onToast={onToast}
+      />
 
       <div
         className="flex flex-wrap items-center justify-between gap-3"
@@ -375,24 +260,6 @@ function ModeToggle({ mode, onChange }: ModeToggleProps) {
 }
 
 // ── Tiny inline icons (no extra dep) ────────────────────────────────────
-
-function SyncIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true">
-      <path d="M21 12a9 9 0 11-3-6.7" />
-      <path d="M21 4v5h-5" />
-    </svg>
-  );
-}
 
 function BrainIcon() {
   return (

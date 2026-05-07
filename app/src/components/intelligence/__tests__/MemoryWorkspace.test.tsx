@@ -195,6 +195,8 @@ describe('MemoryWorkspace (graph view)', () => {
     const onToast = vi.fn();
     renderWithProviders(<MemoryWorkspace onToast={onToast} />);
     const button = await screen.findByTestId('memory-source-sync-gmail');
+    // Source row title surfaces the account identity, not just the toolkit.
+    expect(button.closest('li')).toHaveTextContent(/Gmail · alice@example\.com/);
     fireEvent.click(button);
     await waitFor(() => {
       expect(syncConnection).toHaveBeenCalledWith('conn-gmail-001', 'manual');
@@ -203,7 +205,7 @@ describe('MemoryWorkspace (graph view)', () => {
       expect(onToast).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'success',
-          title: expect.stringContaining('Gmail'),
+          title: expect.stringContaining('alice@example.com'),
         })
       );
     });
