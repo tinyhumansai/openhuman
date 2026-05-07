@@ -25,10 +25,12 @@ use crate::openhuman::memory::tree::canonicalize::email::{EmailMessage, EmailThr
 use crate::openhuman::memory::tree::canonicalize::email_clean::{
     extract_email, parse_message_date,
 };
+use crate::openhuman::memory::tree::content_store::paths::slugify_source_id;
 use crate::openhuman::memory::tree::content_store::raw::{
     self as raw_store, slug_account_email, RawItem,
 };
 use crate::openhuman::memory::tree::ingest::{ingest_email, IngestResult};
+use crate::openhuman::memory::tree::store::{set_chunk_raw_refs, RawRef};
 use crate::openhuman::memory::tree::util::redact::redact;
 
 /// Provider name embedded in the canonical email-thread header. Matches
@@ -253,6 +255,27 @@ pub async fn ingest_page_into_memory_tree(
         }
     }
 
+    // Per-account ingest path: one ingest call per upstream message so
+    // each resulting chunk has a clean 1:1 (or 1:few-for-oversize)
+    // mapping to a single raw archive file. Each chunk's body is then
+    // reconstructed at read time from `raw_refs_json` rather than
+    // duplicated in the SQL `content` column. Falls back to the
+    // legacy participant-bucket path when we can't derive an
+    // account-scoped source id (CLI runs / missing profile fetch).
+    if let Some(ref source_id) = account_source_id {
+        let total_chunks =
+            ingest_per_message(config, source_id, owner, page_messages).await;
+        log::info!(
+            "[composio:gmail][ingest] page_done owner_hash={} chunks={total_chunks} mode=per-account",
+            redact(owner),
+        );
+        return Ok(total_chunks);
+    }
+
+    // Legacy fallback: participant-bucketed thread ingest. No
+    // raw_refs_json — read paths fall through to the SQL `content`
+    // preview or `content_path` if a chunk file is staged. Only used
+    // by the CLI backfill binary today.
     let buckets = bucket_by_participants(page_messages);
     let mut total_chunks = 0usize;
     let mut total_buckets = 0usize;
@@ -268,16 +291,8 @@ pub async fn ingest_page_into_memory_tree(
             );
             continue;
         }
-        let source_id = account_source_id
-            .clone()
-            .unwrap_or_else(|| format!("gmail:{}", participants));
+        let source_id = format!("gmail:{}", participants);
         let thread_subject = pick_thread_subject(&messages);
-        log::info!(
-            "[composio:gmail][ingest] bucket participants_hash={} messages={} source_id_hash={}",
-            redact(participants),
-            messages.len(),
-            redact(&source_id)
-        );
         let thread = EmailThread {
             provider: GMAIL_PROVIDER.to_string(),
             thread_subject,
@@ -300,11 +315,97 @@ pub async fn ingest_page_into_memory_tree(
         }
     }
     log::info!(
-        "[composio:gmail][ingest] page_done owner_hash={} buckets={total_buckets} chunks={total_chunks} mode={}",
+        "[composio:gmail][ingest] page_done owner_hash={} buckets={total_buckets} chunks={total_chunks} mode=per-participants",
         redact(owner),
-        if account_source_id.is_some() { "per-account" } else { "per-participants" },
     );
     Ok(total_chunks)
+}
+
+/// Per-account ingest: one `ingest_email` call per upstream message.
+///
+/// Each call produces 1 chunk for normal messages or N chunks for
+/// oversize messages (≥`DEFAULT_CHUNK_MAX_TOKENS`). After the ingest
+/// we tag every resulting chunk with a `RawRef` pointing at the raw
+/// archive file we wrote during `write_raw_archive`, so
+/// `read_chunk_body` can reconstruct full bodies without duplicating
+/// bytes in the SQL `content` column.
+async fn ingest_per_message(
+    config: &Config,
+    source_id: &str,
+    owner: &str,
+    page_messages: &[Value],
+) -> usize {
+    let source_slug = slugify_source_id(source_id);
+    let mut total_chunks = 0usize;
+    for raw in page_messages {
+        let id = raw
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        let Some(msg_id) = id else { continue };
+        let Some(sent_at) = parse_message_date(raw) else { continue };
+        let Some(message) = raw_to_email_message(raw) else { continue };
+
+        let raw_path = format!(
+            "raw/{}/{}_{}.md",
+            source_slug,
+            sent_at.timestamp_millis(),
+            sanitize_uid_for_path(msg_id)
+        );
+
+        let thread_subject = pick_thread_subject(std::slice::from_ref(&message));
+        let thread = EmailThread {
+            provider: GMAIL_PROVIDER.to_string(),
+            thread_subject,
+            messages: vec![message],
+        };
+        let tags = DEFAULT_TAGS.iter().map(|s| (*s).to_string()).collect();
+        match ingest_email(config, source_id, owner, tags, thread).await {
+            Ok(result) => {
+                total_chunks += result.chunks_written;
+                let refs = vec![RawRef {
+                    path: raw_path.clone(),
+                    start: 0,
+                    end: None,
+                }];
+                for chunk_id in &result.chunk_ids {
+                    if let Err(e) = set_chunk_raw_refs(config, chunk_id, &refs) {
+                        log::warn!(
+                            "[composio:gmail][ingest] set_chunk_raw_refs failed chunk_id={} err={:#}",
+                            chunk_id,
+                            e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "[composio:gmail][ingest] per-message ingest_email failed msg_id_hash={} err={:#}",
+                    redact(msg_id),
+                    e
+                );
+            }
+        }
+    }
+    total_chunks
+}
+
+/// Same character map the raw-archive writer uses for filenames.
+/// Mirrors `raw_store::write_raw_items::sanitize_uid` but local so a
+/// future rule change on either side stays decoupled.
+fn sanitize_uid_for_path(uid: &str) -> String {
+    let cleaned: String = uid
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | ' ' => '-',
+            other => other,
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "unknown".into()
+    } else {
+        cleaned
+    }
 }
 
 /// Mirror a page of raw Gmail messages into the on-disk raw archive.

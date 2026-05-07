@@ -143,22 +143,35 @@ pub fn read_chunk_body(
     config: &crate::openhuman::config::Config,
     chunk_id: &str,
 ) -> anyhow::Result<String> {
-    use crate::openhuman::memory::tree::store::get_chunk_content_pointers;
+    use crate::openhuman::memory::tree::store::{
+        get_chunk_content_pointers, get_chunk_raw_refs,
+    };
+
+    // Path 1: chunk has raw-archive pointers (today: email). Read each
+    // referenced file, slice by byte range, join with `\n\n` (the
+    // chunker's unit separator). No SHA verify — the raw archive is
+    // the source of truth and was written transactionally with the
+    // chunk row's id; mismatch can only happen after manual edits.
+    if let Some(refs) = get_chunk_raw_refs(config, chunk_id)? {
+        if !refs.is_empty() {
+            return read_chunk_body_from_raw(config, &refs);
+        }
+    }
 
     let pointers = get_chunk_content_pointers(config, chunk_id)?.ok_or_else(|| {
         anyhow::anyhow!(
-            "[content_store::read] no content_path for chunk_id={} (pre-MD-migration row?)",
+            "[content_store::read] no content_path or raw_refs for chunk_id={} \
+             (pre-MD-migration row?)",
             chunk_id
         )
     })?;
     let (rel_path, expected_sha256) = pointers;
-    // Email chunks aren't mirrored on disk under `email/<scope>/` —
-    // they're stored full-fidelity in the SQL `content` column instead
-    // (see `upsert_staged_chunks_tx`). For those rows, return the SQL
-    // body directly so downstream workers (extract, embed, summariser)
-    // get the full text without paying a filesystem hop.
     if rel_path.is_empty() {
-        return read_chunk_content_from_sql(config, chunk_id);
+        return Err(anyhow::anyhow!(
+            "[content_store::read] empty content_path and no raw_refs for chunk_id={} \
+             — chunk has no resolvable body source",
+            chunk_id
+        ));
     }
 
     let content_root = config.memory_tree_content_root();
@@ -206,34 +219,56 @@ pub fn read_chunk_body(
 
 use anyhow::Context as _;
 
-/// Fetch a chunk's body straight from the SQL `content` column.
+/// Reconstruct a chunk body by reading the raw archive files it
+/// points at and joining their contents with `"\n\n"` — the same
+/// separator the chunker uses between units.
 ///
-/// Used for chunks that aren't mirrored on disk (today: email — the
-/// raw archive holds the verbatim message bytes, and `mem_tree_chunks`
-/// keeps the canonical chunk body in `content` rather than as a
-/// truncated preview). No SHA verification — the SQL row itself is
-/// the source of truth, written transactionally with the chunk's id.
-fn read_chunk_content_from_sql(
+/// Each [`RawRef`] is resolved relative to
+/// `config.memory_tree_content_root()`. Byte ranges (`start`, `end`)
+/// slice the file; defaults read the whole file. Out-of-bounds
+/// ranges are clamped (start past EOF returns empty, end past EOF
+/// reads to EOF) so a corrupted offset can't panic the worker —
+/// reads are best-effort, log + skip on per-file errors so a single
+/// missing raw file doesn't take the whole chunk down.
+fn read_chunk_body_from_raw(
     config: &crate::openhuman::config::Config,
-    chunk_id: &str,
+    refs: &[crate::openhuman::memory::tree::store::RawRef],
 ) -> anyhow::Result<String> {
-    use crate::openhuman::memory::tree::store::with_connection;
-    use rusqlite::{params, OptionalExtension};
-    let body: Option<String> = with_connection(config, |conn| {
-        conn.query_row(
-            "SELECT content FROM mem_tree_chunks WHERE id = ?1",
-            params![chunk_id],
-            |r| r.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(anyhow::Error::from)
-    })?;
-    body.ok_or_else(|| {
-        anyhow::anyhow!(
-            "[content_store::read] no SQL content for chunk_id={} (chunk row missing)",
-            chunk_id
-        )
-    })
+    let content_root = config.memory_tree_content_root();
+    let mut parts: Vec<String> = Vec::with_capacity(refs.len());
+    for r in refs {
+        let mut abs = content_root.clone();
+        for component in r.path.split('/') {
+            abs.push(component);
+        }
+        let bytes = match std::fs::read(&abs) {
+            Ok(b) => b,
+            Err(e) => {
+                log::warn!(
+                    "[content_store::read] raw_ref read failed path_hash={} err={e}",
+                    redact(&r.path)
+                );
+                continue;
+            }
+        };
+        let len = bytes.len();
+        let start = r.start.min(len);
+        let end = r.end.unwrap_or(len).min(len);
+        if end <= start {
+            continue;
+        }
+        let slice = &bytes[start..end];
+        match std::str::from_utf8(slice) {
+            Ok(s) => parts.push(s.to_string()),
+            Err(e) => {
+                log::warn!(
+                    "[content_store::read] raw_ref non-utf8 path_hash={} err={e}",
+                    redact(&r.path)
+                );
+            }
+        }
+    }
+    Ok(parts.join("\n\n"))
 }
 
 /// Read the full body of a summary `.md` file by its summary id.
