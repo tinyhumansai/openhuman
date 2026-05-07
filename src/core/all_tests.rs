@@ -109,6 +109,7 @@ fn namespace_description_known_namespaces() {
     assert!(namespace_description("billing").is_some());
     assert!(namespace_description("config").is_some());
     assert!(namespace_description("health").is_some());
+    assert!(namespace_description("security").is_some());
     assert!(namespace_description("voice").is_some());
     assert!(namespace_description("webhooks").is_some());
     assert!(namespace_description("notification").is_some());
@@ -192,6 +193,15 @@ fn schema_for_rpc_method_finds_known_method() {
     let s = schema.unwrap();
     assert_eq!(s.namespace, "health");
     assert_eq!(s.function, "snapshot");
+}
+
+#[test]
+fn schema_for_rpc_method_finds_security_policy_info() {
+    let schema = schema_for_rpc_method("openhuman.security_policy_info");
+    assert!(schema.is_some(), "security.policy_info should be findable");
+    let s = schema.unwrap();
+    assert_eq!(s.namespace, "security");
+    assert_eq!(s.function, "policy_info");
 }
 
 #[test]
@@ -418,6 +428,19 @@ async fn try_invoke_registered_rpc_returns_some_for_known_method() {
     // required params — it must route and produce Some(_).
     let out = try_invoke_registered_rpc("openhuman.health_snapshot", Map::new()).await;
     assert!(out.is_some(), "known method must route");
+}
+
+#[tokio::test]
+async fn try_invoke_registered_rpc_routes_security_policy_info() {
+    let out = try_invoke_registered_rpc("openhuman.security_policy_info", Map::new())
+        .await
+        .expect("security policy info should be registered")
+        .expect("security policy info should succeed");
+
+    assert!(
+        out.get("result").is_some() || out.get("autonomy").is_some(),
+        "security policy info should return policy payload: {out}"
+    );
 }
 
 #[test]
