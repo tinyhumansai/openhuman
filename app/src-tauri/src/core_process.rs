@@ -538,8 +538,11 @@ fn find_pid_on_port(port: u16) -> Option<u32> {
 
 #[cfg(windows)]
 fn find_pid_on_port(port: u16) -> Option<u32> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let output = std::process::Command::new("netstat")
         .args(["-ano", "-p", "TCP"])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
     if !output.status.success() {

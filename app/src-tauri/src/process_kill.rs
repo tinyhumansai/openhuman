@@ -152,17 +152,23 @@ fn signaled_at_least_one(status: &std::process::ExitStatus) -> bool {
 /// follow-up [`kill_pid_force`] does the actual termination.
 #[cfg(windows)]
 pub(crate) fn kill_pid_term(pid: u32) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     // Best-effort — ignore non-zero exit (e.g. process is windowless).
     let _ = std::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
         .status();
     Ok(())
 }
 
 #[cfg(windows)]
 pub(crate) fn kill_pid_force(pid: u32) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let status = std::process::Command::new("taskkill")
         .args(["/F", "/T", "/PID", &pid.to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
         .status()
         .map_err(|e| format!("taskkill spawn: {e}"))?;
     if !status.success() {
