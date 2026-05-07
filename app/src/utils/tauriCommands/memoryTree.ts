@@ -512,6 +512,41 @@ export async function memoryTreeWipeAll(): Promise<WipeAllResponse> {
   return out;
 }
 
+/** Response shape for `memory_tree_reset_tree`. */
+export interface ResetTreeResponse {
+  /** Tree-state SQLite rows deleted (summaries + trees + buffers + jobs). */
+  tree_rows_deleted: number;
+  /** Chunks reset to lifecycle_status = 'pending_extraction'. */
+  chunks_requeued: number;
+  /** `extract_chunk` jobs enqueued (one per chunk). */
+  jobs_enqueued: number;
+}
+
+/**
+ * Wipe summary-tree state but keep chunks, raw archive, and sync
+ * state — then re-enqueue every chunk through extraction so the
+ * tree rebuilds without a fresh upstream sync. Backed by
+ * `openhuman.memory_tree_reset_tree`.
+ *
+ * Use after changing the summariser backend (e.g. flipping inert
+ * → real local LLM) to re-summarise existing data on the new
+ * model.
+ */
+export async function memoryTreeResetTree(): Promise<ResetTreeResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeResetTree: entry');
+  const resp = await callCoreRpc<ResetTreeResponse | ResultEnvelope<ResetTreeResponse>>({
+    method: 'openhuman.memory_tree_reset_tree',
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeResetTree: exit tree_rows=%d chunks=%d jobs=%d',
+    out.tree_rows_deleted,
+    out.chunks_requeued,
+    out.jobs_enqueued
+  );
+  return out;
+}
+
 /** Response shape for `memory_tree_flush_now`. */
 export interface FlushNowResponse {
   enqueued: boolean;

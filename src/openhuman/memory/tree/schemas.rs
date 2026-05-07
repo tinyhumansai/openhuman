@@ -43,6 +43,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("graph_export"),
         schemas("flush_now"),
         schemas("wipe_all"),
+        schemas("reset_tree"),
     ]
 }
 
@@ -117,6 +118,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("wipe_all"),
             handler: handle_wipe_all,
+        },
+        RegisteredController {
+            schema: schemas("reset_tree"),
+            handler: handle_reset_tree,
         },
     ]
 }
@@ -576,6 +581,36 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "reset_tree" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "reset_tree",
+            description: "Wipe summary-tree state but keep chunks + raw archive + sync state, \
+                          then re-enqueue every chunk through the extraction pipeline so the \
+                          tree rebuilds from scratch. Useful after changing the summariser \
+                          backend (e.g. enabling a local LLM) without paying the upstream \
+                          re-sync cost.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "tree_rows_deleted",
+                    ty: TypeSchema::U64,
+                    comment: "Tree-state rows removed (summaries + trees + buffers + jobs).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "chunks_requeued",
+                    ty: TypeSchema::U64,
+                    comment: "Chunks reset to lifecycle_status = 'pending_extraction'.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "jobs_enqueued",
+                    ty: TypeSchema::U64,
+                    comment: "extract_chunk jobs enqueued (one per chunk).",
+                    required: true,
+                },
+            ],
+        },
         "flush_now" => ControllerSchema {
             namespace: NAMESPACE,
             function: "flush_now",
@@ -871,6 +906,13 @@ fn handle_wipe_all(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(read_rpc::wipe_all_rpc(&config).await?)
+    })
+}
+
+fn handle_reset_tree(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(read_rpc::reset_tree_rpc(&config).await?)
     })
 }
 

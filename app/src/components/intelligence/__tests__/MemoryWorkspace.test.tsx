@@ -14,6 +14,7 @@ vi.mock('../../../utils/tauriCommands', () => ({
   memoryTreeGraphExport: vi.fn(),
   memoryTreeFlushNow: vi.fn(),
   memoryTreeWipeAll: vi.fn(),
+  memoryTreeResetTree: vi.fn(),
 }));
 
 vi.mock('../../../services/memorySyncService', () => ({
@@ -31,13 +32,13 @@ vi.mock('../../../utils/openUrl', () => ({
   openUrl: vi.fn().mockResolvedValue(undefined),
 }));
 
-const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll } = (await import(
-  '../../../utils/tauriCommands'
-)) as unknown as {
-  memoryTreeGraphExport: Mock;
-  memoryTreeFlushNow: Mock;
-  memoryTreeWipeAll: Mock;
-};
+const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll, memoryTreeResetTree } =
+  (await import('../../../utils/tauriCommands')) as unknown as {
+    memoryTreeGraphExport: Mock;
+    memoryTreeFlushNow: Mock;
+    memoryTreeWipeAll: Mock;
+    memoryTreeResetTree: Mock;
+  };
 
 const { listConnections, syncConnection } = (await import(
   '../../../lib/composio/composioApi'
@@ -87,6 +88,11 @@ describe('MemoryWorkspace (graph view)', () => {
       rows_deleted: 42,
       dirs_removed: ['raw', 'wiki', 'email'],
       sync_state_cleared: 1,
+    });
+    memoryTreeResetTree.mockResolvedValue({
+      tree_rows_deleted: 12,
+      chunks_requeued: 7,
+      jobs_enqueued: 7,
     });
     listConnections.mockResolvedValue({ connections: [] });
     syncConnection.mockResolvedValue({ ok: true });
@@ -198,6 +204,38 @@ describe('MemoryWorkspace (graph view)', () => {
           type: 'success',
           title: 'Memory wiped',
           message: expect.stringContaining('42'),
+        })
+      );
+    });
+    confirmSpy.mockRestore();
+  });
+
+  it('"Reset memory tree" requires a confirm and dispatches memory_tree_reset_tree', async () => {
+    const onToast = vi.fn();
+    const confirmSpy = vi.spyOn(window, 'confirm');
+
+    // Cancel first → no RPC call.
+    confirmSpy.mockReturnValueOnce(false);
+    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
+    const button = await screen.findByTestId('memory-reset-tree');
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(memoryTreeResetTree).not.toHaveBeenCalled();
+
+    // Accept → RPC fires, success toast carries the chunk + job counts.
+    confirmSpy.mockReturnValueOnce(true);
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(memoryTreeResetTree).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'success',
+          title: 'Memory tree rebuilding',
+          message: expect.stringContaining('7'),
         })
       );
     });

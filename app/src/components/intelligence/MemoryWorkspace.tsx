@@ -34,6 +34,7 @@ import {
   type GraphMode,
   memoryTreeFlushNow,
   memoryTreeGraphExport,
+  memoryTreeResetTree,
   memoryTreeWipeAll,
 } from '../../utils/tauriCommands';
 import { MemoryGraph } from './MemoryGraph';
@@ -83,6 +84,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   const [error, setError] = useState<string | null>(null);
   const [building, setBuilding] = useState(false);
   const [wiping, setWiping] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [mode, setMode] = useState<GraphMode>('tree');
 
   // (Re)load the graph whenever the mode toggle flips. The Memory
@@ -150,6 +152,50 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       });
     } finally {
       setWiping(false);
+    }
+  }, [onToast, mode]);
+
+  const handleResetTree = useCallback(async () => {
+    const ok = window.confirm(
+      'This deletes every summary, buffer, and tree job — but keeps chunks ' +
+        'and raw markdown intact. Every chunk gets re-queued through extraction ' +
+        'and the tree rebuilds from scratch on the *current* summariser. ' +
+        'No upstream re-fetch. Continue?'
+    );
+    if (!ok) return;
+    setResetting(true);
+    try {
+      const resp = await memoryTreeResetTree();
+      onToast?.({
+        type: 'success',
+        title: 'Memory tree rebuilding',
+        message:
+          `Cleared ${resp.tree_rows_deleted.toLocaleString()} tree row(s); ` +
+          `requeued ${resp.chunks_requeued.toLocaleString()} chunk(s) ` +
+          `(${resp.jobs_enqueued.toLocaleString()} extract jobs). ` +
+          `The graph will fill back in as the worker drains.`,
+      });
+      // Stagger the graph re-fetch a bit longer than build_trees does —
+      // reset_tree starts from extract jobs (slower than seal-only).
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const next = await memoryTreeGraphExport(mode);
+            setGraph(next);
+          } catch (err) {
+            console.warn('[ui-flow][memory-workspace] post-reset graph refresh failed', err);
+          }
+        })();
+      }, 8000);
+    } catch (err) {
+      console.error('[ui-flow][memory-workspace] reset_tree failed', err);
+      onToast?.({
+        type: 'error',
+        title: 'Could not reset memory tree',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setResetting(false);
     }
   }, [onToast, mode]);
 
@@ -223,6 +269,27 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
             ) : (
               <>
                 <TrashIcon /> Reset memory
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={handleResetTree}
+            disabled={resetting || wiping || building}
+            data-testid="memory-reset-tree"
+            className="inline-flex items-center gap-2 rounded-lg
+                       border border-amber-300 bg-white px-4 py-2 text-sm font-semibold
+                       text-amber-800 shadow-sm transition-colors hover:bg-amber-50
+                       disabled:cursor-not-allowed disabled:opacity-50
+                       focus:outline-none focus:ring-2 focus:ring-amber-200"
+            title="Wipe summaries + buffers and re-summarise existing chunks (no upstream re-fetch)">
+            {resetting ? (
+              <>
+                <Spinner /> Rebuilding…
+              </>
+            ) : (
+              <>
+                <RefreshIcon /> Reset memory tree
               </>
             )}
           </button>
@@ -322,6 +389,26 @@ function ModeToggle({ mode, onChange }: ModeToggleProps) {
 }
 
 // ── Tiny inline icons (no extra dep) ────────────────────────────────────
+
+function RefreshIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M21 12a9 9 0 11-3-6.7" />
+      <path d="M21 4v5h-5" />
+      <path d="M3 12a9 9 0 003 6.7" />
+      <path d="M3 20v-5h5" />
+    </svg>
+  );
+}
 
 function TrashIcon() {
   return (

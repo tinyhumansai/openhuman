@@ -1350,6 +1350,148 @@ fn clear_composio_sync_state(db_path: &std::path::Path) -> Result<u64> {
     Ok(n as u64)
 }
 
+// ── reset_tree (rebuild summary tree from existing chunks) ──────────────
+
+/// Response shape for [`reset_tree_rpc`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResetTreeResponse {
+    /// Tree-state SQLite rows deleted (summaries + trees + buffers + jobs).
+    pub tree_rows_deleted: u64,
+    /// Number of `mem_tree_chunks` whose lifecycle_status was reset to
+    /// `pending_extraction` (i.e. the chunks that will re-enter the
+    /// extract → score → embed → buffer → seal pipeline).
+    pub chunks_requeued: u64,
+    /// Number of `extract_chunk` jobs enqueued (one per chunk in
+    /// `chunks_requeued`). The job worker picks these up and drives
+    /// each chunk back through the pipeline; downstream seals
+    /// happen automatically as L0 buffers fill.
+    pub jobs_enqueued: u64,
+}
+
+/// `memory_tree_reset_tree` — wipe summary-tree state but keep chunks
+/// + raw archive + sync state, then re-enqueue every chunk through
+/// the extraction pipeline so the tree rebuilds from scratch.
+///
+/// Useful when you've changed the LLM summariser (e.g. flipped from
+/// inert fallback to a real Ollama model) and want to re-summarise
+/// existing data without paying the upstream sync cost again.
+///
+/// Three steps, each in its own SQL pass:
+///   1. Truncate `mem_tree_summaries`, `mem_tree_trees`,
+///      `mem_tree_buffers`, `mem_tree_jobs`. The tree schema is
+///      derived state — chunks are the source of truth.
+///   2. Remove `<content_root>/wiki/summaries/` on disk so stale
+///      `.md` files don't drift from the SQL truth.
+///   3. Reset every chunk's `lifecycle_status` to
+///      `'pending_extraction'` and enqueue an `extract_chunk` job
+///      keyed on the chunk id. The async worker picks each up and
+///      re-runs entity extract → score → embed → append-to-buffer.
+///      Seals happen automatically as L0 buffers cross the gate.
+pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeResponse>, String> {
+    use crate::openhuman::memory::tree::jobs::store as jobs_store;
+    use crate::openhuman::memory::tree::jobs::types::{ExtractChunkPayload, NewJob};
+
+    let cfg = config.clone();
+    let resp = tokio::task::spawn_blocking(move || -> Result<ResetTreeResponse> {
+        // Step 1 — truncate tree state in one transaction. Chunks
+        // (`mem_tree_chunks`), the entity index, score rows, and the
+        // sync-state KV all stay intact.
+        const TREE_TABLES: &[&str] = &[
+            "mem_tree_summaries",
+            "mem_tree_trees",
+            "mem_tree_buffers",
+            "mem_tree_jobs",
+        ];
+        let tree_rows_deleted: u64 = with_connection(&cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            let mut total: u64 = 0;
+            for table in TREE_TABLES {
+                let n = tx
+                    .execute(&format!("DELETE FROM {table}"), [])
+                    .with_context(|| format!("delete from {table}"))?;
+                total += n as u64;
+            }
+            tx.commit()?;
+            Ok(total)
+        })?;
+
+        // Step 2 — wipe the on-disk wiki/summaries tree. Best-effort:
+        // a missing folder is fine (fresh workspace). Other errors
+        // log + carry on — the SQL truth is what the rebuild relies on.
+        let summaries_dir = cfg.memory_tree_content_root().join("wiki").join("summaries");
+        match std::fs::remove_dir_all(&summaries_dir) {
+            Ok(()) => log::debug!(
+                "[memory_tree::read::reset_tree] removed {}",
+                summaries_dir.display()
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!(
+                "[memory_tree::read::reset_tree] failed to remove {}: {e}",
+                summaries_dir.display()
+            ),
+        }
+
+        // Step 3 — flip every chunk back to `pending_extraction` and
+        // enqueue an `extract_chunk` job per id. Done in a single
+        // transaction so partial state is impossible: either the
+        // whole queue is in flight or nothing is. We use a chunked
+        // SELECT so very large workspaces don't materialise the
+        // entire id list in memory.
+        let (chunks_requeued, jobs_enqueued) =
+            with_connection(&cfg, |conn| -> anyhow::Result<(u64, u64)> {
+                let tx = conn.unchecked_transaction()?;
+                let chunks_requeued = tx.execute(
+                    "UPDATE mem_tree_chunks SET lifecycle_status = 'pending_extraction'",
+                    [],
+                )? as u64;
+                let chunk_ids: Vec<String> = {
+                    let mut stmt = tx.prepare("SELECT id FROM mem_tree_chunks")?;
+                    let rows = stmt
+                        .query_map([], |r| r.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                        .context("collect chunk ids")?;
+                    rows
+                };
+                let mut jobs_enqueued: u64 = 0;
+                for id in &chunk_ids {
+                    let payload = ExtractChunkPayload {
+                        chunk_id: id.clone(),
+                    };
+                    let job = NewJob::extract_chunk(&payload)
+                        .context("build extract_chunk NewJob")?;
+                    if jobs_store::enqueue_tx(&tx, &job)
+                        .context("enqueue extract_chunk")?
+                        .is_some()
+                    {
+                        jobs_enqueued += 1;
+                    }
+                }
+                tx.commit()?;
+                Ok((chunks_requeued, jobs_enqueued))
+            })?;
+
+        // Wake the worker pool so the freshly-enqueued jobs start
+        // running immediately rather than waiting for the next
+        // periodic poll.
+        crate::openhuman::memory::tree::jobs::wake_workers();
+
+        Ok(ResetTreeResponse {
+            tree_rows_deleted,
+            chunks_requeued,
+            jobs_enqueued,
+        })
+    })
+    .await
+    .map_err(|e| format!("reset_tree join error: {e}"))?
+    .map_err(|e| format!("reset_tree: {e:#}"))?;
+
+    let log = format!(
+        "memory_tree::read: reset_tree tree_rows={} chunks={} jobs={}",
+        resp.tree_rows_deleted, resp.chunks_requeued, resp.jobs_enqueued
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
 // ── flush_now (manual "Build summary trees" trigger) ────────────────────
 
 /// Response shape for [`flush_now_rpc`].
