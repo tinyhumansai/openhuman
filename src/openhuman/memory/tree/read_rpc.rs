@@ -1444,13 +1444,11 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
             .join("wiki")
             .join("summaries");
         match std::fs::remove_dir_all(&summaries_dir) {
-            Ok(()) => log::debug!(
-                "[memory_tree::read::reset_tree] removed wiki/summaries"
-            ),
+            Ok(()) => log::debug!("[memory_tree::read::reset_tree] removed wiki/summaries"),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => log::warn!(
-                "[memory_tree::read::reset_tree] failed to remove wiki/summaries: {e}"
-            ),
+            Err(e) => {
+                log::warn!("[memory_tree::read::reset_tree] failed to remove wiki/summaries: {e}")
+            }
         }
 
         // Step 3 — flip every chunk back to `pending_extraction` and

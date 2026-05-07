@@ -517,17 +517,17 @@ pub(crate) async fn seal_one_level(
                 // We still yield `None` (so `compose_summary_md`
                 // takes the sanitised-id fallback) but a warn log
                 // makes the SQL error visible for diagnosis.
-                match crate::openhuman::memory::tree::store::get_chunk_raw_refs(
-                    config, chunk_id,
-                ) {
-                    Ok(refs_opt) => refs_opt
-                        .and_then(|refs| refs.into_iter().next())
-                        .and_then(|r| {
-                            std::path::Path::new(&r.path)
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .map(|s| s.to_string())
-                        }),
+                match crate::openhuman::memory::tree::store::get_chunk_raw_refs(config, chunk_id) {
+                    Ok(refs_opt) => {
+                        refs_opt
+                            .and_then(|refs| refs.into_iter().next())
+                            .and_then(|r| {
+                                std::path::Path::new(&r.path)
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .map(|s| s.to_string())
+                            })
+                    }
                     Err(e) => {
                         log::warn!(
                             "[tree_source::bucket_seal] get_chunk_raw_refs failed \
