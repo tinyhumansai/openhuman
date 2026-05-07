@@ -64,7 +64,7 @@ function isMethodNotFound(err: unknown): boolean {
 }
 
 /**
- * Poll `openhuman.ping` with exponential back-off until the core responds or
+ * Poll `core.ping` with exponential back-off until the core responds or
  * we exhaust the budget.
  *
  * Returns true when the core is reachable, false on timeout.

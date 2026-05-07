@@ -608,14 +608,25 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
         )
         .map_err(|e| format!("append seed reflection message failed: {e}"))?;
 
-        // Stamp acted_on_at on success.
+        // Stamp acted_on_at on success. If the stamp write fails, log a
+        // warning — the new thread already exists, so a silent failure
+        // here would leave the reflection unmarked and the user could
+        // re-Act on the same card and spawn a duplicate thread. The
+        // reflection itself is still actionable from the user's
+        // perspective, so we don't want to fail the whole call.
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
-        let _ = store::with_connection(&config.workspace_dir, |conn| {
+        if let Err(e) = store::with_connection(&config.workspace_dir, |conn| {
             reflection_store::mark_acted(conn, &reflection_id, now)
-        });
+        }) {
+            log::warn!(
+                "[subconscious] failed to stamp acted_on_at reflection={} thread={}: {e} — reflection card will reappear and a re-Act would spawn a duplicate thread",
+                reflection_id,
+                thread_id
+            );
+        }
 
         to_json(RpcOutcome::single_log(
             serde_json::json!({

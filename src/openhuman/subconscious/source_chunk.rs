@@ -114,22 +114,22 @@ fn resolve_one(
     // stripped the prefix and found nothing in either table.
     match kind {
         "summary" => resolve_summary(config, raw),
-        // The LLM's "entity" / "artifact" / "person" / etc. all live in
-        // `mem_tree_entity_index.entity_id` keyed by the full prefixed
-        // string — route any non-summary non-empty kind through the
-        // entity resolver and let the SQL miss decide whether the row
-        // exists. Refs we genuinely don't know about (e.g. `due_item:`,
-        // which is a per-tick situation-report-only id without a
-        // persisted row) fall through to the empty-content default.
-        "entity" | "artifact" | "person" | "place" | "tool" | "topic" => {
-            resolve_entity(config, raw)
-        }
-        _ => SourceChunk {
+        // Reject only the obvious non-lookups: refs the parser gave up
+        // on (`unknown` / empty kind) get an empty stub; everything
+        // else is treated as a candidate entity_index lookup. The LLM
+        // emits `artifact:`, `person:`, `place:`, `tool:`, `topic:`,
+        // and occasionally novel kinds the schema later picks up — an
+        // allowlist would silently drop those, taking their evidence
+        // out of the reflection snapshot. Letting the SQL miss decide
+        // costs at most one extra `query_row` for ids that happen not
+        // to exist (e.g. per-tick `due_item:<uuid>` placeholders).
+        "unknown" | "" => SourceChunk {
             ref_id: raw.to_string(),
             kind: kind.to_string(),
             content: String::new(),
             metadata: serde_json::Value::Null,
         },
+        _ => resolve_entity(config, raw),
     }
 }
 
@@ -221,6 +221,13 @@ fn resolve_entity(
     // Same key convention as summaries — `mem_tree_entity_index.entity_id`
     // is the full kind-prefixed string (`artifact:"foo"`, `person:bar`,
     // etc.). Match against the raw ref verbatim.
+    //
+    // The returned `SourceChunk.kind` carries the LLM's *original*
+    // prefix (`artifact`, `person`, `tool`, …) instead of being flattened
+    // to the literal `"entity"` — preserving the exact type the LLM
+    // cited matters for the system-prompt renderer downstream and for
+    // any UI that wants to chip the chunk by category.
+    let original_kind = parse_ref(raw).0.to_string();
     type EntityLookup = anyhow::Result<Option<(String, String, f64, Option<f64>)>>;
     let lookup: EntityLookup =
         crate::openhuman::memory::tree::store::with_connection(config, |conn| {
@@ -275,7 +282,7 @@ fn resolve_entity(
             }
             SourceChunk {
                 ref_id: raw.to_string(),
-                kind: "entity".to_string(),
+                kind: original_kind.clone(),
                 content,
                 metadata,
             }
@@ -294,7 +301,7 @@ fn resolve_entity(
             );
             SourceChunk {
                 ref_id: raw.to_string(),
-                kind: "entity".to_string(),
+                kind: original_kind.clone(),
                 content: String::new(),
                 metadata: serde_json::json!({
                     "resolver_status": "db_error",

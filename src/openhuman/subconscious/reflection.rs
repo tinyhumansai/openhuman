@@ -155,9 +155,23 @@ pub fn hydrate_draft(
 /// Body is included because `kind`+`source_refs` alone misses cases
 /// where the same source is interpreted two different ways.
 pub fn dedup_key(kind: ReflectionKind, source_refs: &[String], body: &str) -> String {
-    let mut refs = source_refs.to_vec();
+    // Canonicalize the refs: trim, drop empties, dedupe, sort. The LLM
+    // sometimes echoes the same id twice in `source_refs` or sandwiches
+    // whitespace; without this normalization those near-identical
+    // reflections produce different keys and slip through the gate.
+    let mut refs: Vec<String> = source_refs
+        .iter()
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty())
+        .collect();
     refs.sort();
-    let body_prefix: String = body.chars().take(80).collect();
+    refs.dedup();
+    // Canonicalize the body: collapse runs of whitespace into single
+    // spaces and trim. Same rationale — a reflection with an extra
+    // newline or double space at the start would otherwise key
+    // differently from the original.
+    let canonical_body: String = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let body_prefix: String = canonical_body.chars().take(80).collect();
     format!("{}|{}|{}", kind.as_str(), refs.join(","), body_prefix)
 }
 
