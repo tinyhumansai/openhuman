@@ -866,8 +866,9 @@ const CAPABILITIES: &[Capability] = &[
         domain: "meet",
         category: CapabilityCategory::Channels,
         description: "Join a Google Meet call as an anonymous guest in a dedicated CEF webview \
-                      window with an isolated profile. The host admits the agent from the \
-                      Meet waiting room.",
+                      window with an isolated profile. The agent automatically dismisses the \
+                      device-check, types its display name, and clicks Ask-to-join via CDP; the \
+                      host admits the agent from the Meet waiting room.",
         how_to: "Intelligence > Calls",
         status: CapabilityStatus::Beta,
         privacy: Some(CapabilityPrivacy {

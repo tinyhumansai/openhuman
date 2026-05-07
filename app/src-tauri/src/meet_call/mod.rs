@@ -29,6 +29,8 @@ use serde::Deserialize;
 use tauri::{webview::WebviewWindowBuilder, AppHandle, Emitter, Manager, Runtime, WebviewUrl};
 use url::Url;
 
+use crate::meet_scanner;
+
 /// Per-process registry of open Meet webview windows, keyed by
 /// `request_id` so the frontend can ask us to close a specific call.
 #[derive(Default)]
@@ -109,6 +111,11 @@ pub async fn meet_call_open_window<R: Runtime>(
         .lock()
         .unwrap()
         .insert(request_id.clone(), label.clone());
+
+    // Kick off the CDP-driven join automation: dismiss the device-check,
+    // type the display name, and click "Ask to join". Fire-and-forget —
+    // the user can finish manually if any step times out.
+    meet_scanner::spawn(app.clone(), request_id.clone(), args.display_name.clone());
 
     // Emit a `closed` event when the user dismisses the window so the
     // frontend can drop the call from its in-flight list.

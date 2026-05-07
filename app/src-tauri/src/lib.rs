@@ -15,6 +15,7 @@ mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
 mod meet_call;
+mod meet_scanner;
 mod native_notifications;
 mod notification_settings;
 mod process_kill;
