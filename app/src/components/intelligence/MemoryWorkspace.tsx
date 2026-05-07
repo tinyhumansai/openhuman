@@ -245,10 +245,10 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                       disabled={isSyncing || !isActive}
                       data-testid={`memory-source-sync-${conn.toolkit}`}
                       className="inline-flex items-center gap-1.5 rounded-md
-                                 bg-ocean-500 px-3 py-1.5 text-xs font-semibold text-white
-                                 shadow-sm transition-colors hover:bg-ocean-600
+                                 bg-primary-500 px-3 py-1.5 text-xs font-semibold text-white
+                                 shadow-sm transition-colors hover:bg-primary-600
                                  disabled:cursor-not-allowed disabled:opacity-50
-                                 focus:outline-none focus:ring-2 focus:ring-ocean-200">
+                                 focus:outline-none focus:ring-2 focus:ring-primary-200">
                       {isSyncing ? (
                         <>
                           <Spinner /> Syncing…
@@ -285,10 +285,10 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
             disabled={building}
             data-testid="memory-build-trees"
             className="inline-flex items-center gap-2 rounded-lg
-                       bg-ocean-500 px-4 py-2 text-sm font-semibold text-white
-                       shadow-sm transition-colors hover:bg-ocean-600
+                       bg-primary-500 px-4 py-2 text-sm font-semibold text-white
+                       shadow-sm transition-colors hover:bg-primary-600
                        disabled:cursor-not-allowed disabled:opacity-50
-                       focus:outline-none focus:ring-2 focus:ring-ocean-200">
+                       focus:outline-none focus:ring-2 focus:ring-primary-200">
             {building ? (
               <>
                 <Spinner /> Building…
@@ -343,8 +343,8 @@ interface ModeToggleProps {
 
 function ModeToggle({ mode, onChange }: ModeToggleProps) {
   const baseBtn =
-    'px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-ocean-200';
-  const active = 'bg-ocean-500 text-white shadow-sm';
+    'px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-200';
+  const active = 'bg-primary-500 text-white shadow-sm';
   const idle = 'bg-white text-stone-600 hover:bg-stone-50';
   return (
     <div
