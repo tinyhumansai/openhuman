@@ -61,6 +61,10 @@ const ComposioTriagePanel = () => {
       saveStatusTimer.current = setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (err) {
       console.warn('[ComposioTriagePanel] failed to save settings:', err);
+      if (saveStatusTimer.current !== null) {
+        clearTimeout(saveStatusTimer.current);
+        saveStatusTimer.current = null;
+      }
       setSaveStatus('error');
     } finally {
       setSaving(false);
