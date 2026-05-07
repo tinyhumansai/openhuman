@@ -33,6 +33,46 @@ use crate::openhuman::memory::conversations::ConversationMessage;
 use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 
+/// Prompt suffix injected into every typed sub-agent run.
+///
+/// Purpose:
+/// - make the child explicitly aware it is acting as a sub-agent
+/// - keep delegated outputs concise so parent-context growth stays bounded
+/// - discourage verbose restatement of the delegated task/context
+const SUBAGENT_ROLE_CONTRACT_SUFFIX: &str = "## Sub-agent Role Contract\n\n\
+You are a sub-agent working for a parent OpenHuman agent, not a direct end-user assistant.\n\
+- Stay tightly scoped to the delegated task.\n\
+- Keep tool arguments and follow-up prompts compact, include only required fields/context.\n\
+- Keep your final response concise and synthesis-ready for the parent, prefer short bullets or short paragraphs.\n\
+- Do not restate the full task/context unless strictly required for correctness.\n";
+
+fn append_subagent_role_contract(base_prompt: String, agent_id: &str) -> String {
+    if base_prompt.contains(SUBAGENT_ROLE_CONTRACT_SUFFIX.trim()) {
+        tracing::debug!(
+            agent_id = %agent_id,
+            base_chars = base_prompt.chars().count(),
+            "[subagent_runner] sub-agent role contract already present in system prompt"
+        );
+        return base_prompt;
+    }
+
+    let mut prompt = base_prompt;
+    if !prompt.ends_with('\n') {
+        prompt.push('\n');
+    }
+    prompt.push('\n');
+    prompt.push_str(SUBAGENT_ROLE_CONTRACT_SUFFIX);
+
+    tracing::debug!(
+        agent_id = %agent_id,
+        suffix_chars = SUBAGENT_ROLE_CONTRACT_SUFFIX.chars().count(),
+        final_chars = prompt.chars().count(),
+        "[subagent_runner] appended sub-agent role contract to system prompt"
+    );
+
+    prompt
+}
+
 /// Lazy resolver that lets `integrations_agent` recover when the model
 /// calls a Composio action slug that exists in the bound toolkit's full
 /// catalogue but was filtered out of the up-front fuzzy top-K. On a
@@ -674,6 +714,8 @@ async fn run_typed_mode(
             )
         }
     };
+
+    let system_prompt = append_subagent_role_contract(system_prompt, &definition.id);
 
     // ── Build the user message (with optional context prefix) ──────────
     // Merge explicit orchestrator context with the parent's auto-loaded

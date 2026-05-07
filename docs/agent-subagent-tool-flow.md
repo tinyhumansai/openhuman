@@ -65,6 +65,7 @@ There are two related but distinct execution tiers:
 
 2. `run_subagent`
    This is an isolated delegated run. It does not become a nested full `Agent` session. It runs a smaller inner loop and returns a single compact text result to the parent as a normal tool result.
+   Every typed subagent prompt now also appends a shared "Sub-agent Role Contract" suffix that explicitly states sub-agent role expectations and requires concise, synthesis-ready outputs.
 
 That distinction matters when debugging. A subagent is not a second copy of the full session runtime.
 

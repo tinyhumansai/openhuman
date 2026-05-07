@@ -115,6 +115,21 @@ fn subagent_mode_as_str_roundtrip() {
     assert_eq!(SubagentMode::Typed.as_str(), "typed");
 }
 
+#[test]
+fn append_subagent_role_contract_adds_role_and_brevity_rules() {
+    let rendered = append_subagent_role_contract("base prompt".to_string(), "researcher");
+    assert!(rendered.contains("## Sub-agent Role Contract"));
+    assert!(rendered.contains("You are a sub-agent working for a parent OpenHuman agent"));
+    assert!(rendered.contains("Keep your final response concise and synthesis-ready"));
+}
+
+#[test]
+fn append_subagent_role_contract_is_idempotent() {
+    let once = append_subagent_role_contract("base prompt".to_string(), "researcher");
+    let twice = append_subagent_role_contract(once.clone(), "researcher");
+    assert_eq!(once, twice, "contract suffix should only appear once");
+}
+
 // ── End-to-end runner tests with mock provider ────────────────────────
 
 use crate::openhuman::agent::harness::fork_context::with_parent_context;
@@ -315,6 +330,38 @@ async fn typed_mode_injects_current_date_and_time_into_user_message() {
         "subagent user message must include current date/time context, got: {}",
         user_msg.content
     );
+}
+
+#[tokio::test]
+async fn typed_mode_system_prompt_includes_subagent_role_contract() {
+    let provider = ScriptedProvider::new(vec![text_response("ok")]);
+    let parent = make_parent(provider.clone(), vec![stub("file_read")]);
+    let def = make_def_named_tools(&[]);
+
+    let _ = with_parent_context(parent, async {
+        run_subagent(
+            &def,
+            "the actual task prompt",
+            SubagentRunOptions::default(),
+        )
+        .await
+    })
+    .await
+    .unwrap();
+
+    let captured = provider.captured.lock();
+    let system_msg = captured[0]
+        .messages
+        .iter()
+        .find(|m| m.role == "system")
+        .expect("system message should be present");
+    assert!(system_msg.content.contains("## Sub-agent Role Contract"));
+    assert!(system_msg
+        .content
+        .contains("You are a sub-agent working for a parent OpenHuman agent"));
+    assert!(system_msg
+        .content
+        .contains("Keep your final response concise and synthesis-ready"));
 }
 
 #[tokio::test]
