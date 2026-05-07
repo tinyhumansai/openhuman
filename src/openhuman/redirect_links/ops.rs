@@ -26,6 +26,20 @@ fn short_url_regex() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"openhuman://link/([0-9a-f]+)").unwrap())
 }
 
+fn public_url_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    // Anchor on `https?://` and match the `openhm.xyz` domain specifically to
+    // avoid lookalikes (evil-openhm.xyz) or mid-token matches. Capture optional
+    // query and fragment as separate tail parts so callers can safely insert
+    // `?u=` into the query without polluting the fragment.
+    RE.get_or_init(|| {
+        Regex::new(
+            r#"https?://openhm\.xyz/[A-Za-z0-9_-]+(?:\?[\w\d./\?=%\-&:+@~!,;]*)?(?:#[\w\d./\?=%\-&:+@~!,;]*)?"#,
+        )
+        .unwrap()
+    })
+}
+
 /// Strip trailing sentence punctuation (`.`, `,`, `;`, `:`, `!`) so that
 /// "see https://example.com/path." doesn't capture the period.
 fn trim_trailing_punct(s: &str) -> &str {
@@ -120,6 +134,63 @@ pub fn rewrite_outbound(config: &Config, text: &str) -> Result<RewriteResult> {
         text: out,
         replacements,
     })
+}
+
+/// Convenience wrapper that runs `rewrite_outbound` and then appends the
+/// `user_id` to any public `openhm.xyz` links in the result.
+pub fn rewrite_outbound_for_user(
+    config: &Config,
+    text: &str,
+    user_id: Option<&str>,
+) -> Result<RewriteResult> {
+    let mut result = rewrite_outbound(config, text)?;
+    result.text = append_user_id_to_public_links(&result.text, user_id);
+    Ok(result)
+}
+
+/// Append `?u=<user_id>` to every `openhm.xyz/<id>` URL in a string.
+/// If `user_id` is `None`, the text is returned unchanged.
+/// Idempotent: URLs already containing a `u=` query parameter are left alone.
+pub fn append_user_id_to_public_links(text: &str, user_id: Option<&str>) -> String {
+    let Some(user_id) = user_id else {
+        return text.to_string();
+    };
+
+    let re = public_url_regex();
+    let encoded_user_id = urlencoding::encode(user_id);
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+
+    for m in re.find_iter(text) {
+        out.push_str(&text[cursor..m.start()]);
+        let raw = m.as_str();
+        let url = trim_trailing_punct(raw);
+        let trailing = &raw[url.len()..];
+
+        // Split off any fragment (#…) so `?u=` lands in the query, not the fragment.
+        let (base, fragment) = match url.split_once('#') {
+            Some((b, f)) => (b, Some(f)),
+            None => (url, None),
+        };
+
+        if !base.contains("?u=") && !base.contains("&u=") {
+            let separator = if base.contains('?') { "&" } else { "?" };
+            out.push_str(base);
+            out.push_str(separator);
+            out.push_str("u=");
+            out.push_str(&encoded_user_id);
+        } else {
+            out.push_str(base);
+        }
+        if let Some(frag) = fragment {
+            out.push('#');
+            out.push_str(frag);
+        }
+        out.push_str(trailing);
+        cursor = m.end();
+    }
+    out.push_str(&text[cursor..]);
+    out
 }
 
 // ── RPC handlers ────────────────────────────────────────────────────────
@@ -272,5 +343,122 @@ mod tests {
         let text = format!("{LONG} and also {LONG}?extra=1234567890abcdef");
         let result = rewrite_inbound(&cfg, &text).unwrap();
         assert_eq!(result.replacements.len(), 2);
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_bare() {
+        let text = "https://openhm.xyz/abc";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(got, "https://openhm.xyz/abc?u=nikhil");
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_query() {
+        let text = "https://openhm.xyz/abc?foo=bar";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(got, "https://openhm.xyz/abc?foo=bar&u=nikhil");
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_idempotent() {
+        // Already ?u=
+        let text = "https://openhm.xyz/abc?u=existing";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(got, text);
+
+        // Already &u=
+        let text = "https://openhm.xyz/abc?foo=bar&u=existing";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(got, text);
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_none() {
+        let text = "https://openhm.xyz/abc";
+        let got = append_user_id_to_public_links(text, None);
+        assert_eq!(got, text);
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_no_match() {
+        let text = "https://example.com/abc";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(got, text);
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_multiple() {
+        let text = "https://openhm.xyz/a and https://openhm.xyz/b?x=y";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(
+            got,
+            "https://openhm.xyz/a?u=nikhil and https://openhm.xyz/b?x=y&u=nikhil"
+        );
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_encoding() {
+        let text = "https://openhm.xyz/abc";
+        let got = append_user_id_to_public_links(text, Some("nikhil@example.com + space"));
+        assert_eq!(
+            got,
+            "https://openhm.xyz/abc?u=nikhil%40example.com%20%2B%20space"
+        );
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_lookalikes() {
+        let text = "https://evil-openhm.xyz/abc and openhm.xyz.evil.com/abc";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(got, text);
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_punctuation() {
+        let text = "Click https://openhm.xyz/abc.";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(got, "Click https://openhm.xyz/abc?u=nikhil.");
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_query_with_fragment() {
+        let text = "https://openhm.xyz/abc?foo=bar#frag";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(got, "https://openhm.xyz/abc?foo=bar&u=nikhil#frag");
+    }
+
+    #[test]
+    fn append_user_id_to_public_links_bare_with_fragment() {
+        let text = "https://openhm.xyz/abc#frag";
+        let got = append_user_id_to_public_links(text, Some("nikhil"));
+        assert_eq!(got, "https://openhm.xyz/abc?u=nikhil#frag");
+    }
+
+    #[test]
+    fn rewrite_outbound_for_user_expands_placeholder_and_tags_public_url() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = test_config(&tmp);
+
+        // Shorten LONG into an openhuman:// placeholder, then craft outbound text
+        // that mixes the placeholder with a public openhm.xyz URL.
+        let inbound = rewrite_inbound(&cfg, LONG).unwrap();
+        let placeholder = &inbound.replacements[0].replacement;
+        let text = format!("see {placeholder} and https://openhm.xyz/abc");
+
+        let result = rewrite_outbound_for_user(&cfg, &text, Some("nikhil")).unwrap();
+        assert!(
+            result.text.contains(LONG),
+            "placeholder must expand back to LONG"
+        );
+        assert!(
+            result.text.contains("https://openhm.xyz/abc?u=nikhil"),
+            "openhm.xyz URL must carry ?u= tag"
+        );
+
+        // None user_id leaves openhm.xyz untouched but still expands placeholder.
+        let result_none = rewrite_outbound_for_user(&cfg, &text, None).unwrap();
+        assert!(result_none.text.contains(LONG));
+        assert!(result_none.text.contains("https://openhm.xyz/abc"));
+        assert!(!result_none.text.contains("?u="));
     }
 }

@@ -12,7 +12,10 @@ mod store;
 mod types;
 
 pub use ops as rpc;
-pub use ops::{expand_link, rewrite_inbound, rewrite_outbound, shorten_url};
+pub use ops::{
+    append_user_id_to_public_links, expand_link, rewrite_inbound, rewrite_outbound,
+    rewrite_outbound_for_user, shorten_url,
+};
 pub use schemas::{
     all_controller_schemas as all_redirect_links_controller_schemas,
     all_registered_controllers as all_redirect_links_registered_controllers,
