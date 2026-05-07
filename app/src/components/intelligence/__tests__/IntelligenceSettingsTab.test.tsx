@@ -177,11 +177,12 @@ describe('IntelligenceSettingsTab', () => {
     // so use getAllByText. Just confirm the catalog has at least one of
     // each curated entry rendered somewhere on the screen.
     expect(screen.getAllByText('gemma3:1b-it-qat').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('llama3.1:8b').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('gemma3:4b').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('gemma3:12b-it-qat').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('bge-m3').length).toBeGreaterThanOrEqual(1);
 
-    // 4.9 GB is unique to llama3.1:8b in the catalog row meta.
-    expect(screen.getByText('4.9 GB')).toBeInTheDocument();
+    // 3.3 GB is unique to gemma3:4b in the catalog row meta.
+    expect(screen.getByText('3.3 GB')).toBeInTheDocument();
   });
 
   it('renders a Download action for models that are not installed', async () => {
@@ -239,18 +240,18 @@ describe('IntelligenceSettingsTab', () => {
     // dropdown change, not the earlier backend toggle.
     memoryTreeSetLlm.mockClear();
 
-    // Pick a different memory LLM. `llama3.1:8b` is in the curated
+    // Pick a different memory LLM. `gemma3:12b-it-qat` is in the curated
     // catalog with both `extract` and `summariser` roles.
     const memorySelect = screen.getByLabelText(
       'Memory LLM (extract + summarise)'
     ) as HTMLSelectElement;
-    fireEvent.change(memorySelect, { target: { value: 'llama3.1:8b' } });
+    fireEvent.change(memorySelect, { target: { value: 'gemma3:12b-it-qat' } });
 
     await waitFor(() => {
       expect(memoryTreeSetLlm).toHaveBeenCalledWith({
         backend: 'local',
-        extract_model: 'llama3.1:8b',
-        summariser_model: 'llama3.1:8b',
+        extract_model: 'gemma3:12b-it-qat',
+        summariser_model: 'gemma3:12b-it-qat',
       });
     });
   });

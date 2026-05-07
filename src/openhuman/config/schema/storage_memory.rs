@@ -313,20 +313,22 @@ fn default_memory_tree_content_dir() -> Option<PathBuf> {
 
 /// Default Ollama model for the memory-tree LLMs (extractor + summariser).
 ///
-/// `llama3.1:8b` is large enough to produce coherent abstractive
-/// summaries on real Gmail inboxes — smaller models (≤3B) routinely
-/// regress to "the email says X, the email says Y" enumeration which
-/// is barely better than the InertSummariser concat fallback. 8B
-/// stays inside an 8GB VRAM/RAM envelope on a typical laptop and
-/// finishes a seal-budget summary in ~30s on Apple Silicon.
+/// `gemma3:4b` is in the Gemma 3 family (Gemma 4 isn't released yet)
+/// and sits between the 1B compact tier and the 12B/27B large tiers.
+/// At ~3 GB on disk and ~8 GB RAM at inference it stays inside the
+/// envelope of a typical laptop and produces coherent abstractive
+/// summaries on real Gmail inboxes — smaller models (≤1.5B) regress
+/// to "the email says X, the email says Y" enumeration that's barely
+/// better than the InertSummariser concat fallback.
 ///
 /// Override via `memory_tree.llm_summariser_model` /
 /// `llm_extractor_model` in TOML (or `OPENHUMAN_MEMORY_TREE_LLM_*_MODEL`
-/// env vars) to point at a different Ollama model when the host has
-/// more headroom (e.g. `llama3.1:70b`) or less (e.g. `gemma3:1b-it-qat`
-/// for laptops without a GPU).
+/// env vars) to scale up (`gemma3:12b-it-qat`, `llama3.1:8b`) or down
+/// (`gemma3:1b-it-qat`) for the host's headroom. The frontend
+/// `ModelCatalog` lists the curated picks the UI offers as
+/// downloadable presets.
 fn default_memory_tree_llm_model() -> Option<String> {
-    Some("llama3.1:8b".to_string())
+    Some("gemma3:4b".to_string())
 }
 
 impl Default for MemoryTreeConfig {
