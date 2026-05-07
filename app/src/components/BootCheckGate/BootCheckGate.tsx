@@ -9,12 +9,12 @@
  * Visual language follows ServiceBlockingGate.tsx (bg-stone-950/80 overlay,
  * bg-stone-900 panel, ocean-500 / coral-500 semantics).
  */
-import { invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { type BootCheckResult, runBootCheck } from '../../lib/bootCheck';
-import { callCoreRpc, clearCoreRpcUrlCache } from '../../services/coreRpcClient';
+import { bootCheckTransport } from '../../services/bootCheckService';
+import { clearCoreRpcUrlCache } from '../../services/coreRpcClient';
 import { type CoreMode, resetCoreMode, setCoreMode } from '../../store/coreModeSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { storeRpcUrl } from '../../utils/configPersistence';
@@ -369,13 +369,9 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
   // Prevent concurrent or stale runs.
   const runningRef = useRef(false);
 
-  // Build the transport object using the real implementations.  Defined
-  // outside runCheck so it can be passed from action handlers too.
-  const transport = {
-    callRpc: <T,>(method: string, params?: Record<string, unknown>) =>
-      callCoreRpc<T>({ method, params }),
-    invokeCmd: <T,>(cmd: string, args?: Record<string, unknown>) => invoke<T>(cmd, args ?? {}),
-  };
+  // Production transport lives in services/bootCheckService so direct
+  // Tauri/RPC imports stay localized there.
+  const transport = bootCheckTransport;
 
   const runCheck = useCallback(
     async (mode: CoreMode) => {
@@ -458,7 +454,7 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
   const handleQuit = useCallback(async () => {
     log('[boot-check] gate — quit requested');
     try {
-      await invoke('app_quit');
+      await bootCheckTransport.invokeCmd('app_quit');
     } catch (err) {
       logError('[boot-check] gate — app_quit failed: %o', err);
     }

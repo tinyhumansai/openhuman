@@ -11,10 +11,9 @@
  *  - Injectable transport (callRpc / invokeCmd) for hermetic unit tests.
  *  - All branches emit [boot-check] prefixed debug logs.
  */
-import { invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
 
-import { callCoreRpc, clearCoreRpcUrlCache } from '../../services/coreRpcClient';
+import { clearCoreRpcUrlCache } from '../../services/coreRpcClient';
 import type { CoreMode } from '../../store/coreModeSlice';
 import { APP_VERSION } from '../../utils/config';
 import { storeRpcUrl } from '../../utils/configPersistence';
@@ -45,22 +44,9 @@ export interface BootCheckTransport {
   invokeCmd: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 }
 
-// ---------------------------------------------------------------------------
-// Default transport (real app)
-// ---------------------------------------------------------------------------
-
-async function defaultCallRpc<T>(method: string, params?: Record<string, unknown>): Promise<T> {
-  return callCoreRpc<T>({ method, params });
-}
-
-async function defaultInvokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  return invoke<T>(cmd, args);
-}
-
-export const defaultTransport: BootCheckTransport = {
-  callRpc: defaultCallRpc,
-  invokeCmd: defaultInvokeCmd,
-};
+// The production transport lives in `app/src/services/bootCheckService.ts`
+// so this module stays free of direct Tauri IPC / RPC imports per the
+// project's IPC localization guideline.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -188,7 +174,7 @@ async function checkVersion(callRpc: BootCheckTransport['callRpc']): Promise<Ver
  */
 export async function runBootCheck(
   mode: CoreMode,
-  transport: BootCheckTransport = defaultTransport
+  transport: BootCheckTransport
 ): Promise<BootCheckResult> {
   const { callRpc, invokeCmd } = transport;
 
@@ -250,7 +236,14 @@ export async function runBootCheck(
   // ------------------------------------------------------------------
   // Cloud mode
   // ------------------------------------------------------------------
-  log('[boot-check] cloud mode — url=%s', mode.url);
+  let safeUrl = '<invalid-url>';
+  try {
+    const parsed = new URL(mode.url);
+    safeUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch {
+    // keep redacted fallback
+  }
+  log('[boot-check] cloud mode — url=%s', safeUrl);
   storeRpcUrl(mode.url);
   clearCoreRpcUrlCache();
   log('[boot-check] cloud RPC URL stored and cache cleared');
