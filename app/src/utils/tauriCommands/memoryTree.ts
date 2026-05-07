@@ -489,14 +489,16 @@ export interface WipeAllResponse {
 }
 
 /**
- * Destructive reset: truncate every `mem_tree_*` table and remove the
- * on-disk chunk-store directories under the workspace content root.
- * Backed by `openhuman.memory_tree_wipe_all`.
+ * Destructive reset: truncate every `mem_tree_*` table, remove the
+ * on-disk chunk-store directories under the workspace content root,
+ * **and** clear the `composio-sync-state` KV namespace so the next
+ * sync re-fetches every upstream item from scratch (no
+ * synced-id-dedup carry-over). Backed by
+ * `openhuman.memory_tree_wipe_all`.
  *
- * Composio sync state is **not** cleared by this call — to force a
- * full upstream re-fetch, the caller must also delete + re-authorize
- * the affected Composio connection. See the Rust handler doc for
- * the rationale.
+ * Callers can rely on `sync_state_cleared` in the response — a
+ * positive count means the next sync will be a full re-fetch; `0`
+ * means there were no live cursors to drop (e.g. fresh workspace).
  */
 export async function memoryTreeWipeAll(): Promise<WipeAllResponse> {
   console.debug('[memory-tree-rpc] memoryTreeWipeAll: entry');
@@ -591,11 +593,13 @@ export async function memoryTreeGraphExport(
   });
   const out = unwrapResult(resp);
   console.debug(
-    '[memory-tree-rpc] memoryTreeGraphExport: exit mode=%s n=%d edges=%d root=%s',
+    // Don't log the absolute content root — it embeds the user's
+    // home directory + username and shows up in console logs / bug
+    // reports. The path is still returned to the caller.
+    '[memory-tree-rpc] memoryTreeGraphExport: exit mode=%s n=%d edges=%d',
     mode,
     out.nodes?.length ?? 0,
-    out.edges?.length ?? 0,
-    out.content_root_abs
+    out.edges?.length ?? 0
   );
   return out;
 }

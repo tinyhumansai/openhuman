@@ -22,7 +22,7 @@
     "opener:default",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "obsidian://*" }]
+      "allow": [{ "url": "obsidian://open*" }]
     },
     "updater:default",
     "allow-core-process",

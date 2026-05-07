@@ -107,7 +107,19 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("path has no parent: {}", path.display()))?;
-    let tmp = path.with_extension("md.tmp");
+    // Per-writer unique tempfile so two concurrent ingest workers
+    // staging into the same source folder can't trample each other's
+    // staging path. PID + nanos is collision-free for any realistic
+    // local concurrency level; the tempfile lands in `parent` so the
+    // subsequent `rename` is still atomic-on-same-filesystem.
+    let tmp = parent.join(format!(
+        ".tmp_raw_{}_{}.md",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
     let mut f = fs::File::create(&tmp).with_context(|| format!("create tmp {}", tmp.display()))?;
     f.write_all(bytes)
         .with_context(|| format!("write tmp {}", tmp.display()))?;
@@ -117,9 +129,16 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     fs::rename(&tmp, path)
         .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
     // Best-effort fsync of the directory so the rename is durable on
-    // crash; ignore failures on platforms that don't support it.
+    // crash. We don't surface as an error (the rename has already
+    // committed; missing dirent fsync is a durability degradation,
+    // not a failure), but operators want visibility when it happens.
     if let Ok(dir_handle) = fs::File::open(parent) {
-        let _ = dir_handle.sync_all();
+        if let Err(e) = dir_handle.sync_all() {
+            log::debug!(
+                "[content_store::raw] parent dir fsync failed path={} err={e}",
+                parent.display()
+            );
+        }
     }
     Ok(())
 }

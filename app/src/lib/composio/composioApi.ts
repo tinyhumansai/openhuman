@@ -180,10 +180,17 @@ export async function syncConnection(
     params: { connection_id: connectionId, reason },
   });
   const outcome = unwrapCliEnvelope<unknown>(raw);
+  // Avoid logging the raw outcome — provider sync responses can carry
+  // message-level PII (subjects, sender addresses, body excerpts).
+  // Surface a sanitised shape (top-level keys + payload type) instead.
+  const outcomeShape =
+    outcome && typeof outcome === 'object'
+      ? { keys: Object.keys(outcome as Record<string, unknown>).slice(0, 10) }
+      : { type: typeof outcome };
   console.debug(
-    '[composio][sync] ← openhuman.composio_sync conn=%s outcome=%o',
+    '[composio][sync] ← openhuman.composio_sync conn=%s outcome_shape=%o',
     connectionId,
-    outcome
+    outcomeShape
   );
   return outcome;
 }

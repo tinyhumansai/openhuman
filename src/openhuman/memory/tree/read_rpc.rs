@@ -993,12 +993,15 @@ pub async fn graph_export_rpc(
     .await
     .map_err(|e| format!("graph_export join error: {e}"))?
     .map_err(|e| format!("graph_export: {e:#}"))?;
+    // Hash the content root rather than logging the absolute path —
+    // it embeds the user's home / username, which we don't want in
+    // tail-sampled debug streams or bug reports.
     let log = format!(
-        "memory_tree::read: graph_export mode={:?} nodes={} edges={} root={}",
+        "memory_tree::read: graph_export mode={:?} nodes={} edges={} root_hash={}",
         mode,
         resp.nodes.len(),
         resp.edges.len(),
-        resp.content_root_abs,
+        crate::openhuman::memory::tree::util::redact::redact(&resp.content_root_abs),
     );
     Ok(RpcOutcome::single_log(resp, log))
 }
@@ -1276,9 +1279,12 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
                 Ok(()) => dirs_removed.push((*dir).to_string()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => {
+                    // Logical name (raw / wiki / chat / ...) is enough
+                    // signal — the absolute path embeds the user's
+                    // home directory.
                     log::warn!(
-                        "[memory_tree::read::wipe] failed to remove {}: {e}",
-                        path.display()
+                        "[memory_tree::read::wipe] failed to remove dir={} err={e}",
+                        dir
                     );
                 }
             }
@@ -1294,9 +1300,10 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
         let sync_state_cleared: u64 = {
             let unified_db = cfg.workspace_dir.join("memory").join("memory.db");
             if !unified_db.exists() {
+                // No path interpolation — operators just need to
+                // know the unified DB is absent on this workspace.
                 log::debug!(
-                    "[memory_tree::read::wipe] unified memory DB not present at {} — skipping sync-state clear",
-                    unified_db.display()
+                    "[memory_tree::read::wipe] unified memory DB not present — skipping sync-state clear"
                 );
                 0
             } else {
@@ -1404,10 +1411,16 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
         // and `PRAGMA foreign_keys = ON` is set. Trees must come last
         // or SQLite throws "FOREIGN KEY constraint failed". `mem_tree_jobs`
         // has no FK so its position is free.
+        // `mem_tree_entity_index` holds both leaf (chunk) and summary
+        // entity rows. Clearing it on reset prevents `top_entities`
+        // from counting orphan rows pointing at deleted summaries;
+        // the leaf rows get rebuilt naturally when the requeued
+        // `extract_chunk` jobs run for every chunk.
         const TREE_TABLES: &[&str] = &[
             "mem_tree_summaries",
             "mem_tree_buffers",
             "mem_tree_jobs",
+            "mem_tree_entity_index",
             "mem_tree_trees",
         ];
         let tree_rows_deleted: u64 = with_connection(&cfg, |conn| {
@@ -1432,13 +1445,11 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
             .join("summaries");
         match std::fs::remove_dir_all(&summaries_dir) {
             Ok(()) => log::debug!(
-                "[memory_tree::read::reset_tree] removed {}",
-                summaries_dir.display()
+                "[memory_tree::read::reset_tree] removed wiki/summaries"
             ),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => log::warn!(
-                "[memory_tree::read::reset_tree] failed to remove {}: {e}",
-                summaries_dir.display()
+                "[memory_tree::read::reset_tree] failed to remove wiki/summaries: {e}"
             ),
         }
 

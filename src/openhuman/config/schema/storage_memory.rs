@@ -182,13 +182,15 @@ pub struct MemoryTreeConfig {
     pub embedding_strict: bool,
 
     /// Ollama endpoint for the LLM entity extractor
-    /// (`memory::tree::score::extract::llm::LlmEntityExtractor`). When
-    /// unset, ingest uses the regex-only extractor — no LLM call. Soft
-    /// failures in the LLM path fall back to regex-only for that chunk.
+    /// (`memory::tree::score::extract::llm::LlmEntityExtractor`).
+    /// Defaults to `Some("http://localhost:11434")` — the standard
+    /// Ollama listener — see [`default_memory_tree_llm_endpoint`].
+    /// Soft failures in the LLM path fall back to regex-only for
+    /// that chunk.
     #[serde(default = "default_memory_tree_llm_endpoint")]
     pub llm_extractor_endpoint: Option<String>,
 
-    /// Model name for the entity extractor. Defaults to `llama3.1:8b`
+    /// Model name for the entity extractor. Defaults to `gemma3:4b`
     /// (see [`default_memory_tree_llm_model`] for the rationale);
     /// override to a smaller model on resource-constrained hosts.
     #[serde(default = "default_memory_tree_llm_model")]
@@ -200,15 +202,16 @@ pub struct MemoryTreeConfig {
 
     /// Ollama endpoint for the summariser
     /// (`memory::tree::tree_source::summariser::llm::LlmSummariser`).
-    /// When unset, bucket-seal cascades use `InertSummariser` — sealed
-    /// nodes contain concatenated+truncated child text instead of a
-    /// real LLM summary. Soft failures fall back to inert per seal.
+    /// Defaults to `Some("http://localhost:11434")` — see
+    /// [`default_memory_tree_llm_endpoint`]. Soft failures fall back
+    /// to `InertSummariser` per seal.
     #[serde(default = "default_memory_tree_llm_endpoint")]
     pub llm_summariser_endpoint: Option<String>,
 
-    /// Model name for the summariser. Defaults to `llama3.1:8b` —
-    /// larger models produce more coherent abstractive summaries at
-    /// higher latency. See [`default_memory_tree_llm_model`].
+    /// Model name for the summariser. Defaults to `gemma3:4b` —
+    /// larger Gemma tiers (`gemma3:12b-it-qat`, `gemma3:27b`) produce
+    /// more coherent abstractive summaries at higher latency. See
+    /// [`default_memory_tree_llm_model`].
     #[serde(default = "default_memory_tree_llm_model")]
     pub llm_summariser_model: Option<String>,
 
