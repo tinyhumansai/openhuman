@@ -101,7 +101,7 @@ describe('MemoryDataPanel', () => {
     renderWithProviders(<MemoryDataPanel />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('memory-sync-connections')).toBeInTheDocument();
+      expect(screen.getByTestId('memory-sources')).toBeInTheDocument();
     });
   });
 
