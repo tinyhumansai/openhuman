@@ -78,7 +78,10 @@ export function useIntelligenceStats(): IntelligenceStats {
     }
 
     try {
-      const files = await aiListMemoryFiles('memory');
+      // Empty string lists the memory root; the resolver joins it
+      // onto `<workspace>/memory/`, so passing 'memory' here would
+      // double up to `<workspace>/memory/memory` and miss the dir.
+      const files = await aiListMemoryFiles('');
       setMemoryFiles(files.length);
       hasSuccess = true;
     } catch {
