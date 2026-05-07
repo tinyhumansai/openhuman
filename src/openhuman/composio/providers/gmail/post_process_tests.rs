@@ -388,6 +388,56 @@ fn detects_raw_html_like_output() {
 }
 
 #[test]
+fn prefers_backend_markdown_formatted_when_present() {
+    // Composio backend (tinyhumansai/backend#683 +) ships
+    // `markdownFormatted` already URL-shortened + footer-stripped on
+    // each message. When present, our post-processor must use it
+    // verbatim instead of re-decoding the MIME tree.
+    let mut v = json!({
+        "messages": [{
+            "messageId": "m1",
+            "threadId": "t1",
+            "subject": "s",
+            "sender": "a@x.com",
+            "to": "b@y.com",
+            "messageTimestamp": "2026-04-17",
+            "labelIds": [],
+            // markdownFormatted should win — `messageText` would
+            // otherwise be picked up as the fallback.
+            "markdownFormatted": "# Already nice\n\nShort URL: https://gh.io/abc",
+            "messageText": "<html>fallback should not be used</html>",
+            "payload": {}
+        }]
+    });
+    post_process("GMAIL_FETCH_EMAILS", None, &mut v);
+    let md = v["messages"][0]["markdown"].as_str().unwrap();
+    assert_eq!(md, "# Already nice\n\nShort URL: https://gh.io/abc");
+    // Sanity: the fallback path was *not* taken.
+    assert!(!md.contains("fallback should not be used"));
+}
+
+#[test]
+fn empty_markdown_formatted_falls_through_to_message_text() {
+    let mut v = json!({
+        "messages": [{
+            "messageId": "m1",
+            "threadId": "t1",
+            "subject": "s",
+            "sender": "a@x.com",
+            "to": "b@y.com",
+            "messageTimestamp": "2026-04-17",
+            "labelIds": [],
+            "markdownFormatted": "   \n  \n",
+            "messageText": "real body",
+            "payload": {}
+        }]
+    });
+    post_process("GMAIL_FETCH_EMAILS", None, &mut v);
+    let md = v["messages"][0]["markdown"].as_str().unwrap();
+    assert!(md.contains("real body"));
+}
+
+#[test]
 fn html_in_message_text_is_converted() {
     let mut v = json!({
         "messages": [{

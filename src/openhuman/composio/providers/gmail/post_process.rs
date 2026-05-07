@@ -204,6 +204,21 @@ fn pick_header(msg: &Map<String, Value>, name: &str) -> Option<Value> {
 ///   3. Top-level `messageText` (Composio convenience field) — html or
 ///      plaintext depending on what the source had.
 fn extract_markdown_body(msg: &Map<String, Value>) -> String {
+    // Preferred: Composio backend (tinyhumansai/backend#683 +) ships a
+    // pre-rendered `markdownFormatted` per message — already URL-
+    // shortened, footer-stripped, and whitespace-normalised. When the
+    // upstream provides it, use it verbatim instead of re-decoding the
+    // MIME tree ourselves. Saves CPU and matches what the LLM
+    // dispatcher already feeds into agents via `action_tool.rs`.
+    if let Some(formatted) = msg
+        .get("markdownFormatted")
+        .or_else(|| msg.get("markdown_formatted"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return formatted.to_string();
+    }
     if let Some(parts) = msg.get("payload").and_then(|p| p.get("parts")) {
         if let Some(text) = find_decoded_part(parts, "text/plain") {
             return normalize_markdownish_text(&text);
