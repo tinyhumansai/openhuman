@@ -62,5 +62,12 @@ allow = [
     "gmail_trash",
     "gmail_add_label",
     "gmail_find_linkedin_profile_url",
+    # Surface the embedded core's daily-rotated log directory
+    # (`<data_dir>/logs/`) so the Settings → Developer Options panel can
+    # show users the path and reveal it in the platform file manager when
+    # collecting support bundles. Read-only; no writes occur in the
+    # backing commands.
+    "logs_folder_path",
+    "reveal_logs_folder",
 ]
 deny = []

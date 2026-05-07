@@ -24,26 +24,39 @@ use chrono::{DateTime, Utc};
 
 use crate::openhuman::memory::tree::util::redact::redact;
 
-/// Which kind of summary tree a summary belongs to. Determines the top-level
-/// directory under `<content_root>/summaries/`.
+/// Which kind of summary tree a summary belongs to. Determines the
+/// folder name under `<content_root>/wiki/summaries/` — flattened
+/// from the original `<kind>/<scope_slug>/...` two-level layout to a
+/// single dash-joined `<kind>-<scope_slug>/...` folder so the
+/// Obsidian sidebar listing stays readable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SummaryTreeKind {
-    /// Per-source-tree summary. Layout: `summaries/source/<scope_slug>/L<level>/<id>.md`
+    /// Per-source-tree summary. Layout: `wiki/summaries/source-<scope_slug>/L<level>/<id>.md`
     Source,
-    /// Global digest tree. Layout: `summaries/global/<yyyy-mm-dd>/L<level>/<id>.md`
+    /// Global digest tree. Layout: `wiki/summaries/global-<yyyy-mm-dd>/L<level>/<id>.md`
     Global,
-    /// Per-topic (entity) tree. Layout: `summaries/topic/<scope_slug>/L<level>/<id>.md`
+    /// Per-topic (entity) tree. Layout: `wiki/summaries/topic-<scope_slug>/L<level>/<id>.md`
     Topic,
 }
 
+/// Top-level directory for derived/wiki content (summaries today,
+/// contacts and other knowledge-graph notes later). The two-tier
+/// `<content_root>/raw/` (verbatim source bytes) +
+/// `<content_root>/wiki/` (processed, human-facing) split lets users
+/// keep one tidy Obsidian vault rooted at `<content_root>` without
+/// chunked intermediates polluting the listing.
+pub const WIKI_PREFIX: &str = "wiki";
+
 /// Build the relative content path for a summary, using forward slashes.
 ///
-/// Path layout depends on tree_kind:
-/// - Source: `"summaries/source/<scope_slug>/L<level>/<summary_filename>.md"`
-/// - Global: `"summaries/global/<yyyy-mm-dd>/L<level>/<summary_filename>.md"`
+/// Path layout depends on tree_kind. Folder name is `<kind>-<scope>` —
+/// flattening the historical two-level `<kind>/<scope>/` so users see
+/// one folder per logical source in their Obsidian sidebar:
+/// - Source: `"wiki/summaries/source-<scope_slug>/L<level>/<summary_filename>.md"`
+/// - Global: `"wiki/summaries/global-<yyyy-mm-dd>/L<level>/<summary_filename>.md"`
 ///   Falls back to `unknown-date` (with a warn log) if `date_for_global` is
 ///   `None` — preferable to panicking inside a path utility.
-/// - Topic:  `"summaries/topic/<scope_slug>/L<level>/<summary_filename>.md"`
+/// - Topic:  `"wiki/summaries/topic-<scope_slug>/L<level>/<summary_filename>.md"`
 ///
 /// `scope_slug` must already be slugified by the caller (use [`slugify_source_id`] or
 /// a per-kind variant). A trailing `.md` on `summary_id` is stripped if present.
@@ -64,14 +77,12 @@ pub fn summary_rel_path(
 
     match tree_kind {
         SummaryTreeKind::Source => {
-            format!("summaries/source/{}/L{}/{}.md", scope_slug, level, filename)
+            format!(
+                "{WIKI_PREFIX}/summaries/source-{}/L{}/{}.md",
+                scope_slug, level, filename
+            )
         }
         SummaryTreeKind::Global => {
-            // Fall back to a sentinel date rather than panic — a path-utility
-            // panic would propagate up through seal/digest/janitor codepaths
-            // and abort otherwise-recoverable work. Callers should always
-            // pass a date for Global; the warn log surfaces the contract
-            // violation without taking the process down.
             let date_str = match date_for_global {
                 Some(d) => d.format("%Y-%m-%d").to_string(),
                 None => {
@@ -83,10 +94,16 @@ pub fn summary_rel_path(
                     "unknown-date".to_string()
                 }
             };
-            format!("summaries/global/{}/L{}/{}.md", date_str, level, filename)
+            format!(
+                "{WIKI_PREFIX}/summaries/global-{}/L{}/{}.md",
+                date_str, level, filename
+            )
         }
         SummaryTreeKind::Topic => {
-            format!("summaries/topic/{}/L{}/{}.md", scope_slug, level, filename)
+            format!(
+                "{WIKI_PREFIX}/summaries/topic-{}/L{}/{}.md",
+                scope_slug, level, filename
+            )
         }
     }
 }
@@ -403,7 +420,7 @@ mod tests {
         // Colons in summary_id are replaced with '-' for cross-platform filenames.
         assert_eq!(
             p,
-            "summaries/source/gmail-alice-x-com-bob-y-com/L1/summary-L1-abc.md"
+            "wiki/summaries/source-gmail-alice-x-com-bob-y-com/L1/summary-L1-abc.md"
         );
     }
 
@@ -418,7 +435,7 @@ mod tests {
             "summary:L0:daily",
             Some(date),
         );
-        assert_eq!(p, "summaries/global/2026-04-28/L0/summary-L0-daily.md");
+        assert_eq!(p, "wiki/summaries/global-2026-04-28/L0/summary-L0-daily.md");
     }
 
     #[test]
@@ -432,7 +449,7 @@ mod tests {
         );
         assert_eq!(
             p,
-            "summaries/topic/person-alex-johnson/L1/summary-L1-xyz.md"
+            "wiki/summaries/topic-person-alex-johnson/L1/summary-L1-xyz.md"
         );
     }
 
@@ -446,7 +463,7 @@ mod tests {
             "summary:L2:foo.md",
             None,
         );
-        assert_eq!(p, "summaries/topic/entity-slug/L2/summary-L2-foo.md");
+        assert_eq!(p, "wiki/summaries/topic-entity-slug/L2/summary-L2-foo.md");
     }
 
     #[test]
@@ -455,7 +472,7 @@ mod tests {
         // panic — fall back to a sentinel `unknown-date` segment so the
         // file lands somewhere predictable rather than aborting the seal.
         let p = summary_rel_path(SummaryTreeKind::Global, "global", 0, "summary:L0:x", None);
-        assert_eq!(p, "summaries/global/unknown-date/L0/summary-L0-x.md");
+        assert_eq!(p, "wiki/summaries/global-unknown-date/L0/summary-L0-x.md");
     }
 
     #[test]

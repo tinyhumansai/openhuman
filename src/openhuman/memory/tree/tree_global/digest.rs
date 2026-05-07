@@ -209,6 +209,7 @@ pub async fn end_of_day_digest(
         tree_scope: &global.scope,
         level: daily.level,
         child_ids: &daily.child_ids,
+        child_basenames: None,
         child_count: daily.child_ids.len(),
         time_range_start: daily.time_range_start,
         time_range_end: daily.time_range_end,

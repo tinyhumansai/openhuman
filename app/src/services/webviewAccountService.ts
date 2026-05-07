@@ -12,6 +12,7 @@ import {
 import { addIntegrationNotification } from '../store/notificationSlice';
 import { fetchRespondQueue } from '../store/providerSurfaceSlice';
 import type { AccountProvider, IngestedMessage } from '../types/accounts';
+import { openhumanGetMeetSettings } from '../utils/tauriCommands/config';
 import { threadApi } from './api/threadApi';
 import { chatSend } from './chatService';
 import { callCoreRpc } from './coreRpcClient';
@@ -67,6 +68,9 @@ interface WebviewAccountLoadPayload {
   // `'timeout'`  — 15 s watchdog elapsed; keep hidden and show retry UI
   // `'reused'`   — warm re-open of already-loaded account; reveal synchronously
   state: 'finished' | 'timeout' | 'reused' | string;
+  // `'load'`     — native/CDP load signal caused this event
+  // `'watchdog'` — fallback watchdog caused this event
+  trigger?: 'load' | 'watchdog' | string;
   url: string;
 }
 
@@ -181,7 +185,13 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
     errLog('webview-account:load missing account_id — ignoring: %o', payload);
     return;
   }
-  log('load event account=%s state=%s url=%s', accountId, payload.state, payload.url);
+  log(
+    'load event account=%s state=%s trigger=%s url=%s',
+    accountId,
+    payload.state,
+    payload.trigger,
+    payload.url
+  );
   loadingAccounts.delete(accountId);
 
   const timeoutLike =
@@ -213,8 +223,9 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
   // the webview will have been positioned server-side by `emit_load_finished`.
   const bounds = lastBoundsByAccount.get(accountId);
   log('load finished account=%s state=%s reveal=%s', accountId, payload.state, Boolean(bounds));
+  const trigger = payload.trigger === 'watchdog' ? 'watchdog' : 'load';
   if (bounds) {
-    invoke('webview_account_reveal', { args: { account_id: accountId, bounds } })
+    invoke('webview_account_reveal', { args: { account_id: accountId, bounds, trigger } })
       .catch(err => {
         errLog('webview_account_reveal failed account=%s: %o', accountId, err);
       })
@@ -637,7 +648,7 @@ async function flushMeetingSession(
     );
 
     if (segments.length > 0) {
-      await handoffToOrchestrator(accountId, session, endedAt, markdown, participants);
+      await maybeHandoffToOrchestrator(accountId, session, endedAt, markdown, participants);
     }
   } catch (err) {
     errLog('meet: memory write failed: %o', err);
@@ -655,6 +666,45 @@ async function flushMeetingSession(
 }
 
 /**
+ * Privacy gate (#1299) — only call `handoffToOrchestrator` when the
+ * user has explicitly opted in via the `meet.auto_orchestrator_handoff`
+ * setting. Without this gate, every Meet call ended would auto-feed the
+ * transcript to the orchestrator, which has the full Slack tool surface
+ * and would proactively post summaries to public channels (e.g.
+ * `#general`) without consent.
+ *
+ * The setting is read fresh per call rather than cached so toggle
+ * changes mid-session take effect immediately. Failure to read settings
+ * (e.g. core RPC down) is treated as opt-out — privacy-conservative.
+ */
+async function maybeHandoffToOrchestrator(
+  accountId: string,
+  session: MeetingSession,
+  endedAt: number,
+  transcriptMarkdown: string,
+  participants: Set<string>
+): Promise<void> {
+  let optedIn = false;
+  try {
+    const settings = await openhumanGetMeetSettings();
+    optedIn = settings?.result?.auto_orchestrator_handoff === true;
+  } catch (err) {
+    // Fail-closed: if we can't read the setting, do not hand off.
+    errLog('meet: failed to read meet settings, defaulting to OFF: %o', err);
+  }
+
+  if (!optedIn) {
+    log(
+      'meet: orchestrator handoff disabled (auto_orchestrator_handoff !== true), skipping for code=%s',
+      session.code
+    );
+    return;
+  }
+
+  await handoffToOrchestrator(accountId, session, endedAt, transcriptMarkdown, participants);
+}
+
+/**
  * After a meeting transcript is persisted, open a fresh thread with the
  * orchestrator agent and hand it the transcript so it can extract notes
  * (summary, decisions, action items) and proactively act on follow-ups.
@@ -662,6 +712,10 @@ async function flushMeetingSession(
  * The orchestrator IS the LLM here — there's no separate summarisation
  * call. It produces structured notes inline as part of its reply and
  * routes any actionable items to its subagents/skills.
+ *
+ * IMPORTANT: This function is the privacy-sensitive path. Callers must
+ * gate it on user opt-in via {@link maybeHandoffToOrchestrator} — do
+ * NOT invoke it directly from session-end code paths. See #1299.
  */
 async function handoffToOrchestrator(
   accountId: string,
@@ -872,6 +926,40 @@ export async function retryWebviewAccountLoad(
   await openWebviewAccount({ accountId, provider, bounds });
 }
 
+/**
+ * Spawn a hidden webview for an account so its CEF profile and provider
+ * page are warm by the time the user actually clicks the rail icon.
+ *
+ * Rust spawns the prewarm webview off-screen at 1×1, attaches CDP, navigates
+ * to the real provider URL, and registers it in the same `inner` map as a
+ * regular open. When the user later clicks the account, `webview_account_open`
+ * hits the warm-reopen branch and emits `state:"reused"` synchronously — no
+ * cold spinner.
+ *
+ * Idempotent — calling again for an already-warm account is a Rust-side no-op.
+ * Best-effort — any error is logged and swallowed; the worst case is a normal
+ * cold open later.
+ */
+export async function prewarmWebviewAccount(
+  accountId: string,
+  provider: AccountProvider
+): Promise<void> {
+  if (!isTauri()) return;
+  log('[webview-accounts] prewarm dispatch account=%s provider=%s', accountId, provider);
+  try {
+    await invoke('webview_account_prewarm', { args: { account_id: accountId, provider } });
+  } catch (err) {
+    // Don't surface to the user — prewarm failure means we fall back to the
+    // normal cold-open path on click. Logged for diagnosis.
+    errLog(
+      '[webview-accounts] prewarm failed account=%s provider=%s: %o',
+      accountId,
+      provider,
+      err
+    );
+  }
+}
+
 export async function setWebviewAccountBounds(
   accountId: string,
   bounds: WebviewAccountBounds
@@ -1014,3 +1102,6 @@ async function flushMeetingIfAny(accountId: string, reason: string): Promise<voi
   activeMeetings.delete(accountId);
   await flushMeetingSession(accountId, session, Date.now(), reason);
 }
+
+/** Test-only re-exports — do NOT import outside `__tests__/`. */
+export const __testInternals = { maybeHandoffToOrchestrator };

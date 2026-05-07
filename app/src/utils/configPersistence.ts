@@ -105,14 +105,3 @@ export function normalizeRpcUrl(url: string): string {
 export function getDefaultRpcUrl(): string {
   return CORE_RPC_URL;
 }
-
-/**
- * Build the full RPC endpoint URL from a base URL.
- *
- * @param baseUrl - The base URL (e.g., 'http://127.0.0.1:7788')
- * @returns The full RPC endpoint URL
- */
-export function buildRpcEndpoint(baseUrl: string): string {
-  const normalized = normalizeRpcUrl(baseUrl);
-  return normalized.endsWith('/rpc') ? normalized : `${normalized}/rpc`;
-}

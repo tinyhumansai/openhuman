@@ -275,15 +275,15 @@ const Settings = () => {
         <Route path="voice" element={wrapSettingsPage(<VoicePanel />)} />
         <Route path="messaging" element={wrapSettingsPage(<MessagingPanel />)} />
         <Route path="notifications" element={wrapSettingsPage(<NotificationsPanel />)} />
-        <Route
-          path="notification-routing"
-          element={wrapSettingsPage(<NotificationRoutingPanel />)}
-        />
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
         {/* AI & Models leaf panels */}
         <Route path="local-model" element={wrapSettingsPage(<LocalModelPanel />)} />
         {/* Developer Options */}
         <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
+        <Route
+          path="notification-routing"
+          element={wrapSettingsPage(<NotificationRoutingPanel />)}
+        />
         <Route path="ai" element={wrapSettingsPage(<AIPanel />)} />
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />

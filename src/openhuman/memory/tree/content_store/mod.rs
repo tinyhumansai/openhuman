@@ -15,6 +15,7 @@
 pub mod atomic;
 pub mod compose;
 pub mod paths;
+pub mod raw;
 pub mod read;
 pub mod tags;
 
@@ -58,11 +59,30 @@ pub fn update_summary_tags(
 /// Already-existing files are skipped (immutable-body contract). Parent
 /// directories are created on demand.
 ///
+/// **Email chunks skip the disk write.** Their content already lives in
+/// the per-message raw archive at `<content_root>/raw/<source>/<ts>_<id>.md`,
+/// so a parallel copy in `<content_root>/email/<source>/<chunk_id>.md`
+/// would just duplicate bytes and clutter the Obsidian vault. We still
+/// emit a `StagedChunk` row with an empty `content_path` so the SQLite
+/// upsert proceeds — read paths fall back to the chunk's truncated SQL
+/// `content` column or to the raw archive when they need full bodies.
+///
 /// `content_root` — absolute path to the root of the content store.
 pub fn stage_chunks(content_root: &Path, chunks: &[Chunk]) -> anyhow::Result<Vec<StagedChunk>> {
+    use crate::openhuman::memory::tree::types::SourceKind;
     let mut staged = Vec::with_capacity(chunks.len());
 
     for chunk in chunks {
+        if chunk.metadata.source_kind == SourceKind::Email {
+            // Body lives in raw/<source>/<ts>_<id>.md — no chunk file.
+            staged.push(StagedChunk {
+                chunk: chunk.clone(),
+                content_path: String::new(),
+                content_sha256: String::new(),
+            });
+            continue;
+        }
+
         let source_kind = chunk.metadata.source_kind.as_str();
         let source_id = &chunk.metadata.source_id;
 

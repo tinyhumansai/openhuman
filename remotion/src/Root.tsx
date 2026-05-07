@@ -1,59 +1,82 @@
-import type { FC } from "react";
 import "./index.css";
-import { Composition } from "remotion";
+import { Composition, getStaticFiles } from "remotion";
+import { AIVideo, aiVideoSchema } from "./components/AIVideo";
+import { MascotWave } from "./components/MascotWave";
+import { MascotHi } from "./components/MascotHi";
+import { FPS, INTRO_DURATION } from "./lib/constants";
+import { getTimelinePath, loadTimelineFromFile } from "./lib/utils";
 import { Ghosty, ghostySchema } from "./Ghosty/Ghosty";
 import { GhostyIdle, ghostyIdleSchema } from "./Ghosty/GhostyIdle";
-import { GhostyRecording, ghostyRecordingSchema } from "./Ghosty/GhostyRecording";
+import {
+  GhostyRecording,
+  ghostyRecordingSchema,
+} from "./Ghosty/GhostyRecording";
 import { GhostyLoading, ghostyLoadingSchema } from "./Ghosty/GhostyLoading";
 import { GhostyPickup, ghostyPickupSchema } from "./Ghosty/GhostyPickup";
 import { Mascot, mascotSchema } from "./Mascot/Mascot";
-import { YellowMascotIdle, yellowMascotIdleSchema } from "./Mascot/yellow-MascotIdle";
-import { YellowMascotRecording, yellowMascotRecordingSchema } from "./Mascot/yellow-MascotRecording";
-import { YellowMascotLoading, yellowMascotLoadingSchema } from "./Mascot/yellow-MascotLoading";
-import { YellowMascotPickup, yellowMascotPickupSchema } from "./Mascot/yellow-MascotPickup";
-import { YellowMascotTalking, yellowMascotTalkingSchema } from "./Mascot/yellow-MascotTalking";
-import { YellowMascotThinking, yellowMascotThinkingSchema } from "./Mascot/yellow-MascotThinking";
-import { YellowMascotSleep, yellowMascotSleepSchema } from "./Mascot/yellow-MascotSleep";
+import {
+  YellowMascotIdle,
+  yellowMascotIdleSchema,
+} from "./Mascot/yellow-MascotIdle";
+import {
+  YellowMascotRecording,
+  yellowMascotRecordingSchema,
+} from "./Mascot/yellow-MascotRecording";
+import {
+  YellowMascotLoading,
+  yellowMascotLoadingSchema,
+} from "./Mascot/yellow-MascotLoading";
+import {
+  YellowMascotPickup,
+  yellowMascotPickupSchema,
+} from "./Mascot/yellow-MascotPickup";
+import {
+  YellowMascotTalking,
+  yellowMascotTalkingSchema,
+} from "./Mascot/yellow-MascotTalking";
+import {
+  YellowMascotSleep,
+  yellowMascotSleepSchema,
+} from "./Mascot/yellow-MascotSleep";
+import {
+  YellowMascotThinking,
+  yellowMascotThinkingSchema,
+} from "./Mascot/yellow-MascotThinking";
 import { MascotGreeting, mascotGreetingSchema } from "./Mascot/MascotGreeting";
+import { NewMascotListening } from "./Mascot/NewMascotListening";
+import { NewMascotLove } from "./Mascot/NewMascotLove";
+import { NewMascotCrying } from "./Mascot/NewMascotCrying";
+import { NewMascotCelebrate } from "./Mascot/NewMascotCelebrate";
+import { NewMascotLaughing } from "./Mascot/NewMascotLaughing";
+import { NewMascotWink } from "./Mascot/NewMascotWink";
+import { NewMascotBookReading } from "./Mascot/NewMascotBookReading";
+import { NewMascotHatWithBag } from "./Mascot/NewMascotHatWithBag";
+import { NewMascotCupHolding } from "./Mascot/NewMascotCupHolding";
+import { NewMascotBobateaHolding } from "./Mascot/NewMascotBobateaHolding";
+import { NewMascotSyicSmile } from "./Mascot/NewMascotSyicSmile";
+import { NewMascotSyicSmileSlow } from "./Mascot/NewMascotSyicSmileSlow";
 
-// Each <Composition> is a character variant rendered with a transparent background.
-// Render any of them as alpha MOV via:
-//   pnpm render <CompositionId>
-// e.g. `pnpm render GhostyWave` → out/GhostyWave.mov
+export const RemotionRoot: React.FC = () => {
+  const staticFiles = getStaticFiles();
+  const timelines = staticFiles
+    .filter((file) => file.name.endsWith("timeline.json"))
+    .map((file) => file.name.split("/")[1]);
 
-const SHARED = {
-  fps: 30,
-  width: 1080,
-  height: 1080,
-} as const;
+  const GHOSTY_SHARED = { fps: 30, width: 1080, height: 1080 } as const;
+  const GHOSTY_DEFAULTS = {
+    bodyColor: "#1a1a1a" as const,
+    blushColor: "#f5a3ad" as const,
+    recordingColor: "#ff3b30" as const,
+    loadingColor: "#ffffff" as const,
+  };
 
-const GHOSTY_DEFAULTS = {
-  bodyColor: "#1a1a1a" as const,
-  blushColor: "#f5a3ad" as const,
-  recordingColor: "#ff3b30" as const,
-  loadingColor: "#ffffff" as const,
-};
-
-const YELLOW_DEFAULTS = {
-  arm: "steady" as const,
-  face: "normal" as const,
-  talking: false,
-  sleeping: false,
-  thinking: false,
-  greeting: false,
-  recordingColor: "#ff3b30" as const,
-  loadingColor: "#ffffff" as const,
-};
-
-export const RemotionRoot: FC = () => {
   return (
     <>
-      {/* ── Ghosty ─────────────────────────────────────────────────────────── */}
       <Composition
         id="GhostyWave"
         component={Ghosty}
         durationInFrames={180}
-        {...SHARED}
+        {...GHOSTY_SHARED}
         schema={ghostySchema}
         defaultProps={{
           ...GHOSTY_DEFAULTS,
@@ -61,12 +84,11 @@ export const RemotionRoot: FC = () => {
           face: "normal" as const,
         }}
       />
-
       <Composition
         id="GhostyIdle"
         component={GhostyIdle}
         durationInFrames={180}
-        {...SHARED}
+        {...GHOSTY_SHARED}
         schema={ghostyIdleSchema}
         defaultProps={{
           ...GHOSTY_DEFAULTS,
@@ -74,12 +96,11 @@ export const RemotionRoot: FC = () => {
           face: "normal" as const,
         }}
       />
-
       <Composition
         id="GhostyRecording"
         component={GhostyRecording}
         durationInFrames={180}
-        {...SHARED}
+        {...GHOSTY_SHARED}
         schema={ghostyRecordingSchema}
         defaultProps={{
           ...GHOSTY_DEFAULTS,
@@ -87,12 +108,11 @@ export const RemotionRoot: FC = () => {
           face: "recording" as const,
         }}
       />
-
       <Composition
         id="GhostyLoading"
         component={GhostyLoading}
         durationInFrames={Math.round(30 * 1.4 * 3)}
-        {...SHARED}
+        {...GHOSTY_SHARED}
         schema={ghostyLoadingSchema}
         defaultProps={{
           ...GHOSTY_DEFAULTS,
@@ -100,124 +120,307 @@ export const RemotionRoot: FC = () => {
           face: "loading" as const,
         }}
       />
-
       <Composition
         id="GhostyPickup"
         component={GhostyPickup}
         durationInFrames={Math.round(30 * 4)}
-        {...SHARED}
+        {...GHOSTY_SHARED}
         schema={ghostyPickupSchema}
         defaultProps={{
-          ...GHOSTY_DEFAULTS,
-          arm: "none" as const,
+          bodyColor: "#1a1a1a",
+          blushColor: "#f5a3ad",
+          recordingColor: "#ff3b30",
+          loadingColor: "#ffffff",
+          arm: "wave" as const,
           face: "normal" as const,
         }}
       />
-
-      {/* ── Yellow Mascot ──────────────────────────────────────────────────── */}
       <Composition
         id="yellow-MascotWave2"
         component={Mascot}
         durationInFrames={180}
-        {...SHARED}
+        fps={30}
+        width={1080}
+        height={1080}
         schema={mascotSchema}
         defaultProps={{
-          ...YELLOW_DEFAULTS,
           arm: "wave" as const,
+          face: "normal" as const,
+          talking: true,
+          sleeping: false,
+          thinking: false,
+          greeting: false,
+          recordingColor: "#ff3b30",
+          loadingColor: "#ffffff",
         }}
       />
-
       <Composition
         id="yellow-MascotIdle"
         component={YellowMascotIdle}
         durationInFrames={180}
-        {...SHARED}
+        fps={30}
+        width={1080}
+        height={1080}
         schema={yellowMascotIdleSchema}
-        defaultProps={YELLOW_DEFAULTS}
+        defaultProps={{
+          arm: "steady" as const,
+          face: "normal" as const,
+          talking: false,
+          sleeping: false,
+          thinking: false,
+          greeting: false,
+          recordingColor: "#ff3b30",
+          loadingColor: "#ffffff",
+        }}
       />
-
       <Composition
         id="yellow-MascotRecording"
         component={YellowMascotRecording}
         durationInFrames={180}
-        {...SHARED}
+        fps={30}
+        width={1080}
+        height={1080}
         schema={yellowMascotRecordingSchema}
         defaultProps={{
-          ...YELLOW_DEFAULTS,
-          arm: "none" as const,
+          arm: "steady" as const,
           face: "recording" as const,
+          talking: false,
+          sleeping: false,
+          thinking: false,
+          greeting: false,
+          recordingColor: "#ff3b30",
+          loadingColor: "#ffffff",
         }}
       />
-
       <Composition
         id="yellow-MascotLoading"
         component={YellowMascotLoading}
         durationInFrames={Math.round(30 * 1.4 * 3)}
-        {...SHARED}
+        fps={30}
+        width={1080}
+        height={1080}
         schema={yellowMascotLoadingSchema}
         defaultProps={{
-          ...YELLOW_DEFAULTS,
-          arm: "none" as const,
+          arm: "steady" as const,
           face: "loading" as const,
+          talking: false,
+          sleeping: false,
+          thinking: false,
+          greeting: false,
+          recordingColor: "#ff3b30",
+          loadingColor: "#ffffff",
         }}
       />
-
       <Composition
         id="yellow-MascotPickup"
         component={YellowMascotPickup}
         durationInFrames={Math.round(30 * 4)}
-        {...SHARED}
+        fps={30}
+        width={1080}
+        height={1080}
         schema={yellowMascotPickupSchema}
-        defaultProps={YELLOW_DEFAULTS}
+        defaultProps={{
+          arm: "steady" as const,
+          face: "normal" as const,
+          talking: false,
+          sleeping: false,
+          thinking: false,
+          greeting: false,
+          recordingColor: "#ff3b30",
+          loadingColor: "#ffffff",
+        }}
       />
-
       <Composition
         id="yellow-MascotTalking"
         component={YellowMascotTalking}
         durationInFrames={180}
-        {...SHARED}
+        fps={30}
+        width={1080}
+        height={1080}
         schema={yellowMascotTalkingSchema}
         defaultProps={{
-          ...YELLOW_DEFAULTS,
+          arm: "steady" as const,
+          face: "normal" as const,
           talking: true,
+          sleeping: false,
+          thinking: false,
+          greeting: false,
+          recordingColor: "#ff3b30",
+          loadingColor: "#ffffff",
         }}
       />
-
       <Composition
         id="yellow-MascotThinking"
         component={YellowMascotThinking}
         durationInFrames={Math.round(30 * 6)}
-        {...SHARED}
+        fps={30}
+        width={1080}
+        height={1080}
         schema={yellowMascotThinkingSchema}
         defaultProps={{
-          ...YELLOW_DEFAULTS,
+          arm: "steady" as const,
+          face: "normal" as const,
+          talking: false,
+          sleeping: false,
           thinking: true,
+          greeting: false,
+          recordingColor: "#ff3b30",
+          loadingColor: "#ffffff",
         }}
       />
-
       <Composition
         id="yellow-MascotSleep"
         component={YellowMascotSleep}
         durationInFrames={Math.round(30 * 10)}
-        {...SHARED}
+        fps={30}
+        width={1080}
+        height={1080}
         schema={yellowMascotSleepSchema}
         defaultProps={{
-          ...YELLOW_DEFAULTS,
+          arm: "wave" as const,
+          face: "normal" as const,
+          talking: false,
           sleeping: true,
+          thinking: false,
+          greeting: false,
+          recordingColor: "#ff3b30",
+          loadingColor: "#ffffff",
         }}
       />
-
       <Composition
-        id="yellow-MascotGreeting"
-        component={MascotGreeting}
-        durationInFrames={Math.round(30 * 5)}
-        {...SHARED}
-        schema={mascotGreetingSchema}
-        defaultProps={{
-          ...YELLOW_DEFAULTS,
-          greeting: true,
-        }}
+        id="new-MascotLove"
+        component={NewMascotLove}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
       />
+      <Composition
+        id="new-MascotListening"
+        component={NewMascotListening}
+        durationInFrames={180}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="new-MascotCrying"
+        component={NewMascotCrying}
+        durationInFrames={300}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="new-MascotCelebrate"
+        component={NewMascotCelebrate}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="new-MascotHatWithBag"
+        component={NewMascotHatWithBag}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="new-MascotBookReading"
+        component={NewMascotBookReading}
+        durationInFrames={300}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="new-MascotWink"
+        component={NewMascotWink}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="new-MascotCupHolding"
+        component={NewMascotCupHolding}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="new-MascotBobateaHolding"
+        component={NewMascotBobateaHolding}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="new-MascotSyicSmile"
+        component={NewMascotSyicSmile}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="new-MascotSyicSmileSlow"
+        component={NewMascotSyicSmileSlow}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      <Composition
+        id="new-MascotLaughing"
+        component={NewMascotLaughing}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+      {timelines.map((storyName) => (
+        <Composition
+          id={storyName}
+          component={AIVideo}
+          fps={FPS}
+          width={1080}
+          height={1920}
+          schema={aiVideoSchema}
+          defaultProps={{
+            timeline: null,
+          }}
+          calculateMetadata={async ({ props }) => {
+            const { lengthFrames, timeline } = await loadTimelineFromFile(
+              getTimelinePath(storyName),
+            );
+
+            return {
+              durationInFrames: lengthFrames + INTRO_DURATION,
+              props: {
+                ...props,
+                timeline,
+              },
+            };
+          }}
+        />
+      ))}
     </>
   );
 };

@@ -70,20 +70,29 @@ export const RECOMMENDED_MODEL_CATALOG: ReadonlyArray<ModelDescriptor> = [
   },
   {
     id: 'gemma3:1b-it-qat',
-    size: '1.7 GB',
-    approxBytes: Math.round(1.7 * 1024 * 1024 * 1024),
-    ramHint: '≤8 GB RAM',
-    category: 'balanced',
-    note: 'default summariser',
+    size: '1.0 GB',
+    approxBytes: Math.round(1.0 * 1024 * 1024 * 1024),
+    ramHint: '≤4 GB RAM',
+    category: 'fast',
+    note: 'compact Gemma; OK on laptops without a GPU',
     roles: ['extract', 'summariser'],
   },
   {
-    id: 'llama3.1:8b',
-    size: '4.9 GB',
-    approxBytes: Math.round(4.9 * 1024 * 1024 * 1024),
-    ramHint: '≥8 GB RAM',
+    id: 'gemma3:4b',
+    size: '3.3 GB',
+    approxBytes: Math.round(3.3 * 1024 * 1024 * 1024),
+    ramHint: '≤8 GB RAM',
+    category: 'balanced',
+    note: 'default summariser — coherent abstractive output',
+    roles: ['extract', 'summariser'],
+  },
+  {
+    id: 'gemma3:12b-it-qat',
+    size: '8.9 GB',
+    approxBytes: Math.round(8.9 * 1024 * 1024 * 1024),
+    ramHint: '≥16 GB RAM',
     category: 'high quality',
-    note: 'for capable machines',
+    note: 'larger Gemma; sharper summaries on capable hardware',
     roles: ['extract', 'summariser'],
   },
   {
@@ -97,8 +106,8 @@ export const RECOMMENDED_MODEL_CATALOG: ReadonlyArray<ModelDescriptor> = [
   },
 ];
 
-export const DEFAULT_EXTRACT_MODEL = 'qwen2.5:0.5b';
-export const DEFAULT_SUMMARISER_MODEL = 'gemma3:1b-it-qat';
+export const DEFAULT_EXTRACT_MODEL = 'gemma3:4b';
+export const DEFAULT_SUMMARISER_MODEL = 'gemma3:4b';
 export const REQUIRED_EMBEDDER_MODEL = 'bge-m3';
 
 /**

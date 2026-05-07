@@ -11,6 +11,7 @@
  * Mounted once at AppShell root.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
 import {
@@ -20,9 +21,14 @@ import {
   showNativeNotification,
 } from '../lib/nativeNotifications/tauriBridge';
 import { isTauri, purgeWebviewAccount } from '../services/webviewAccountService';
-import { addAccount, removeAccount } from '../store/accountsSlice';
+import { addAccount, removeAccount, setActiveAccount } from '../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { type Account, type AccountProvider, PROVIDERS } from '../types/accounts';
+import {
+  type Account,
+  type AccountProvider,
+  type AccountStatus,
+  PROVIDERS,
+} from '../types/accounts';
 import { BILLING_DASHBOARD_URL } from '../utils/links';
 import { openUrl } from '../utils/openUrl';
 import { ProviderIcon } from './accounts/providerIcons';
@@ -389,10 +395,33 @@ function makeAccountId(): string {
   return `acct-${Date.now().toString(36)}`;
 }
 
+/** Status label + color for a given account lifecycle status. */
+function statusDisplay(status: AccountStatus): { label: string; dotClass: string } {
+  switch (status) {
+    case 'open':
+      return { label: 'Connected', dotClass: 'bg-emerald-500' };
+    case 'loading':
+      return { label: 'Loading…', dotClass: 'bg-amber-400' };
+    case 'pending':
+      return { label: 'Needs sign-in', dotClass: 'bg-amber-400' };
+    case 'timeout':
+      return { label: 'Timed out', dotClass: 'bg-red-400' };
+    case 'error':
+      return { label: 'Error', dotClass: 'bg-red-400' };
+    case 'closed':
+      return { label: 'Closed', dotClass: 'bg-stone-300' };
+  }
+}
+
 const AccountsSetupBody = ({ close }: { close: () => void }) => {
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const accountsById = useAppSelector(s => s.accounts.accounts);
   const order = useAppSelector(s => s.accounts.order);
+
+  // Track accounts added during this modal session so "Done" can navigate.
+  // Uses state (not ref) so the CTA label re-renders when toggles change.
+  const [newlyAdded, setNewlyAdded] = useState<Map<string, string>>(new Map());
 
   // Map provider → first existing account (one provider, one row).
   const accountByProvider = useMemo(() => {
@@ -416,8 +445,12 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
     if (currentlyOn) {
       const existing = accountByProvider.get(providerId);
       if (!existing) return;
-      // Best-effort tear down the webview if one was already spun up.
       void purgeWebviewAccount(existing.id).catch(() => {});
+      setNewlyAdded(prev => {
+        const next = new Map(prev);
+        next.delete(existing.id);
+        return next;
+      });
       dispatch(removeAccount({ accountId: existing.id }));
       return;
     }
@@ -428,8 +461,24 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
       createdAt: new Date().toISOString(),
       status: 'pending',
     };
+    setNewlyAdded(prev => new Map(prev).set(acct.id, label));
     dispatch(addAccount(acct));
   };
+
+  const handleDone = () => {
+    close();
+    // Navigate to /chat and activate the first newly-added account so its
+    // WebviewHost mounts and the auth flow starts immediately.
+    const firstNew = [...newlyAdded.keys()][0];
+    if (firstNew) {
+      dispatch(setActiveAccount(firstNew));
+      navigate('/chat');
+    }
+  };
+
+  // Dynamic CTA based on what's been toggled on
+  const firstNewLabel = [...newlyAdded.values()][0];
+  const doneLabel = firstNewLabel ? `Continue with ${firstNewLabel} sign-in` : 'Done';
 
   return (
     <div className="space-y-4 text-sm text-stone-700">
@@ -440,7 +489,9 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
       </p>
       <div className="space-y-2">
         {providerDescriptors.map(p => {
-          const on = accountByProvider.has(p.id);
+          const acct = accountByProvider.get(p.id);
+          const on = !!acct;
+          const status = acct?.status;
           return (
             <div
               key={p.id}
@@ -448,7 +499,16 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
               <ProviderIcon provider={p.id} className="h-5 w-5 flex-none" />
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium text-stone-900">{p.label}</div>
-                <p className="line-clamp-1 text-xs text-stone-500">{p.description}</p>
+                {on && status ? (
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`inline-block h-1.5 w-1.5 rounded-full ${statusDisplay(status).dotClass}`}
+                    />
+                    <span className="text-xs text-stone-500">{statusDisplay(status).label}</span>
+                  </div>
+                ) : (
+                  <p className="line-clamp-1 text-xs text-stone-500">{p.description}</p>
+                )}
               </div>
               <button
                 type="button"
@@ -470,10 +530,10 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
         })}
       </div>
       <p className="text-xs text-stone-400">
-        Toggling on creates a private webview here. You'll sign in the first time you open it from
-        the sidebar — credentials stay on your device.
+        Toggling on adds a private webview. You'll sign in the first time you open it — credentials
+        stay on your device.
       </p>
-      <DoneFooter close={close} />
+      <DoneFooter close={close} onDone={handleDone} doneLabel={doneLabel} />
     </div>
   );
 };
@@ -482,9 +542,13 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
 
 const DoneFooter = ({
   close,
+  onDone,
+  doneLabel = 'Done',
   skipLabel = 'Skip for now',
 }: {
   close: () => void;
+  onDone?: () => void;
+  doneLabel?: string;
   skipLabel?: string;
 }) => (
   <div className="flex items-center justify-between gap-3 pt-1">
@@ -496,9 +560,9 @@ const DoneFooter = ({
     </button>
     <button
       type="button"
-      onClick={close}
+      onClick={onDone ?? close}
       className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50">
-      Done
+      {doneLabel}
     </button>
   </div>
 );

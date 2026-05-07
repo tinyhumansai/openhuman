@@ -1,6 +1,11 @@
 import type { Step } from 'react-joyride';
 import type { NavigateFunction } from 'react-router-dom';
 
+import { TOUR_WELCOME_MESSAGE } from '../../constants/onboardingChat';
+import { store } from '../../store';
+import { addMessageLocal, createNewThread, setSelectedThread } from '../../store/threadSlice';
+import type { ThreadMessage } from '../../types/thread';
+
 /**
  * Polls via setTimeout until `[data-walkthrough="<selector>"]` appears in the
  * DOM, then resolves. Rejects after `timeout` ms (default 3000).
@@ -38,7 +43,7 @@ export function waitForTarget(selector: string, timeout = 3000): Promise<void> {
 }
 
 /**
- * Factory that produces the 9-step walkthrough sequence.
+ * Factory that produces the 10-step walkthrough sequence.
  *
  * Steps that navigate to a different page receive a `before` async hook that
  * calls `navigate(path)` and then waits for the target element to appear in
@@ -159,13 +164,36 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
       skipBeacon: true,
     },
 
-    // ── Step 9 — /home (already there) ───────────────────────────────────
+    // ── Step 9 — /chat (pre-seeded welcome message) ───────────────────────
     {
-      target: '[data-walkthrough="tab-settings"]',
-      title: "That's the tour!",
-      content: "You're all set! Go explore. Restart this tour anytime from Settings.",
-      placement: 'top',
+      target: '[data-walkthrough="chat-agent-panel"]',
+      title: "You're all set!",
+      content:
+        'Your assistant left you a welcome note — this is your space to chat, ask questions, or brainstorm. Have fun!',
+      placement: 'bottom',
       skipBeacon: true,
+      before: async () => {
+        try {
+          const thread = await store.dispatch(createNewThread()).unwrap();
+          const welcomeMessage: ThreadMessage = {
+            id: `msg_${crypto.randomUUID()}`,
+            content: TOUR_WELCOME_MESSAGE,
+            type: 'text',
+            sender: 'agent',
+            createdAt: new Date().toISOString(),
+            extraMetadata: {},
+          };
+          await store
+            .dispatch(addMessageLocal({ threadId: thread.id, message: welcomeMessage }))
+            .unwrap();
+          store.dispatch(setSelectedThread(thread.id));
+          navigate('/chat');
+        } catch (err) {
+          console.debug('[walkthrough] step-9 before hook failed, falling back to /chat', err);
+          navigate('/chat');
+        }
+        await waitForTarget('chat-agent-panel');
+      },
     },
   ];
 }

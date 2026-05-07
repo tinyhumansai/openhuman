@@ -327,7 +327,10 @@ pub(crate) fn upsert_staged_chunks_tx(
     )?;
     for s in staged {
         let chunk = &s.chunk;
-        // Store a ≤500-char preview in the `content` column; full body is on disk.
+        // SQL `content` column always carries a ≤500-char preview now
+        // — the full body either lives at `content_path` (chat /
+        // document) or is reconstructed from `raw_refs_json` byte
+        // ranges in the raw archive (email). See `read_chunk_body`.
         let preview: String = chunk.content.chars().take(500).collect();
         stmt.execute(params![
             chunk.id,
@@ -653,7 +656,71 @@ pub(crate) fn with_connection<T>(
     // fall back to the `content` column for those rows.
     add_column_if_missing(&conn, "mem_tree_summaries", "content_path", "TEXT")?;
     add_column_if_missing(&conn, "mem_tree_summaries", "content_sha256", "TEXT")?;
+    // Raw-archive pointer column. JSON array of {path, start, end} —
+    // used by chunks whose body comes from one or more files under
+    // `<content_root>/raw/...` (today: email). When set, `read_chunk_body`
+    // reads + concatenates those byte ranges instead of fetching from
+    // disk via `content_path` or falling back to the SQL `content`
+    // preview. Nullable so legacy chunks keep working unchanged.
+    add_column_if_missing(&conn, "mem_tree_chunks", "raw_refs_json", "TEXT")?;
     f(&conn)
+}
+
+/// One pointer into the raw archive. A chunk's body is reconstructed by
+/// reading each [`RawRef`] in order and joining with `"\n\n"`.
+///
+/// `start` / `end` are byte offsets into the raw `.md` file. `end =
+/// None` means "read to end of file". Both default to "the whole
+/// file" (`start = 0`, `end = None`) for the common one-message-one-chunk
+/// path; oversize-message chunks get explicit ranges so each chunk
+/// reconstructs its sub-slice.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct RawRef {
+    /// Forward-slash relative path under `<content_root>/`,
+    /// e.g. `"raw/gmail-stevent95-at-gmail-dot-com/1700000_msg-id.md"`.
+    pub path: String,
+    #[serde(default)]
+    pub start: usize,
+    #[serde(default)]
+    pub end: Option<usize>,
+}
+
+/// Stash a list of [`RawRef`] entries on a chunk row. Replaces any
+/// previous value. Used by ingest pipelines that mirror their bytes
+/// into `<content_root>/raw/...` so reads can skip the SQL preview
+/// path and pull the full body straight from the archive.
+pub fn set_chunk_raw_refs(config: &Config, chunk_id: &str, refs: &[RawRef]) -> Result<()> {
+    let json = serde_json::to_string(refs).context("serialize raw_refs")?;
+    with_connection(config, |conn| {
+        conn.execute(
+            "UPDATE mem_tree_chunks SET raw_refs_json = ?1 WHERE id = ?2",
+            params![json, chunk_id],
+        )?;
+        Ok(())
+    })
+}
+
+/// Return the raw-archive pointers stored in SQLite for `chunk_id`,
+/// or `None` if no `raw_refs_json` was recorded.
+pub fn get_chunk_raw_refs(config: &Config, chunk_id: &str) -> Result<Option<Vec<RawRef>>> {
+    with_connection(config, |conn| {
+        let row = conn
+            .query_row(
+                "SELECT raw_refs_json FROM mem_tree_chunks WHERE id = ?1",
+                params![chunk_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        match row {
+            Some(json) if !json.is_empty() => {
+                let refs: Vec<RawRef> =
+                    serde_json::from_str(&json).context("deserialize raw_refs_json")?;
+                Ok(Some(refs))
+            }
+            _ => Ok(None),
+        }
+    })
 }
 
 /// Return both `content_path` and `content_sha256` stored in SQLite for `chunk_id`.

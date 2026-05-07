@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
@@ -7,8 +7,13 @@ import PrivacyPanel from '../PrivacyPanel';
 
 vi.mock('../../../../utils/tauriCommands/aboutApp', () => ({ listCapabilities: vi.fn() }));
 
+const setMeetAutoOrchestratorHandoffMock = vi.fn();
 vi.mock('../../../../providers/CoreStateProvider', () => ({
-  useCoreState: () => ({ snapshot: { analyticsEnabled: false }, setAnalyticsEnabled: vi.fn() }),
+  useCoreState: () => ({
+    snapshot: { analyticsEnabled: false, meetAutoOrchestratorHandoff: false },
+    setAnalyticsEnabled: vi.fn(),
+    setMeetAutoOrchestratorHandoff: (v: boolean) => setMeetAutoOrchestratorHandoffMock(v),
+  }),
 }));
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
@@ -88,7 +93,21 @@ describe('PrivacyPanel', () => {
       expect(screen.getByTestId('privacy-load-error')).toBeTruthy();
     });
     expect(screen.queryByTestId('privacy-capability-list')).toBeNull();
-    // Analytics toggle still rendered
-    expect(screen.getByRole('switch')).toBeTruthy();
+    // Analytics + meet-handoff toggles still rendered
+    expect(screen.getAllByRole('switch').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('flips the meet auto-handoff toggle from OFF to ON when clicked (#1299)', async () => {
+    vi.mocked(listCapabilities).mockResolvedValue([]);
+    renderWithProviders(<PrivacyPanel />);
+
+    const toggle = await screen.findByTestId('privacy-meet-handoff-toggle');
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(setMeetAutoOrchestratorHandoffMock).toHaveBeenCalledWith(true);
+    });
   });
 });

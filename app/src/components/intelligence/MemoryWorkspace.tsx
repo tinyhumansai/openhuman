@@ -1,309 +1,483 @@
 /**
- * Two-pane memory_tree browser with overlay detail.
+ * Obsidian-style graph view for the memory tree, plus controls to drive
+ * the ingestion pipeline manually.
  *
- *   ┌─────────────┬──────────────────────────────────────┐
- *   │  NAVIGATOR  │  RESULT LIST                         │  ← default 2-pane
- *   │  240px      │  flex                                │
- *   └─────────────┴──────────────────────────────────────┘
+ *   ┌───────────────────────────────────────────────────────┐
+ *   │  Memory Sync Connections (counts + freshness pills)   │
+ *   └───────────────────────────────────────────────────────┘
+ *   ┌───────────────────────────────────────────────────────┐
+ *   │  Composio connections  · [Sync] per row               │
+ *   └───────────────────────────────────────────────────────┘
+ *   ┌───────────────────────────────────────────────────────┐
+ *   │   [ View vault in Obsidian ]   [ Build summary trees ]│
+ *   └───────────────────────────────────────────────────────┘
+ *   ┌───────────────────────────────────────────────────────┐
+ *   │           Force-directed summary graph (SVG)          │
+ *   └───────────────────────────────────────────────────────┘
  *
- *   ┌──────────────────────────────────────────────────[✕]┐
- *   │  CHUNK DETAIL (full card width)                     │  ← when chunk selected
- *   │  Subject · sender · entities · body · score         │
- *   └─────────────────────────────────────────────────────┘
+ * `Sync` (per provider) calls `composio.sync` which downloads new raw
+ * items from the toolkit (Gmail messages, Slack messages, …) and
+ * writes them into the memory chunk store.
  *
- * ResultList finally gets ~970px to breathe (multi-line rows with
- * sender, time, entity chips, preview). When a chunk is selected the
- * detail layer absolute-positions over the 2-pane base so list scroll
- * state is preserved on close. Esc + close button + (later) backdrop
- * click all dismiss.
- *
- * Talks to the real `openhuman.memory_tree_*` JSON-RPC surface via the
- * `utils/tauriCommands/memoryTree` wrappers.
+ * `Build summary trees` calls `memory_tree.flush_now` which enqueues a
+ * `flush_stale` job with `max_age_secs=0` so every L0 buffer
+ * force-seals immediately. The seal worker runs each through the
+ * configured cloud or local LLM and the new summary nodes appear in
+ * the graph after the worker drains.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { ToastNotification } from '../../types/intelligence';
+import { openUrl } from '../../utils/openUrl';
 import {
-  type Chunk,
-  type ChunkFilter,
-  type EntityRef,
-  memoryTreeChunksForEntity,
-  memoryTreeListChunks,
-  memoryTreeListSources,
-  memoryTreeTopEntities,
-  type Source,
+  type GraphExportResponse,
+  type GraphMode,
+  memoryTreeFlushNow,
+  memoryTreeGraphExport,
+  memoryTreeResetTree,
+  memoryTreeWipeAll,
 } from '../../utils/tauriCommands';
-import './memory-workspace.css';
-import { MemoryChunkDetail } from './MemoryChunkDetail';
-import { MemoryEmptyPlaceholder } from './MemoryEmptyPlaceholder';
-import { MemoryNavigator, type NavigatorSelection } from './MemoryNavigator';
-import { MemoryResultList } from './MemoryResultList';
-import { MemorySyncConnections } from './MemorySyncConnections';
+import { MemoryGraph } from './MemoryGraph';
+import { MemorySources } from './MemorySources';
 
 interface MemoryWorkspaceProps {
   onToast?: (toast: Omit<ToastNotification, 'id'>) => void;
 }
 
-export function MemoryWorkspace({ onToast: _onToast }: MemoryWorkspaceProps) {
-  const [allChunks, setAllChunks] = useState<Chunk[]>([]);
-  const [sources, setSources] = useState<Source[]>([]);
-  const [topPeople, setTopPeople] = useState<EntityRef[]>([]);
-  const [topTopics, setTopTopics] = useState<EntityRef[]>([]);
-  const [selectedChunkId, setSelectedChunkId] = useState<string | null>(null);
-  const [selection, setSelection] = useState<NavigatorSelection>({ sourceIds: [], entityIds: [] });
-  const [searchQuery, setSearchQuery] = useState('');
+/**
+ * Toolkits that have a memory-tree-ingesting sync implementation on the
+ * Rust side. Only these get a Sync button — clicking it on a toolkit
+ * that lacks an ingest path would just churn the worker without
+ * adding chunks to the memory tree.
+ *
+ * Source of truth: providers under
+ * `src/openhuman/composio/providers/<toolkit>/` that call
+ * `ingest_page_into_memory_tree`. Today that's gmail. Add a slug here
+ * when a new provider lands a memory-tree ingest path.
+ */
+const SYNCABLE_TOOLKITS: ReadonlySet<string> = new Set(['gmail']);
 
-  // Initial data load.
-  useEffect(() => {
-    console.debug('[ui-flow][memory-workspace] initial load (2-pane + overlay)');
-    let cancelled = false;
-    const run = async () => {
-      try {
-        const [chunkResult, srcs, people, anyEntities] = await Promise.all([
-          memoryTreeListChunks({ limit: 500 }),
-          memoryTreeListSources(),
-          memoryTreeTopEntities('person', 12),
-          memoryTreeTopEntities(undefined, 40),
-        ]);
-        if (cancelled) return;
-        const topicKinds = new Set(['technology', 'product', 'event']);
-        const topics = anyEntities.filter(e => topicKinds.has(e.kind)).slice(0, 12);
-        setAllChunks(chunkResult.chunks);
-        setSources(srcs);
-        setTopPeople(people);
-        setTopTopics(topics);
-      } catch (err) {
-        if (cancelled) return;
-        // Initial-load failure leaves the panes empty rather than
-        // half-populated with stale state. The console line lets us
-        // diagnose without blocking the user behind a modal — they can
-        // still navigate the tab and retry by reloading.
-        console.error('[ui-flow][memory-workspace] initial load failed', err);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Resolve entity selection → set of chunk ids via the dedicated
-  // `memory_tree_chunks_for_entity` RPC. The chunks' `tags` column only
-  // stores high-level category tags (`["gmail", "ingested"]`), NOT
-  // per-chunk entity refs — those live in `mem_tree_entity_index`.
-  // Calling the inverse-index RPC gives us the real chunk ids that
-  // mention each selected entity. Union across the selection (chunk
-  // mentions ANY of the selected entities is enough — same semantics
-  // as a multi-select OR filter in Mail.app's people sidebar).
-  const [entityChunkIds, setEntityChunkIds] = useState<Set<string> | null>(null);
-  useEffect(() => {
-    console.debug(
-      '[ui-flow][memory-workspace] entity-effect fire entityIds=%o',
-      selection.entityIds
-    );
-    let cancelled = false;
-    const run = async () => {
-      if (selection.entityIds.length === 0) {
-        setEntityChunkIds(null);
-        return;
-      }
-      try {
-        const results = await Promise.all(
-          selection.entityIds.map(id => memoryTreeChunksForEntity(id))
-        );
-        if (cancelled) {
-          console.debug('[ui-flow][memory-workspace] entity-effect cancelled before commit');
-          return;
-        }
-        const union = new Set<string>();
-        for (const ids of results) for (const id of ids) union.add(id);
-        console.debug(
-          '[ui-flow][memory-workspace] entity-effect commit set_size=%d sample=%o',
-          union.size,
-          [...union].slice(0, 3)
-        );
-        setEntityChunkIds(union);
-      } catch (err) {
-        if (cancelled) return;
-        // If the inverse-index lookup rejects, do NOT keep filtering by
-        // the previously-resolved set — that would leave the result list
-        // showing chunks tied to the old selection while the user thinks
-        // they've moved on. Reset to "no entity filter" so they at least
-        // see the unfiltered timeline; the navigator selection is left
-        // alone so they can retry by reselecting.
-        console.error('[ui-flow][memory-workspace] entity-effect lookup failed', err);
-        setEntityChunkIds(null);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [selection.entityIds]);
-
-  // Apply navigator selection + search.
-  const filteredChunks = useMemo<Chunk[]>(() => {
-    const filter: ChunkFilter = {
-      source_ids: selection.sourceIds.length > 0 ? selection.sourceIds : undefined,
-      query: searchQuery.trim() || undefined,
-    };
-    const out = allChunks.filter(c => {
-      if (filter.source_ids && !filter.source_ids.includes(c.source_id)) return false;
-      if (entityChunkIds && !entityChunkIds.has(c.id)) return false;
-      if (filter.query) {
-        const needle = filter.query.toLowerCase();
-        const hay = `${c.content_preview ?? ''} ${c.tags.join(' ')}`.toLowerCase();
-        if (!hay.includes(needle)) return false;
-      }
-      return true;
-    });
-    console.debug(
-      '[ui-flow][memory-workspace] filteredChunks recompute all=%d entitySet=%s out=%d',
-      allChunks.length,
-      entityChunkIds ? `Set(${entityChunkIds.size})` : 'null',
-      out.length
-    );
-    return out;
-  }, [allChunks, selection.sourceIds, entityChunkIds, searchQuery]);
-
-  const selectedChunk = useMemo(
-    () => allChunks.find(c => c.id === selectedChunkId) ?? null,
-    [allChunks, selectedChunkId]
-  );
-
-  const handleSelectChunk = useCallback((id: string) => {
-    console.debug('[ui-flow][memory-workspace] open chunk overlay', id);
-    setSelectedChunkId(id);
-  }, []);
-
-  const handleCloseDetail = useCallback(() => {
-    setSelectedChunkId(null);
-  }, []);
-
-  const handleSelectionChange = useCallback((next: NavigatorSelection) => {
-    setSelection(next);
-  }, []);
-
-  const handleSearchChange = useCallback((q: string) => {
-    setSearchQuery(q);
-  }, []);
-
-  const handleSelectEntity = useCallback((entity: EntityRef) => {
-    console.debug('[ui-flow][memory-workspace] entity click → activate lens', entity.entity_id);
-    setSelection(prev => {
-      if (prev.entityIds.includes(entity.entity_id)) return prev;
-      return { ...prev, entityIds: [...prev.entityIds, entity.entity_id] };
-    });
-    // Closing detail surfaces the filtered list immediately.
-    setSelectedChunkId(null);
-  }, []);
-
-  // Esc key dismisses the detail overlay.
-  useEffect(() => {
-    if (!selectedChunkId) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        handleCloseDetail();
-      }
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [selectedChunkId, handleCloseDetail]);
-
-  const isEmpty = allChunks.length === 0;
-
-  if (isEmpty) {
-    return (
-      <div className="space-y-4">
-        <MemorySyncConnections pollIntervalMs={5000} />
-        <div className="flex min-h-[40vh] items-center justify-center">
-          <MemoryEmptyPlaceholder />
-        </div>
-      </div>
-    );
+/**
+ * Trigger the `obsidian://open?path=<abs>` deep link via the OS shell.
+ *
+ * We deliberately route through `openUrl` (which delegates to
+ * `tauri-plugin-opener`) rather than setting `window.location.href`.
+ * The webview-host intent handler intercepts in-app navigations and
+ * does NOT punt custom schemes to the OS, so a direct
+ * `window.location.href = "obsidian://…"` either no-ops or navigates
+ * the React app away from the Memory tab. The opener plugin hands the
+ * URL straight to the system handler so Obsidian launches as a
+ * separate process.
+ */
+async function openVaultInObsidian(contentRootAbs: string): Promise<void> {
+  const url = `obsidian://open?path=${encodeURIComponent(contentRootAbs)}`;
+  console.debug('[ui-flow][memory-workspace] open vault in Obsidian url=%s', url);
+  try {
+    await openUrl(url);
+  } catch (err) {
+    console.error('[ui-flow][memory-workspace] openUrl failed', err);
   }
+}
+
+export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
+  const [graph, setGraph] = useState<GraphExportResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [building, setBuilding] = useState(false);
+  const [wiping, setWiping] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [mode, setMode] = useState<GraphMode>('tree');
+
+  // (Re)load the graph whenever the mode toggle flips. The Memory
+  // sources panel manages its own polling.
+  useEffect(() => {
+    console.debug('[ui-flow][memory-workspace] graph load: entry mode=%s', mode);
+    let cancelled = false;
+    setError(null);
+    setGraph(null);
+    void (async () => {
+      try {
+        const resp = await memoryTreeGraphExport(mode);
+        if (cancelled) return;
+        console.debug(
+          '[ui-flow][memory-workspace] graph load: exit mode=%s n=%d edges=%d',
+          mode,
+          resp.nodes.length,
+          resp.edges.length
+        );
+        setGraph(resp);
+      } catch (err) {
+        if (cancelled) return;
+        console.error('[ui-flow][memory-workspace] graph load failed', err);
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
+
+  const handleWipe = useCallback(async () => {
+    // Two-step confirm so accidental clicks can't nuke a workspace.
+    const ok = window.confirm(
+      'This deletes every chunk, summary, and raw markdown file in this workspace. ' +
+        'Re-syncing afterwards will re-ingest from upstream. Continue?'
+    );
+    if (!ok) return;
+    setWiping(true);
+    try {
+      const resp = await memoryTreeWipeAll();
+      onToast?.({
+        type: 'success',
+        title: 'Memory wiped',
+        message:
+          `Removed ${resp.rows_deleted.toLocaleString()} row(s) and ` +
+          `${resp.dirs_removed.length} folder(s); cleared ` +
+          `${resp.sync_state_cleared.toLocaleString()} sync-state cursor(s). ` +
+          `Click Sync on a connected source to repopulate.`,
+      });
+      // Re-fetch the (now empty) graph immediately so the canvas
+      // reflects the wipe instead of staying frozen on stale data.
+      try {
+        const next = await memoryTreeGraphExport(mode);
+        setGraph(next);
+      } catch (err) {
+        console.warn('[ui-flow][memory-workspace] post-wipe graph refresh failed', err);
+      }
+    } catch (err) {
+      console.error('[ui-flow][memory-workspace] wipe_all failed', err);
+      onToast?.({
+        type: 'error',
+        title: 'Reset failed',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setWiping(false);
+    }
+  }, [onToast, mode]);
+
+  const handleResetTree = useCallback(async () => {
+    const ok = window.confirm(
+      'This deletes every summary, buffer, and tree job — but keeps chunks ' +
+        'and raw markdown intact. Every chunk gets re-queued through extraction ' +
+        'and the tree rebuilds from scratch on the *current* summariser. ' +
+        'No upstream re-fetch. Continue?'
+    );
+    if (!ok) return;
+    setResetting(true);
+    try {
+      const resp = await memoryTreeResetTree();
+      onToast?.({
+        type: 'success',
+        title: 'Memory tree rebuilding',
+        message:
+          `Cleared ${resp.tree_rows_deleted.toLocaleString()} tree row(s); ` +
+          `requeued ${resp.chunks_requeued.toLocaleString()} chunk(s) ` +
+          `(${resp.jobs_enqueued.toLocaleString()} extract jobs). ` +
+          `The graph will fill back in as the worker drains.`,
+      });
+      // Stagger the graph re-fetch a bit longer than build_trees does —
+      // reset_tree starts from extract jobs (slower than seal-only).
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const next = await memoryTreeGraphExport(mode);
+            setGraph(next);
+          } catch (err) {
+            console.warn('[ui-flow][memory-workspace] post-reset graph refresh failed', err);
+          }
+        })();
+      }, 8000);
+    } catch (err) {
+      console.error('[ui-flow][memory-workspace] reset_tree failed', err);
+      onToast?.({
+        type: 'error',
+        title: 'Could not reset memory tree',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setResetting(false);
+    }
+  }, [onToast, mode]);
+
+  const handleBuildTrees = useCallback(async () => {
+    setBuilding(true);
+    try {
+      const resp = await memoryTreeFlushNow();
+      onToast?.({
+        type: resp.enqueued ? 'success' : 'info',
+        title: resp.enqueued
+          ? `Building summary trees · ${resp.stale_buffers} buffer(s)`
+          : 'Build already in progress',
+        message: resp.enqueued
+          ? 'Force-sealing every L0 buffer through the configured AI summariser. The graph will refresh once the worker drains.'
+          : 'A flush job for today is already queued — no new work needed.',
+      });
+      // Re-fetch the graph after a short delay so newly-sealed
+      // summaries appear in the view. The seal cascade runs async on
+      // the worker pool; 4s is enough for the typical case without
+      // making the UI feel stuck.
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const next = await memoryTreeGraphExport(mode);
+            setGraph(next);
+          } catch (err) {
+            console.warn('[ui-flow][memory-workspace] post-build graph refresh failed', err);
+          }
+        })();
+      }, 4000);
+    } catch (err) {
+      console.error('[ui-flow][memory-workspace] flush_now failed', err);
+      onToast?.({
+        type: 'error',
+        title: 'Could not build summary trees',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBuilding(false);
+    }
+  }, [onToast, mode]);
 
   return (
-    <div className="space-y-4">
-      <MemorySyncConnections pollIntervalMs={5000} />
-      <section
-        className="memory-workspace-root relative flex"
-        style={{ height: 'calc(100vh - 16rem)' }}
-        data-testid="memory-workspace">
-        {/* 2-pane base */}
-        <aside
-          className="w-60 shrink-0 overflow-y-auto border-r border-stone-100 bg-stone-50/60"
-          aria-label="Memory navigator">
-          <MemoryNavigator
-            chunks={allChunks}
-            sources={sources}
-            topPeople={topPeople}
-            topTopics={topTopics}
-            selection={selection}
-            onSelectionChange={handleSelectionChange}
-            searchQuery={searchQuery}
-            onSearchChange={handleSearchChange}
-          />
-        </aside>
+    <div className="space-y-4" data-testid="memory-workspace">
+      <MemorySources syncableToolkits={SYNCABLE_TOOLKITS} pollIntervalMs={5000} onToast={onToast} />
 
-        <main className="flex-1 overflow-y-auto bg-white" aria-label="Result list">
-          <MemoryResultList
-            chunks={filteredChunks}
-            selectedChunkId={selectedChunkId}
-            onSelectChunk={handleSelectChunk}
-          />
-        </main>
+      <div
+        className="flex flex-wrap items-center justify-between gap-3"
+        data-testid="memory-actions">
+        <ModeToggle mode={mode} onChange={setMode} />
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleWipe}
+            disabled={wiping || building}
+            data-testid="memory-wipe-all"
+            className="inline-flex items-center gap-2 rounded-lg
+                       border border-coral-200 bg-white px-4 py-2 text-sm font-semibold
+                       text-coral-700 shadow-sm transition-colors hover:bg-coral-50
+                       disabled:cursor-not-allowed disabled:opacity-50
+                       focus:outline-none focus:ring-2 focus:ring-coral-200"
+            title="Delete every chunk, summary, and raw file in this workspace">
+            {wiping ? (
+              <>
+                <Spinner /> Resetting…
+              </>
+            ) : (
+              <>
+                <TrashIcon /> Reset memory
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={handleResetTree}
+            disabled={resetting || wiping || building}
+            data-testid="memory-reset-tree"
+            className="inline-flex items-center gap-2 rounded-lg
+                       border border-amber-300 bg-white px-4 py-2 text-sm font-semibold
+                       text-amber-800 shadow-sm transition-colors hover:bg-amber-50
+                       disabled:cursor-not-allowed disabled:opacity-50
+                       focus:outline-none focus:ring-2 focus:ring-amber-200"
+            title="Wipe summaries + buffers and re-summarise existing chunks (no upstream re-fetch)">
+            {resetting ? (
+              <>
+                <Spinner /> Rebuilding…
+              </>
+            ) : (
+              <>
+                <RefreshIcon /> Reset memory tree
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={handleBuildTrees}
+            disabled={building}
+            data-testid="memory-build-trees"
+            className="inline-flex items-center gap-2 rounded-lg
+                       bg-primary-500 px-4 py-2 text-sm font-semibold text-white
+                       shadow-sm transition-colors hover:bg-primary-600
+                       disabled:cursor-not-allowed disabled:opacity-50
+                       focus:outline-none focus:ring-2 focus:ring-primary-200">
+            {building ? (
+              <>
+                <Spinner /> Building…
+              </>
+            ) : (
+              <>
+                <BrainIcon /> Build summary trees
+              </>
+            )}
+          </button>
+          {graph && (
+            <button
+              type="button"
+              onClick={() => void openVaultInObsidian(graph.content_root_abs)}
+              data-testid="memory-open-in-obsidian"
+              className="inline-flex items-center gap-2 rounded-lg
+                         bg-violet-500 px-4 py-2 text-sm font-semibold text-white
+                         shadow-sm transition-colors hover:bg-violet-600
+                         focus:outline-none focus:ring-2 focus:ring-violet-300"
+              title={`obsidian://open?path=${graph.content_root_abs}`}>
+              <ExternalLinkIcon />
+              View vault in Obsidian
+            </button>
+          )}
+        </div>
+      </div>
 
-        {/* Detail overlay — fills the entire workspace card */}
-        {selectedChunk && (
-          <div
-            className="absolute inset-0 z-10 flex flex-col bg-canvas-50/95 backdrop-blur-sm
-                     duration-150 motion-safe:animate-fade-in"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Chunk detail">
-            <header
-              className="sticky top-0 z-10 flex items-center justify-between gap-4
-                       border-b border-stone-100 bg-white/90 px-6 py-3 backdrop-blur">
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-mono text-xs text-stone-500">
-                  <span className="text-stone-400">{selectedChunk.source_kind}</span>
-                  {' · '}
-                  {selectedChunk.source_id}
-                </p>
-              </div>
-              <button
-                onClick={handleCloseDetail}
-                aria-label="Close detail (Esc)"
-                title="Close (Esc)"
-                className="rounded-lg p-1.5 text-stone-500 transition-colors
-                         hover:bg-stone-100 hover:text-stone-900
-                         focus:outline-none focus:ring-2 focus:ring-ocean-200">
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true">
-                  <path d="M18 6L6 18" />
-                  <path d="M6 6l12 12" />
-                </svg>
-              </button>
-            </header>
-
-            <div className="flex-1 overflow-y-auto">
-              <div className="mx-auto max-w-4xl px-8 py-6">
-                <MemoryChunkDetail chunk={selectedChunk} onSelectEntity={handleSelectEntity} />
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
+      {error ? (
+        <div className="rounded-lg border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-800">
+          Failed to load memory graph: {error}
+        </div>
+      ) : !graph ? (
+        <div className="flex h-[640px] items-center justify-center rounded-lg border border-stone-100 bg-stone-50/40 text-sm text-stone-500">
+          Loading graph…
+        </div>
+      ) : (
+        <MemoryGraph
+          nodes={graph.nodes}
+          edges={graph.edges}
+          mode={mode}
+          contentRootAbs={graph.content_root_abs}
+        />
+      )}
     </div>
+  );
+}
+
+interface ModeToggleProps {
+  mode: GraphMode;
+  onChange: (next: GraphMode) => void;
+}
+
+function ModeToggle({ mode, onChange }: ModeToggleProps) {
+  const baseBtn =
+    'px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-200';
+  const active = 'bg-primary-500 text-white shadow-sm';
+  const idle = 'bg-white text-stone-600 hover:bg-stone-50';
+  return (
+    <div
+      className="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-stone-50 p-1"
+      role="tablist"
+      aria-label="Graph view mode"
+      data-testid="memory-graph-mode-toggle">
+      <button
+        type="button"
+        onClick={() => onChange('tree')}
+        className={`${baseBtn} ${mode === 'tree' ? active : idle}`}
+        role="tab"
+        aria-selected={mode === 'tree'}
+        data-testid="memory-graph-mode-tree">
+        Trees
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange('contacts')}
+        className={`${baseBtn} ${mode === 'contacts' ? active : idle}`}
+        role="tab"
+        aria-selected={mode === 'contacts'}
+        data-testid="memory-graph-mode-contacts">
+        Contacts
+      </button>
+    </div>
+  );
+}
+
+// ── Tiny inline icons (no extra dep) ────────────────────────────────────
+
+function RefreshIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M21 12a9 9 0 11-3-6.7" />
+      <path d="M21 4v5h-5" />
+      <path d="M3 12a9 9 0 003 6.7" />
+      <path d="M3 20v-5h5" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  );
+}
+
+function BrainIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M9 4.5a2.5 2.5 0 015 0v15a2.5 2.5 0 01-5 0" />
+      <path d="M9 4.5A2.5 2.5 0 116.5 7M9 19.5A2.5 2.5 0 116.5 17" />
+      <path d="M14 4.5A2.5 2.5 0 1117.5 7M14 19.5A2.5 2.5 0 1017.5 17" />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M14 3h7v7" />
+      <path d="M10 14L21 3" />
+      <path d="M21 14v7H3V3h7" />
+    </svg>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg
+      className="animate-spin"
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true">
+      <circle cx="12" cy="12" r="9" opacity="0.25" />
+      <path d="M21 12a9 9 0 00-9-9" />
+    </svg>
   );
 }

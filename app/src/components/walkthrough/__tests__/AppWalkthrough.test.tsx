@@ -28,6 +28,18 @@ import { createWalkthroughSteps, waitForTarget } from '../walkthroughSteps';
 
 import WalkthroughTooltip from '../WalkthroughTooltip';
 
+vi.mock('../../../store', () => ({
+  store: {
+    dispatch: vi.fn(() => ({ unwrap: vi.fn().mockResolvedValue({ id: 'thread-welcome-123' }) })),
+  },
+}));
+
+vi.mock('../../../store/threadSlice', () => ({
+  createNewThread: vi.fn(() => ({ type: 'thread/createNewThread' })),
+  setSelectedThread: vi.fn((id: string) => ({ type: 'thread/setSelectedThread', payload: id })),
+  addMessageLocal: vi.fn(() => ({ type: 'thread/addMessageLocal' })),
+}));
+
 // ── Mock react-joyride so tests don't need a real DOM with
 //    positioned elements for each step target. ─────────────────────────────
 //    The mock captures the `onEvent` callback so individual tests can
@@ -519,11 +531,11 @@ describe('createWalkthroughSteps', () => {
     expect(steps[0].target).toBe('[data-walkthrough="home-card"]');
   });
 
-  it('last step targets tab-settings', () => {
+  it('last step targets chat-agent-panel', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
     const last = steps[steps.length - 1];
-    expect(last.target).toBe('[data-walkthrough="tab-settings"]');
+    expect(last.target).toBe('[data-walkthrough="chat-agent-panel"]');
   });
 
   it('all steps have a title and content', () => {
@@ -539,8 +551,8 @@ describe('createWalkthroughSteps', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
 
-    // Steps: 2=chat, 3=integrations, 4=channels, 5=intelligence, 6=settings, 7=home-return
-    const crossPageIndices = [2, 3, 4, 5, 6, 7];
+    // Steps: 2=chat, 3=integrations, 4=channels, 5=intelligence, 6=settings, 7=home-return, 9=chat-welcome
+    const crossPageIndices = [2, 3, 4, 5, 6, 7, 9];
     for (const idx of crossPageIndices) {
       expect(typeof steps[idx].before, `step[${idx}] should have a before fn`).toBe('function');
     }
@@ -550,8 +562,8 @@ describe('createWalkthroughSteps', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
 
-    // Steps: 0=home-card, 1=home-cta, 8=tab-notifications, 9=tab-settings
-    const homeOnlyIndices = [0, 1, 8, 9];
+    // Steps: 0=home-card, 1=home-cta, 8=tab-notifications (step 9 now has a before hook)
+    const homeOnlyIndices = [0, 1, 8];
     for (const idx of homeOnlyIndices) {
       expect(steps[idx].before, `step[${idx}] should not have a before fn`).toBeUndefined();
     }
@@ -564,6 +576,7 @@ describe('createWalkthroughSteps', () => {
     { idx: 5, route: '/intelligence', target: 'intelligence-header' },
     { idx: 6, route: '/settings', target: 'settings-menu' },
     { idx: 7, route: '/home', target: 'tab-chat' },
+    { idx: 9, route: '/chat', target: 'chat-agent-panel' },
   ])('before hook for step $idx calls navigate("$route")', async ({ idx, route, target }) => {
     const navigate = vi.fn();
 
@@ -577,6 +590,52 @@ describe('createWalkthroughSteps', () => {
       if (route) {
         expect(navigate).toHaveBeenCalledWith(route);
       }
+    } finally {
+      document.body.removeChild(el);
+    }
+  });
+
+  it('final step before hook creates thread and seeds welcome message', async () => {
+    const { store } = await import('../../../store');
+    const { createNewThread, addMessageLocal, setSelectedThread } =
+      await import('../../../store/threadSlice');
+
+    const navigate = vi.fn();
+    const el = document.createElement('div');
+    el.setAttribute('data-walkthrough', 'chat-agent-panel');
+    document.body.appendChild(el);
+
+    try {
+      const steps = createWalkthroughSteps(navigate);
+      const lastStep = steps[steps.length - 1];
+      await (lastStep.before as unknown as () => Promise<void>)();
+
+      expect(store.dispatch).toHaveBeenCalled();
+      expect(createNewThread).toHaveBeenCalled();
+      expect(addMessageLocal).toHaveBeenCalled();
+      expect(setSelectedThread).toHaveBeenCalledWith('thread-welcome-123');
+      expect(navigate).toHaveBeenCalledWith('/chat');
+    } finally {
+      document.body.removeChild(el);
+    }
+  });
+
+  it('final step before hook still navigates to /chat when thread creation fails', async () => {
+    const { store } = await import('../../../store');
+    vi.mocked(store.dispatch).mockReturnValueOnce({
+      unwrap: vi.fn().mockRejectedValue(new Error('Network error')),
+    } as any);
+
+    const navigate = vi.fn();
+    const el = document.createElement('div');
+    el.setAttribute('data-walkthrough', 'chat-agent-panel');
+    document.body.appendChild(el);
+
+    try {
+      const steps = createWalkthroughSteps(navigate);
+      const lastStep = steps[steps.length - 1];
+      await (lastStep.before as unknown as () => Promise<void>)();
+      expect(navigate).toHaveBeenCalledWith('/chat');
     } finally {
       document.body.removeChild(el);
     }

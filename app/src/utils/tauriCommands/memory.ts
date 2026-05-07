@@ -226,7 +226,18 @@ export async function memoryDocIngest(params: {
   return await callCoreRpc<unknown>({ method: 'openhuman.memory_doc_ingest', params });
 }
 
-export async function aiListMemoryFiles(relativeDir = 'memory'): Promise<string[]> {
+/**
+ * List files inside the workspace memory root. `relativeDir` is
+ * resolved relative to `<workspace>/memory/`, so an empty string
+ * means "list the memory root" — which is what most callers want.
+ *
+ * Historical bug (pre-#TBD): the default was `'memory'`, which the
+ * Rust side then joined onto the already-rooted memory subdir,
+ * yielding `<workspace>/memory/memory` and a "No such file" error
+ * the moment the hook polled. The Rust resolver intentionally
+ * accepts `""` as "the memory root", so default to that.
+ */
+export async function aiListMemoryFiles(relativeDir = ''): Promise<string[]> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }

@@ -7,6 +7,7 @@ import HumanPage from './features/human/HumanPage';
 import Accounts from './pages/Accounts';
 import Channels from './pages/Channels';
 import Home from './pages/Home';
+import Intelligence from './pages/Intelligence';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
@@ -57,7 +58,14 @@ const AppRoutes = () => {
         }
       />
 
-      <Route path="/intelligence" element={<Navigate to="/settings/intelligence" replace />} />
+      <Route
+        path="/intelligence"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Intelligence />
+          </ProtectedRoute>
+        }
+      />
 
       <Route
         path="/skills"

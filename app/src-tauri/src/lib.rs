@@ -9,6 +9,7 @@ mod core_process;
 mod core_rpc;
 mod dictation_hotkeys;
 mod discord_scanner;
+mod file_logging;
 mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
@@ -234,6 +235,33 @@ async fn restart_core_process(
     let _guard = state.inner().restart_lock().await;
     log::debug!("[core] restart_core_process: acquired restart lock");
     state.inner().restart().await
+}
+
+/// Start the embedded core process on demand.
+///
+/// Called by the BootCheckGate (Local mode) before the version check.  The
+/// core no longer auto-spawns at Tauri setup — the UI is responsible for
+/// driving the lifecycle so it can surface startup failures and version
+/// mismatches to the user.
+///
+/// Idempotent: `ensure_running` is a no-op if the core is already up.
+#[tauri::command]
+async fn start_core_process(
+    state: tauri::State<'_, core_process::CoreProcessHandle>,
+) -> Result<(), String> {
+    log::info!("[core] start_core_process: command invoked from frontend");
+    state.inner().ensure_running().await
+}
+
+/// Cleanly exit the application.
+///
+/// Called by the BootCheckGate "Quit" button when the core is unreachable and
+/// the user chooses to close the app rather than switch modes.
+#[tauri::command]
+async fn app_quit(app: tauri::AppHandle<AppRuntime>) -> Result<(), String> {
+    log::info!("[app] app_quit: quit requested from frontend");
+    app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1097,6 +1125,17 @@ pub fn run() {
         sample_rate: 1.0,
         ..sentry::ClientOptions::default()
     });
+    // Tag every Sentry event with CPU architecture and OS so Intel-specific
+    // crashes (issue #1012 — SIGABRT in CrBrowserMain on x86_64 macOS) are
+    // clearly identified without needing a separate build identifier.
+    sentry::configure_scope(|scope| {
+        scope.set_tag("cpu_arch", std::env::consts::ARCH);
+        scope.set_tag("os_name", std::env::consts::OS);
+        #[cfg(target_os = "macos")]
+        if let Some(ver) = macos_os_version() {
+            scope.set_tag("os_version", ver);
+        }
+    });
 
     // Optional smoke trigger for verifying the Sentry pipeline end-to-end.
     // Run with `OPENHUMAN_TAURI_SENTRY_TEST=panic` to fire a panic, or
@@ -1119,10 +1158,26 @@ pub fn run() {
 
     let daemon_mode = is_daemon_mode();
 
-    let default_filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
-    let _ = env_logger::Builder::new()
-        .parse_filters(&default_filter)
-        .try_init();
+    // Install the unified tracing subscriber + daily-rotated file appender
+    // before any other startup work so CEF preflight failures, sentry
+    // smoke-test events, and the rest of `run()` are captured in
+    // `<data_dir>/logs/openhuman-YYYY-MM-DD.log`. The shell's `log::*` calls
+    // are bridged into the same subscriber via `tracing_log::LogTracer`,
+    // replacing the previous stderr-only `env_logger`.
+    file_logging::init();
+
+    // Log platform identity early so every log session is tagged with arch
+    // and OS version — essential for reproducing and triaging Intel-only
+    // crashes like issue #1012 (SIGABRT in CrBrowserMain on x86_64 macOS).
+    {
+        let arch = std::env::consts::ARCH;
+        let os = std::env::consts::OS;
+        #[cfg(target_os = "macos")]
+        let os_ver = macos_os_version().unwrap_or_else(|| "unknown".to_string());
+        #[cfg(not(target_os = "macos"))]
+        let os_ver = "n/a".to_string();
+        log::info!("[startup] platform: arch={arch} os={os} os_version={os_ver}");
+    }
 
     // The vendored tauri-cef dev-server proxy builds a reqwest 0.13 client
     // (see vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) which calls
@@ -1209,6 +1264,18 @@ pub fn run() {
         // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
         // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
         args.push(("--remote-debugging-port", Some("19222")));
+        // Issue #1012 — Intel macOS (x86_64) crashes with EXC_CRASH (SIGABRT)
+        // inside CrBrowserMain when CEF 146 tries to use GPU compositing via
+        // Metal on Intel GPU hardware/drivers. Disable GPU compositing on
+        // x86_64 macOS so the browser process falls back to software
+        // compositing instead of aborting. This flag is a no-op on Apple
+        // Silicon (arm64) and on non-macOS targets; all other GPU paths
+        // (WebGL, video decode) remain unaffected.
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        {
+            args.push(("--disable-gpu-compositing", None));
+            log::info!("[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)");
+        }
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
 
@@ -1287,7 +1354,6 @@ pub fn run() {
                 return Err("webview_apis bridge failed to start — aborting setup".into());
             }
 
-            let _ = daemon_mode;
             let core_handle =
                 core_process::CoreProcessHandle::new(core_process::default_core_port());
             std::env::set_var("OPENHUMAN_CORE_RPC_URL", core_handle.rpc_url());
@@ -1312,13 +1378,23 @@ pub fn run() {
             }
 
             app.manage(core_handle.clone());
-            tauri::async_runtime::spawn(async move {
-                if let Err(err) = core_handle.ensure_running().await {
-                    log::error!("[core] failed to start embedded core: {err}");
-                    return;
-                }
-                log::info!("[core] embedded core ready");
-            });
+            // NOTE: the core is NOT auto-spawned here. The BootCheckGate UI
+            // calls `start_core_process` (Local mode) after the user picks a
+            // mode, which lets the frontend surface startup failures and
+            // version mismatches before the rest of the app mounts.
+            //
+            // In daemon mode (headless) we spawn immediately so the tray
+            // agent is available without waiting for a UI interaction.
+            if daemon_mode {
+                let core_handle_daemon = core_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = core_handle_daemon.ensure_running().await {
+                        log::error!("[core] daemon_mode — failed to start embedded core: {err}");
+                        return;
+                    }
+                    log::info!("[core] daemon_mode — embedded core ready");
+                });
+            }
 
             // Restore last-known window position+size before showing the
             // window so the user's first paint after a restart-driven flow
@@ -1426,6 +1502,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1469,6 +1546,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1512,6 +1590,7 @@ pub fn run() {
                                 width: 900.0,
                                 height: 700.0,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1570,6 +1649,7 @@ pub fn run() {
                                 width: w,
                                 height: h,
                             }),
+                            prewarm: false,
                         };
                         match webview_accounts::webview_account_open(
                             app_handle.clone(),
@@ -1621,12 +1701,15 @@ pub fn run() {
             download_app_update,
             install_app_update,
             restart_core_process,
+            start_core_process,
+            app_quit,
             restart_app,
             get_active_user_id,
             schedule_cef_profile_purge,
             register_dictation_hotkey,
             unregister_dictation_hotkey,
             webview_accounts::webview_account_open,
+            webview_accounts::webview_account_prewarm,
             webview_accounts::webview_account_close,
             webview_accounts::webview_account_purge,
             webview_accounts::webview_account_bounds,
@@ -1650,7 +1733,9 @@ pub fn run() {
             activate_main_window,
             native_notifications::show_native_notification,
             mascot_window_show,
-            mascot_window_hide
+            mascot_window_hide,
+            file_logging::reveal_logs_folder,
+            file_logging::logs_folder_path
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1775,9 +1860,32 @@ fn resolve_sentry_environment() -> String {
     "production".to_string()
 }
 
+/// Returns the macOS product version string (e.g. `"14.5"`) by reading
+/// `sw_vers -productVersion`. Returns `None` on non-macOS targets or when
+/// the command is unavailable. Used to tag Sentry events and startup logs
+/// with OS version so Intel-specific crashes (issue #1012) can be filtered
+/// by macOS release.
+#[cfg(target_os = "macos")]
+fn macos_os_version() -> Option<String> {
+    std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Tests that read/write process-global env vars must serialize through this
+    // mutex. Rust's test runner executes tests in parallel by default; without
+    // coordination, concurrent set_var / remove_var calls race and produce
+    // spurious failures.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Test that is_daemon_mode correctly detects daemon flag variations
     #[test]
@@ -1790,20 +1898,17 @@ mod tests {
     /// Test core_rpc_url returns expected format
     #[test]
     fn core_rpc_url_returns_expected_format() {
-        // Save original env
+        let _g = ENV_LOCK.lock().unwrap();
         let original = std::env::var("OPENHUMAN_CORE_RPC_URL").ok();
 
-        // Test with env var set
         std::env::set_var("OPENHUMAN_CORE_RPC_URL", "http://localhost:9999/rpc");
         let url = core_rpc_url();
         assert_eq!(url, "http://localhost:9999/rpc");
 
-        // Test fallback when env not set
         std::env::remove_var("OPENHUMAN_CORE_RPC_URL");
         let url = core_rpc_url();
         assert_eq!(url, "http://127.0.0.1:7788/rpc");
 
-        // Restore original
         match original {
             Some(v) => std::env::set_var("OPENHUMAN_CORE_RPC_URL", v),
             None => std::env::remove_var("OPENHUMAN_CORE_RPC_URL"),
@@ -1813,25 +1918,21 @@ mod tests {
     /// Test overlay_parent_rpc_url handles empty env var
     #[test]
     fn overlay_parent_rpc_url_handles_empty() {
-        // Save original env
+        let _g = ENV_LOCK.lock().unwrap();
         let original = std::env::var("OPENHUMAN_CORE_RPC_URL").ok();
 
-        // Test with empty string (should return None)
         std::env::set_var("OPENHUMAN_CORE_RPC_URL", "");
-        let result = overlay_parent_rpc_url();
-        assert!(result.is_none());
+        assert!(overlay_parent_rpc_url().is_none());
 
-        // Test with whitespace only (should return None)
         std::env::set_var("OPENHUMAN_CORE_RPC_URL", "   ");
-        let result = overlay_parent_rpc_url();
-        assert!(result.is_none());
+        assert!(overlay_parent_rpc_url().is_none());
 
-        // Test with valid URL
         std::env::set_var("OPENHUMAN_CORE_RPC_URL", "http://127.0.0.1:7788/rpc");
-        let result = overlay_parent_rpc_url();
-        assert_eq!(result, Some("http://127.0.0.1:7788/rpc".to_string()));
+        assert_eq!(
+            overlay_parent_rpc_url(),
+            Some("http://127.0.0.1:7788/rpc".to_string())
+        );
 
-        // Restore original
         match original {
             Some(v) => std::env::set_var("OPENHUMAN_CORE_RPC_URL", v),
             None => std::env::remove_var("OPENHUMAN_CORE_RPC_URL"),
@@ -1880,5 +1981,220 @@ mod tests {
         // "[app] RunEvent::Ready — GTK initialized, setting up tray"
         //
         // This test passes if the code compiles with these log messages.
+    }
+
+    // -------------------------------------------------------------------------
+    // macos_os_version (issue #1012)
+    // -------------------------------------------------------------------------
+
+    /// On macOS, sw_vers is always present and must return a version string.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_os_version_returns_some() {
+        assert!(
+            macos_os_version().is_some(),
+            "sw_vers -productVersion must succeed on macOS"
+        );
+    }
+
+    /// The returned version must be a non-empty trimmed string.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_os_version_is_nonempty() {
+        let ver = macos_os_version().expect("sw_vers must return a version on macOS");
+        assert!(!ver.is_empty());
+        // No leading/trailing whitespace (the impl trims).
+        assert_eq!(ver, ver.trim());
+    }
+
+    /// The version string must look like dot-separated integers ("14.5", "13.2.1").
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_os_version_is_dotted_integer_format() {
+        let ver = macos_os_version().expect("sw_vers must return a version on macOS");
+        let all_numeric_parts = ver
+            .split('.')
+            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()));
+        assert!(
+            all_numeric_parts,
+            "os version {ver:?} must be dot-separated integers (e.g. '14.5')"
+        );
+    }
+
+    /// The version must have at least one component (e.g. a bare major "15" is valid).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_os_version_has_at_least_one_component() {
+        let ver = macos_os_version().expect("sw_vers must return a version on macOS");
+        assert!(
+            !ver.split('.').next().unwrap_or("").is_empty(),
+            "version must have at least one numeric component"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Platform constants (issue #1012 Sentry tagging)
+    // -------------------------------------------------------------------------
+
+    /// cpu_arch tag is derived from std::env::consts::ARCH which must be non-empty.
+    #[test]
+    fn platform_arch_constant_is_nonempty() {
+        assert!(
+            !std::env::consts::ARCH.is_empty(),
+            "ARCH constant used for Sentry cpu_arch tag must be non-empty"
+        );
+    }
+
+    /// os_name tag is derived from std::env::consts::OS which must be non-empty.
+    #[test]
+    fn platform_os_constant_is_nonempty() {
+        assert!(
+            !std::env::consts::OS.is_empty(),
+            "OS constant used for Sentry os_name tag must be non-empty"
+        );
+    }
+
+    /// On a macOS build the OS constant must equal "macos".
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn platform_os_is_macos_on_macos_build() {
+        assert_eq!(std::env::consts::OS, "macos");
+    }
+
+    /// On an Intel macOS build the ARCH constant must equal "x86_64".
+    /// This is the architecture that triggers --disable-gpu-compositing.
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    #[test]
+    fn platform_arch_is_x86_64_on_intel_build() {
+        assert_eq!(std::env::consts::ARCH, "x86_64");
+    }
+
+    /// On Apple Silicon the ARCH constant must equal "aarch64"; the GPU flag
+    /// must NOT be compiled in (verified by this test existing in the binary).
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn platform_arch_is_aarch64_on_apple_silicon_build() {
+        assert_eq!(std::env::consts::ARCH, "aarch64");
+    }
+
+    // -------------------------------------------------------------------------
+    // build_sentry_release_tag
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn sentry_release_tag_starts_with_openhuman() {
+        let tag = build_sentry_release_tag();
+        assert!(
+            tag.starts_with("openhuman@"),
+            "release tag must start with 'openhuman@', got: {tag:?}"
+        );
+    }
+
+    #[test]
+    fn sentry_release_tag_contains_cargo_pkg_version() {
+        let tag = build_sentry_release_tag();
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(
+            tag.contains(version),
+            "release tag {tag:?} must embed CARGO_PKG_VERSION {version:?}"
+        );
+    }
+
+    #[test]
+    fn sentry_release_tag_version_part_is_nonempty() {
+        let tag = build_sentry_release_tag();
+        let after_prefix = tag.strip_prefix("openhuman@").unwrap_or("");
+        assert!(!after_prefix.is_empty(), "version part must not be empty");
+    }
+
+    /// When a SHA is baked in the tag takes the form `openhuman@<ver>+<sha12>`.
+    /// When it is not, the tag is simply `openhuman@<ver>` with no `+`.
+    /// Either way the full tag must be non-empty.
+    #[test]
+    fn sentry_release_tag_is_nonempty() {
+        assert!(!build_sentry_release_tag().is_empty());
+    }
+
+    // -------------------------------------------------------------------------
+    // resolve_sentry_environment
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn sentry_environment_reads_openhuman_app_env() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let key = "OPENHUMAN_APP_ENV";
+        let original = std::env::var(key).ok();
+        std::env::set_var(key, "staging");
+        let env = resolve_sentry_environment();
+        match original {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+        assert_eq!(env, "staging");
+    }
+
+    #[test]
+    fn sentry_environment_trims_whitespace_from_openhuman_app_env() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let key = "OPENHUMAN_APP_ENV";
+        let original = std::env::var(key).ok();
+        std::env::set_var(key, "  dev  ");
+        let env = resolve_sentry_environment();
+        match original {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+        assert_eq!(env, "dev");
+    }
+
+    #[test]
+    fn sentry_environment_skips_empty_openhuman_app_env() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let key = "OPENHUMAN_APP_ENV";
+        let original = std::env::var(key).ok();
+        std::env::set_var(key, "");
+        let env = resolve_sentry_environment();
+        match original {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+        // Falls through to VITE_ compile-time value or "production"; must be non-empty.
+        assert!(!env.is_empty());
+    }
+
+    #[test]
+    fn sentry_environment_skips_whitespace_only_openhuman_app_env() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let key = "OPENHUMAN_APP_ENV";
+        let original = std::env::var(key).ok();
+        std::env::set_var(key, "   ");
+        let env = resolve_sentry_environment();
+        match original {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+        assert!(!env.is_empty());
+    }
+
+    /// When neither runtime env var nor compile-time VITE_ is set, the fallback
+    /// must be "production". Guard with a compile-time check so this test only
+    /// asserts the hard default when no compile-time override is present.
+    #[test]
+    fn sentry_environment_defaults_to_production_when_unset() {
+        let _g = ENV_LOCK.lock().unwrap();
+        if option_env!("VITE_OPENHUMAN_APP_ENV").is_some() {
+            // A compile-time override is baked in; skip — the fallback path is
+            // exercised by sentry_environment_skips_empty_openhuman_app_env.
+            return;
+        }
+        let key = "OPENHUMAN_APP_ENV";
+        let original = std::env::var(key).ok();
+        std::env::remove_var(key);
+        let env = resolve_sentry_environment();
+        match original {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+        assert_eq!(env, "production");
     }
 }

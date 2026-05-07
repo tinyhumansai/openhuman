@@ -32,5 +32,14 @@
          consent dialog. -->
     <key>com.apple.security.automation.apple-events</key>
     <true/>
+    <!-- Required so embedded Chromium can enumerate Bluetooth audio devices
+         (AirPods, headsets) inside getUserMedia() / enumerateDevices() calls
+         on macOS 11+. The companion `NSBluetoothAlwaysUsageDescription` in
+         `Info.plist` supplies the user-facing text shown in the consent
+         dialog; the entitlement is belt-and-braces under the Hardened
+         Runtime — harmless when non-sandboxed, future-safe if Apple
+         tightens the sandbox. Tracked in #1288. -->
+    <key>com.apple.security.device.bluetooth</key>
+    <true/>
 </dict>
 </plist>

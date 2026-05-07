@@ -60,7 +60,7 @@ OpenHuman is an open-source agentic assistant that is designed to integrate with
 
 - **Deep desktop integrations** — OpenHuman is a **native desktop** assistant, not a web-only chat: **memory-aware keyboard autocomplete**, **voice** (**STT** listening and **TTS** replies), **screen intelligence** that understands what is on screen and feeds your local context, plus windowing and OS-level permissions—so the agent meets you **on the machine**, not trapped in a browser tab.
 
-Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Contributor orientation: [`CONTRIBUTING.md`](./CONTRIBUTING.md). Running from source: [`docs/install.md`](docs/install.md#running-from-source).
+Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Contributor orientation: [`CONTRIBUTING.md`](./CONTRIBUTING.md). Running from source: [`docs/install.md`](docs/install.md#running-from-source). Cloud-hosting the headless core: [`docs/CLOUD_DEPLOY.md`](docs/CLOUD_DEPLOY.md).
 
 ## Highlights
 

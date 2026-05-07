@@ -83,6 +83,11 @@ pub struct AppStateSnapshot {
     /// `complete_onboarding(action="complete")`.
     pub chat_onboarding_completed: bool,
     pub analytics_enabled: bool,
+    /// Mirror of `Config::meet.auto_orchestrator_handoff` — gates whether
+    /// ending a Google Meet call hands the transcript to the orchestrator
+    /// agent for proactive follow-up actions. Default `false`. See
+    /// issue #1299.
+    pub meet_auto_orchestrator_handoff: bool,
     pub local_state: StoredAppState,
     pub runtime: RuntimeSnapshot,
 }
@@ -464,11 +469,12 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     let runtime = build_runtime_snapshot(&config).await;
 
     debug!(
-        "{LOG_PREFIX} snapshot auth={} onboarding={} chat_onboarding={} analytics={} wallet_present={} si_active={} local_ai_state={} autocomplete_phase={} service_state={:?}",
+        "{LOG_PREFIX} snapshot auth={} onboarding={} chat_onboarding={} analytics={} meet_handoff={} wallet_present={} si_active={} local_ai_state={} autocomplete_phase={} service_state={:?}",
         auth.is_authenticated,
         config.onboarding_completed,
         config.chat_onboarding_completed,
         config.observability.analytics_enabled,
+        config.meet.auto_orchestrator_handoff,
         local_state.primary_wallet_address.is_some(),
         runtime.screen_intelligence.session.active,
         runtime.local_ai.state,
@@ -484,6 +490,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             onboarding_completed: config.onboarding_completed,
             chat_onboarding_completed: config.chat_onboarding_completed,
             analytics_enabled: config.observability.analytics_enabled,
+            meet_auto_orchestrator_handoff: config.meet.auto_orchestrator_handoff,
             local_state,
             runtime,
         },

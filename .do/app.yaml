@@ -1,0 +1,56 @@
+# DigitalOcean App Platform spec for OpenHuman Core.
+#
+# Deploys the headless Rust core (`openhuman-core`) from the repo Dockerfile,
+# exposing the JSON-RPC server on the public HTTP port. Used by the "Deploy
+# to DigitalOcean" button (see docs/CLOUD_DEPLOY.md) and by `doctl apps create`.
+#
+# After deploy:
+#   - /health is publicly reachable (no auth — used for liveness)
+#   - /rpc requires Authorization: Bearer $OPENHUMAN_CORE_TOKEN
+#
+# Operators MUST set OPENHUMAN_CORE_TOKEN to a strong secret in App Platform's
+# environment editor before any client calls /rpc.
+
+name: openhuman-core
+region: nyc
+
+services:
+  - name: core
+    dockerfile_path: Dockerfile
+    source_dir: /
+    github:
+      repo: tinyhumansai/openhuman
+      branch: main
+      deploy_on_push: false
+    instance_count: 1
+    instance_size_slug: basic-xs
+    http_port: 7788
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 20
+      period_seconds: 30
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+    envs:
+      - key: OPENHUMAN_CORE_HOST
+        scope: RUN_TIME
+        value: "0.0.0.0"
+      - key: OPENHUMAN_CORE_PORT
+        scope: RUN_TIME
+        value: "7788"
+      - key: OPENHUMAN_APP_ENV
+        scope: RUN_TIME
+        value: production
+      - key: BACKEND_URL
+        scope: RUN_TIME
+        value: https://api.tinyhumans.ai
+      - key: RUST_LOG
+        scope: RUN_TIME
+        value: info
+      # Required for clients to authenticate against /rpc. Set to a strong
+      # random value (e.g. `openssl rand -hex 32`) in the App Platform UI.
+      - key: OPENHUMAN_CORE_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+        value: "CHANGE_ME_BEFORE_DEPLOY"

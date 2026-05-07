@@ -687,6 +687,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "channels.whatsapp_read_messages",
+        name: "Read WhatsApp Messages",
+        domain: "channels",
+        category: CapabilityCategory::Channels,
+        description: "Read and search WhatsApp Web conversations and messages after connecting WhatsApp in OpenHuman. Data is stored locally only and never transmitted.",
+        how_to: "Connect WhatsApp Web via Channels, then ask the agent to read or summarise your messages.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "settings.configure_ai",
         name: "Configure AI",
         domain: "settings",

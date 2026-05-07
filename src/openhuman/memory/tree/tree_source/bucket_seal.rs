@@ -497,6 +497,52 @@ pub(crate) async fn seal_one_level(
             }
         }
     };
+    // For L1 seals (children are chunks), point each child wikilink at
+    // the raw archive file the chunk's body lives in — the email
+    // chunk-store path `email/<scope>/<chunk_id>.md` no longer
+    // exists, so `[[<chunk_id>]]` would be an unresolved Obsidian
+    // link. The raw file basename `<ts_ms>_<msg_id>` matches what
+    // `raw_store::write_raw_items` writes. L≥2 children are
+    // summary ids whose default `sanitize_filename` resolves to
+    // existing `wiki/summaries/...md` files — leave overrides
+    // unset there.
+    let child_basename_overrides: Option<Vec<Option<String>>> = if node.level == 1 {
+        let overrides: Vec<Option<String>> = node
+            .child_ids
+            .iter()
+            .map(|chunk_id| {
+                // Surface lookup failures explicitly — silently
+                // falling back to `[[<chunk_hash>]]` would commit an
+                // unresolved Obsidian wikilink without any signal.
+                // We still yield `None` (so `compose_summary_md`
+                // takes the sanitised-id fallback) but a warn log
+                // makes the SQL error visible for diagnosis.
+                match crate::openhuman::memory::tree::store::get_chunk_raw_refs(config, chunk_id) {
+                    Ok(refs_opt) => {
+                        refs_opt
+                            .and_then(|refs| refs.into_iter().next())
+                            .and_then(|r| {
+                                std::path::Path::new(&r.path)
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .map(|s| s.to_string())
+                            })
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[tree_source::bucket_seal] get_chunk_raw_refs failed \
+                             chunk_id={chunk_id} err={e:#} — falling back to \
+                             chunk_id-based wikilink"
+                        );
+                        None
+                    }
+                }
+            })
+            .collect();
+        Some(overrides)
+    } else {
+        None
+    };
     let compose_input = SummaryComposeInput {
         summary_id: &node.id,
         tree_kind: summary_tree_kind,
@@ -504,6 +550,7 @@ pub(crate) async fn seal_one_level(
         tree_scope: &tree.scope,
         level: node.level,
         child_ids: &node.child_ids,
+        child_basenames: child_basename_overrides.as_deref(),
         child_count: node.child_ids.len(),
         time_range_start: node.time_range_start,
         time_range_end: node.time_range_end,

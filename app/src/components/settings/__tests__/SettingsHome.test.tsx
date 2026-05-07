@@ -92,21 +92,17 @@ describe('SettingsHome', () => {
   });
 
   describe('item grouping order', () => {
-    it('places Account, Notifications, Notification Routing under General', () => {
+    it('places Account and Notifications under General', () => {
       renderSettingsHome();
       const generalHeader = screen.getByText('General');
       const accountItem = screen.getByText('Account');
       const notificationsItem = screen.getByText('Notifications');
-      const routingItem = screen.getByText('Notification Routing');
 
       // All should appear after the General header in DOM order
       expect(generalHeader.compareDocumentPosition(accountItem)).toBe(
         Node.DOCUMENT_POSITION_FOLLOWING
       );
       expect(generalHeader.compareDocumentPosition(notificationsItem)).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      );
-      expect(generalHeader.compareDocumentPosition(routingItem)).toBe(
         Node.DOCUMENT_POSITION_FOLLOWING
       );
     });
@@ -206,14 +202,6 @@ describe('SettingsHome', () => {
 
       await user.click(screen.getByText('Restart Tour').closest('button')!);
       expect(mockNavigate).toHaveBeenCalledWith('/home');
-    });
-
-    it('navigates to notification-routing settings when Notification Routing is clicked', async () => {
-      const user = userEvent.setup();
-      renderSettingsHome();
-
-      await user.click(screen.getByText('Notification Routing').closest('button')!);
-      expect(mockNavigateToSettings).toHaveBeenCalledWith('notification-routing');
     });
 
     it('navigates to features settings when Features is clicked', async () => {
