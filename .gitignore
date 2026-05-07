@@ -64,6 +64,7 @@ e2e-results/
 wdio-logs/
 test-results/
 coverage/
+app/public/generated/remotion/
 
 tauri.key
 tauri.key.pub

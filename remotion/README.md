@@ -37,6 +37,12 @@ pnpm render GhostyWave
 pnpm render:all
 ```
 
+**Render runtime mascot assets for the desktop app** (writes transparent animated WebP files for `yellow`, `burgundy`, `black`, `navy`, and `green` to `app/public/generated/remotion/`)
+
+```console
+pnpm render:runtime-assets
+```
+
 **Upgrade Remotion**
 
 ```console

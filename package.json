@@ -25,6 +25,7 @@
     "test:coverage": "pnpm --filter openhuman-app test:coverage",
     "test:rust": "pnpm --filter openhuman-app test:rust",
     "mock:api": "node scripts/mock-api-server.mjs",
+    "mascot:render": "pnpm --dir remotion render:runtime-assets",
     "pr:checklist": "node scripts/check-pr-checklist.mjs",
     "review": "bash scripts/review/cli.sh",
     "work": "bash scripts/work/cli.sh",
