@@ -15,6 +15,7 @@
 pub mod atomic;
 pub mod compose;
 pub mod paths;
+pub mod raw;
 pub mod read;
 pub mod tags;
 

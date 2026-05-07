@@ -25,6 +25,9 @@ use crate::openhuman::memory::tree::canonicalize::email::{EmailMessage, EmailThr
 use crate::openhuman::memory::tree::canonicalize::email_clean::{
     extract_email, parse_message_date,
 };
+use crate::openhuman::memory::tree::content_store::raw::{
+    self as raw_store, slug_account_email, RawItem,
+};
 use crate::openhuman::memory::tree::ingest::{ingest_email, IngestResult};
 use crate::openhuman::memory::tree::util::redact::redact;
 
@@ -206,12 +209,20 @@ fn parse_address_list(v: Option<&Value>) -> Vec<String> {
 /// Ingest a page of raw Gmail messages into the memory tree.
 ///
 /// Each participant-bucket (sorted set of `from` ∪ `to` email addresses)
-/// becomes one [`EmailThread`] handed to [`ingest_email`] which fans out
-/// to the chunker + scorer + source tree downstream.
+/// becomes one [`EmailThread`] handed to [`ingest_email`]. Every bucket
+/// emits the **same** `source_id` keyed on the connection's account
+/// email, so all of an account's correspondence rolls up under a single
+/// memory source — `gmail:{slug(account_email)}` (e.g.
+/// `gmail:stevent95-at-gmail-dot-com`). When the caller can't supply
+/// an `account_email` (legacy `gmail-backfill-3d` CLI runs, missing
+/// profile fetch), we fall back to the per-participant `gmail:{participants}`
+/// shape so older invocations don't lose their stable bucketing.
 ///
-/// `source_id` = `"gmail:{participants}"` where participants is
-/// `addr1|addr2|...` (sorted, deduped, lowercased). This groups all
-/// correspondence between the same people into one path subtree.
+/// In addition to the chunked content_store output, we mirror every
+/// admitted message as a verbatim `.md` under
+/// `<content_root>/raw/<source_slug>/<created_at_ms>_<message_id>.md`.
+/// Useful for debugging, Obsidian browsing, and as a stable archive
+/// independent of the chunker / summariser.
 ///
 /// Returns the total number of chunks written across all buckets so
 /// callers can surface counts in logs / outcomes. Per-bucket errors are
@@ -220,11 +231,28 @@ fn parse_address_list(v: Option<&Value>) -> Vec<String> {
 pub async fn ingest_page_into_memory_tree(
     config: &Config,
     owner: &str,
+    account_email: Option<&str>,
     page_messages: &[Value],
 ) -> Result<usize> {
     if page_messages.is_empty() {
         return Ok(0);
     }
+    let account_source_id = account_email
+        .filter(|e| !e.trim().is_empty())
+        .map(|email| format!("gmail:{}", slug_account_email(email)));
+
+    // Best-effort raw archive — runs once per page, before chunking, so
+    // a chunker bug doesn't block us from capturing the source bytes.
+    if let Some(ref source_id) = account_source_id {
+        if let Err(e) = write_raw_archive(config, source_id, page_messages) {
+            log::warn!(
+                "[composio:gmail][ingest] raw archive write failed source_id_hash={} err={:#}",
+                redact(source_id),
+                e
+            );
+        }
+    }
+
     let buckets = bucket_by_participants(page_messages);
     let mut total_chunks = 0usize;
     let mut total_buckets = 0usize;
@@ -240,9 +268,9 @@ pub async fn ingest_page_into_memory_tree(
             );
             continue;
         }
-        // source_id encodes participants so every unique conversation set
-        // lands in its own path subtree.
-        let source_id = format!("gmail:{}", participants);
+        let source_id = account_source_id
+            .clone()
+            .unwrap_or_else(|| format!("gmail:{}", participants));
         let thread_subject = pick_thread_subject(&messages);
         log::info!(
             "[composio:gmail][ingest] bucket participants_hash={} messages={} source_id_hash={}",
@@ -272,10 +300,87 @@ pub async fn ingest_page_into_memory_tree(
         }
     }
     log::info!(
-        "[composio:gmail][ingest] page_done owner_hash={} buckets={total_buckets} chunks={total_chunks}",
-        redact(owner)
+        "[composio:gmail][ingest] page_done owner_hash={} buckets={total_buckets} chunks={total_chunks} mode={}",
+        redact(owner),
+        if account_source_id.is_some() { "per-account" } else { "per-participants" },
     );
     Ok(total_chunks)
+}
+
+/// Mirror a page of raw Gmail messages into the on-disk raw archive.
+///
+/// Files land under `<content_root>/raw/<source_slug>/<ts_ms>_<msg_id>.md`.
+/// Body is the upstream `markdown` field with a small YAML header so
+/// the file is self-contained when opened in Obsidian. Messages
+/// without a parseable date or id are skipped (they'd produce
+/// non-stable filenames).
+fn write_raw_archive(config: &Config, source_id: &str, page: &[Value]) -> Result<usize> {
+    let content_root = config.memory_tree_content_root();
+    let mut items: Vec<RawItem<'_>> = Vec::with_capacity(page.len());
+    let mut bodies: Vec<String> = Vec::with_capacity(page.len());
+
+    for raw in page {
+        let id = raw
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        let Some(id) = id else { continue };
+        let Some(sent_at) = parse_message_date(raw) else { continue };
+        let from = raw.get("from").and_then(|v| v.as_str()).unwrap_or("");
+        let subject = raw.get("subject").and_then(|v| v.as_str()).unwrap_or("");
+        let body = raw.get("markdown").and_then(|v| v.as_str()).unwrap_or("");
+        // Compose a tiny self-describing wrapper. The body is the
+        // upstream markdown verbatim so re-syncing the same message
+        // produces identical bytes.
+        let composed = format!(
+            "---\nid: {id}\nfrom: {from}\nsubject: {subject}\ndate: {date}\n---\n{body}",
+            id = yaml_escape(id),
+            from = yaml_escape(from),
+            subject = yaml_escape(subject),
+            date = sent_at.to_rfc3339(),
+            body = body,
+        );
+        bodies.push(composed);
+    }
+    // Rebuild the items array with stable string slices into bodies.
+    let mut idx = 0usize;
+    for raw in page {
+        let id = raw
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        let Some(id) = id else { continue };
+        let Some(sent_at) = parse_message_date(raw) else { continue };
+        items.push(RawItem {
+            uid: id,
+            created_at_ms: sent_at.timestamp_millis(),
+            markdown: &bodies[idx],
+        });
+        idx += 1;
+    }
+    let n = raw_store::write_raw_items(&content_root, source_id, &items)?;
+    log::debug!(
+        "[composio:gmail][raw] archived {n} messages source_id_hash={}",
+        redact(source_id)
+    );
+    Ok(n)
+}
+
+/// YAML-quote scalars that contain reserved characters. Conservative
+/// — we always wrap in double quotes when the field is non-empty and
+/// contains anything beyond plain identifiers.
+fn yaml_escape(s: &str) -> String {
+    if s.is_empty() {
+        return "\"\"".into();
+    }
+    let needs_quote = s.contains(|c: char| {
+        matches!(c, ':' | '#' | '"' | '\'' | '\\' | '\n' | '[' | ']' | '{' | '}')
+    }) || s.starts_with(|c: char| matches!(c, '-' | '?' | '!' | '*' | '&' | '|' | '>' | '<'));
+    if !needs_quote {
+        return s.to_string();
+    }
+    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
 
 /// Strip "Re:" / "Fwd:" prefixes from the head message's subject so

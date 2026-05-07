@@ -201,6 +201,23 @@ impl ComposioProvider for GmailProvider {
         };
         let mut state = SyncState::load(&memory, "gmail", &connection_id).await?;
 
+        // Fetch the account email up-front so every chunk gets a stable
+        // per-account `source_id` (`gmail:{slug(email)}`). One HTTP
+        // round-trip per sync; if it fails we fall back to the legacy
+        // per-participants bucketing inside the ingest call so we
+        // still write *something* useful.
+        let account_email: Option<String> = match self.fetch_user_profile(ctx).await {
+            Ok(profile) => profile.email,
+            Err(e) => {
+                tracing::warn!(
+                    connection_id = %connection_id,
+                    error = ?e,
+                    "[composio:gmail] fetch_user_profile failed; ingest will fall back to per-participants source_id"
+                );
+                None
+            }
+        };
+
         // ── Step 2: check daily budget ──────────────────────────────
         if state.budget_exhausted() {
             tracing::info!(
@@ -347,7 +364,13 @@ impl ComposioProvider for GmailProvider {
             // the storage layer.
             if !new_messages.is_empty() {
                 let owner = format!("gmail-sync:{connection_id}");
-                match ingest_page_into_memory_tree(ctx.config.as_ref(), &owner, &new_messages).await
+                match ingest_page_into_memory_tree(
+                    ctx.config.as_ref(),
+                    &owner,
+                    account_email.as_deref(),
+                    &new_messages,
+                )
+                .await
                 {
                     Ok(n) => {
                         for id in &pending_synced_ids {
