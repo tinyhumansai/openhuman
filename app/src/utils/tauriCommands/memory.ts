@@ -383,6 +383,9 @@ export async function whatsappListChats(params?: {
   limit?: number;
   offset?: number;
 }): Promise<WhatsAppChat[]> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
   const resp = await callCoreRpc<{ result?: WhatsAppChat[]; logs?: string[] } | WhatsAppChat[]>({
     method: 'openhuman.whatsapp_data_list_chats',
     params: params ?? {},
@@ -398,6 +401,9 @@ export async function whatsappListMessages(params: {
   limit?: number;
   offset?: number;
 }): Promise<WhatsAppMessage[]> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
   const resp = await callCoreRpc<
     { result?: WhatsAppMessage[]; logs?: string[] } | WhatsAppMessage[]
   >({ method: 'openhuman.whatsapp_data_list_messages', params });
