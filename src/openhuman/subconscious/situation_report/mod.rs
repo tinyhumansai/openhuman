@@ -71,8 +71,10 @@ pub async fn build_situation_report(
     let summaries_section = summaries::build_section(config, last_tick_at).await;
     append_section(&mut report, &mut remaining, &summaries_section);
 
-    // Section 5: latest global L0 digest body.
-    let digest_section = digest::build_section(config).await;
+    // Section 5: latest global L0 digest body — gated by `last_tick_at`
+    // so a digest the previous tick already saw doesn't get re-fed and
+    // re-cited (which was producing duplicate reflections).
+    let digest_section = digest::build_section(config, last_tick_at).await;
     append_section(&mut report, &mut remaining, &digest_section);
 
     // Section 6: query_global recap window since last tick.

@@ -227,21 +227,22 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "reflections_act" => ControllerSchema {
             namespace: "subconscious",
             function: "reflections_act",
-            description: "Act on a reflection — drives `start_chat` against the user's \
-                 active orchestrator thread with a primer composed from the \
-                 reflection body and proposed_action. Marks `acted_on_at`.",
-            inputs: vec![
-                field_req("reflection_id", TypeSchema::String, "Reflection ID."),
-                field_req(
-                    "target_thread_id",
-                    TypeSchema::String,
-                    "User's active orchestrator thread (NOT the subconscious thread).",
-                ),
-            ],
+            description: "Act on a reflection — creates a fresh conversation thread \
+                 and seeds it with the reflection body as the first ASSISTANT \
+                 message (with proposed_action appended if present). No LLM \
+                 turn fires — the user lands in a thread that opens with the \
+                 observation from OpenHuman, ready for them to reply. Marks \
+                 `acted_on_at`. Returns the new thread id so the frontend can \
+                 navigate to it.",
+            inputs: vec![field_req(
+                "reflection_id",
+                TypeSchema::String,
+                "Reflection ID.",
+            )],
             outputs: vec![field(
                 "result",
                 TypeSchema::Json,
-                "{request_id, reflection_id}.",
+                "{reflection_id, thread_id}.",
             )],
         },
         "reflections_dismiss" => ControllerSchema {
@@ -524,11 +525,6 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
             .and_then(|v| v.as_str())
             .ok_or("reflection_id is required")?
             .to_string();
-        let target_thread_id = params
-            .get("target_thread_id")
-            .and_then(|v| v.as_str())
-            .ok_or("target_thread_id is required")?
-            .to_string();
 
         let config = load_config().await?;
         let reflection = store::with_connection(&config.workspace_dir, |conn| {
@@ -537,28 +533,80 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("reflection not found: {reflection_id}"))?;
 
-        let primer = format!(
-            "Acting on a subconscious suggestion.\n\nObservation: {body}\n\nProposed action: {action}",
-            body = reflection.body,
-            action = reflection
-                .proposed_action
-                .clone()
-                .unwrap_or_else(|| "(no specific action provided)".to_string())
-        );
-
-        // Drive start_chat against the user's active orchestrator
-        // thread — NOT the subconscious thread (per #623). Acting on a
-        // reflection moves the conversation into the user's normal
-        // chat surface; the subconscious feed remains observation-only.
-        let request_id = crate::openhuman::channels::providers::web::start_chat(
-            "subconscious",
-            &target_thread_id,
-            &primer,
-            None,
-            None,
+        // Spawn a fresh conversation thread for this action. Reflections never
+        // write into the user's existing threads — each act gets its own
+        // chat so the active conversation stays uncluttered. Title is the
+        // first ~60 chars of the body so it's recognisable in the thread list.
+        let thread_id = uuid::Uuid::new_v4().to_string();
+        let thread_title: String = {
+            let mut s: String = reflection
+                .body
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(60)
+                .collect();
+            if reflection.body.chars().count() > 60 {
+                s.push('…');
+            }
+            if s.trim().is_empty() {
+                format!(
+                    "Reflection: {kind}",
+                    kind = reflection.kind.as_str().replace('_', " ")
+                )
+            } else {
+                s
+            }
+        };
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        crate::openhuman::memory::conversations::ensure_thread(
+            config.workspace_dir.clone(),
+            crate::openhuman::memory::conversations::CreateConversationThread {
+                id: thread_id.clone(),
+                title: thread_title,
+                created_at: now_iso.clone(),
+                parent_thread_id: None,
+                labels: Some(vec!["from_reflection".to_string()]),
+            },
         )
-        .await
-        .map_err(|e| format!("start_chat failed: {e}"))?;
+        .map_err(|e| format!("ensure_thread (reflection-spawned) failed: {e}"))?;
+
+        // Seed the new thread with the reflection as the FIRST message,
+        // sent from `assistant` (i.e. OpenHuman speaking). The frontend
+        // renders this as a regular AI message, so the user lands in a
+        // thread that already starts with the observation. They can then
+        // type their own reply — no auto LLM turn fires here. This is
+        // distinct from `start_chat`, which would have appended the
+        // reflection as a USER message and immediately triggered an
+        // orchestrator response.
+        let body_md = match reflection.proposed_action.as_deref() {
+            Some(action) if !action.trim().is_empty() => format!(
+                "{body}\n\n_Proposed action_: {action}",
+                body = reflection.body.trim(),
+                action = action.trim()
+            ),
+            _ => reflection.body.trim().to_string(),
+        };
+        let extra_metadata = serde_json::json!({
+            "reflection_id": reflection.id,
+            "kind": reflection.kind.as_str(),
+            "proposed_action": reflection.proposed_action,
+            "source_refs": reflection.source_refs,
+            "origin": "subconscious_reflection",
+        });
+        let seed_message = crate::openhuman::memory::conversations::ConversationMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            content: body_md,
+            message_type: "text".to_string(),
+            extra_metadata,
+            sender: "assistant".to_string(),
+            created_at: now_iso,
+        };
+        crate::openhuman::memory::conversations::append_message(
+            config.workspace_dir.clone(),
+            &thread_id,
+            seed_message,
+        )
+        .map_err(|e| format!("append seed reflection message failed: {e}"))?;
 
         // Stamp acted_on_at on success.
         let now = std::time::SystemTime::now()
@@ -571,8 +619,8 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
 
         to_json(RpcOutcome::single_log(
             serde_json::json!({
-                "request_id": request_id,
                 "reflection_id": reflection_id,
+                "thread_id": thread_id,
             }),
             "reflection acted",
         ))

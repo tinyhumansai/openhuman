@@ -1,9 +1,9 @@
 /**
  * Vitest for SubconsciousReflectionCards (#623).
  *
- * Covers: empty state, card rendering for Observe + Notify, action
- * button visibility, dismiss optimistic hide, and the act → mark-acted
- * RPC wiring.
+ * Covers: empty state, card rendering with/without proposed_action,
+ * action button visibility, dismiss optimistic hide, the act → spawn-
+ * thread RPC wiring, and the onNavigateToThread callback.
  */
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,11 +40,9 @@ function refl(overrides: Partial<Reflection> = {}): Reflection {
     id: 'r-1',
     kind: 'hotness_spike',
     body: 'Phoenix surge',
-    disposition: 'notify',
     proposed_action: 'Pull mentions',
     source_refs: ['entity:phoenix'],
     created_at: 1,
-    surfaced_at: null,
     acted_on_at: null,
     dismissed_at: null,
     ...overrides,
@@ -57,40 +55,31 @@ describe('SubconsciousReflectionCards', () => {
   });
 
   it('renders empty state when no reflections', () => {
-    renderWithProviders(
-      <SubconsciousReflectionCards activeThreadId="thread-1" initialReflections={[]} />
-    );
+    renderWithProviders(<SubconsciousReflectionCards initialReflections={[]} />);
     expect(screen.getByTestId('reflection-cards-empty')).toBeTruthy();
   });
 
-  it('renders Notify reflections with Act + Dismiss buttons', () => {
-    renderWithProviders(
-      <SubconsciousReflectionCards activeThreadId="thread-1" initialReflections={[refl()]} />
-    );
+  it('renders reflections with Act + Dismiss buttons when proposed_action is present', () => {
+    renderWithProviders(<SubconsciousReflectionCards initialReflections={[refl()]} />);
     expect(screen.getByText('Phoenix surge')).toBeTruthy();
     expect(screen.getByText('Hotness spike')).toBeTruthy();
-    expect(screen.getByText('In conversation')).toBeTruthy();
     expect(screen.getByTestId('reflection-act-r-1')).toBeTruthy();
     expect(screen.getByTestId('reflection-dismiss-r-1')).toBeTruthy();
   });
 
-  it('renders Observe reflections without Act button', () => {
+  it('renders reflections without Act button when proposed_action is null', () => {
     renderWithProviders(
       <SubconsciousReflectionCards
-        activeThreadId="thread-1"
-        initialReflections={[refl({ id: 'obs-1', disposition: 'observe', proposed_action: null })]}
+        initialReflections={[refl({ id: 'obs-1', proposed_action: null })]}
       />
     );
-    expect(screen.getByText('Observed')).toBeTruthy();
     expect(screen.queryByTestId('reflection-act-obs-1')).toBeNull();
     expect(screen.getByTestId('reflection-dismiss-obs-1')).toBeTruthy();
   });
 
   it('hides card optimistically on dismiss tap', async () => {
     mockedDismissReflection.mockResolvedValueOnce({ result: { dismissed: 'r-1' }, logs: [] });
-    renderWithProviders(
-      <SubconsciousReflectionCards activeThreadId="thread-1" initialReflections={[refl()]} />
-    );
+    renderWithProviders(<SubconsciousReflectionCards initialReflections={[refl()]} />);
     fireEvent.click(screen.getByTestId('reflection-dismiss-r-1'));
     await waitFor(() => {
       expect(screen.queryByTestId('reflection-card-r-1')).toBeNull();
@@ -98,35 +87,31 @@ describe('SubconsciousReflectionCards', () => {
     expect(mockedDismissReflection).toHaveBeenCalledWith('r-1');
   });
 
-  it('act fires actOnReflection RPC with target thread + hides card', async () => {
+  it('act fires actOnReflection RPC, hides card, and calls onNavigateToThread with the new thread id', async () => {
     mockedActOnReflection.mockResolvedValueOnce({
-      result: { request_id: 'req-1', reflection_id: 'r-1' },
+      result: { reflection_id: 'r-1', thread_id: 'spawned-thread-1' },
       logs: [],
     });
+    const onNavigateToThread = vi.fn();
     renderWithProviders(
-      <SubconsciousReflectionCards activeThreadId="thread-active" initialReflections={[refl()]} />
+      <SubconsciousReflectionCards
+        initialReflections={[refl()]}
+        onNavigateToThread={onNavigateToThread}
+      />
     );
     fireEvent.click(screen.getByTestId('reflection-act-r-1'));
     await waitFor(() => {
-      expect(mockedActOnReflection).toHaveBeenCalledWith('r-1', 'thread-active');
+      expect(mockedActOnReflection).toHaveBeenCalledWith('r-1');
     });
     await waitFor(() => {
       expect(screen.queryByTestId('reflection-card-r-1')).toBeNull();
     });
-  });
-
-  it('disables Act button when no active thread', () => {
-    renderWithProviders(
-      <SubconsciousReflectionCards activeThreadId={null} initialReflections={[refl()]} />
-    );
-    const btn = screen.getByTestId('reflection-act-r-1') as HTMLButtonElement;
-    expect(btn.disabled).toBe(true);
+    expect(onNavigateToThread).toHaveBeenCalledWith('spawned-thread-1');
   });
 
   it('hides reflections that already have dismissed_at or acted_on_at', () => {
     renderWithProviders(
       <SubconsciousReflectionCards
-        activeThreadId="thread-1"
         initialReflections={[
           refl({ id: 'visible' }),
           refl({ id: 'gone-acted', acted_on_at: 100 }),
@@ -141,7 +126,7 @@ describe('SubconsciousReflectionCards', () => {
 
   it('fetches reflections on mount via listReflections (when no initial seed)', async () => {
     mockedListReflections.mockResolvedValueOnce({ result: [refl({ id: 'fetched' })], logs: [] });
-    renderWithProviders(<SubconsciousReflectionCards activeThreadId="thread-1" />);
+    renderWithProviders(<SubconsciousReflectionCards />);
     await waitFor(() => {
       expect(mockedListReflections).toHaveBeenCalled();
     });

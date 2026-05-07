@@ -34,9 +34,29 @@ pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
         }
     };
 
-    if resp.hits.is_empty() {
+    // Post-filter the hits against `last_tick_at`. `query_global` rounds
+    // up to whole days (`MIN_WINDOW_DAYS=1`), so even a 5-minute gap
+    // between ticks pulls back the same 24h window of digest summaries
+    // — those would re-feed the LLM the very content that produced the
+    // last tick's reflections, and the no-insert-time-dedupe path on
+    // `persist_and_surface_reflections` would happily store the
+    // duplicates. Cutoff semantics match `summaries::build_section`:
+    // anything whose `time_range_end` is at or before `last_tick_at` has
+    // already been considered; suppress it.
+    let fresh_hits: Vec<&_> = if last_tick_at > 0.0 {
+        let cutoff = last_tick_at as i64;
+        resp.hits
+            .iter()
+            .filter(|h| h.time_range_end.timestamp() > cutoff)
+            .collect()
+    } else {
+        // Cold start — keep everything inside the configured window.
+        resp.hits.iter().collect()
+    };
+
+    if fresh_hits.is_empty() {
         return format!(
-            "## Recap window ({} day{})\n\nNo recap available — global digest empty for window.\n",
+            "## Recap window ({} day{})\n\nNo new recap content since last tick.\n",
             window_days,
             if window_days == 1 { "" } else { "s" }
         );
@@ -47,7 +67,7 @@ pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
         window_days,
         if window_days == 1 { "" } else { "s" }
     );
-    for hit in &resp.hits {
+    for hit in fresh_hits {
         let _ = writeln!(
             section,
             "- L{} {} → {}: {}",

@@ -4,7 +4,7 @@
 //! runs DDL on every connection, and provides pure functions.
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -29,6 +29,15 @@ pub fn with_connection<T>(
 
     conn.execute_batch(SCHEMA_DDL)
         .with_context(|| "failed to run subconscious schema DDL")?;
+
+    // Drop the legacy `disposition` / `surfaced_at` columns + their index
+    // from previously-migrated DBs. Idempotent — fresh installs and
+    // already-migrated DBs no-op via swallowed errors.
+    super::reflection_store::migrate_drop_legacy_columns(&conn);
+
+    // Add the `source_chunks` JSON column to previously-migrated DBs.
+    // Idempotent (duplicate-column errors swallowed).
+    super::reflection_store::migrate_add_source_chunks_column(&conn);
 
     f(&conn)
 }
@@ -81,30 +90,52 @@ const SCHEMA_DDL: &str = "
     CREATE INDEX IF NOT EXISTS idx_escalations_status
         ON subconscious_escalations(status);
 
-    -- #623: reflection layer (proactive subconscious). DDL lives in
-    -- `super::reflection_store::REFLECTION_SCHEMA_DDL`; appended here so
-    -- a single migration runs per connection.
+    -- #623: reflection layer (proactive subconscious). Mirrored in
+    -- `super::reflection_store::REFLECTION_SCHEMA_DDL` for the unit
+    -- tests there. Legacy `disposition` / `surfaced_at` columns +
+    -- their index were removed when the auto-post-into-thread flow
+    -- was dropped — `migrate_drop_legacy_columns` cleans them off
+    -- previously-migrated DBs. The `source_chunks` JSON column was
+    -- added later for the memory-context snapshot feature —
+    -- `migrate_add_source_chunks_column` backfills previously-migrated
+    -- DBs that pre-date it.
     CREATE TABLE IF NOT EXISTS subconscious_reflections (
         id              TEXT PRIMARY KEY,
         kind            TEXT NOT NULL,
         body            TEXT NOT NULL,
-        disposition     TEXT NOT NULL,
         proposed_action TEXT,
         source_refs     TEXT NOT NULL DEFAULT '[]',
+        source_chunks   TEXT NOT NULL DEFAULT '[]',
         created_at      REAL NOT NULL,
-        surfaced_at     REAL,
         acted_on_at     REAL,
         dismissed_at    REAL
     );
     CREATE INDEX IF NOT EXISTS idx_reflections_created
         ON subconscious_reflections(created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_reflections_disposition_created
-        ON subconscious_reflections(disposition, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS subconscious_hotness_snapshots (
         entity_id       TEXT PRIMARY KEY,
         score           REAL NOT NULL,
         captured_at     REAL NOT NULL
+    );
+
+    -- Tiny KV table for engine-local state that needs to survive
+    -- process restarts. Currently holds:
+    --   * `last_tick_at`  — unix-seconds float of the most recent
+    --                       successful tick. Used by the situation-
+    --                       report sections (`summaries`, `query_window`,
+    --                       `digest`) as a `WHERE sealed_at_ms > ?` cutoff
+    --                       so the LLM only sees memory-tree rows that
+    --                       have appeared since it last looked. Without
+    --                       persistence the cutoff resets to 0 on every
+    --                       restart, the LLM keeps reading the same
+    --                       summaries, and `persist_and_surface_reflections`
+    --                       (which has no insert-time dedupe) accumulates
+    --                       near-duplicate reflections about the same
+    --                       chunks (#623).
+    CREATE TABLE IF NOT EXISTS subconscious_state (
+        key   TEXT PRIMARY KEY,
+        value REAL NOT NULL
     );
 ";
 
@@ -564,6 +595,39 @@ fn now_secs() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+// ── Engine state KV ──────────────────────────────────────────────────────────
+
+/// SQLite key for the most recent successful tick, in unix seconds.
+/// Loaded by [`SubconsciousEngine::from_heartbeat_config`] on init and
+/// updated after every successful tick. See `subconscious_state` table
+/// docstring in [`SCHEMA_DDL`] for the dedupe rationale.
+const STATE_KEY_LAST_TICK_AT: &str = "last_tick_at";
+
+/// Read the persisted `last_tick_at` from `subconscious_state`. Returns
+/// `0.0` when the row is absent (cold start or fresh workspace) so the
+/// caller can treat "never ticked" identically to "first run".
+pub fn get_last_tick_at(conn: &Connection) -> Result<f64> {
+    let value: Option<f64> = conn
+        .query_row(
+            "SELECT value FROM subconscious_state WHERE key = ?1",
+            [STATE_KEY_LAST_TICK_AT],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(value.unwrap_or(0.0))
+}
+
+/// Persist `last_tick_at` so the next process restart picks up where
+/// this run left off. Upsert via `INSERT OR REPLACE` — the table is one
+/// row per key, so collisions are the expected case.
+pub fn set_last_tick_at(conn: &Connection, value: f64) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO subconscious_state (key, value) VALUES (?1, ?2)",
+        rusqlite::params![STATE_KEY_LAST_TICK_AT, value],
+    )?;
+    Ok(())
 }
 
 /// Compute the next run time for a cron expression.

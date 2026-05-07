@@ -10,7 +10,26 @@ import {
   REGISTER,
   REHYDRATE,
 } from 'redux-persist';
-import defaultStorage from 'redux-persist/lib/storage';
+// `import defaultStorage from 'redux-persist/lib/storage'` resolves under
+// our current Vite + vite-plugin-node-polyfills chain to the wrapper
+// `exports` object instead of `exports.default`, so `defaultStorage.getItem`
+// is undefined and the very first PERSIST action throws
+// `TypeError: storage.getItem is not a function` — leaving the app stuck
+// at a white pre-rehydrate screen. Inline the trivial localStorage adapter
+// so we don't depend on the broken interop. Matches the implementation
+// upstream in `redux-persist/lib/storage/createWebStorage`.
+const defaultStorage = {
+  getItem: (key: string): Promise<string | null> =>
+    Promise.resolve(localStorage.getItem(key)),
+  setItem: (key: string, value: string): Promise<void> => {
+    localStorage.setItem(key, value);
+    return Promise.resolve();
+  },
+  removeItem: (key: string): Promise<void> => {
+    localStorage.removeItem(key);
+    return Promise.resolve();
+  },
+};
 
 import { IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';

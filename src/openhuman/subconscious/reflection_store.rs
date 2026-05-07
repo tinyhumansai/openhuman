@@ -2,9 +2,8 @@
 //!
 //! Two tables:
 //! - `subconscious_reflections` — durable record of every reflection the
-//!   tick LLM emits. Indexed by `(created_at DESC)` and `(disposition,
-//!   created_at DESC)` so the Intelligence tab and the prompt's
-//!   "Recent reflections" section can both fetch in one go.
+//!   tick LLM emits. Indexed by `(created_at DESC)` so the Intelligence tab
+//!   and the prompt's "Recent reflections" section can both fetch in one go.
 //! - `subconscious_hotness_snapshots` — per-entity copy of the previous
 //!   tick's hotness score, used by the situation report's
 //!   `hotness_deltas` section to compute meaningful movement.
@@ -12,11 +11,18 @@
 //! DDL is appended to `super::store::SCHEMA_DDL` so the schema migration
 //! and `with_connection` lifecycle stay unified — no parallel DB handle.
 //! See [`super::store::with_connection`] for the sole entry point.
+//!
+//! Migration note: prior versions of this schema carried `disposition` and
+//! `surfaced_at` columns to support the now-removed auto-post-into-thread
+//! flow. [`migrate_drop_legacy_columns`] handles existing DBs by dropping
+//! those columns + their index; the DDL below describes the post-migration
+//! shape so fresh installs come up clean.
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use super::reflection::{Disposition, Reflection, ReflectionKind};
+use super::reflection::{Reflection, ReflectionKind};
+use super::source_chunk::SourceChunk;
 
 /// DDL appended to the subconscious schema. Imported by `super::store`'s
 /// `SCHEMA_DDL` constant so every connection runs the migration.
@@ -25,18 +31,15 @@ pub const REFLECTION_SCHEMA_DDL: &str = "
         id              TEXT PRIMARY KEY,
         kind            TEXT NOT NULL,
         body            TEXT NOT NULL,
-        disposition     TEXT NOT NULL,
         proposed_action TEXT,
         source_refs     TEXT NOT NULL DEFAULT '[]',
+        source_chunks   TEXT NOT NULL DEFAULT '[]',
         created_at      REAL NOT NULL,
-        surfaced_at     REAL,
         acted_on_at     REAL,
         dismissed_at    REAL
     );
     CREATE INDEX IF NOT EXISTS idx_reflections_created
         ON subconscious_reflections(created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_reflections_disposition_created
-        ON subconscious_reflections(disposition, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS subconscious_hotness_snapshots (
         entity_id       TEXT PRIMARY KEY,
@@ -44,6 +47,44 @@ pub const REFLECTION_SCHEMA_DDL: &str = "
         captured_at     REAL NOT NULL
     );
 ";
+
+/// Best-effort migration: drop the legacy `disposition` / `surfaced_at`
+/// columns and their index from `subconscious_reflections` if they still
+/// exist on disk. Idempotent — repeated calls and clean installs are no-ops.
+///
+/// Each statement is run with errors swallowed because:
+/// - On a fresh install the columns/index were never created → DROP errors.
+/// - On a previously-migrated install the columns/index are already gone.
+/// - SQLite ≥ 3.35 supports `ALTER TABLE ... DROP COLUMN`; older builds
+///   would fail this whole block, but we ship sqlite≥3.35 via rusqlite's
+///   bundled feature so this is fine in practice.
+pub fn migrate_drop_legacy_columns(conn: &Connection) {
+    let _ = conn.execute(
+        "DROP INDEX IF EXISTS idx_reflections_disposition_created",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE subconscious_reflections DROP COLUMN disposition",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE subconscious_reflections DROP COLUMN surfaced_at",
+        [],
+    );
+}
+
+/// Idempotent additive migration: add the `source_chunks` JSON column to
+/// previously-migrated DBs that pre-date the #623-followup memory-context
+/// snapshot work. Errors swallowed because:
+/// - Fresh installs already have the column from the CREATE TABLE above.
+/// - Already-migrated installs have it too, so ADD COLUMN errors with
+///   "duplicate column" — a no-op for our purposes.
+pub fn migrate_add_source_chunks_column(conn: &Connection) {
+    let _ = conn.execute(
+        "ALTER TABLE subconscious_reflections ADD COLUMN source_chunks TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+}
 
 // ── Reflection CRUD ──────────────────────────────────────────────────────────
 
@@ -54,30 +95,32 @@ pub fn add_reflection(conn: &Connection, reflection: &Reflection) -> Result<()> 
     let source_refs_json = serde_json::to_string(&reflection.source_refs)
         .context("serialize source_refs")
         .unwrap_or_else(|_| "[]".to_string());
+    let source_chunks_json = serde_json::to_string(&reflection.source_chunks)
+        .context("serialize source_chunks")
+        .unwrap_or_else(|_| "[]".to_string());
     conn.execute(
         "INSERT OR IGNORE INTO subconscious_reflections (
-            id, kind, body, disposition, proposed_action, source_refs,
-            created_at, surfaced_at, acted_on_at, dismissed_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            id, kind, body, proposed_action, source_refs, source_chunks,
+            created_at, acted_on_at, dismissed_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             reflection.id,
             reflection.kind.as_str(),
             reflection.body,
-            reflection.disposition.as_str(),
             reflection.proposed_action,
             source_refs_json,
+            source_chunks_json,
             reflection.created_at,
-            reflection.surfaced_at,
             reflection.acted_on_at,
             reflection.dismissed_at,
         ],
     )
     .context("insert reflection")?;
     log::debug!(
-        "[subconscious::reflection_store] added id={} kind={} disposition={}",
+        "[subconscious::reflection_store] added id={} kind={} chunks={}",
         reflection.id,
         reflection.kind.as_str(),
-        reflection.disposition.as_str()
+        reflection.source_chunks.len()
     );
     Ok(())
 }
@@ -94,8 +137,8 @@ pub fn list_recent(
     let mut stmt;
     let mapped: Vec<Reflection> = if let Some(ts) = since_ts {
         stmt = conn.prepare(
-            "SELECT id, kind, body, disposition, proposed_action, source_refs,
-                    created_at, surfaced_at, acted_on_at, dismissed_at
+            "SELECT id, kind, body, proposed_action, source_refs, source_chunks,
+                    created_at, acted_on_at, dismissed_at
              FROM subconscious_reflections
              WHERE created_at > ?1
              ORDER BY created_at DESC LIMIT ?2",
@@ -107,8 +150,8 @@ pub fn list_recent(
         rows
     } else {
         stmt = conn.prepare(
-            "SELECT id, kind, body, disposition, proposed_action, source_refs,
-                    created_at, surfaced_at, acted_on_at, dismissed_at
+            "SELECT id, kind, body, proposed_action, source_refs, source_chunks,
+                    created_at, acted_on_at, dismissed_at
              FROM subconscious_reflections
              ORDER BY created_at DESC LIMIT ?1",
         )?;
@@ -124,8 +167,8 @@ pub fn list_recent(
 /// Fetch one reflection by id.
 pub fn get_reflection(conn: &Connection, id: &str) -> Result<Option<Reflection>> {
     let mut stmt = conn.prepare(
-        "SELECT id, kind, body, disposition, proposed_action, source_refs,
-                created_at, surfaced_at, acted_on_at, dismissed_at
+        "SELECT id, kind, body, proposed_action, source_refs, source_chunks,
+                created_at, acted_on_at, dismissed_at
          FROM subconscious_reflections WHERE id = ?1",
     )?;
     let r = stmt
@@ -133,22 +176,6 @@ pub fn get_reflection(conn: &Connection, id: &str) -> Result<Option<Reflection>>
         .optional()
         .context("get reflection")?;
     Ok(r)
-}
-
-/// Stamp `surfaced_at` after a Notify reflection lands in the
-/// subconscious conversation thread.
-pub fn mark_surfaced(conn: &Connection, id: &str, ts: f64) -> Result<()> {
-    let updated = conn.execute(
-        "UPDATE subconscious_reflections SET surfaced_at = ?1 WHERE id = ?2 AND surfaced_at IS NULL",
-        params![ts, id],
-    )?;
-    if updated == 0 {
-        log::debug!(
-            "[subconscious::reflection_store] mark_surfaced no-op id={} (already surfaced or missing)",
-            id
-        );
-    }
-    Ok(())
 }
 
 /// Stamp `acted_on_at` when the user taps the proposed action.
@@ -173,26 +200,26 @@ fn row_to_reflection(row: &rusqlite::Row) -> rusqlite::Result<Reflection> {
     let id: String = row.get(0)?;
     let kind_s: String = row.get(1)?;
     let body: String = row.get(2)?;
-    let disposition_s: String = row.get(3)?;
-    let proposed_action: Option<String> = row.get(4)?;
-    let source_refs_json: String = row.get(5)?;
+    let proposed_action: Option<String> = row.get(3)?;
+    let source_refs_json: String = row.get(4)?;
+    let source_chunks_json: String = row.get(5)?;
     let created_at: f64 = row.get(6)?;
-    let surfaced_at: Option<f64> = row.get(7)?;
-    let acted_on_at: Option<f64> = row.get(8)?;
-    let dismissed_at: Option<f64> = row.get(9)?;
+    let acted_on_at: Option<f64> = row.get(7)?;
+    let dismissed_at: Option<f64> = row.get(8)?;
 
     let source_refs: Vec<String> =
         serde_json::from_str(&source_refs_json).unwrap_or_else(|_| Vec::new());
+    let source_chunks: Vec<SourceChunk> =
+        serde_json::from_str(&source_chunks_json).unwrap_or_else(|_| Vec::new());
 
     Ok(Reflection {
         id,
         kind: ReflectionKind::from_str_lossy(&kind_s),
         body,
-        disposition: Disposition::from_str_lossy(&disposition_s),
         proposed_action,
         source_refs,
+        source_chunks,
         created_at,
-        surfaced_at,
         acted_on_at,
         dismissed_at,
     })

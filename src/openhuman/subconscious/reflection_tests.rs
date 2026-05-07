@@ -3,19 +3,6 @@
 use super::*;
 
 #[test]
-fn disposition_round_trip() {
-    assert_eq!(Disposition::Observe.as_str(), "observe");
-    assert_eq!(Disposition::Notify.as_str(), "notify");
-    assert_eq!(Disposition::from_str_lossy("notify"), Disposition::Notify);
-    assert_eq!(Disposition::from_str_lossy("observe"), Disposition::Observe);
-    // Unknown -> Observe (forward compatible).
-    assert_eq!(
-        Disposition::from_str_lossy("future-bucket"),
-        Disposition::Observe
-    );
-}
-
-#[test]
 fn reflection_kind_round_trip() {
     for k in [
         ReflectionKind::HotnessSpike,
@@ -36,6 +23,9 @@ fn reflection_kind_round_trip() {
 
 #[test]
 fn parses_reflection_draft_from_llm_json() {
+    // The legacy `disposition` field is silently ignored by serde — kept
+    // in the fixture to verify forward/backward compat with LLM responses
+    // emitted before the field was dropped from the prompt contract.
     let json = r#"{
         "kind": "hotness_spike",
         "body": "Phoenix has been mentioned 4x in the last hour.",
@@ -45,7 +35,6 @@ fn parses_reflection_draft_from_llm_json() {
     }"#;
     let d: ReflectionDraft = serde_json::from_str(json).expect("parse");
     assert_eq!(d.kind, ReflectionKind::HotnessSpike);
-    assert_eq!(d.disposition, Disposition::Notify);
     assert_eq!(
         d.proposed_action.as_deref(),
         Some("Pull recent Phoenix mentions")
@@ -57,8 +46,7 @@ fn parses_reflection_draft_from_llm_json() {
 fn parses_minimal_reflection_draft_without_optional_fields() {
     let json = r#"{
         "kind": "daily_digest",
-        "body": "New daily digest sealed.",
-        "disposition": "observe"
+        "body": "New daily digest sealed."
     }"#;
     let d: ReflectionDraft = serde_json::from_str(json).expect("parse");
     assert!(d.proposed_action.is_none());
@@ -70,14 +58,12 @@ fn hydrate_draft_fills_lifecycle_fields() {
     let draft = ReflectionDraft {
         kind: ReflectionKind::Opportunity,
         body: "User mentioned founders dinner".into(),
-        disposition: Disposition::Notify,
         proposed_action: Some("Draft an invite list".into()),
         source_refs: vec!["entity:dinner".into()],
     };
-    let r = hydrate_draft(draft, "abc-123".into(), 1_700_000_000.0);
+    let r = hydrate_draft(draft, "abc-123".into(), 1_700_000_000.0, Vec::new());
     assert_eq!(r.id, "abc-123");
     assert_eq!(r.created_at, 1_700_000_000.0);
-    assert!(r.surfaced_at.is_none());
     assert!(r.acted_on_at.is_none());
     assert!(r.dismissed_at.is_none());
 }
@@ -112,7 +98,6 @@ fn apply_cap_keeps_within_limit() {
         .map(|i| ReflectionDraft {
             kind: ReflectionKind::DailyDigest,
             body: format!("body {i}"),
-            disposition: Disposition::Observe,
             proposed_action: None,
             source_refs: vec![],
         })
@@ -128,7 +113,6 @@ fn apply_cap_trims_excess() {
         .map(|i| ReflectionDraft {
             kind: ReflectionKind::DailyDigest,
             body: format!("body {i}"),
-            disposition: Disposition::Observe,
             proposed_action: None,
             source_refs: vec![],
         })

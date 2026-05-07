@@ -31,10 +31,9 @@ pub fn build_section(reflections: &[Reflection]) -> String {
     for r in reflections.iter().take(RENDER_CAP) {
         let _ = writeln!(
             section,
-            "- [{id}] kind={kind} disposition={disp} — {body}",
+            "- [{id}] kind={kind} — {body}",
             id = r.id,
             kind = r.kind.as_str(),
-            disp = r.disposition.as_str(),
             body = trim_for_prompt(&r.body),
         );
     }
@@ -55,7 +54,7 @@ fn trim_for_prompt(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::openhuman::subconscious::reflection::{
-        hydrate_draft, Disposition, ReflectionDraft, ReflectionKind,
+        hydrate_draft, ReflectionDraft, ReflectionKind,
     };
 
     fn r(id: &str, body: &str) -> Reflection {
@@ -63,12 +62,12 @@ mod tests {
             ReflectionDraft {
                 kind: ReflectionKind::HotnessSpike,
                 body: body.into(),
-                disposition: Disposition::Notify,
                 proposed_action: None,
                 source_refs: vec![],
             },
             id.into(),
             1.0,
+            Vec::new(),
         )
     }
 

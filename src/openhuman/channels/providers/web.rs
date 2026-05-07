@@ -1083,7 +1083,31 @@ fn build_session_agent(
         thread_id
     );
 
-    Agent::from_config_for_agent(&effective, target_agent_id)
+    // (#623) If this thread was spawned from a subconscious reflection,
+    // load the pre-resolved `source_chunks` snapshot and route through
+    // the chunks-aware constructor so the orchestrator's system prompt
+    // carries the same memory context the reflection-LLM cited. For
+    // regular threads this is a no-op (chunks=None, normal path).
+    let reflection_chunks =
+        load_reflection_chunks_for_thread(&effective.workspace_dir, thread_id);
+
+    let agent_result = match reflection_chunks {
+        Some(chunks) if !chunks.is_empty() => {
+            log::info!(
+                "[web-channel] thread={} spawned from reflection — injecting {} memory chunks into system prompt",
+                thread_id,
+                chunks.len()
+            );
+            Agent::from_config_for_agent_with_reflection_chunks(
+                &effective,
+                target_agent_id,
+                chunks,
+            )
+        }
+        _ => Agent::from_config_for_agent(&effective, target_agent_id),
+    };
+
+    agent_result
         .map(|mut agent| {
             agent.set_event_context(event_session_id_for(client_id, thread_id), "web_channel");
             // Scope session transcripts per thread so each conversation
@@ -1099,6 +1123,50 @@ fn build_session_agent(
             agent
         })
         .map_err(|e| e.to_string())
+}
+
+/// Look up reflection-spawned-thread metadata for a chat thread (#623).
+///
+/// Reads the thread's first message; if it was seeded by `reflections_act`
+/// — `extra_metadata.origin == "subconscious_reflection"` with a
+/// `reflection_id` — fetches the reflection row and returns its
+/// pre-resolved `source_chunks` snapshot. Returns `None` for ordinary
+/// chat threads (no reflection origin) and on any error so a missing
+/// reflection never breaks the chat path.
+fn load_reflection_chunks_for_thread(
+    workspace_dir: &std::path::Path,
+    thread_id: &str,
+) -> Option<Vec<crate::openhuman::subconscious::SourceChunk>> {
+    let messages = crate::openhuman::memory::conversations::get_messages(
+        workspace_dir.to_path_buf(),
+        thread_id,
+    )
+    .ok()?;
+    let first = messages.first()?;
+    let origin = first
+        .extra_metadata
+        .get("origin")
+        .and_then(|v| v.as_str())?;
+    if origin != "subconscious_reflection" {
+        return None;
+    }
+    let reflection_id = first
+        .extra_metadata
+        .get("reflection_id")
+        .and_then(|v| v.as_str())?
+        .to_string();
+    let reflection = crate::openhuman::subconscious::store::with_connection(
+        workspace_dir,
+        |conn| {
+            crate::openhuman::subconscious::reflection_store::get_reflection(
+                conn,
+                &reflection_id,
+            )
+        },
+    )
+    .ok()
+    .flatten()?;
+    Some(reflection.source_chunks)
 }
 
 #[derive(Debug, Deserialize)]

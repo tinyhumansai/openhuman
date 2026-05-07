@@ -9,7 +9,7 @@
     "dev": "vite",
     "dev:web": "vite",
     "dev:app": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && bash ../scripts/setup-chromium-safe-storage.sh && source ../scripts/load-dotenv.sh && APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev",
-    "dev:app:win": "bash ../scripts/run-dev-win.sh",
+    "dev:app:win": "\"C:/Program Files/Git/bin/bash.exe\" ../scripts/run-dev-win.sh",
     "dev:cef": "pnpm dev:app",
     "dev:wry": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && source ../scripts/load-dotenv.sh && cargo tauri dev --no-default-features --features wry",
     "core:stage": "echo '[core:stage] no-op — core is linked in-process; sidecar removed (PR #1061)'",

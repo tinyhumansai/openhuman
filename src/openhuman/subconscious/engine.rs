@@ -8,10 +8,10 @@
 //! while the old one is in-flight, the old tick's in_progress entries are
 //! marked as cancelled and its results are discarded.
 
-use super::conversation_post;
 use super::executor;
 use super::prompt;
-use super::reflection::{apply_cap, hydrate_draft, Disposition, Reflection, ReflectionDraft};
+use super::reflection::{apply_cap, hydrate_draft, Reflection, ReflectionDraft};
+use super::source_chunk::resolve_chunks;
 use super::reflection_store;
 use super::situation_report::build_situation_report;
 use super::store;
@@ -76,6 +76,27 @@ impl SubconsciousEngine {
             }
         };
 
+        // Restore `last_tick_at` from `subconscious_state` so the
+        // situation-report cutoff survives process restarts. Without
+        // this every restart cold-starts the LLM, which sees the same
+        // memory-tree rows again and re-emits near-duplicate reflections
+        // (no insert-time dedupe in `persist_and_surface_reflections`).
+        // 0.0 on first run / load failure mirrors the previous default.
+        let last_tick_at = match store::with_connection(&workspace_dir, store::get_last_tick_at) {
+            Ok(v) => {
+                if v > 0.0 {
+                    info!(
+                        "[subconscious] resumed last_tick_at={v} from disk (situation report will only emit memory-tree rows newer than this)"
+                    );
+                }
+                v
+            }
+            Err(e) => {
+                warn!("[subconscious] last_tick_at load failed, falling back to 0.0: {e}");
+                0.0
+            }
+        };
+
         Self {
             workspace_dir,
             interval_minutes: heartbeat.interval_minutes.max(5),
@@ -83,7 +104,7 @@ impl SubconsciousEngine {
             enabled: heartbeat.enabled && heartbeat.inference_enabled,
             memory,
             state: Mutex::new(EngineState {
-                last_tick_at: 0.0,
+                last_tick_at,
                 total_ticks: 0,
                 consecutive_failures: 0,
                 seeded,
@@ -159,6 +180,7 @@ impl SubconsciousEngine {
         if due_tasks.is_empty() {
             debug!("[subconscious] no due tasks");
             state.last_tick_at = tick_at;
+            persist_last_tick_at(&self.workspace_dir, tick_at);
             state.total_ticks += 1;
             return Ok(TickResult {
                 tick_at,
@@ -270,7 +292,16 @@ impl SubconsciousEngine {
         //     output anyway. We do NOT advance `last_tick_at` on
         //     failure, so the next tick sees the same window.
         if !evaluation_failed && !reflection_drafts.is_empty() {
-            persist_and_surface_reflections(&self.workspace_dir, reflection_drafts, tick_at).await;
+            // Reuse the same `config_for_report` we built for the situation
+            // report — the source-chunk resolver reads the same memory-tree
+            // tables, so a single load is enough.
+            persist_and_surface_reflections(
+                &self.workspace_dir,
+                &config_for_report,
+                reflection_drafts,
+                tick_at,
+            )
+            .await;
         }
 
         // 7. Execute based on decisions, updating log entries in place
@@ -331,6 +362,7 @@ impl SubconsciousEngine {
         } else {
             state.consecutive_failures = 0;
             state.last_tick_at = tick_at;
+            persist_last_tick_at(&self.workspace_dir, tick_at);
         }
 
         Ok(TickResult {
@@ -798,14 +830,20 @@ fn parse_response(
     (evals, vec![])
 }
 
-/// Persist a batch of LLM-emitted reflection drafts and post any
-/// `Notify`-disposition entries into the `system:subconscious` thread.
+/// Persist a batch of LLM-emitted reflection drafts.
 ///
 /// Caps to `MAX_REFLECTIONS_PER_TICK`. Failures on individual writes
 /// are logged but do not abort the rest — the tick must finish even if
 /// one row trips an I/O error.
+///
+/// Note: prior versions of this function also auto-posted `Notify`-
+/// disposition reflections into a `system:subconscious` conversation
+/// thread. That auto-post path is removed — reflections live exclusively
+/// on the Intelligence tab. The user can spawn a fresh conversation from
+/// any reflection via the `reflections_act` RPC (drives the action button).
 async fn persist_and_surface_reflections(
     workspace_dir: &std::path::Path,
+    config: &crate::openhuman::config::Config,
     drafts: Vec<ReflectionDraft>,
     now: f64,
 ) -> Vec<Reflection> {
@@ -821,10 +859,20 @@ async fn persist_and_surface_reflections(
         return vec![];
     }
 
-    // Hydrate drafts into full reflections with fresh ids.
+    // Hydrate drafts into full reflections with fresh ids. For each draft,
+    // resolve its `source_refs` against the live memory-tree data NOW so
+    // the snapshot freezes the LLM's actual context. The chunks ride
+    // alongside the reflection row and feed both the Intelligence-tab
+    // "Sources" disclosure and the orchestrator's system-prompt memory-
+    // context injection for any chat turn in a thread spawned from this
+    // reflection. Resolver failures degrade per-chunk to empty content
+    // (see `source_chunk::resolve_chunks`).
     let reflections: Vec<Reflection> = drafts
         .into_iter()
-        .map(|d| hydrate_draft(d, uuid::Uuid::new_v4().to_string(), now))
+        .map(|d| {
+            let chunks = resolve_chunks(config, &d.source_refs);
+            hydrate_draft(d, uuid::Uuid::new_v4().to_string(), now, chunks)
+        })
         .collect();
 
     // Persist all reflections in one connection. Idempotent inserts —
@@ -839,43 +887,6 @@ async fn persist_and_surface_reflections(
         Ok(())
     }) {
         warn!("[subconscious] reflection batch persist failed: {e}");
-    }
-
-    // For Notify reflections, also ensure the thread + post the message.
-    let notify_count = reflections
-        .iter()
-        .filter(|r| r.disposition == Disposition::Notify)
-        .count();
-    if notify_count == 0 {
-        return reflections;
-    }
-    debug!("[subconscious] surfacing {notify_count} Notify reflections to system:subconscious");
-
-    let now_iso = chrono::Utc::now().to_rfc3339();
-    if let Err(e) =
-        conversation_post::ensure_subconscious_thread(workspace_dir.to_path_buf(), now_iso.clone())
-    {
-        warn!("[subconscious] ensure_subconscious_thread failed: {e}");
-        // Don't return — persistence still happened; just no surfacing.
-        return reflections;
-    }
-
-    for r in &reflections {
-        if r.disposition != Disposition::Notify {
-            continue;
-        }
-        match conversation_post::post_reflection(workspace_dir.to_path_buf(), r) {
-            Ok(_msg) => {
-                if let Err(e) = store::with_connection(workspace_dir, |conn| {
-                    reflection_store::mark_surfaced(conn, &r.id, now)
-                }) {
-                    warn!("[subconscious] mark_surfaced failed id={}: {e}", r.id);
-                }
-            }
-            Err(e) => {
-                warn!("[subconscious] post_reflection failed id={}: {e}", r.id);
-            }
-        }
     }
 
     reflections
@@ -901,6 +912,19 @@ fn extract_json(text: &str) -> &str {
         &trimmed[start..end]
     } else {
         trimmed
+    }
+}
+
+/// Best-effort durability for the in-memory `last_tick_at` advance.
+/// SQLite write failures are downgraded to a warning — the in-memory
+/// value still advances and the current process keeps deduping
+/// correctly. The next restart would just cold-start as before, which
+/// is the pre-fix behaviour.
+fn persist_last_tick_at(workspace_dir: &std::path::Path, tick_at: f64) {
+    if let Err(e) =
+        store::with_connection(workspace_dir, |conn| store::set_last_tick_at(conn, tick_at))
+    {
+        warn!("[subconscious] failed to persist last_tick_at={tick_at}: {e}");
     }
 }
 

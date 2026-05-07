@@ -58,10 +58,10 @@ For each reflection:
 - `kind`: one of `hotness_spike` | `cross_source_pattern` | `daily_digest`
   | `due_item` | `risk` | `opportunity`.
 - `body`: short markdown-friendly observation.
-- `disposition`: `observe` (quietly persist for next-tick decay) or
-  `notify` (also surface in the proactive conversation thread).
-- `proposed_action` (optional): one-tap action text. The user sees this
-  as a button — never auto-executed.
+- `proposed_action` (optional): one-tap action text. When the user taps
+  the action button, OpenHuman opens a *new* conversation thread seeded
+  with the body + this action — never auto-executed, never written into
+  any existing chat.
 - `source_refs`: opaque ids from the situation report so we can trace
   provenance.
 
@@ -69,8 +69,10 @@ For each reflection:
 shows what you already noticed. Re-emit only if the underlying signal
 materially intensified — otherwise let it decay silently.
 
-**No side effects**: you do not execute anything. `proposed_action` is a
-suggestion the user chooses (or the agent on their behalf, post-tap).
+**No side effects, no thread bloat**: reflections are observation-only.
+They surface on the Intelligence tab; nothing is auto-posted into any
+conversation. Only emit a `proposed_action` when there is a concrete
+follow-up the user could plausibly want to start a chat about.
 
 Cap: emit at most **5 reflections per tick**. Excess is dropped.
 
@@ -84,7 +86,6 @@ Cap: emit at most **5 reflections per tick**. Excess is dropped.
     {{
       "kind": "hotness_spike",
       "body": "Phoenix mentions surged 4× in last hour across Slack + email.",
-      "disposition": "notify",
       "proposed_action": "Pull the last 24h of Phoenix mentions into a thread",
       "source_refs": ["entity:phoenix", "summary:abc123"]
     }}

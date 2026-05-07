@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::openhuman::subconscious::reflection::{
-    hydrate_draft, Disposition, ReflectionDraft, ReflectionKind,
+    hydrate_draft, ReflectionDraft, ReflectionKind,
 };
 use rusqlite::Connection;
 
@@ -19,21 +19,20 @@ fn fresh_conn() -> Connection {
     conn
 }
 
-fn sample_reflection(id: &str, disposition: Disposition, created_at: f64) -> Reflection {
+fn sample_reflection(id: &str, created_at: f64) -> Reflection {
     let draft = ReflectionDraft {
         kind: ReflectionKind::HotnessSpike,
         body: format!("body for {id}"),
-        disposition,
         proposed_action: Some("Take a look".into()),
         source_refs: vec!["entity:foo".into()],
     };
-    hydrate_draft(draft, id.into(), created_at)
+    hydrate_draft(draft, id.into(), created_at, Vec::new())
 }
 
 #[test]
 fn add_and_get_round_trip() {
     let conn = fresh_conn();
-    let r = sample_reflection("r1", Disposition::Notify, 1.0);
+    let r = sample_reflection("r1", 1.0);
     add_reflection(&conn, &r).expect("add");
     let got = get_reflection(&conn, "r1").expect("get").expect("present");
     assert_eq!(got, r);
@@ -42,7 +41,7 @@ fn add_and_get_round_trip() {
 #[test]
 fn add_is_idempotent_on_id() {
     let conn = fresh_conn();
-    let r = sample_reflection("dup", Disposition::Observe, 5.0);
+    let r = sample_reflection("dup", 5.0);
     add_reflection(&conn, &r).unwrap();
     let mut bumped = r.clone();
     bumped.body = "DIFFERENT — should not overwrite".into();
@@ -54,9 +53,9 @@ fn add_is_idempotent_on_id() {
 #[test]
 fn list_recent_orders_newest_first() {
     let conn = fresh_conn();
-    add_reflection(&conn, &sample_reflection("a", Disposition::Observe, 1.0)).unwrap();
-    add_reflection(&conn, &sample_reflection("b", Disposition::Observe, 5.0)).unwrap();
-    add_reflection(&conn, &sample_reflection("c", Disposition::Observe, 3.0)).unwrap();
+    add_reflection(&conn, &sample_reflection("a", 1.0)).unwrap();
+    add_reflection(&conn, &sample_reflection("b", 5.0)).unwrap();
+    add_reflection(&conn, &sample_reflection("c", 3.0)).unwrap();
     let got = list_recent(&conn, 10, None).unwrap();
     let ids: Vec<&str> = got.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(ids, vec!["b", "c", "a"]);
@@ -65,32 +64,18 @@ fn list_recent_orders_newest_first() {
 #[test]
 fn list_recent_respects_since_ts() {
     let conn = fresh_conn();
-    add_reflection(&conn, &sample_reflection("a", Disposition::Observe, 1.0)).unwrap();
-    add_reflection(&conn, &sample_reflection("b", Disposition::Observe, 5.0)).unwrap();
+    add_reflection(&conn, &sample_reflection("a", 1.0)).unwrap();
+    add_reflection(&conn, &sample_reflection("b", 5.0)).unwrap();
     let got = list_recent(&conn, 10, Some(2.0)).unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].id, "b");
 }
 
 #[test]
-fn mark_surfaced_sets_timestamp_once() {
-    let conn = fresh_conn();
-    let r = sample_reflection("s1", Disposition::Notify, 1.0);
-    add_reflection(&conn, &r).unwrap();
-    mark_surfaced(&conn, "s1", 100.0).unwrap();
-    let got = get_reflection(&conn, "s1").unwrap().unwrap();
-    assert_eq!(got.surfaced_at, Some(100.0));
-    // Second mark should be a no-op (idempotent).
-    mark_surfaced(&conn, "s1", 200.0).unwrap();
-    let again = get_reflection(&conn, "s1").unwrap().unwrap();
-    assert_eq!(again.surfaced_at, Some(100.0));
-}
-
-#[test]
 fn mark_acted_and_dismissed_set_timestamps() {
     let conn = fresh_conn();
-    add_reflection(&conn, &sample_reflection("act", Disposition::Notify, 1.0)).unwrap();
-    add_reflection(&conn, &sample_reflection("dis", Disposition::Notify, 1.0)).unwrap();
+    add_reflection(&conn, &sample_reflection("act", 1.0)).unwrap();
+    add_reflection(&conn, &sample_reflection("dis", 1.0)).unwrap();
     mark_acted(&conn, "act", 50.0).unwrap();
     mark_dismissed(&conn, "dis", 60.0).unwrap();
     assert_eq!(

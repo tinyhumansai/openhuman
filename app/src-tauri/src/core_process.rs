@@ -105,6 +105,30 @@ impl CoreProcessHandle {
 
     pub async fn ensure_running(&self) -> Result<(), String> {
         if self.is_rpc_port_open().await {
+            // Idempotent fast-path: if we already own a running embedded
+            // task, the listener on this port is us — not a stale external
+            // process. Without this short-circuit, a second `ensure_running`
+            // call (from BootCheckGate re-render, React StrictMode mount, or
+            // any double-invoke of `start_core_process`) hits the
+            // `identify_listener` path, identifies the listener as
+            // OpenHuman, calls `takeover_stale_listener`, and aborts with
+            // "stale-listener pid <self> matches the Tauri host pid;
+            // refusing to self-terminate". (#1316 introduced the
+            // frontend-driven `start_core_process` invoke without
+            // hardening `ensure_running` against double-invoke.)
+            {
+                let guard = self.task.lock().await;
+                if let Some(task) = guard.as_ref() {
+                    if !task.is_finished() {
+                        log::debug!(
+                            "[core] ensure_running: embedded task already running on port {}, returning Ok (idempotent)",
+                            self.port
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+
             if reuse_existing_listener_enabled() {
                 log::warn!(
                     "[core] OPENHUMAN_CORE_REUSE_EXISTING=1 — attaching to whatever is listening on port {} without identification (legacy behavior)",

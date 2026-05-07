@@ -170,6 +170,29 @@ impl SystemPromptBuilder {
         self
     }
 
+    /// Append a "Memory context" section carrying the resolved chunks the
+    /// subconscious LLM cited when it produced the reflection that
+    /// spawned this thread (#623).
+    ///
+    /// Snapshot semantics — chunks are baked at construction so the
+    /// rendered system prompt remains byte-identical for the lifetime of
+    /// the session, preserving the inference backend's prefix cache hit.
+    /// The session builder calls this when it detects a thread with a
+    /// `subconscious_reflection`-origin seed message.
+    ///
+    /// No-op when `chunks` is empty.
+    pub fn with_reflection_context(
+        mut self,
+        chunks: Vec<crate::openhuman::subconscious::SourceChunk>,
+    ) -> Self {
+        if chunks.is_empty() {
+            return self;
+        }
+        self.sections
+            .push(Box::new(ReflectionMemoryContextSection::new(chunks)));
+        self
+    }
+
     /// Render every section in order into a single prompt string.
     ///
     /// The rendered bytes are intended to be **frozen for the whole
@@ -201,6 +224,69 @@ pub const GLOBAL_STYLE_SUFFIX: &str = "## Output style\n\n\
     - Do **not** use em-dashes (`—`). Replace them with commas, colons, \
     parentheses, or two short sentences. This applies to every output \
     you produce: chat replies, summaries, tool args, and file contents.\n";
+
+/// "Memory context" section for chat threads spawned from a subconscious
+/// reflection (#623). Renders the resolved [`SourceChunk`]s that the
+/// subconscious LLM cited when it produced the reflection — gives the
+/// orchestrator the same memory context the reflection-LLM had, so the
+/// user can drill into the observation without the orchestrator
+/// hallucinating details it never saw.
+///
+/// Chunks are passed in at construction (snapshot at session-start) so
+/// the rendered bytes stay stable for the whole session, matching the
+/// "frozen prompt for prefix cache" contract documented on
+/// [`SystemPromptBuilder::build`].
+pub struct ReflectionMemoryContextSection {
+    chunks: Vec<crate::openhuman::subconscious::SourceChunk>,
+}
+
+impl ReflectionMemoryContextSection {
+    pub fn new(chunks: Vec<crate::openhuman::subconscious::SourceChunk>) -> Self {
+        Self { chunks }
+    }
+}
+
+impl PromptSection for ReflectionMemoryContextSection {
+    fn name(&self) -> &str {
+        "reflection_memory_context"
+    }
+
+    fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
+        // Skip chunks the resolver couldn't populate — `not_found`,
+        // `db_error`, or stub kinds without a wired resolver yet. Earlier
+        // versions emitted "(content not yet resolved)" as a placeholder,
+        // but the orchestrator picks up that literal string as part of
+        // its memory context and ends up echoing it back to the user
+        // mid-reply. Better to give the LLM no chunk than a placeholder
+        // it'll quote.
+        let usable: Vec<&crate::openhuman::subconscious::SourceChunk> = self
+            .chunks
+            .iter()
+            .filter(|c| !c.content.trim().is_empty())
+            .collect();
+        if usable.is_empty() {
+            return Ok(String::new());
+        }
+        let mut out = String::from("## Memory context\n\n");
+        out.push_str(
+            "This thread was spawned from a subconscious reflection. The chunks below \
+             are what OpenHuman was looking at when it surfaced the observation — \
+             use them to ground follow-up answers in the same evidence the reflection \
+             was based on.\n\n",
+        );
+        for chunk in usable {
+            let body = chunk.content.replace('\n', " ").trim().to_string();
+            let _ = writeln!(
+                out,
+                "- **{kind}** `{ref_id}`: {body}",
+                kind = chunk.kind,
+                ref_id = chunk.ref_id,
+                body = body,
+            );
+        }
+        Ok(out)
+    }
+}
 
 /// Sub-agent role prompt — pre-loaded text from an
 /// [`crate::openhuman::agent::harness::definition::AgentDefinition`]'s

@@ -861,6 +861,41 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     welcomePending: false,
     rustChat,
   });
+  // Auto-focus the composer when a thread becomes selected and the composer
+  // isn't blocked. Without this, navigating into a thread from elsewhere in
+  // the app (e.g. acting on a subconscious reflection in the Intelligence
+  // tab — `IntelligenceSubconsciousTab.handleNavigateToReflectionThread`
+  // dispatches `setSelectedThread` then routes to `/chat`) leaves focus on
+  // the unmounted source button, falling back to `document.body`. The
+  // textarea is rendered and enabled but ignores keystrokes until the user
+  // clicks into it. Skip when there is no thread, when the composer is
+  // disabled, when in voice mode, and when the user has focus on another
+  // input/textarea/contenteditable (don't steal focus from a settings pane
+  // the user just clicked into).
+  useEffect(() => {
+    if (!selectedThreadId) return;
+    if (composerInteractionBlocked) return;
+    if (inputMode !== 'text') return;
+    const ta = textInputRef.current;
+    if (!ta) return;
+    const active = document.activeElement;
+    if (
+      active &&
+      active !== document.body &&
+      active !== ta &&
+      (active.tagName === 'INPUT' ||
+        active.tagName === 'TEXTAREA' ||
+        active.getAttribute('contenteditable') === 'true')
+    ) {
+      return;
+    }
+    // rAF — wait for the textarea to be in the layout tree (selectedThread
+    // changes can arrive a tick before the panel mounts on first navigation).
+    const id = window.requestAnimationFrame(() => {
+      textInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [selectedThreadId, composerInteractionBlocked, inputMode]);
   const isSending = Boolean(
     selectedThreadId &&
     (inferenceTurnLifecycleByThread[selectedThreadId] === 'started' ||

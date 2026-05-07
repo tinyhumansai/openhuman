@@ -1,6 +1,8 @@
 import type { Dispatch, FormEvent, SetStateAction } from 'react';
+import { useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 
+import { setSelectedThread } from '../../store/threadSlice';
 import type {
   SubconsciousEscalation,
   SubconsciousLogEntry,
@@ -33,13 +35,6 @@ interface IntelligenceSubconsciousTabProps {
   triggering: boolean;
   escalations: SubconsciousEscalation[];
   loading: boolean;
-  /**
-   * The user's active orchestrator thread id (#623). Used by the
-   * reflection-cards component when the user taps a proposed action —
-   * the conversation moves into this thread, NOT the subconscious feed.
-   * `null` disables the Act button.
-   */
-  activeThreadId?: string | null;
 }
 
 export default function IntelligenceSubconsciousTab({
@@ -59,9 +54,32 @@ export default function IntelligenceSubconsciousTab({
   toggleSubconsciousTask,
   triggerTick,
   triggering,
-  activeThreadId = null,
 }: IntelligenceSubconsciousTabProps) {
   const navigate = useNavigate();
+  const dispatch = useDispatch();
+
+  // Reflection "Act" callback — sets the freshly-spawned thread as the
+  // selected one and navigates the user to the chat surface so they
+  // land in the new conversation. Reflections never write into existing
+  // threads (#623), so every act starts its own conversation.
+  //
+  // We dispatch `setSelectedThread` (NOT `setActiveThread`): the
+  // Conversations page reads `selectedThreadId` from the thread slice on
+  // mount and resumes that thread if present in the fetched list,
+  // falling back to the most recent thread otherwise. `activeThreadId`
+  // is a separate, runtime-only field used for in-flight chat-turn
+  // routing — setting it without `selectedThreadId` would not affect
+  // which thread the user lands on.
+  //
+  // Route is `/chat`, NOT `/conversations`. The repo's CLAUDE.md hash-
+  // route list is stale — `BottomTabBar` and `OpenhumanLinkModal` both
+  // navigate to `/chat`. Using `/conversations` falls through to a home
+  // redirect so the user ends up on `/home` instead of the new thread.
+  const handleNavigateToReflectionThread = (threadId: string) => {
+    console.debug('[subconscious-ui] reflection navigate:thread', { threadId });
+    dispatch(setSelectedThread(threadId));
+    navigate('/chat');
+  };
 
   const handleAddTask = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -229,7 +247,10 @@ export default function IntelligenceSubconsciousTab({
         </div>
       </div>
 
-      <SubconsciousReflectionCards activeThreadId={activeThreadId} pollIntervalMs={15_000} />
+      <SubconsciousReflectionCards
+        onNavigateToThread={handleNavigateToReflectionThread}
+        pollIntervalMs={15_000}
+      />
 
       {escalations.length > 0 && (
         <div>

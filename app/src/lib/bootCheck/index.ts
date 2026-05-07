@@ -79,7 +79,14 @@ async function waitForCore(
     const elapsedAtStart = Date.now() - startedAt;
     try {
       log('[boot-check] ping attempt elapsed=%dms', elapsedAtStart);
-      await callRpc('openhuman.ping', {});
+      // Method is `core.ping`, not `openhuman.ping`. The latter routes
+      // through the `openhuman.*` domain dispatcher which has no `ping`
+      // controller — the core's `GET /` endpoint even self-documents the
+      // correct invocation: `usage.jsonrpc.method = "core.ping"`. Upstream
+      // `#1316` introduced this call site with the wrong namespace; the
+      // dispatcher rejects with `unknown method: openhuman.ping` and the
+      // BootCheckGate spins until timeout.
+      await callRpc('core.ping', {});
       log('[boot-check] ping succeeded elapsed=%dms', elapsedAtStart);
       return true;
     } catch {
@@ -131,11 +138,21 @@ type VersionCheckResult = 'match' | 'outdated' | 'noVersionMethod' | 'unreachabl
 
 async function checkVersion(callRpc: BootCheckTransport['callRpc']): Promise<VersionCheckResult> {
   try {
-    const result = await callRpc<{ version_info?: { version?: string } }>(
+    // The Rust handler at `src/openhuman/update/ops.rs:15` returns a
+    // `RpcOutcome::single_log(VersionInfo, ...)` which serializes as
+    // `{ logs: [...], result: { version, target_triple, asset_prefix } }`.
+    // After callRpc strips the JSON-RPC envelope's outer `result` field,
+    // we still need to drill through RpcOutcome's inner `result` wrapper
+    // to reach the actual VersionInfo. The upstream `#1316` PR read
+    // `.version_info.version` which doesn't exist anywhere in the
+    // response, so `coreVersion === APP_VERSION` always failed and the
+    // gate falsely reported a version mismatch even on fresh same-build
+    // runs.
+    const response = await callRpc<{ result?: { version?: string } }>(
       'openhuman.update_version',
       {}
     );
-    const coreVersion = result?.version_info?.version ?? '';
+    const coreVersion = response?.result?.version ?? '';
     log('[boot-check] version_check app=%s core=%s', APP_VERSION, coreVersion);
 
     if (!coreVersion) {
