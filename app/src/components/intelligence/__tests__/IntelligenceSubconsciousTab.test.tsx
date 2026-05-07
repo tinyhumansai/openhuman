@@ -12,16 +12,15 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { setSelectedThread } from '../../../store/threadSlice';
+import IntelligenceSubconsciousTab from '../IntelligenceSubconsciousTab';
+
 const mockDispatch = vi.fn();
 const mockNavigate = vi.fn();
 
-vi.mock('react-redux', () => ({
-  useDispatch: () => mockDispatch,
-}));
+vi.mock('react-redux', () => ({ useDispatch: () => mockDispatch }));
 
-vi.mock('react-router-dom', () => ({
-  useNavigate: () => mockNavigate,
-}));
+vi.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }));
 
 // Stub out the cards component so we can trigger the navigate callback
 // directly without exercising the RPC / polling path (already covered by
@@ -37,9 +36,6 @@ vi.mock('../SubconsciousReflectionCards', () => ({
     </button>
   ),
 }));
-
-import IntelligenceSubconsciousTab from '../IntelligenceSubconsciousTab';
-import { setSelectedThread } from '../../../store/threadSlice';
 
 function baseProps() {
   return {
