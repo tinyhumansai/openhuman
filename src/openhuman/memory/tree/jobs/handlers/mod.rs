@@ -672,7 +672,12 @@ mod tests {
         let p: TopicRoutePayload = serde_json::from_str(&payload_json).unwrap();
         match p.node {
             NodeRef::Summary { summary_id } => {
-                assert!(summary_id.starts_with("summary:L1:"));
+                // Format: `summary:<13-digit-ms>:L<level>-<8hex>` —
+                // see `tree_source::registry::new_summary_id`.
+                assert!(
+                    summary_id.starts_with("summary:") && summary_id.contains(":L1-"),
+                    "expected summary id with L1 segment, got {summary_id}"
+                );
             }
             other => panic!("expected NodeRef::Summary, got {other:?}"),
         }
