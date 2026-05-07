@@ -74,7 +74,7 @@ async fn cancel_chat_validates_required_fields() {
 #[tokio::test]
 async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
     set_test_forced_run_chat_task_error(Some(
-        "error sending request for url (https://staging-api.alphahuman.xyz/openai/v1/chat/completions)",
+        "error sending request for url (https://internal-api.example.invalid/openai/v1/chat/completions)",
     ))
     .await;
     let _forced_error_guard = TestForcedRunChatTaskErrorGuard;
