@@ -65,6 +65,28 @@ impl JobKind {
     }
 }
 
+/// Outcome of a successful handler run. Workers translate this into a
+/// queue settlement: `Done` finalises the row, while `Defer` puts it back
+/// to `ready` with `available_at_ms = until_ms` and **does not** count
+/// toward the failure-attempt budget.
+///
+/// `Defer` exists so a handler that is transiently unable to make
+/// progress (cloud rate-limited, dependency unavailable, model warming
+/// up) can re-queue its job with a wake-up time without marking it
+/// failed. Handlers should still surface real errors via `Err(_)` — that
+/// path runs the existing exponential-backoff retry logic which **does**
+/// burn the failure budget.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JobOutcome {
+    /// Handler ran to completion. Row is settled as `done`.
+    Done,
+    /// Handler chose not to make progress yet. Row is rescheduled to
+    /// `available_at_ms = until_ms` (UTC milliseconds) with `attempts`
+    /// reverted to its pre-claim value so the failure budget is not
+    /// touched. `reason` is recorded in `last_error` for visibility.
+    Defer { until_ms: i64, reason: String },
+}
+
 /// Lifecycle states persisted on `mem_tree_jobs.status`. Workers transition
 /// `ready → running → done|failed`. `Cancelled` is reserved for explicit
 /// admin actions (none surfaced yet).

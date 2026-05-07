@@ -2,8 +2,12 @@
 //!
 //! Each handler parses its payload from `Job::payload_json`, performs its
 //! side effects (DB writes, LLM calls, follow-up enqueues), and returns
-//! `Ok(())` on success or an `anyhow::Error` on retryable failure.
-//! [`handle_job`] fans out to the handler matching the row's `kind`.
+//! `Ok(JobOutcome::Done)` on success or an `anyhow::Error` on retryable
+//! failure. A handler may also return `Ok(JobOutcome::Defer { … })` to
+//! re-queue the job with a wake-up time without burning the failure
+//! budget — useful for transient blockers like cloud rate limits or a
+//! warming-up model. [`handle_job`] fans out to the handler matching the
+//! row's `kind`.
 
 use anyhow::{Context, Result};
 
@@ -14,7 +18,7 @@ use crate::openhuman::memory::tree::content_store::{
 use crate::openhuman::memory::tree::jobs::store;
 use crate::openhuman::memory::tree::jobs::types::{
     AppendBufferPayload, AppendTarget, DigestDailyPayload, ExtractChunkPayload, FlushStalePayload,
-    Job, JobKind, NewJob, NodeRef, SealPayload, TopicRoutePayload,
+    Job, JobKind, JobOutcome, NewJob, NodeRef, SealPayload, TopicRoutePayload,
 };
 use crate::openhuman::memory::tree::score;
 use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, pack_checked};
@@ -28,7 +32,12 @@ use crate::openhuman::memory::tree::tree_source::{
 use crate::openhuman::memory::tree::tree_topic::curator;
 
 /// Dispatch a claimed job to the matching per-kind handler.
-pub async fn handle_job(config: &Config, job: &Job) -> Result<()> {
+///
+/// Existing handlers all return `Ok(JobOutcome::Done)` on success. The
+/// `Defer` outcome is wired through the worker but not yet emitted by any
+/// in-tree handler — consumers (cloud rate limiter, triage tiered
+/// fallback, embed warmup) land in follow-up issues.
+pub async fn handle_job(config: &Config, job: &Job) -> Result<JobOutcome> {
     match job.kind {
         JobKind::ExtractChunk => handle_extract(config, job).await,
         JobKind::AppendBuffer => handle_append_buffer(config, job).await,
@@ -39,7 +48,7 @@ pub async fn handle_job(config: &Config, job: &Job) -> Result<()> {
     }
 }
 
-async fn handle_extract(config: &Config, job: &Job) -> Result<()> {
+async fn handle_extract(config: &Config, job: &Job) -> Result<JobOutcome> {
     let payload: ExtractChunkPayload =
         serde_json::from_str(&job.payload_json).context("parse ExtractChunk payload")?;
     let Some(chunk) = chunk_store::get_chunk(config, &payload.chunk_id)? else {
@@ -47,7 +56,7 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<()> {
             "[memory_tree::jobs] extract chunk missing chunk_id={}",
             payload.chunk_id
         );
-        return Ok(());
+        return Ok(JobOutcome::Done);
     };
 
     // Read the full body from disk (the `content` column in SQLite holds a
@@ -204,10 +213,10 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<()> {
         super::worker::wake_workers();
     }
 
-    Ok(())
+    Ok(JobOutcome::Done)
 }
 
-async fn handle_append_buffer(config: &Config, job: &Job) -> Result<()> {
+async fn handle_append_buffer(config: &Config, job: &Job) -> Result<JobOutcome> {
     use crate::openhuman::memory::tree::tree_source::bucket_seal::should_seal;
     use crate::openhuman::memory::tree::tree_source::store as src_store;
 
@@ -221,7 +230,7 @@ async fn handle_append_buffer(config: &Config, job: &Job) -> Result<()> {
         NodeRef::Leaf { chunk_id } => {
             let Some(chunk) = chunk_store::get_chunk(config, chunk_id)? else {
                 log::warn!("[memory_tree::jobs] append_buffer chunk missing chunk_id={chunk_id}");
-                return Ok(());
+                return Ok(JobOutcome::Done);
             };
             let score_row = score_store::get_score(config, &chunk.id)?
                 .ok_or_else(|| anyhow::anyhow!("missing score row for chunk {}", chunk.id))?;
@@ -247,7 +256,7 @@ async fn handle_append_buffer(config: &Config, job: &Job) -> Result<()> {
                 log::warn!(
                     "[memory_tree::jobs] append_buffer summary missing summary_id={summary_id}"
                 );
-                return Ok(());
+                return Ok(JobOutcome::Done);
             };
             // Read the full body from disk — `summary.content` is a ≤500-char
             // preview after the MD-on-disk migration. The summariser receives
@@ -282,7 +291,7 @@ async fn handle_append_buffer(config: &Config, job: &Job) -> Result<()> {
         // topic_route and this append). Drop on the floor — the
         // topic_route was advisory and the source-tree path already
         // ran for this leaf.
-        return Ok(());
+        return Ok(JobOutcome::Done);
     };
 
     let is_source_target = matches!(payload.target, AppendTarget::Source { .. });
@@ -342,10 +351,10 @@ async fn handle_append_buffer(config: &Config, job: &Job) -> Result<()> {
     if did_enqueue_seal {
         super::worker::wake_workers();
     }
-    Ok(())
+    Ok(JobOutcome::Done)
 }
 
-async fn handle_seal(config: &Config, job: &Job) -> Result<()> {
+async fn handle_seal(config: &Config, job: &Job) -> Result<JobOutcome> {
     use crate::openhuman::memory::tree::tree_source::bucket_seal::{seal_one_level, should_seal};
     use crate::openhuman::memory::tree::tree_source::store as src_store;
     use crate::openhuman::memory::tree::tree_source::types::TreeKind;
@@ -357,7 +366,7 @@ async fn handle_seal(config: &Config, job: &Job) -> Result<()> {
             "[memory_tree::jobs] seal tree missing tree_id={}",
             payload.tree_id
         );
-        return Ok(());
+        return Ok(JobOutcome::Done);
     };
 
     // Seal exactly one level. Parents only get sealed via a follow-up job
@@ -371,7 +380,7 @@ async fn handle_seal(config: &Config, job: &Job) -> Result<()> {
             tree.id,
             payload.level
         );
-        return Ok(());
+        return Ok(JobOutcome::Done);
     }
     if !forced && !should_seal(&buf) {
         // Another job sealed this level out from under us (or the buffer
@@ -382,7 +391,7 @@ async fn handle_seal(config: &Config, job: &Job) -> Result<()> {
             payload.level,
             buf.token_sum
         );
-        return Ok(());
+        return Ok(JobOutcome::Done);
     }
 
     // Pick the labeling strategy for this tree kind. Source trees mint
@@ -417,10 +426,10 @@ async fn handle_seal(config: &Config, job: &Job) -> Result<()> {
     }
 
     super::worker::wake_workers();
-    Ok(())
+    Ok(JobOutcome::Done)
 }
 
-async fn handle_topic_route(config: &Config, job: &Job) -> Result<()> {
+async fn handle_topic_route(config: &Config, job: &Job) -> Result<JobOutcome> {
     let payload: TopicRoutePayload =
         serde_json::from_str(&job.payload_json).context("parse TopicRoute payload")?;
 
@@ -431,7 +440,7 @@ async fn handle_topic_route(config: &Config, job: &Job) -> Result<()> {
         NodeRef::Leaf { chunk_id } => {
             if chunk_store::get_chunk(config, chunk_id)?.is_none() {
                 log::warn!("[memory_tree::jobs] topic_route chunk missing chunk_id={chunk_id}");
-                return Ok(());
+                return Ok(JobOutcome::Done);
             }
             chunk_id.clone()
         }
@@ -442,7 +451,7 @@ async fn handle_topic_route(config: &Config, job: &Job) -> Result<()> {
                 log::warn!(
                     "[memory_tree::jobs] topic_route summary missing summary_id={summary_id}"
                 );
-                return Ok(());
+                return Ok(JobOutcome::Done);
             }
             summary_id.clone()
         }
@@ -451,7 +460,7 @@ async fn handle_topic_route(config: &Config, job: &Job) -> Result<()> {
     let entity_ids = score_store::list_entity_ids_for_node(config, &node_id)?;
     if entity_ids.is_empty() {
         log::debug!("[memory_tree::jobs] topic_route no entities for node_id={node_id} — skipping");
-        return Ok(());
+        return Ok(JobOutcome::Done);
     }
 
     let summariser = build_summariser(config);
@@ -473,10 +482,10 @@ async fn handle_topic_route(config: &Config, job: &Job) -> Result<()> {
             }
         }
     }
-    Ok(())
+    Ok(JobOutcome::Done)
 }
 
-async fn handle_digest_daily(config: &Config, job: &Job) -> Result<()> {
+async fn handle_digest_daily(config: &Config, job: &Job) -> Result<JobOutcome> {
     let payload: DigestDailyPayload =
         serde_json::from_str(&job.payload_json).context("parse DigestDaily payload")?;
     let day = chrono::NaiveDate::parse_from_str(&payload.date_iso, "%Y-%m-%d")
@@ -491,10 +500,10 @@ async fn handle_digest_daily(config: &Config, job: &Job) -> Result<()> {
             log::debug!("[memory_tree::jobs] digest skipped existing_id={existing_id}");
         }
     }
-    Ok(())
+    Ok(JobOutcome::Done)
 }
 
-async fn handle_flush_stale(config: &Config, job: &Job) -> Result<()> {
+async fn handle_flush_stale(config: &Config, job: &Job) -> Result<JobOutcome> {
     let payload: FlushStalePayload =
         serde_json::from_str(&job.payload_json).context("parse FlushStale payload")?;
     let age_secs = payload
@@ -513,7 +522,7 @@ async fn handle_flush_stale(config: &Config, job: &Job) -> Result<()> {
             super::worker::wake_workers();
         }
     }
-    Ok(())
+    Ok(JobOutcome::Done)
 }
 
 #[cfg(test)]
