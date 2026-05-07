@@ -310,77 +310,79 @@ pub async fn ingest_page_into_memory_tree(
 /// Mirror a page of raw Gmail messages into the on-disk raw archive.
 ///
 /// Files land under `<content_root>/raw/<source_slug>/<ts_ms>_<msg_id>.md`.
-/// Body is the upstream `markdown` field with a small YAML header so
-/// the file is self-contained when opened in Obsidian. Messages
-/// without a parseable date or id are skipped (they'd produce
-/// non-stable filenames).
+/// We write each message through the existing backend rendering
+/// pipeline rather than building a wrapper here:
+///
+///  1. The Composio post-processor (`gmail::post_process`) has already
+///     populated `raw["markdown"]` with a normalised, HTML-stripped
+///     markdown body via `extract_markdown_body` /
+///     `html_email_to_markdown`.
+///  2. We then run that through `canonicalize::email::canonicalise`
+///     for a single-message [`EmailThread`], so the per-message
+///     header block (`---\nFrom:/To:/Subject:/Date:` + cleaned body)
+///     matches exactly what the chunker sees. No bespoke YAML or
+///     header composition lives here.
+///
+/// Messages without a parseable date or id are skipped (they'd
+/// produce non-stable filenames). Per-message render failures log
+/// and are skipped rather than aborting the whole page.
 fn write_raw_archive(config: &Config, source_id: &str, page: &[Value]) -> Result<usize> {
+    use crate::openhuman::memory::tree::canonicalize::email as canonicalize_email;
+
     let content_root = config.memory_tree_content_root();
-    let mut items: Vec<RawItem<'_>> = Vec::with_capacity(page.len());
-    let mut bodies: Vec<String> = Vec::with_capacity(page.len());
+    // Keep bodies alive — `RawItem.markdown` is a borrowed slice.
+    let mut bodies: Vec<(String, i64, String)> = Vec::with_capacity(page.len());
 
     for raw in page {
         let id = raw
             .get("id")
             .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty());
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
         let Some(id) = id else { continue };
         let Some(sent_at) = parse_message_date(raw) else { continue };
-        let from = raw.get("from").and_then(|v| v.as_str()).unwrap_or("");
-        let subject = raw.get("subject").and_then(|v| v.as_str()).unwrap_or("");
-        let body = raw.get("markdown").and_then(|v| v.as_str()).unwrap_or("");
-        // Compose a tiny self-describing wrapper. The body is the
-        // upstream markdown verbatim so re-syncing the same message
-        // produces identical bytes.
-        let composed = format!(
-            "---\nid: {id}\nfrom: {from}\nsubject: {subject}\ndate: {date}\n---\n{body}",
-            id = yaml_escape(id),
-            from = yaml_escape(from),
-            subject = yaml_escape(subject),
-            date = sent_at.to_rfc3339(),
-            body = body,
-        );
-        bodies.push(composed);
+        let Some(message) = raw_to_email_message(raw) else { continue };
+
+        // Single-message thread → canonicalise → take the rendered
+        // markdown verbatim. The thread wrapper produces exactly the
+        // per-message format the chunker emits, so the raw archive
+        // stays in lock-step with the canonical view.
+        let thread = canonicalize_email::EmailThread {
+            provider: GMAIL_PROVIDER.to_string(),
+            thread_subject: message.subject.clone(),
+            messages: vec![message],
+        };
+        let rendered = match canonicalize_email::canonicalise(source_id, "raw-archive", &[], thread)
+        {
+            Ok(Some(canonical)) => canonical.markdown,
+            Ok(None) => continue,
+            Err(e) => {
+                log::warn!(
+                    "[composio:gmail][raw] canonicalise failed id_hash={} err={}",
+                    redact(&id),
+                    e
+                );
+                continue;
+            }
+        };
+        bodies.push((id, sent_at.timestamp_millis(), rendered));
     }
-    // Rebuild the items array with stable string slices into bodies.
-    let mut idx = 0usize;
-    for raw in page {
-        let id = raw
-            .get("id")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty());
-        let Some(id) = id else { continue };
-        let Some(sent_at) = parse_message_date(raw) else { continue };
-        items.push(RawItem {
+
+    let items: Vec<RawItem<'_>> = bodies
+        .iter()
+        .map(|(id, ts, md)| RawItem {
             uid: id,
-            created_at_ms: sent_at.timestamp_millis(),
-            markdown: &bodies[idx],
-        });
-        idx += 1;
-    }
+            created_at_ms: *ts,
+            markdown: md.as_str(),
+        })
+        .collect();
+
     let n = raw_store::write_raw_items(&content_root, source_id, &items)?;
     log::debug!(
         "[composio:gmail][raw] archived {n} messages source_id_hash={}",
         redact(source_id)
     );
     Ok(n)
-}
-
-/// YAML-quote scalars that contain reserved characters. Conservative
-/// — we always wrap in double quotes when the field is non-empty and
-/// contains anything beyond plain identifiers.
-fn yaml_escape(s: &str) -> String {
-    if s.is_empty() {
-        return "\"\"".into();
-    }
-    let needs_quote = s.contains(|c: char| {
-        matches!(c, ':' | '#' | '"' | '\'' | '\\' | '\n' | '[' | ']' | '{' | '}')
-    }) || s.starts_with(|c: char| matches!(c, '-' | '?' | '!' | '*' | '&' | '|' | '>' | '<'));
-    if !needs_quote {
-        return s.to_string();
-    }
-    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
 }
 
 /// Strip "Re:" / "Fwd:" prefixes from the head message's subject so

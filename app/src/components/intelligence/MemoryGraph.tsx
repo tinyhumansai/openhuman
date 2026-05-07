@@ -144,10 +144,13 @@ async function openSummaryInObsidian(node: GraphNode, contentRootAbs: string): P
     return;
   }
   const slug = slugify(node.tree_scope ?? '');
+  // Mirrors `summary_rel_path` on the Rust side — the `wiki/` prefix
+  // separates derived/processed content from the raw upstream archive
+  // under `raw/`.
   const rel =
     node.tree_kind === 'global'
-      ? `summaries/global`
-      : `summaries/${node.tree_kind}/${slug}/L${node.level}/${node.file_basename}.md`;
+      ? `wiki/summaries/global`
+      : `wiki/summaries/${node.tree_kind}/${slug}/L${node.level}/${node.file_basename}.md`;
   const abs = joinPath(contentRootAbs, rel);
   const url = `obsidian://open?path=${encodeURIComponent(abs)}`;
   console.debug('[memory-graph] open in Obsidian url=%s', url);
