@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { type EventData, EVENTS, Joyride, STATUS } from 'react-joyride';
+import { type Controls, type EventData, EVENTS, Joyride, STATUS } from 'react-joyride';
 import { useNavigate } from 'react-router-dom';
 
+import { getStepGate } from './interactiveGates';
 import { createWalkthroughSteps } from './walkthroughSteps';
 import WalkthroughTooltip from './WalkthroughTooltip';
 
@@ -9,6 +10,7 @@ import WalkthroughTooltip from './WalkthroughTooltip';
 
 const WALKTHROUGH_KEY = 'openhuman:walkthrough_completed';
 const WALKTHROUGH_PENDING_KEY = 'openhuman:walkthrough_pending';
+export const WALKTHROUGH_STEP_KEY = 'openhuman:walkthrough_step';
 
 /**
  * Returns `true` when the walkthrough should be shown. This is true when:
@@ -58,6 +60,7 @@ export function markWalkthroughComplete(): void {
   try {
     localStorage.setItem(WALKTHROUGH_KEY, 'true');
     localStorage.removeItem(WALKTHROUGH_PENDING_KEY);
+    localStorage.removeItem(WALKTHROUGH_STEP_KEY);
     console.debug('[walkthrough] marked as complete');
   } catch (e) {
     console.warn('[walkthrough] could not mark walkthrough complete in localStorage', e);
@@ -75,12 +78,40 @@ export function markWalkthroughComplete(): void {
 export function resetWalkthrough(): void {
   try {
     localStorage.removeItem(WALKTHROUGH_KEY);
+    localStorage.removeItem(WALKTHROUGH_STEP_KEY);
     localStorage.setItem(WALKTHROUGH_PENDING_KEY, 'true');
     console.debug('[walkthrough] reset — pending flag set, completed flag removed');
   } catch (e) {
     console.warn('[walkthrough] could not reset walkthrough in localStorage', e);
   }
   window.dispatchEvent(new CustomEvent('walkthrough:restart'));
+}
+
+// ── Step persistence helpers ───────────────────────────────────────────────
+
+function getSavedStepIndex(): number {
+  try {
+    const saved = localStorage.getItem(WALKTHROUGH_STEP_KEY);
+    return saved ? Math.max(0, parseInt(saved, 10) || 0) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveStepIndex(index: number): void {
+  try {
+    localStorage.setItem(WALKTHROUGH_STEP_KEY, String(index));
+  } catch (e) {
+    console.warn('[walkthrough] could not save step index', e);
+  }
+}
+
+function clearStepIndex(): void {
+  try {
+    localStorage.removeItem(WALKTHROUGH_STEP_KEY);
+  } catch (e) {
+    console.warn('[walkthrough] could not clear step index', e);
+  }
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -103,6 +134,9 @@ const AppWalkthrough = ({ onboarded = false }: { onboarded?: boolean }) => {
   // Using a lazy initializer keeps this stable across re-renders.
   const [run, setRun] = useState<boolean>(() => isWalkthroughPending(onboarded));
 
+  // Track the current step index for controlled mode — enables resume support.
+  const [stepIndex, setStepIndex] = useState<number>(() => getSavedStepIndex());
+
   // Memoize steps so they are only recreated when `navigate` identity changes.
   const steps = useMemo(() => createWalkthroughSteps(navigate), [navigate]);
 
@@ -111,6 +145,8 @@ const AppWalkthrough = ({ onboarded = false }: { onboarded?: boolean }) => {
   useEffect(() => {
     const handleRestart = () => {
       console.debug('[walkthrough] restart event received — restarting tour');
+      clearStepIndex();
+      setStepIndex(0);
       setRun(true);
     };
     window.addEventListener('walkthrough:restart', handleRestart);
@@ -119,14 +155,33 @@ const AppWalkthrough = ({ onboarded = false }: { onboarded?: boolean }) => {
     };
   }, []);
 
-  const handleEvent = (data: EventData) => {
+  const handleEvent = (data: EventData, controls: Controls) => {
     const { type, status } = data;
     console.debug('[walkthrough] event', { type, status, index: data.index });
+
+    // STEP_BEFORE: auto-skip gated steps whose gate is already satisfied.
+    if (type === EVENTS.STEP_BEFORE) {
+      const gate = getStepGate(steps[data.index]);
+      if (gate && gate.isComplete()) {
+        console.debug('[walkthrough] gate already complete, auto-skipping step', data.index);
+        // Use setTimeout to avoid calling controls.next() during the event handler.
+        setTimeout(() => controls.next(), 0);
+        return;
+      }
+    }
+
+    // STEP_AFTER: persist the next step index so the tour can resume.
+    if (type === EVENTS.STEP_AFTER) {
+      const nextIndex = data.index + 1;
+      setStepIndex(nextIndex);
+      saveStepIndex(nextIndex);
+    }
 
     // TOUR_END fires when the tour finishes or is skipped.
     if (type === EVENTS.TOUR_END) {
       if (status === STATUS.FINISHED || status === STATUS.SKIPPED) {
         markWalkthroughComplete();
+        clearStepIndex();
         setRun(false);
       }
     }
@@ -139,6 +194,7 @@ const AppWalkthrough = ({ onboarded = false }: { onboarded?: boolean }) => {
     <Joyride
       steps={steps}
       run={run}
+      stepIndex={stepIndex}
       continuous={true}
       tooltipComponent={WalkthroughTooltip}
       onEvent={handleEvent}

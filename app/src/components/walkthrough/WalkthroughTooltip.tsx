@@ -1,5 +1,8 @@
 import type { TooltipRenderProps } from 'react-joyride';
 
+import { getStepGate } from './interactiveGates';
+import { useGatePoller } from './useGatePoller';
+
 /** Emoji accents per step — adds visual personality to each tooltip.
  *  10 entries map to: home-card, home-cta, chat, integrations, channels,
  *  intelligence, settings, quick-access tabs, notifications, final. */
@@ -25,6 +28,11 @@ const WalkthroughTooltip = ({
 }: TooltipRenderProps) => {
   const progress = ((index + 1) / size) * 100;
   const icon = STEP_ICONS[index] ?? '✨';
+
+  const gate = getStepGate(step);
+  const gateComplete = useGatePoller(gate);
+  const isGated = gate !== null;
+  const gateBlocking = isGated && !gateComplete;
 
   return (
     <div
@@ -62,6 +70,11 @@ const WalkthroughTooltip = ({
           {/* Body */}
           <div className="text-[13px] text-stone-600 leading-relaxed mb-5">{step.content}</div>
 
+          {/* Gate prompt */}
+          {gateBlocking && (
+            <div className="text-[12px] text-amber-600 font-medium mb-3">{gate.label}</div>
+          )}
+
           {/* Actions */}
           <div className="flex items-center gap-2">
             {/* Skip tour */}
@@ -74,6 +87,21 @@ const WalkthroughTooltip = ({
             )}
 
             <div className="flex-1" />
+
+            {/* Gate status */}
+            {isGated && (
+              <div className="flex items-center gap-2">
+                {gateBlocking ? (
+                  <button
+                    {...primaryProps}
+                    className="text-[11px] text-stone-400 hover:text-stone-600 transition-colors px-2 py-1.5 rounded-lg hover:bg-stone-100">
+                    {gate.skipLabel}
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-emerald-600 font-medium">✓ Done!</span>
+                )}
+              </div>
+            )}
 
             {/* Back */}
             {index > 0 && (
@@ -88,7 +116,10 @@ const WalkthroughTooltip = ({
             {continuous && (
               <button
                 {...primaryProps}
-                className="text-[12px] text-white bg-[#2F6EF4] hover:bg-[#2563d4] active:scale-[0.97] transition-all px-4 py-2 rounded-xl font-medium shadow-sm hover:shadow-md">
+                disabled={gateBlocking}
+                className={`text-[12px] text-white bg-[#2F6EF4] hover:bg-[#2563d4] active:scale-[0.97] transition-all px-4 py-2 rounded-xl font-medium shadow-sm hover:shadow-md${
+                  gateBlocking ? ' opacity-50 cursor-not-allowed' : ''
+                }`}>
                 {isLastStep ? "Let's go!" : 'Next →'}
               </button>
             )}
