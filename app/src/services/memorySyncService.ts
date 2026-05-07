@@ -57,7 +57,10 @@ export async function memorySyncStatusList(): Promise<MemorySyncStatus[]> {
     throw err;
   }
   if (!resp || !Array.isArray(resp.statuses)) {
-    errLog('memory_sync_status_list: malformed response (missing statuses[]), returning empty: %O', resp);
+    errLog(
+      'memory_sync_status_list: malformed response (missing statuses[]), returning empty: %O',
+      resp
+    );
     return [];
   }
   log('memory_sync_status_list: received %d row(s)', resp.statuses.length);
