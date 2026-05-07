@@ -3,10 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
 
-const hoisted = vi.hoisted(() => ({
-  getSettings: vi.fn(),
-  updateSettings: vi.fn(),
-}));
+const hoisted = vi.hoisted(() => ({ getSettings: vi.fn(), updateSettings: vi.fn() }));
 
 vi.mock('../../../../utils/tauriCommands', () => ({
   openhumanGetComposioTriggerSettings: hoisted.getSettings,
