@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import AboutPanel from '../components/settings/panels/AboutPanel';
+import ComposioTriagePanel from '../components/settings/panels/ComposioTriagePanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
@@ -299,6 +300,7 @@ const Settings = () => {
         <Route path="memory-debug" element={wrapSettingsPage(<MemoryDebugPanel />)} />
         <Route path="intelligence" element={<Intelligence />} />
         <Route path="webhooks-triggers" element={<Webhooks />} />
+        <Route path="composio-triggers" element={wrapSettingsPage(<ComposioTriagePanel />)} />
         {/* About / updates */}
         <Route path="about" element={wrapSettingsPage(<AboutPanel />)} />
         {/* Fallback */}

@@ -56,6 +56,57 @@ fn triage_disabled_flag_parser() {
     assert!(!triage_disabled(), "unset must default to triage enabled");
 }
 
+#[test]
+fn composio_config_triage_disabled_default() {
+    use crate::openhuman::config::ComposioConfig;
+    let cfg = ComposioConfig::default();
+    assert!(!cfg.triage_disabled, "triage_disabled must default to false");
+    assert!(
+        cfg.triage_disabled_toolkits.is_empty(),
+        "triage_disabled_toolkits must default to empty"
+    );
+}
+
+#[test]
+fn composio_config_triage_disabled_toolkit_match() {
+    use crate::openhuman::config::ComposioConfig;
+    let cfg = ComposioConfig {
+        triage_disabled_toolkits: vec!["GMAIL".to_string(), "slack".to_string()],
+        ..Default::default()
+    };
+    let toolkit = "gmail";
+    let toolkit_lower = toolkit.to_ascii_lowercase();
+    assert!(
+        cfg.triage_disabled_toolkits
+            .iter()
+            .any(|t| t.to_ascii_lowercase() == toolkit_lower),
+        "case-insensitive match against gmail should fire"
+    );
+    assert!(
+        !cfg.triage_disabled_toolkits
+            .iter()
+            .any(|t| t.to_ascii_lowercase() == "github"),
+        "github should not match"
+    );
+}
+
+#[tokio::test]
+async fn trigger_subscriber_skips_triage_when_env_disabled() {
+    let _guard = TRIAGE_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::set_var(TRIAGE_DISABLED_ENV, "1");
+    let sub = ComposioTriggerSubscriber::new();
+    // Should complete without panicking (env gate fires, triage skipped).
+    sub.handle(&DomainEvent::ComposioTriggerReceived {
+        toolkit: "gmail".into(),
+        trigger: "GMAIL_NEW_GMAIL_MESSAGE".into(),
+        metadata_id: "trig-env".into(),
+        metadata_uuid: "uuid-env".into(),
+        payload: json!({ "subject": "env gate test" }),
+    })
+    .await;
+    std::env::remove_var(TRIAGE_DISABLED_ENV);
+}
+
 #[tokio::test]
 async fn handles_connection_created_event_without_panic() {
     let sub = ComposioConnectionCreatedSubscriber::new();

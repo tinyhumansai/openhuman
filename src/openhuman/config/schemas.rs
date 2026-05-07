@@ -113,6 +113,12 @@ struct VoiceServerSettingsUpdate {
     custom_dictionary: Option<Vec<String>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ComposioTriggerSettingsUpdate {
+    triage_disabled: Option<bool>,
+    triage_disabled_toolkits: Option<Vec<String>>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("get_config"),
@@ -140,6 +146,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_dictation_settings"),
         schemas("get_voice_server_settings"),
         schemas("update_voice_server_settings"),
+        schemas("update_composio_trigger_settings"),
+        schemas("get_composio_trigger_settings"),
     ]
 }
 
@@ -244,6 +252,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_voice_server_settings"),
             handler: handle_update_voice_server_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_composio_trigger_settings"),
+            handler: handle_update_composio_trigger_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_composio_trigger_settings"),
+            handler: handle_get_composio_trigger_settings,
         },
     ]
 }
@@ -652,6 +668,49 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "update_composio_trigger_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_composio_trigger_settings",
+            description:
+                "Update Composio trigger-triage settings. When triage is disabled the \
+                 local LLM is NOT invoked per trigger — events are still archived to \
+                 trigger history.",
+            inputs: vec![
+                optional_bool(
+                    "triage_disabled",
+                    "When true, skip the LLM triage turn for all Composio triggers globally.",
+                ),
+                FieldSchema {
+                    name: "triage_disabled_toolkits",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Toolkit slugs that skip LLM triage (e.g. [\"gmail\", \"slack\"]).",
+                    required: false,
+                },
+            ],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
+        "get_composio_trigger_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_composio_trigger_settings",
+            description: "Read current Composio trigger-triage settings.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "triage_disabled",
+                    ty: TypeSchema::Bool,
+                    comment: "Whether the global triage-disabled flag is set.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "triage_disabled_toolkits",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "Toolkit slugs that skip LLM triage.",
+                    required: true,
+                },
+            ],
+        },
         _ => ControllerSchema {
             namespace: "config",
             function: "unknown",
@@ -943,6 +1002,49 @@ fn handle_set_onboarding_completed(params: Map<String, Value>) -> ControllerFutu
     Box::pin(async move {
         let payload = deserialize_params::<OnboardingCompletedSetParams>(params)?;
         to_json(config_rpc::set_onboarding_completed(payload.value).await?)
+    })
+}
+
+fn handle_update_composio_trigger_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("[config][rpc] update_composio_trigger_settings enter");
+        let update = match deserialize_params::<ComposioTriggerSettingsUpdate>(params) {
+            Ok(u) => u,
+            Err(err) => {
+                log::warn!("[config][rpc] update_composio_trigger_settings invalid params: {err}");
+                return Err(err);
+            }
+        };
+        let patch = config_rpc::ComposioTriggerSettingsPatch {
+            triage_disabled: update.triage_disabled,
+            triage_disabled_toolkits: update.triage_disabled_toolkits,
+        };
+        match config_rpc::load_and_apply_composio_trigger_settings(patch).await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] update_composio_trigger_settings ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] update_composio_trigger_settings failed: {err}");
+                Err(err)
+            }
+        }
+    })
+}
+
+fn handle_get_composio_trigger_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        log::debug!("[config][rpc] get_composio_trigger_settings enter");
+        match config_rpc::get_composio_trigger_settings().await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] get_composio_trigger_settings ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] get_composio_trigger_settings failed: {err}");
+                Err(err)
+            }
+        }
     })
 }
 

@@ -233,6 +233,14 @@ pub struct LocalAiSettingsPatch {
     pub usage_subconscious: Option<bool>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ComposioTriggerSettingsPatch {
+    /// When `Some(true)`, disables triage for all toolkits.
+    pub triage_disabled: Option<bool>,
+    /// When `Some(v)`, replaces the per-toolkit opt-out list entirely.
+    pub triage_disabled_toolkits: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeFlagsOut {
     pub browser_allow_all: bool,
@@ -564,6 +572,57 @@ pub async fn load_and_apply_local_ai_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_local_ai_settings(&mut config, update).await
+}
+
+/// Updates the Composio trigger-triage settings in the configuration.
+pub async fn apply_composio_trigger_settings(
+    config: &mut Config,
+    update: ComposioTriggerSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    if let Some(v) = update.triage_disabled {
+        config.composio.triage_disabled = v;
+        tracing::debug!(
+            triage_disabled = v,
+            "[config][composio] triage_disabled updated"
+        );
+    }
+    if let Some(toolkits) = update.triage_disabled_toolkits {
+        tracing::debug!(
+            count = toolkits.len(),
+            "[config][composio] triage_disabled_toolkits updated"
+        );
+        config.composio.triage_disabled_toolkits = toolkits;
+    }
+    config.save().await.map_err(|e| e.to_string())?;
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "composio trigger settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+/// Loads the configuration, applies composio trigger settings, and saves it.
+pub async fn load_and_apply_composio_trigger_settings(
+    update: ComposioTriggerSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_composio_trigger_settings(&mut config, update).await
+}
+
+/// Reads the current composio trigger-triage settings.
+pub async fn get_composio_trigger_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let result = serde_json::json!({
+        "triage_disabled": config.composio.triage_disabled,
+        "triage_disabled_toolkits": config.composio.triage_disabled_toolkits,
+    });
+    Ok(RpcOutcome::new(
+        result,
+        vec!["composio trigger settings read".to_string()],
+    ))
 }
 
 /// Resolves the effective API URL from configuration or defaults.

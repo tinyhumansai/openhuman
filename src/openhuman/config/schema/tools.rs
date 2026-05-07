@@ -248,6 +248,17 @@ pub struct ComposioConfig {
     pub enabled: bool,
     #[serde(default = "default_entity_id")]
     pub entity_id: String,
+    /// When true, the triage pipeline is disabled for all Composio
+    /// triggers. Triggers are still recorded to history.
+    /// Overrides `triage_disabled_toolkits` when set.
+    #[serde(default)]
+    pub triage_disabled: bool,
+    /// Per-toolkit triage opt-out list. Toolkit slugs listed here
+    /// skip the LLM triage turn — triggers are still recorded to
+    /// history. Case-insensitive match against the incoming toolkit
+    /// field (e.g. `["gmail", "slack"]`).
+    #[serde(default)]
+    pub triage_disabled_toolkits: Vec<String>,
 }
 
 fn default_entity_id() -> String {
@@ -259,6 +270,8 @@ impl Default for ComposioConfig {
         Self {
             enabled: false,
             entity_id: default_entity_id(),
+            triage_disabled: false,
+            triage_disabled_toolkits: Vec::new(),
         }
     }
 }

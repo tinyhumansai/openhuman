@@ -219,6 +219,45 @@ impl EventHandler for ComposioTriggerSubscriber {
             return;
         }
 
+        // Config-level triage gates — checked after env var so the env var
+        // remains a global emergency kill-switch that works even when the
+        // config file is corrupt. Fail-open on load error: if we can't read
+        // the config we let triage run rather than silently drop events.
+        match config_rpc::load_config_with_timeout().await {
+            Ok(config) => {
+                if config.composio.triage_disabled {
+                    tracing::debug!(
+                        toolkit = %toolkit,
+                        trigger = %trigger,
+                        "[composio][triage] skipped: composio.triage_disabled=true in config"
+                    );
+                    return;
+                }
+                let toolkit_lower = toolkit.to_ascii_lowercase();
+                if config
+                    .composio
+                    .triage_disabled_toolkits
+                    .iter()
+                    .any(|t| t.to_ascii_lowercase() == toolkit_lower)
+                {
+                    tracing::debug!(
+                        toolkit = %toolkit,
+                        trigger = %trigger,
+                        "[composio][triage] skipped: toolkit in composio.triage_disabled_toolkits"
+                    );
+                    return;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    toolkit = %toolkit,
+                    trigger = %trigger,
+                    error = %e,
+                    "[composio][triage] config load failed — falling through to triage (fail-open)"
+                );
+            }
+        }
+
         // Build the envelope outside the spawned task so any panic in
         // `from_composio` surfaces on the bus dispatch thread (where
         // the broadcast subscriber loop can log it) rather than being
