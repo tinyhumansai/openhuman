@@ -372,6 +372,7 @@ mod tests {
             tree_scope: "gmail:alice@x.com",
             level: 1,
             child_ids: &children,
+            child_basenames: None,
             child_count: 1,
             time_range_start: ts,
             time_range_end: ts,

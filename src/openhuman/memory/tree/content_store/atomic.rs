@@ -278,6 +278,7 @@ mod tests {
             tree_scope: scope,
             level: 1,
             child_ids: children,
+            child_basenames: None,
             child_count: children.len(),
             time_range_start: ts,
             time_range_end: ts,

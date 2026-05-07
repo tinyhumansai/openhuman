@@ -188,8 +188,10 @@ pub struct MemoryTreeConfig {
     #[serde(default = "default_memory_tree_llm_endpoint")]
     pub llm_extractor_endpoint: Option<String>,
 
-    /// Model name for the entity extractor (e.g. `qwen2.5:0.5b`).
-    #[serde(default = "default_memory_tree_llm_endpoint")]
+    /// Model name for the entity extractor. Defaults to `llama3.1:8b`
+    /// (see [`default_memory_tree_llm_model`] for the rationale);
+    /// override to a smaller model on resource-constrained hosts.
+    #[serde(default = "default_memory_tree_llm_model")]
     pub llm_extractor_model: Option<String>,
 
     /// Per-request timeout for the LLM extractor, in milliseconds.
@@ -204,10 +206,10 @@ pub struct MemoryTreeConfig {
     #[serde(default = "default_memory_tree_llm_endpoint")]
     pub llm_summariser_endpoint: Option<String>,
 
-    /// Model name for the summariser. Larger models produce better
-    /// summaries at higher latency; `llama3.1:8b` is a reasonable
-    /// default for production.
-    #[serde(default = "default_memory_tree_llm_endpoint")]
+    /// Model name for the summariser. Defaults to `llama3.1:8b` —
+    /// larger models produce more coherent abstractive summaries at
+    /// higher latency. See [`default_memory_tree_llm_model`].
+    #[serde(default = "default_memory_tree_llm_model")]
     pub llm_summariser_model: Option<String>,
 
     /// Per-request timeout for the summariser, in milliseconds. Default
@@ -309,6 +311,24 @@ fn default_memory_tree_content_dir() -> Option<PathBuf> {
     None
 }
 
+/// Default Ollama model for the memory-tree LLMs (extractor + summariser).
+///
+/// `llama3.1:8b` is large enough to produce coherent abstractive
+/// summaries on real Gmail inboxes — smaller models (≤3B) routinely
+/// regress to "the email says X, the email says Y" enumeration which
+/// is barely better than the InertSummariser concat fallback. 8B
+/// stays inside an 8GB VRAM/RAM envelope on a typical laptop and
+/// finishes a seal-budget summary in ~30s on Apple Silicon.
+///
+/// Override via `memory_tree.llm_summariser_model` /
+/// `llm_extractor_model` in TOML (or `OPENHUMAN_MEMORY_TREE_LLM_*_MODEL`
+/// env vars) to point at a different Ollama model when the host has
+/// more headroom (e.g. `llama3.1:70b`) or less (e.g. `gemma3:1b-it-qat`
+/// for laptops without a GPU).
+fn default_memory_tree_llm_model() -> Option<String> {
+    Some("llama3.1:8b".to_string())
+}
+
 impl Default for MemoryTreeConfig {
     fn default() -> Self {
         Self {
@@ -317,10 +337,10 @@ impl Default for MemoryTreeConfig {
             embedding_timeout_ms: default_memory_tree_embedding_timeout_ms(),
             embedding_strict: default_memory_tree_embedding_strict(),
             llm_extractor_endpoint: default_memory_tree_llm_endpoint(),
-            llm_extractor_model: default_memory_tree_llm_endpoint(),
+            llm_extractor_model: default_memory_tree_llm_model(),
             llm_extractor_timeout_ms: default_memory_tree_llm_extractor_timeout_ms(),
             llm_summariser_endpoint: default_memory_tree_llm_endpoint(),
-            llm_summariser_model: default_memory_tree_llm_endpoint(),
+            llm_summariser_model: default_memory_tree_llm_model(),
             llm_summariser_timeout_ms: default_memory_tree_llm_summariser_timeout_ms(),
             content_dir: default_memory_tree_content_dir(),
             llm_backend: default_llm_backend(),
