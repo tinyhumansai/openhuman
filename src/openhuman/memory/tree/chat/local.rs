@@ -62,18 +62,20 @@ impl ChatProvider for OllamaChatProvider {
     }
 
     async fn chat_for_json(&self, prompt: &ChatPrompt) -> Result<String> {
-        self.run_chat(prompt, "json").await
+        self.run_chat(prompt, Some("json")).await
     }
 
     async fn chat_for_text(&self, prompt: &ChatPrompt) -> Result<String> {
-        // Empty `format` tells Ollama to emit free-form text — the
-        // summariser doesn't want a JSON envelope around its output.
-        self.run_chat(prompt, "").await
+        // Omit `format` entirely — Ollama's `/api/chat` only accepts
+        // `"json"`, a JSON-schema object, or absence-of-field for
+        // free-form text. Sending `format: ""` is undefined behaviour,
+        // so the field is dropped from the request body when None.
+        self.run_chat(prompt, None).await
     }
 }
 
 impl OllamaChatProvider {
-    async fn run_chat(&self, prompt: &ChatPrompt, format: &str) -> Result<String> {
+    async fn run_chat(&self, prompt: &ChatPrompt, format: Option<&str>) -> Result<String> {
         if self.endpoint.is_empty() || self.model.is_empty() {
             return Err(anyhow!(
                 "[memory_tree::chat::local] Ollama endpoint or model not configured \
@@ -96,7 +98,7 @@ impl OllamaChatProvider {
                     content: prompt.user.clone(),
                 },
             ],
-            format: format.to_string(),
+            format: format.map(str::to_string),
             stream: false,
             options: OllamaOptions {
                 temperature: prompt.temperature as f32,
@@ -153,7 +155,11 @@ fn truncate_for_log(s: &str, max_chars: usize) -> String {
 struct OllamaChatRequest {
     model: String,
     messages: Vec<OllamaMessage>,
-    format: String,
+    /// Omitted from the wire body when `None` (`#[serde(skip_serializing_if)]`),
+    /// so the JSON-mode flag is only present for the `chat_for_json` path.
+    /// Ollama treats absence as "free-form text".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
     stream: bool,
     options: OllamaOptions,
 }

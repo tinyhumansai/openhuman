@@ -2,8 +2,9 @@
 //!
 //! The canonicalisers produce one big canonical Markdown blob per source
 //! record; the chunker slices that into chunks of at most [`DEFAULT_CHUNK_MAX_TOKENS`]
-//! so later phases (#709 seal budget = 10k tokens) can ingest them without
-//! blowing past the summariser ceiling.
+//! so later phases (L0 seal at `INPUT_TOKEN_BUDGET = 50k` tokens, or 10
+//! items via the count fallback) can ingest them without blowing past
+//! the summariser ceiling.
 //!
 //! ## Dispatch by source kind (Phase B)
 //!

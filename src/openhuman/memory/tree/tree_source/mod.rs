@@ -28,4 +28,5 @@ pub use store::{get_summary_embedding, set_summary_embedding};
 pub use summariser::{build_summariser, inert::InertSummariser, llm::LlmSummariser, Summariser};
 pub use types::{
     Buffer, SummaryNode, Tree, TreeKind, TreeStatus, INPUT_TOKEN_BUDGET, OUTPUT_TOKEN_BUDGET,
+    SUMMARY_FANOUT,
 };

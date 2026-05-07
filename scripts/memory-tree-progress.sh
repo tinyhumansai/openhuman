@@ -158,9 +158,13 @@ snapshot() {
         eta_min=$(( ext_ready * secs_per / 60 ))m
     fi
 
-    printf "%s  extract: done=%d pending=%d run=%d (+%d/tick eta~%s)  summaries L0=%d L1=%d L2=%d L3+=%d (+%d)  chunks: pend=%d adm=%d buf=%d  running=%s/%ss  cloud_avg=%s\n" \
+    # NOTE: source-tree leaves are L1+ (raw chunks are the L0 leaves of the
+    # tree but aren't represented in `mem_tree_summaries`); the L0 row in
+    # `mem_tree_summaries` is only populated by global-tree daily digests.
+    # We surface it here as `digest=` so the bucket name doesn't mislead.
+    printf "%s  extract: done=%d pending=%d run=%d (+%d/tick eta~%s)  summaries L1=%d L2=%d L3+=%d digest=%d (+%d)  chunks: pend=%d adm=%d buf=%d  running=%s/%ss  cloud_avg=%s\n" \
         "$ts" "$ext_done" "$ext_ready" "$ext_run" "$d_extract" "$eta_min" \
-        "$sums_l0" "$sums_l1" "$sums_l2" "$sums_l3" "$d_sums" \
+        "$sums_l1" "$sums_l2" "$sums_l3" "$sums_l0" "$d_sums" \
         "$chunks_pending" "$chunks_admitted" "$chunks_buffered" \
         "$running_kind" "$running_age_s" "$rt_recent_avg"
 
