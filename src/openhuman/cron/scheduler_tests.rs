@@ -45,6 +45,22 @@ fn test_job(command: &str) -> CronJob {
     }
 }
 
+#[test]
+fn agent_failure_copy_mentions_retry_reporting_and_discord() {
+    assert!(AGENT_JOB_USER_FAILURE_MESSAGE.contains("Something went wrong. Please try again."));
+    assert!(AGENT_JOB_USER_FAILURE_MESSAGE.contains("This error has been reported."));
+    assert!(AGENT_JOB_USER_FAILURE_MESSAGE.contains("Report on Discord"));
+}
+
+#[test]
+fn agent_session_target_tag_matches_expected_values() {
+    assert_eq!(agent_session_target_tag(&SessionTarget::Main), "main");
+    assert_eq!(
+        agent_session_target_tag(&SessionTarget::Isolated),
+        "isolated"
+    );
+}
+
 #[cfg(not(windows))]
 #[tokio::test]
 async fn run_job_command_success() {

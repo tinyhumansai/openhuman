@@ -6,6 +6,7 @@ use super::{
     start_chat, subscribe_web_channel_events,
 };
 use crate::core::TypeSchema;
+use tokio::time::{timeout, Duration};
 
 #[tokio::test]
 async fn start_chat_validates_required_fields() {
@@ -56,6 +57,43 @@ async fn cancel_chat_validates_required_fields() {
         .await
         .expect_err("thread id should be required");
     assert!(err.contains("thread_id is required"));
+}
+
+#[tokio::test]
+async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
+    let mut rx = subscribe_web_channel_events();
+    let request_id = start_chat(
+        "coverage-client",
+        "coverage-thread",
+        "Please summarize this in one line.",
+        None,
+        None,
+    )
+    .await
+    .expect("start_chat should accept valid request");
+
+    let expected = generic_inference_error_user_message().to_string();
+    let recv = timeout(Duration::from_secs(20), async move {
+        loop {
+            let event = rx.recv().await.expect("event stream should stay open");
+            if event.event != "chat_error" {
+                continue;
+            }
+            if event.request_id != request_id {
+                continue;
+            }
+            return event;
+        }
+    })
+    .await
+    .expect("expected chat_error event for started chat request");
+
+    let message = recv.message.unwrap_or_default();
+    assert_eq!(message, expected);
+    assert!(
+        !message.contains("error sending request for url"),
+        "chat error payload must not expose raw transport details"
+    );
 }
 
 #[test]
