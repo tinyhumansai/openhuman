@@ -2,12 +2,12 @@ import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import AboutPanel from '../components/settings/panels/AboutPanel';
-import ComposioTriagePanel from '../components/settings/panels/ComposioTriagePanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
 import AutocompletePanel from '../components/settings/panels/AutocompletePanel';
 import BillingPanel from '../components/settings/panels/BillingPanel';
+import ComposioTriagePanel from '../components/settings/panels/ComposioTriagePanel';
 import ConnectionsPanel from '../components/settings/panels/ConnectionsPanel';
 import CronJobsPanel from '../components/settings/panels/CronJobsPanel';
 import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOptionsPanel';

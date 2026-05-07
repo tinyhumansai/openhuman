@@ -19,7 +19,9 @@ const ComposioTriagePanel = () => {
   useEffect(() => {
     openhumanGetComposioTriggerSettings()
       .then(res => {
-        const settings = res.result ?? (res as unknown as { triage_disabled: boolean; triage_disabled_toolkits: string[] });
+        const settings =
+          res.result ??
+          (res as unknown as { triage_disabled: boolean; triage_disabled_toolkits: string[] });
         setTriageDisabled(settings.triage_disabled ?? false);
         setDisabledToolkits((settings.triage_disabled_toolkits ?? []).join(', '));
       })
@@ -77,9 +79,9 @@ const ComposioTriagePanel = () => {
 
       <div className="p-4 space-y-5">
         <p className="text-sm text-stone-500">
-          When active, each incoming Composio trigger runs through an AI triage step that
-          classifies the event and may kick off automated actions — one local LLM turn per
-          trigger. Disable globally or per integration if you prefer manual review.
+          When active, each incoming Composio trigger runs through an AI triage step that classifies
+          the event and may kick off automated actions — one local LLM turn per trigger. Disable
+          globally or per integration if you prefer manual review.
         </p>
 
         {/* Global toggle */}
@@ -115,8 +117,8 @@ const ComposioTriagePanel = () => {
             Disable AI triage for specific integrations
           </label>
           <p className="text-xs text-stone-500">
-            Comma-separated integration slugs, e.g.{' '}
-            <span className="font-mono">gmail, slack</span>. Case-insensitive.
+            Comma-separated integration slugs, e.g. <span className="font-mono">gmail, slack</span>.
+            Case-insensitive.
           </p>
           <input
             id="disabled-toolkits"
