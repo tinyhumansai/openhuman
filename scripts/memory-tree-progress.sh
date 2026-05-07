@@ -38,8 +38,13 @@ CORE_LOG="${CORE_LOG:-/tmp/oh-core.log}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --flush) DO_FLUSH=1; shift ;;
-        --interval) INTERVAL="$2"; shift 2 ;;
-        --log) CORE_LOG="$2"; shift 2 ;;
+        --interval)
+            [ $# -ge 2 ] || { echo "--interval requires a value (seconds)" >&2; exit 2; }
+            [[ "$2" =~ ^[1-9][0-9]*$ ]] || { echo "--interval must be a positive integer" >&2; exit 2; }
+            INTERVAL="$2"; shift 2 ;;
+        --log)
+            [ $# -ge 2 ] || { echo "--log requires a file path" >&2; exit 2; }
+            CORE_LOG="$2"; shift 2 ;;
         --once) ONCE=1; shift ;;
         -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -77,8 +82,15 @@ if [ "$DO_FLUSH" = 1 ]; then
         exit 1
     fi
     echo "→ triggering memory_tree.flush_now"
-    "$CORE_BIN" call --method openhuman.memory_tree_flush_now --params '{}' 2>&1 \
-        | grep -E '"enqueued"|"stale_buffers"|memory_tree::read' || true
+    # Capture the full output so we can echo it on failure (the call's
+    # exit code is what we gate on; the grep below is just for the
+    # success-path summary).
+    flush_out="$("$CORE_BIN" call --method openhuman.memory_tree_flush_now --params '{}' 2>&1)" || {
+        echo "$flush_out" >&2
+        echo "flush_now failed; aborting monitor start." >&2
+        exit 1
+    }
+    echo "$flush_out" | grep -E '"enqueued"|"stale_buffers"|memory_tree::read' || true
     echo
 fi
 
