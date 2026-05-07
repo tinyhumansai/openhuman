@@ -60,7 +60,10 @@ fn triage_disabled_flag_parser() {
 fn composio_config_triage_disabled_default() {
     use crate::openhuman::config::ComposioConfig;
     let cfg = ComposioConfig::default();
-    assert!(!cfg.triage_disabled, "triage_disabled must default to false");
+    assert!(
+        !cfg.triage_disabled,
+        "triage_disabled must default to false"
+    );
     assert!(
         cfg.triage_disabled_toolkits.is_empty(),
         "triage_disabled_toolkits must default to empty"
