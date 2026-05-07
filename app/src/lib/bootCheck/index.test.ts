@@ -217,3 +217,85 @@ describe('runBootCheck — unset mode', () => {
     expect(result.kind).toBe('unreachable');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Edge-case branches surfaced by the diff-coverage gate
+// ---------------------------------------------------------------------------
+
+describe('runBootCheck — error and edge branches', () => {
+  it('treats service_status throw as "no daemon" and continues', async () => {
+    const appVersion = (await import('../../utils/config')).APP_VERSION;
+
+    const transport = makeTransport({
+      callRpc: rpcResponder({
+        'openhuman.ping': {},
+        'openhuman.service_status': new Error('rpc transport blew up'),
+        'openhuman.update_version': { version_info: { version: appVersion } },
+      }),
+    });
+
+    const result = await runBootCheck({ kind: 'local' }, transport);
+    expect(result.kind).toBe('match');
+  });
+
+  it('treats empty version_info.version as outdatedLocal', async () => {
+    const transport = makeTransport({
+      callRpc: rpcResponder({
+        'openhuman.ping': {},
+        'openhuman.service_status': { installed: false, running: false },
+        'openhuman.update_version': { version_info: { version: '' } },
+      }),
+    });
+
+    const result = await runBootCheck({ kind: 'local' }, transport);
+    expect(result.kind).toBe('outdatedLocal');
+  });
+
+  it('returns unreachable when start_core_process Tauri command fails', async () => {
+    const transport: BootCheckTransport = {
+      callRpc: vi.fn(),
+      invokeCmd: vi.fn().mockRejectedValue(new Error('tauri command not registered')),
+    };
+
+    const result = await runBootCheck({ kind: 'local' }, transport);
+    expect(result.kind).toBe('unreachable');
+    if (result.kind === 'unreachable') {
+      expect(result.reason).toContain('Failed to start local core');
+    }
+  });
+
+  it('returns unreachable when local version check throws repeatedly', async () => {
+    let pingCalls = 0;
+    const transport: BootCheckTransport = {
+      callRpc: vi.fn(async (method: string) => {
+        if (method === 'openhuman.ping') {
+          pingCalls += 1;
+          if (pingCalls === 1) return {};
+          throw new Error('subsequent failure');
+        }
+        if (method === 'openhuman.service_status') {
+          return { installed: false, running: false };
+        }
+        if (method === 'openhuman.update_version') {
+          // Generic transport error (no -32601), should map to 'unreachable'.
+          throw new Error('connection reset');
+        }
+        throw new Error(`Unexpected RPC: ${method}`);
+      }) as BootCheckTransport['callRpc'],
+      invokeCmd: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await runBootCheck({ kind: 'local' }, transport);
+    expect(result.kind).toBe('unreachable');
+  });
+
+  it('refuses to persist an invalid cloud URL', async () => {
+    const transport = makeTransport();
+    const result = await runBootCheck({ kind: 'cloud', url: 'not a url' }, transport);
+    expect(result.kind).toBe('unreachable');
+    if (result.kind === 'unreachable') {
+      expect(result.reason).toContain('valid URL');
+    }
+    expect(transport.callRpc).not.toHaveBeenCalled();
+  });
+});
