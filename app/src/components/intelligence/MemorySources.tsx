@@ -109,45 +109,32 @@ interface SourceRow {
 
 function buildRows(
   connections: ComposioConnection[],
-  statuses: MemorySyncStatus[]
+  statuses: MemorySyncStatus[],
+  syncableToolkits: ReadonlySet<string>
 ): SourceRow[] {
+  // Hide rows the user can't act on: only render identities that are
+  // (1) currently connected via Composio AND (2) whose toolkit has a
+  // memory-tree sync implementation. Orphan toolkits with chunks but
+  // no live auth, and connected toolkits without a sync provider, are
+  // both filtered out — neither offers a working Sync button so they
+  // were just clutter at the top of the Memory tab.
   const statusByToolkit = new Map<string, MemorySyncStatus>();
   for (const s of statuses) statusByToolkit.set(s.provider, s);
 
   const rows: SourceRow[] = [];
-  const seenStatusToolkits = new Set<string>();
-
-  // 1. One row per Composio connection (the user's "live" identities).
   for (const conn of connections) {
-    const toolkit = conn.toolkit;
-    const label = TOOLKIT_LABEL[toolkit] ?? toolkit;
+    if (!syncableToolkits.has(conn.toolkit)) continue;
+    const label = TOOLKIT_LABEL[conn.toolkit] ?? conn.toolkit;
     const identity = identityFor(conn);
     const title = identity ? `${label} · ${identity}` : label;
     rows.push({
       key: `conn:${conn.id}`,
-      toolkit,
+      toolkit: conn.toolkit,
       title,
       connection: conn,
-      status: statusByToolkit.get(toolkit) ?? null,
-    });
-    seenStatusToolkits.add(toolkit);
-  }
-
-  // 2. Trailing rows for toolkits with chunks but no live Composio
-  //    connection — usually legacy data from a revoked/expired auth.
-  //    Surface them so the user sees the data exists; no Sync button.
-  for (const status of statuses) {
-    if (seenStatusToolkits.has(status.provider)) continue;
-    const label = TOOLKIT_LABEL[status.provider] ?? status.provider;
-    rows.push({
-      key: `orphan:${status.provider}`,
-      toolkit: status.provider,
-      title: label,
-      connection: null,
-      status,
+      status: statusByToolkit.get(conn.toolkit) ?? null,
     });
   }
-
   return rows;
 }
 
@@ -198,7 +185,10 @@ export function MemorySources({
     return () => clearInterval(id);
   }, [pollIntervalMs, loadAll]);
 
-  const rows = useMemo(() => buildRows(connections, statuses), [connections, statuses]);
+  const rows = useMemo(
+    () => buildRows(connections, statuses, syncableToolkits),
+    [connections, statuses, syncableToolkits]
+  );
 
   const handleSync = useCallback(
     async (conn: ComposioConnection, title: string) => {
@@ -258,7 +248,8 @@ export function MemorySources({
         data-testid="memory-sources">
         <h3 className="text-sm font-semibold text-stone-700">Memory sources</h3>
         <p className="mt-2 text-xs text-stone-500">
-          No sources yet. Connect an integration in the Chat tab to start ingesting.
+          No connected sources with a memory-tree sync provider yet. Connect Gmail (or
+          another supported integration) in the Chat tab to start ingesting.
         </p>
       </section>
     );
@@ -277,7 +268,6 @@ export function MemorySources({
           <SourceRowCard
             key={row.key}
             row={row}
-            isSyncable={syncableToolkits.has(row.toolkit)}
             isSyncing={row.connection?.id != null && syncingId === row.connection.id}
             onSync={handleSync}
           />
@@ -289,13 +279,16 @@ export function MemorySources({
 
 interface SourceRowCardProps {
   row: SourceRow;
-  isSyncable: boolean;
   isSyncing: boolean;
   onSync: (conn: ComposioConnection, title: string) => void;
 }
 
-function SourceRowCard({ row, isSyncable, isSyncing, onSync }: SourceRowCardProps) {
+function SourceRowCard({ row, isSyncing, onSync }: SourceRowCardProps) {
+  // `buildRows` already filtered down to (connected toolkit + syncable),
+  // so `connection` is non-null and `isSyncable` is always true here.
   const { connection, status, title, toolkit } = row;
+  if (!connection) return null;
+
   const lastSync = status ? relativeTimestamp(status.last_chunk_at_ms) : null;
   const lifetime = status?.chunks_synced ?? 0;
   const pending = status?.chunks_pending ?? 0;
@@ -304,10 +297,7 @@ function SourceRowCard({ row, isSyncable, isSyncing, onSync }: SourceRowCardProp
   const batchPending = batchTotal - batchProcessed;
   const pct = batchTotal > 0 ? Math.round((batchProcessed / batchTotal) * 100) : 0;
   const showProgress = batchTotal > 0 && batchPending > 0;
-
-  const isActive =
-    connection?.status === 'ACTIVE' || connection?.status === 'CONNECTED';
-  const showSyncButton = connection != null && isSyncable;
+  const isActive = connection.status === 'ACTIVE' || connection.status === 'CONNECTED';
 
   return (
     <li
@@ -323,7 +313,7 @@ function SourceRowCard({ row, isSyncable, isSyncing, onSync }: SourceRowCardProp
               {FRESHNESS_LABEL[status.freshness]}
             </span>
           )}
-          {connection && !isActive && (
+          {!isActive && (
             <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
               {connection.status}
             </span>
@@ -355,35 +345,26 @@ function SourceRowCard({ row, isSyncable, isSyncing, onSync }: SourceRowCardProp
         )}
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        {showSyncButton ? (
-          <button
-            type="button"
-            onClick={() => connection && onSync(connection, title)}
-            disabled={isSyncing || !isActive}
-            data-testid={`memory-source-sync-${toolkit}`}
-            className="inline-flex items-center gap-1.5 rounded-md
-                       bg-primary-500 px-3 py-1.5 text-xs font-semibold text-white
-                       shadow-sm transition-colors hover:bg-primary-600
-                       disabled:cursor-not-allowed disabled:opacity-50
-                       focus:outline-none focus:ring-2 focus:ring-primary-200">
-            {isSyncing ? (
-              <>
-                <Spinner /> Syncing…
-              </>
-            ) : (
-              <>
-                <SyncIcon /> Sync
-              </>
-            )}
-          </button>
-        ) : connection ? (
-          <span
-            className="text-xs italic text-stone-400"
-            data-testid={`memory-source-no-sync-${toolkit}`}
-            title="No memory-tree sync provider for this toolkit yet">
-            no sync yet
-          </span>
-        ) : null}
+        <button
+          type="button"
+          onClick={() => onSync(connection, title)}
+          disabled={isSyncing || !isActive}
+          data-testid={`memory-source-sync-${toolkit}`}
+          className="inline-flex items-center gap-1.5 rounded-md
+                     bg-primary-500 px-3 py-1.5 text-xs font-semibold text-white
+                     shadow-sm transition-colors hover:bg-primary-600
+                     disabled:cursor-not-allowed disabled:opacity-50
+                     focus:outline-none focus:ring-2 focus:ring-primary-200">
+          {isSyncing ? (
+            <>
+              <Spinner /> Syncing…
+            </>
+          ) : (
+            <>
+              <SyncIcon /> Sync
+            </>
+          )}
+        </button>
       </div>
     </li>
   );

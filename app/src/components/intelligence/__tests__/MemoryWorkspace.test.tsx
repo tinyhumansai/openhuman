@@ -134,7 +134,7 @@ describe('MemoryWorkspace (graph view)', () => {
     });
   });
 
-  it('hides the Sync button for toolkits without a memory-tree ingest provider', async () => {
+  it('hides toolkits without a memory-tree ingest provider entirely', async () => {
     listConnections.mockResolvedValue({
       connections: [
         { id: 'conn-gmail', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'a@x' },
@@ -143,13 +143,15 @@ describe('MemoryWorkspace (graph view)', () => {
       ],
     });
     renderWithProviders(<MemoryWorkspace />);
+    // Gmail row exists with a working Sync button.
     expect(await screen.findByTestId('memory-source-sync-gmail')).toBeInTheDocument();
+    // Non-syncable toolkits are filtered out completely — neither
+    // the row nor the Sync button render. Cleaner than a "no sync
+    // yet" placeholder for an action the user can't take.
+    expect(screen.queryByTestId('memory-source-row-slack')).toBeNull();
+    expect(screen.queryByTestId('memory-source-row-notion')).toBeNull();
     expect(screen.queryByTestId('memory-source-sync-slack')).toBeNull();
     expect(screen.queryByTestId('memory-source-sync-notion')).toBeNull();
-    // Non-syncable toolkits still appear in the list with a plain
-    // "no sync yet" hint so the user knows the connection exists.
-    expect(screen.getByTestId('memory-source-no-sync-slack')).toBeInTheDocument();
-    expect(screen.getByTestId('memory-source-no-sync-notion')).toBeInTheDocument();
   });
 
   it('toggling to Contacts mode re-fetches the graph with mode=contacts', async () => {
