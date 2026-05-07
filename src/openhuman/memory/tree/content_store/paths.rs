@@ -463,10 +463,7 @@ mod tests {
             "summary:L2:foo.md",
             None,
         );
-        assert_eq!(
-            p,
-            "wiki/summaries/topic-entity-slug/L2/summary-L2-foo.md"
-        );
+        assert_eq!(p, "wiki/summaries/topic-entity-slug/L2/summary-L2-foo.md");
     }
 
     #[test]

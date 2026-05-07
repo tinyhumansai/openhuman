@@ -108,10 +108,7 @@ pub fn apply_response_level_markdown(data: &mut Value, top_md: &str) {
             }
         },
     };
-    let Some(messages) = container
-        .get_mut("messages")
-        .and_then(|v| v.as_array_mut())
-    else {
+    let Some(messages) = container.get_mut("messages").and_then(|v| v.as_array_mut()) else {
         return;
     };
     let count = messages.len();
@@ -121,8 +118,7 @@ pub fn apply_response_level_markdown(data: &mut Value, top_md: &str) {
     // Clone hints out of the messages array so the slice borrows
     // don't conflict with the upcoming `messages.iter_mut()` mutation.
     let hints: Vec<Value> = messages.clone();
-    let Some(slices) =
-        split_response_markdown_per_message_with_hint(trimmed, count, Some(&hints))
+    let Some(slices) = split_response_markdown_per_message_with_hint(trimmed, count, Some(&hints))
     else {
         tracing::debug!(
             messages = count,
@@ -134,10 +130,7 @@ pub fn apply_response_level_markdown(data: &mut Value, top_md: &str) {
     };
     for (msg, slice) in messages.iter_mut().zip(slices.into_iter()) {
         if let Some(obj) = msg.as_object_mut() {
-            obj.insert(
-                "markdownFormatted".to_string(),
-                Value::String(slice),
-            );
+            obj.insert("markdownFormatted".to_string(), Value::String(slice));
         }
     }
     tracing::debug!(
@@ -255,7 +248,10 @@ fn validate_segments_against_hints(segments: &[String], hints: &[Value]) -> bool
         if subject.is_empty() {
             continue;
         }
-        if !seg.to_ascii_lowercase().contains(&subject.to_ascii_lowercase()) {
+        if !seg
+            .to_ascii_lowercase()
+            .contains(&subject.to_ascii_lowercase())
+        {
             return false;
         }
     }

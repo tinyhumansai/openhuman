@@ -61,8 +61,7 @@ pub fn write_raw_items(
         return Ok(0);
     }
     let dir = raw_dir(content_root, source_id);
-    fs::create_dir_all(&dir)
-        .with_context(|| format!("create raw dir {}", dir.display()))?;
+    fs::create_dir_all(&dir).with_context(|| format!("create raw dir {}", dir.display()))?;
     let mut written = 0usize;
     for item in items {
         let filename = build_filename(item.created_at_ms, item.uid);
@@ -110,8 +109,10 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("path has no parent: {}", path.display()))?;
     let tmp = path.with_extension("md.tmp");
     let mut f = fs::File::create(&tmp).with_context(|| format!("create tmp {}", tmp.display()))?;
-    f.write_all(bytes).with_context(|| format!("write tmp {}", tmp.display()))?;
-    f.sync_all().with_context(|| format!("fsync tmp {}", tmp.display()))?;
+    f.write_all(bytes)
+        .with_context(|| format!("write tmp {}", tmp.display()))?;
+    f.sync_all()
+        .with_context(|| format!("fsync tmp {}", tmp.display()))?;
     drop(f);
     fs::rename(&tmp, path)
         .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
@@ -230,7 +231,11 @@ mod tests {
         let n = write_raw_items(root, "gmail:stevent95-at-gmail-dot-com", &items).unwrap();
         assert_eq!(n, 2);
         let dir = raw_dir(root, "gmail:stevent95-at-gmail-dot-com");
-        assert!(dir.exists(), "raw dir should be created at {}", dir.display());
+        assert!(
+            dir.exists(),
+            "raw dir should be created at {}",
+            dir.display()
+        );
         // Files must sort chronologically (created_at_ms prefix).
         let mut names: Vec<String> = fs::read_dir(&dir)
             .unwrap()

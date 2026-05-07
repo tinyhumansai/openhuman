@@ -28,9 +28,7 @@ vi.mock('../../../lib/composio/composioApi', () => ({
 
 // Stub `openUrl` so deep-link clicks land in a mock instead of routing
 // through `tauri-plugin-opener` (which isn't loaded in the test env).
-vi.mock('../../../utils/openUrl', () => ({
-  openUrl: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 
 const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll, memoryTreeResetTree } =
   (await import('../../../utils/tauriCommands')) as unknown as {
@@ -40,16 +38,13 @@ const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll, memoryTree
     memoryTreeResetTree: Mock;
   };
 
-const { listConnections, syncConnection } = (await import(
-  '../../../lib/composio/composioApi'
-)) as unknown as {
-  listConnections: Mock;
-  syncConnection: Mock;
-};
+const { listConnections, syncConnection } =
+  (await import('../../../lib/composio/composioApi')) as unknown as {
+    listConnections: Mock;
+    syncConnection: Mock;
+  };
 
-const { openUrl } = (await import('../../../utils/openUrl')) as unknown as {
-  openUrl: Mock;
-};
+const { openUrl } = (await import('../../../utils/openUrl')) as unknown as { openUrl: Mock };
 
 function makeSummary(partial: Partial<GraphNode>): GraphNode {
   return {
@@ -128,8 +123,7 @@ describe('MemoryWorkspace (graph view)', () => {
     fireEvent.click(button);
     await waitFor(() => {
       expect(openUrl).toHaveBeenCalledWith(
-        'obsidian://open?path=' +
-          encodeURIComponent('/tmp/workspace/memory_tree/content')
+        'obsidian://open?path=' + encodeURIComponent('/tmp/workspace/memory_tree/content')
       );
     });
   });
@@ -252,10 +246,7 @@ describe('MemoryWorkspace (graph view)', () => {
     });
     await waitFor(() => {
       expect(onToast).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'success',
-          title: expect.stringContaining('3 buffer'),
-        })
+        expect.objectContaining({ type: 'success', title: expect.stringContaining('3 buffer') })
       );
     });
   });

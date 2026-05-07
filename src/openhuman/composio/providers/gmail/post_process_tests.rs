@@ -261,8 +261,7 @@ fn split_with_hint_accepts_when_subjects_match() {
         json!({"subject": "Welcome to Gmail"}),
         json!({"subject": "Your invoice"}),
     ];
-    let slices =
-        super::split_response_markdown_per_message_with_hint(md, 2, Some(&hints)).unwrap();
+    let slices = super::split_response_markdown_per_message_with_hint(md, 2, Some(&hints)).unwrap();
     assert_eq!(slices.len(), 2);
     assert!(slices[0].contains("Welcome to Gmail"));
     assert!(slices[1].contains("Your invoice"));
@@ -272,8 +271,7 @@ fn split_with_hint_accepts_when_subjects_match() {
 fn split_with_hint_skips_messages_with_blank_subject() {
     let md = "## A\nbody1\n---\n## B\nbody2";
     let hints = vec![json!({"subject": "A"}), json!({"subject": ""})];
-    let slices =
-        super::split_response_markdown_per_message_with_hint(md, 2, Some(&hints)).unwrap();
+    let slices = super::split_response_markdown_per_message_with_hint(md, 2, Some(&hints)).unwrap();
     assert_eq!(slices.len(), 2);
 }
 
@@ -290,7 +288,10 @@ fn apply_response_level_markdown_stashes_per_message_field() {
     let m1 = data["messages"][0]["markdownFormatted"].as_str().unwrap();
     let m2 = data["messages"][1]["markdownFormatted"].as_str().unwrap();
     assert!(m1.contains("Hello"));
-    assert!(m1.contains("https://gh.io/abc"), "shortened URL must survive");
+    assert!(
+        m1.contains("https://gh.io/abc"),
+        "shortened URL must survive"
+    );
     assert!(m2.contains("World"));
     assert!(!m1.contains("World"), "no cross-message bleed");
 }

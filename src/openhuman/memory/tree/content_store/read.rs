@@ -143,9 +143,7 @@ pub fn read_chunk_body(
     config: &crate::openhuman::config::Config,
     chunk_id: &str,
 ) -> anyhow::Result<String> {
-    use crate::openhuman::memory::tree::store::{
-        get_chunk_content_pointers, get_chunk_raw_refs,
-    };
+    use crate::openhuman::memory::tree::store::{get_chunk_content_pointers, get_chunk_raw_refs};
 
     // Path 1: chunk has raw-archive pointers (today: email). Read each
     // referenced file, slice by byte range, join with `\n\n` (the

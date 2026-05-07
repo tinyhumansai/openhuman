@@ -263,8 +263,7 @@ pub async fn ingest_page_into_memory_tree(
     // legacy participant-bucket path when we can't derive an
     // account-scoped source id (CLI runs / missing profile fetch).
     if let Some(ref source_id) = account_source_id {
-        let total_chunks =
-            ingest_per_message(config, source_id, owner, page_messages).await;
+        let total_chunks = ingest_per_message(config, source_id, owner, page_messages).await;
         log::info!(
             "[composio:gmail][ingest] page_done owner_hash={} chunks={total_chunks} mode=per-account",
             redact(owner),
@@ -343,8 +342,12 @@ async fn ingest_per_message(
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty());
         let Some(msg_id) = id else { continue };
-        let Some(sent_at) = parse_message_date(raw) else { continue };
-        let Some(message) = raw_to_email_message(raw) else { continue };
+        let Some(sent_at) = parse_message_date(raw) else {
+            continue;
+        };
+        let Some(message) = raw_to_email_message(raw) else {
+            continue;
+        };
 
         let raw_path = format!(
             "raw/{}/{}_{}.md",
@@ -440,7 +443,9 @@ fn write_raw_archive(config: &Config, source_id: &str, page: &[Value]) -> Result
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
         let Some(id) = id else { continue };
-        let Some(sent_at) = parse_message_date(raw) else { continue };
+        let Some(sent_at) = parse_message_date(raw) else {
+            continue;
+        };
 
         // Pull the post-processed markdown straight off the upstream
         // page. Falls back to an empty body if the post-processor
@@ -458,8 +463,16 @@ fn write_raw_archive(config: &Config, source_id: &str, page: &[Value]) -> Result
             );
             continue;
         }
-        let from = raw.get("from").and_then(|v| v.as_str()).unwrap_or("").trim();
-        let subject = raw.get("subject").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let from = raw
+            .get("from")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let subject = raw
+            .get("subject")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
 
         let mut composed = String::with_capacity(markdown_body.len() + 256);
         if !from.is_empty() {

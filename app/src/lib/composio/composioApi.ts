@@ -170,13 +170,21 @@ export async function syncConnection(
   connectionId: string,
   reason: 'manual' | 'periodic' | 'connection_created' = 'manual'
 ): Promise<unknown> {
-  console.debug('[composio][sync] → openhuman.composio_sync conn=%s reason=%s', connectionId, reason);
+  console.debug(
+    '[composio][sync] → openhuman.composio_sync conn=%s reason=%s',
+    connectionId,
+    reason
+  );
   const raw = await callCoreRpc<unknown>({
     method: 'openhuman.composio_sync',
     params: { connection_id: connectionId, reason },
   });
   const outcome = unwrapCliEnvelope<unknown>(raw);
-  console.debug('[composio][sync] ← openhuman.composio_sync conn=%s outcome=%o', connectionId, outcome);
+  console.debug(
+    '[composio][sync] ← openhuman.composio_sync conn=%s outcome=%o',
+    connectionId,
+    outcome
+  );
   return outcome;
 }
 

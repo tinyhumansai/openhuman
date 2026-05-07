@@ -152,13 +152,15 @@ export function MemorySources({
   const loadAll = useCallback(async () => {
     try {
       const [conns, stats] = await Promise.all([
-        listConnections().then(r => r.connections).catch(err => {
-          // Composio may be unreachable in dev; degrade to anonymous
-          // toolkit rows from sync-status alone rather than masking
-          // the rest of the UI behind an error.
-          console.warn('[ui-flow][memory-sources] list_connections failed', err);
-          return [] as ComposioConnection[];
-        }),
+        listConnections()
+          .then(r => r.connections)
+          .catch(err => {
+            // Composio may be unreachable in dev; degrade to anonymous
+            // toolkit rows from sync-status alone rather than masking
+            // the rest of the UI behind an error.
+            console.warn('[ui-flow][memory-sources] list_connections failed', err);
+            return [] as ComposioConnection[];
+          }),
         memorySyncStatusList(),
       ]);
       setConnections(conns);
@@ -248,8 +250,8 @@ export function MemorySources({
         data-testid="memory-sources">
         <h3 className="text-sm font-semibold text-stone-700">Memory sources</h3>
         <p className="mt-2 text-xs text-stone-500">
-          No connected sources with a memory-tree sync provider yet. Connect Gmail (or
-          another supported integration) in the Chat tab to start ingesting.
+          No connected sources with a memory-tree sync provider yet. Connect Gmail (or another
+          supported integration) in the Chat tab to start ingesting.
         </p>
       </section>
     );
@@ -261,7 +263,9 @@ export function MemorySources({
       data-testid="memory-sources">
       <header className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-stone-700">Memory sources</h3>
-        <span className="text-xs text-stone-400">{rows.length} identit{rows.length === 1 ? 'y' : 'ies'}</span>
+        <span className="text-xs text-stone-400">
+          {rows.length} identit{rows.length === 1 ? 'y' : 'ies'}
+        </span>
       </header>
       <ul className="divide-y divide-stone-100">
         {rows.map(row => (

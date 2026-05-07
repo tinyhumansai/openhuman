@@ -689,11 +689,7 @@ pub struct RawRef {
 /// previous value. Used by ingest pipelines that mirror their bytes
 /// into `<content_root>/raw/...` so reads can skip the SQL preview
 /// path and pull the full body straight from the archive.
-pub fn set_chunk_raw_refs(
-    config: &Config,
-    chunk_id: &str,
-    refs: &[RawRef],
-) -> Result<()> {
+pub fn set_chunk_raw_refs(config: &Config, chunk_id: &str, refs: &[RawRef]) -> Result<()> {
     let json = serde_json::to_string(refs).context("serialize raw_refs")?;
     with_connection(config, |conn| {
         conn.execute(

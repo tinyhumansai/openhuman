@@ -1426,7 +1426,10 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
         // Step 2 — wipe the on-disk wiki/summaries tree. Best-effort:
         // a missing folder is fine (fresh workspace). Other errors
         // log + carry on — the SQL truth is what the rebuild relies on.
-        let summaries_dir = cfg.memory_tree_content_root().join("wiki").join("summaries");
+        let summaries_dir = cfg
+            .memory_tree_content_root()
+            .join("wiki")
+            .join("summaries");
         match std::fs::remove_dir_all(&summaries_dir) {
             Ok(()) => log::debug!(
                 "[memory_tree::read::reset_tree] removed {}",
@@ -1465,8 +1468,8 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
                     let payload = ExtractChunkPayload {
                         chunk_id: id.clone(),
                     };
-                    let job = NewJob::extract_chunk(&payload)
-                        .context("build extract_chunk NewJob")?;
+                    let job =
+                        NewJob::extract_chunk(&payload).context("build extract_chunk NewJob")?;
                     if jobs_store::enqueue_tx(&tx, &job)
                         .context("enqueue extract_chunk")?
                         .is_some()
@@ -1544,8 +1547,7 @@ pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowRespons
             max_age_secs: Some(0),
         };
         let date_iso = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let job = NewJob::flush_stale(&payload, &date_iso)
-            .context("build flush_stale NewJob")?;
+        let job = NewJob::flush_stale(&payload, &date_iso).context("build flush_stale NewJob")?;
         let enqueued = jobs_store::enqueue(&cfg, &job)
             .context("enqueue flush_stale job")?
             .is_some();

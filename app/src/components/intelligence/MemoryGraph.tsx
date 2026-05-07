@@ -76,11 +76,7 @@ function nodeRadius(node: GraphNode): number {
  * Run the force simulation for `iterations` ticks. Mutates positions in
  * place so we can re-use the same buffer across renders.
  */
-function relaxLayout(
-  nodes: SimNode[],
-  edges: Array<[number, number]>,
-  iterations = 220
-): void {
+function relaxLayout(nodes: SimNode[], edges: Array<[number, number]>, iterations = 220): void {
   const REPULSION = 1800;
   const SPRING_K = 0.04;
   const SPRING_LEN = 60;
@@ -196,13 +192,7 @@ function joinPath(root: string, rel: string): string {
   return `${trimmed}/${rel}`;
 }
 
-export function MemoryGraph({
-  nodes,
-  edges,
-  mode,
-  contentRootAbs,
-  emptyHint,
-}: MemoryGraphProps) {
+export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: MemoryGraphProps) {
   const [hovered, setHovered] = useState<GraphNode | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
@@ -355,7 +345,9 @@ export function MemoryGraph({
           ) : hovered.kind === 'contact' ? (
             <>
               <span className="font-medium text-violet-700">{hovered.label}</span>
-              <span className="ml-3 text-stone-400">person · canonical id {hovered.id.slice(0, 12)}…</span>
+              <span className="ml-3 text-stone-400">
+                person · canonical id {hovered.id.slice(0, 12)}…
+              </span>
             </>
           ) : (
             <>

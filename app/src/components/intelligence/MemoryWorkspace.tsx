@@ -240,11 +240,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
 
   return (
     <div className="space-y-4" data-testid="memory-workspace">
-      <MemorySources
-        syncableToolkits={SYNCABLE_TOOLKITS}
-        pollIntervalMs={5000}
-        onToast={onToast}
-      />
+      <MemorySources syncableToolkits={SYNCABLE_TOOLKITS} pollIntervalMs={5000} onToast={onToast} />
 
       <div
         className="flex flex-wrap items-center justify-between gap-3"
