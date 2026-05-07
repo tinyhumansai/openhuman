@@ -21,7 +21,8 @@ function normalizeError(error: unknown): Error {
 function useThreadQuery<T>(
   queryName: string,
   load: () => Promise<T>,
-  enabled = true
+  enabled = true,
+  queryKey = queryName
 ): ThreadQueryState<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(enabled);
@@ -29,6 +30,7 @@ function useThreadQuery<T>(
   const [isRefetching, setIsRefetching] = useState(false);
   const requestIdRef = useRef(0);
   const dataRef = useRef<T | null>(null);
+  const queryKeyRef = useRef(queryKey);
 
   const execute = useCallback(
     async (reason: 'initial' | 'refetch'): Promise<T | undefined> => {
@@ -79,6 +81,15 @@ function useThreadQuery<T>(
   );
 
   useEffect(() => {
+    if (queryKeyRef.current !== queryKey) {
+      requestIdRef.current += 1;
+      queryKeyRef.current = queryKey;
+      dataRef.current = null;
+      setData(null);
+      setError(null);
+      setIsRefetching(false);
+    }
+
     if (!enabled) {
       requestIdRef.current += 1;
       dataRef.current = null;
@@ -89,7 +100,7 @@ function useThreadQuery<T>(
       return;
     }
     void execute('initial');
-  }, [enabled, execute]);
+  }, [enabled, execute, queryKey]);
 
   useEffect(
     () => () => {
@@ -114,5 +125,10 @@ export function useThreadMessages(threadId?: string | null): ThreadQueryState<Th
     () => threadApi.getThreadMessages(normalizedThreadId ?? ''),
     [normalizedThreadId]
   );
-  return useThreadQuery('threads.messages', load, normalizedThreadId !== null);
+  return useThreadQuery(
+    'threads.messages',
+    load,
+    normalizedThreadId !== null,
+    `threads.messages:${normalizedThreadId ?? 'disabled'}`
+  );
 }

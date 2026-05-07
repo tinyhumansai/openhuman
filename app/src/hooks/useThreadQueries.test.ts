@@ -138,4 +138,54 @@ describe('useThreadQueries', () => {
     expect(result.current.isRefetching).toBe(false);
     expect(result.current.data?.messages[0].id).toBe('message-2');
   });
+
+  it('clears previous messages while loading a different thread id', async () => {
+    const nextMessages = deferred<{ messages: ThreadMessage[]; count: number }>();
+    mockGetThreadMessages
+      .mockResolvedValueOnce({ messages: [message], count: 1 })
+      .mockReturnValueOnce(nextMessages.promise);
+    const { useThreadMessages } = await import('./useThreadQueries');
+
+    const { result, rerender } = renderHook(({ threadId }) => useThreadMessages(threadId), {
+      initialProps: { threadId: 'thread-1' },
+    });
+
+    await waitFor(() => expect(result.current.data?.messages[0].id).toBe('message-1'));
+
+    rerender({ threadId: 'thread-2' });
+
+    await waitFor(() => expect(result.current.data).toBeNull());
+    expect(result.current.loading).toBe(true);
+    expect(result.current.isRefetching).toBe(false);
+
+    nextMessages.resolve({ messages: [{ ...message, id: 'message-2' }], count: 1 });
+    await waitFor(() => expect(result.current.data?.messages[0].id).toBe('message-2'));
+    expect(mockGetThreadMessages).toHaveBeenNthCalledWith(1, 'thread-1');
+    expect(mockGetThreadMessages).toHaveBeenNthCalledWith(2, 'thread-2');
+  });
+
+  it('ignores stale message responses after switching thread ids', async () => {
+    const firstMessages = deferred<{ messages: ThreadMessage[]; count: number }>();
+    const secondMessages = deferred<{ messages: ThreadMessage[]; count: number }>();
+    mockGetThreadMessages
+      .mockReturnValueOnce(firstMessages.promise)
+      .mockReturnValueOnce(secondMessages.promise);
+    const { useThreadMessages } = await import('./useThreadQueries');
+
+    const { result, rerender } = renderHook(({ threadId }) => useThreadMessages(threadId), {
+      initialProps: { threadId: 'thread-1' },
+    });
+
+    rerender({ threadId: 'thread-2' });
+
+    secondMessages.resolve({ messages: [{ ...message, id: 'message-2' }], count: 1 });
+    await waitFor(() => expect(result.current.data?.messages[0].id).toBe('message-2'));
+
+    firstMessages.resolve({ messages: [{ ...message, id: 'message-1' }], count: 1 });
+    await act(async () => {
+      await firstMessages.promise;
+    });
+
+    expect(result.current.data?.messages[0].id).toBe('message-2');
+  });
 });
