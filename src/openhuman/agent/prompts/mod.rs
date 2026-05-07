@@ -396,10 +396,16 @@ impl PromptSection for ToolsSection {
 
     fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
         // Native function-calling: the provider already sends full JSON
-        // schemas in the API request — no need to repeat them in the
-        // system prompt. Skip the catalogue to save tokens.
+        // schemas in the API request — no need to repeat the tool catalogue
+        // in the system prompt (pure token bloat). However, any non-empty
+        // `dispatcher_instructions` (e.g. the "## Tool Use Protocol" block
+        // from NativeToolDispatcher) must still be included so the model
+        // receives its behavioural guidance.
         if ctx.tool_call_format == ToolCallFormat::Native {
-            return Ok(String::new());
+            if ctx.dispatcher_instructions.trim().is_empty() {
+                return Ok(String::new());
+            }
+            return Ok(ctx.dispatcher_instructions.to_string());
         }
         let mut out = String::from("## Tools\n\n");
         let has_filter = !ctx.visible_tool_names.is_empty();

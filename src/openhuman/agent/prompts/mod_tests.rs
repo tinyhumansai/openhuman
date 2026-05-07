@@ -1384,3 +1384,39 @@ fn tools_section_nonempty_for_pformat() {
         "PFormat should render tool catalogue header, got: {out:?}"
     );
 }
+
+#[test]
+fn tools_section_native_with_dispatcher_instructions_returns_instructions() {
+    // Native mode must still include non-empty dispatcher_instructions
+    // (e.g. the "## Tool Use Protocol" block from NativeToolDispatcher) so
+    // the model receives behavioural guidance even though the tool catalogue
+    // itself is omitted.
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+    let prompt_tools = PromptTool::from_tools(&tools);
+    let ctx = PromptContext {
+        workspace_dir: Path::new("/tmp"),
+        model_name: "test-model",
+        agent_id: "",
+        tools: &prompt_tools,
+        skills: &[],
+        dispatcher_instructions: "## Tool Use Protocol\n\nUse native tool calling.",
+        learned: LearnedContextData::default(),
+        visible_tool_names: &NO_FILTER,
+        tool_call_format: ToolCallFormat::Native,
+        connected_integrations: &[],
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: false,
+        curated_snapshot: None,
+        user_identity: None,
+    };
+    let out = ToolsSection.build(&ctx).unwrap();
+    assert!(
+        out.contains("## Tool Use Protocol"),
+        "Native mode with non-empty dispatcher_instructions must include them, got: {out:?}"
+    );
+    assert!(
+        !out.contains("## Tools"),
+        "Native mode must not include the tool catalogue header, got: {out:?}"
+    );
+}
