@@ -49,6 +49,9 @@ const ComposioTriagePanel = () => {
         triage_disabled_toolkits: toolkitList,
       });
       setSaveStatus('saved');
+      if (saveStatusTimer.current !== null) {
+        clearTimeout(saveStatusTimer.current);
+      }
       saveStatusTimer.current = setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (err) {
       console.warn('[ComposioTriagePanel] failed to save settings:', err);
@@ -94,6 +97,9 @@ const ComposioTriagePanel = () => {
         <div className="rounded-2xl border border-stone-200 bg-stone-50/60 p-4 space-y-1">
           <button
             type="button"
+            role="switch"
+            aria-checked={triageDisabled}
+            aria-label="Disable AI triage for all triggers"
             onClick={() => setTriageDisabled(v => !v)}
             className="w-full flex items-center justify-between">
             <div className="text-left">
