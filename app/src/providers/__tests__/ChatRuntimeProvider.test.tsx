@@ -396,6 +396,50 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         })
       );
     });
+
+    it('does not append duplicate fallback error bubble when the previous message already matches', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onError?.({
+          thread_id: 't-err-dedupe',
+          request_id: 'r1',
+          message: 'transport fail one',
+          error_type: 'inference',
+          round: 0,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-err-dedupe',
+          expect.objectContaining({
+            content: expect.stringContaining('Something went wrong. Please try again.'),
+          })
+        )
+      );
+
+      act(() => {
+        listeners.onError?.({
+          thread_id: 't-err-dedupe',
+          request_id: 'r2',
+          message: 'transport fail two',
+          error_type: 'inference',
+          round: 0,
+        });
+      });
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const matchingCalls = vi
+        .mocked(threadApi.appendMessage)
+        .mock.calls.filter(
+          call =>
+            call[0] === 't-err-dedupe' &&
+            typeof call[1]?.content === 'string' &&
+            call[1].content.includes('Something went wrong. Please try again.')
+        );
+      expect(matchingCalls).toHaveLength(1);
+    });
   });
 
   // Live subagent activity (#1122) — the parent thread surfaces a
