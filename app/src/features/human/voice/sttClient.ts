@@ -71,10 +71,12 @@ export async function transcribeCloud(
     // is opaque to end users — surface an actionable message instead.
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('unknown method')) {
+      sttLog('transcribe rpc stale-sidecar path hit; rewriting unknown-method error: %s', msg);
       throw new Error(
         'Voice transcription is unavailable in this build. Restart the OpenHuman desktop app to pick up the latest core sidecar.'
       );
     }
+    sttLog('transcribe rpc failed (passthrough): %O', err);
     throw err;
   }
   const text = result?.text?.trim() ?? '';

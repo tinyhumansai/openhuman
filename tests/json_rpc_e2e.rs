@@ -3836,14 +3836,17 @@ async fn voice_cloud_transcribe_registered_e2e() {
         json!({ "audio_base64": "" }),
     )
     .await;
-    let err_msg = resp
+    // Inspect the full error blob, not just `error.message`. A future
+    // server-shape change that moves the dispatcher's unknown-method
+    // string into `error.data` would otherwise let this regression
+    // guard silently pass.
+    let err_blob = resp
         .get("error")
-        .and_then(|e| e.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
+        .map(|e| e.to_string().to_ascii_lowercase())
+        .unwrap_or_default();
     assert!(
-        !err_msg.contains("unknown method"),
-        "voice_cloud_transcribe must be a known method (got: {err_msg:?}); full response: {resp}"
+        !err_blob.contains("unknown method"),
+        "voice_cloud_transcribe must be a known method; full response: {resp}"
     );
 
     mock_join.abort();
