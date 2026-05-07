@@ -52,10 +52,25 @@ fn extract_error_detail_truncates_long_non_json_bodies_at_char_boundary() {
     let body = "€".repeat(200); // 600 bytes
     let out = extract_error_detail(&body, 50);
     assert!(out.ends_with('…'), "expected ellipsis, got: {out}");
-    // Stripped output (without the ellipsis) must be valid UTF-8 — the
-    // helper would panic if it sliced mid-codepoint, so just reaching
-    // here proves the boundary check held.
-    assert!(out.len() <= 50 + "…".len() + 2);
+    // Hard cap check: the returned string MUST NOT exceed `max` bytes
+    // including the ellipsis. Earlier the helper appended `…` after
+    // slicing to `max`, which leaked 3 bytes past the advertised cap;
+    // CR flagged this. Now the cap is strict.
+    assert!(
+        out.len() <= 50,
+        "output ({} bytes) exceeded advertised cap of 50",
+        out.len()
+    );
+}
+
+#[test]
+fn extract_error_detail_with_max_below_ellipsis_returns_empty() {
+    // Edge case: when `max` is smaller than the ellipsis byte length
+    // (3 bytes), there's no room for any content + ellipsis, so the
+    // helper must return an empty string rather than panic or emit a
+    // partial codepoint.
+    let body = "€".repeat(10);
+    assert_eq!(extract_error_detail(&body, 2), "");
 }
 
 #[test]

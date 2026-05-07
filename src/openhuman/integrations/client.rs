@@ -41,7 +41,15 @@ fn truncate_at_char_boundary(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
-    let mut end = max;
+    // Reserve space for the trailing `…` so the returned string never
+    // exceeds `max` bytes. Without this, a 500-byte cap could return
+    // 503 bytes (500 raw + 3-byte ellipsis), breaking the hard cap that
+    // Sentry tag values and user-facing toasts rely on.
+    let ellipsis_len = '…'.len_utf8();
+    if max < ellipsis_len {
+        return String::new();
+    }
+    let mut end = max - ellipsis_len;
     while end > 0 && !s.is_char_boundary(end) {
         end -= 1;
     }
