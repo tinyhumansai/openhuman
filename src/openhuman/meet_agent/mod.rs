@@ -40,6 +40,7 @@ pub mod rpc;
 pub mod schemas;
 pub mod session;
 pub mod types;
+pub mod wav;
 
 pub use schemas::{
     all_controller_schemas as all_meet_agent_controller_schemas,
