@@ -1,10 +1,12 @@
 //! Time-based buffer flush for source trees (#709).
 //!
-//! The bucket-seal path only fires when a buffer crosses `TOKEN_BUDGET`.
-//! Low-volume sources (e.g. an email account with two threads a week) can
-//! otherwise leave leaves parked in the L0 buffer indefinitely, which
-//! hurts recall. `flush_stale_buffers` force-seals any buffer whose
-//! `oldest_at` is older than `max_age`, regardless of token count.
+//! The bucket-seal path only fires when a buffer crosses
+//! `INPUT_TOKEN_BUDGET` (token volume) or `SUMMARY_FANOUT` (item count
+//! — the L0 fallback gate). Low-volume sources (e.g. an email account
+//! with two threads a week) can still park a buffer below both
+//! thresholds indefinitely, which hurts recall.
+//! `flush_stale_buffers` force-seals any buffer whose `oldest_at` is
+//! older than `max_age`, regardless of token count or item count.
 //!
 //! This is meant to run on a cadence (e.g. daily cron). Phase 3a ships
 //! the primitive; wiring into a scheduler is not required for merge.

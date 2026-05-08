@@ -10,7 +10,7 @@ Phase 3a (#709) — per-source summary trees with bucket-seal mechanics. One tre
 - `pub fn build_summariser` / `pub trait Summariser` / `pub struct SummaryInput` / `pub struct SummaryContext` / `pub struct SummaryOutput` — `summariser/mod.rs` — folds N inputs into one summary.
 - `pub struct InertSummariser` — `summariser/inert.rs` — deterministic dependency-free fallback.
 - `pub struct LlmSummariser` / `pub struct LlmSummariserConfig` — `summariser/llm.rs` — Ollama-backed implementation with soft-fallback to inert.
-- `pub struct Tree` / `pub struct SummaryNode` / `pub struct Buffer` / `pub enum TreeKind` / `pub enum TreeStatus` / `pub const TOKEN_BUDGET` / `pub const SUMMARY_FANOUT` — `types.rs`.
+- `pub struct Tree` / `pub struct SummaryNode` / `pub struct Buffer` / `pub enum TreeKind` / `pub enum TreeStatus` / `pub const INPUT_TOKEN_BUDGET` / `pub const OUTPUT_TOKEN_BUDGET` / `pub const SUMMARY_FANOUT` — `types.rs`.
 - `pub fn get_summary_embedding` / `pub fn set_summary_embedding` / `pub fn insert_tree` / `pub fn get_tree_by_scope` / `pub fn get_tree` / `pub fn list_trees_by_kind` / `pub fn get_summary` / `pub fn list_summaries_at_level` / `pub fn count_summaries` / `pub fn get_buffer` / `pub fn list_stale_buffers` — `store.rs`.
 
 ## Files

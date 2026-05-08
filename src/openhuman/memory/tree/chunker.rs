@@ -2,8 +2,9 @@
 //!
 //! The canonicalisers produce one big canonical Markdown blob per source
 //! record; the chunker slices that into chunks of at most [`DEFAULT_CHUNK_MAX_TOKENS`]
-//! so later phases (#709 seal budget = 10k tokens) can ingest them without
-//! blowing past the summariser ceiling.
+//! so later phases (L0 seal at `INPUT_TOKEN_BUDGET = 50k` tokens, or 10
+//! items via the count fallback) can ingest them without blowing past
+//! the summariser ceiling.
 //!
 //! ## Dispatch by source kind (Phase B)
 //!
@@ -20,10 +21,10 @@ use crate::openhuman::memory::tree::util::redact::redact;
 
 /// Default upper bound on per-chunk tokens.
 ///
-/// Sized below the L0 seal budget (`tree_source::types::TOKEN_BUDGET = 4_500`)
-/// so each seal accumulates roughly 1–3 chunks before firing — natural pacing
-/// for the local 1B summariser, which produces noticeably better summaries
-/// with smaller (≤4–5k) inputs than at the previous 10k cap.
+/// Well below `tree_source::types::INPUT_TOKEN_BUDGET = 50_000` so each
+/// L0 seal accumulates many chunks (~15+) before firing — the cloud
+/// summariser handles large input contexts well, so we let the seal
+/// fold a meaningful slice of the source rather than a single chunk.
 pub const DEFAULT_CHUNK_MAX_TOKENS: u32 = 3_000;
 
 /// Tunable settings for the chunker.

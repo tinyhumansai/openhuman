@@ -78,11 +78,24 @@ pub trait ChatProvider: Send + Sync {
     /// Stable, grep-friendly name for logs. e.g. `"cloud:summarization-v1"`.
     fn name(&self) -> &str;
 
-    /// Run one chat completion and return the assistant's content.
+    /// Run one chat completion and return the assistant's content,
+    /// constraining the model to JSON output where the wire format
+    /// supports it (Ollama's `format: "json"`).
     ///
     /// Implementations should log entry / exit at debug level under the
     /// `[memory_tree::chat]` prefix.
     async fn chat_for_json(&self, prompt: &ChatPrompt) -> Result<String>;
+
+    /// Run one chat completion and return the assistant's plain-text
+    /// content. Unlike [`chat_for_json`], implementations MUST NOT
+    /// enable any wire-level JSON-mode flag — used by the summariser
+    /// which emits prose, not a structured envelope.
+    ///
+    /// Default impl forwards to `chat_for_json`; providers that gate
+    /// JSON-mode at the wire (e.g. Ollama) override to skip it.
+    async fn chat_for_text(&self, prompt: &ChatPrompt) -> Result<String> {
+        self.chat_for_json(prompt).await
+    }
 }
 
 /// Build the [`ChatProvider`] dictated by `config.memory_tree.llm_backend`.

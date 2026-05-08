@@ -225,8 +225,8 @@ async fn seal_populates_summary_embedding() {
         created_at: ts,
         partial_message: false,
     };
-    let c1 = mk_chunk(0, 6_000);
-    let c2 = mk_chunk(1, 6_000);
+    let c1 = mk_chunk(0, 30_000);
+    let c2 = mk_chunk(1, 30_000);
     upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
     {
         let content_root = cfg.memory_tree_content_root();

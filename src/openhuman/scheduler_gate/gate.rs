@@ -17,15 +17,15 @@ use crate::openhuman::scheduler_gate::signals::Signals;
 /// Process-wide ceiling on concurrent LLM-bound work.
 ///
 /// Held at 1 to keep concurrent local-Ollama / bge-m3 calls (8K context,
-/// ~1.3 GB resident each) from saturating local RAM. The cloud path
-/// itself is bandwidth-bound but the gate also fronts triage and
-/// reflection turns that fan out to `agent.run_turn`, where every local
-/// route loads the same Ollama model — so a single global slot is the
-/// safest contract until #1064 (per-toolkit triage toggle) and the
-/// cloud-side rate limiter ship.
-///
-/// See `feedback_local_llm_load.md` — backfills with multiple
+/// ~1.3 GB resident each) from saturating local RAM. See
+/// `feedback_local_llm_load.md` — backfills with multiple
 /// simultaneous Ollama requests have crashed the user's laptop twice.
+///
+/// Cloud-backend LLM calls bypass this semaphore at the worker layer
+/// (see `memory_tree::jobs::worker::run_once`) because they're
+/// bandwidth-bound, not RAM-bound, and the worker pool itself bounds
+/// concurrency upstream. Keeping this at 1 preserves the laptop-RAM
+/// contract regardless of backend.
 const LLM_SLOTS: usize = 1;
 
 static LLM_PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();

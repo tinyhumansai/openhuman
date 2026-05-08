@@ -575,7 +575,7 @@ mod tests {
     }
 
     /// Seed a source tree and push enough labeled leaves into its L0 buffer
-    /// to cross `TOKEN_BUDGET`, returning the tree. The caller can then
+    /// to cross `INPUT_TOKEN_BUDGET`, returning the tree. The caller can then
     /// fire `handle_seal` and inspect the result.
     async fn seed_source_tree_ready_to_seal(
         cfg: &Config,
@@ -599,7 +599,7 @@ mod tests {
                 source_ref: Some(SourceRef::new("slack://x")),
             },
             // Bust budget so the L0 buffer is "ready" for seal.
-            token_count: 10_000,
+            token_count: 60_000,
             seq_in_source: 0,
             created_at: ts,
             partial_message: false,
@@ -619,7 +619,7 @@ mod tests {
         .unwrap();
         let leaf = LeafRef {
             chunk_id: chunk.id,
-            token_count: 10_000,
+            token_count: 60_000,
             timestamp: ts,
             content: chunk.content,
             entities: vec![],
@@ -672,7 +672,12 @@ mod tests {
         let p: TopicRoutePayload = serde_json::from_str(&payload_json).unwrap();
         match p.node {
             NodeRef::Summary { summary_id } => {
-                assert!(summary_id.starts_with("summary:L1:"));
+                // Format: `summary:<13-digit-ms>:L<level>-<8hex>` —
+                // see `tree_source::registry::new_summary_id`.
+                assert!(
+                    summary_id.starts_with("summary:") && summary_id.contains(":L1-"),
+                    "expected summary id with L1 segment, got {summary_id}"
+                );
             }
             other => panic!("expected NodeRef::Summary, got {other:?}"),
         }
@@ -707,7 +712,7 @@ mod tests {
                 tags: vec![],
                 source_ref: Some(SourceRef::new("slack://x")),
             },
-            token_count: 10_000,
+            token_count: 60_000,
             seq_in_source: 0,
             created_at: ts,
             partial_message: false,
@@ -727,7 +732,7 @@ mod tests {
         .unwrap();
         let leaf = LeafRef {
             chunk_id: chunk.id,
-            token_count: 10_000,
+            token_count: 60_000,
             timestamp: ts,
             content: chunk.content,
             entities: vec![],
@@ -794,7 +799,7 @@ mod tests {
                     tags: vec![],
                     source_ref: Some(SourceRef::new("slack://x")),
                 },
-                token_count: 6_000,
+                token_count: 30_000,
                 seq_in_source: seq,
                 created_at: ts,
                 partial_message: false,
@@ -812,7 +817,7 @@ mod tests {
             .unwrap();
             let leaf = LeafRef {
                 chunk_id: chunk.id,
-                token_count: 6_000,
+                token_count: 30_000,
                 timestamp: ts,
                 content: chunk.content,
                 entities: vec![],

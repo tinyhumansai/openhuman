@@ -178,27 +178,31 @@ impl Buffer {
     }
 }
 
-/// Token ceiling for one summariser invocation.
+/// Input token target for one L0 → L1 seal: when an L0 buffer's
+/// `token_sum` reaches this, we summarise the accumulated leaves.
 ///
-/// Sized for the local 1B summariser (`gemma3:1b-it-qat`), which produces
-/// noticeably better summaries with ≤4-5k input than at higher caps. The
-/// chunker's `DEFAULT_CHUNK_MAX_TOKENS` (3_000) sits below this so each
-/// L0 buffer accumulates roughly 1-3 chunks before sealing.
-///
-/// Gates only the L0 → L1 seal: leaves are fan-in by raw token volume so
-/// the summariser input stays bounded. Summaries above L0 use
-/// [`SUMMARY_FANOUT`] instead — see `bucket_seal::should_seal`.
-pub const TOKEN_BUDGET: u32 = 4_500;
+/// Sized for the cloud summariser's 120k-token context with headroom for
+/// the system prompt and the model's own output. With ~5k tokens emitted
+/// per summary (see [`OUTPUT_TOKEN_BUDGET`]), one parent represents ~50k
+/// tokens of leaf content — i.e. ~10 child summaries' worth.
+pub const INPUT_TOKEN_BUDGET: u32 = 50_000;
+
+/// Output token budget passed to the summariser as `ctx.token_budget`.
+/// The summariser may clamp lower (see `summariser/llm.rs`'s
+/// `MAX_SUMMARY_OUTPUT_TOKENS`). 5k keeps the produced summary well
+/// under the embedder's 8k input ceiling so the post-seal embed never
+/// rejects the row.
+pub const OUTPUT_TOKEN_BUDGET: u32 = 5_000;
 
 /// Sibling count that triggers a seal at level ≥ 1 (summaries → next level).
 ///
-/// Decouples upper-level seals from per-summary token size so the tree's
-/// fan-in stays stable regardless of summariser quality. With a real
-/// summariser each L1 might be ~500 tokens; with the inert fallback each
-/// L1 fills the full [`TOKEN_BUDGET`]. Token-based gating collapses the
-/// inert case into a 1:1:1 chain — count-based gating gives a real tree
-/// shape (`SUMMARY_FANOUT` children per parent) in both cases.
-pub const SUMMARY_FANOUT: u32 = 4;
+/// Set to match the [`INPUT_TOKEN_BUDGET`] / [`OUTPUT_TOKEN_BUDGET`]
+/// ratio so each level folds roughly the same volume of content as L0:
+/// 10 summaries × ~5k tokens ≈ 50k input. Decouples upper-level seals
+/// from per-summary token size so the tree's fan-in stays stable
+/// regardless of summariser quality (token-based gating would collapse
+/// the inert-fallback case into a 1:1:1 chain).
+pub const SUMMARY_FANOUT: u32 = 10;
 
 /// Default age at which a non-empty buffer is force-sealed even under the
 /// token budget. Keeps recent activity from stalling waiting for more

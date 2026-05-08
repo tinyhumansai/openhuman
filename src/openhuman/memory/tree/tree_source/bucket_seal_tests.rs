@@ -101,9 +101,9 @@ async fn crossing_budget_triggers_seal() {
         created_at: ts,
         partial_message: false,
     };
-    // Budget-relative sizes so the test stays correct as TOKEN_BUDGET shifts:
+    // Budget-relative sizes so the test stays correct as INPUT_TOKEN_BUDGET shifts:
     // each leaf is 60% of budget, so the second append crosses the threshold.
-    let per_leaf = TOKEN_BUDGET * 6 / 10;
+    let per_leaf = INPUT_TOKEN_BUDGET * 6 / 10;
     let c1 = mk_chunk(0, per_leaf);
     let c2 = mk_chunk(1, per_leaf);
     upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
@@ -200,10 +200,10 @@ async fn fanout_at_l1_triggers_l2_seal() {
                 tags: vec![],
                 source_ref: Some(SourceRef::new("slack://x")),
             },
-            // Each leaf alone busts TOKEN_BUDGET so the L0→L1 seal
+            // Each leaf alone busts INPUT_TOKEN_BUDGET so the L0→L1 seal
             // fires on every append. After SUMMARY_FANOUT seals, the
             // L1 buffer's count-based gate trips and cascades to L2.
-            token_count: 10_000,
+            token_count: INPUT_TOKEN_BUDGET + 1,
             seq_in_source: seq,
             created_at: ts,
             partial_message: false,
@@ -292,7 +292,7 @@ async fn upper_level_does_not_seal_below_fanout() {
                 tags: vec![],
                 source_ref: Some(SourceRef::new("slack://x")),
             },
-            token_count: 10_000,
+            token_count: INPUT_TOKEN_BUDGET + 1,
             seq_in_source: seq,
             created_at: ts,
             partial_message: false,
@@ -369,8 +369,8 @@ fn seed_leaf(
             tags: topics.clone(),
             source_ref: Some(SourceRef::new(format!("slack://x{seq}"))),
         },
-        // Bust TOKEN_BUDGET in one leaf so the seal fires immediately.
-        token_count: 10_000,
+        // Bust INPUT_TOKEN_BUDGET in one leaf so the seal fires immediately.
+        token_count: INPUT_TOKEN_BUDGET + 1,
         seq_in_source: seq,
         created_at: ts,
         partial_message: false,
@@ -490,7 +490,7 @@ async fn seal_with_union_strategy_inherits_labels_from_children() {
     // a third append triggers a seal containing both. Reuse the helper
     // and override the leaf's token_count for this test.
     // Each leaf at half the budget so two together hit threshold exactly.
-    let per_leaf = TOKEN_BUDGET / 2;
+    let per_leaf = INPUT_TOKEN_BUDGET / 2;
     let leaf1 = LeafRef {
         token_count: per_leaf,
         ..leaf1
