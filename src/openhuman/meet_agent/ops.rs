@@ -2,19 +2,20 @@
 //! detection, sample-rate sanity, request_id sanitization. Kept out of
 //! `session.rs` so they can be unit-tested without a tokio runtime.
 
-/// Lowest sample rate we will accept. Whisper's training data is at
-/// 16kHz; downsampling below that loses too much intelligibility.
-pub const MIN_SAMPLE_RATE: u32 = 16_000;
-/// Highest sample rate we will accept. CEF's audio handler typically
-/// emits 48kHz; the shell must downsample, but we accept up to 48k as
-/// a safety net for direct passthrough during development.
-pub const MAX_SAMPLE_RATE: u32 = 48_000;
+/// The only sample rate the meet-agent loop currently supports.
+/// `brain.rs` packs WAVs, computes durations, and sizes the turn
+/// floor against this constant; until we plumb the per-session rate
+/// all the way through, every helper assumes 16 kHz. The shell's
+/// listen path resamples to this rate before pushing.
+pub const REQUIRED_SAMPLE_RATE: u32 = 16_000;
 
-/// Validate a sample rate handed in from the shell.
+/// Validate a sample rate handed in from the shell. Locked to a
+/// single value at the boundary instead of accepting a range — see
+/// `REQUIRED_SAMPLE_RATE` for the rationale.
 pub fn validate_sample_rate(hz: u32) -> Result<u32, String> {
-    if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&hz) {
+    if hz != REQUIRED_SAMPLE_RATE {
         return Err(format!(
-            "sample_rate_hz {hz} out of range [{MIN_SAMPLE_RATE}, {MAX_SAMPLE_RATE}]"
+            "sample_rate_hz {hz} unsupported; only {REQUIRED_SAMPLE_RATE} is allowed"
         ));
     }
     Ok(hz)
@@ -123,14 +124,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validate_sample_rate_accepts_common_rates() {
+    fn validate_sample_rate_accepts_only_required_rate() {
         validate_sample_rate(16_000).unwrap();
-        validate_sample_rate(48_000).unwrap();
     }
 
     #[test]
-    fn validate_sample_rate_rejects_out_of_range() {
+    fn validate_sample_rate_rejects_anything_else() {
         assert!(validate_sample_rate(8_000).is_err());
+        assert!(validate_sample_rate(48_000).is_err());
         assert!(validate_sample_rate(96_000).is_err());
     }
 

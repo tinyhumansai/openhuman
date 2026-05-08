@@ -18,27 +18,27 @@ const DEFS: &[Def] = &[
     Def {
         function: "start_session",
         schema: schema_start_session,
-        handler: wrap_start_session,
+        handler: handle_start_session,
     },
     Def {
         function: "push_listen_pcm",
         schema: schema_push_listen_pcm,
-        handler: wrap_push_listen_pcm,
+        handler: handle_push_listen_pcm,
     },
     Def {
         function: "push_caption",
         schema: schema_push_caption,
-        handler: wrap_push_caption,
+        handler: handle_push_caption,
     },
     Def {
         function: "poll_speech",
         schema: schema_poll_speech,
-        handler: wrap_poll_speech,
+        handler: handle_poll_speech,
     },
     Def {
         function: "stop_session",
         schema: schema_stop_session,
-        handler: wrap_stop_session,
+        handler: handle_stop_session,
     },
 ];
 
@@ -295,19 +295,19 @@ fn schema_unknown() -> ControllerSchema {
     }
 }
 
-fn wrap_start_session(p: Map<String, Value>) -> ControllerFuture {
+fn handle_start_session(p: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::handle_start_session(p).await })
 }
-fn wrap_push_listen_pcm(p: Map<String, Value>) -> ControllerFuture {
+fn handle_push_listen_pcm(p: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::handle_push_listen_pcm(p).await })
 }
-fn wrap_push_caption(p: Map<String, Value>) -> ControllerFuture {
+fn handle_push_caption(p: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::handle_push_caption(p).await })
 }
-fn wrap_poll_speech(p: Map<String, Value>) -> ControllerFuture {
+fn handle_poll_speech(p: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::handle_poll_speech(p).await })
 }
-fn wrap_stop_session(p: Map<String, Value>) -> ControllerFuture {
+fn handle_stop_session(p: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::handle_stop_session(p).await })
 }
 

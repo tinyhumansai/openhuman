@@ -27,27 +27,43 @@ the call and listens to the agent's voice).
    - A dedicated CEF window opens. The window title bar reads
      "Meet — OpenHuman Agent".
 3. **Laptop B**: admit the agent from the lobby.
-4. **Laptop B**: speak a question into your mic. Examples:
-   - "Hey, can you confirm you can hear me?"
-   - "What's the weather like in Paris today?"
+4. Confirm Meet's live captions are on. The captions bridge auto-clicks
+   "Turn on captions" up to ~30 times over the first minute; if the
+   button isn't found (Meet UI rolls), enable CC manually.
+5. Speak a wake-word phrase into the call mic. Examples:
+   - "Hey, OpenHuman — remember to email Bob about the launch."
+   - "Hey OpenHuman, follow up with the design team next week."
+
+   The agent should reply with a short canned ack ("Got it.",
+   "Noted.", "Adding that.", "On it.", or "Captured.") routed back
+   into Meet's audio.
 
 ## What to watch for
 
-### Listen path (Meet → agent)
+### Listen path (Meet captions → agent)
+
+- The CEF audio handler / Whisper STT path is **not** the live-call
+  listen path; do not expect `cef stream start` or `push_listen_pcm`
+  log lines (those modules are kept in tree as `_legacy_listen` for a
+  future opt-in).
 
 - Tail the file logs (`~/Library/Application Support/OpenHuman/logs/`):
 
   ```text
-  [meet-audio] cef stream start request_id=… hz=48000 channels=2 …
-  [meet-audio] forward channel push (…)
-  [meet-agent-rpc] handle_push_listen_pcm turn_started=true (when you stop talking)
-  [meet-agent] STT request_id=… text_chars=…
-  [meet-agent] turn done request_id=… reply_chars=… synth_samples=…
+  [meet-audio] inject reload requested session=…
+  [meet-audio] bridge alive info={"installed":true,"sample_rate":16000,…}
+  [meet-audio] captions drained count=N request_id=…
+  [meet-agent-rpc] wake word fired request_id=… speaker=…
+  [meet-agent] caption turn start request_id=… prompt_chars=…
+  [meet-agent] caption turn done request_id=… reply_chars=… synth_samples=…
   ```
 
-- If `cef stream start` never logs, the per-browser CEF audio handler
-  isn't installed. Check that `tauri_runtime_cef::audio::register_audio_handler`
-  matched the meet URL prefix.
+- If `captions drained` never logs, the captions bridge didn't find
+  Meet's caption region — either CC is off (auto-enable failed) or
+  Meet rolled the DOM and the `aria-label="Captions"` selector
+  needs updating in `captions_bridge.js`. Confirm via the embedded
+  page console: `window.__openhumanCaptionsBridgeInfo()` — the
+  `region_found` field should be `true` once captions are on.
 
 ### Speak path (agent → Meet)
 

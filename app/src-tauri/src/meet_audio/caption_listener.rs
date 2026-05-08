@@ -107,7 +107,11 @@ async fn drain_and_forward(
         captions.len()
     );
     for (speaker, text, ts_ms) in captions {
-        let res = super::rpc_call(
+        // Propagate the failure so MAX_CONSECUTIVE_ERRORS can trip if
+        // core's session/RPC path is broken — without this the
+        // listener would silently drop captions forever while the
+        // page kept producing them.
+        super::rpc_call(
             "openhuman.meet_agent_push_caption",
             serde_json::json!({
                 "request_id": request_id,
@@ -116,10 +120,8 @@ async fn drain_and_forward(
                 "ts_ms": ts_ms,
             }),
         )
-        .await;
-        if let Err(err) = res {
-            log::debug!("[meet-audio] push_caption err request_id={request_id} err={err}");
-        }
+        .await
+        .map_err(|err| format!("push_caption (request_id={request_id}): {err}"))?;
     }
     Ok(())
 }

@@ -41,7 +41,11 @@ use super::wav;
 /// 250 ms @ 16 kHz — under this, VAD almost certainly fired on a
 /// transient (cough, click) rather than real speech.
 const MIN_TURN_SAMPLES: usize = 4_000;
-const SAMPLE_RATE_HZ: u32 = 16_000;
+/// Re-exported from `ops` so any drift (if we ever loosen the
+/// boundary check) immediately breaks the WAV / duration math here
+/// at compile time. Today the same constant is used in both places —
+/// the ops boundary check rejects anything else outright.
+const SAMPLE_RATE_HZ: u32 = super::ops::REQUIRED_SAMPLE_RATE;
 
 /// Caption-driven turn. Drains the session's pending wake-word prompt
 /// (assembled by `session::note_caption`) and runs LLM → TTS → enqueue
