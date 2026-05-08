@@ -38,8 +38,60 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::openhuman::memory::tree::content_store::paths::{sanitize_filename, SummaryTreeKind};
+use crate::openhuman::memory::tree::content_store::paths::{
+    sanitize_filename, slugify_source_id, SummaryTreeKind,
+};
 use crate::openhuman::memory::tree::types::{Chunk, SourceKind};
+
+/// Build the canonical Obsidian `source/<slug>` tag for a given
+/// `source_id`. Used to seed the `tags:` block on every chunk and
+/// every source-tree summary so the Obsidian graph view can filter by
+/// source.
+///
+/// Slug rules match `slugify_source_id` (lowercase ASCII, `-` separators,
+/// alphanumerics + `_` preserved) so the tag matches the on-disk
+/// `raw/<slug>/...` directory name byte-for-byte.
+pub fn source_tag(source_id: &str) -> String {
+    format!("source/{}", slugify_source_id(source_id))
+}
+
+/// Prepend the source tag to `tags`, dedup, and return the new list.
+/// Order is preserved otherwise — `source/...` always comes first so
+/// it shows up at the top of the YAML block.
+pub fn with_source_tag(source_id: &str, tags: &[String]) -> Vec<String> {
+    let st = source_tag(source_id);
+    let mut out = Vec::with_capacity(tags.len() + 1);
+    out.push(st.clone());
+    for t in tags {
+        if t != &st {
+            out.push(t.clone());
+        }
+    }
+    out
+}
+
+/// Parse the value of a top-level YAML scalar field (e.g. `source_id`,
+/// `tree_scope`, `tree_kind`) from a frontmatter string. Strips
+/// surrounding double-quotes if present so the returned slice matches
+/// what the original composer passed in. Returns `None` if the key is
+/// not present at the top level of the frontmatter.
+pub fn scan_fm_field<'a>(fm: &'a str, key: &str) -> Option<String> {
+    let prefix = format!("{key}: ");
+    for raw in fm.lines() {
+        // Skip indented lines (those are list items / nested mappings).
+        if raw.starts_with(' ') || raw.starts_with('\t') {
+            continue;
+        }
+        if let Some(rest) = raw.strip_prefix(&prefix) {
+            let trimmed = rest.trim();
+            if let Some(inner) = trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+                return Some(inner.replace("\\\"", "\"").replace("\\\\", "\\"));
+            }
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
 
 /// Compose the full file content (front-matter + body) for `chunk`.
 ///
@@ -78,13 +130,13 @@ fn build_front_matter(chunk: &Chunk) -> Vec<u8> {
         fm.push_str(&format!("source_ref: {}\n", yaml_scalar(&sr.value)));
     }
 
-    if meta.tags.is_empty() {
-        fm.push_str("tags: []\n");
-    } else {
-        fm.push_str("tags:\n");
-        for tag in &meta.tags {
-            fm.push_str(&format!("  - {}\n", yaml_scalar(tag)));
-        }
+    // Always seed the source tag so the Obsidian graph filter can pick
+    // up `source/<slug>` for every chunk regardless of what the
+    // ingest-side tag list contained.
+    let seeded_tags = with_source_tag(&meta.source_id, &meta.tags);
+    fm.push_str("tags:\n");
+    for tag in &seeded_tags {
+        fm.push_str(&format!("  - {}\n", yaml_scalar(tag)));
     }
 
     // Email-specific fields: participants list + Obsidian alias.
@@ -369,7 +421,16 @@ fn build_summary_front_matter(r: &SummaryComposeInput<'_>) -> String {
     fm.push_str("aliases:\n");
     fm.push_str(&format!("  - {}\n", yaml_scalar(&alias)));
 
-    fm.push_str("tags: []\n");
+    // Source-tree summaries get a `source/<slug>` seed tag for graph
+    // filtering. Global / topic trees aggregate across sources, so the
+    // `source/...` tag has no single value there — leave them untagged
+    // at compose time (LLM extraction adds entity tags later).
+    if matches!(r.tree_kind, SummaryTreeKind::Source) {
+        fm.push_str("tags:\n");
+        fm.push_str(&format!("  - {}\n", yaml_scalar(&source_tag(r.tree_scope))));
+    } else {
+        fm.push_str("tags: []\n");
+    }
     fm.push_str("---\n");
     fm
 }
@@ -790,7 +851,10 @@ mod tests {
             fm.contains("  - \"[[child-2]]\""),
             "must list child ids as Obsidian wikilinks; got:\n{fm}"
         );
-        assert!(fm.contains("tags: []"), "must start with empty tags");
+        assert!(
+            fm.contains("  - source/"),
+            "source-tree summary must seed source tag; got:\n{fm}"
+        );
         // aliases must mention the scope
         assert!(fm.contains("aliases:"), "must have aliases");
         assert!(
