@@ -4,6 +4,7 @@ delegate_name = "research"
 when_to_use = "Web & docs crawler — reads real documentation, compresses to dense markdown. Use for any task that requires looking up external knowledge."
 temperature = 0.4
 max_iterations = 8
+max_result_chars = 8000
 sandbox_mode = "none"
 omit_identity = true
 omit_memory_context = true

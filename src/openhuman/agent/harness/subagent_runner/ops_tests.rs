@@ -20,6 +20,7 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         skill_filter: None,
         extra_tools: vec![],
         max_iterations: 5,
+        max_result_chars: None,
         timeout_secs: None,
         sandbox_mode: crate::openhuman::agent::harness::definition::SandboxMode::None,
         background: false,
@@ -232,7 +233,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         memory: noop_memory(),
         agent_config: crate::openhuman::config::AgentConfig::default(),
         skills: Arc::new(vec![]),
-        memory_context: None,
+        memory_context: Arc::new(None),
         session_id: "test-session".into(),
         channel: "test".into(),
         connected_integrations: vec![],
@@ -432,7 +433,9 @@ async fn typed_mode_no_memory_context_in_user_message() {
 async fn typed_mode_includes_memory_context_when_definition_allows_it() {
     let provider = ScriptedProvider::new(vec![text_response("ok")]);
     let mut parent = make_parent(provider.clone(), vec![stub("file_read")]);
-    parent.memory_context = Some("[Memory context]\n- prior fact: branch X failed\n".into());
+    parent.memory_context = Arc::new(Some(
+        "[Memory context]\n- prior fact: branch X failed\n".into(),
+    ));
     let mut def = make_def_named_tools(&[]);
     def.omit_memory_context = false;
 
@@ -681,3 +684,6 @@ async fn typed_mode_progress_emission_is_a_noop_without_sink() {
     .expect("runner should succeed");
     assert_eq!(outcome.iterations, 1);
 }
+
+// Truncation tests live in ops_truncation_tests.rs to keep this file
+// under the ~500-line guideline.

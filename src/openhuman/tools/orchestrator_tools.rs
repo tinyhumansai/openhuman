@@ -124,6 +124,17 @@ pub fn collect_orchestrator_tools(
                     continue;
                 }
                 for integration in connected_integrations {
+                    // Only emit a delegate_* tool for integrations that are
+                    // actually connected — exposing unconnected entries would
+                    // let the orchestrator call a tool whose pre-flight
+                    // will immediately reject with "not connected".
+                    if !integration.connected {
+                        log::debug!(
+                            "[orchestrator_tools] skipping unconnected integration: {}",
+                            integration.toolkit
+                        );
+                        continue;
+                    }
                     // Slug the toolkit name into a tool-name-safe form.
                     // Composio toolkit slugs are already lowercase / dash-
                     // separated (e.g. "gmail", "google_calendar"), but
@@ -175,7 +186,11 @@ pub fn collect_orchestrator_tools(
 /// Allows ASCII alphanumerics and underscores; everything else becomes
 /// an underscore. OpenAI-style function names only accept
 /// `[a-zA-Z0-9_-]{1,64}`, so this is the conservative subset.
-fn sanitise_slug(raw: &str) -> String {
+///
+/// Used both when synthesising `delegate_*` tools and when rendering the
+/// delegation guide in prompts — they must agree on slug canonicalisation
+/// so the prompt always references a tool name that actually exists.
+pub(crate) fn sanitise_slug(raw: &str) -> String {
     raw.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '_' {
@@ -213,6 +228,7 @@ mod tests {
             skill_filter: None,
             extra_tools: vec![],
             max_iterations: 8,
+            max_result_chars: None,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
             background: false,
@@ -355,5 +371,39 @@ mod tests {
         assert_eq!(sanitise_slug("google-calendar"), "google_calendar");
         assert_eq!(sanitise_slug("slack.bot"), "slack_bot");
         assert_eq!(sanitise_slug("weird name!"), "weird_name_");
+    }
+
+    /// Unconnected integrations must be silently skipped — exposing a
+    /// `delegate_*` tool for a toolkit whose OAuth token is absent would
+    /// let the orchestrator call a tool whose pre-flight check immediately
+    /// rejects with "not connected".
+    #[test]
+    fn unconnected_integrations_are_skipped() {
+        let orch = sample_orchestrator();
+        let reg = registry_with_targets();
+        let integrations = vec![
+            integration("gmail", "Send and read email."),
+            ConnectedIntegration {
+                toolkit: "github".into(),
+                description: "GitHub access.".into(),
+                tools: vec![],
+                connected: false, // not connected — must not produce a tool
+            },
+            integration("notion", "Read and write pages."),
+        ];
+        let tools = collect_orchestrator_tools(&orch, &reg, &integrations);
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert!(
+            names.contains(&"delegate_gmail"),
+            "connected gmail must produce a tool"
+        );
+        assert!(
+            !names.contains(&"delegate_github"),
+            "unconnected github must NOT produce a tool"
+        );
+        assert!(
+            names.contains(&"delegate_notion"),
+            "connected notion must produce a tool"
+        );
     }
 }

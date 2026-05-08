@@ -69,7 +69,9 @@ pub struct ParentExecutionContext {
     /// Memory context loaded for the current turn. Auto-injected into
     /// subagent prompts so they have access to conversation history and
     /// skill sync data without running their own memory queries.
-    pub memory_context: Option<String>,
+    /// Wrapped in `Arc` so cloning into sub-agents is O(1) — a reference
+    /// count bump rather than a full string copy per spawn.
+    pub memory_context: Arc<Option<String>>,
 
     /// Parent's event-bus session id (for tracing & DomainEvents).
     pub session_id: String,

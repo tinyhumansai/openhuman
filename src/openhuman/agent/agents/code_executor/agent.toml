@@ -4,6 +4,7 @@ delegate_name = "run_code"
 when_to_use = "Sandboxed developer — writes, runs, and debugs code until tests pass. Use for any task that requires producing or modifying source files and exercising them with shell or test commands."
 temperature = 0.4
 max_iterations = 10
+max_result_chars = 16000
 sandbox_mode = "sandboxed"
 omit_identity = true
 omit_memory_context = true

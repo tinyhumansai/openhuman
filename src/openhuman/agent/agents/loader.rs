@@ -301,7 +301,20 @@ mod tests {
         assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "reasoning"));
         match def.tools {
             ToolScope::Named(tools) => {
-                assert!(tools.iter().any(|t| t == "spawn_subagent"));
+                // spawn_subagent was removed in #1141; spawn_worker_thread is the replacement
+                assert!(
+                    tools.iter().any(|t| t == "spawn_worker_thread"),
+                    "orchestrator must have spawn_worker_thread"
+                );
+                assert!(
+                    !tools.iter().any(|t| t == "spawn_subagent"),
+                    "spawn_subagent must not appear — removed in #1141"
+                );
+                // consolidated memory_tree* → single memory_tree with mode dispatch
+                assert!(
+                    tools.iter().any(|t| t == "memory_tree"),
+                    "orchestrator must have memory_tree"
+                );
                 assert!(!tools.iter().any(|t| t == "shell"));
                 assert!(!tools.iter().any(|t| t == "file_write"));
             }

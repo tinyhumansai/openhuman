@@ -59,9 +59,7 @@ hint = "reasoning"
 
 [tools]
 # Direct tools — things the orchestrator calls itself rather than
-# delegating. `spawn_subagent` is retained as an advanced fallback so
-# power users can still spawn arbitrary agent ids that are not listed
-# in `subagents` above (e.g. workspace-override custom agents).
+# delegating.
 #
 # `composio_list_connections` is the orchestrator's only composio_*
 # tool: it exists so the agent can detect newly-authorised integrations
@@ -74,28 +72,20 @@ named = [
     "query_memory",
     "memory_store",
     "memory_forget",
-    "memory_tree_search_entities",
-    "memory_tree_query_topic",
-    "memory_tree_query_source",
-    "memory_tree_query_global",
-    "memory_tree_drill_down",
-    "memory_tree_fetch_leaves",
+    "memory_tree",
     "read_workspace_state",
     "ask_user_clarification",
-    "spawn_subagent",
     "spawn_worker_thread",
     "composio_list_connections",
     # Time + scheduling — lets the orchestrator answer "what time is it",
     # "remind me in 10 minutes", "every morning at 8" directly rather than
     # delegating or telling the user it can't. `current_time` grounds
     # relative-time parsing; `cron_add` / `cron_list` / `cron_remove`
-    # manage recurring + one-shot agent/shell jobs; `schedule` is the
-    # simpler shell-only alias for one-shot reminders.
+    # manage recurring + one-shot agent/shell jobs.
     "current_time",
     "cron_add",
     "cron_list",
     "cron_remove",
-    "schedule",
     # Coding-harness coordination primitives from #1208. `todowrite`
     # gives the orchestrator a shared todo store to track multi-step
     # work across delegations; `plan_exit` is the stable marker that

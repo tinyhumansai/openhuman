@@ -139,10 +139,35 @@ pub async fn run_subagent(
     // want to gate on it (e.g. `composio_execute` rejecting
     // Write/Admin slugs under `ReadOnly`) read it via
     // `current_sandbox_mode()`; tools that don't care just ignore it.
-    let outcome = with_current_sandbox_mode(definition.sandbox_mode, async {
+    let mut outcome = with_current_sandbox_mode(definition.sandbox_mode, async {
         run_typed_mode(definition, task_prompt, &options, &parent, &task_id).await
     })
     .await?;
+
+    // Truncate result to the definition's cap if set.
+    // Use char-count (not byte-length) to avoid panicking on multi-byte
+    // UTF-8 sequences at the truncation boundary.
+    if let Some(cap) = definition.max_result_chars {
+        let original_chars = outcome.output.chars().count();
+        if original_chars > cap {
+            tracing::debug!(
+                agent_id = %definition.id,
+                original_chars,
+                cap,
+                "[subagent_runner] truncating oversized result to max_result_chars cap"
+            );
+            // Find the byte offset of the cap-th character boundary so
+            // `truncate` never lands mid-codepoint.
+            let byte_offset = outcome
+                .output
+                .char_indices()
+                .nth(cap)
+                .map(|(i, _)| i)
+                .unwrap_or(outcome.output.len());
+            outcome.output.truncate(byte_offset);
+            outcome.output.push_str("\n[...truncated]");
+        }
+    }
 
     tracing::info!(
         agent_id = %definition.id,
@@ -730,7 +755,7 @@ async fn run_typed_mode(
 
     let mut context_parts: Vec<&str> = Vec::new();
     if !definition.omit_memory_context {
-        if let Some(ref mem_ctx) = parent.memory_context {
+        if let Some(ref mem_ctx) = *parent.memory_context {
             context_parts.push(mem_ctx);
         }
     }
@@ -1361,3 +1386,7 @@ fn parse_tool_arguments(arguments: &str) -> serde_json::Value {
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ops_truncation_tests.rs"]
+mod truncation_tests;

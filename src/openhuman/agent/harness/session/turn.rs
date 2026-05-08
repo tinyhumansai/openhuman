@@ -1058,7 +1058,7 @@ impl Agent {
             memory: Arc::clone(&self.memory),
             agent_config: self.config.clone(),
             skills: Arc::new(self.skills.clone()),
-            memory_context: self.last_memory_context.clone(),
+            memory_context: Arc::new(self.last_memory_context.clone()),
             session_id: self.event_session_id().to_string(),
             channel: self.event_channel().to_string(),
             connected_integrations: self.connected_integrations.clone(),

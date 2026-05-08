@@ -438,8 +438,29 @@ async fn resolve_target_agent(channel: &str) -> AgentScoping {
     // the helper is agent-agnostic so future agents that delegate
     // (e.g. a custom workspace-override planner that subdivides work)
     // pick this up for free.
+    //
+    // Wrap the Composio fetch in the same 3-second timeout used by
+    // `build_connection_state_block` so a slow/unresponsive Composio API
+    // can never block turn dispatch indefinitely.
+    const COMPOSIO_FETCH_TIMEOUT_SECS: u64 = 3;
     let extra_tools = if !definition.subagents.is_empty() {
-        let connected = fetch_connected_integrations(&config).await;
+        let connected = match tokio::time::timeout(
+            Duration::from_secs(COMPOSIO_FETCH_TIMEOUT_SECS),
+            fetch_connected_integrations(&config),
+        )
+        .await
+        {
+            Ok(list) => list,
+            Err(_) => {
+                tracing::warn!(
+                    channel = %channel,
+                    target_agent = target_id,
+                    "[dispatch::routing] Composio fetch timed out after {}s — proceeding without connected integrations",
+                    COMPOSIO_FETCH_TIMEOUT_SECS
+                );
+                Vec::new()
+            }
+        };
         tracing::debug!(
             channel = %channel,
             target_agent = target_id,
@@ -571,6 +592,7 @@ mod scoping_tests {
             skill_filter: None,
             extra_tools: vec![],
             max_iterations: 8,
+            max_result_chars: None,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
             background: false,
