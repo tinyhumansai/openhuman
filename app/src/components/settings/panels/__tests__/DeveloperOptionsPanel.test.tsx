@@ -61,7 +61,9 @@ describe('DeveloperOptionsPanel — CoreModeBadge', () => {
     const Panel = await importPanel();
     renderWithProviders(<Panel />, {
       preloadedState: {
-        coreMode: { mode: { kind: 'cloud', url: 'https://core.example.com/rpc', token: 'abc1234' } },
+        coreMode: {
+          mode: { kind: 'cloud', url: 'https://core.example.com/rpc', token: 'abc1234' },
+        },
       },
     });
     expect(screen.getByText('Cloud')).toBeInTheDocument();
