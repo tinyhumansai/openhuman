@@ -105,6 +105,7 @@ pub async fn ingest_bucket(
                 chunks_written: 0,
                 chunks_dropped: 0,
                 chunk_ids: Vec::new(),
+                already_ingested: false,
             });
         }
     };

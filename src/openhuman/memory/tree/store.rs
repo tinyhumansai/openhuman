@@ -215,6 +215,19 @@ CREATE INDEX IF NOT EXISTS idx_mem_tree_jobs_kind
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_tree_jobs_dedupe_active
     ON mem_tree_jobs(dedupe_key)
     WHERE dedupe_key IS NOT NULL AND status IN ('ready', 'running');
+
+-- Source-level ingest gate. Memory items (documents, chat batches, email
+-- threads) are append-only — once a `(source_kind, source_id)` is ingested
+-- it must not be re-ingested, otherwise its chunks flow back through
+-- extract → admit → buffer → seal and end up duplicated in the summariser
+-- tree. The first ingest claims the row; subsequent ingest_* calls for the
+-- same key short-circuit before canonicalisation.
+CREATE TABLE IF NOT EXISTS mem_tree_ingested_sources (
+    source_kind            TEXT NOT NULL,
+    source_id              TEXT NOT NULL,
+    ingested_at_ms         INTEGER NOT NULL,
+    PRIMARY KEY (source_kind, source_id)
+);
 ";
 
 /// Upsert a batch of chunks atomically.
@@ -530,6 +543,49 @@ fn set_chunk_lifecycle_status_conn(conn: &Connection, chunk_id: &str, status: &s
         );
     }
     Ok(())
+}
+
+/// Best-effort, non-transactional check used by `ingest_*` to skip
+/// canonicalisation when a source has already been ingested. The
+/// authoritative gate is [`claim_source_ingest_tx`] inside the persist
+/// transaction — this lookup just avoids burning canonicaliser work on
+/// the obvious dup case.
+pub fn is_source_ingested(
+    config: &Config,
+    source_kind: SourceKind,
+    source_id: &str,
+) -> Result<bool> {
+    with_connection(config, |conn| {
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_ingested_sources \
+             WHERE source_kind = ?1 AND source_id = ?2",
+            params![source_kind.as_str(), source_id],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    })
+}
+
+/// Atomically claim `(source_kind, source_id)` for ingestion. Returns
+/// `true` if the row was newly inserted (caller should proceed with the
+/// rest of the persist transaction); `false` if a previous ingest already
+/// claimed this source (caller must roll back / skip).
+///
+/// Lives inside the same transaction as the chunk + job writes so two
+/// concurrent ingests of the same source can't both pass the gate.
+pub(crate) fn claim_source_ingest_tx(
+    tx: &Transaction<'_>,
+    source_kind: SourceKind,
+    source_id: &str,
+    now_ms: i64,
+) -> Result<bool> {
+    let inserted = tx.execute(
+        "INSERT OR IGNORE INTO mem_tree_ingested_sources \
+            (source_kind, source_id, ingested_at_ms) \
+         VALUES (?1, ?2, ?3)",
+        params![source_kind.as_str(), source_id, now_ms],
+    )?;
+    Ok(inserted > 0)
 }
 
 fn row_to_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
