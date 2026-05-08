@@ -11,6 +11,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "remotion": "4.0.454",
+    "webp-converter": "^2.3.3",
     "zod": "4.3.6",
     "@remotion/tailwind-v4": "4.0.454",
     "tailwindcss": "4.0.0"

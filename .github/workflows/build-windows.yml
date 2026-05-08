@@ -66,6 +66,8 @@ jobs:
         if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
         shell: bash
         run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
+      - name: Install mascot build dependencies
+        run: choco install ffmpeg -y
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 

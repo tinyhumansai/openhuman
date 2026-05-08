@@ -27,7 +27,7 @@ function run(command, args, cwd) {
 function expectedAssetPaths() {
   return profiles.flatMap(profile =>
     colors.flatMap(color =>
-      compositions.map(composition => join(generatedRoot, profile, color, `${composition}.png`))
+      compositions.map(composition => join(generatedRoot, profile, color, `${composition}.webp`))
     )
   );
 }
@@ -47,7 +47,7 @@ function manifestLooksCurrent() {
         profiles.includes(variant.profile ?? '') &&
         compositions.includes(variant.composition ?? '') &&
         typeof variant.path === 'string' &&
-        variant.path.endsWith('.png')
+        variant.path.endsWith('.webp')
       )
     );
   } catch {

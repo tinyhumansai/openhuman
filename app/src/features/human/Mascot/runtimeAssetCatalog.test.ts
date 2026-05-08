@@ -6,13 +6,13 @@ describe('selectYellowMascotAsset', () => {
   it('uses default pre-rendered assets for the steady mascot states', () => {
     expect(selectYellowMascotAsset({ face: 'idle', arm: 'none' })).toEqual({
       profile: 'default',
-      relativePath: 'generated/remotion/default/yellow/yellow-MascotIdle.png',
+      relativePath: 'generated/remotion/default/yellow/yellow-MascotIdle.webp',
       variant: 'yellow-MascotIdle',
     });
 
     expect(selectYellowMascotAsset({ face: 'speaking', arm: 'none' })).toEqual({
       profile: 'default',
-      relativePath: 'generated/remotion/default/yellow/yellow-MascotTalking.png',
+      relativePath: 'generated/remotion/default/yellow/yellow-MascotTalking.webp',
       variant: 'yellow-MascotTalking',
     });
   });
@@ -20,7 +20,7 @@ describe('selectYellowMascotAsset', () => {
   it('maps thinking faces to the thinking asset', () => {
     expect(selectYellowMascotAsset({ face: 'confused', arm: 'none' })).toEqual({
       profile: 'default',
-      relativePath: 'generated/remotion/default/yellow/yellow-MascotThinking.png',
+      relativePath: 'generated/remotion/default/yellow/yellow-MascotThinking.webp',
       variant: 'yellow-MascotThinking',
     });
   });
@@ -28,7 +28,7 @@ describe('selectYellowMascotAsset', () => {
   it('selects the requested mascot color family', () => {
     expect(selectYellowMascotAsset({ face: 'idle', arm: 'none', mascotColor: 'navy' })).toEqual({
       profile: 'default',
-      relativePath: 'generated/remotion/default/navy/yellow-MascotIdle.png',
+      relativePath: 'generated/remotion/default/navy/yellow-MascotIdle.webp',
       variant: 'yellow-MascotIdle',
     });
   });
@@ -43,7 +43,7 @@ describe('selectYellowMascotAsset', () => {
       })
     ).toEqual({
       profile: 'compact',
-      relativePath: 'generated/remotion/compact/yellow/yellow-MascotIdle.png',
+      relativePath: 'generated/remotion/compact/yellow/yellow-MascotIdle.webp',
       variant: 'yellow-MascotIdle',
     });
   });

@@ -153,12 +153,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            ffmpeg \
             libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
             patchelf cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libxi-dev \
             libevdev-dev libssl-dev libclang-dev \
             libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
             libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
             libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev
+      - name: Install mascot build dependencies (macOS only)
+        if: matrix.settings.platform == 'macos-latest'
+        run: brew install ffmpeg
+      - name: Install mascot build dependencies (Windows only)
+        if: matrix.settings.platform == 'windows-latest'
+        run: choco install ffmpeg -y
       - name: Dump missing shared libs (debug)
         if: matrix.settings.platform == 'ubuntu-22.04'
         shell: bash
