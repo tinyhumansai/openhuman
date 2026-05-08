@@ -21,6 +21,18 @@ describe('coreModeSlice', () => {
     expect(state.mode).toEqual({ kind: 'cloud', url: 'https://core.example.com/rpc' });
   });
 
+  it('sets cloud mode with url + token', () => {
+    const state = reducer(
+      undefined,
+      setCoreMode({ kind: 'cloud', url: 'https://core.example.com/rpc', token: 'tok-1234' })
+    );
+    expect(state.mode).toEqual({
+      kind: 'cloud',
+      url: 'https://core.example.com/rpc',
+      token: 'tok-1234',
+    });
+  });
+
   it('resets to unset', () => {
     const withLocal = reducer(undefined, setCoreMode({ kind: 'local' }));
     const reset = reducer(withLocal, resetCoreMode());

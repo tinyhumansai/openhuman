@@ -23,7 +23,7 @@
  *
  * There is **no** demo loop — the overlay is entirely event-driven.
  */
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import {
   currentMonitor,
   getCurrentWindow,
@@ -34,8 +34,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
-import { callCoreRpc } from '../services/coreRpcClient';
-import { CORE_RPC_URL } from '../utils/config';
+import { callCoreRpc, getCoreHttpBaseUrl } from '../services/coreRpcClient';
 
 const OVERLAY_IDLE_WIDTH = 50;
 const OVERLAY_IDLE_HEIGHT = 50;
@@ -102,19 +101,10 @@ function bubbleToneClass(tone: BubbleTone) {
 }
 
 /** Resolve the core process base URL (without /rpc suffix) for Socket.IO.
- *  Mirrors `useDictationHotkey.resolveCoreSocketUrl`. */
+ *  Mirrors `useDictationHotkey.resolveCoreSocketUrl`. Delegates to
+ *  `getCoreHttpBaseUrl` so cloud-mode overrides flow through. */
 async function resolveCoreSocketUrl(): Promise<string> {
-  let rpcUrl = CORE_RPC_URL;
-  if (isTauri()) {
-    try {
-      const url = await invoke<string>('core_rpc_url');
-      if (url) rpcUrl = String(url);
-    } catch {
-      // fall through to default
-    }
-  }
-  const trimmed = rpcUrl.trim().replace(/\/+$/, '');
-  return trimmed.endsWith('/rpc') ? trimmed.slice(0, -4) : trimmed;
+  return getCoreHttpBaseUrl();
 }
 
 // ── Bubble chip with typewriter animation ────────────────────────────────

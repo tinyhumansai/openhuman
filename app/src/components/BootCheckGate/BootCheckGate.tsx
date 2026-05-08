@@ -14,10 +14,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { type BootCheckResult, runBootCheck } from '../../lib/bootCheck';
 import { bootCheckTransport } from '../../services/bootCheckService';
-import { clearCoreRpcUrlCache } from '../../services/coreRpcClient';
+import { clearCoreRpcTokenCache, clearCoreRpcUrlCache } from '../../services/coreRpcClient';
 import { type CoreMode, resetCoreMode, setCoreMode } from '../../store/coreModeSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { storeRpcUrl } from '../../utils/configPersistence';
+import {
+  clearStoredCoreMode,
+  clearStoredCoreToken,
+  storeCoreMode,
+  storeCoreToken,
+  storeRpcUrl,
+} from '../../utils/configPersistence';
 
 const log = debug('boot-check');
 const logError = debug('boot-check:error');
@@ -60,7 +66,9 @@ interface PickerProps {
 function ModePicker({ onConfirm }: PickerProps) {
   const [selected, setSelected] = useState<'local' | 'cloud'>('local');
   const [cloudUrl, setCloudUrl] = useState('');
+  const [cloudToken, setCloudToken] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [tokenError, setTokenError] = useState<string | null>(null);
 
   const handleContinue = () => {
     if (selected === 'local') {
@@ -70,13 +78,13 @@ function ModePicker({ onConfirm }: PickerProps) {
     }
 
     // Basic URL validation: must be http(s)
-    const trimmed = cloudUrl.trim();
-    if (!trimmed) {
+    const trimmedUrl = cloudUrl.trim();
+    if (!trimmedUrl) {
       setUrlError('Please enter a core URL.');
       return;
     }
     try {
-      const parsed = new URL(trimmed);
+      const parsed = new URL(trimmedUrl);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         setUrlError('URL must start with http:// or https://');
         return;
@@ -85,10 +93,24 @@ function ModePicker({ onConfirm }: PickerProps) {
       setUrlError('Please enter a valid URL (e.g. https://core.example.com/rpc)');
       return;
     }
-
     setUrlError(null);
-    log('[boot-check] picker — user selected cloud mode url=%s', trimmed);
-    onConfirm({ kind: 'cloud', url: trimmed });
+
+    // Cloud cores require a bearer token (OPENHUMAN_CORE_TOKEN). Without one
+    // every /rpc call would 401 and the user would be stuck on the boot
+    // gate; require it up front rather than failing later.
+    const trimmedToken = cloudToken.trim();
+    if (!trimmedToken) {
+      setTokenError('Please enter the core auth token.');
+      return;
+    }
+    setTokenError(null);
+
+    log(
+      '[boot-check] picker — user selected cloud mode url=%s tokenLen=%d',
+      trimmedUrl,
+      trimmedToken.length
+    );
+    onConfirm({ kind: 'cloud', url: trimmedUrl, token: trimmedToken });
   };
 
   return (
@@ -130,18 +152,43 @@ function ModePicker({ onConfirm }: PickerProps) {
         </button>
 
         {selected === 'cloud' && (
-          <div className="mt-1 flex flex-col gap-1">
-            <input
-              type="url"
-              placeholder="https://core.example.com/rpc"
-              value={cloudUrl}
-              onChange={e => {
-                setCloudUrl(e.target.value);
-                setUrlError(null);
-              }}
-              className="rounded-lg border border-stone-600 bg-stone-800 px-3 py-2 text-sm text-white placeholder-stone-500 focus:border-ocean-500 focus:outline-none"
-            />
-            {urlError && <p className="text-xs text-coral-400">{urlError}</p>}
+          <div className="mt-1 flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-stone-300">Core RPC URL</label>
+              <input
+                type="url"
+                placeholder="https://core.example.com/rpc"
+                value={cloudUrl}
+                onChange={e => {
+                  setCloudUrl(e.target.value);
+                  setUrlError(null);
+                }}
+                className="rounded-lg border border-stone-600 bg-stone-800 px-3 py-2 text-sm text-white placeholder-stone-500 focus:border-ocean-500 focus:outline-none"
+              />
+              {urlError && <p className="text-xs text-coral-400">{urlError}</p>}
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-stone-300">
+                Auth token (<code className="text-[10px]">OPENHUMAN_CORE_TOKEN</code>)
+              </label>
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="Bearer token configured on the remote core"
+                value={cloudToken}
+                onChange={e => {
+                  setCloudToken(e.target.value);
+                  setTokenError(null);
+                }}
+                className="rounded-lg border border-stone-600 bg-stone-800 px-3 py-2 text-sm text-white placeholder-stone-500 focus:border-ocean-500 focus:outline-none"
+              />
+              {tokenError && <p className="text-xs text-coral-400">{tokenError}</p>}
+              <p className="text-[11px] text-stone-500">
+                Stored on this device only. Required for remote cores — the desktop sends it as{' '}
+                <code>Authorization: Bearer …</code> on every RPC.
+              </p>
+            </div>
           </div>
         )}
       </div>
@@ -429,6 +476,24 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
   const handlePickerConfirm = useCallback(
     (mode: CoreMode) => {
       log('[boot-check] gate — picker confirmed mode=%s', mode.kind);
+      // Persist URL + token for cloud mode so getCoreRpcUrl/Token resolve
+      // correctly on the boot-check probe (and every subsequent RPC) without
+      // waiting for redux-persist's async rehydrate to complete. Also write
+      // the synchronous `openhuman_core_mode` marker so a reload triggered
+      // mid-flight (e.g. `handleIdentityFlip` → `restartApp`) recovers the
+      // chosen mode from localStorage before redux-persist flushes. Clear
+      // caches so any prior local-mode resolution doesn't leak into cloud.
+      if (mode.kind === 'cloud') {
+        storeRpcUrl(mode.url);
+        storeCoreToken(mode.token ?? '');
+        storeCoreMode('cloud');
+      } else {
+        storeRpcUrl('');
+        clearStoredCoreToken();
+        storeCoreMode('local');
+      }
+      clearCoreRpcUrlCache();
+      clearCoreRpcTokenCache();
       dispatch(setCoreMode(mode));
       setPhase('checking');
     },
@@ -441,7 +506,10 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
   const handleSwitchMode = useCallback(() => {
     log('[boot-check] gate — switch mode requested');
     storeRpcUrl('');
+    clearStoredCoreToken();
+    clearStoredCoreMode();
     clearCoreRpcUrlCache();
+    clearCoreRpcTokenCache();
     dispatch(resetCoreMode());
     setPhase('picker');
     setResult(null);

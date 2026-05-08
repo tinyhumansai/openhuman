@@ -27,10 +27,15 @@ vi.mock('../../../lib/bootCheck', () => ({
 vi.mock('../../../services/coreRpcClient', () => ({
   callCoreRpc: vi.fn(),
   clearCoreRpcUrlCache: vi.fn(),
+  clearCoreRpcTokenCache: vi.fn(),
 }));
 
 vi.mock('../../../utils/configPersistence', () => ({
   storeRpcUrl: vi.fn(),
+  storeCoreToken: vi.fn(),
+  clearStoredCoreToken: vi.fn(),
+  storeCoreMode: vi.fn(),
+  clearStoredCoreMode: vi.fn(),
   isValidRpcUrl: vi.fn().mockReturnValue(true),
 }));
 

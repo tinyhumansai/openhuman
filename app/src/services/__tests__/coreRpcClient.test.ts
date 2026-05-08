@@ -503,9 +503,10 @@ describe('getCoreRpcUrl', () => {
     vi.mocked(invoke).mockReset();
   });
 
-  test('in web mode returns stored URL when getStoredRpcUrl returns a non-default value', async () => {
+  test('in web mode returns stored URL when one is stored', async () => {
     vi.doMock('../../utils/configPersistence', () => ({
-      getStoredRpcUrl: () => 'http://custom-host:9999/rpc',
+      peekStoredRpcUrl: () => 'http://custom-host:9999/rpc',
+      getStoredCoreToken: () => null,
     }));
     vi.mocked(isTauri).mockReturnValue(false);
 
@@ -514,9 +515,10 @@ describe('getCoreRpcUrl', () => {
     expect(url).toBe('http://custom-host:9999/rpc');
   });
 
-  test('in web mode returns default CORE_RPC_URL when nothing custom is stored', async () => {
+  test('in web mode returns default CORE_RPC_URL when nothing is stored', async () => {
     vi.doMock('../../utils/configPersistence', () => ({
-      getStoredRpcUrl: () => 'http://127.0.0.1:7788/rpc',
+      peekStoredRpcUrl: () => null,
+      getStoredCoreToken: () => null,
     }));
     vi.mocked(isTauri).mockReturnValue(false);
 
@@ -528,10 +530,11 @@ describe('getCoreRpcUrl', () => {
   test('in web mode caches the result — second call does not change the returned value', async () => {
     let callCount = 0;
     vi.doMock('../../utils/configPersistence', () => ({
-      getStoredRpcUrl: () => {
+      peekStoredRpcUrl: () => {
         callCount++;
-        return 'http://127.0.0.1:7788/rpc';
+        return null;
       },
+      getStoredCoreToken: () => null,
     }));
     vi.mocked(isTauri).mockReturnValue(false);
 
@@ -539,13 +542,16 @@ describe('getCoreRpcUrl', () => {
     const first = await freshGetCoreRpcUrl();
     const second = await freshGetCoreRpcUrl();
     expect(first).toBe(second);
-    // getStoredRpcUrl should only have been called once due to caching
+    // peekStoredRpcUrl should only have been called once due to caching
     expect(callCount).toBe(1);
   });
 
   test('returns fresh value after clearCoreRpcUrlCache()', async () => {
-    let storedValue = 'http://127.0.0.1:7788/rpc';
-    vi.doMock('../../utils/configPersistence', () => ({ getStoredRpcUrl: () => storedValue }));
+    let storedValue: string | null = null;
+    vi.doMock('../../utils/configPersistence', () => ({
+      peekStoredRpcUrl: () => storedValue,
+      getStoredCoreToken: () => null,
+    }));
     vi.mocked(isTauri).mockReturnValue(false);
 
     const { getCoreRpcUrl: freshGetCoreRpcUrl, clearCoreRpcUrlCache: freshClear } =
@@ -562,9 +568,10 @@ describe('getCoreRpcUrl', () => {
     expect(second).toBe('http://new-host:8888/rpc');
   });
 
-  test('in Tauri mode calls invoke("core_rpc_url") when no stored URL is customised', async () => {
+  test('in Tauri mode calls invoke("core_rpc_url") when no stored URL', async () => {
     vi.doMock('../../utils/configPersistence', () => ({
-      getStoredRpcUrl: () => 'http://127.0.0.1:7788/rpc',
+      peekStoredRpcUrl: () => null,
+      getStoredCoreToken: () => null,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -580,7 +587,8 @@ describe('getCoreRpcUrl', () => {
 
   test('in Tauri mode stored URL takes priority over invoke result', async () => {
     vi.doMock('../../utils/configPersistence', () => ({
-      getStoredRpcUrl: () => 'http://stored-override:4444/rpc',
+      peekStoredRpcUrl: () => 'http://stored-override:4444/rpc',
+      getStoredCoreToken: () => null,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -595,9 +603,32 @@ describe('getCoreRpcUrl', () => {
     expect(vi.mocked(invoke)).not.toHaveBeenCalled();
   });
 
+  test('cloud-picker URL identical to build-time default still wins over local sidecar', async () => {
+    // Regression: in the old `storedUrl !== CORE_RPC_URL` check the picker's
+    // value was discarded when it coincided with `VITE_OPENHUMAN_CORE_RPC_URL`,
+    // silently routing cloud-mode RPC back to the local sidecar.
+    vi.doMock('../../utils/configPersistence', () => ({
+      peekStoredRpcUrl: () => 'http://127.0.0.1:7788/rpc',
+      getStoredCoreToken: () => null,
+    }));
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'core_rpc_url') {
+        throw new Error('should not be consulted when a stored URL exists');
+      }
+      throw new Error(`unexpected: ${cmd}`);
+    });
+
+    const { getCoreRpcUrl: freshGetCoreRpcUrl } = await import('../coreRpcClient');
+    const url = await freshGetCoreRpcUrl();
+    expect(url).toBe('http://127.0.0.1:7788/rpc');
+    expect(vi.mocked(invoke)).not.toHaveBeenCalled();
+  });
+
   test('in Tauri mode falls back to CORE_RPC_URL when invoke fails and no stored URL', async () => {
     vi.doMock('../../utils/configPersistence', () => ({
-      getStoredRpcUrl: () => 'http://127.0.0.1:7788/rpc',
+      peekStoredRpcUrl: () => null,
+      getStoredCoreToken: () => null,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockRejectedValue(new Error('invoke failed'));
@@ -606,5 +637,66 @@ describe('getCoreRpcUrl', () => {
     const url = await freshGetCoreRpcUrl();
     // Should fall back to the default
     expect(url).toBe('http://127.0.0.1:7788/rpc');
+  });
+});
+
+describe('getCoreRpcToken (cloud-mode persistence)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  test('uses stored cloud-mode token before invoking Tauri sidecar token', async () => {
+    vi.doMock('../../utils/configPersistence', () => ({
+      peekStoredRpcUrl: () => 'https://core.example.com/rpc',
+      getStoredCoreToken: () => 'cloud-token-abc',
+    }));
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'core_rpc_url') return 'https://core.example.com/rpc';
+      if (cmd === 'core_rpc_token') {
+        throw new Error('should not be called when stored token exists');
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: { ok: true } }),
+    } as Response);
+
+    const { callCoreRpc: freshCallCoreRpc } = await import('../coreRpcClient');
+    await freshCallCoreRpc({ method: 'openhuman.ping' });
+
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith('core_rpc_token', expect.anything());
+    const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer cloud-token-abc');
+  });
+
+  test('falls back to Tauri sidecar token when no stored cloud token', async () => {
+    vi.doMock('../../utils/configPersistence', () => ({
+      peekStoredRpcUrl: () => null,
+      getStoredCoreToken: () => null,
+    }));
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'core_rpc_url') return 'http://127.0.0.1:7788/rpc';
+      if (cmd === 'core_rpc_token') return 'local-sidecar-token';
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: { ok: true } }),
+    } as Response);
+
+    const { callCoreRpc: freshCallCoreRpc } = await import('../coreRpcClient');
+    await freshCallCoreRpc({ method: 'openhuman.ping' });
+
+    const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer local-sidecar-token');
   });
 });

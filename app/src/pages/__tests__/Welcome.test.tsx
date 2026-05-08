@@ -64,8 +64,15 @@ vi.mock('../../services/backendUrl', () => ({
 
 vi.mock('../../utils/configPersistence', () => ({
   getStoredRpcUrl: vi.fn(() => 'http://127.0.0.1:7788/rpc'),
+  peekStoredRpcUrl: vi.fn(() => null),
   storeRpcUrl: vi.fn(),
   clearStoredRpcUrl: vi.fn(),
+  getStoredCoreToken: vi.fn(() => null),
+  storeCoreToken: vi.fn(),
+  clearStoredCoreToken: vi.fn(),
+  getStoredCoreMode: vi.fn(() => null),
+  storeCoreMode: vi.fn(),
+  clearStoredCoreMode: vi.fn(),
   getDefaultRpcUrl: vi.fn(() => 'http://127.0.0.1:7788/rpc'),
   isValidRpcUrl: vi.fn((url: string) => {
     if (!url || url.trim().length === 0) return false;

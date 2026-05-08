@@ -47,9 +47,18 @@ let primed = false;
  * Mark `userScopedStorage` as primed with the boot-time active user id.
  *
  * Called once by `main.tsx` after `getActiveUserIdFromCore()` returns.
- * Pass `null` for "no user logged in yet" — storage reads/writes then
- * fall through as no-ops until a real id is supplied later via
- * `setActiveUserId`.
+ * Pass `null` for "core couldn't tell us who's active" — most commonly:
+ *
+ *   1. fresh device with no local `~/.openhuman/active_user.toml`
+ *   2. cloud-mode boot where the local Rust core isn't running at all
+ *   3. transient `getActiveUserIdFromCore` failure (`.catch(() => prime(null))`)
+ *
+ * In any of those cases we **fall back** to whatever `OPENHUMAN_ACTIVE_USER_ID`
+ * already has in plain `localStorage` from a prior `setActiveUserId` write
+ * rather than wiping it. Without this fallback, `handleIdentityFlip`'s
+ * `setActiveUserId(X) → restartApp` cycle is reset on every reload (because
+ * the next boot's `prime(null)` removes X again), trapping cloud-mode users
+ * in an infinite picker → snapshot → flip → reload loop.
  *
  * Safe to call before `setActiveUserId` for an initial seed; subsequent
  * `primeActiveUserId(...)` calls have no effect (the gate is one-shot).
@@ -57,15 +66,16 @@ let primed = false;
 export function primeActiveUserId(id: string | null): void {
   if (primed) return;
   primed = true;
-  activeUserId = id;
-  try {
-    if (id) {
+  if (id) {
+    activeUserId = id;
+    try {
       localStorage.setItem(ACTIVE_USER_KEY, id);
-    } else {
-      localStorage.removeItem(ACTIVE_USER_KEY);
+    } catch {
+      // localStorage may be unavailable; in-memory ref still drives reads
     }
-  } catch {
-    // localStorage may be unavailable; in-memory ref still drives reads
+  } else {
+    // Don't wipe — keep whatever a prior session wrote.
+    activeUserId = safeGetActiveUserIdSync();
   }
   activeUserIdResolve();
 }
