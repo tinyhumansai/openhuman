@@ -80,6 +80,16 @@ named = [
     "memory_tree_query_global",
     "memory_tree_drill_down",
     "memory_tree_fetch_leaves",
+    # WhatsApp local-data tools (issue #1341). The scanner ingests chats
+    # and messages into `whatsapp_data.db` on the user's machine; these
+    # three read-only tools let the orchestrator quote, summarise and
+    # search that local data without exposing the scanner's
+    # `whatsapp_data_ingest` write-path. Pair with the `memory_tree_*`
+    # tools above for cross-source / action-item flows once the scanner
+    # also forwards messages into the memory tree.
+    "whatsapp_data_list_chats",
+    "whatsapp_data_list_messages",
+    "whatsapp_data_search_messages",
     "read_workspace_state",
     "ask_user_clarification",
     "spawn_subagent",
