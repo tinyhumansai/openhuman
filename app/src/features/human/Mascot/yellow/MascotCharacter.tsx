@@ -342,19 +342,6 @@ export const MascotCharacter: React.FC<
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
             <feColorMatrix type="matrix" values={palette.bodyShadowMatrix} />
             <feBlend mode="normal" in2="effect1_innerShadow" result="effect2_innerShadow" />
-            <feTurbulence type="fractalNoise" baseFrequency="0.999" numOctaves={3} seed={8703} />
-            <feDisplacementMap
-              in="effect2_innerShadow"
-              scale={8}
-              xChannelSelector="R"
-              yChannelSelector="G"
-              result="displacedImage"
-              width="100%"
-              height="100%"
-            />
-            <feMerge>
-              <feMergeNode in="displacedImage" />
-            </feMerge>
           </filter>
 
           {/* filter1: head circle — inner shadows + grain texture */}
@@ -390,19 +377,6 @@ export const MascotCharacter: React.FC<
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
             <feColorMatrix type="matrix" values={palette.headShadowMatrix} />
             <feBlend mode="normal" in2="effect1_innerShadow" result="effect2_innerShadow" />
-            <feTurbulence type="fractalNoise" baseFrequency="0.999" numOctaves={3} seed={8703} />
-            <feDisplacementMap
-              in="effect2_innerShadow"
-              scale={8}
-              xChannelSelector="R"
-              yChannelSelector="G"
-              result="displacedImage"
-              width="100%"
-              height="100%"
-            />
-            <feMerge>
-              <feMergeNode in="displacedImage" />
-            </feMerge>
           </filter>
 
           {/* filter2: neck shadow 1 — blur */}
@@ -466,19 +440,6 @@ export const MascotCharacter: React.FC<
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
             <feColorMatrix type="matrix" values={rightArmShadowMatrix} />
             <feBlend mode="normal" in2="effect1_innerShadow" result="effect2_innerShadow" />
-            <feTurbulence type="fractalNoise" baseFrequency="0.999" numOctaves={3} seed={8703} />
-            <feDisplacementMap
-              in="effect2_innerShadow"
-              scale={8}
-              xChannelSelector="R"
-              yChannelSelector="G"
-              result="displacedImage"
-              width="100%"
-              height="100%"
-            />
-            <feMerge>
-              <feMergeNode in="displacedImage" />
-            </feMerge>
           </filter>
 
           {/* filter5: left arm — inner shadows + grain texture */}
@@ -514,19 +475,6 @@ export const MascotCharacter: React.FC<
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
             <feColorMatrix type="matrix" values={leftArmShadowMatrix} />
             <feBlend mode="normal" in2="effect1_innerShadow" result="effect2_innerShadow" />
-            <feTurbulence type="fractalNoise" baseFrequency="0.999" numOctaves={3} seed={8703} />
-            <feDisplacementMap
-              in="effect2_innerShadow"
-              scale={8}
-              xChannelSelector="R"
-              yChannelSelector="G"
-              result="displacedImage"
-              width="100%"
-              height="100%"
-            />
-            <feMerge>
-              <feMergeNode in="displacedImage" />
-            </feMerge>
           </filter>
 
           {/* filter6-7: left eye highlights */}
@@ -626,19 +574,6 @@ export const MascotCharacter: React.FC<
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
             <feColorMatrix type="matrix" values={leftArmShadowMatrix} />
             <feBlend mode="normal" in2="effect1_innerShadow" result="effect2_innerShadow" />
-            <feTurbulence type="fractalNoise" baseFrequency="0.999" numOctaves={3} seed={8703} />
-            <feDisplacementMap
-              in="effect2_innerShadow"
-              scale={8}
-              xChannelSelector="R"
-              yChannelSelector="G"
-              result="displacedImage"
-              width="100%"
-              height="100%"
-            />
-            <feMerge>
-              <feMergeNode in="displacedImage" />
-            </feMerge>
           </filter>
 
           {/* filter11-12: cheek highlights */}

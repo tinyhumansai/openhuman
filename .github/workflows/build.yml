@@ -57,13 +57,6 @@ jobs:
             pnpm-store-${{ runner.os }}-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Install mascot build dependencies
-        run: apt-get update && apt-get install -y ffmpeg
-      - name: Cache mascot rendered assets
-        uses: actions/cache@v4
-        with:
-          path: app/public/generated/remotion
-          key: mascot-assets-${{ runner.os }}-${{ hashFiles('remotion/scripts/render-runtime-assets.mjs', 'remotion/src/**', 'remotion/package.json') }}
       # Core is linked into the Tauri binary as a path dep — no separate
       # sidecar build / stage step needed.
       - name: Build Tauri app (CEF default)
@@ -71,11 +64,10 @@ jobs:
         run: |
           # Skip tsc in beforeBuildCommand — typechecking runs in the dedicated
           # `typecheck` workflow, so doing it again here is duplicated CI time.
-          TAURI_CONFIG_OVERRIDE='{"build":{"beforeBuildCommand":"node ../scripts/ensure-mascot-assets.mjs && npx vite build"},"plugins":{"updater":{"active":false}}}'
+          TAURI_CONFIG_OVERRIDE='{"build":{"beforeBuildCommand":"npx vite build"},"plugins":{"updater":{"active":false}}}'
           cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
         env:
           NODE_ENV: production
-          MASCOT_COLORS: all
           CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
           CARGO_PROFILE_RELEASE_LTO: "false"

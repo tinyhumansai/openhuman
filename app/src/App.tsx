@@ -20,7 +20,6 @@ import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
 import AppWalkthrough from './components/walkthrough/AppWalkthrough';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { isWelcomeLocked } from './lib/coreState/store';
-import { loadMascotManifest } from './features/human/Mascot/mascotManifest';
 import { startNativeNotificationsService } from './lib/nativeNotifications';
 import { startWebviewNotificationsService } from './lib/webviewNotifications';
 import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
@@ -42,7 +41,6 @@ import { DEV_FORCE_ONBOARDING } from './utils/config';
 startWebviewAccountService();
 startWebviewNotificationsService();
 startNativeNotificationsService();
-void loadMascotManifest();
 
 function App() {
   return (

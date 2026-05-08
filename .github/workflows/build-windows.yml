@@ -66,13 +66,6 @@ jobs:
         if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
         shell: bash
         run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
-      - name: Install mascot build dependencies
-        run: choco install ffmpeg -y
-      - name: Cache mascot rendered assets
-        uses: actions/cache@v4
-        with:
-          path: app/public/generated/remotion
-          key: mascot-assets-windows-${{ hashFiles('remotion/scripts/render-runtime-assets.mjs', 'remotion/src/**', 'remotion/package.json') }}
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
@@ -107,7 +100,6 @@ jobs:
           VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
-          MASCOT_COLORS: all
         run: |
           NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --target x86_64-pc-windows-msvc
       - name: Upload MSI artifact
