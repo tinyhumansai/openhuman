@@ -1,7 +1,13 @@
 //! On-disk archive of raw provider items (one .md per source item).
 //!
 //! Lives alongside the chunked content store but writes a *separate*
-//! tree at `<content_root>/raw/<source_slug>/<created_at_ms>_<uid>.md`.
+//! tree at `<content_root>/raw/<source_slug>/<kind>/<created_at_ms>_<uid>.md`,
+//! where `<kind>` is one of `emails`, `chats`, `documents`, `contacts`,
+//! `posts` (see [`RawKind`]). The kind subdir keeps a single source's
+//! items split by category so Obsidian `.base` files at
+//! `<content_root>/raw/<source_slug>/<kind>.base` can render
+//! per-category views. Contacts and documents are scoped to one source.
+//!
 //! This is the verbatim payload captured at sync time — no chunking, no
 //! summarisation. Useful for:
 //!
@@ -28,6 +34,40 @@ use anyhow::{Context, Result};
 
 use super::paths::slugify_source_id;
 
+/// Category of a raw item. Used to split a single source's items into
+/// per-kind subdirectories under `raw/<source_slug>/<kind>/`.
+///
+/// Each connector picks a kind per item — a single connector can write
+/// into multiple kinds (e.g. Gmail → [`Self::Email`] for messages,
+/// [`Self::Contact`] for senders, [`Self::Document`] for attachments).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum RawKind {
+    /// Email messages (Gmail, Outlook, …).
+    Email,
+    /// Chat / DM messages (Slack, Telegram, WhatsApp, Discord, …).
+    Chat,
+    /// Standalone documents — Notion pages, Drive files, attachments.
+    Document,
+    /// One file per person reachable via this source.
+    Contact,
+    /// Long-form posts — LinkedIn posts, tweets, blog entries.
+    Post,
+}
+
+impl RawKind {
+    /// Directory name used on disk for this kind. Plural to match the
+    /// canonical layout (`emails/`, `chats/`, `documents/`, …).
+    pub const fn as_dir(&self) -> &'static str {
+        match self {
+            Self::Email => "emails",
+            Self::Chat => "chats",
+            Self::Document => "documents",
+            Self::Contact => "contacts",
+            Self::Post => "posts",
+        }
+    }
+}
+
 /// One raw item ready to land on disk.
 pub struct RawItem<'a> {
     /// Stable upstream identifier (e.g. Gmail message id). Used for the
@@ -40,16 +80,19 @@ pub struct RawItem<'a> {
     /// Markdown body to write. Should be self-contained (front-matter
     /// optional but encouraged).
     pub markdown: &'a str,
+    /// Category subdir under the source (`emails/`, `chats/`, …).
+    pub kind: RawKind,
 }
 
-/// Write a batch of raw items under `raw/<source_slug>/`.
+/// Write a batch of raw items under `raw/<source_slug>/<kind>/`.
 ///
 /// `content_root` is the same root that backs `chunk_rel_path` /
 /// `summary_rel_path` — i.e. `<workspace>/memory_tree/content/`.
 /// `source_id` is the chunk-store source id (e.g.
 /// `"gmail:stevent95-at-gmail-dot-com"`); we slugify it the same way
 /// the chunk path does so the raw and chunk trees line up under
-/// matching directory names.
+/// matching directory names. Each item carries its own [`RawKind`],
+/// which selects the per-kind subdir.
 ///
 /// Returns the number of files written.
 pub fn write_raw_items(
@@ -60,10 +103,10 @@ pub fn write_raw_items(
     if items.is_empty() {
         return Ok(0);
     }
-    let dir = raw_dir(content_root, source_id);
-    fs::create_dir_all(&dir).with_context(|| format!("create raw dir {}", dir.display()))?;
     let mut written = 0usize;
     for item in items {
+        let dir = raw_kind_dir(content_root, source_id, item.kind);
+        fs::create_dir_all(&dir).with_context(|| format!("create raw dir {}", dir.display()))?;
         let filename = build_filename(item.created_at_ms, item.uid);
         let path = dir.join(&filename);
         write_atomic(&path, item.markdown.as_bytes())
@@ -73,10 +116,28 @@ pub fn write_raw_items(
     Ok(written)
 }
 
-/// Resolve the on-disk directory for a source's raw archive.
-pub fn raw_dir(content_root: &Path, source_id: &str) -> PathBuf {
+/// Resolve the on-disk directory for a source's raw archive (the
+/// per-source folder that holds every kind subdir plus `_source.md`
+/// and `<kind>.base` views).
+pub fn raw_source_dir(content_root: &Path, source_id: &str) -> PathBuf {
     let slug = slugify_source_id(source_id);
     content_root.join("raw").join(slug)
+}
+
+/// Resolve the on-disk directory for a single kind under a source —
+/// e.g. `<root>/raw/<source_slug>/emails/`.
+pub fn raw_kind_dir(content_root: &Path, source_id: &str, kind: RawKind) -> PathBuf {
+    raw_source_dir(content_root, source_id).join(kind.as_dir())
+}
+
+/// Forward-slash relative path of a raw file under `<content_root>/`,
+/// e.g. `"raw/gmail-acct/emails/1700000000000_msg-1.md"`. Used by
+/// callers that record a [`crate::openhuman::memory::tree::store::RawRef`]
+/// so reads can resolve the file later without re-deriving the layout.
+pub fn raw_rel_path(source_id: &str, kind: RawKind, created_at_ms: i64, uid: &str) -> String {
+    let slug = slugify_source_id(source_id);
+    let filename = build_filename(created_at_ms, uid);
+    format!("raw/{}/{}/{}", slug, kind.as_dir(), filename)
 }
 
 fn build_filename(created_at_ms: i64, uid: &str) -> String {
@@ -244,20 +305,27 @@ mod tests {
                 uid: "msg-1",
                 created_at_ms: 1_700_000_000_000,
                 markdown: "# hello",
+                kind: RawKind::Email,
             },
             RawItem {
                 uid: "msg-2",
                 created_at_ms: 1_700_000_010_000,
                 markdown: "# world",
+                kind: RawKind::Email,
             },
         ];
         let n = write_raw_items(root, "gmail:stevent95-at-gmail-dot-com", &items).unwrap();
         assert_eq!(n, 2);
-        let dir = raw_dir(root, "gmail:stevent95-at-gmail-dot-com");
+        let dir = raw_kind_dir(root, "gmail:stevent95-at-gmail-dot-com", RawKind::Email);
         assert!(
             dir.exists(),
             "raw dir should be created at {}",
             dir.display()
+        );
+        // Source-level dir is the parent of the kind dir.
+        assert_eq!(
+            dir.parent().unwrap(),
+            raw_source_dir(root, "gmail:stevent95-at-gmail-dot-com")
         );
         // Files must sort chronologically (created_at_ms prefix).
         let mut names: Vec<String> = fs::read_dir(&dir)
@@ -283,16 +351,17 @@ mod tests {
             uid: "msg-1",
             created_at_ms: 1_700_000_000_000,
             markdown: "v1",
+            kind: RawKind::Email,
         };
         write_raw_items(root, "gmail:acct", &[item]).unwrap();
-        // Re-write with new content under the same uid → overwrite.
         let item2 = RawItem {
             uid: "msg-1",
             created_at_ms: 1_700_000_000_000,
             markdown: "v2",
+            kind: RawKind::Email,
         };
         write_raw_items(root, "gmail:acct", &[item2]).unwrap();
-        let dir = raw_dir(root, "gmail:acct");
+        let dir = raw_kind_dir(root, "gmail:acct", RawKind::Email);
         let path = dir.join("1700000000000_msg-1.md");
         let body = fs::read_to_string(&path).unwrap();
         assert_eq!(body, "v2");
@@ -306,9 +375,10 @@ mod tests {
             uid: "msg/with:dangerous*chars",
             created_at_ms: 0,
             markdown: "x",
+            kind: RawKind::Email,
         };
         write_raw_items(root, "gmail:acct", &[item]).unwrap();
-        let dir = raw_dir(root, "gmail:acct");
+        let dir = raw_kind_dir(root, "gmail:acct", RawKind::Email);
         let entries: Vec<String> = fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
@@ -324,7 +394,48 @@ mod tests {
         let root = tmp.path();
         let n = write_raw_items(root, "gmail:acct", &[]).unwrap();
         assert_eq!(n, 0);
-        // Directory should not be created for an empty batch.
-        assert!(!raw_dir(root, "gmail:acct").exists());
+        // Neither source nor any kind dir should exist for an empty batch.
+        assert!(!raw_source_dir(root, "gmail:acct").exists());
+        assert!(!raw_kind_dir(root, "gmail:acct", RawKind::Email).exists());
+    }
+
+    #[test]
+    fn write_raw_items_splits_kinds_into_subdirs() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let items = [
+            RawItem {
+                uid: "msg-1",
+                created_at_ms: 1_700_000_000_000,
+                markdown: "email",
+                kind: RawKind::Email,
+            },
+            RawItem {
+                uid: "person-1",
+                created_at_ms: 0,
+                markdown: "contact",
+                kind: RawKind::Contact,
+            },
+        ];
+        let n = write_raw_items(root, "gmail:acct", &items).unwrap();
+        assert_eq!(n, 2);
+        assert!(raw_kind_dir(root, "gmail:acct", RawKind::Email)
+            .join("1700000000000_msg-1.md")
+            .exists());
+        assert!(raw_kind_dir(root, "gmail:acct", RawKind::Contact)
+            .join("0_person-1.md")
+            .exists());
+    }
+
+    #[test]
+    fn raw_rel_path_uses_kind_subdir() {
+        assert_eq!(
+            raw_rel_path("gmail:acct", RawKind::Email, 1_700_000_000_000, "msg-1"),
+            "raw/gmail-acct/emails/1700000000000_msg-1.md"
+        );
+        assert_eq!(
+            raw_rel_path("slack:team", RawKind::Chat, 42, "msg/with:bad"),
+            "raw/slack-team/chats/42_msg-with-bad.md"
+        );
     }
 }
