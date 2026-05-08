@@ -31,8 +31,9 @@ use anyhow::Result;
 use super::types::SlackMessage;
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory::tree::content_store::paths::slugify_source_id;
-use crate::openhuman::memory::tree::content_store::raw::{self as raw_store, RawItem};
+use crate::openhuman::memory::tree::content_store::raw::{
+    self as raw_store, raw_rel_path, RawItem, RawKind,
+};
 use crate::openhuman::memory::tree::ingest::ingest_chat;
 use crate::openhuman::memory::tree::store::{set_chunk_raw_refs, RawRef};
 use crate::openhuman::memory::tree::util::redact::redact;
@@ -157,7 +158,6 @@ async fn ingest_per_message(
     owner: &str,
     page_messages: &[SlackMessage],
 ) -> usize {
-    let source_slug = slugify_source_id(source_id);
     let mut total_chunks = 0usize;
 
     for m in page_messages {
@@ -170,8 +170,7 @@ async fn ingest_per_message(
         }
 
         let ts_ms = m.timestamp.timestamp_millis();
-        let ts_raw_sanitized = sanitize_uid_for_path(&m.ts_raw);
-        let raw_path = format!("raw/{source_slug}/{ts_ms}_{ts_raw_sanitized}.md");
+        let raw_path = raw_rel_path(source_id, RawKind::Chat, ts_ms, &m.ts_raw);
 
         let chat_message = slack_message_to_chat_message(m);
         let label = channel_label(&m.channel_name, m.is_private);
@@ -218,28 +217,11 @@ async fn ingest_per_message(
     total_chunks
 }
 
-/// Same character map the raw-archive writer uses for filenames.
-///
-/// Mirrors `raw_store::write_raw_items::sanitize_uid` but kept local so
-/// a future change on either side stays decoupled.
-fn sanitize_uid_for_path(uid: &str) -> String {
-    let cleaned: String = uid
-        .chars()
-        .map(|c| match c {
-            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | ' ' => '-',
-            other => other,
-        })
-        .collect();
-    if cleaned.is_empty() {
-        "unknown".into()
-    } else {
-        cleaned
-    }
-}
-
 /// Mirror a page of Slack messages into the on-disk raw archive.
 ///
-/// Files land under `<content_root>/raw/<source_slug>/<ts_ms>_<ts_raw>.md`.
+/// Files land under `<content_root>/raw/<source_slug>/chats/<ts_ms>_<ts_raw>.md`
+/// — the `chats/` subdir is selected automatically by [`RawKind::Chat`]
+/// (see `content_store::raw`).
 /// Each file gets a small metadata header (channel, author, date) followed
 /// by the message body so the file is self-describing when opened
 /// standalone in Obsidian or a text editor.
@@ -271,8 +253,7 @@ fn write_raw_archive(config: &Config, source_id: &str, page: &[SlackMessage]) ->
         composed.push_str(&format!("**Date:** {date_str}\n\n"));
         composed.push_str(body);
 
-        let uid = sanitize_uid_for_path(&m.ts_raw);
-        bodies.push((uid, ts_ms, composed));
+        bodies.push((m.ts_raw.clone(), ts_ms, composed));
     }
 
     let items: Vec<RawItem<'_>> = bodies
@@ -281,6 +262,7 @@ fn write_raw_archive(config: &Config, source_id: &str, page: &[SlackMessage]) ->
             uid: uid.as_str(),
             created_at_ms: *ts,
             markdown: md.as_str(),
+            kind: RawKind::Chat,
         })
         .collect();
 
