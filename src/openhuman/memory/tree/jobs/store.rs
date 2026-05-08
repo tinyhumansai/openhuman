@@ -253,6 +253,57 @@ pub fn mark_failed(config: &Config, job: &Job, error: &str) -> Result<()> {
     })
 }
 
+/// Mark a claimed job as deferred: put it back to `ready` with
+/// `available_at_ms = until_ms` so [`claim_next`] will re-pick it once the
+/// wake-up time has passed. The handler ran successfully but chose not to
+/// make progress (cloud rate-limited, dependency unavailable, model
+/// warming up), so this path **does not** burn the failure budget — the
+/// `attempts` bump that [`claim_next`] applied at claim time is reverted.
+///
+/// `reason` is recorded in `last_error` for visibility and `started_at_ms`
+/// is cleared (mirroring the retry branch of [`mark_failed`]) so the next
+/// claim stamps a fresh start time.
+///
+/// Like [`mark_done`] / [`mark_failed`], the UPDATE is gated on the
+/// claim-token (`attempts` + `started_at_ms`) so a stale lessee's
+/// settlement is a silent no-op rather than clobbering an active lessee's
+/// row.
+pub fn mark_deferred(config: &Config, job: &Job, until_ms: i64, reason: &str) -> Result<()> {
+    let job_id = &job.id;
+    let claim_attempts = job.attempts as i64;
+    let pre_claim_attempts = claim_attempts.saturating_sub(1);
+    let claim_started_at = job.started_at_ms;
+    with_connection(config, |conn| {
+        let n = conn.execute(
+            "UPDATE mem_tree_jobs
+                SET status = 'ready',
+                    attempts = ?1,
+                    available_at_ms = ?2,
+                    locked_until_ms = NULL,
+                    started_at_ms = NULL,
+                    last_error = ?3
+              WHERE id = ?4
+                AND attempts = ?5
+                AND started_at_ms IS ?6",
+            params![
+                pre_claim_attempts,
+                until_ms,
+                reason,
+                job_id,
+                claim_attempts,
+                claim_started_at,
+            ],
+        )?;
+        if n == 0 {
+            log::warn!(
+                "[memory_tree::jobs] mark_deferred id={job_id} was a no-op \
+                 (stale lease: attempts={claim_attempts} started_at_ms={claim_started_at:?})"
+            );
+        }
+        Ok(())
+    })
+}
+
 /// Flip any `running` row whose `locked_until_ms` has expired back to
 /// `ready`. Called once at worker startup so a process crash mid-job
 /// doesn't leave work stranded. Returns the number of rows recovered.
@@ -626,5 +677,206 @@ mod tests {
         mark_done(&cfg, &claimed).unwrap();
         assert_eq!(count_by_status(&cfg, JobStatus::Done).unwrap(), 1);
         assert_eq!(count_by_status(&cfg, JobStatus::Ready).unwrap(), 2);
+    }
+
+    /// Defer must NOT advance the failure-attempt counter. After a claim
+    /// (which bumps attempts to 1) and a deferral, the next claim should
+    /// see attempts==2 (just the second claim's bump) — proving the
+    /// transient deferral did not burn a slot from the row's failure
+    /// budget.
+    #[test]
+    fn mark_deferred_does_not_increment_attempts() {
+        let (_tmp, cfg) = test_config();
+        let payload = ExtractChunkPayload {
+            chunk_id: "c-defer-1".into(),
+        };
+        let nj = NewJob::extract_chunk(&payload).unwrap();
+        let id = enqueue(&cfg, &nj).unwrap().expect("inserted");
+
+        let claim1 = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        assert_eq!(claim1.id, id);
+        assert_eq!(claim1.attempts, 1, "first claim bumps attempts to 1");
+
+        // Defer with a wake-up time already in the past so the next
+        // claim_next is immediately eligible without sleeping.
+        mark_deferred(&cfg, &claim1, 0, "rate_limited").unwrap();
+
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(row.status, JobStatus::Ready);
+        assert_eq!(
+            row.attempts, 0,
+            "Defer must revert the claim's attempts bump (back to pre-claim 0)"
+        );
+        assert_eq!(row.last_error.as_deref(), Some("rate_limited"));
+        assert_eq!(row.available_at_ms, 0);
+        assert!(row.locked_until_ms.is_none());
+        assert!(row.started_at_ms.is_none());
+
+        let claim2 = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        assert_eq!(claim2.id, id);
+        assert_eq!(
+            claim2.attempts, 1,
+            "second claim bumps attempts to 1 again (Defer didn't count)"
+        );
+    }
+
+    /// A row deferred to a future `until_ms` must not be claimable until
+    /// the system clock crosses that threshold.
+    #[test]
+    fn deferred_row_not_claimable_until_until_ms() {
+        let (_tmp, cfg) = test_config();
+        let payload = ExtractChunkPayload {
+            chunk_id: "c-defer-2".into(),
+        };
+        let nj = NewJob::extract_chunk(&payload).unwrap();
+        let id = enqueue(&cfg, &nj).unwrap().expect("inserted");
+
+        let claimed = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        let future_ms = Utc::now().timestamp_millis() + 60_000;
+        mark_deferred(&cfg, &claimed, future_ms, "warming_up").unwrap();
+
+        // Right now: not yet eligible.
+        let none = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap();
+        assert!(
+            none.is_none(),
+            "deferred row must not be claimable before until_ms"
+        );
+
+        // Force the row available again (proxy for "wall clock advanced
+        // past until_ms") and confirm claim_next picks it up.
+        with_connection(&cfg, |c| {
+            c.execute(
+                "UPDATE mem_tree_jobs SET available_at_ms = 0 WHERE id = ?1",
+                params![id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let claim2 = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        assert_eq!(claim2.id, id);
+        assert_eq!(claim2.attempts, 1, "Defer left attempts at pre-claim 0");
+    }
+
+    /// Three rows with three different terminal verbs: Done, Failed (with
+    /// retry left, so it bounces back to ready with bumped attempts), and
+    /// Defer. After processing, each row's terminal state must reflect its
+    /// settlement verb. Critically, the Defer row keeps its pre-claim
+    /// `attempts` value while the failed row bumps.
+    #[test]
+    fn mixed_outcomes_stress() {
+        let (_tmp, cfg) = test_config();
+        let p_a = ExtractChunkPayload {
+            chunk_id: "c-mix-a".into(),
+        };
+        let p_b = ExtractChunkPayload {
+            chunk_id: "c-mix-b".into(),
+        };
+        let p_c = ExtractChunkPayload {
+            chunk_id: "c-mix-c".into(),
+        };
+        let id_a = enqueue(&cfg, &NewJob::extract_chunk(&p_a).unwrap())
+            .unwrap()
+            .unwrap();
+        let id_b = enqueue(&cfg, &NewJob::extract_chunk(&p_b).unwrap())
+            .unwrap()
+            .unwrap();
+        let id_c = enqueue(&cfg, &NewJob::extract_chunk(&p_c).unwrap())
+            .unwrap()
+            .unwrap();
+
+        // Claim the three rows in turn (FIFO within same kind/priority).
+        let claim_a = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        let claim_b = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        let claim_c = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        // Sanity: three distinct ids covering A/B/C.
+        let mut got: Vec<&str> = vec![&claim_a.id, &claim_b.id, &claim_c.id];
+        got.sort();
+        let mut want = vec![id_a.as_str(), id_b.as_str(), id_c.as_str()];
+        want.sort();
+        assert_eq!(got, want);
+
+        let until_ms = Utc::now().timestamp_millis() + 30_000;
+
+        // Settle: A=done, B=err (retry path), C=defer.
+        mark_done(&cfg, &claim_a).unwrap();
+        mark_failed(&cfg, &claim_b, "transient_error").unwrap();
+        mark_deferred(&cfg, &claim_c, until_ms, "rate_limited").unwrap();
+
+        // A: terminal done.
+        let row_a = get_job(&cfg, &id_a).unwrap().unwrap();
+        assert_eq!(row_a.status, JobStatus::Done);
+        assert!(row_a.completed_at_ms.is_some());
+
+        // B: retry path — back to ready with bumped attempts (1) and a
+        // future available_at_ms from exponential backoff.
+        let row_b = get_job(&cfg, &id_b).unwrap().unwrap();
+        assert_eq!(row_b.status, JobStatus::Ready);
+        assert_eq!(
+            row_b.attempts, 1,
+            "Err settlement keeps the claim's attempts bump"
+        );
+        assert!(row_b.available_at_ms > Utc::now().timestamp_millis());
+        assert_eq!(row_b.last_error.as_deref(), Some("transient_error"));
+
+        // C: deferred — back to ready with attempts reverted and
+        // available_at_ms == until_ms.
+        let row_c = get_job(&cfg, &id_c).unwrap().unwrap();
+        assert_eq!(row_c.status, JobStatus::Ready);
+        assert_eq!(
+            row_c.attempts, 0,
+            "Defer settlement reverts the claim's attempts bump"
+        );
+        assert_eq!(row_c.available_at_ms, until_ms);
+        assert_eq!(row_c.last_error.as_deref(), Some("rate_limited"));
+        assert!(row_c.locked_until_ms.is_none());
+        assert!(row_c.started_at_ms.is_none());
+    }
+
+    /// Stale-worker `mark_deferred` must be a no-op — same lease-token
+    /// gating as `mark_done` / `mark_failed`. After Worker A's claim
+    /// expires and Worker B re-claims, Worker A's stale Defer must not
+    /// clobber B's running row.
+    #[test]
+    fn mark_deferred_stale_lease_is_noop() {
+        let (_tmp, cfg) = test_config();
+        let payload = ExtractChunkPayload {
+            chunk_id: "c-defer-stale".into(),
+        };
+        let nj = NewJob::extract_chunk(&payload).unwrap();
+        let id = enqueue(&cfg, &nj).unwrap().expect("inserted");
+
+        // Worker A claims with already-expired lock.
+        let worker_a_job = claim_next(&cfg, -1).unwrap().unwrap();
+        assert_eq!(worker_a_job.attempts, 1);
+
+        // Lease expires; Worker B re-claims.
+        let recovered = recover_stale_locks(&cfg).unwrap();
+        assert_eq!(recovered, 1);
+        let worker_b_job = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        assert_eq!(worker_b_job.attempts, 2);
+
+        // Worker A (stale) tries to defer using its old snapshot — must
+        // be a silent no-op.
+        let stale_until_ms = Utc::now().timestamp_millis() + 999_000;
+        mark_deferred(&cfg, &worker_a_job, stale_until_ms, "stale_defer").unwrap();
+
+        // Worker B's row must be untouched: still 'running' with
+        // attempts=2 and no stale_defer side effect.
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(
+            row.status,
+            JobStatus::Running,
+            "stale mark_deferred must not clobber Worker B's running row"
+        );
+        assert_eq!(row.attempts, 2);
+        assert_ne!(
+            row.last_error.as_deref(),
+            Some("stale_defer"),
+            "stale defer reason must not be persisted"
+        );
+        assert_ne!(
+            row.available_at_ms, stale_until_ms,
+            "stale until_ms must not be persisted"
+        );
     }
 }

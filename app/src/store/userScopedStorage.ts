@@ -31,6 +31,27 @@ function safeGetActiveUserIdSync(): string | null {
 
 let activeUserId: string | null = safeGetActiveUserIdSync();
 
+// Recover from a prior buggy build that moved `persist:coreMode` into the
+// user-scoped namespace via `migrateLegacyPersistKeys`. The unscoped key is
+// authoritative; if it's missing but a scoped copy exists, copy it back so
+// the boot picker stops re-prompting on every launch.
+(function recoverUnscopedCoreMode(): void {
+  try {
+    if (localStorage.getItem('persist:coreMode') !== null) return;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.endsWith(':persist:coreMode')) continue;
+      const value = localStorage.getItem(key);
+      if (value === null) continue;
+      localStorage.setItem('persist:coreMode', value);
+      localStorage.removeItem(key);
+      break;
+    }
+  } catch {
+    // best-effort
+  }
+})();
+
 // Gate redux-persist's rehydrate on the boot prime from main.tsx
 // (which reads the authoritative id from `~/.openhuman/active_user.toml`
 // via the Rust core). The localStorage value used at module load is
@@ -115,11 +136,17 @@ export function setActiveUserId(id: string | null): void {
  */
 function migrateLegacyPersistKeys(id: string): void {
   const LEGACY_PREFIXES = ['persist:'];
+  // Keys that are intentionally pre-login / un-scoped and must NOT be moved
+  // into the per-user namespace. `persist:coreMode` is the local-vs-cloud
+  // mode picker — it lives in plain localStorage so it survives across user
+  // switches, and migrating it away makes the picker re-prompt every launch.
+  const UNSCOPED_KEYS = new Set(['persist:coreMode']);
   try {
     const legacyKeys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (!key) continue;
+      if (UNSCOPED_KEYS.has(key)) continue;
       if (LEGACY_PREFIXES.some(p => key.startsWith(p))) {
         legacyKeys.push(key);
       }

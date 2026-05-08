@@ -1,5 +1,8 @@
 //! JSON-RPC handler functions for the Composio-backed Slack provider.
 //!
+//! Moved from `memory::slack_ingestion::rpc` into this module so the
+//! entire Slack integration lives under `composio::providers::slack`.
+//!
 //! Public JSON-RPC surface:
 //! - `openhuman.slack_memory_sync_trigger` — run `SlackProvider::sync()`
 //!   once for each active Slack connection (or just one, if

@@ -34,12 +34,12 @@ mod worker;
 
 pub use scheduler::{backfill_missing_digests, trigger_digest};
 pub use store::{
-    claim_next, count_by_status, count_total, enqueue, enqueue_tx, get_job, mark_done, mark_failed,
-    recover_stale_locks, DEFAULT_LOCK_DURATION_MS,
+    claim_next, count_by_status, count_total, enqueue, enqueue_tx, get_job, mark_deferred,
+    mark_done, mark_failed, recover_stale_locks, DEFAULT_LOCK_DURATION_MS,
 };
 pub use testing::drain_until_idle;
 pub use types::{
     AppendBufferPayload, AppendTarget, DigestDailyPayload, ExtractChunkPayload, FlushStalePayload,
-    Job, JobKind, JobStatus, NewJob, NodeRef, SealPayload, TopicRoutePayload,
+    Job, JobKind, JobOutcome, JobStatus, NewJob, NodeRef, SealPayload, TopicRoutePayload,
 };
 pub use worker::{start, wake_workers};

@@ -17,8 +17,10 @@ use tokio::sync::Notify;
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::jobs::handlers;
 use crate::openhuman::memory::tree::jobs::store::{
-    claim_next, mark_done, mark_failed, recover_stale_locks, DEFAULT_LOCK_DURATION_MS,
+    claim_next, mark_deferred, mark_done, mark_failed, recover_stale_locks,
+    DEFAULT_LOCK_DURATION_MS,
 };
+use crate::openhuman::memory::tree::jobs::types::JobOutcome;
 
 /// Number of concurrent job-worker tasks. Each worker claims one job
 /// at a time via `claim_next` (atomic UPDATE under SQLite WAL with
@@ -148,8 +150,28 @@ pub async fn run_once(config: &Config) -> Result<bool> {
     drop(llm_permit);
 
     match result {
-        Ok(()) => {
+        Ok(JobOutcome::Done) => {
+            log::debug!(
+                "[memory_tree::jobs] done id={} kind={}",
+                job.id,
+                job.kind.as_str()
+            );
             mark_done(config, &job)?;
+        }
+        Ok(JobOutcome::Defer { until_ms, reason }) => {
+            // Defer is normal operation (transient blocker, e.g. rate
+            // limit) — log at info, not warn — and do NOT count this
+            // claim toward the failure-attempt budget. `mark_deferred`
+            // reverts the bump applied by `claim_next` so the row's
+            // attempts counter stays where it was before this claim.
+            log::info!(
+                "[memory_tree::jobs] deferred id={} kind={} until_ms={} reason={}",
+                job.id,
+                job.kind.as_str(),
+                until_ms,
+                reason
+            );
+            mark_deferred(config, &job, until_ms, &reason)?;
         }
         Err(err) => {
             // Preserve the full anyhow cause chain in the persisted

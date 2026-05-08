@@ -1,34 +1,31 @@
 //! Helpers for the Composio-backed Slack provider.
 //!
-//! Split out from `provider.rs` so the response-shape parsing code can
-//! evolve independently of the sync orchestration — Composio (and Slack
-//! beneath it) periodically widens response envelopes, and keeping the
-//! JSON-pointer walks in one file makes adding new paths cheap.
+//! This module contains thin enrichers that take a post-processed slim
+//! envelope (produced by [`super::post_process`]) and turn it into
+//! [`SlackMessage`] / [`SlackChannel`] values with user-id resolution and
+//! channel-context injection applied.
+//!
+//! Response-shape walking (nested envelopes, empty-field filtering) lives in
+//! `post_process.rs`; this module assumes the slim shape is already in place.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
 
+use super::types::{SlackChannel, SlackMessage};
 use super::users::SlackUsers;
-use crate::openhuman::memory::slack_ingestion::types::{SlackChannel, SlackMessage};
 
-/// Walk the Composio response envelope and pull out the channel array
-/// from a `SLACK_LIST_CONVERSATIONS` call. Composio often wraps the raw
-/// upstream shape one or two levels deeper, so we try multiple pointers.
+/// Enrich the top-level `channels[]` array in a post-processed
+/// `SLACK_LIST_CONVERSATIONS` response into [`SlackChannel`] values.
+///
+/// The post-processor has already stripped unknown channels and normalised
+/// to `{ id, name, is_private }` — this function just deserialises them.
 pub(crate) fn extract_channels(data: &Value) -> Vec<SlackChannel> {
-    let candidates = [
-        data.pointer("/data/channels"),
-        data.pointer("/channels"),
-        data.pointer("/data/data/channels"),
-        data.pointer("/data/conversations"),
-        data.pointer("/conversations"),
-    ];
-    let arr = candidates
-        .into_iter()
-        .flatten()
-        .find_map(|v| v.as_array())
+    let arr = data
+        .get("channels")
+        .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
 
@@ -60,35 +57,29 @@ fn parse_channel(raw: Value) -> Option<SlackChannel> {
     })
 }
 
-/// Walk the Composio response envelope and pull out the `messages` array
-/// from a `SLACK_FETCH_CONVERSATION_HISTORY` call.
+/// Enrich the top-level `messages[]` array in a post-processed
+/// `SLACK_FETCH_CONVERSATION_HISTORY` response into [`SlackMessage`]s.
 ///
-/// `users` resolves Slack user ids both as the message author and inline
-/// `<@…>` mentions in the text. Pass [`SlackUsers::empty`] to skip
-/// resolution — raw ids will pass through unchanged.
+/// `channel` provides the channel id, name, and privacy flag (not present
+/// in the response body — only in the request). `users` resolves author ids
+/// and rewrites `<@…>` mentions in message text.
 pub(crate) fn extract_messages(
     data: &Value,
-    channel_id: &str,
+    channel: &SlackChannel,
     users: &SlackUsers,
 ) -> Vec<SlackMessage> {
-    let candidates = [
-        data.pointer("/data/messages"),
-        data.pointer("/messages"),
-        data.pointer("/data/data/messages"),
-    ];
-    let arr = candidates
-        .into_iter()
-        .flatten()
-        .find_map(|v| v.as_array())
+    let arr = data
+        .get("messages")
+        .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
 
     arr.into_iter()
-        .filter_map(|raw| parse_message(channel_id, raw, users))
+        .filter_map(|raw| parse_message(raw, channel, users))
         .collect()
 }
 
-fn parse_message(channel_id: &str, raw: Value, users: &SlackUsers) -> Option<SlackMessage> {
+fn parse_message(raw: Value, channel: &SlackChannel, users: &SlackUsers) -> Option<SlackMessage> {
     let ts_raw = raw.get("ts").and_then(|t| t.as_str())?.to_string();
     let timestamp = parse_ts(&ts_raw)?;
     let raw_text = raw
@@ -99,12 +90,9 @@ fn parse_message(channel_id: &str, raw: Value, users: &SlackUsers) -> Option<Sla
     if raw_text.trim().is_empty() {
         return None;
     }
-    // Replace `<@Uxxx>` mentions with `@<resolved>` so the canonical
-    // markdown reads naturally.
     let text = users.replace_mentions(&raw_text);
     let author_id = raw
         .get("user")
-        .or_else(|| raw.get("bot_id"))
         .and_then(|u| u.as_str())
         .unwrap_or("")
         .to_string();
@@ -113,96 +101,130 @@ fn parse_message(channel_id: &str, raw: Value, users: &SlackUsers) -> Option<Sla
         .get("thread_ts")
         .and_then(|t| t.as_str())
         .map(String::from);
+    let permalink = raw
+        .get("permalink")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
     Some(SlackMessage {
-        channel_id: channel_id.to_string(),
+        channel_id: channel.id.clone(),
+        channel_name: channel.name.clone(),
+        is_private: channel.is_private,
         author,
+        author_id,
         text,
         timestamp,
         ts_raw,
         thread_ts,
+        permalink,
+    })
+}
+
+/// Enrich the top-level `messages[]` array in a post-processed
+/// `SLACK_SEARCH_MESSAGES` response into [`SlackMessage`]s.
+///
+/// `channel_map` provides channel names and privacy flags keyed by id.
+/// When a match's `channel_id` is absent from the map, channel name and
+/// privacy default to empty/false — the message is still ingested but
+/// the label will be less informative.
+pub(crate) fn extract_search_messages(
+    data: &Value,
+    channel_map: &HashMap<String, SlackChannel>,
+    users: &SlackUsers,
+) -> Vec<SlackMessage> {
+    let arr = data
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    arr.into_iter()
+        .filter_map(|raw| parse_search_match(raw, channel_map, users))
+        .collect()
+}
+
+fn parse_search_match(
+    raw: Value,
+    channel_map: &HashMap<String, SlackChannel>,
+    users: &SlackUsers,
+) -> Option<SlackMessage> {
+    let ts_raw = raw.get("ts").and_then(|t| t.as_str())?.to_string();
+    let timestamp = parse_ts(&ts_raw)?;
+    let raw_text = raw
+        .get("text")
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .to_string();
+    if raw_text.trim().is_empty() {
+        return None;
+    }
+    let text = users.replace_mentions(&raw_text);
+    let author_id = raw
+        .get("user")
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
+    let author = users.resolve(&author_id);
+    // Drop malformed search hits with no channel id — they'd funnel into a
+    // single empty-channel bucket downstream and ingest under the wrong
+    // (or no) channel context.
+    let channel_id = raw
+        .get("channel_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let (channel_name, is_private) = channel_map
+        .get(&channel_id)
+        .map(|c| (c.name.clone(), c.is_private))
+        .unwrap_or_else(|| (String::new(), false));
+    let thread_ts = raw
+        .get("thread_ts")
+        .and_then(|t| t.as_str())
+        .map(String::from);
+    let permalink = raw
+        .get("permalink")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+    Some(SlackMessage {
+        channel_id,
+        channel_name,
+        is_private,
+        author,
+        author_id,
+        text,
+        timestamp,
+        ts_raw,
+        thread_ts,
+        permalink,
     })
 }
 
 /// Slack's `ts` is a decimal string `"<unix_seconds>.<micro>"`. The
-/// integer part is what we care about for bucketing.
-fn parse_ts(ts_raw: &str) -> Option<DateTime<Utc>> {
+/// integer part is what we care about for `DateTime<Utc>` purposes;
+/// micro is preserved separately by [`parse_ts_components`] for cursor
+/// ordering.
+pub(crate) fn parse_ts(ts_raw: &str) -> Option<DateTime<Utc>> {
     let seconds_str = ts_raw.split('.').next()?;
     let secs: i64 = seconds_str.parse().ok()?;
     Utc.timestamp_opt(secs, 0).single()
 }
 
-/// Walk a `SLACK_SEARCH_MESSAGES` response envelope and pull out every
-/// matching message. Unlike `extract_messages` (which is per-channel),
-/// search results carry a `channel.id` field on each match — so the
-/// returned `SlackMessage`s span every channel that matched the query.
-pub(crate) fn extract_search_messages(data: &Value, users: &SlackUsers) -> Vec<SlackMessage> {
-    let candidates = [
-        data.pointer("/data/messages/matches"),
-        data.pointer("/messages/matches"),
-        data.pointer("/data/data/messages/matches"),
-    ];
-    let arr = candidates
-        .into_iter()
-        .flatten()
-        .find_map(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    arr.into_iter()
-        .filter_map(|raw| parse_search_match(raw, users))
-        .collect()
+/// Parse a Slack `ts` into a `(seconds, micros)` tuple suitable for
+/// `max_by_key` / lexicographic ordering at full precision. Unparseable
+/// inputs fall back to `(0, 0)` so they never dominate a max — they
+/// just lose to anything real.
+pub(crate) fn parse_ts_components(ts_raw: &str) -> (i64, u64) {
+    let mut parts = ts_raw.splitn(2, '.');
+    let secs: i64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let micros: u64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    (secs, micros)
 }
 
-/// Total page count from the search response. Slack's `search.messages`
-/// uses page-number pagination (1-indexed) under
-/// `messages.paging.pages`.
+/// Extract the total page count from a post-processed
+/// `SLACK_SEARCH_MESSAGES` response. Defaults to 1 when absent.
 pub(crate) fn extract_search_total_pages(data: &Value) -> u32 {
-    let candidates = [
-        data.pointer("/data/messages/paging/pages"),
-        data.pointer("/messages/paging/pages"),
-    ];
-    candidates
-        .into_iter()
-        .flatten()
-        .find_map(|v| v.as_u64())
-        .unwrap_or(1) as u32
-}
-
-fn parse_search_match(raw: Value, users: &SlackUsers) -> Option<SlackMessage> {
-    let ts_raw = raw.get("ts").and_then(|t| t.as_str())?.to_string();
-    let timestamp = parse_ts(&ts_raw)?;
-    let raw_text = raw
-        .get("text")
-        .and_then(|t| t.as_str())
-        .unwrap_or("")
-        .to_string();
-    if raw_text.trim().is_empty() {
-        return None;
-    }
-    let text = users.replace_mentions(&raw_text);
-    let author_id = raw
-        .get("user")
-        .or_else(|| raw.get("bot_id"))
-        .and_then(|u| u.as_str())
-        .unwrap_or("")
-        .to_string();
-    let author = users.resolve(&author_id);
-    let channel_id = raw
-        .pointer("/channel/id")
-        .and_then(|c| c.as_str())?
-        .to_string();
-    let thread_ts = raw
-        .get("thread_ts")
-        .and_then(|t| t.as_str())
-        .map(String::from);
-    Some(SlackMessage {
-        channel_id,
-        author,
-        text,
-        timestamp,
-        ts_raw,
-        thread_ts,
-    })
+    data.get("pages").and_then(|v| v.as_u64()).unwrap_or(1) as u32
 }
 
 /// Extract a pagination `next_cursor` from a `SLACK_LIST_CONVERSATIONS`
@@ -229,13 +251,17 @@ pub(crate) fn extract_next_cursor(data: &Value) -> Option<String> {
 /// `BTreeMap` so serialization is deterministic (makes log diffs
 /// readable and tests stable).
 ///
-/// Value is unix-seconds of the **end of the latest flushed bucket** for
-/// that channel. Fetches for that channel use `oldest = value` so we
-/// skip already-ingested ranges.
-pub type ChannelCursors = BTreeMap<String, i64>;
+/// Value is the **raw Slack `ts`** of the latest successfully-ingested
+/// message for that channel (e.g. `"1714003200.123456"`) — full
+/// microsecond precision is preserved so multi-message-per-second
+/// channels don't replay an entire second on the next incremental
+/// fetch (`oldest` with `inclusive=false` excludes only that exact
+/// timestamp). Fetches for that channel use `oldest = value`
+/// verbatim.
+pub type ChannelCursors = BTreeMap<String, String>;
 
 /// Deserialize the per-channel cursor map out of `SyncState.cursor`.
-/// Returns an empty map on any parse failure — a "broken" cursor should
+/// Returns an empty map on any parse failure — a broken cursor should
 /// degrade to "start from the backfill window" rather than bail out.
 pub(crate) fn decode_cursors(raw: Option<&str>) -> ChannelCursors {
     let Some(raw) = raw else {
@@ -270,15 +296,13 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn extract_channels_from_data_channels() {
+    fn extract_channels_from_post_processed_shape() {
         let data = json!({
-            "data": {
-                "channels": [
-                    {"id": "C1", "name": "eng", "is_private": false},
-                    {"id": "G1", "name": "ops", "is_private": true},
-                    {"id": "", "name": "empty-id-drops"},
-                ]
-            }
+            "channels": [
+                {"id": "C1", "name": "eng", "is_private": false},
+                {"id": "G1", "name": "ops", "is_private": true},
+                {"id": "", "name": "empty-id-drops"},
+            ]
         });
         let out = extract_channels(&data);
         assert_eq!(out.len(), 2);
@@ -289,62 +313,77 @@ mod tests {
     }
 
     #[test]
-    fn extract_channels_honors_nested_envelope() {
+    fn extract_messages_parses_post_processed_shape() {
         let data = json!({
-            "data": { "data": { "channels": [{"id": "C1", "name": "eng"}] } }
+            "messages": [
+                {"ts": "1714003200.000100", "user": "U1", "text": "hi"},
+                {"ts": "1714003300.000200", "user": "U2", "text": "world"},
+                {"ts": "1714003400.000300", "user": "U3", "text": "  "} // dropped (blank)
+            ]
         });
-        let out = extract_channels(&data);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].id, "C1");
-    }
-
-    #[test]
-    fn extract_messages_parses_fields() {
-        let data = json!({
-            "data": {
-                "messages": [
-                    {"ts": "1714003200.000100", "user": "U1", "text": "hi"},
-                    {"ts": "1714003300.000200", "user": "U2", "text": "world"},
-                    {"ts": "1714003400.000300", "user": "U3", "text": "  "} // dropped (blank)
-                ]
-            }
-        });
+        let channel = SlackChannel {
+            id: "C1".into(),
+            name: "eng".into(),
+            is_private: false,
+        };
         let users = SlackUsers::empty();
-        let out = extract_messages(&data, "C1", &users);
+        let out = extract_messages(&data, &channel, &users);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].channel_id, "C1");
-        // Empty user-cache passes raw id through unchanged.
+        assert_eq!(out[0].channel_name, "eng");
+        assert!(!out[0].is_private);
         assert_eq!(out[0].author, "U1");
+        assert_eq!(out[0].author_id, "U1");
         assert_eq!(out[0].text, "hi");
         assert_eq!(out[0].timestamp.timestamp(), 1_714_003_200);
-        assert_eq!(out[0].ts_raw, "1714003200.000100");
     }
 
     #[test]
     fn extract_messages_resolves_authors_and_mentions() {
         let data = json!({
-            "data": {
-                "messages": [
-                    {"ts": "1714003200.0", "user": "U1", "text": "ping <@U2> about the migration"}
-                ]
-            }
+            "messages": [
+                {"ts": "1714003200.0", "user": "U1", "text": "ping <@U2> about the migration"}
+            ]
         });
-        let mut m = std::collections::HashMap::new();
+        let channel = SlackChannel {
+            id: "C1".into(),
+            name: "eng".into(),
+            is_private: false,
+        };
+        let mut m = HashMap::new();
         m.insert("U1".into(), "alice".into());
         m.insert("U2".into(), "bob".into());
         let users = SlackUsers::from_map(m);
-        let out = extract_messages(&data, "C1", &users);
+        let out = extract_messages(&data, &channel, &users);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].author, "alice");
+        assert_eq!(out[0].author_id, "U1");
         assert_eq!(out[0].text, "ping @bob about the migration");
     }
 
     #[test]
-    fn extract_messages_skips_missing_ts() {
-        let data = json!({"messages": [{"user": "U1", "text": "orphan"}]});
+    fn extract_search_messages_enriches_from_channel_map() {
+        let data = json!({
+            "messages": [
+                {"ts": "1714003200.0", "user": "U1", "text": "hello", "channel_id": "C1"},
+                {"ts": "1714003300.0", "user": "U2", "text": "world", "channel_id": "C2"},
+            ]
+        });
+        let mut channel_map = HashMap::new();
+        channel_map.insert(
+            "C1".to_string(),
+            SlackChannel {
+                id: "C1".into(),
+                name: "eng".into(),
+                is_private: false,
+            },
+        );
+        // C2 not in map — should still work with empty channel_name
         let users = SlackUsers::empty();
-        let out = extract_messages(&data, "C1", &users);
-        assert!(out.is_empty());
+        let out = extract_search_messages(&data, &channel_map, &users);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].channel_name, "eng");
+        assert_eq!(out[1].channel_name, "");
     }
 
     #[test]
@@ -369,8 +408,8 @@ mod tests {
     #[test]
     fn encode_decode_roundtrip() {
         let mut map = ChannelCursors::new();
-        map.insert("C1".into(), 1_714_003_200);
-        map.insert("C2".into(), 1_714_010_000);
+        map.insert("C1".into(), "1714003200.123456".into());
+        map.insert("C2".into(), "1714010000.000100".into());
         let encoded = encode_cursors(&map);
         let decoded = decode_cursors(Some(&encoded));
         assert_eq!(decoded, map);
@@ -387,6 +426,43 @@ mod tests {
     fn parse_ts_accepts_slack_decimal_format() {
         let dt = parse_ts("1714003200.000100").unwrap();
         assert_eq!(dt.timestamp(), 1_714_003_200);
+    }
+
+    #[test]
+    fn extract_search_messages_drops_match_with_missing_channel_id() {
+        // A search hit with no `channel_id` would otherwise funnel into a
+        // single empty-channel bucket and ingest under no channel context.
+        let data = json!({
+            "messages": [
+                {"ts": "1714003200.0", "user": "U1", "text": "valid", "channel_id": "C1"},
+                {"ts": "1714003300.0", "user": "U2", "text": "orphan"},
+                {"ts": "1714003400.0", "user": "U3", "text": "blank-id", "channel_id": ""},
+            ]
+        });
+        let mut channel_map = HashMap::new();
+        channel_map.insert(
+            "C1".to_string(),
+            SlackChannel {
+                id: "C1".into(),
+                name: "eng".into(),
+                is_private: false,
+            },
+        );
+        let users = SlackUsers::empty();
+        let out = extract_search_messages(&data, &channel_map, &users);
+        assert_eq!(out.len(), 1, "only the well-formed match should pass");
+        assert_eq!(out[0].channel_id, "C1");
+    }
+
+    #[test]
+    fn parse_ts_components_preserves_microseconds() {
+        // Two messages in the same wall-clock second must order by their
+        // micro suffix — without this, cursor advancement loses precision
+        // and incremental fetches replay duplicates.
+        let earlier = parse_ts_components("1714003200.000100");
+        let later = parse_ts_components("1714003200.999999");
+        assert!(later > earlier);
+        assert_eq!(parse_ts_components("garbage"), (0, 0));
     }
 
     #[test]
