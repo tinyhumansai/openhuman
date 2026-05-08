@@ -130,7 +130,7 @@ describe('<WhatsAppMemorySection />', () => {
     render(<WhatsAppMemorySection pollIntervalMs={0} />);
     await waitFor(() => screen.getByTestId('whatsapp-memory-section'));
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     let resolveSync!: (v: any) => void;
     mockWhatsappListChats.mockReturnValueOnce(
       new Promise(r => {

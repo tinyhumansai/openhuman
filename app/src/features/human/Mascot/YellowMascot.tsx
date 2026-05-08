@@ -103,13 +103,28 @@ export const YellowMascot: FC<YellowMascotProps> = ({
   }, [face, arm, mascotColor, groundShadowOpacity, compactArmShading]);
   const playerRef = useRef<PlayerRef>(null);
 
-  // Player's `autoPlay` prop is unreliable across browsers / strict-mode mounts
-  // (autoplay policy gating, ref attaching after first paint). Kick playback
-  // explicitly once the ref is attached and again whenever the variant changes.
+  // Player's `autoPlay` prop races with its internal init: on a cold mount the
+  // ref is attached but the internal frame loop hasn't been wired yet, so the
+  // single play() call we used to make would silently no-op — the SVG renders
+  // its first frame and freezes there until the user interacts (e.g. tab away
+  // and back, which remounts when state is hot). Retry play() on rAF until
+  // isPlaying() reports true, with a hard stop after ~30 frames to avoid
+  // looping forever in failure modes.
   useEffect(() => {
     const p = playerRef.current;
     if (!p) return;
-    p.play();
+    let raf = 0;
+    let attempts = 0;
+    const tick = () => {
+      const player = playerRef.current;
+      if (!player) return;
+      if (player.isPlaying()) return;
+      player.play();
+      attempts += 1;
+      if (attempts < 30) raf = window.requestAnimationFrame(tick);
+    };
+    raf = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(raf);
   }, [component]);
 
   return (
@@ -134,6 +149,11 @@ export const YellowMascot: FC<YellowMascotProps> = ({
         controls={false}
         clickToPlay={false}
         doubleClickToFullscreen={false}
+        // No audio in mascot compositions — skip the shared <audio> tag pool
+        // that Player otherwise pre-mounts on first init. Removing those tags
+        // is what was actually delaying first-frame playback (browser audio
+        // context boot can be hundreds of ms on a cold tab).
+        numberOfSharedAudioTags={0}
         style={{ width: '100%', height: '100%', background: 'transparent' }}
       />
     </div>

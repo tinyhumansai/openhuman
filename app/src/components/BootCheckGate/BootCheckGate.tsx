@@ -416,7 +416,7 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
   // Start check automatically when mode is set and we're in checking phase.
   // The async setState calls inside runCheck() happen after an await, so they
   // do not synchronously cascade — suppress the linter warning here.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
+   
   useEffect(() => {
     if (coreMode.kind !== 'unset' && phase === 'checking') {
       void runCheck(coreMode);
