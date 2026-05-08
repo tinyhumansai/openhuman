@@ -1,22 +1,44 @@
 //! Install the OpenHuman camera bridge into the Meet webview via CDP.
 //!
-//! Call shape mirrors [`crate::meet_audio::inject`]: one
-//! `Page.addScriptToEvaluateOnNewDocument` per bridge, then a single
-//! `Page.reload` to make sure the script runs on the live document.
-//! Since the audio inject path already does the attach + reload, the
-//! camera bridge piggybacks on the same CDP session via
-//! [`install_camera_bridge_on_session`] — no second attach needed.
+//! ## Why post-reload `Runtime.evaluate`, not `addScriptToEvaluateOnNewDocument`
+//!
+//! The natural shape would be to mirror [`crate::meet_audio::inject`]:
+//! register via `Page.addScriptToEvaluateOnNewDocument`, then ride the
+//! audio bridge's `Page.reload` so all three scripts run at
+//! document-start. We tried that. With CEF 146 + a 56 KB camera bridge
+//! (the inlined mascot SVGs as data URIs are the bulk), registering a
+//! third pre-document script consistently crashed the renderer during
+//! the reload — `meet-scanner` would see
+//! `cdp error: {"code":-32000,"message":"Target crashed"}` within ~1 s
+//! of opening, the page was gone before either readiness probe could
+//! answer, and the user saw a blank Meet window.
+//!
+//! The camera bridge only needs to be in place before Meet's first
+//! `getUserMedia` call, which happens after the user (or
+//! `meet_scanner`) clicks "Ask to join" — multiple seconds after the
+//! navigation completes. Plenty of room to inject via
+//! `Runtime.evaluate` once the post-reload page is up.
+//!
+//! Lifecycle:
+//! 1. `meet_audio::inject::install_audio_bridge` registers + reloads
+//!    (unchanged).
+//! 2. After the audio bridge's readiness probe confirms the new doc is
+//!    live, [`install_camera_bridge_post_reload`] evaluates the bridge
+//!    JS directly. No second reload, no pre-document script.
 
 use serde_json::{json, Value};
 use std::time::Duration;
 
 use crate::cdp::CdpConn;
 
-/// Install the camera bridge using an already-attached CDP session.
-/// Called by `meet_audio::inject::install_audio_bridge` after the audio
-/// + captions bridges are registered, so the single `Page.reload` that
-/// follows boots all three.
-pub async fn install_camera_bridge_on_session(
+/// Inject the camera bridge into the Meet page's main world via
+/// `Runtime.evaluate`. Called *after* the audio bridge's Page.reload
+/// has settled, so we land on the live, post-reload document.
+///
+/// Returns `Ok(())` if the evaluation didn't throw page-side. Errors
+/// are non-fatal at the call site: the audio path keeps working and
+/// Meet falls back to the static-Y4M outbound camera.
+pub async fn install_camera_bridge_post_reload(
     cdp: &mut CdpConn,
     session: &str,
 ) -> Result<(), String> {
@@ -25,13 +47,22 @@ pub async fn install_camera_bridge_on_session(
         "[meet-camera] inject session={session} bridge_chars={}",
         js.chars().count()
     );
-    cdp.call(
-        "Page.addScriptToEvaluateOnNewDocument",
-        json!({ "source": js }),
-        Some(session),
-    )
-    .await
-    .map_err(|e| format!("addScriptToEvaluateOnNewDocument(camera): {e}"))?;
+    let res = cdp
+        .call(
+            "Runtime.evaluate",
+            json!({
+                "expression": js,
+                // returnByValue:false because the bridge IIFE returns
+                // undefined; we only care about exceptionDetails.
+                "awaitPromise": false,
+            }),
+            Some(session),
+        )
+        .await
+        .map_err(|e| format!("Runtime.evaluate(camera bridge): {e}"))?;
+    if let Some(exception) = res.get("exceptionDetails") {
+        return Err(format!("page exception: {exception}"));
+    }
     Ok(())
 }
 

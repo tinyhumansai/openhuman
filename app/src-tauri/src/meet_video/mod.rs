@@ -38,8 +38,13 @@
 
 pub mod inject;
 
-use base64::engine::general_purpose::STANDARD as BASE64;
-use base64::Engine as _;
+// SVG data URIs use URL encoding rather than base64 because:
+//   1. base64-encoded `data:image/svg+xml` has tripped on strict
+//      image-src CSPs in some Meet builds, manifesting as the bridge's
+//      "mascot decode failed Event" warning with no further detail.
+//   2. The SVGs already minify well; url-encoding only inflates the
+//      reserved characters, while base64 inflates the whole payload by
+//      33%. Net wire size is comparable.
 
 /// Idle mascot SVG (calm, eyes-forward). Rasterized into the canvas
 /// during the bridge's `ready` promise.
@@ -56,9 +61,8 @@ const MASCOT_THINKING_SVG: &str = include_str!("../../../../remotion/public/Book
 const CAMERA_BRIDGE_TEMPLATE: &str = include_str!("camera_bridge.js");
 
 /// Build the page-side camera bridge JS with the mascot SVGs inlined as
-/// data URIs. Done at runtime (not `const`) because `base64::encode` is
-/// not const, but the result is cheap to compute and stable per process,
-/// so the inject path memoizes it via `OnceLock` if it grows hot.
+/// data URIs. Cheap to compute and stable per process; the inject path
+/// can memoize via `OnceLock` if it ever grows hot.
 pub fn build_camera_bridge_js() -> String {
     let idle = svg_to_data_uri(MASCOT_IDLE_SVG);
     let thinking = svg_to_data_uri(MASCOT_THINKING_SVG);
@@ -67,9 +71,40 @@ pub fn build_camera_bridge_js() -> String {
         .replace("__OPENHUMAN_MASCOT_THINKING_DATAURI__", &thinking)
 }
 
+/// URL-encode an SVG into a `data:image/svg+xml` URI suitable for
+/// `<img src>`. Conservative whitelist of unreserved characters per
+/// RFC 3986 plus a few path-safe extras; everything else is
+/// percent-encoded byte-by-byte (UTF-8). Earlier passes that escaped
+/// only the obvious breakers (`<`, `>`, `"`, `#`, `%`) left raw spaces
+/// in attribute values like `viewBox="0 0 1000 1000"`, which Chromium
+/// rejects in data URIs (manifests as the bridge's
+/// "mascot decode failed Event" warning with no further detail).
 fn svg_to_data_uri(svg: &str) -> String {
-    let b64 = BASE64.encode(svg.as_bytes());
-    format!("data:image/svg+xml;base64,{b64}")
+    fn is_unreserved(b: u8) -> bool {
+        matches!(b,
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-' | b'_' | b'.' | b'~'
+            // Sub-delims + path-safe that don't trip data-URI parsers
+            // and keep the SVG body itself parseable. Notably: '/'
+            // and ':' are fine inside path components per RFC 3986.
+            | b'/' | b':' | b';' | b'=' | b',' | b'(' | b')'
+            | b'*' | b'!' | b'\''
+        )
+    }
+
+    let mut out = String::with_capacity(svg.len() * 2 + 64);
+    out.push_str("data:image/svg+xml;charset=utf-8,");
+    for byte in svg.bytes() {
+        if is_unreserved(byte) {
+            out.push(byte as char);
+        } else {
+            use std::fmt::Write as _;
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -81,19 +116,23 @@ mod tests {
         let js = build_camera_bridge_js();
         assert!(!js.contains("__OPENHUMAN_MASCOT_IDLE_DATAURI__"));
         assert!(!js.contains("__OPENHUMAN_MASCOT_THINKING_DATAURI__"));
-        assert!(js.contains("data:image/svg+xml;base64,"));
-        // Both mascots should appear (two distinct data URIs).
-        let count = js.matches("data:image/svg+xml;base64,").count();
+        let count = js.matches("data:image/svg+xml;charset=utf-8,").count();
         assert!(count >= 2, "expected at least 2 data URIs, got {count}");
     }
 
     #[test]
-    fn data_uri_round_trips() {
-        let uri = svg_to_data_uri("<svg/>");
-        assert!(uri.starts_with("data:image/svg+xml;base64,"));
-        let b64 = uri.trim_start_matches("data:image/svg+xml;base64,");
-        let decoded = BASE64.decode(b64).expect("base64 decodes");
-        assert_eq!(decoded, b"<svg/>");
+    fn url_encoding_escapes_reserved_chars() {
+        let uri = svg_to_data_uri("<svg width=\"10\"/>\n");
+        assert!(uri.starts_with("data:image/svg+xml;charset=utf-8,"));
+        let body = uri.trim_start_matches("data:image/svg+xml;charset=utf-8,");
+        // The breakers — '<', '>', '"', '\n' — must not appear unescaped.
+        assert!(!body.contains('<'));
+        assert!(!body.contains('>'));
+        assert!(!body.contains('"'));
+        assert!(!body.contains('\n'));
+        assert!(body.contains("%3C"));
+        assert!(body.contains("%3E"));
+        assert!(body.contains("%22"));
     }
 
     #[test]

@@ -34,7 +34,10 @@
     return new Promise(function (resolve, reject) {
       const img = new Image();
       img.onload = function () { resolve(img); };
-      img.onerror = function (e) { reject(e); };
+      img.onerror = function (e) {
+        console.warn(TAG, 'image decode failed for src head=', (src || '').slice(0, 120));
+        reject(new Error('img.onerror'));
+      };
       img.src = src;
     });
   }
@@ -62,10 +65,14 @@
     }
   })();
 
-  // rAF loop. We keep a small per-frame phase counter for a gentle
-  // sine-wave bob so the camera reads as a live feed (Meet's outbound
-  // codec drops static frames, which can manifest as a "frozen camera"
-  // banner to other participants).
+  // setInterval-driven render loop, NOT requestAnimationFrame: the
+  // meet window is frequently backgrounded behind the main openhuman
+  // window during the agent flow, and Chromium throttles rAF to ~0Hz
+  // in background tabs. setInterval keeps firing regardless of focus,
+  // which is what we need for the outbound camera to stay live.
+  // The small per-frame phase counter drives a gentle sine-wave bob
+  // so the camera reads as a live feed (Meet's outbound codec drops
+  // static frames, which can show up as a "frozen camera" banner).
   let frame = 0;
   function tick() {
     frame++;
@@ -73,12 +80,10 @@
     ctx.fillRect(0, 0, W, H);
     const img = moodImgs[currentMood];
     if (img) {
-      // Fit with 12% margin so Meet's rounded tile mask doesn't crop.
       const margin = 0.12;
       const tw = W * (1 - 2 * margin);
       const th = H * (1 - 2 * margin);
       const scale = Math.min(tw / img.naturalWidth, th / img.naturalHeight);
-      // Subtle bob: ±6px vertical, ~2s period.
       const bob = Math.sin(frame / (FPS * 2 / Math.PI)) * 6;
       const dw = img.naturalWidth * scale;
       const dh = img.naturalHeight * scale;
@@ -86,9 +91,8 @@
       const dy = (H - dh) / 2 + bob;
       ctx.drawImage(img, dx, dy, dw, dh);
     }
-    requestAnimationFrame(tick);
   }
-  requestAnimationFrame(tick);
+  setInterval(tick, Math.round(1000 / FPS));
 
   // Capture-stream once both mascots are decoded; before then the
   // canvas just shows the background fill, which is fine — Meet won't
@@ -106,70 +110,71 @@
   }
 
   // ---- monkey-patch ----------------------------------------------------
+  // Important: the audio bridge (audio_bridge.js) installs its own
+  // getUserMedia override BEFORE we run, and it already handles every
+  // shape of constraint correctly — including audio+video, where it
+  // pulls the fake-camera Y4M video and splices in its own audio. We
+  // must NOT build a new MediaStream from cloned tracks: doing so
+  // creates duplicate audio senders against the same destination,
+  // which manifests at WebRTC negotiation as
+  // "BUNDLE group contains a codec collision between [111: audio/opus]
+  // and [111: audio/opus]" and breaks the Meet join flow.
+  //
+  // Correct shape: let the audio bridge produce the canonical stream,
+  // then swap *only* the video track in place.
   const md = navigator.mediaDevices;
   if (!md) {
     console.warn(TAG, 'navigator.mediaDevices missing — cannot install bridge');
     return;
   }
   const origGetUserMedia = md.getUserMedia ? md.getUserMedia.bind(md) : null;
-  const origEnumerateDevices = md.enumerateDevices ? md.enumerateDevices.bind(md) : null;
+  if (!origGetUserMedia) {
+    console.warn(TAG, 'navigator.mediaDevices.getUserMedia missing — cannot install bridge');
+    return;
+  }
 
   function wantsVideo(constraints) {
     if (!constraints) return false;
     const v = constraints.video;
     return v === true || (v && typeof v === 'object');
   }
-  function wantsAudio(constraints) {
-    if (!constraints) return false;
-    const a = constraints.audio;
-    return a === true || (a && typeof a === 'object');
-  }
 
   md.getUserMedia = async function (constraints) {
     console.log(TAG, 'getUserMedia intercepted', JSON.stringify(constraints || {}));
     if (!wantsVideo(constraints)) {
-      // Audio-only call — pass through unchanged.
-      if (origGetUserMedia) return origGetUserMedia(constraints);
-      throw new Error('getUserMedia(audio) not available');
+      return origGetUserMedia(constraints);
     }
     await ready;
-    // Build the returned stream: our video track + (optionally) the
-    // user's real microphone audio, fetched via the original API.
-    const tracks = [];
-    const videoTrack = stream.getVideoTracks()[0];
-    if (videoTrack) tracks.push(videoTrack.clone());
-    if (wantsAudio(constraints) && origGetUserMedia) {
-      try {
-        const audioStream = await origGetUserMedia({ audio: constraints.audio });
-        audioStream.getAudioTracks().forEach(function (t) { tracks.push(t); });
-      } catch (err) {
-        console.warn(TAG, 'real audio capture failed, returning video-only', err);
-      }
+    // Run the existing chain (audio bridge + Chromium) with the full
+    // original constraints so it returns a properly assembled stream.
+    const realStream = await origGetUserMedia(constraints);
+    // Drop whatever video track came back (the fake-camera Y4M) and
+    // splice our canvas track in. addTrack/removeTrack on a live
+    // MediaStream is the supported way to mutate a stream returned
+    // from getUserMedia without re-allocating it.
+    try {
+      realStream.getVideoTracks().forEach(function (t) {
+        realStream.removeTrack(t);
+        t.stop();
+      });
+    } catch (err) {
+      console.warn(TAG, 'failed to strip original video tracks', err);
     }
-    return new MediaStream(tracks);
+    const ours = stream.getVideoTracks()[0];
+    if (ours) {
+      realStream.addTrack(ours.clone());
+    } else {
+      console.warn(TAG, 'no canvas video track available — returning audio-only');
+    }
+    return realStream;
   };
 
-  md.enumerateDevices = async function () {
-    const real = origEnumerateDevices ? await origEnumerateDevices() : [];
-    // Drop real cameras so Meet's device picker doesn't offer them as
-    // alternatives; keep mics + speakers untouched.
-    const filtered = real.filter(function (d) { return d.kind !== 'videoinput'; });
-    filtered.unshift({
-      deviceId: 'openhuman-mascot',
-      kind: 'videoinput',
-      label: 'OpenHuman Mascot',
-      groupId: 'openhuman',
-      toJSON: function () {
-        return {
-          deviceId: this.deviceId,
-          kind: this.kind,
-          label: this.label,
-          groupId: this.groupId,
-        };
-      },
-    });
-    return filtered;
-  };
+  // Note: we deliberately do NOT override enumerateDevices. The
+  // process-level --use-fake-device-for-media-stream flag already
+  // surfaces a "Fake Video Capture" device, which Meet picks by
+  // default. Returning custom plain objects from enumerateDevices
+  // can break Meet's device-picker code paths that expect real
+  // MediaDeviceInfo instances.
 
   // ---- host API --------------------------------------------------------
   window.__openhumanSetMood = function (mood) {
