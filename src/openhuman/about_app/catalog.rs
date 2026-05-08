@@ -877,6 +877,25 @@ const CAPABILITIES: &[Capability] = &[
             destinations: &["Google Meet"],
         }),
     },
+    Capability {
+        id: "meet_agent.live_loop",
+        name: "Live Meet Agent — Listen + Speak",
+        domain: "meet_agent",
+        category: CapabilityCategory::Automation,
+        description: "While the agent is in a Google Meet call, it listens to the other \
+                      participants by tapping the embedded webview's audio output, runs \
+                      VAD-segmented speech-to-text, decides whether to respond, and speaks \
+                      back through a virtual microphone the embedded Chromium reads as if \
+                      it were a real input device. No system audio permission required — \
+                      capture and playback both stay inside the CEF process.",
+        how_to: "Automatic once a Meet call is open via Intelligence > Calls.",
+        status: CapabilityStatus::Beta,
+        privacy: Some(CapabilityPrivacy {
+            leaves_device: true,
+            data_kind: PrivacyDataKind::Derived,
+            destinations: &["Google Meet", "ElevenLabs (STT/TTS via hosted backend)"],
+        }),
+    },
     // ── Update ──────────────────────────────────────────────────────────────
     Capability {
         id: "update.check",

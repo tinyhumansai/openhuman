@@ -79,6 +79,7 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "settings.manage_service",
         "settings.clear_app_data",
         "meet.join_call",
+        "meet_agent.live_loop",
     ] {
         assert!(
             ids.contains(expected),

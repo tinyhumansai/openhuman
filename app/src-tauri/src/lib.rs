@@ -15,6 +15,7 @@ mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+mod meet_audio;
 mod meet_call;
 mod meet_scanner;
 mod native_notifications;
@@ -1367,6 +1368,7 @@ pub fn run() {
     let builder = builder.manage(telegram_scanner::ScannerRegistry::new());
     let builder = builder.manage(screen_capture::ScreenShareState::new());
     let builder = builder.manage(meet_call::MeetCallState::new());
+    let builder = builder.manage(meet_audio::MeetAudioState::new());
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
