@@ -34,8 +34,22 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde_json::{json, Value};
 
 use super::session::registry;
-use super::types::SessionEventKind;
+use super::types::{SessionEvent, SessionEventKind};
 use super::wav;
+
+/// How many of the most recent `Heard` / `Spoke` events we feed back
+/// into the LLM as rolling conversation context. 12 ≈ a few minutes of
+/// captioned dialogue — enough for the model to follow a thread without
+/// blowing the prompt budget.
+const CONTEXT_EVENT_WINDOW: usize = 12;
+/// Spoken-reply ceiling. Each token is roughly ¾ of a word, so 220
+/// tokens ≈ 30 seconds of speech — long enough for a real answer, short
+/// enough that the model can't hijack the meeting.
+const REPLY_MAX_TOKENS: u32 = 220;
+/// ElevenLabs model. `eleven_turbo_v2_5` strikes the best
+/// quality/latency balance; the older default the backend would pick
+/// (`eleven_monolingual_v1`) sounds noticeably flatter.
+const TTS_MODEL_ID: &str = "eleven_turbo_v2_5";
 
 /// Minimum samples below which we skip the brain turn entirely.
 /// 250 ms @ 16 kHz — under this, VAD almost certainly fired on a
@@ -63,22 +77,38 @@ pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
     // a chance to assemble before we drain the prompt.
     tokio::time::sleep(std::time::Duration::from_millis(CAPTION_TURN_DELAY_MS)).await;
 
-    let prompt = match registry().with_session(request_id, |s| s.take_pending_prompt())? {
-        Some(p) => p,
-        None => return Ok(false),
+    let (prompt, history) = match registry().with_session(request_id, |s| {
+        let prompt = s.take_pending_prompt();
+        let history = recent_dialog_history(s.events(), CONTEXT_EVENT_WINDOW);
+        (prompt, history)
+    })? {
+        (Some(p), h) => (p, h),
+        (None, _) => return Ok(false),
     };
     log::info!(
-        "[meet-agent] caption turn start request_id={request_id} prompt_chars={}",
-        prompt.chars().count()
+        "[meet-agent] caption turn start request_id={request_id} prompt_chars={} history_msgs={}",
+        prompt.chars().count(),
+        history.len(),
     );
 
-    // We deliberately skip the LLM in the hot path. The note itself
-    // is already stored verbatim in the session transcript (a `Heard`
-    // event). The verbal ack should always be brief, deterministic,
-    // and free of model latency / chain-of-thought leakage — so we
-    // pick a short canned phrase. Post-meeting summarisation (which
-    // can take its time and run a real LLM) lives in a follow-up.
-    let reply_text = pick_ack_phrase(&prompt).to_string();
+    // Real LLM call. The model gets the rolling caption history plus
+    // the user's direct address and decides whether to respond, what
+    // to say, and how concise to be. It can also return an empty
+    // string when it concludes the message wasn't actually directed
+    // at it (false-positive wake word, side conversation).
+    let reply_text = match llm_meeting(&prompt, &history).await {
+        Ok(text) => text,
+        Err(err) => {
+            log::warn!("[meet-agent] caption-turn LLM failed request_id={request_id} err={err}");
+            let _ = registry().with_session(request_id, |s| {
+                s.record_event(
+                    SessionEventKind::Note,
+                    format!("LLM failure (using ack): {err}"),
+                );
+            });
+            pick_ack_phrase(&prompt).to_string()
+        }
+    };
 
     let synthesized = if reply_text.trim().is_empty() {
         Vec::new()
@@ -148,7 +178,11 @@ fn pick_ack_phrase(prompt: &str) -> &'static str {
 /// turn actually ran, `Ok(false)` when the inbound buffer was below the
 /// floor.
 pub async fn run_turn(request_id: &str) -> Result<bool, String> {
-    let drained = registry().with_session(request_id, |s| s.drain_inbound())?;
+    let (drained, history) = registry().with_session(request_id, |s| {
+        let drained = s.drain_inbound();
+        let history = recent_dialog_history(s.events(), CONTEXT_EVENT_WINDOW);
+        (drained, history)
+    })?;
     if drained.len() < MIN_TURN_SAMPLES {
         log::debug!(
             "[meet-agent] skipping turn request_id={request_id} samples={}",
@@ -188,7 +222,7 @@ pub async fn run_turn(request_id: &str) -> Result<bool, String> {
     );
 
     // ─── LLM ────────────────────────────────────────────────────────
-    let reply_text = match llm(&heard).await {
+    let reply_text = match llm_meeting(&heard, &history).await {
         Ok(text) => text,
         Err(err) => {
             log::warn!("[meet-agent] LLM failed request_id={request_id} err={err}");
@@ -263,7 +297,43 @@ async fn stt(samples: &[i16]) -> Result<String, String> {
     Ok(text)
 }
 
-async fn llm(heard: &str) -> Result<String, String> {
+/// System prompt for the live meeting agent. Pushes the model toward
+/// (a) recognising whether the latest utterance is genuinely directed
+/// at it (intent classification — emit empty string when not), and
+/// (b) responding conversationally and concisely when it is.
+const MEETING_SYSTEM_PROMPT: &str = "\
+You are OpenHuman, an AI assistant joining a live Google Meet call as a participant. \
+The meeting transcript is provided as prior turns where `user` lines are captions \
+spoken by humans on the call (sometimes prefixed with their name) and `assistant` \
+lines are things you previously said out loud. The latest `user` message is the \
+utterance you are deciding how to respond to.\n\
+\n\
+Decide first: was this latest utterance actually directed at you? Strong signals: \
+the speaker addresses you by name (\"OpenHuman\", \"hey openhuman\"), asks a direct \
+question, or asks you to do something (note this, summarise, look up, remember, \
+remind, draft). Weak signals (do NOT respond): chit-chat between humans, \
+side conversation, your name appearing inside a longer thought aimed at someone \
+else, ambient transcription noise.\n\
+\n\
+If it is NOT directed at you, output exactly the empty string. Stay silent. \
+\n\
+If it IS directed at you:\n\
+  • Reply in 1–2 spoken sentences. Conversational, warm, direct. No filler.\n\
+  • Pronounce naturally — write the way a person speaks, not the way they type. \
+No markdown, no bullet lists, no code blocks, no emoji.\n\
+  • For dictation / note requests (\"remember…\", \"action item…\", \"follow up on…\"), \
+the note is already captured in the transcript log, so just acknowledge briefly \
+(\"Got it.\", \"Adding that.\") — don't read the note back.\n\
+  • For questions, answer directly with what you know; if you don't know, say so \
+in one sentence rather than guessing.\n\
+  • Never repeat verbatim what was said. Never describe what you're about to do — \
+just do it.\n\
+";
+
+/// Build a chat-completions request from rolling meeting history plus
+/// the current user prompt, post it through the backend, and return
+/// the assistant's reply (trimmed, possibly empty).
+async fn llm_meeting(prompt: &str, history: &[ConversationTurn]) -> Result<String, String> {
     use crate::api::config::effective_api_url;
     use crate::api::jwt::get_session_token;
     use crate::api::BackendOAuthClient;
@@ -278,31 +348,18 @@ async fn llm(heard: &str) -> Result<String, String> {
     let api_url = effective_api_url(&config.api_url);
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
 
+    let mut messages: Vec<Value> = Vec::with_capacity(history.len() + 2);
+    messages.push(json!({ "role": "system", "content": MEETING_SYSTEM_PROMPT }));
+    for turn in history {
+        messages.push(json!({ "role": turn.role, "content": turn.content }));
+    }
+    messages.push(json!({ "role": "user", "content": prompt }));
+
     let body = json!({
         "model": "agentic-v1",
-        "temperature": 0.2,
-        // Hard cap to force a terse acknowledgement. agentic-v1
-        // tends to elaborate (200+ chars) when given more headroom.
-        "max_tokens": 20,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are OpenHuman, a note-taking AI participating in a live Google \
-                            Meet call. Each user message you receive is a single dictation — a \
-                            note, action item, or follow-up the user wants captured for after \
-                            the meeting. The transcript log stores the note verbatim, so your \
-                            job is only to acknowledge briefly out loud that you got it. \
-                            \
-                            Reply with one short sentence, ideally three to six words \
-                            (\"Got it.\", \"Noted.\", \"Adding that to your follow-ups.\"). \
-                            Never repeat the user's note back, never speculate or expand on \
-                            it, never engage in side conversation. \
-                            \
-                            If the message is empty, unclear, or just filler (\"uh\", \"hmm\", \
-                            a name), reply with an empty string."
-            },
-            { "role": "user", "content": heard }
-        ]
+        "temperature": 0.5,
+        "max_tokens": REPLY_MAX_TOKENS,
+        "messages": messages,
     });
 
     let raw = client
@@ -317,18 +374,101 @@ async fn llm(heard: &str) -> Result<String, String> {
 
     let text = extract_chat_completion_text(&raw)
         .ok_or_else(|| format!("unexpected chat completions response: {raw}"))?;
-    Ok(text)
+    Ok(strip_for_speech(&text))
+}
+
+/// Trim characters that sound bad when read aloud by TTS but routinely
+/// leak from a chat-completions response (markdown asterisks, fenced
+/// code, leading bullets). Keep punctuation that affects prosody
+/// (commas, periods, question marks) intact.
+fn strip_for_speech(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_code = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code {
+            continue;
+        }
+        let cleaned: String = trimmed
+            .trim_start_matches(|c: char| c == '-' || c == '*' || c == '#' || c == '>')
+            .trim()
+            .chars()
+            .filter(|c| !matches!(c, '*' | '`' | '_' | '#'))
+            .collect();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(&cleaned);
+    }
+    out.trim().to_string()
+}
+
+/// One rolling-history entry handed to the LLM.
+#[derive(Debug, Clone)]
+struct ConversationTurn {
+    role: &'static str,
+    content: String,
+}
+
+/// Pull the last `window` `Heard`/`Spoke` events from the session log
+/// and shape them into chat-completions turns. `Note` events are
+/// internal book-keeping (errors, wake-word matches) and are skipped.
+fn recent_dialog_history(events: &[SessionEvent], window: usize) -> Vec<ConversationTurn> {
+    let mut out: Vec<ConversationTurn> = Vec::with_capacity(window);
+    for e in events.iter().rev() {
+        if out.len() >= window {
+            break;
+        }
+        let role = match e.kind {
+            SessionEventKind::Heard => "user",
+            SessionEventKind::Spoke => "assistant",
+            SessionEventKind::Note => continue,
+        };
+        let content = e.text.trim();
+        if content.is_empty() {
+            continue;
+        }
+        out.push(ConversationTurn {
+            role,
+            content: content.to_string(),
+        });
+    }
+    out.reverse();
+    out
 }
 
 async fn tts(text: &str) -> Result<Vec<i16>, String> {
     use crate::openhuman::voice::reply_speech::{synthesize_reply, ReplySpeechOptions};
 
     let config = crate::openhuman::config::ops::load_config_with_timeout().await?;
+    // Tuned for live conversational speech, not narration:
+    //   stability 0.4 — leave room for prosody / inflection. Higher
+    //     values (>0.6) flatten the read into the "monotone audiobook"
+    //     timbre the previous default produced.
+    //   similarity_boost 0.75 — keep the chosen voice's character.
+    //   style 0.35 — light expressiveness; too high makes punctuation
+    //     swallow words.
+    //   use_speaker_boost on — louder, clearer in noisy meetings.
+    let voice_settings = json!({
+        "stability": 0.4,
+        "similarity_boost": 0.75,
+        "style": 0.35,
+        "use_speaker_boost": true,
+    });
     let opts = ReplySpeechOptions {
         // Ask ElevenLabs (via the hosted backend) for raw PCM16LE @
         // 16 kHz so we can feed the result straight into the
         // shell-side bridge with no transcoding.
         output_format: Some("pcm_16000".to_string()),
+        model_id: Some(TTS_MODEL_ID.to_string()),
+        voice_settings: Some(voice_settings),
         ..Default::default()
     };
     let outcome = synthesize_reply(&config, text, &opts).await?;
@@ -444,5 +584,72 @@ mod tests {
             extract_chat_completion_text(&json!({ "choices": [] })),
             None
         );
+    }
+
+    #[test]
+    fn recent_dialog_history_maps_event_kinds_to_chat_roles() {
+        let now = 0;
+        let events = vec![
+            SessionEvent {
+                kind: SessionEventKind::Heard,
+                text: "Alice: how's the build going".into(),
+                timestamp_ms: now,
+            },
+            SessionEvent {
+                kind: SessionEventKind::Note,
+                text: "wake word".into(),
+                timestamp_ms: now,
+            },
+            SessionEvent {
+                kind: SessionEventKind::Spoke,
+                text: "Build is green.".into(),
+                timestamp_ms: now,
+            },
+            SessionEvent {
+                kind: SessionEventKind::Heard,
+                text: "Bob: ship it".into(),
+                timestamp_ms: now,
+            },
+        ];
+        let history = recent_dialog_history(&events, 10);
+        assert_eq!(history.len(), 3, "Note events are dropped");
+        assert_eq!(history[0].role, "user");
+        assert_eq!(history[1].role, "assistant");
+        assert_eq!(history[2].role, "user");
+        assert_eq!(history[2].content, "Bob: ship it");
+    }
+
+    #[test]
+    fn recent_dialog_history_caps_at_window_keeping_most_recent() {
+        let events: Vec<SessionEvent> = (0..30)
+            .map(|i| SessionEvent {
+                kind: SessionEventKind::Heard,
+                text: format!("line {i}"),
+                timestamp_ms: 0,
+            })
+            .collect();
+        let history = recent_dialog_history(&events, 5);
+        assert_eq!(history.len(), 5);
+        assert_eq!(history[0].content, "line 25");
+        assert_eq!(history[4].content, "line 29");
+    }
+
+    #[test]
+    fn strip_for_speech_removes_markdown_punctuation_and_fences() {
+        let raw = "**Got it.** Adding `that` to your follow-ups.";
+        assert_eq!(
+            strip_for_speech(raw),
+            "Got it. Adding that to your follow-ups."
+        );
+        let fenced = "Sure:\n```\ncode\n```\nDone.";
+        assert_eq!(strip_for_speech(fenced), "Sure: Done.");
+        let bullets = "- one\n- two";
+        assert_eq!(strip_for_speech(bullets), "one two");
+    }
+
+    #[test]
+    fn strip_for_speech_preserves_empty_when_input_empty() {
+        assert_eq!(strip_for_speech(""), "");
+        assert_eq!(strip_for_speech("   \n  "), "");
     }
 }

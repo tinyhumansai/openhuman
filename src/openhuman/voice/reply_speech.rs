@@ -57,6 +57,11 @@ pub struct ReplySpeechOptions {
     pub voice_id: Option<String>,
     pub model_id: Option<String>,
     pub output_format: Option<String>,
+    /// ElevenLabs `voice_settings` blob — passed through verbatim.
+    /// Typical fields: `stability`, `similarity_boost`, `style`,
+    /// `use_speaker_boost`. The backend forwards this to ElevenLabs;
+    /// unknown keys are dropped server-side.
+    pub voice_settings: Option<Value>,
 }
 
 /// Synthesize the agent's reply through the hosted backend.
@@ -116,6 +121,11 @@ pub async fn synthesize_reply(
         .filter(|s| !s.is_empty())
     {
         body.insert("output_format".to_string(), json!(v));
+    }
+    if let Some(settings) = opts.voice_settings.as_ref() {
+        if !settings.is_null() {
+            body.insert("voice_settings".to_string(), settings.clone());
+        }
     }
 
     debug!(

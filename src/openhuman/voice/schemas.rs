@@ -372,6 +372,7 @@ fn handle_voice_reply_synthesize(params: Map<String, Value>) -> ControllerFuture
             voice_id: p.voice_id,
             model_id: p.model_id,
             output_format: p.output_format,
+            voice_settings: None,
         };
         to_json(
             crate::openhuman::voice::reply_speech::synthesize_reply(&config, &p.text, &opts)
