@@ -29,17 +29,12 @@ fn truncate_payload_marks_truncation_and_stays_valid_utf8() {
     let big = serde_json::Value::String("😀".repeat(10_000));
     let out = truncate_payload(&big, 128);
     assert!(out.contains("[...truncated"));
-    assert!(out.len() <= 128 + 64); // generous upper bound for the marker
-                                    // Round-trip to prove it's valid UTF-8 (otherwise format! would
-                                    // have panicked — this assertion is belt-and-braces).
+    assert!(out.len() <= 128 + 64);
     let _ = out.as_str();
 }
 
 #[test]
 fn extract_inline_prompt_returns_body_for_trigger_triage_builtin() {
-    // Load the baked-in TOML+prompt directly so this test doesn't
-    // depend on `AgentDefinitionRegistry::init_global` having been
-    // called by the test runner.
     let builtin = BUILTINS
         .iter()
         .find(|b| b.id == TRIGGER_TRIAGE_AGENT_ID)
@@ -53,23 +48,56 @@ fn extract_inline_prompt_returns_body_for_trigger_triage_builtin() {
     );
 }
 
-// ── Bus dispatch integration test ───────────────────────────────
-//
-// Stubs `agent.run_turn` via `mock_agent_run_turn` and drives
-// `run_triage_with_resolved` with an injected `ResolvedProvider`.
-// Proves:
-//   1. the evaluator routes its turn through the native bus
-//   2. the dispatched `AgentTurnRequest` has the triage system
-//      prompt, a user message carrying the envelope label, empty
-//      tools_registry, and the `provider_name` / `model` the
-//      resolver returned
-//   3. a canned JSON reply is parsed into the correct
-//      `TriageDecision`
+#[test]
+fn classify_string_recognises_429_with_retry_after() {
+    let err = classify_error("HTTP 429 Too Many Requests; Retry-After: 2".to_string());
+    match err {
+        ArmError::Retryable {
+            retry_after_ms: Some(ms),
+            ..
+        } => {
+            assert_eq!(ms, 2_000, "Retry-After: 2 → 2000 ms");
+        }
+        _ => panic!("expected Retryable with retry_after_ms"),
+    }
+}
 
-/// Minimal `Provider` impl that satisfies the `Arc<dyn Provider>`
-/// type in `ResolvedProvider`. The stubbed bus handler never
-/// actually invokes any provider methods — if it did, these
-/// methods would bail out loudly so the test fails fast.
+#[test]
+fn classify_string_recognises_5xx_as_transient() {
+    let err = classify_error("upstream returned 503 Service Unavailable".to_string());
+    assert!(
+        matches!(err, ArmError::Retryable { .. }),
+        "5xx should be Retryable"
+    );
+}
+
+#[test]
+fn classify_string_recognises_timeout_as_transient() {
+    let err = classify_error("request timed out after 30s".to_string());
+    assert!(
+        matches!(err, ArmError::Retryable { .. }),
+        "timeout should be Retryable"
+    );
+}
+
+#[test]
+fn classify_string_treats_auth_failure_as_fatal() {
+    let err = classify_error("HTTP 401 unauthorized: invalid api key".to_string());
+    assert!(
+        matches!(err, ArmError::Fatal(_)),
+        "auth failure should be Fatal"
+    );
+}
+
+// ── Tiered fallback integration tests ───────────────────────────
+//
+// These drive `run_triage_with_arms` end-to-end through the agent
+// bus, with a stateful stub that decides per-call whether to return
+// success, a 429, a 5xx, or a fatal auth error. Each `cloud-then-
+// local` test relies on call-ordering: cloud arm is exercised
+// first; falling through to local arm uses a different
+// `provider_name` we inspect to disambiguate.
+
 struct NoopProvider;
 
 #[async_trait]
@@ -81,247 +109,258 @@ impl Provider for NoopProvider {
         _model: &str,
         _temperature: f64,
     ) -> anyhow::Result<String> {
-        anyhow::bail!(
-            "NoopProvider::chat_with_system should never be called — \
-             the mock_agent_run_turn stub short-circuits before the \
-             real handler hits any provider method"
-        )
+        anyhow::bail!("NoopProvider should never be called — bus mock short-circuits")
     }
 }
 
-fn fake_resolved(used_local: bool) -> ResolvedProvider {
+fn cloud_arm() -> ResolvedProvider {
     ResolvedProvider {
         provider: StdArc::new(NoopProvider) as StdArc<dyn Provider>,
-        provider_name: "stub-provider".to_string(),
-        model: "stub-model".to_string(),
-        used_local,
+        provider_name: "stub-cloud".to_string(),
+        model: "stub-cloud-model".to_string(),
+        used_local: false,
     }
 }
 
-#[tokio::test]
-async fn run_triage_dispatches_through_agent_run_turn_bus() {
-    // Registry must be available before `run_triage_with_resolved`
-    // looks up the `trigger_triage` definition. `init_global_builtins`
-    // is a no-op on subsequent calls so parallel tests are safe.
-    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+fn local_arm() -> ResolvedProvider {
+    ResolvedProvider {
+        provider: StdArc::new(NoopProvider) as StdArc<dyn Provider>,
+        provider_name: "stub-local".to_string(),
+        model: "stub-local-model".to_string(),
+        used_local: true,
+    }
+}
 
-    let envelope = TriggerEnvelope::from_composio(
+fn envelope() -> TriggerEnvelope {
+    TriggerEnvelope::from_composio(
         "gmail",
         "GMAIL_NEW_GMAIL_MESSAGE",
-        "trig-42",
-        "uuid-42",
+        "trig-x",
+        "uuid-x",
         json!({ "from": "ada@example.com", "subject": "ship it" }),
-    );
+    )
+}
 
-    let stub_calls = StdArc::new(AtomicUsize::new(0));
-    let stub_calls_handler = StdArc::clone(&stub_calls);
+const VALID_JSON_REPLY: &str = "{\"action\":\"acknowledge\",\"reason\":\"all good\"}";
 
-    // Capture of the dispatched request for deeper assertions
-    // after the bus round-trip completes.
-    let captured = StdArc::new(tokio::sync::Mutex::new(
-        None::<(
-            String, // provider_name
-            String, // model
-            usize,  // history length
-            usize,  // tools_registry length
-            String, // channel_name
-            String, // system prompt body (first 200 chars)
-            String, // user message body
-        )>,
-    ));
-    let captured_handler = StdArc::clone(&captured);
+#[tokio::test]
+async fn happy_path_returns_cloud_resolution() {
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
 
-    let _guard = mock_agent_run_turn(move |req| {
-        let calls = StdArc::clone(&stub_calls_handler);
-        let cap = StdArc::clone(&captured_handler);
-        async move {
-            calls.fetch_add(1, Ordering::SeqCst);
-            let system_preview = req
-                .history
-                .first()
-                .map(|m| m.content.chars().take(200).collect::<String>())
-                .unwrap_or_default();
-            let user_msg = req
-                .history
-                .get(1)
-                .map(|m| m.content.clone())
-                .unwrap_or_default();
-            *cap.lock().await = Some((
-                req.provider_name.clone(),
-                req.model.clone(),
-                req.history.len(),
-                req.tools_registry.len(),
-                req.channel_name.clone(),
-                system_preview,
-                user_msg,
-            ));
-            Ok(AgentTurnResponse {
-                text:
-                    "Here's my call:\n```json\n{\"action\":\"drop\",\"reason\":\"test noise\"}\n```"
-                        .to_string(),
-            })
-        }
+    let _guard = mock_agent_run_turn(move |_req| async move {
+        Ok(AgentTurnResponse {
+            text: VALID_JSON_REPLY.to_string(),
+        })
     })
     .await;
 
-    let run = run_triage_with_resolved(fake_resolved(false), &envelope)
+    let outcome = run_triage_with_arms(cloud_arm(), Some(local_arm()), &envelope())
         .await
-        .expect("run_triage should succeed with stub");
+        .expect("happy path must succeed");
 
-    // ── Stub was hit exactly once.
-    assert_eq!(
-        stub_calls.load(Ordering::SeqCst),
-        1,
-        "stub handler must be invoked exactly once per triage run"
-    );
-
-    // ── Dispatched request shape.
-    let cap = captured.lock().await;
-    let (provider_name, model, hist_len, tools_len, channel, sys_preview, user_msg) =
-        cap.clone().expect("captured request");
-    assert_eq!(provider_name, "stub-provider");
-    assert_eq!(model, "stub-model");
-    assert_eq!(hist_len, 2, "expected system + user message");
-    assert_eq!(tools_len, 0, "trigger_triage has zero tools");
-    assert_eq!(channel, "triage");
-    assert!(
-        sys_preview.to_lowercase().contains("trigger"),
-        "system prompt should come from trigger_triage/prompt.md"
-    );
-    assert!(
-        user_msg.contains("composio/gmail/GMAIL_NEW_GMAIL_MESSAGE"),
-        "user message must carry the envelope display label, got: {user_msg}"
-    );
-    assert!(
-        user_msg.contains("ada@example.com"),
-        "user message must carry the payload, got: {user_msg}"
-    );
-
-    // ── Parsed decision matches the canned reply.
-    assert_eq!(
-        run.decision.action,
-        crate::openhuman::agent::triage::TriageAction::Drop
-    );
-    assert_eq!(run.decision.reason, "test noise");
+    let run = outcome.into_decision().expect("decision");
+    assert_eq!(run.resolution_path, TriageResolutionPath::Cloud);
     assert!(!run.used_local);
 }
 
 #[tokio::test]
-async fn remote_parse_failure_surfaces_as_error() {
-    // When a remote turn (used_local=false) produces an unparseable
-    // reply, the error surfaces directly — no retry is attempted
-    // because there's no "better" provider to fall back to.
+async fn rate_limited_then_ok_marks_cloud_after_retry() {
     AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
-
-    let envelope =
-        TriggerEnvelope::from_composio("notion", "NOTION_PAGE_UPDATED", "t", "u", json!({}));
-
-    let _guard = mock_agent_run_turn(move |_req| async move {
-        Ok(AgentTurnResponse {
-            text: "totally unparseable, no json here at all".to_string(),
-        })
-    })
-    .await;
-
-    let err = run_triage_with_resolved(fake_resolved(false), &envelope)
-        .await
-        .expect_err("remote parse failure must surface as error");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("parser") || msg.contains("JSON"),
-        "expected parser error message, got: {msg}"
-    );
-}
-
-#[tokio::test]
-async fn local_parse_failure_is_retry_eligible() {
-    // When a local turn (used_local=true) produces an unparseable
-    // reply, the error is wrapped in TurnOutcomeFailure with
-    // used_local=true, so the outer `run_triage` can detect it
-    // and retry on remote.
-    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
-
-    let envelope = TriggerEnvelope::from_composio("slack", "SLACK_MESSAGE", "t", "u", json!({}));
-
-    let _guard = mock_agent_run_turn(move |_req| async move {
-        Ok(AgentTurnResponse {
-            text: "no json here".to_string(),
-        })
-    })
-    .await;
-
-    let err = run_triage_with_resolved(fake_resolved(true), &envelope)
-        .await
-        .expect_err("local parse failure must surface as error");
-
-    // The error must be a TurnOutcomeFailure with used_local=true
-    // so the outer run_triage can detect it for retry.
-    let failure = err
-        .downcast_ref::<TurnOutcomeFailure>()
-        .expect("error must be a TurnOutcomeFailure");
-    assert!(
-        failure.used_local,
-        "TurnOutcomeFailure must report used_local=true for retry eligibility"
-    );
-    assert_eq!(failure.kind, "parser");
-}
-
-#[tokio::test]
-async fn stateful_stub_simulates_local_garbage_then_remote_success() {
-    // Proves the bus round-trip works with a stateful stub that
-    // returns garbage on call 1 (simulating local) and valid JSON
-    // on call 2 (simulating remote). This validates the exact
-    // sequence the retry path in `run_triage` exercises.
-    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
-
-    let envelope = TriggerEnvelope::from_composio(
-        "github",
-        "GITHUB_PUSH",
-        "t",
-        "u",
-        json!({ "ref": "refs/heads/main" }),
-    );
-
-    let call_counter = StdArc::new(AtomicUsize::new(0));
-    let counter_for_stub = StdArc::clone(&call_counter);
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
 
     let _guard = mock_agent_run_turn(move |_req| {
         let counter = StdArc::clone(&counter_for_stub);
         async move {
             let n = counter.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
-                // First call: simulate garbage local response
-                Ok(AgentTurnResponse {
-                    text: "I have no idea what to do with this".to_string(),
-                })
+                Err("HTTP 429 Too Many Requests; Retry-After: 0".to_string())
             } else {
-                // Second call: valid JSON
                 Ok(AgentTurnResponse {
-                    text: "{\"action\":\"acknowledge\",\"reason\":\"valid on retry\"}".to_string(),
+                    text: VALID_JSON_REPLY.to_string(),
                 })
             }
         }
     })
     .await;
 
-    // Call 1: local (used_local=true) → expect parse failure
-    let err = run_triage_with_resolved(fake_resolved(true), &envelope)
+    let outcome = run_triage_with_arms(cloud_arm(), Some(local_arm()), &envelope())
         .await
-        .expect_err("first call should fail (garbage)");
-    let failure = err.downcast_ref::<TurnOutcomeFailure>().unwrap();
-    assert!(failure.used_local);
+        .expect("retry path must succeed");
 
-    // Call 2: remote (used_local=false) → expect success
-    let run = run_triage_with_resolved(fake_resolved(false), &envelope)
-        .await
-        .expect("second call should succeed (valid JSON)");
-    assert_eq!(
-        run.decision.action,
-        crate::openhuman::agent::triage::TriageAction::Acknowledge
-    );
-    assert_eq!(run.decision.reason, "valid on retry");
+    let run = outcome.into_decision().expect("decision");
+    assert_eq!(run.resolution_path, TriageResolutionPath::CloudAfterRetry);
     assert!(!run.used_local);
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
+}
 
-    // Total: exactly 2 bus calls
-    assert_eq!(call_counter.load(Ordering::SeqCst), 2);
+#[tokio::test]
+async fn double_429_falls_through_to_local_fallback() {
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            let n = counter.fetch_add(1, Ordering::SeqCst);
+            if n < 2 {
+                // Cloud calls #1 and #2 both 429.
+                assert_eq!(req.provider_name, "stub-cloud", "first two calls hit cloud");
+                Err("HTTP 429 Too Many Requests; Retry-After: 0".to_string())
+            } else {
+                // Third call should be the local arm.
+                assert_eq!(req.provider_name, "stub-local", "fall-through hits local");
+                Ok(AgentTurnResponse {
+                    text: VALID_JSON_REPLY.to_string(),
+                })
+            }
+        }
+    })
+    .await;
+
+    let outcome = run_triage_with_arms(cloud_arm(), Some(local_arm()), &envelope())
+        .await
+        .expect("local fallback must succeed");
+
+    let run = outcome.into_decision().expect("decision");
+    assert_eq!(run.resolution_path, TriageResolutionPath::LocalFallback);
+    assert!(run.used_local);
+    assert_eq!(counter.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn cloud_5xx_falls_through_to_local_fallback() {
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            let n = counter.fetch_add(1, Ordering::SeqCst);
+            if n < 2 {
+                assert_eq!(req.provider_name, "stub-cloud");
+                Err("upstream returned 502 Bad Gateway".to_string())
+            } else {
+                assert_eq!(req.provider_name, "stub-local");
+                Ok(AgentTurnResponse {
+                    text: VALID_JSON_REPLY.to_string(),
+                })
+            }
+        }
+    })
+    .await;
+
+    let outcome = run_triage_with_arms(cloud_arm(), Some(local_arm()), &envelope())
+        .await
+        .expect("local fallback must succeed after 5xx");
+
+    let run = outcome.into_decision().expect("decision");
+    assert_eq!(run.resolution_path, TriageResolutionPath::LocalFallback);
+}
+
+#[tokio::test]
+async fn cloud_then_local_failure_returns_deferred() {
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |_req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            // Every call fails transiently — cloud retry #1, retry #2, local.
+            Err("HTTP 503 Service Unavailable".to_string())
+        }
+    })
+    .await;
+
+    let outcome = run_triage_with_arms(cloud_arm(), Some(local_arm()), &envelope())
+        .await
+        .expect("Deferred is Ok, not Err");
+
+    match outcome {
+        TriageOutcome::Deferred {
+            defer_until_ms,
+            reason,
+        } => {
+            assert!(
+                defer_until_ms > chrono::Utc::now().timestamp_millis(),
+                "defer_until_ms must be in the future"
+            );
+            assert!(
+                reason.to_lowercase().contains("503") || reason.contains("cloud"),
+                "reason should reference the upstream failure: {reason}"
+            );
+        }
+        TriageOutcome::Decision(_) => panic!("expected Deferred, got Decision"),
+    }
+    assert_eq!(counter.load(Ordering::SeqCst), 3, "1 + retry + local = 3");
+}
+
+#[tokio::test]
+async fn fatal_cloud_error_short_circuits_without_local_attempt() {
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |_req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Err("HTTP 401 unauthorized: invalid api key".to_string())
+        }
+    })
+    .await;
+
+    let err = run_triage_with_arms(cloud_arm(), Some(local_arm()), &envelope())
+        .await
+        .expect_err("auth failure must surface as Err");
+
+    assert!(
+        err.to_string().to_lowercase().contains("401")
+            || err.to_string().to_lowercase().contains("unauthorized"),
+        "expected auth-related error message, got: {err}"
+    );
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "fatal cloud error should not retry or fall back"
+    );
+}
+
+#[tokio::test]
+async fn no_local_arm_returns_deferred_after_cloud_exhaustion() {
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |_req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Err("HTTP 503 Service Unavailable".to_string())
+        }
+    })
+    .await;
+
+    let outcome = run_triage_with_arms(cloud_arm(), None, &envelope())
+        .await
+        .expect("Deferred is Ok");
+
+    match outcome {
+        TriageOutcome::Deferred { reason, .. } => {
+            assert!(
+                reason.contains("local arm unavailable"),
+                "reason should explain the missing local arm: {reason}"
+            );
+        }
+        TriageOutcome::Decision(_) => panic!("expected Deferred"),
+    }
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        2,
+        "1 cloud + 1 retry, no local"
+    );
 }

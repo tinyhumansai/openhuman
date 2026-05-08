@@ -52,7 +52,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler, SubscriptionHandle};
-use crate::openhuman::agent::triage::{apply_decision, run_triage, TriggerEnvelope};
+use crate::openhuman::agent::triage::{apply_decision, run_triage, TriageOutcome, TriggerEnvelope};
 use crate::openhuman::composio::trigger_history;
 use crate::openhuman::config::rpc as config_rpc;
 
@@ -279,7 +279,7 @@ impl EventHandler for ComposioTriggerSubscriber {
         // triage turn is an LLM round-trip that may take seconds.
         tokio::spawn(async move {
             match run_triage(&envelope).await {
-                Ok(run) => {
+                Ok(TriageOutcome::Decision(run)) => {
                     if let Err(e) = apply_decision(run, &envelope).await {
                         tracing::error!(
                             label = %envelope.display_label,
@@ -287,6 +287,21 @@ impl EventHandler for ComposioTriggerSubscriber {
                             "[composio][triage] apply_decision failed"
                         );
                     }
+                }
+                Ok(TriageOutcome::Deferred {
+                    defer_until_ms,
+                    reason,
+                }) => {
+                    // Tiered fallback exhausted both arms; the caller
+                    // surface (composio bus) has no scheduler of its
+                    // own — log and drop. The next composio fire will
+                    // re-enter the chain.
+                    tracing::warn!(
+                        label = %envelope.display_label,
+                        defer_until_ms = defer_until_ms,
+                        reason = %reason,
+                        "[composio][triage] run_triage deferred"
+                    );
                 }
                 Err(e) => {
                     tracing::error!(

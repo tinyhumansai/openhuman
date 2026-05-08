@@ -77,7 +77,7 @@ fn is_context_window_exceeded(err: &anyhow::Error) -> bool {
 
 /// Detect provider-side temporary capacity/outage errors that are often surfaced
 /// as HTTP 5xx with text like "no healthy upstream".
-fn is_upstream_unhealthy(err: &anyhow::Error) -> bool {
+pub(crate) fn is_upstream_unhealthy(err: &anyhow::Error) -> bool {
     let lower = err.to_string().to_lowercase();
     lower.contains("no healthy upstream")
         || lower.contains("upstream unavailable")
@@ -85,7 +85,7 @@ fn is_upstream_unhealthy(err: &anyhow::Error) -> bool {
 }
 
 /// Check if an error is a rate-limit (429) error.
-fn is_rate_limited(err: &anyhow::Error) -> bool {
+pub(crate) fn is_rate_limited(err: &anyhow::Error) -> bool {
     if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
         if let Some(status) = reqwest_err.status() {
             return status.as_u16() == 429;
@@ -144,7 +144,7 @@ fn is_non_retryable_rate_limit(err: &anyhow::Error) -> bool {
 
 /// Try to extract a Retry-After value (in milliseconds) from an error message.
 /// Looks for patterns like `Retry-After: 5` or `retry_after: 2.5` in the error string.
-fn parse_retry_after_ms(err: &anyhow::Error) -> Option<u64> {
+pub(crate) fn parse_retry_after_ms(err: &anyhow::Error) -> Option<u64> {
     let msg = err.to_string();
     let lower = msg.to_lowercase();
 

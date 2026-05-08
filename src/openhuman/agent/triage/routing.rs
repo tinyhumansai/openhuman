@@ -54,6 +54,75 @@ pub async fn resolve_provider_with_config(config: &Config) -> anyhow::Result<Res
     build_remote_provider(config)
 }
 
+/// Build the local-arm provider for the tiered fallback chain (issue
+/// #1257). Returns `None` when local AI is disabled or no chat model
+/// is configured — callers (`evaluator::run_triage`) skip straight to
+/// `Deferred` in that case.
+///
+/// The returned provider is a thin `OpenAiCompatibleProvider` pointed
+/// at the configured local inference base (Ollama by default,
+/// overridable via `OPENHUMAN_LOCAL_INFERENCE_URL`). It mirrors the
+/// wiring `routing::factory::new_provider` uses for the local arm of
+/// `IntelligentRoutingProvider` so the same model that serves
+/// lightweight chat also serves the triage fallback.
+pub fn build_local_provider_with_config(config: &Config) -> Option<ResolvedProvider> {
+    use crate::openhuman::providers::compatible::{AuthStyle, OpenAiCompatibleProvider};
+
+    let local_cfg = &config.local_ai;
+    if !local_cfg.runtime_enabled {
+        tracing::debug!("[triage::routing] local arm disabled (runtime_enabled=false)");
+        return None;
+    }
+    if local_cfg.chat_model_id.trim().is_empty() {
+        tracing::debug!("[triage::routing] local arm skipped (no chat_model_id configured)");
+        return None;
+    }
+
+    let override_base = std::env::var("OPENHUMAN_LOCAL_INFERENCE_URL")
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty());
+    let provider_kind = local_cfg.provider.trim().to_ascii_lowercase();
+    let use_openai_compat = override_base.is_some()
+        || matches!(
+            provider_kind.as_str(),
+            "llamacpp" | "llama-server" | "custom_openai"
+        );
+
+    let (label, base) = if use_openai_compat {
+        let base = override_base
+            .or_else(|| local_cfg.base_url.clone())
+            .unwrap_or_else(|| "http://127.0.0.1:8080/v1".to_string());
+        let label = if provider_kind == "custom_openai" {
+            "custom_openai"
+        } else {
+            "llamacpp"
+        };
+        (label, base)
+    } else {
+        let ollama_base = crate::openhuman::local_ai::ollama_base_url();
+        ("ollama", format!("{ollama_base}/v1"))
+    };
+
+    let provider: Arc<dyn Provider> = Arc::new(OpenAiCompatibleProvider::new(
+        label,
+        &base,
+        local_cfg.api_key.as_deref(),
+        AuthStyle::Bearer,
+    ));
+    tracing::debug!(
+        provider = %label,
+        model = %local_cfg.chat_model_id,
+        "[triage::routing] resolved local fallback provider"
+    );
+    Some(ResolvedProvider {
+        provider,
+        provider_name: label.to_string(),
+        model: local_cfg.chat_model_id.clone(),
+        used_local: true,
+    })
+}
+
 // ── Provider builder ────────────────────────────────────────────────────
 
 /// Build the default remote routed backend provider. Same wiring as

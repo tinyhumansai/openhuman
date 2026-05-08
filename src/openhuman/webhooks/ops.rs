@@ -179,7 +179,7 @@ pub async fn trigger_agent(
         }
     };
 
-    let run = tokio::time::timeout(
+    let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(60),
         crate::openhuman::agent::triage::run_triage(&envelope),
     )
@@ -187,23 +187,40 @@ pub async fn trigger_agent(
     .map_err(|_| "triage timed out after 60s".to_string())?
     .map_err(|e| format!("triage failed: {e}"))?;
 
-    tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        crate::openhuman::agent::triage::apply_decision(run.clone(), &envelope),
-    )
-    .await
-    .map_err(|_| "apply_decision timed out after 60s".to_string())?
-    .map_err(|e| format!("apply_decision failed: {e}"))?;
+    match outcome {
+        crate::openhuman::agent::triage::TriageOutcome::Decision(run) => {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                crate::openhuman::agent::triage::apply_decision(run.clone(), &envelope),
+            )
+            .await
+            .map_err(|_| "apply_decision timed out after 60s".to_string())?
+            .map_err(|e| format!("apply_decision failed: {e}"))?;
 
-    Ok(RpcOutcome::single_log(
-        serde_json::json!({
-            "decision": run.decision.action.as_str(),
-            "target_agent": run.decision.target_agent,
-            "prompt": run.decision.prompt,
-            "reason": run.decision.reason,
-        }),
-        format!("webhooks.trigger_agent completed for {source}/{caller_id}"),
-    ))
+            Ok(RpcOutcome::single_log(
+                serde_json::json!({
+                    "decision": run.decision.action.as_str(),
+                    "target_agent": run.decision.target_agent,
+                    "prompt": run.decision.prompt,
+                    "reason": run.decision.reason,
+                    "resolution_path": run.resolution_path.as_str(),
+                }),
+                format!("webhooks.trigger_agent completed for {source}/{caller_id}"),
+            ))
+        }
+        crate::openhuman::agent::triage::TriageOutcome::Deferred {
+            defer_until_ms,
+            reason,
+        } => Ok(RpcOutcome::single_log(
+            serde_json::json!({
+                "decision": "deferred",
+                "resolution_path": "deferred",
+                "defer_until_ms": defer_until_ms,
+                "reason": reason,
+            }),
+            format!("webhooks.trigger_agent deferred for {source}/{caller_id}"),
+        )),
+    }
 }
 
 pub fn build_echo_response(request: &WebhookRequest) -> WebhookResponseData {

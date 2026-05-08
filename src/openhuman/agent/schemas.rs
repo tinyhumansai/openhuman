@@ -316,26 +316,47 @@ fn handle_triage_evaluate(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][agent] running triage pipeline"
         );
 
-        let run = crate::openhuman::agent::triage::run_triage(&envelope)
+        let outcome = crate::openhuman::agent::triage::run_triage(&envelope)
             .await
             .map_err(|e| format!("triage evaluation failed: {e}"))?;
 
         let dry_run = p.dry_run.unwrap_or(false);
-        if !dry_run {
-            crate::openhuman::agent::triage::apply_decision(run.clone(), &envelope)
-                .await
-                .map_err(|e| format!("apply_decision failed: {e}"))?;
-        }
+        match outcome {
+            crate::openhuman::agent::triage::TriageOutcome::Decision(run) => {
+                if !dry_run {
+                    crate::openhuman::agent::triage::apply_decision(run.clone(), &envelope)
+                        .await
+                        .map_err(|e| format!("apply_decision failed: {e}"))?;
+                }
 
-        Ok(serde_json::json!({
-            "decision": run.decision.action.as_str(),
-            "target_agent": run.decision.target_agent,
-            "prompt": run.decision.prompt,
-            "reason": run.decision.reason,
-            "used_local": run.used_local,
-            "latency_ms": run.latency_ms,
-            "dry_run": dry_run,
-        }))
+                Ok(serde_json::json!({
+                    "decision": run.decision.action.as_str(),
+                    "target_agent": run.decision.target_agent,
+                    "prompt": run.decision.prompt,
+                    "reason": run.decision.reason,
+                    "used_local": run.used_local,
+                    "latency_ms": run.latency_ms,
+                    "resolution_path": run.resolution_path.as_str(),
+                    "dry_run": dry_run,
+                }))
+            }
+            crate::openhuman::agent::triage::TriageOutcome::Deferred {
+                defer_until_ms,
+                reason,
+            } => {
+                // Deferred outcome: the chain (cloud → cloud-retry →
+                // local) all failed; the caller is expected to
+                // re-issue this trigger after `defer_until_ms`. No
+                // side effects fire on this path.
+                Ok(serde_json::json!({
+                    "decision": "deferred",
+                    "resolution_path": "deferred",
+                    "defer_until_ms": defer_until_ms,
+                    "reason": reason,
+                    "dry_run": dry_run,
+                }))
+            }
+        }
     })
 }
 

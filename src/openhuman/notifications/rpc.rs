@@ -13,7 +13,9 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use crate::core::event_bus::{publish_global, DomainEvent};
-use crate::openhuman::agent::triage::{apply_decision, run_triage, TriggerEnvelope, TriggerSource};
+use crate::openhuman::agent::triage::{
+    apply_decision, run_triage, TriageOutcome, TriggerEnvelope, TriggerSource,
+};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
 
@@ -105,7 +107,7 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
         };
 
         match run_triage(&envelope).await {
-            Ok(triage_run) => {
+            Ok(TriageOutcome::Decision(triage_run)) => {
                 let action = triage_run.decision.action.as_str().to_string();
                 let reason = triage_run.decision.reason.clone();
                 // Map TriageAction → importance score heuristic.
@@ -199,6 +201,21 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
                     latency_ms = latency_ms,
                     routed = routed,
                     "[notification_intel] published NotificationTriaged event"
+                );
+            }
+            Ok(TriageOutcome::Deferred {
+                defer_until_ms,
+                reason,
+            }) => {
+                // Tiered fallback exhausted both arms; the next
+                // notification ingest re-enters the chain. Log only —
+                // notifications are inherently retryable on the next
+                // user fetch.
+                tracing::warn!(
+                    id = %id_for_triage,
+                    defer_until_ms = defer_until_ms,
+                    reason = %reason,
+                    "[notification_intel] triage deferred"
                 );
             }
             Err(e) => {
