@@ -89,6 +89,23 @@ pub async fn install_audio_bridge(meet_url: &str) -> Result<(CdpConn, String), S
     .await
     .map_err(|e| format!("addScriptToEvaluateOnNewDocument(captions): {e}"))?;
 
+    // Camera bridge: monkey-patches getUserMedia so the agent's outbound
+    // video is a programmatic mascot canvas rather than the static Y4M
+    // backed by --use-file-for-fake-video-capture. Installed on the same
+    // CDP session as the audio + captions bridges so a single Page.reload
+    // boots all three. See `crate::meet_video` for the rationale.
+    if let Err(err) = crate::meet_video::inject::install_camera_bridge_on_session(
+        &mut cdp,
+        &session,
+    )
+    .await
+    {
+        // Non-fatal: a missing camera bridge falls back to the static
+        // Y4M, so the agent still has *some* outbound video. Audio +
+        // captions remain functional.
+        log::warn!("[meet-audio] camera bridge install failed: {err} (falling back to static Y4M)");
+    }
+
     // Reload so the script applies to the (already-loaded) meet page.
     // `ignoreCache: true` defeats the bfcache so we get a real
     // document-start hook for the bridge.
@@ -107,6 +124,7 @@ pub async fn install_audio_bridge(meet_url: &str) -> Result<(CdpConn, String), S
     // failed to run for any reason. Best-effort: a missing bridge
     // logs and we still return Ok so the listen path keeps working.
     confirm_bridge_alive(&mut cdp, &session).await;
+    crate::meet_video::inject::confirm_bridge_alive(&mut cdp, &session).await;
 
     Ok((cdp, session))
 }

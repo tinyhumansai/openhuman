@@ -18,6 +18,7 @@ mod mascot_native_window;
 mod meet_audio;
 mod meet_call;
 mod meet_scanner;
+mod meet_video;
 mod native_notifications;
 mod notification_settings;
 mod process_kill;
