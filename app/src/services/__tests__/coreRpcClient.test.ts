@@ -675,6 +675,34 @@ describe('getCoreRpcToken (cloud-mode persistence)', () => {
     expect(headers.Authorization).toBe('Bearer cloud-token-abc');
   });
 
+  test('clearCoreRpcTokenCache forces a re-resolve on the next call', async () => {
+    let storedToken: string | null = 'first-token';
+    vi.doMock('../../utils/configPersistence', () => ({
+      peekStoredRpcUrl: () => 'https://core.example.com/rpc',
+      getStoredCoreToken: () => storedToken,
+    }));
+    vi.mocked(isTauri).mockReturnValue(true);
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: { ok: true } }),
+    } as Response);
+
+    const { callCoreRpc: freshCallCoreRpc, clearCoreRpcTokenCache } =
+      await import('../coreRpcClient');
+    await freshCallCoreRpc({ method: 'openhuman.ping' });
+    let headers = fetchMock.mock.calls[0][1] as RequestInit;
+    expect((headers.headers as Record<string, string>).Authorization).toBe('Bearer first-token');
+
+    // Rotate the stored token; without clearing the cache the old value
+    // persists. Clearing it makes the next call re-resolve.
+    storedToken = 'second-token';
+    clearCoreRpcTokenCache();
+    await freshCallCoreRpc({ method: 'openhuman.ping' });
+    headers = fetchMock.mock.calls[1][1] as RequestInit;
+    expect((headers.headers as Record<string, string>).Authorization).toBe('Bearer second-token');
+  });
+
   test('falls back to Tauri sidecar token when no stored cloud token', async () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => null,
