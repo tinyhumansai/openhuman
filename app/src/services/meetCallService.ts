@@ -30,6 +30,14 @@ export async function joinMeetCall(input: MeetJoinCallInput): Promise<MeetJoinCa
 
   if (!meetUrl) throw new Error('Please paste a Google Meet link.');
   if (!displayName) throw new Error('Please enter a display name.');
+  // Refuse early outside the desktop shell so the browser dev surface
+  // (`pnpm dev`) doesn't mint a stray request_id on the core for a join
+  // attempt that has no chance of opening a CEF window.
+  if (!isTauri()) {
+    throw new Error(
+      'Joining a Meet call requires the desktop app. Run `pnpm tauri dev` and try again.'
+    );
+  }
 
   const rpcResult = await callCoreRpc<CoreJoinResponse>({
     method: 'openhuman.meet_join_call',
@@ -38,15 +46,6 @@ export async function joinMeetCall(input: MeetJoinCallInput): Promise<MeetJoinCa
 
   if (!rpcResult?.ok || !rpcResult.request_id) {
     throw new Error('Core rejected the meet_join_call request.');
-  }
-
-  if (!isTauri()) {
-    // Outside the desktop shell we can't actually open a CEF window;
-    // surface this clearly so the dev knows the join is a no-op in the
-    // browser dev surface (`pnpm dev` web view).
-    throw new Error(
-      'Joining a Meet call requires the desktop app. Run `pnpm tauri dev` and try again.'
-    );
   }
 
   let windowLabel: string;

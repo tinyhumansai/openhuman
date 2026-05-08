@@ -48,9 +48,18 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Spawn the CDP-driven join automation. Fire-and-forget — the caller
 /// (the Tauri command that just opened the window) doesn't wait for it.
-pub fn spawn<R: Runtime>(_app: AppHandle<R>, request_id: String, display_name: String) {
+///
+/// `meet_url` is the exact normalised URL the window was navigated to;
+/// the scanner uses it as a target-URL prefix so two concurrent calls
+/// each attach to their own CEF target instead of cross-controlling.
+pub fn spawn<R: Runtime>(
+    _app: AppHandle<R>,
+    request_id: String,
+    meet_url: String,
+    display_name: String,
+) {
     tauri::async_runtime::spawn(async move {
-        match run(&request_id, &display_name).await {
+        match run(&request_id, &meet_url, &display_name).await {
             Ok(()) => log::info!("[meet-scanner] join sequence completed request_id={request_id}"),
             Err(err) => {
                 log::warn!("[meet-scanner] join sequence aborted request_id={request_id} err={err}")
@@ -59,8 +68,8 @@ pub fn spawn<R: Runtime>(_app: AppHandle<R>, request_id: String, display_name: S
     });
 }
 
-async fn run(request_id: &str, display_name: &str) -> Result<(), String> {
-    let (mut cdp, session) = wait_for_meet_target().await?;
+async fn run(request_id: &str, meet_url: &str, display_name: &str) -> Result<(), String> {
+    let (mut cdp, session) = wait_for_meet_target(meet_url).await?;
     log::info!("[meet-scanner] attached to meet target request_id={request_id} session={session}");
 
     // `Runtime.enable` is required before `Runtime.evaluate` returns
@@ -105,18 +114,15 @@ async fn run(request_id: &str, display_name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Poll CEF's target list until a page whose URL is on `meet.google.com`
-/// shows up, then attach a CDP session to it. We can't filter on the
-/// per-call `request_id` because Meet uses opaque meeting codes in the
-/// URL, but in practice only the just-opened webview hits this host
-/// inside the per-call data directory, so a host match is enough.
-async fn wait_for_meet_target() -> Result<(CdpConn, String), String> {
+/// Poll CEF's target list until a page whose URL starts with `meet_url`
+/// shows up, then attach a CDP session to it. Filtering by the full
+/// per-call URL prefix (rather than just the host) keeps two concurrent
+/// Meet calls from cross-controlling each other when both are open.
+async fn wait_for_meet_target(meet_url: &str) -> Result<(CdpConn, String), String> {
     let deadline = tokio::time::Instant::now() + TARGET_DISCOVERY_BUDGET;
     let mut last_err = String::new();
     while tokio::time::Instant::now() < deadline {
-        match cdp::connect_and_attach_matching(|t| t.url.starts_with("https://meet.google.com/"))
-            .await
-        {
+        match cdp::connect_and_attach_matching(|t| t.url.starts_with(meet_url)).await {
             Ok(pair) => return Ok(pair),
             Err(err) => {
                 last_err = err;

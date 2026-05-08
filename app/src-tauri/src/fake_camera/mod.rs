@@ -67,8 +67,17 @@ pub fn ensure_mascot_y4m(data_dir: &Path) -> Result<PathBuf, String> {
     // mid-write never leaves CEF reading a half-finished Y4M.
     let tmp_path = y4m_path.with_extension("y4m.partial");
     fs::write(&tmp_path, &y4m_bytes).map_err(|e| format!("write y4m: {e}"))?;
-    fs::rename(&tmp_path, &y4m_path).map_err(|e| format!("rename y4m: {e}"))?;
-    Ok(y4m_path)
+    // Tolerate a concurrent writer landing first: if rename fails but the
+    // target already exists, the other writer wrote the same SVG-hash-keyed
+    // file and we can drop our temp copy.
+    match fs::rename(&tmp_path, &y4m_path) {
+        Ok(()) => Ok(y4m_path),
+        Err(_) if y4m_path.exists() => {
+            let _ = fs::remove_file(&tmp_path);
+            Ok(y4m_path)
+        }
+        Err(e) => Err(format!("rename y4m: {e}")),
+    }
 }
 
 /// Render the SVG to a 640×480 RGBA8 bitmap, letterboxed onto a flat

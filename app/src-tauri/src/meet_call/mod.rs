@@ -100,7 +100,7 @@ pub async fn meet_call_open_window<R: Runtime>(
         .title(title)
         .inner_size(1100.0, 760.0)
         .resizable(true)
-        .data_directory(data_dir);
+        .data_directory(data_dir.clone());
 
     let window = builder
         .build()
@@ -114,15 +114,26 @@ pub async fn meet_call_open_window<R: Runtime>(
 
     // Kick off the CDP-driven join automation: dismiss the device-check,
     // type the display name, and click "Ask to join". Fire-and-forget —
-    // the user can finish manually if any step times out.
-    meet_scanner::spawn(app.clone(), request_id.clone(), args.display_name.clone());
+    // the user can finish manually if any step times out. Pass the
+    // normalised URL so the scanner can attach to the right CEF target
+    // when more than one Meet window is open.
+    meet_scanner::spawn(
+        app.clone(),
+        request_id.clone(),
+        parsed.to_string(),
+        args.display_name.clone(),
+    );
 
-    // Emit a `closed` event when the user dismisses the window so the
-    // frontend can drop the call from its in-flight list.
+    // Emit a `closed` event when the user dismisses the window AND clean
+    // up the per-call data directory. The data dir holds an isolated CEF
+    // profile (cookies, cache) we explicitly want to throw away after
+    // each call so the next anonymous join doesn't reuse stale state and
+    // disk doesn't grow unboundedly across many calls.
     {
         let app_for_event = app.clone();
         let label_for_event = label.clone();
         let request_id_for_event = request_id.clone();
+        let data_dir_for_event = data_dir.clone();
         window.on_window_event(move |event| {
             if let tauri::WindowEvent::Destroyed = event {
                 if let Some(state) = app_for_event.try_state::<MeetCallState>() {
@@ -140,6 +151,19 @@ pub async fn meet_call_open_window<R: Runtime>(
                 log::info!(
                     "[meet-call] window destroyed label={label_for_event} request_id={request_id_for_event}"
                 );
+                // CEF may still be flushing the profile to disk on
+                // teardown; do the rmdir off the UI thread so any
+                // last-second writes don't race the delete.
+                let dir_to_purge = data_dir_for_event.clone();
+                let request_id_for_purge = request_id_for_event.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = std::fs::remove_dir_all(&dir_to_purge) {
+                        log::debug!(
+                            "[meet-call] data-dir cleanup skipped request_id={request_id_for_purge} dir={} err={err}",
+                            dir_to_purge.display()
+                        );
+                    }
+                });
             }
         });
     }

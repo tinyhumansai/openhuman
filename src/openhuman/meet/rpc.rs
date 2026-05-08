@@ -26,10 +26,12 @@ pub async fn handle_join_call(params: Map<String, Value>) -> Result<Value, Strin
         ops::validate_display_name(&req.display_name).map_err(|e| format!("[meet] {e}"))?;
 
     let request_id = Uuid::new_v4().to_string();
+    // Path contains the meeting code, which is the secret that grants
+    // access to the call. Treat it like a credential and keep it out of
+    // logs — host + display-name length is enough for diagnostics.
     tracing::info!(
         request_id = %request_id,
         host = %normalized_url.host_str().unwrap_or(""),
-        path = %normalized_url.path(),
         display_name_chars = display_name.chars().count(),
         "[meet] meet_join_call accepted; awaiting shell handoff"
     );

@@ -33,7 +33,7 @@ pub fn validate_meet_url(raw: &str) -> Result<url::Url, String> {
     }
 
     let path = url.path().trim_matches('/');
-    let allowed_path = is_meet_code(path) || path.starts_with("lookup/");
+    let allowed_path = is_meet_code(path) || is_lookup_path(path);
     if !allowed_path {
         return Err(format!(
             "invalid meet_url: path `/{path}` is not a Meet meeting code or lookup link"
@@ -41,6 +41,17 @@ pub fn validate_meet_url(raw: &str) -> Result<url::Url, String> {
     }
 
     Ok(url)
+}
+
+/// Accept exactly `lookup/<id>` with a single non-empty segment. Permitting
+/// nested paths under `lookup/` would broaden the attack surface beyond a
+/// call deep-link.
+fn is_lookup_path(path: &str) -> bool {
+    let mut parts = path.split('/');
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some("lookup"), Some(id), None) if !id.is_empty()
+    )
 }
 
 /// Trim and validate the display name. Meet's "Your name" field accepts a
@@ -103,6 +114,10 @@ mod tests {
         assert!(validate_meet_url("https://meet.google.com/").is_err());
         assert!(validate_meet_url("https://meet.google.com/foo").is_err());
         assert!(validate_meet_url("https://meet.google.com/AB-CD-EF").is_err());
+        // Nested paths under `lookup/` must stay rejected — only a single
+        // non-empty id segment is allowed.
+        assert!(validate_meet_url("https://meet.google.com/lookup/").is_err());
+        assert!(validate_meet_url("https://meet.google.com/lookup/abc/extra").is_err());
     }
 
     #[test]

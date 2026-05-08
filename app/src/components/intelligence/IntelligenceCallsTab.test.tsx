@@ -119,4 +119,29 @@ describe('IntelligenceCallsTab', () => {
       expect(screen.queryByRole('button', { name: /Leave/i })).not.toBeInTheDocument()
     );
   });
+
+  it('keeps the row when closeMeetCall returns false (window stayed open)', async () => {
+    vi.mocked(joinMeetCall).mockResolvedValueOnce({
+      requestId: 'req-3',
+      meetUrl: VALID_URL,
+      displayName: 'OpenHuman Agent',
+      windowLabel: 'meet-call-req-3',
+    });
+    vi.mocked(closeMeetCall).mockResolvedValueOnce(false);
+
+    render(<IntelligenceCallsTab />);
+    fireEvent.change(screen.getByPlaceholderText(/meet\.google\.com/i), {
+      target: { value: VALID_URL },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Join call/i }));
+
+    const leaveBtn = await screen.findByRole('button', { name: /Leave/i });
+    fireEvent.click(leaveBtn);
+
+    await waitFor(() => expect(closeMeetCall).toHaveBeenCalledWith('req-3'));
+    // Row stays so the user can retry; the meet-call:closed event listener
+    // would still drop it later if the shell ends up tearing the window
+    // down on its own.
+    expect(screen.getByRole('button', { name: /Leave/i })).toBeInTheDocument();
+  });
 });

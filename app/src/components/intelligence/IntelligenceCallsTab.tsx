@@ -84,12 +84,16 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
 
   const handleClose = async (requestId: string) => {
     try {
-      await closeMeetCall(requestId);
+      const closed = await closeMeetCall(requestId);
+      if (closed) {
+        // Only drop the row when the shell confirms the window is gone.
+        // The `meet-call:closed` event listener also clears the row, so
+        // a manual window-close still keeps the list accurate.
+        setActiveCalls(prev => prev.filter(call => call.requestId !== requestId));
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to close call.';
       onToast?.({ type: 'error', title: 'Could not close call', message });
-    } finally {
-      setActiveCalls(prev => prev.filter(call => call.requestId !== requestId));
     }
   };
 
