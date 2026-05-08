@@ -1,7 +1,7 @@
 import type { FC } from 'react';
-import { useVideoConfig } from 'remotion';
 import { z } from 'zod';
 
+import { useVideoConfig } from './frameContext';
 import { MascotCharacter, mascotSchema } from './MascotCharacter';
 
 export const yellowMascotThinkingSchema = mascotSchema.extend({

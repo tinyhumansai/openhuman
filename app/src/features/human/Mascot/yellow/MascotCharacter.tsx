@@ -1,9 +1,10 @@
 import { zColor } from '@remotion/zod-types';
 import React from 'react';
-import { AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Easing, interpolate } from 'remotion';
 import { z } from 'zod';
 
 import { getMascotPalette, type MascotColor } from '../mascotPalette';
+import { useCurrentFrame, useVideoConfig } from './frameContext';
 import { LoadingFace } from './LoadingFace';
 import { RecordingFace } from './RecordingFace';
 
