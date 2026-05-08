@@ -6,6 +6,7 @@ pub mod filesystem;
 pub mod memory;
 pub mod network;
 pub mod system;
+pub mod whatsapp_data;
 
 pub use agent::*;
 pub use browser::*;
@@ -15,3 +16,4 @@ pub use filesystem::*;
 pub use memory::*;
 pub use network::*;
 pub use system::*;
+pub use whatsapp_data::*;
