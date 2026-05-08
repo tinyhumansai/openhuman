@@ -22,6 +22,7 @@ use crate::openhuman::memory::tree::jobs::{self, ExtractChunkPayload, NewJob};
 use crate::openhuman::memory::tree::score::{self, ScoreResult, ScoringConfig};
 use crate::openhuman::memory::tree::store;
 use crate::openhuman::memory::tree::types::SourceKind;
+use crate::openhuman::memory::tree::util::redact::redact;
 
 /// Outcome of one ingest call.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -119,7 +120,8 @@ pub async fn ingest_document(
 ) -> Result<IngestResult> {
     if already_ingested(config, SourceKind::Document, source_id).await? {
         log::debug!(
-            "[memory_tree::ingest] skip ingest_document — source_id already ingested: {source_id}"
+            "[memory_tree::ingest] skip ingest_document — source_id_hash={} already ingested",
+            redact(source_id)
         );
         return Ok(IngestResult::already_ingested(source_id));
     }
@@ -221,8 +223,8 @@ async fn persist(
                 )?;
                 if !claimed {
                     log::debug!(
-                        "[memory_tree::ingest] persist gate: document already ingested source_id={}",
-                        source_id_for_store
+                        "[memory_tree::ingest] persist gate: document already ingested source_id_hash={}",
+                        redact(&source_id_for_store)
                     );
                     // Drop the (empty) transaction implicitly; nothing to commit.
                     return Ok(None);
