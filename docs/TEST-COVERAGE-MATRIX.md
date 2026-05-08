@@ -327,6 +327,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | ------ | ------------------------- | ----- | ----------------------------------------------------- | ------ | ----- |
 | 10.3.1 | Incoming Message Sync     | RU+WD | `src/openhuman/channels/tests/`, `gmail-flow.spec.ts` | ✅     |       |
 | 10.3.2 | Message Deduplication     | RU    | `src/openhuman/channels/tests/`                       | ✅     |       |
+| 10.3.3 | WhatsApp Agent Retrieval  | RU    | `src/openhuman/tools/impl/whatsapp_data/` (this PR), `tests/json_rpc_e2e.rs::whatsapp_data_agent_tools_e2e_1341` (this PR) | ✅     | Three read-only agent tools wrap the local SQLite store; ingest stays internal-only. See [`docs/whatsapp-data-flow.md`](whatsapp-data-flow.md). |
 | 10.3.3 | Real-Time vs Delayed Sync | RU    | `src/openhuman/channels/tests/runtime_dispatch.rs`    | ✅     |       |
 
 ### 10.4 Messaging Operations
