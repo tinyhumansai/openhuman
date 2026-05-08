@@ -6,7 +6,7 @@ This document describes how WhatsApp Web data captured by the desktop scanner be
 
 ## Pipeline at a glance
 
-```
+```text
 ┌────────────────────────┐
 │ WhatsApp Web (CEF view)│
 └────────────┬───────────┘
