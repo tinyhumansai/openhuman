@@ -102,8 +102,11 @@ async fn set_null_proxy_url_clears_existing_value() {
     let get_result = tool.execute(json!({"action": "get"})).await.unwrap();
     assert!(!get_result.is_error);
     let parsed: Value = serde_json::from_str(&get_result.output()).unwrap();
+    // Only assert the *configured* proxy is cleared. `runtime_proxy.http_proxy`
+    // resolves through the process env (HTTP_PROXY / http_proxy) when the
+    // configured value is null, so on runners with those vars set the resolved
+    // field is non-null and unrelated to whether `set` cleared the config.
     assert!(parsed["proxy"]["http_proxy"].is_null());
-    assert!(parsed["runtime_proxy"]["http_proxy"].is_null());
 }
 
 // ── parse_scope ──────────────────────────────────────────────────
