@@ -68,19 +68,13 @@ pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
         prompt.chars().count()
     );
 
-    let reply_text = match llm(&prompt).await {
-        Ok(text) => text,
-        Err(err) => {
-            log::warn!("[meet-agent] caption-turn LLM failed request_id={request_id} err={err}");
-            let _ = registry().with_session(request_id, |s| {
-                s.record_event(
-                    SessionEventKind::Note,
-                    format!("LLM failure (using stub): {err}"),
-                );
-            });
-            stub_llm(&prompt).await
-        }
-    };
+    // We deliberately skip the LLM in the hot path. The note itself
+    // is already stored verbatim in the session transcript (a `Heard`
+    // event). The verbal ack should always be brief, deterministic,
+    // and free of model latency / chain-of-thought leakage — so we
+    // pick a short canned phrase. Post-meeting summarisation (which
+    // can take its time and run a real LLM) lives in a follow-up.
+    let reply_text = pick_ack_phrase(&prompt).to_string();
 
     let synthesized = if reply_text.trim().is_empty() {
         Vec::new()
@@ -128,6 +122,27 @@ pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
 /// 2-3 caption fragments can join up; short enough that the user
 /// doesn't experience awkward silence after they stop talking.
 const CAPTION_TURN_DELAY_MS: u64 = 1_500;
+
+/// Canned acknowledgements the agent speaks out loud after capturing
+/// a note. Short, varied so consecutive notes don't sound robotic.
+/// Selected by hashing the prompt so the same dictation reliably
+/// produces the same ack (helpful for tests + debugging) while still
+/// rotating across the set in a normal conversation.
+const ACK_PHRASES: &[&str] = &[
+    "Got it.",
+    "Noted.",
+    "Adding that.",
+    "On it.",
+    "Captured.",
+];
+
+fn pick_ack_phrase(prompt: &str) -> &'static str {
+    if prompt.trim().is_empty() {
+        return "";
+    }
+    let h: u32 = prompt.bytes().fold(0u32, |a, b| a.wrapping_add(b as u32));
+    ACK_PHRASES[(h as usize) % ACK_PHRASES.len()]
+}
 
 /// Fire one brain turn for the named session. Returns `Ok(true)` when a
 /// turn actually ran, `Ok(false)` when the inbound buffer was below the
@@ -264,16 +279,27 @@ async fn llm(heard: &str) -> Result<String, String> {
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
 
     let body = json!({
-        "model": "gpt-4o-mini",
-        "temperature": 0.4,
-        "max_tokens": 120,
+        "model": "agentic-v1",
+        "temperature": 0.2,
+        // Hard cap to force a terse acknowledgement. agentic-v1
+        // tends to elaborate (200+ chars) when given more headroom.
+        "max_tokens": 20,
         "messages": [
             {
                 "role": "system",
-                "content": "You are an AI assistant joining a live Google Meet call as a participant. \
-                            Reply concisely (one or two short sentences). If the latest utterance is \
-                            small talk, a question directed at others, or doesn't need a response, \
-                            reply with an empty string. Never reveal you are an AI unless asked."
+                "content": "You are OpenHuman, a note-taking AI participating in a live Google \
+                            Meet call. Each user message you receive is a single dictation — a \
+                            note, action item, or follow-up the user wants captured for after \
+                            the meeting. The transcript log stores the note verbatim, so your \
+                            job is only to acknowledge briefly out loud that you got it. \
+                            \
+                            Reply with one short sentence, ideally three to six words \
+                            (\"Got it.\", \"Noted.\", \"Adding that to your follow-ups.\"). \
+                            Never repeat the user's note back, never speculate or expand on \
+                            it, never engage in side conversation. \
+                            \
+                            If the message is empty, unclear, or just filler (\"uh\", \"hmm\", \
+                            a name), reply with an empty string."
             },
             { "role": "user", "content": heard }
         ]

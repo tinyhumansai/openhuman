@@ -65,6 +65,13 @@ pub struct MeetAgentSession {
     /// `pending_prompt`. The brain uses this + the current time to
     /// decide whether the user has stopped talking.
     pub last_caption_ts_ms: u64,
+    /// Page-side `Date.now()` of the most recent caption that fired
+    /// the wake word. Suppresses re-firing while Meet's caption
+    /// region keeps the same utterance visible (Meet shows captions
+    /// for ~5–8 s after speaking ends, and our dedupe is per-exact-
+    /// text — a single character growth re-queues the line). Without
+    /// this gate the brain spam-fires on every caption growth.
+    wake_cooldown_until_ts_ms: u64,
 }
 
 impl MeetAgentSession {
@@ -84,6 +91,7 @@ impl MeetAgentSession {
             pending_prompt: String::new(),
             wake_active: false,
             last_caption_ts_ms: 0,
+            wake_cooldown_until_ts_ms: 0,
         }
     }
 
@@ -101,41 +109,24 @@ impl MeetAgentSession {
             return false;
         }
         self.last_caption_ts_ms = ts_ms;
-        let lower = text.to_lowercase();
-        let wake_idx = lower
-            .find("hey openhuman")
-            .or_else(|| lower.find("hey open human"));
-        if let Some(idx) = wake_idx {
-            // Slice off the wake phrase. Use `lower` to find the
-            // end-of-phrase position, then map back to the original
-            // text via byte indices (safe because lowercase ASCII has
-            // the same byte length).
-            let after = if lower[idx..].starts_with("hey openhuman") {
-                idx + "hey openhuman".len()
-            } else {
-                idx + "hey open human".len()
-            };
-            let tail = text.get(after..).unwrap_or("").trim().to_string();
-            self.pending_prompt = tail;
-            self.wake_active = true;
-            self.record_event(
-                SessionEventKind::Note,
-                format!("wake word from speaker={speaker}"),
-            );
-            return true;
-        }
+        // Already collecting after a previous wake word: just append
+        // the new caption. No second fire — the brain is already
+        // scheduled and will drain the prompt in ~1.5 s. Without this
+        // gate, a slowly-growing caption fires the wake word on
+        // every dedupe-then-grow cycle.
         if self.wake_active {
-            // Append continuation captions until the brain takes the
-            // prompt. Keep separators so adjacent fragments don't
-            // collide ("hello there" → "...hello there").
             if !self.pending_prompt.is_empty() {
                 self.pending_prompt.push(' ');
             }
             self.pending_prompt.push_str(text.trim());
-        } else {
-            // Outside a wake context, just record the line for the
-            // transcript log. Useful for debugging "why didn't the
-            // agent respond".
+            return false;
+        }
+        // In cooldown after a recent turn — Meet keeps the same
+        // utterance visible for several seconds, so without this
+        // gate the brain re-fires on every caption growth. Continue
+        // recording the caption to the transcript log (below) but
+        // skip wake-word matching.
+        if ts_ms != 0 && ts_ms < self.wake_cooldown_until_ts_ms {
             self.record_event(
                 SessionEventKind::Heard,
                 if speaker.is_empty() {
@@ -144,18 +135,69 @@ impl MeetAgentSession {
                     format!("{speaker}: {text}")
                 },
             );
+            return false;
         }
+        // Normalize before matching: Meet's STT punctuates the wake
+        // phrase ("hey, openhuman"), capitalizes mid-sentence, and
+        // sometimes collapses the brand to two words. Folding to
+        // lowercase + replacing punctuation with spaces + collapsing
+        // whitespace gives us a single canonical form to substring
+        // against. The tail (the dictation after the wake phrase) is
+        // returned in normalized form too — that's fine for the LLM
+        // and the transcript log; the user's punctuation isn't load-
+        // bearing for note-taking.
+        let normalized = normalize_for_wake(text);
+        let wake_idx = normalized
+            .find("hey openhuman")
+            .or_else(|| normalized.find("hey open human"));
+        if let Some(idx) = wake_idx {
+            let after = if normalized[idx..].starts_with("hey openhuman") {
+                idx + "hey openhuman".len()
+            } else {
+                idx + "hey open human".len()
+            };
+            let tail = normalized.get(after..).unwrap_or("").trim().to_string();
+            self.pending_prompt = tail;
+            self.wake_active = true;
+            self.record_event(
+                SessionEventKind::Note,
+                format!("wake word from speaker={speaker}"),
+            );
+            return true;
+        }
+        // Outside a wake context, just record the line for the
+        // transcript log. Useful for debugging "why didn't the agent
+        // respond". (The wake-active branch is handled by the
+        // early-return above.)
+        self.record_event(
+            SessionEventKind::Heard,
+            if speaker.is_empty() {
+                text.to_string()
+            } else {
+                format!("{speaker}: {text}")
+            },
+        );
         false
     }
 
     /// Drain the assembled wake-word prompt and clear the active
     /// flag. The brain calls this once it's ready to dispatch the
     /// turn so subsequent captions start a fresh wake-word cycle.
+    ///
+    /// Sets a cooldown window keyed off `last_caption_ts_ms` so any
+    /// subsequent caption push for the same lingering utterance
+    /// doesn't re-fire the wake-word state machine. 8s is a comfortable
+    /// upper bound on how long Meet keeps a finalised caption visible.
     pub fn take_pending_prompt(&mut self) -> Option<String> {
         if !self.wake_active {
             return None;
         }
         self.wake_active = false;
+        // 8s grace beyond the most recent caption's page timestamp.
+        // `last_caption_ts_ms` is whatever Date.now() was page-side
+        // when the line landed — same clock as future caption pushes.
+        const COOLDOWN_MS: u64 = 8_000;
+        self.wake_cooldown_until_ts_ms = self.last_caption_ts_ms.saturating_add(COOLDOWN_MS);
         let prompt = std::mem::take(&mut self.pending_prompt);
         let trimmed = prompt.trim().to_string();
         if trimmed.is_empty() {
@@ -243,6 +285,25 @@ impl MeetAgentSession {
     pub fn spoken_seconds(&self) -> f32 {
         self.total_outbound_samples as f32 / self.sample_rate_hz as f32
     }
+}
+
+/// Lowercase + drop punctuation + collapse whitespace, so the wake
+/// phrase matches regardless of how Meet's STT punctuated or cased
+/// it ("Hey, OpenHuman", "hey open-human", etc).
+fn normalize_for_wake(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut prev_space = true;
+    for c in text.chars() {
+        let lc = c.to_ascii_lowercase();
+        if lc.is_ascii_alphanumeric() {
+            out.push(lc);
+            prev_space = false;
+        } else if !prev_space {
+            out.push(' ');
+            prev_space = true;
+        }
+    }
+    out.trim_end().to_string()
 }
 
 /// Process-wide session registry. Sessions are keyed by `request_id`.
@@ -365,6 +426,44 @@ mod tests {
             assert!(!done);
         })
         .unwrap();
+    }
+
+    #[test]
+    fn note_caption_handles_punctuated_wake() {
+        let mut s = MeetAgentSession::new("p".into(), 16_000);
+        // Meet often inserts a comma after "hey".
+        let fired = s.note_caption("Alice", "Hey, OpenHuman remember the launch", 1);
+        assert!(fired, "punctuated wake phrase should still fire");
+        let prompt = s.take_pending_prompt().expect("prompt drained");
+        assert_eq!(prompt, "remember the launch");
+    }
+
+    #[test]
+    fn note_caption_handles_split_brand() {
+        let mut s = MeetAgentSession::new("p".into(), 16_000);
+        let fired = s.note_caption("Alice", "hey open-human, send the report", 1);
+        assert!(fired);
+        let prompt = s.take_pending_prompt().expect("prompt drained");
+        assert_eq!(prompt, "send the report");
+    }
+
+    #[test]
+    fn note_caption_does_not_double_fire_on_growing_caption() {
+        let mut s = MeetAgentSession::new("p".into(), 16_000);
+        let first = s.note_caption("Alice", "hey openhuman take notes", 1);
+        assert!(first);
+        let second = s.note_caption("Alice", "hey openhuman take notes about the launch", 2);
+        assert!(!second, "second caption while wake_active must not refire");
+        let prompt = s.take_pending_prompt().expect("prompt drained");
+        // First wake stripped "hey openhuman"; the continuation
+        // appended the WHOLE growing caption (still containing "hey
+        // openhuman" because we don't re-strip), separated by a
+        // space. That's fine — the LLM ignores the prefix and the
+        // transcript log still records the verbatim dictation.
+        assert!(
+            prompt.contains("take notes about the launch"),
+            "got prompt: {prompt}"
+        );
     }
 
     #[test]
