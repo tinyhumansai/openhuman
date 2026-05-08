@@ -56,11 +56,22 @@ impl Tool for WhatsAppDataSearchMessagesTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][whatsapp_data] search_messages invoked");
         let req: SearchMessagesRequest = serde_json::from_value(args).map_err(|e| {
+            log::debug!("[tool][whatsapp_data] search_messages invalid_args error={e}");
             anyhow::anyhow!("invalid arguments for whatsapp_data_search_messages: {e}")
         })?;
+        log::debug!(
+            "[tool][whatsapp_data] search_messages args has_account={} has_chat={} limit={:?} query_len={}",
+            req.account_id.is_some(),
+            req.chat_id.is_some(),
+            req.limit,
+            req.query.len(),
+        );
         let outcome = whatsapp_rpc::whatsapp_data_search_messages(req)
             .await
-            .map_err(|e| anyhow::anyhow!("whatsapp_data_search_messages: {e}"))?;
+            .map_err(|e| {
+                log::warn!("[tool][whatsapp_data] search_messages rpc_error error={e}");
+                anyhow::anyhow!("whatsapp_data_search_messages: {e}")
+            })?;
         let messages = outcome.value;
         log::debug!(
             "[tool][whatsapp_data] search_messages returning count={}",

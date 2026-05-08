@@ -50,11 +50,22 @@ impl Tool for WhatsAppDataListChatsTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][whatsapp_data] list_chats invoked");
-        let req: ListChatsRequest = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("invalid arguments for whatsapp_data_list_chats: {e}"))?;
+        let req: ListChatsRequest = serde_json::from_value(args).map_err(|e| {
+            log::debug!("[tool][whatsapp_data] list_chats invalid_args error={e}");
+            anyhow::anyhow!("invalid arguments for whatsapp_data_list_chats: {e}")
+        })?;
+        log::debug!(
+            "[tool][whatsapp_data] list_chats args has_account={} limit={:?} offset={:?}",
+            req.account_id.is_some(),
+            req.limit,
+            req.offset,
+        );
         let outcome = whatsapp_rpc::whatsapp_data_list_chats(req)
             .await
-            .map_err(|e| anyhow::anyhow!("whatsapp_data_list_chats: {e}"))?;
+            .map_err(|e| {
+                log::warn!("[tool][whatsapp_data] list_chats rpc_error error={e}");
+                anyhow::anyhow!("whatsapp_data_list_chats: {e}")
+            })?;
         let chats = outcome.value;
         log::debug!(
             "[tool][whatsapp_data] list_chats returning count={}",
