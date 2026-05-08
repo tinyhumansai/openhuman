@@ -273,8 +273,7 @@ fn popup_should_stay_in_app(provider: &str, url: &Url) -> bool {
             // receives it and completes sign-in (#1021).
             match url.host_str() {
                 Some(host) => {
-                    is_google_sso_host(host)
-                        && url.path().to_ascii_lowercase().contains("gsi")
+                    is_google_sso_host(host) && url.path().to_ascii_lowercase().contains("gsi")
                 }
                 None => false,
             }
@@ -3524,11 +3523,9 @@ mod tests {
     #[test]
     fn linkedin_unrelated_popup_still_goes_to_system_browser() {
         // Non-Google external links from LinkedIn must still route out.
-        assert!(popup_should_navigate_parent(
-            "linkedin",
-            &url("https://example.com/blog"),
-        )
-        .is_none());
+        assert!(
+            popup_should_navigate_parent("linkedin", &url("https://example.com/blog"),).is_none()
+        );
         assert!(!popup_should_stay_in_app(
             "linkedin",
             &url("https://example.com/blog"),
@@ -3545,7 +3542,9 @@ mod tests {
         // postMessage credential callback would have no opener to reach) (#1021).
         assert!(popup_should_stay_in_app(
             "linkedin",
-            &url("https://accounts.google.com/gsi/select?client_id=990339570472-k6nq&ux_mode=popup"),
+            &url(
+                "https://accounts.google.com/gsi/select?client_id=990339570472-k6nq&ux_mode=popup"
+            ),
         ));
         assert!(popup_should_stay_in_app(
             "linkedin",
