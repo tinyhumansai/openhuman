@@ -232,6 +232,7 @@ mod tests {
             },
             used_local: false,
             latency_ms: 9,
+            resolution_path: super::super::evaluator::TriageResolutionPath::Cloud,
         }
     }
 
@@ -245,6 +246,7 @@ mod tests {
             },
             used_local: false,
             latency_ms: 9,
+            resolution_path: super::super::evaluator::TriageResolutionPath::Cloud,
         }
     }
 

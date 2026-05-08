@@ -302,19 +302,27 @@ fn decode_webhook_body(base64_body: &str) -> Result<serde_json::Value, String> {
 async fn run_agent_trigger(
     envelope: &crate::openhuman::agent::triage::TriggerEnvelope,
 ) -> Result<String, String> {
-    let run = crate::openhuman::agent::triage::run_triage(envelope)
+    let outcome = crate::openhuman::agent::triage::run_triage(envelope)
         .await
         .map_err(|e| format!("triage evaluation failed: {e}"))?;
 
-    crate::openhuman::agent::triage::apply_decision(run.clone(), envelope)
-        .await
-        .map_err(|e| format!("apply_decision failed: {e}"))?;
+    match outcome {
+        crate::openhuman::agent::triage::TriageOutcome::Decision(run) => {
+            crate::openhuman::agent::triage::apply_decision(run.clone(), envelope)
+                .await
+                .map_err(|e| format!("apply_decision failed: {e}"))?;
 
-    Ok(format!(
-        "Triage decision: {} (agent: {:?})",
-        run.decision.action.as_str(),
-        run.decision.target_agent
-    ))
+            Ok(format!(
+                "Triage decision: {} (agent: {:?})",
+                run.decision.action.as_str(),
+                run.decision.target_agent
+            ))
+        }
+        crate::openhuman::agent::triage::TriageOutcome::Deferred {
+            defer_until_ms,
+            reason,
+        } => Ok(format!("Triage deferred until {defer_until_ms}: {reason}")),
+    }
 }
 
 /// Build a base64-encoded JSON response body for an agent trigger result.
