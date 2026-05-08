@@ -1254,6 +1254,19 @@ pub fn run() {
             // send COOP/COEP headers, so without this flag the feature
             // silently disappears and huddle/call buttons no-op.
             ("--enable-features", Some("SharedArrayBuffer")),
+            // Allow autoplay (audio + video) without a prior user gesture.
+            // CEF inherits Chromium's default policy, which leaves an
+            // AudioContext suspended until the user interacts with the
+            // page; @remotion/player gates its rAF frame loop on
+            // AudioContext.state === 'running', so on a cold tab the
+            // mascot SVG paints frame 0 and freezes there until the user
+            // alt-tabs / clicks somewhere (which counts as a gesture and
+            // resumes the context — the "fast on revisit" symptom). With
+            // this flag the AudioContext starts in 'running' immediately
+            // and the mascot animates from first paint. We control every
+            // surface in this webview, so dropping the gesture gate is
+            // safe.
+            ("--autoplay-policy", Some("no-user-gesture-required")),
         ];
         // Always expose the CDP port, not just in debug. The webview-accounts
         // CDP session opener navigates each embedded provider webview from its
