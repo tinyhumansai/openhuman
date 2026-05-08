@@ -13,12 +13,17 @@ impl Tool for WhatsAppDataSearchMessagesTool {
     }
 
     fn description(&self) -> &str {
-        "Case-insensitive substring search across stored WhatsApp message \
-         bodies, newest-first. Use ONLY for WhatsApp lookups by keyword, \
-         person name appearing in text, or topic phrase (e.g. \"what did \
-         <person> say on WhatsApp about <topic>\"). Optionally narrow with \
-         `chat_id` and/or `account_id`. Returns provider provenance so \
-         replies can cite WhatsApp."
+        "Case-insensitive substring search across stored WhatsApp messages, \
+         newest-first. Matches BOTH the message body AND the sender name, so \
+         a query of 'Alice' returns Alice's own messages even when the body \
+         does not contain the word 'Alice'. USE THIS for keyword lookups \
+         (specific words, phrases, project names, URLs in messages) and for \
+         'what did <person> say about <topic>' style intents. \
+         Do NOT use this for time-window queries like 'what did <person> say \
+         in the last 3 hours' — those go through `whatsapp_data_list_chats` \
+         to resolve the chat, then `whatsapp_data_list_messages` with \
+         `since_ts`. Optionally narrow with `chat_id` and/or `account_id`. \
+         Returns provider provenance so replies can cite WhatsApp."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

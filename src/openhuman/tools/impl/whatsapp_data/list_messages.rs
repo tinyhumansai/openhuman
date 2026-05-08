@@ -14,12 +14,18 @@ impl Tool for WhatsAppDataListMessagesTool {
 
     fn description(&self) -> &str {
         "Return WhatsApp messages for one chat, ordered oldest-first within \
-         the requested time window. Use ONLY for WhatsApp summarisation, \
-         action-item extraction or quoting tasks where the user identifies a \
-         specific chat (group or contact). Pass the `chat_id` returned by \
-         `whatsapp_data_list_chats` (or `whatsapp_data_search_messages`); \
-         optionally bound the range with `since_ts` / `until_ts` (Unix \
-         seconds). Returns provider provenance so replies can cite WhatsApp."
+         the requested time window. USE THIS for any WhatsApp request scoped \
+         to a specific chat — summarisation, action-item extraction, \
+         quoting, or 'show me the last N messages with <person>'. ALSO use \
+         this (paired with `since_ts` from `current_time` minus N hours) for \
+         time-window reads like 'what did <person> message me in the last 3 \
+         hours' AFTER resolving the chat via `whatsapp_data_list_chats`. The \
+         `chat_id` arg is required — get it from `whatsapp_data_list_chats` \
+         (or `whatsapp_data_search_messages`); optionally bound the range \
+         with `since_ts` / `until_ts` (Unix seconds). Do NOT use \
+         `whatsapp_data_search_messages` for time-only queries — that tool \
+         is keyword-based, not time-based. Returns provider provenance so \
+         replies can cite WhatsApp."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

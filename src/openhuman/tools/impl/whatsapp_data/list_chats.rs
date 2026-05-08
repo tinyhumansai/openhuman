@@ -13,13 +13,17 @@ impl Tool for WhatsAppDataListChatsTool {
     }
 
     fn description(&self) -> &str {
-        "List WhatsApp chats stored locally on this device, newest activity \
-         first. Use ONLY when the user asks about WhatsApp conversations or \
-         which WhatsApp contacts/groups they have been talking to. Each chat \
-         carries `chat_id`, `display_name`, `is_group`, `last_message_ts`, \
-         and `message_count`; use those to drive `whatsapp_data_list_messages` \
-         or `whatsapp_data_search_messages` afterwards. Returns provider \
-         provenance so replies can cite WhatsApp."
+        "List WhatsApp chats stored locally on this device, sorted by \
+         `last_message_ts` DESC (most recent activity first). USE THIS for \
+         intents about recent WhatsApp activity, identifying who the user \
+         spoke to recently, or resolving a contact/group name to a `chat_id`. \
+         Examples: 'who did I talk to on WhatsApp in the last 3 hours', \
+         'find my chat with Alice', 'which WhatsApp groups are active'. \
+         Each chat carries `chat_id`, `display_name`, `is_group`, \
+         `last_message_ts`, and `message_count`. After getting the chat \
+         list, drive `whatsapp_data_list_messages` (with the `chat_id`, \
+         optionally bounded by `since_ts`) for the message contents. \
+         Returns provider provenance so replies can cite WhatsApp."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
