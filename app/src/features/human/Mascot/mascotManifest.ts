@@ -2,7 +2,7 @@ import type { MascotColor } from './mascotPalette';
 
 const ALL_MASCOT_COLORS: MascotColor[] = ['yellow', 'burgundy', 'black', 'navy', 'green'];
 
-let availableColors: Set<MascotColor> = new Set(ALL_MASCOT_COLORS);
+let availableColors: Set<MascotColor> = new Set(['yellow']);
 let loadPromise: Promise<void> | null = null;
 
 export function isMascotColorAvailable(color: MascotColor): boolean {

@@ -1,8 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
+import { setAvailableMascotColors } from './mascotManifest';
 import { selectYellowMascotAsset } from './runtimeAssetCatalog';
 
 describe('selectYellowMascotAsset', () => {
+  afterEach(() => {
+    setAvailableMascotColors(['yellow']);
+  });
+
   it('uses default pre-rendered assets for the steady mascot states', () => {
     expect(selectYellowMascotAsset({ face: 'idle', arm: 'none' })).toEqual({
       profile: 'default',
@@ -25,10 +30,19 @@ describe('selectYellowMascotAsset', () => {
     });
   });
 
-  it('selects the requested mascot color family', () => {
+  it('selects the requested mascot color family when the manifest reports it available', () => {
+    setAvailableMascotColors(['yellow', 'navy']);
     expect(selectYellowMascotAsset({ face: 'idle', arm: 'none', mascotColor: 'navy' })).toEqual({
       profile: 'default',
       relativePath: 'generated/remotion/default/navy/yellow-MascotIdle.webp',
+      variant: 'yellow-MascotIdle',
+    });
+  });
+
+  it('falls back to yellow when the requested color is not in the manifest', () => {
+    expect(selectYellowMascotAsset({ face: 'idle', arm: 'none', mascotColor: 'navy' })).toEqual({
+      profile: 'default',
+      relativePath: 'generated/remotion/default/yellow/yellow-MascotIdle.webp',
       variant: 'yellow-MascotIdle',
     });
   });
