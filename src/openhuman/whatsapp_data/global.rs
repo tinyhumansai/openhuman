@@ -79,9 +79,13 @@ pub fn store_if_ready() -> Option<WhatsAppDataStoreRef> {
 /// Drop any currently-installed store handle so the next [`init`] re-binds
 /// the global to a fresh workspace. Reachable from integration tests under
 /// `tests/`, which see the crate as an external consumer and therefore can't
-/// use a `#[cfg(test)]`-only symbol. Production callers MUST NOT invoke this
-/// at runtime — the SQLite connection used by in-flight handlers would be
-/// released mid-call. Hidden from rustdoc to discourage misuse.
+/// use a `#[cfg(test)]`-only symbol. Gated behind `cfg(any(test,
+/// debug_assertions))` so the symbol is compiled out of release builds —
+/// `cargo test` and dev builds keep `debug_assertions` on, `--release` turns
+/// it off. Production callers MUST NOT invoke this at runtime — the SQLite
+/// connection used by in-flight handlers would be released mid-call. Hidden
+/// from rustdoc to discourage misuse.
+#[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
 pub fn reset_for_tests() {
     if let Ok(mut guard) = GLOBAL_STORE.write() {
