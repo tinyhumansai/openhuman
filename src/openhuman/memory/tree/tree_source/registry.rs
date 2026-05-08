@@ -10,6 +10,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::tree_source::source_file::write_source_file;
 use crate::openhuman::memory::tree::tree_source::store;
 use crate::openhuman::memory::tree::tree_source::types::{Tree, TreeKind, TreeStatus};
 
@@ -25,6 +26,14 @@ pub fn get_or_create_source_tree(config: &Config, scope: &str) -> Result<Tree> {
             existing.id,
             scope
         );
+        // Refresh the `_source.md` mirror — cheap idempotent rewrite,
+        // keeps the on-disk view current even if a previous run wrote
+        // the row before this file existed (or the file was deleted).
+        if let Err(e) = write_source_file(config, &existing) {
+            log::warn!(
+                "[tree_source::registry] write_source_file failed scope={scope} err={e:#}"
+            );
+        }
         return Ok(existing);
     }
 
@@ -45,6 +54,11 @@ pub fn get_or_create_source_tree(config: &Config, scope: &str) -> Result<Tree> {
                 tree.id,
                 scope
             );
+            if let Err(e) = write_source_file(config, &tree) {
+                log::warn!(
+                    "[tree_source::registry] write_source_file failed scope={scope} err={e:#}"
+                );
+            }
             Ok(tree)
         }
         Err(err) if is_unique_violation(&err) => {
