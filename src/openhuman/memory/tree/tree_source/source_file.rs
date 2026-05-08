@@ -208,9 +208,6 @@ mod tests {
         let path = write_source_file(&cfg, &tree).unwrap();
         let body = fs::read_to_string(&path).unwrap();
         // scope contains ':' → must be quoted to round-trip through YAML.
-        assert!(
-            body.contains("scope: \"gmail:user@example.com\""),
-            "{body}"
-        );
+        assert!(body.contains("scope: \"gmail:user@example.com\""), "{body}");
     }
 }

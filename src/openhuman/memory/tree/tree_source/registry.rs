@@ -30,9 +30,7 @@ pub fn get_or_create_source_tree(config: &Config, scope: &str) -> Result<Tree> {
         // keeps the on-disk view current even if a previous run wrote
         // the row before this file existed (or the file was deleted).
         if let Err(e) = write_source_file(config, &existing) {
-            log::warn!(
-                "[tree_source::registry] write_source_file failed scope={scope} err={e:#}"
-            );
+            log::warn!("[tree_source::registry] write_source_file failed scope={scope} err={e:#}");
         }
         return Ok(existing);
     }
