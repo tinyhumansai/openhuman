@@ -118,9 +118,7 @@ pub async fn install_audio_bridge(meet_url: &str) -> Result<(CdpConn, String), S
     if let Err(err) =
         crate::meet_video::inject::install_camera_bridge_post_reload(&mut cdp, &session).await
     {
-        log::warn!(
-            "[meet-audio] camera bridge install failed: {err} (falling back to static Y4M)"
-        );
+        log::warn!("[meet-audio] camera bridge install failed: {err} (falling back to static Y4M)");
     } else {
         crate::meet_video::inject::confirm_bridge_alive(&mut cdp, &session).await;
     }
