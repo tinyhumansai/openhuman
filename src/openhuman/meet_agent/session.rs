@@ -53,6 +53,18 @@ pub struct MeetAgentSession {
     total_inbound_samples: u64,
     total_outbound_samples: u64,
     pub turn_count: u32,
+    /// Buffer of post-wake-word caption text waiting for the brain
+    /// turn to fire. Populated by `note_caption` once a wake word is
+    /// observed; flushed by `take_pending_prompt`.
+    pending_prompt: String,
+    /// True between "wake word matched" and "brain turn dispatched".
+    /// Used to avoid firing a second turn on every subsequent caption
+    /// line while the prompt is still being assembled.
+    pub wake_active: bool,
+    /// `ts_ms` of the last caption that contributed to
+    /// `pending_prompt`. The brain uses this + the current time to
+    /// decide whether the user has stopped talking.
+    pub last_caption_ts_ms: u64,
 }
 
 impl MeetAgentSession {
@@ -69,6 +81,87 @@ impl MeetAgentSession {
             total_inbound_samples: 0,
             total_outbound_samples: 0,
             turn_count: 0,
+            pending_prompt: String::new(),
+            wake_active: false,
+            last_caption_ts_ms: 0,
+        }
+    }
+
+    /// Caption-driven listen path. Returns `true` when this caption
+    /// just tripped the wake word (caller should kick a turn).
+    ///
+    /// The wake-word match is intentionally permissive: case-folded
+    /// substring on `"hey openhuman"` (and `"hey open human"` to
+    /// tolerate Meet's STT splitting the brand name). Any text after
+    /// the match in the same caption is treated as the start of the
+    /// prompt; subsequent captions append until `take_pending_prompt`
+    /// drains.
+    pub fn note_caption(&mut self, speaker: &str, text: &str, ts_ms: u64) -> bool {
+        if text.trim().is_empty() {
+            return false;
+        }
+        self.last_caption_ts_ms = ts_ms;
+        let lower = text.to_lowercase();
+        let wake_idx = lower
+            .find("hey openhuman")
+            .or_else(|| lower.find("hey open human"));
+        if let Some(idx) = wake_idx {
+            // Slice off the wake phrase. Use `lower` to find the
+            // end-of-phrase position, then map back to the original
+            // text via byte indices (safe because lowercase ASCII has
+            // the same byte length).
+            let after = if lower[idx..].starts_with("hey openhuman") {
+                idx + "hey openhuman".len()
+            } else {
+                idx + "hey open human".len()
+            };
+            let tail = text.get(after..).unwrap_or("").trim().to_string();
+            self.pending_prompt = tail;
+            self.wake_active = true;
+            self.record_event(
+                SessionEventKind::Note,
+                format!("wake word from speaker={speaker}"),
+            );
+            return true;
+        }
+        if self.wake_active {
+            // Append continuation captions until the brain takes the
+            // prompt. Keep separators so adjacent fragments don't
+            // collide ("hello there" → "...hello there").
+            if !self.pending_prompt.is_empty() {
+                self.pending_prompt.push(' ');
+            }
+            self.pending_prompt.push_str(text.trim());
+        } else {
+            // Outside a wake context, just record the line for the
+            // transcript log. Useful for debugging "why didn't the
+            // agent respond".
+            self.record_event(
+                SessionEventKind::Heard,
+                if speaker.is_empty() {
+                    text.to_string()
+                } else {
+                    format!("{speaker}: {text}")
+                },
+            );
+        }
+        false
+    }
+
+    /// Drain the assembled wake-word prompt and clear the active
+    /// flag. The brain calls this once it's ready to dispatch the
+    /// turn so subsequent captions start a fresh wake-word cycle.
+    pub fn take_pending_prompt(&mut self) -> Option<String> {
+        if !self.wake_active {
+            return None;
+        }
+        self.wake_active = false;
+        let prompt = std::mem::take(&mut self.pending_prompt);
+        let trimmed = prompt.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
         }
     }
 

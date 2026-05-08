@@ -43,6 +43,92 @@ use super::wav;
 const MIN_TURN_SAMPLES: usize = 4_000;
 const SAMPLE_RATE_HZ: u32 = 16_000;
 
+/// Caption-driven turn. Drains the session's pending wake-word prompt
+/// (assembled by `session::note_caption`) and runs LLM → TTS → enqueue
+/// outbound. Skips STT entirely — the captions are already text.
+///
+/// We give the user a short window (`CAPTION_TURN_DELAY_MS`) after the
+/// wake word fires so multi-caption utterances ("hey openhuman …
+/// what's the weather like in paris") have a chance to assemble
+/// before we hit the LLM. The shell calls this on every caption
+/// push that flagged the wake word; subsequent calls before the
+/// delay expires are coalesced via the session's `wake_active` flag.
+pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
+    // Wait briefly so a multi-fragment wake utterance ("hey openhuman
+    // what's the weather like in paris" arriving as 2-3 captions) has
+    // a chance to assemble before we drain the prompt.
+    tokio::time::sleep(std::time::Duration::from_millis(CAPTION_TURN_DELAY_MS)).await;
+
+    let prompt = match registry().with_session(request_id, |s| s.take_pending_prompt())? {
+        Some(p) => p,
+        None => return Ok(false),
+    };
+    log::info!(
+        "[meet-agent] caption turn start request_id={request_id} prompt_chars={}",
+        prompt.chars().count()
+    );
+
+    let reply_text = match llm(&prompt).await {
+        Ok(text) => text,
+        Err(err) => {
+            log::warn!("[meet-agent] caption-turn LLM failed request_id={request_id} err={err}");
+            let _ = registry().with_session(request_id, |s| {
+                s.record_event(
+                    SessionEventKind::Note,
+                    format!("LLM failure (using stub): {err}"),
+                );
+            });
+            stub_llm(&prompt).await
+        }
+    };
+
+    let synthesized = if reply_text.trim().is_empty() {
+        Vec::new()
+    } else {
+        match tts(&reply_text).await {
+            Ok(samples) => samples,
+            Err(err) => {
+                log::warn!("[meet-agent] caption-turn TTS failed request_id={request_id} err={err}");
+                let _ = registry().with_session(request_id, |s| {
+                    s.record_event(
+                        SessionEventKind::Note,
+                        format!("TTS failure (using stub): {err}"),
+                    );
+                });
+                stub_tts(&reply_text).await
+            }
+        }
+    };
+
+    registry().with_session(request_id, |s| {
+        s.record_event(SessionEventKind::Heard, prompt.clone());
+        if !reply_text.is_empty() {
+            s.record_event(SessionEventKind::Spoke, reply_text.clone());
+            if !synthesized.is_empty() {
+                s.enqueue_outbound_pcm(&synthesized, true);
+            }
+        } else {
+            s.record_event(
+                SessionEventKind::Note,
+                "agent declined to respond".to_string(),
+            );
+        }
+        s.turn_count += 1;
+    })?;
+
+    log::info!(
+        "[meet-agent] caption turn done request_id={request_id} reply_chars={} synth_samples={}",
+        reply_text.chars().count(),
+        synthesized.len()
+    );
+    Ok(true)
+}
+
+/// Delay between wake-word match and prompt drain. Long enough that
+/// 2-3 caption fragments can join up; short enough that the user
+/// doesn't experience awkward silence after they stop talking.
+const CAPTION_TURN_DELAY_MS: u64 = 1_500;
+
 /// Fire one brain turn for the named session. Returns `Ok(true)` when a
 /// turn actually ran, `Ok(false)` when the inbound buffer was below the
 /// floor.

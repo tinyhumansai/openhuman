@@ -20,7 +20,8 @@ use super::brain;
 use super::ops::VadEvent;
 use super::session::registry;
 use super::types::{
-    PollSpeechRequest, PushListenPcmRequest, StartSessionRequest, StopSessionRequest,
+    PollSpeechRequest, PushCaptionRequest, PushListenPcmRequest, StartSessionRequest,
+    StopSessionRequest,
 };
 
 const LOG_PREFIX: &str = "[meet-agent-rpc]";
@@ -72,6 +73,40 @@ pub async fn handle_push_listen_pcm(params: Map<String, Value>) -> Result<Value,
         json!({
             "ok": true,
             "turn_started": turn_started,
+        }),
+        vec![],
+    )
+    .into_cli_compatible_json()
+}
+
+pub async fn handle_push_caption(params: Map<String, Value>) -> Result<Value, String> {
+    let req: PushCaptionRequest = serde_json::from_value(Value::Object(params))
+        .map_err(|e| format!("{LOG_PREFIX} invalid push_caption params: {e}"))?;
+
+    let wake_fired = registry().with_session(&req.request_id, |s| {
+        s.note_caption(&req.speaker, &req.text, req.ts_ms)
+    })?;
+
+    if wake_fired {
+        log::info!(
+            "{LOG_PREFIX} wake word fired request_id={} speaker={}",
+            req.request_id,
+            req.speaker
+        );
+        let request_id = req.request_id.clone();
+        tokio::spawn(async move {
+            if let Err(err) = brain::run_caption_turn(&request_id).await {
+                log::warn!(
+                    "{LOG_PREFIX} caption-turn failed request_id={request_id} err={err}"
+                );
+            }
+        });
+    }
+
+    RpcOutcome::new(
+        json!({
+            "ok": true,
+            "turn_started": wake_fired,
         }),
         vec![],
     )

@@ -45,6 +45,11 @@ use crate::cdp::{self, CdpConn};
 /// so there's nothing to copy at install.
 pub const AUDIO_BRIDGE_JS: &str = include_str!("audio_bridge.js");
 
+/// Captions bridge — DOM observer over Meet's live captions region
+/// plus auto-enable for the CC button. Installed alongside the audio
+/// bridge so a single `Page.reload` boots both.
+pub const CAPTIONS_BRIDGE_JS: &str = include_str!("captions_bridge.js");
+
 /// How long we wait for CDP to surface the meet target after the
 /// window builds. Mirrors [`crate::meet_scanner::TARGET_DISCOVERY_BUDGET`]
 /// so the two scanners share a budget shape.
@@ -74,7 +79,15 @@ pub async fn install_audio_bridge(meet_url: &str) -> Result<(CdpConn, String), S
         Some(&session),
     )
     .await
-    .map_err(|e| format!("addScriptToEvaluateOnNewDocument: {e}"))?;
+    .map_err(|e| format!("addScriptToEvaluateOnNewDocument(audio): {e}"))?;
+
+    cdp.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": CAPTIONS_BRIDGE_JS }),
+        Some(&session),
+    )
+    .await
+    .map_err(|e| format!("addScriptToEvaluateOnNewDocument(captions): {e}"))?;
 
     // Reload so the script applies to the (already-loaded) meet page.
     // `ignoreCache: true` defeats the bfcache so we get a real
@@ -147,6 +160,55 @@ async fn confirm_bridge_alive(cdp: &mut CdpConn, session: &str) {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     log::warn!("[meet-audio] bridge readiness probe timed out — speak pump will retry");
+}
+
+/// Drain the page-side caption queue. Returns 0 or more `(speaker,
+/// text, ts_ms)` triples accumulated since the last drain. The caller
+/// (the caption listener loop) calls this every ~500 ms.
+pub async fn drain_captions(
+    cdp: &mut CdpConn,
+    session: &str,
+) -> Result<Vec<(String, String, u64)>, String> {
+    let res = cdp
+        .call(
+            "Runtime.evaluate",
+            json!({
+                "expression": "(typeof window.__openhumanDrainCaptions === 'function') \
+                               ? JSON.stringify(window.__openhumanDrainCaptions()) \
+                               : '[]'",
+                "returnByValue": true,
+            }),
+            Some(session),
+        )
+        .await
+        .map_err(|e| format!("Runtime.evaluate drain_captions: {e}"))?;
+    let json_str = res
+        .get("result")
+        .and_then(|r| r.get("value"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("[]")
+        .to_string();
+    let parsed: Vec<Value> =
+        serde_json::from_str(&json_str).map_err(|e| format!("parse captions json: {e}"))?;
+    let mut out = Vec::with_capacity(parsed.len());
+    for entry in parsed {
+        let speaker = entry
+            .get("speaker")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let text = entry
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let ts_ms = entry.get("ts").and_then(|v| v.as_u64()).unwrap_or(0);
+        if text.is_empty() {
+            continue;
+        }
+        out.push((speaker, text, ts_ms));
+    }
+    Ok(out)
 }
 
 /// Dispatch one PCM chunk into the page's bridge. Called on every

@@ -25,6 +25,7 @@
 //! immediately), stops the speak pump, and tells core to close the
 //! session and report counters.
 
+pub mod caption_listener;
 pub mod inject;
 pub mod listen_capture;
 pub mod speak_pump;
@@ -50,12 +51,18 @@ impl MeetAudioState {
 }
 
 /// Held while a session is live. Dropping it runs the listen + speak
-/// teardown synchronously — no async drop needed because the audio
-/// handler registration and pump task both shut down on signal/drop.
+/// teardown synchronously — no async drop needed because the caption
+/// listener and speak pump both shut down on signal/drop.
+///
+/// The legacy CEF-audio `listen_capture::ListenSession` is kept as an
+/// optional field so the pre-register flow still has somewhere to
+/// hand the registration off if a future build re-enables it. In the
+/// caption-driven path it stays `None`.
 pub struct MeetAudioSession {
     pub request_id: String,
-    listen: listen_capture::ListenSession,
-    speak: speak_pump::SpeakPump,
+    _captions: caption_listener::CaptionListener,
+    _legacy_listen: Option<listen_capture::ListenSession>,
+    _speak: speak_pump::SpeakPump,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,9 +75,14 @@ pub struct StopSummary {
 
 /// Open a meet-agent audio session.
 ///
+/// Listen path goes via the captions bridge (`captions_bridge.js`) +
+/// [`caption_listener`]. Speak path goes via the audio bridge
+/// (`audio_bridge.js`) + [`speak_pump`]. Both are installed by
+/// [`inject::install_audio_bridge`].
+///
 /// `meet_url` must be the *exact* URL the CEF window was built with —
-/// the listen path uses it as the registration prefix so two concurrent
-/// calls each tap their own browser.
+/// the inject path uses it as the CDP target prefix so two concurrent
+/// calls each attach to their own browser.
 pub async fn start<R: Runtime>(
     app: AppHandle<R>,
     request_id: String,
@@ -102,23 +114,44 @@ pub async fn start<R: Runtime>(
     )
     .await?;
 
-    let listen = listen_capture::start(&meet_url, request_id.clone())?;
-
-    // Install the page-side audio bridge before starting the pump so
-    // the very first feed lands on a working `__openhumanFeedPcm`.
-    // `install_audio_bridge` triggers a `Page.reload`, so we run it
-    // off-thread and let the pump start once the bridge probe
-    // succeeds. Fire-and-forget is fine: failure here just means
-    // speak doesn't work, and the listen path keeps going.
-    let speak = match inject::install_audio_bridge(&meet_url).await {
-        Ok((cdp, session)) => speak_pump::start(request_id.clone(), cdp, session),
+    // Install the page-side audio + captions bridges in one go. The
+    // returned CDP session is shared by the speak pump and caption
+    // listener — we open a second session for the listener so the
+    // two run concurrently without serialising on a single CDP
+    // mailbox.
+    let (speak, captions) = match inject::install_audio_bridge(&meet_url).await {
+        Ok((cdp, session)) => {
+            // Spawn the caption listener on its own CDP attach so a
+            // long Runtime.evaluate from one side never starves the
+            // other. The second attach reuses the same CDP target.
+            let captions = match crate::cdp::connect_and_attach_matching(|t| {
+                t.url.starts_with(&meet_url)
+            })
+            .await
+            {
+                Ok((cdp_for_captions, session_for_captions)) => caption_listener::start(
+                    request_id.clone(),
+                    cdp_for_captions,
+                    session_for_captions,
+                ),
+                Err(err) => {
+                    log::warn!(
+                        "[meet-audio] caption listener cdp attach failed request_id={request_id} err={err}"
+                    );
+                    caption_listener_disabled(request_id.clone())
+                }
+            };
+            let speak = speak_pump::start(request_id.clone(), cdp, session);
+            (speak, captions)
+        }
         Err(err) => {
             log::warn!(
-                "[meet-audio] audio bridge install failed request_id={request_id} err={err} — speak path disabled for this call"
+                "[meet-audio] audio bridge install failed request_id={request_id} err={err} — speak + caption paths disabled for this call"
             );
-            // Return a no-op pump so the session still tracks listen
-            // counters cleanly.
-            speak_pump::start_disabled(request_id.clone())
+            (
+                speak_pump::start_disabled(request_id.clone()),
+                caption_listener_disabled(request_id.clone()),
+            )
         }
     };
 
@@ -127,8 +160,9 @@ pub async fn start<R: Runtime>(
             request_id.clone(),
             MeetAudioSession {
                 request_id: request_id.clone(),
-                listen,
-                speak,
+                _captions: captions,
+                _legacy_listen: None,
+                _speak: speak,
             },
         );
     } else {
@@ -226,6 +260,15 @@ pub(crate) async fn rpc_call(
         return Err(format!("rpc error: {err}"));
     }
     Ok(v.get("result").cloned().unwrap_or(serde_json::Value::Null))
+}
+
+/// No-op caption listener used when CDP attach failed at session
+/// start. Lets the rest of the lifecycle hold a uniform value.
+fn caption_listener_disabled(request_id: String) -> caption_listener::CaptionListener {
+    caption_listener::CaptionListener {
+        request_id,
+        _shutdown_tx: None,
+    }
 }
 
 /// Trim a string for logging without panicking on multi-byte chars.

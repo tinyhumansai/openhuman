@@ -82,6 +82,35 @@ pub struct PollSpeechResponse {
     pub utterance_done: bool,
 }
 
+/// Inputs to `openhuman.meet_agent_push_caption`.
+///
+/// One row per new line scraped from Meet's captions DOM. Sent by the
+/// shell's `caption_listener` every ~500 ms. The wake-word state
+/// machine in the brain (see `brain::on_caption`) decides whether to
+/// fire a turn.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PushCaptionRequest {
+    pub request_id: String,
+    /// Speaker label scraped from Meet (the participant's display
+    /// name); empty when the captions row didn't expose one.
+    #[serde(default)]
+    pub speaker: String,
+    /// Caption transcript. Already trimmed by the page-side bridge.
+    pub text: String,
+    /// `Date.now()` from the page when the line was queued. Used
+    /// only for ordering / staleness — the brain treats it as opaque.
+    #[serde(default)]
+    pub ts_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PushCaptionResponse {
+    pub ok: bool,
+    /// True when this caption tripped the wake-word and a brain turn
+    /// is now in flight.
+    pub turn_started: bool,
+}
+
 /// Inputs to `openhuman.meet_agent_stop_session`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StopSessionRequest {

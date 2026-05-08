@@ -26,6 +26,11 @@ const DEFS: &[Def] = &[
         handler: wrap_push_listen_pcm,
     },
     Def {
+        function: "push_caption",
+        schema: schema_push_caption,
+        handler: wrap_push_caption,
+    },
+    Def {
         function: "poll_speech",
         schema: schema_poll_speech,
         handler: wrap_poll_speech,
@@ -131,6 +136,55 @@ fn schema_push_listen_pcm() -> ControllerSchema {
                 name: "turn_started",
                 ty: TypeSchema::Bool,
                 comment: "True when this push closed an utterance and the brain ran a turn.",
+                required: true,
+            },
+        ],
+    }
+}
+
+fn schema_push_caption() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "meet_agent",
+        function: "push_caption",
+        description: "Push a caption line scraped from Meet's live captions DOM. The wake-word \
+                      gate (\"hey openhuman\") triggers an LLM/TTS turn when fired.",
+        inputs: vec![
+            FieldSchema {
+                name: "request_id",
+                ty: TypeSchema::String,
+                comment: "Session key from start_session.",
+                required: true,
+            },
+            FieldSchema {
+                name: "speaker",
+                ty: TypeSchema::String,
+                comment: "Speaker label scraped from Meet (display name); may be empty.",
+                required: false,
+            },
+            FieldSchema {
+                name: "text",
+                ty: TypeSchema::String,
+                comment: "Caption transcript (already trimmed by the page-side bridge).",
+                required: true,
+            },
+            FieldSchema {
+                name: "ts_ms",
+                ty: TypeSchema::F64,
+                comment: "Page-side Date.now() when the caption was queued.",
+                required: false,
+            },
+        ],
+        outputs: vec![
+            FieldSchema {
+                name: "ok",
+                ty: TypeSchema::Bool,
+                comment: "True when the caption was accepted.",
+                required: true,
+            },
+            FieldSchema {
+                name: "turn_started",
+                ty: TypeSchema::Bool,
+                comment: "True when this caption tripped the wake word and a brain turn dispatched.",
                 required: true,
             },
         ],
@@ -243,6 +297,9 @@ fn wrap_start_session(p: Map<String, Value>) -> ControllerFuture {
 fn wrap_push_listen_pcm(p: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::handle_push_listen_pcm(p).await })
 }
+fn wrap_push_caption(p: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::rpc::handle_push_caption(p).await })
+}
 fn wrap_poll_speech(p: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::handle_poll_speech(p).await })
 }
@@ -270,6 +327,7 @@ mod tests {
             vec![
                 "start_session",
                 "push_listen_pcm",
+                "push_caption",
                 "poll_speech",
                 "stop_session"
             ]

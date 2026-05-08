@@ -134,9 +134,12 @@ pub async fn meet_call_open_window<R: Runtime>(
         let request_id_for_audio = request_id.clone();
         let url_for_audio = parsed.to_string();
         tauri::async_runtime::spawn(async move {
-            if let Err(err) =
-                crate::meet_audio::start(app_for_audio, request_id_for_audio.clone(), url_for_audio)
-                    .await
+            if let Err(err) = crate::meet_audio::start(
+                app_for_audio,
+                request_id_for_audio.clone(),
+                url_for_audio,
+            )
+            .await
             {
                 log::warn!(
                     "[meet-call] meet_audio start failed request_id={request_id_for_audio} err={err}"
