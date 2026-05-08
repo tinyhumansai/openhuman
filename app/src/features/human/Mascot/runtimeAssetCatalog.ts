@@ -41,7 +41,10 @@ function resolveVariant(face: MascotFace): YellowMascotAssetVariant {
 function resolveProfile({
   compactArmShading,
   groundShadowOpacity,
-}: Pick<YellowMascotAssetRequest, 'compactArmShading' | 'groundShadowOpacity'>): YellowMascotAssetProfile | null {
+}: Pick<
+  YellowMascotAssetRequest,
+  'compactArmShading' | 'groundShadowOpacity'
+>): YellowMascotAssetProfile | null {
   if (groundShadowOpacity === undefined && compactArmShading === undefined) {
     return 'default';
   }

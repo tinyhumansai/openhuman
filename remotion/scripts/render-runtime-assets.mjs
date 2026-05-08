@@ -117,7 +117,7 @@ function extractPngFrames(inputMov, frameDir) {
       '-i',
       inputMov,
       '-an',
-      '-fps_mode',
+      '-vsync',
       'passthrough',
       '-pix_fmt',
       'rgba',

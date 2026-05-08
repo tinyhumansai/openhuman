@@ -51,11 +51,7 @@ describe('selectYellowMascotAsset', () => {
   it('falls back to live remotion for unsupported prop combinations', () => {
     expect(selectYellowMascotAsset({ face: 'idle', arm: 'wave' })).toBeNull();
     expect(
-      selectYellowMascotAsset({
-        face: 'idle',
-        arm: 'none',
-        groundShadowOpacity: 0.5,
-      })
+      selectYellowMascotAsset({ face: 'idle', arm: 'none', groundShadowOpacity: 0.5 })
     ).toBeNull();
   });
 });

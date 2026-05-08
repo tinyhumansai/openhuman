@@ -27,13 +27,7 @@ export const YellowMascot: FC<YellowMascotProps> = ({
   const [assetFailed, setAssetFailed] = useState(false);
   const asset = useMemo(
     () =>
-      selectYellowMascotAsset({
-        face,
-        arm,
-        groundShadowOpacity,
-        compactArmShading,
-        mascotColor,
-      }),
+      selectYellowMascotAsset({ face, arm, groundShadowOpacity, compactArmShading, mascotColor }),
     [face, arm, groundShadowOpacity, compactArmShading, mascotColor]
   );
   const assetUrl = useMemo(
@@ -74,7 +68,13 @@ export const YellowMascot: FC<YellowMascotProps> = ({
           aria-hidden="true"
           style={{ width: '100%', height: '100%', background: 'transparent' }}
           onError={() => {
-            debugMascotAssets('asset-miss face=%s arm=%s color=%s url=%s', face, arm, mascotColor, assetUrl);
+            debugMascotAssets(
+              'asset-miss face=%s arm=%s color=%s url=%s',
+              face,
+              arm,
+              mascotColor,
+              assetUrl
+            );
             setAssetFailed(true);
           }}
         />

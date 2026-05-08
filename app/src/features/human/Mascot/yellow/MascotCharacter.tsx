@@ -3,9 +3,9 @@ import React from 'react';
 import { AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
 import { z } from 'zod';
 
+import { getMascotPalette, type MascotColor } from '../mascotPalette';
 import { LoadingFace } from './LoadingFace';
 import { RecordingFace } from './RecordingFace';
-import { getMascotPalette, type MascotColor } from '../mascotPalette';
 
 export const mascotSchema = z.object({
   arm: z.enum(['wave', 'none', 'steady']).default('wave'),
@@ -329,10 +329,7 @@ export const MascotCharacter: React.FC<
             <feOffset dx="17" dy="28" />
             <feGaussianBlur stdDeviation="10.45" />
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
-            <feColorMatrix
-              type="matrix"
-              values={palette.bodyHighlightMatrix}
-            />
+            <feColorMatrix type="matrix" values={palette.bodyHighlightMatrix} />
             <feBlend mode="normal" in2="shape" result="effect1_innerShadow" />
             <feColorMatrix
               in="SourceAlpha"
@@ -343,10 +340,7 @@ export const MascotCharacter: React.FC<
             <feOffset dx="-27" dy="-22" />
             <feGaussianBlur stdDeviation="29.75" />
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
-            <feColorMatrix
-              type="matrix"
-              values={palette.bodyShadowMatrix}
-            />
+            <feColorMatrix type="matrix" values={palette.bodyShadowMatrix} />
             <feBlend mode="normal" in2="effect1_innerShadow" result="effect2_innerShadow" />
             <feTurbulence type="fractalNoise" baseFrequency="0.999" numOctaves={3} seed={8703} />
             <feDisplacementMap
@@ -394,10 +388,7 @@ export const MascotCharacter: React.FC<
             <feOffset dx="-2" dy="-13" />
             <feGaussianBlur stdDeviation="19.7" />
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
-            <feColorMatrix
-              type="matrix"
-              values={palette.headShadowMatrix}
-            />
+            <feColorMatrix type="matrix" values={palette.headShadowMatrix} />
             <feBlend mode="normal" in2="effect1_innerShadow" result="effect2_innerShadow" />
             <feTurbulence type="fractalNoise" baseFrequency="0.999" numOctaves={3} seed={8703} />
             <feDisplacementMap
@@ -622,10 +613,7 @@ export const MascotCharacter: React.FC<
             <feOffset dx="1" dy="-20" />
             <feGaussianBlur stdDeviation="7.55" />
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
-            <feColorMatrix
-              type="matrix"
-              values={armHighlightMatrix}
-            />
+            <feColorMatrix type="matrix" values={armHighlightMatrix} />
             <feBlend mode="normal" in2="shape" result="effect1_innerShadow" />
             <feColorMatrix
               in="SourceAlpha"
@@ -636,10 +624,7 @@ export const MascotCharacter: React.FC<
             <feOffset dx="0" dy="-8" />
             <feGaussianBlur stdDeviation="3.55" />
             <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1" />
-            <feColorMatrix
-              type="matrix"
-              values={leftArmShadowMatrix}
-            />
+            <feColorMatrix type="matrix" values={leftArmShadowMatrix} />
             <feBlend mode="normal" in2="effect1_innerShadow" result="effect2_innerShadow" />
             <feTurbulence type="fractalNoise" baseFrequency="0.999" numOctaves={3} seed={8703} />
             <feDisplacementMap
