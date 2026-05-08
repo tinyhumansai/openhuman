@@ -14,20 +14,28 @@
 //! ```
 
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, RwLock};
 
 use crate::openhuman::whatsapp_data::store::WhatsAppDataStore;
 
 /// Shared, thread-safe reference to the store.
 pub type WhatsAppDataStoreRef = Arc<WhatsAppDataStore>;
 
-static GLOBAL_STORE: OnceLock<WhatsAppDataStoreRef> = OnceLock::new();
+// `RwLock<Option<…>>` rather than `OnceLock` so tests can swap workspaces
+// between runs (each test uses its own temp dir; without reset, the second
+// test would attach to a dropped sqlite path). Production callers still get
+// strict idempotency: `init` is a no-op once a store is set.
+static GLOBAL_STORE: RwLock<Option<WhatsAppDataStoreRef>> = RwLock::new(None);
 
 /// Initialise the global store from a workspace directory. Idempotent —
 /// only the first call has any effect; subsequent calls return the existing
 /// instance.
 pub fn init(workspace_dir: PathBuf) -> Result<WhatsAppDataStoreRef, String> {
-    if let Some(existing) = GLOBAL_STORE.get() {
+    if let Some(existing) = GLOBAL_STORE
+        .read()
+        .map_err(|e| format!("[whatsapp_data:global] read lock poisoned: {e}"))?
+        .as_ref()
+    {
         log::debug!("[whatsapp_data:global] already initialised");
         return Ok(Arc::clone(existing));
     }
@@ -39,19 +47,44 @@ pub fn init(workspace_dir: PathBuf) -> Result<WhatsAppDataStoreRef, String> {
         WhatsAppDataStore::new(&workspace_dir)
             .map_err(|e| format!("[whatsapp_data] store init failed: {e}"))?,
     );
-    let _ = GLOBAL_STORE.set(Arc::clone(&store));
-    Ok(GLOBAL_STORE.get().cloned().unwrap_or(store))
+    let mut guard = GLOBAL_STORE
+        .write()
+        .map_err(|e| format!("[whatsapp_data:global] write lock poisoned: {e}"))?;
+    // Race-resolve: another caller may have inited while we were building.
+    if let Some(existing) = guard.as_ref() {
+        return Ok(Arc::clone(existing));
+    }
+    *guard = Some(Arc::clone(&store));
+    Ok(store)
 }
 
 /// Return the global store. Errors if [`init`] has not been called yet.
 pub fn store() -> Result<WhatsAppDataStoreRef, String> {
-    GLOBAL_STORE.get().cloned().ok_or_else(|| {
-        "whatsapp_data global store accessed before init — call init(workspace) at startup"
-            .to_string()
-    })
+    GLOBAL_STORE
+        .read()
+        .map_err(|e| format!("[whatsapp_data:global] read lock poisoned: {e}"))?
+        .as_ref()
+        .map(Arc::clone)
+        .ok_or_else(|| {
+            "whatsapp_data global store accessed before init — call init(workspace) at startup"
+                .to_string()
+        })
 }
 
 /// Return the global store if already initialised, without error.
 pub fn store_if_ready() -> Option<WhatsAppDataStoreRef> {
-    GLOBAL_STORE.get().cloned()
+    GLOBAL_STORE.read().ok()?.as_ref().map(Arc::clone)
+}
+
+/// Drop any currently-installed store handle so the next [`init`] re-binds
+/// the global to a fresh workspace. Reachable from integration tests under
+/// `tests/`, which see the crate as an external consumer and therefore can't
+/// use a `#[cfg(test)]`-only symbol. Production callers MUST NOT invoke this
+/// at runtime — the SQLite connection used by in-flight handlers would be
+/// released mid-call. Hidden from rustdoc to discourage misuse.
+#[doc(hidden)]
+pub fn reset_for_tests() {
+    if let Ok(mut guard) = GLOBAL_STORE.write() {
+        *guard = None;
+    }
 }
