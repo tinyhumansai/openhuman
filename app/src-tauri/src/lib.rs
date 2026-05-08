@@ -9,12 +9,12 @@ mod core_process;
 mod core_rpc;
 mod dictation_hotkeys;
 mod discord_scanner;
+mod fake_camera;
 mod file_logging;
 mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
-mod fake_camera;
 mod meet_call;
 mod meet_scanner;
 mod native_notifications;
@@ -1268,26 +1268,22 @@ pub fn run() {
         // intentionally requests a camera, and other webviews don't ask
         // for one. The path string is leaked with `Box::leak` so its
         // `&str` outlives the args vec we hand to `command_line_args`.
-        let fake_camera_arg: Option<&'static str> = match fake_camera::ensure_mascot_y4m(
-            &file_logging::resolve_data_dir(),
-        ) {
-            Ok(path) => {
-                let leaked: &'static str = Box::leak(
-                    path.to_string_lossy()
-                        .into_owned()
-                        .into_boxed_str(),
-                );
-                log::info!("[cef-startup] fake-camera y4m path={leaked}");
-                Some(leaked)
-            }
-            Err(err) => {
-                log::warn!(
-                    "[cef-startup] mascot fake-camera unavailable: {err} \
+        let fake_camera_arg: Option<&'static str> =
+            match fake_camera::ensure_mascot_y4m(&file_logging::resolve_data_dir()) {
+                Ok(path) => {
+                    let leaked: &'static str =
+                        Box::leak(path.to_string_lossy().into_owned().into_boxed_str());
+                    log::info!("[cef-startup] fake-camera y4m path={leaked}");
+                    Some(leaked)
+                }
+                Err(err) => {
+                    log::warn!(
+                        "[cef-startup] mascot fake-camera unavailable: {err} \
                      (Meet will see no camera)"
-                );
-                None
-            }
-        };
+                    );
+                    None
+                }
+            };
         if let Some(path) = fake_camera_arg {
             args.push(("--use-fake-device-for-media-stream", None));
             args.push(("--use-fake-ui-for-media-stream", None));

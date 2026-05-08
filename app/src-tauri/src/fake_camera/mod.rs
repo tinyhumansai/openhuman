@@ -75,8 +75,8 @@ pub fn ensure_mascot_y4m(data_dir: &Path) -> Result<PathBuf, String> {
 /// background so the mascot looks centered in the participant tile
 /// regardless of source aspect ratio.
 fn rasterize_svg(svg: &str) -> Result<Vec<u8>, String> {
-    let tree = UsvgTree::from_str(svg, &UsvgOptions::default())
-        .map_err(|e| format!("parse svg: {e}"))?;
+    let tree =
+        UsvgTree::from_str(svg, &UsvgOptions::default()).map_err(|e| format!("parse svg: {e}"))?;
     let svg_size = tree.size();
     let svg_w = svg_size.width();
     let svg_h = svg_size.height();
