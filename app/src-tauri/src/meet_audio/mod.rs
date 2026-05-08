@@ -203,8 +203,14 @@ pub async fn stop<R: Runtime>(
     .await
     {
         Ok(v) => {
-            let listened = v.get("listened_seconds").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
-            let spoken = v.get("spoken_seconds").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+            let listened = v
+                .get("listened_seconds")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0) as f32;
+            let spoken = v
+                .get("spoken_seconds")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0) as f32;
             let turns = v.get("turn_count").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
             log::info!(
                 "[meet-audio] stop ok request_id={request_id} listened={listened:.2}s spoken={spoken:.2}s turns={turns}"

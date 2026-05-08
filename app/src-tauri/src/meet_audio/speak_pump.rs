@@ -132,9 +132,7 @@ async fn poll_and_feed(
         );
         inject::feed_pcm_chunk(cdp, session_id, pcm_b64).await?;
     } else if utterance_done {
-        log::info!(
-            "[meet-audio] speak pump utterance complete request_id={request_id}"
-        );
+        log::info!("[meet-audio] speak pump utterance complete request_id={request_id}");
     }
     Ok(())
 }

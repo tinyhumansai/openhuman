@@ -4073,10 +4073,7 @@ async fn json_rpc_meet_agent_session_lifecycle() {
         .get("listened_seconds")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
-    assert!(
-        listened > 1.0,
-        "expected >1s listened, got {listened:.2}"
-    );
+    assert!(listened > 1.0, "expected >1s listened, got {listened:.2}");
     let turns = stop_body
         .get("turn_count")
         .and_then(|v| v.as_u64())

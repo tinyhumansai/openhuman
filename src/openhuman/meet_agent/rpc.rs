@@ -52,8 +52,8 @@ pub async fn handle_push_listen_pcm(params: Map<String, Value>) -> Result<Value,
     let req: PushListenPcmRequest = serde_json::from_value(Value::Object(params))
         .map_err(|e| format!("{LOG_PREFIX} invalid push_listen_pcm params: {e}"))?;
 
-    let samples = decode_pcm16le_b64(&req.pcm_base64)
-        .map_err(|e| format!("{LOG_PREFIX} pcm decode: {e}"))?;
+    let samples =
+        decode_pcm16le_b64(&req.pcm_base64).map_err(|e| format!("{LOG_PREFIX} pcm decode: {e}"))?;
 
     let event = registry().with_session(&req.request_id, |s| s.push_inbound_pcm(&samples))?;
 
@@ -96,9 +96,7 @@ pub async fn handle_push_caption(params: Map<String, Value>) -> Result<Value, St
         let request_id = req.request_id.clone();
         tokio::spawn(async move {
             if let Err(err) = brain::run_caption_turn(&request_id).await {
-                log::warn!(
-                    "{LOG_PREFIX} caption-turn failed request_id={request_id} err={err}"
-                );
+                log::warn!("{LOG_PREFIX} caption-turn failed request_id={request_id} err={err}");
             }
         });
     }

@@ -149,8 +149,12 @@ mod tests {
 
     #[test]
     fn frame_rms_grows_with_amplitude() {
-        let quiet: Vec<i16> = (0..320).map(|i| if i % 2 == 0 { 1000i16 } else { -1000 }).collect();
-        let loud: Vec<i16> = (0..320).map(|i| if i % 2 == 0 { 8000i16 } else { -8000 }).collect();
+        let quiet: Vec<i16> = (0..320)
+            .map(|i| if i % 2 == 0 { 1000i16 } else { -1000 })
+            .collect();
+        let loud: Vec<i16> = (0..320)
+            .map(|i| if i % 2 == 0 { 8000i16 } else { -8000 })
+            .collect();
         assert!(frame_rms(&loud) > frame_rms(&quiet));
     }
 

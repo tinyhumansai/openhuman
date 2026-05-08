@@ -82,7 +82,9 @@ pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
         match tts(&reply_text).await {
             Ok(samples) => samples,
             Err(err) => {
-                log::warn!("[meet-agent] caption-turn TTS failed request_id={request_id} err={err}");
+                log::warn!(
+                    "[meet-agent] caption-turn TTS failed request_id={request_id} err={err}"
+                );
                 let _ = registry().with_session(request_id, |s| {
                     s.record_event(
                         SessionEventKind::Note,
@@ -128,13 +130,7 @@ const CAPTION_TURN_DELAY_MS: u64 = 1_500;
 /// Selected by hashing the prompt so the same dictation reliably
 /// produces the same ack (helpful for tests + debugging) while still
 /// rotating across the set in a normal conversation.
-const ACK_PHRASES: &[&str] = &[
-    "Got it.",
-    "Noted.",
-    "Adding that.",
-    "On it.",
-    "Captured.",
-];
+const ACK_PHRASES: &[&str] = &["Got it.", "Noted.", "Adding that.", "On it.", "Captured."];
 
 fn pick_ack_phrase(prompt: &str) -> &'static str {
     if prompt.trim().is_empty() {
@@ -306,7 +302,12 @@ async fn llm(heard: &str) -> Result<String, String> {
     });
 
     let raw = client
-        .authed_json(&token, Method::POST, "/openai/v1/chat/completions", Some(body))
+        .authed_json(
+            &token,
+            Method::POST,
+            "/openai/v1/chat/completions",
+            Some(body),
+        )
         .await
         .map_err(|e| e.to_string())?;
 
@@ -409,11 +410,7 @@ mod tests {
         assert_eq!(run_turn("brain-fallback").await.unwrap(), true);
         registry()
             .with_session("brain-fallback", |s| {
-                let kinds: Vec<_> = s
-                    .events()
-                    .iter()
-                    .map(|e| format!("{:?}", e.kind))
-                    .collect();
+                let kinds: Vec<_> = s.events().iter().map(|e| format!("{:?}", e.kind)).collect();
                 assert!(kinds.contains(&"Heard".to_string()));
                 assert!(kinds.contains(&"Spoke".to_string()));
                 assert_eq!(s.turn_count, 1);
@@ -439,6 +436,9 @@ mod tests {
     #[test]
     fn extract_chat_completion_text_returns_none_on_malformed() {
         assert_eq!(extract_chat_completion_text(&json!({})), None);
-        assert_eq!(extract_chat_completion_text(&json!({ "choices": [] })), None);
+        assert_eq!(
+            extract_chat_completion_text(&json!({ "choices": [] })),
+            None
+        );
     }
 }

@@ -118,9 +118,7 @@ async fn drain_and_forward(
         )
         .await;
         if let Err(err) = res {
-            log::debug!(
-                "[meet-audio] push_caption err request_id={request_id} err={err}"
-            );
+            log::debug!("[meet-audio] push_caption err request_id={request_id} err={err}");
         }
     }
     Ok(())

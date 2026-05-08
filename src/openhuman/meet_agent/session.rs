@@ -324,9 +324,7 @@ impl MeetAgentSessionRegistry {
         if guard.contains_key(&request_id) {
             // Idempotent restart: replace the old session so a shell
             // crash + reconnect doesn't wedge the registry.
-            log::info!(
-                "[meet-agent] replacing existing session request_id={request_id}"
-            );
+            log::info!("[meet-agent] replacing existing session request_id={request_id}");
         }
         guard.insert(
             request_id.clone(),

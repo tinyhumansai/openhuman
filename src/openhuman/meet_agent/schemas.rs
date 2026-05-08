@@ -66,7 +66,8 @@ fn schema_start_session() -> ControllerSchema {
     ControllerSchema {
         namespace: "meet_agent",
         function: "start_session",
-        description: "Open a meet-agent session keyed by request_id. The Tauri shell calls this after \
+        description:
+            "Open a meet-agent session keyed by request_id. The Tauri shell calls this after \
                       the meet-call window opens and before pushing PCM frames.",
         inputs: vec![
             FieldSchema {
@@ -109,7 +110,8 @@ fn schema_push_listen_pcm() -> ControllerSchema {
     ControllerSchema {
         namespace: "meet_agent",
         function: "push_listen_pcm",
-        description: "Push a chunk of inbound PCM (Meet → agent) into the session. May trigger a brain \
+        description:
+            "Push a chunk of inbound PCM (Meet → agent) into the session. May trigger a brain \
                       turn when VAD detects end-of-utterance.",
         inputs: vec![
             FieldSchema {
@@ -121,7 +123,8 @@ fn schema_push_listen_pcm() -> ControllerSchema {
             FieldSchema {
                 name: "pcm_base64",
                 ty: TypeSchema::String,
-                comment: "Base64-encoded PCM16LE samples at the session's sample rate. Empty allowed.",
+                comment:
+                    "Base64-encoded PCM16LE samples at the session's sample rate. Empty allowed.",
                 required: true,
             },
         ],
@@ -184,7 +187,8 @@ fn schema_push_caption() -> ControllerSchema {
             FieldSchema {
                 name: "turn_started",
                 ty: TypeSchema::Bool,
-                comment: "True when this caption tripped the wake word and a brain turn dispatched.",
+                comment:
+                    "True when this caption tripped the wake word and a brain turn dispatched.",
                 required: true,
             },
         ],

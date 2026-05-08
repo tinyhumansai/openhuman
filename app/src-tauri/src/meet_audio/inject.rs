@@ -219,11 +219,7 @@ pub async fn drain_captions(
 /// page navigated away (e.g. "you've been removed from the call"),
 /// which the meet-call lifecycle handles by tearing the whole session
 /// down anyway.
-pub async fn feed_pcm_chunk(
-    cdp: &mut CdpConn,
-    session: &str,
-    pcm_b64: &str,
-) -> Result<(), String> {
+pub async fn feed_pcm_chunk(cdp: &mut CdpConn, session: &str, pcm_b64: &str) -> Result<(), String> {
     if pcm_b64.is_empty() {
         return Ok(());
     }
