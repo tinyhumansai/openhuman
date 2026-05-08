@@ -71,7 +71,7 @@ function run(command, args, cwd) {
   } catch (error) {
     if (error?.code === 'ENOENT') {
       throw new Error(
-        `[remotion-runtime-assets] missing required executable "${command}". Install ffmpeg or ensure it is on PATH.`
+        `[remotion-runtime-assets] missing required executable "${command}". Install it and ensure it is on PATH.`
       );
     }
     throw error;
