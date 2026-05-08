@@ -16,6 +16,12 @@ export function setAvailableMascotColors(colors: Iterable<MascotColor>): void {
   }
 }
 
+// Test-only: reset cached load promise + restore yellow-only default. Not for app code.
+export function __resetMascotManifestForTests(): void {
+  availableColors = new Set(['yellow']);
+  loadPromise = null;
+}
+
 interface ManifestVariant {
   color?: string;
 }
