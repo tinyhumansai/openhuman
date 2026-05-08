@@ -72,12 +72,12 @@ pub async fn ingest_chat(
     tags: Vec<String>,
     batch: ChatBatch,
 ) -> Result<IngestResult> {
-    if already_ingested(config, SourceKind::Chat, source_id).await? {
-        log::debug!(
-            "[memory_tree::ingest] skip ingest_chat — source_id already ingested: {source_id}"
-        );
-        return Ok(IngestResult::already_ingested(source_id));
-    }
+    // No source-level gate for chat: a chat `source_id` (e.g.
+    // `slack:{connection_id}`) is a stream identifier — many batches /
+    // buckets accumulate into the same source tree over time. The gate
+    // would make every bucket after the first a no-op. Chunk-level
+    // idempotency (`chunk_id` includes content) still prevents true
+    // replay duplicates from reaching the summariser.
     let canonical =
         match chat::canonicalise(source_id, owner, &tags, batch).map_err(anyhow::Error::msg)? {
             Some(c) => c,
@@ -95,12 +95,11 @@ pub async fn ingest_email(
     tags: Vec<String>,
     thread: EmailThread,
 ) -> Result<IngestResult> {
-    if already_ingested(config, SourceKind::Email, source_id).await? {
-        log::debug!(
-            "[memory_tree::ingest] skip ingest_email — source_id already ingested: {source_id}"
-        );
-        return Ok(IngestResult::already_ingested(source_id));
-    }
+    // No source-level gate for email: gmail per-participant ingest
+    // groups many threads under one `source_id` (e.g.
+    // `gmail:{participants_hash}`) and appends as new threads arrive.
+    // The gate would block all but the first thread. Chunk-level
+    // idempotency still protects against true replays.
     let canonical =
         match email::canonicalise(source_id, owner, &tags, thread).map_err(anyhow::Error::msg)? {
             Some(c) => c,
@@ -197,27 +196,37 @@ async fn persist(
         store::with_connection(&config_owned, |conn| {
             let tx = conn.unchecked_transaction()?;
 
-            // Authoritative source-level gate. `is_source_ingested` above is
-            // a best-effort fast-path that lets us skip canonicalisation;
-            // this row insert is what actually serialises concurrent
-            // ingests of the same source. If the row already exists we
-            // bail before touching chunks / scores / jobs so the
-            // summariser tree never sees the same source twice.
-            let now_ms = chrono::Utc::now().timestamp_millis();
-            let claimed = store::claim_source_ingest_tx(
-                &tx,
-                source_kind_for_store,
-                &source_id_for_store,
-                now_ms,
-            )?;
-            if !claimed {
-                log::debug!(
-                    "[memory_tree::ingest] persist gate: source already ingested kind={} source_id={}",
-                    source_kind_for_store.as_str(),
-                    source_id_for_store
-                );
-                // Drop the (empty) transaction implicitly; nothing to commit.
-                return Ok(None);
+            // Authoritative source-level gate (documents only).
+            //
+            // For documents, `source_id` identifies a single immutable
+            // file (one notion page, one drive doc). `is_source_ingested`
+            // above is a best-effort fast-path; this row insert is what
+            // actually serialises concurrent ingests of the same
+            // document and prevents the same content from flowing
+            // through extract → admit → buffer → seal twice.
+            //
+            // Chat and email don't get this gate: their `source_id`
+            // is a *stream* identifier (e.g. slack workspace, gmail
+            // participant group) under which many batches / threads
+            // accumulate over time. The chunk-level idempotency in
+            // the rest of this transaction is enough to swallow
+            // genuine replays without blocking legitimate appends.
+            if source_kind_for_store == SourceKind::Document {
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                let claimed = store::claim_source_ingest_tx(
+                    &tx,
+                    source_kind_for_store,
+                    &source_id_for_store,
+                    now_ms,
+                )?;
+                if !claimed {
+                    log::debug!(
+                        "[memory_tree::ingest] persist gate: document already ingested source_id={}",
+                        source_id_for_store
+                    );
+                    // Drop the (empty) transaction implicitly; nothing to commit.
+                    return Ok(None);
+                }
             }
 
             // Read each chunk's CURRENT lifecycle BEFORE the upsert. This
@@ -431,7 +440,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn second_ingest_of_same_source_id_is_short_circuited() {
+    async fn second_ingest_document_with_same_source_id_is_short_circuited() {
         let (_tmp, cfg) = test_config();
         let doc = DocumentInput {
             provider: "notion".into(),
