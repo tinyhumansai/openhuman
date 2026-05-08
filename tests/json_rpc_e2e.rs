@@ -3416,6 +3416,9 @@ async fn whatsapp_data_ingest_and_query_e2e() {
     write_min_config(&openhuman_home, &mock_origin);
 
     // Init the whatsapp_data global before the router handles any requests.
+    // Reset first so we attach to *this* test's tempdir even if a sibling
+    // test left a stale handle pointing at an already-dropped tempdir.
+    openhuman_core::openhuman::whatsapp_data::global::reset_for_tests();
     openhuman_core::openhuman::whatsapp_data::global::init(openhuman_home.clone())
         .expect("whatsapp_data global init");
 
@@ -4091,4 +4094,235 @@ async fn json_rpc_meet_agent_session_lifecycle() {
     assert_jsonrpc_error(&bogus, "stop_session unknown");
 
     rpc_join.abort();
+}
+
+/// End-to-end coverage for the WhatsApp agent tool wrappers shipped in
+/// issue #1341. Verifies that:
+///
+/// 1. Each of the three read-only tools (`whatsapp_data_list_chats`,
+///    `whatsapp_data_list_messages`, `whatsapp_data_search_messages`)
+///    correctly forwards into the existing RPC handlers and returns
+///    the rows ingested into `whatsapp_data.db`.
+/// 2. Every successful response carries the `"provider": "whatsapp"`
+///    provenance tag so the agent can cite WhatsApp as the source.
+/// 3. The internal-only `whatsapp_data_ingest` controller is **NOT**
+///    advertised in the agent-facing controller schema list, locking
+///    the read-only boundary the issue requires.
+#[tokio::test(flavor = "multi_thread")]
+async fn whatsapp_data_agent_tools_e2e_1341() {
+    use openhuman_core::openhuman::tools::traits::Tool;
+    use openhuman_core::openhuman::tools::{
+        WhatsAppDataListChatsTool, WhatsAppDataListMessagesTool, WhatsAppDataSearchMessagesTool,
+    };
+    use openhuman_core::openhuman::whatsapp_data::{
+        all_whatsapp_data_controller_schemas, global as wa_global, ops as wa_ops,
+        types::{ChatMeta, IngestMessage, IngestRequest},
+    };
+
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let openhuman_home = tmp.path().join(".openhuman");
+    std::fs::create_dir_all(&openhuman_home).expect("create openhuman home");
+
+    // The whatsapp_data global store is process-wide. Reset before init so
+    // we attach to *this* test's tempdir even if a sibling test already
+    // initialised the global to a tempdir that has since been dropped (which
+    // would leave the SQLite handle pointing at an unlinked file).
+    wa_global::reset_for_tests();
+    wa_global::init(openhuman_home.clone()).expect("whatsapp_data global init");
+
+    // ── 1. Ingest fixture data through the same path the scanner uses ─────
+    let now_ts = chrono::Utc::now().timestamp();
+    let mut chats = std::collections::HashMap::new();
+    chats.insert(
+        "alice@c.us".to_string(),
+        ChatMeta {
+            name: Some("Alice".to_string()),
+        },
+    );
+    chats.insert(
+        "team@g.us".to_string(),
+        ChatMeta {
+            name: Some("Team Group".to_string()),
+        },
+    );
+    let store = wa_global::store().expect("store ref");
+    wa_ops::ingest(
+        &store,
+        IngestRequest {
+            account_id: "agent-tools-acct@c.us".to_string(),
+            chats,
+            messages: vec![
+                IngestMessage {
+                    message_id: "m-alice-1".to_string(),
+                    chat_id: "alice@c.us".to_string(),
+                    sender: Some("Alice".to_string()),
+                    sender_jid: Some("alice@c.us".to_string()),
+                    from_me: Some(false),
+                    body: Some("Send the umbrella report by Friday".to_string()),
+                    timestamp: Some(now_ts - 3600),
+                    message_type: Some("chat".to_string()),
+                    source: Some("cdp-dom".to_string()),
+                },
+                IngestMessage {
+                    message_id: "m-alice-2".to_string(),
+                    chat_id: "alice@c.us".to_string(),
+                    sender: Some("me".to_string()),
+                    sender_jid: None,
+                    from_me: Some(true),
+                    body: Some("Got it, will share tomorrow".to_string()),
+                    timestamp: Some(now_ts - 3500),
+                    message_type: Some("chat".to_string()),
+                    source: Some("cdp-dom".to_string()),
+                },
+                IngestMessage {
+                    message_id: "m-team-1".to_string(),
+                    chat_id: "team@g.us".to_string(),
+                    sender: Some("Bob".to_string()),
+                    sender_jid: Some("bob@c.us".to_string()),
+                    from_me: Some(false),
+                    body: Some("Standup moved to 10am".to_string()),
+                    timestamp: Some(now_ts - 1800),
+                    message_type: Some("chat".to_string()),
+                    source: Some("cdp-indexeddb".to_string()),
+                },
+            ],
+        },
+    )
+    .expect("ingest");
+
+    // Helper: parse a successful Tool response back into JSON.
+    fn parse_tool_output(result: openhuman_core::openhuman::skills::types::ToolResult) -> Value {
+        assert!(!result.is_error, "tool returned error: {result:?}");
+        serde_json::from_str(&result.output()).expect("tool output is valid JSON")
+    }
+
+    // ── 2. list_chats — both fixture chats present, provider tag set ──────
+    let chats_body = parse_tool_output(
+        WhatsAppDataListChatsTool
+            .execute(json!({ "account_id": "agent-tools-acct@c.us" }))
+            .await
+            .expect("list_chats execute"),
+    );
+    assert_eq!(chats_body["provider"], "whatsapp");
+    assert_eq!(chats_body["count"], 2);
+    let chat_ids: Vec<&str> = chats_body["chats"]
+        .as_array()
+        .expect("chats array")
+        .iter()
+        .filter_map(|c| c["chat_id"].as_str())
+        .collect();
+    assert!(
+        chat_ids.contains(&"alice@c.us"),
+        "missing alice: {chats_body}"
+    );
+    assert!(
+        chat_ids.contains(&"team@g.us"),
+        "missing team: {chats_body}"
+    );
+
+    // ── 3. list_messages — chat_id required, returns chronological rows ───
+    let alice_body = parse_tool_output(
+        WhatsAppDataListMessagesTool
+            .execute(json!({
+                "chat_id": "alice@c.us",
+                "account_id": "agent-tools-acct@c.us"
+            }))
+            .await
+            .expect("list_messages execute"),
+    );
+    assert_eq!(alice_body["provider"], "whatsapp");
+    assert_eq!(alice_body["count"], 2);
+    let bodies: Vec<&str> = alice_body["messages"]
+        .as_array()
+        .expect("messages array")
+        .iter()
+        .filter_map(|m| m["body"].as_str())
+        .collect();
+    assert!(
+        bodies.iter().any(|b| b.contains("umbrella report")),
+        "expected umbrella message: {alice_body}"
+    );
+
+    // Missing chat_id should surface as an error.
+    let missing_chat = WhatsAppDataListMessagesTool
+        .execute(json!({}))
+        .await
+        .expect_err("expected missing chat_id error");
+    assert!(missing_chat
+        .to_string()
+        .contains("whatsapp_data_list_messages"));
+
+    // ── 4. search_messages — case-insensitive substring with scoping ──────
+    let search_body = parse_tool_output(
+        WhatsAppDataSearchMessagesTool
+            .execute(json!({
+                "query": "umbrella",
+                "account_id": "agent-tools-acct@c.us"
+            }))
+            .await
+            .expect("search_messages execute"),
+    );
+    assert_eq!(search_body["provider"], "whatsapp");
+    assert_eq!(search_body["count"], 1);
+    let hit = &search_body["messages"][0];
+    assert_eq!(hit["chat_id"], "alice@c.us");
+    assert_eq!(hit["account_id"], "agent-tools-acct@c.us");
+
+    // Empty-result search keeps the same envelope shape (scoped to this
+    // test's account so leftover rows from sibling tests can't interfere).
+    let empty_body = parse_tool_output(
+        WhatsAppDataSearchMessagesTool
+            .execute(json!({
+                "query": "no-such-token-anywhere",
+                "account_id": "agent-tools-acct@c.us"
+            }))
+            .await
+            .expect("search_messages empty execute"),
+    );
+    assert_eq!(empty_body["provider"], "whatsapp");
+    assert_eq!(empty_body["count"], 0);
+    assert!(empty_body["messages"]
+        .as_array()
+        .map(|a| a.is_empty())
+        .unwrap_or(false));
+
+    // ── 5. Boundary lock — agent-facing schemas exclude `whatsapp_data.ingest` ─
+    // ControllerSchema exposes `(namespace, function)` rather than a single
+    // method string. The agent-facing list MUST contain only the read-only
+    // verbs and MUST NOT advertise `ingest` (the scanner write path).
+    let advertised: Vec<(&'static str, &'static str)> = all_whatsapp_data_controller_schemas()
+        .iter()
+        .map(|s| (s.namespace, s.function))
+        .collect();
+    assert!(
+        !advertised.iter().any(|(_, f)| *f == "ingest"),
+        "ingest must NOT be advertised to agents: {advertised:?}"
+    );
+    for read_only in ["list_chats", "list_messages", "search_messages"] {
+        assert!(
+            advertised
+                .iter()
+                .any(|(ns, f)| *ns == "whatsapp_data" && *f == read_only),
+            "expected whatsapp_data.{read_only} in advertised schemas: {advertised:?}"
+        );
+    }
+
+    // ── 6. Tool metadata — names/descriptions reachable for downstream wiring ─
+    assert_eq!(WhatsAppDataListChatsTool.name(), "whatsapp_data_list_chats");
+    assert_eq!(
+        WhatsAppDataListMessagesTool.name(),
+        "whatsapp_data_list_messages"
+    );
+    assert_eq!(
+        WhatsAppDataSearchMessagesTool.name(),
+        "whatsapp_data_search_messages"
+    );
+    assert!(WhatsAppDataListChatsTool.description().contains("WhatsApp"));
+    assert!(WhatsAppDataListMessagesTool
+        .description()
+        .contains("WhatsApp"));
+    assert!(WhatsAppDataSearchMessagesTool
+        .description()
+        .contains("WhatsApp"));
 }
