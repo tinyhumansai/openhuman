@@ -1,16 +1,11 @@
-//! Speak path: drain synthesized PCM the brain enqueued and write it
-//! into Chromium's fake-audio source for the embedded Meet webview.
+//! Speak path: poll synthesized PCM out of core and feed it into the
+//! Meet page's audio bridge over CDP.
 //!
-//! ## Status
-//!
-//! This file is the scaffolding for the speak path. The actual sink —
-//! a Unix domain socket that Chromium's patched `FileSource` reads as
-//! if it were a WAV file — lands in a follow-up slice along with the
-//! C++ patch in the vendored CEF subtree (see project plan: "Pipe://
-//! fake-audio source patch in vendored Chromium"). Until that ships
-//! the pump simply polls `meet_agent_poll_speech` and discards the
-//! audio while logging counters, which exercises the full RPC path
-//! end-to-end so the brain knows somebody is draining its queue.
+//! Design lives in [`super::inject`]: the bridge is installed once at
+//! session start by `install_audio_bridge`, which returns the open CDP
+//! connection + session id. The pump owns those for the lifetime of
+//! the call so each tick is a single `Runtime.evaluate` round-trip
+//! rather than fresh attach + detach.
 
 use std::time::Duration;
 
@@ -18,35 +13,49 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use tokio::sync::oneshot;
 use tokio::time::interval;
 
-/// Polling cadence. Matches the listen path's flush boundary so the
+use crate::cdp::CdpConn;
+
+use super::inject;
+
+/// Polling cadence. Same as the listen path's flush boundary so the
 /// loop stays in lockstep — every ~100 ms we push captured audio in
-/// and pull synthesized audio out.
+/// (listen) and pull synthesized audio out (speak).
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// RAII handle. Drop to stop polling. The pump task exits cleanly on
-/// the next tick after the shutdown channel resolves.
+/// Cap on consecutive feed failures before we give up and stop
+/// pumping. Hitting this usually means the page navigated away
+/// (Meet's "you've been removed" / network drop) — the meet-call
+/// window-destroyed handler will tear the rest of the session down
+/// either way.
+const MAX_CONSECUTIVE_FEED_ERRORS: u32 = 30;
+
+/// RAII handle. Drop to stop the pump task. The shutdown channel
+/// causes the spawned loop to exit on the next select tick.
 pub struct SpeakPump {
     pub request_id: String,
-    /// Held so Drop signals the pump task to exit.
     _shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
 impl Drop for SpeakPump {
     fn drop(&mut self) {
-        // Take + drop the sender so the receiver wakes with `Err(_)`.
         let _ = self._shutdown_tx.take();
     }
 }
 
-pub fn start(request_id: String) -> SpeakPump {
+/// Spawn the speak pump for a session that already has the audio
+/// bridge installed. `cdp` and `session_id` come from
+/// [`inject::install_audio_bridge`] and are owned by the pump task
+/// from this point on.
+pub fn start(request_id: String, cdp: CdpConn, session_id: String) -> SpeakPump {
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
     let request_id_for_task = request_id.clone();
     tauri::async_runtime::spawn(async move {
         let mut tick = interval(POLL_INTERVAL);
         // Burn the first tick (`interval` fires immediately) so we
-        // don't poll before the brain has had a chance to enqueue
-        // anything from the corresponding push.
+        // don't poll before the listen path has had a chance to push.
         tick.tick().await;
+        let mut cdp = cdp;
+        let mut feed_errors: u32 = 0;
         loop {
             tokio::select! {
                 _ = &mut shutdown_rx => {
@@ -56,10 +65,20 @@ pub fn start(request_id: String) -> SpeakPump {
                     break;
                 }
                 _ = tick.tick() => {
-                    if let Err(err) = poll_once(&request_id_for_task).await {
-                        log::debug!(
-                            "[meet-audio] poll_speech err request_id={request_id_for_task} err={err}"
-                        );
+                    match poll_and_feed(&request_id_for_task, &mut cdp, &session_id).await {
+                        Ok(_) => feed_errors = 0,
+                        Err(err) => {
+                            feed_errors += 1;
+                            log::debug!(
+                                "[meet-audio] speak pump tick err request_id={request_id_for_task} consec_errors={feed_errors} err={err}"
+                            );
+                            if feed_errors >= MAX_CONSECUTIVE_FEED_ERRORS {
+                                log::warn!(
+                                    "[meet-audio] speak pump giving up after {feed_errors} consecutive errors request_id={request_id_for_task}"
+                                );
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -72,11 +91,21 @@ pub fn start(request_id: String) -> SpeakPump {
     }
 }
 
-/// One iteration: ask core for any pending PCM, decode it, "write" it
-/// to the (future) Chromium pipe sink. Today the bytes are counted and
-/// dropped — that placeholder lets us validate the timing/throughput
-/// before the sink lands.
-async fn poll_once(request_id: &str) -> Result<(), String> {
+/// No-op pump used when bridge install failed at session start. Keeps
+/// the rest of the session lifecycle uniform — `MeetAudioSession` can
+/// still hold a `SpeakPump` regardless of speak-path readiness.
+pub fn start_disabled(request_id: String) -> SpeakPump {
+    SpeakPump {
+        request_id,
+        _shutdown_tx: None,
+    }
+}
+
+async fn poll_and_feed(
+    request_id: &str,
+    cdp: &mut CdpConn,
+    session_id: &str,
+) -> Result<(), String> {
     let v = super::rpc_call(
         "openhuman.meet_agent_poll_speech",
         serde_json::json!({ "request_id": request_id }),
@@ -90,24 +119,18 @@ async fn poll_once(request_id: &str) -> Result<(), String> {
         .get("utterance_done")
         .and_then(|x| x.as_bool())
         .unwrap_or(false);
+
     if !pcm_b64.is_empty() {
-        match B64.decode(pcm_b64.as_bytes()) {
-            Ok(bytes) => {
-                // TODO(meet-audio-speak-pipe): write `bytes` into the
-                // Chromium fake-audio UDS sink keyed by request_id.
-                // For now, just account it so the logs reflect the
-                // brain's progress.
-                log::debug!(
-                    "[meet-audio] speak pump drained request_id={request_id} bytes={} done={utterance_done}",
-                    bytes.len()
-                );
-            }
-            Err(err) => {
-                log::warn!(
-                    "[meet-audio] speak pump base64 decode failed request_id={request_id} err={err}"
-                );
-            }
-        }
+        // Validate decode locally before pushing — saves a round-trip
+        // when the brain enqueues a malformed batch.
+        let bytes = B64
+            .decode(pcm_b64.as_bytes())
+            .map_err(|e| format!("base64: {e}"))?;
+        log::debug!(
+            "[meet-audio] speak pump feeding request_id={request_id} bytes={} done={utterance_done}",
+            bytes.len()
+        );
+        inject::feed_pcm_chunk(cdp, session_id, pcm_b64).await?;
     } else if utterance_done {
         log::info!(
             "[meet-audio] speak pump utterance complete request_id={request_id}"

@@ -25,6 +25,7 @@
 //! immediately), stops the speak pump, and tells core to close the
 //! session and report counters.
 
+pub mod inject;
 pub mod listen_capture;
 pub mod speak_pump;
 
@@ -102,7 +103,24 @@ pub async fn start<R: Runtime>(
     .await?;
 
     let listen = listen_capture::start(&meet_url, request_id.clone())?;
-    let speak = speak_pump::start(request_id.clone());
+
+    // Install the page-side audio bridge before starting the pump so
+    // the very first feed lands on a working `__openhumanFeedPcm`.
+    // `install_audio_bridge` triggers a `Page.reload`, so we run it
+    // off-thread and let the pump start once the bridge probe
+    // succeeds. Fire-and-forget is fine: failure here just means
+    // speak doesn't work, and the listen path keeps going.
+    let speak = match inject::install_audio_bridge(&meet_url).await {
+        Ok((cdp, session)) => speak_pump::start(request_id.clone(), cdp, session),
+        Err(err) => {
+            log::warn!(
+                "[meet-audio] audio bridge install failed request_id={request_id} err={err} — speak path disabled for this call"
+            );
+            // Return a no-op pump so the session still tracks listen
+            // counters cleanly.
+            speak_pump::start_disabled(request_id.clone())
+        }
+    };
 
     if let Some(state) = app.try_state::<MeetAudioState>() {
         state.inner.lock().unwrap().insert(
