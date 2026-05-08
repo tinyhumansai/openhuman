@@ -63,11 +63,7 @@ export async function joinMeetCall(input: MeetJoinCallInput): Promise<MeetJoinCa
     // not a JS Error. Wrap so the UI catch block — which checks
     // `instanceof Error` — surfaces the real reason instead of a fallback.
     const reason =
-      err instanceof Error
-        ? err.message
-        : typeof err === 'string'
-          ? err
-          : JSON.stringify(err);
+      err instanceof Error ? err.message : typeof err === 'string' ? err : JSON.stringify(err);
     // eslint-disable-next-line no-console
     console.error('[meet-call] meet_call_open_window invoke rejected:', err);
     throw new Error(`meet_call_open_window failed: ${reason}`);

@@ -34,11 +34,14 @@ use crate::cdp::{self, CdpConn};
 const TARGET_DISCOVERY_BUDGET: Duration = Duration::from_secs(20);
 const TARGET_DISCOVERY_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Per-phase polling budgets. Meet's join page is JS-heavy and a cold
-/// renderer can take several seconds before the first interactive
-/// elements paint, so the device-check phase gets the most generous
-/// budget.
-const DEVICE_CHECK_BUDGET: Duration = Duration::from_secs(45);
+/// Per-phase polling budgets. With the mascot fake-camera flag set
+/// process-wide in `lib.rs`, Meet sees a "real" webcam and does NOT
+/// show the "Continue without microphone and camera" screen at all,
+/// so the device-check phase becomes a quick best-effort probe rather
+/// than a meaningful wait. We still keep the phase in case a future
+/// build runs without the fake-camera flag (or the Y4M failed to
+/// rasterize), but cap it tight so the join flow doesn't stall.
+const DEVICE_CHECK_BUDGET: Duration = Duration::from_secs(6);
 const NAME_INPUT_BUDGET: Duration = Duration::from_secs(30);
 const JOIN_BUTTON_BUDGET: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);

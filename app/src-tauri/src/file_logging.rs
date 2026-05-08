@@ -35,7 +35,7 @@ pub fn init() {
 /// `dirs::home_dir` to return `None`), falls back to `<temp>/openhuman`
 /// rather than a relative `.openhuman` whose final location depends on the
 /// shell's CWD at launch time.
-fn resolve_data_dir() -> PathBuf {
+pub(crate) fn resolve_data_dir() -> PathBuf {
     if let Ok(workspace) = std::env::var("OPENHUMAN_WORKSPACE") {
         if !workspace.is_empty() {
             return PathBuf::from(workspace);

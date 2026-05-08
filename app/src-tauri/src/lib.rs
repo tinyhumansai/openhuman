@@ -14,6 +14,7 @@ mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+mod fake_camera;
 mod meet_call;
 mod meet_scanner;
 mod native_notifications;
@@ -1257,6 +1258,41 @@ pub fn run() {
             // silently disappears and huddle/call buttons no-op.
             ("--enable-features", Some("SharedArrayBuffer")),
         ];
+        // Mascot fake-camera: bake the SVG into a one-frame Y4M and
+        // point Chromium's fake-video-capture pipeline at it so any
+        // CEF webview that calls `getUserMedia({video:true})` sees the
+        // mascot as the agent's webcam. `--use-fake-ui-for-media-stream`
+        // auto-allows the permission prompt so Meet's join page doesn't
+        // get stuck behind it. The flags are process-level (affect every
+        // CEF webview), which is fine today: only the Meet call window
+        // intentionally requests a camera, and other webviews don't ask
+        // for one. The path string is leaked with `Box::leak` so its
+        // `&str` outlives the args vec we hand to `command_line_args`.
+        let fake_camera_arg: Option<&'static str> = match fake_camera::ensure_mascot_y4m(
+            &file_logging::resolve_data_dir(),
+        ) {
+            Ok(path) => {
+                let leaked: &'static str = Box::leak(
+                    path.to_string_lossy()
+                        .into_owned()
+                        .into_boxed_str(),
+                );
+                log::info!("[cef-startup] fake-camera y4m path={leaked}");
+                Some(leaked)
+            }
+            Err(err) => {
+                log::warn!(
+                    "[cef-startup] mascot fake-camera unavailable: {err} \
+                     (Meet will see no camera)"
+                );
+                None
+            }
+        };
+        if let Some(path) = fake_camera_arg {
+            args.push(("--use-fake-device-for-media-stream", None));
+            args.push(("--use-fake-ui-for-media-stream", None));
+            args.push(("--use-file-for-fake-video-capture", Some(path)));
+        }
         // Always expose the CDP port, not just in debug. The webview-accounts
         // CDP session opener navigates each embedded provider webview from its
         // `about:blank#openhuman-acct-...` placeholder to the real provider URL
