@@ -503,10 +503,14 @@ async fn process_channel(
     users: &SlackUsers,
     connection_id: &str,
 ) -> Result<usize, String> {
-    let oldest_secs = cursors
-        .get(&channel.id)
-        .copied()
-        .unwrap_or_else(|| (now - chrono::Duration::days(backfill_days())).timestamp());
+    // Cursor value is a raw Slack `ts` (`"<seconds>.<micro>"`) preserved
+    // with full precision, so multi-message-per-second channels don't
+    // replay the whole second on the next incremental fetch. When no
+    // cursor exists yet, fall back to `<backfill_window_secs>.000000`.
+    let oldest_ts = cursors.get(&channel.id).cloned().unwrap_or_else(|| {
+        let secs = (now - chrono::Duration::days(backfill_days())).timestamp();
+        format!("{secs}.000000")
+    });
 
     let mut all_messages: Vec<SlackMessage> = Vec::new();
     let mut cursor: Option<String> = None;
@@ -523,7 +527,7 @@ async fn process_channel(
 
         let mut args = json!({
             "channel": channel.id,
-            "oldest": format!("{oldest_secs}.000000"),
+            "oldest": oldest_ts.clone(),
             "inclusive": false,
             "limit": HISTORY_PAGE_SIZE,
         });
@@ -580,8 +584,18 @@ async fn process_channel(
 
     match ingest_page_into_memory_tree(&ctx.config, "", connection_id, &all_messages).await {
         Ok(chunks) => {
-            // Advance cursor to the latest successfully-ingested message timestamp.
-            if let Some(latest) = all_messages.iter().map(|m| m.timestamp.timestamp()).max() {
+            // Advance cursor to the raw `ts` of the latest successfully-
+            // ingested message. We pick "latest" by the parsed
+            // (seconds, micros) tuple — lexicographic sort on the raw
+            // string would also work for the common 10-digit-seconds
+            // workspace, but the explicit numeric compare is robust to
+            // the rare older/wider format and skips the load-bearing
+            // assumption.
+            if let Some(latest) = all_messages
+                .iter()
+                .max_by_key(|m| sync::parse_ts_components(&m.ts_raw))
+                .map(|m| m.ts_raw.clone())
+            {
                 cursors.insert(channel.id.clone(), latest);
             }
             tracing::info!(

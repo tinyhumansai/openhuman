@@ -165,10 +165,13 @@ fn parse_search_match(
         .unwrap_or("")
         .to_string();
     let author = users.resolve(&author_id);
+    // Drop malformed search hits with no channel id — they'd funnel into a
+    // single empty-channel bucket downstream and ingest under the wrong
+    // (or no) channel context.
     let channel_id = raw
         .get("channel_id")
         .and_then(|v| v.as_str())
-        .unwrap_or("")
+        .filter(|s| !s.is_empty())?
         .to_string();
     let (channel_name, is_private) = channel_map
         .get(&channel_id)
@@ -198,11 +201,24 @@ fn parse_search_match(
 }
 
 /// Slack's `ts` is a decimal string `"<unix_seconds>.<micro>"`. The
-/// integer part is what we care about for timestamp purposes.
+/// integer part is what we care about for `DateTime<Utc>` purposes;
+/// micro is preserved separately by [`parse_ts_components`] for cursor
+/// ordering.
 pub(crate) fn parse_ts(ts_raw: &str) -> Option<DateTime<Utc>> {
     let seconds_str = ts_raw.split('.').next()?;
     let secs: i64 = seconds_str.parse().ok()?;
     Utc.timestamp_opt(secs, 0).single()
+}
+
+/// Parse a Slack `ts` into a `(seconds, micros)` tuple suitable for
+/// `max_by_key` / lexicographic ordering at full precision. Unparseable
+/// inputs fall back to `(0, 0)` so they never dominate a max — they
+/// just lose to anything real.
+pub(crate) fn parse_ts_components(ts_raw: &str) -> (i64, u64) {
+    let mut parts = ts_raw.splitn(2, '.');
+    let secs: i64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let micros: u64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    (secs, micros)
 }
 
 /// Extract the total page count from a post-processed
@@ -235,10 +251,14 @@ pub(crate) fn extract_next_cursor(data: &Value) -> Option<String> {
 /// `BTreeMap` so serialization is deterministic (makes log diffs
 /// readable and tests stable).
 ///
-/// Value is unix-seconds of the latest successfully-ingested message for
-/// that channel. Fetches for that channel use `oldest = value` so we
-/// skip already-ingested ranges.
-pub type ChannelCursors = BTreeMap<String, i64>;
+/// Value is the **raw Slack `ts`** of the latest successfully-ingested
+/// message for that channel (e.g. `"1714003200.123456"`) — full
+/// microsecond precision is preserved so multi-message-per-second
+/// channels don't replay an entire second on the next incremental
+/// fetch (`oldest` with `inclusive=false` excludes only that exact
+/// timestamp). Fetches for that channel use `oldest = value`
+/// verbatim.
+pub type ChannelCursors = BTreeMap<String, String>;
 
 /// Deserialize the per-channel cursor map out of `SyncState.cursor`.
 /// Returns an empty map on any parse failure — a broken cursor should
@@ -388,8 +408,8 @@ mod tests {
     #[test]
     fn encode_decode_roundtrip() {
         let mut map = ChannelCursors::new();
-        map.insert("C1".into(), 1_714_003_200);
-        map.insert("C2".into(), 1_714_010_000);
+        map.insert("C1".into(), "1714003200.123456".into());
+        map.insert("C2".into(), "1714010000.000100".into());
         let encoded = encode_cursors(&map);
         let decoded = decode_cursors(Some(&encoded));
         assert_eq!(decoded, map);
@@ -406,6 +426,43 @@ mod tests {
     fn parse_ts_accepts_slack_decimal_format() {
         let dt = parse_ts("1714003200.000100").unwrap();
         assert_eq!(dt.timestamp(), 1_714_003_200);
+    }
+
+    #[test]
+    fn extract_search_messages_drops_match_with_missing_channel_id() {
+        // A search hit with no `channel_id` would otherwise funnel into a
+        // single empty-channel bucket and ingest under no channel context.
+        let data = json!({
+            "messages": [
+                {"ts": "1714003200.0", "user": "U1", "text": "valid", "channel_id": "C1"},
+                {"ts": "1714003300.0", "user": "U2", "text": "orphan"},
+                {"ts": "1714003400.0", "user": "U3", "text": "blank-id", "channel_id": ""},
+            ]
+        });
+        let mut channel_map = HashMap::new();
+        channel_map.insert(
+            "C1".to_string(),
+            SlackChannel {
+                id: "C1".into(),
+                name: "eng".into(),
+                is_private: false,
+            },
+        );
+        let users = SlackUsers::empty();
+        let out = extract_search_messages(&data, &channel_map, &users);
+        assert_eq!(out.len(), 1, "only the well-formed match should pass");
+        assert_eq!(out[0].channel_id, "C1");
+    }
+
+    #[test]
+    fn parse_ts_components_preserves_microseconds() {
+        // Two messages in the same wall-clock second must order by their
+        // micro suffix — without this, cursor advancement loses precision
+        // and incremental fetches replay duplicates.
+        let earlier = parse_ts_components("1714003200.000100");
+        let later = parse_ts_components("1714003200.999999");
+        assert!(later > earlier);
+        assert_eq!(parse_ts_components("garbage"), (0, 0));
     }
 
     #[test]
