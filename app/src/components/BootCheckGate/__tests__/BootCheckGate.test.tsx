@@ -27,10 +27,15 @@ vi.mock('../../../lib/bootCheck', () => ({
 vi.mock('../../../services/coreRpcClient', () => ({
   callCoreRpc: vi.fn(),
   clearCoreRpcUrlCache: vi.fn(),
+  clearCoreRpcTokenCache: vi.fn(),
 }));
 
 vi.mock('../../../utils/configPersistence', () => ({
   storeRpcUrl: vi.fn(),
+  storeCoreToken: vi.fn(),
+  clearStoredCoreToken: vi.fn(),
+  storeCoreMode: vi.fn(),
+  clearStoredCoreMode: vi.fn(),
   isValidRpcUrl: vi.fn().mockReturnValue(true),
 }));
 
@@ -113,6 +118,71 @@ describe('BootCheckGate — picker (unset mode)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
     expect(screen.getByText(/must start with http/)).toBeInTheDocument();
+  });
+
+  it('shows URL validation error for malformed URL string', () => {
+    renderGate();
+
+    fireEvent.click(screen.getByText('Cloud'));
+    const input = screen.getByPlaceholderText(/https:\/\/core\.example\.com/);
+    fireEvent.change(input, { target: { value: 'not a url at all' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(screen.getByText(/Please enter a valid URL/)).toBeInTheDocument();
+  });
+
+  it('shows token validation error when cloud URL is valid but token is missing', () => {
+    renderGate();
+
+    fireEvent.click(screen.getByText('Cloud'));
+    const urlInput = screen.getByPlaceholderText(/https:\/\/core\.example\.com/);
+    fireEvent.change(urlInput, { target: { value: 'https://core.example.com/rpc' } });
+    // Token left blank.
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(screen.getByText(/Please enter the core auth token/i)).toBeInTheDocument();
+  });
+
+  it('clears the token error as soon as the user types into the token field', () => {
+    renderGate();
+
+    fireEvent.click(screen.getByText('Cloud'));
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/core\.example\.com/), {
+      target: { value: 'https://core.example.com/rpc' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(screen.getByText(/Please enter the core auth token/i)).toBeInTheDocument();
+
+    const tokenInput = screen.getByPlaceholderText(/Bearer token/i);
+    fireEvent.change(tokenInput, { target: { value: 'tok' } });
+
+    expect(screen.queryByText(/Please enter the core auth token/i)).not.toBeInTheDocument();
+  });
+
+  it('advances past picker and triggers boot check when cloud URL + token are both set', async () => {
+    mockRunBootCheck.mockResolvedValue({ kind: 'match' });
+
+    renderGate();
+    fireEvent.click(screen.getByText('Cloud'));
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/core\.example\.com/), {
+      target: { value: 'https://core.example.com/rpc' },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Bearer token/i), {
+      target: { value: 'tok-1234' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('app-content')).toBeInTheDocument();
+    });
+    expect(mockRunBootCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'cloud',
+        url: 'https://core.example.com/rpc',
+        token: 'tok-1234',
+      }),
+      expect.any(Object)
+    );
   });
 });
 

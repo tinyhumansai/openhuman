@@ -2,6 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
 import { triggerSentryTestEvent } from '../../../services/analytics';
+import { useAppSelector } from '../../../store/hooks';
 import { APP_ENVIRONMENT } from '../../../utils/config';
 import SettingsHeader from '../components/SettingsHeader';
 import SettingsMenuItem from '../components/SettingsMenuItem';
@@ -209,6 +210,72 @@ const developerItems = [
   },
 ];
 
+/**
+ * Small badge showing whether the desktop is talking to the embedded local
+ * core or a user-configured remote (cloud) core. Read straight from the
+ * `coreMode` Redux slice so it always reflects what `coreRpcClient` will
+ * resolve on the next call. For cloud mode also surfaces the (masked) URL
+ * + a "token set" indicator so users debugging a misconfigured cloud
+ * deployment can verify they actually entered both pieces in the picker.
+ */
+const CoreModeBadge = () => {
+  const mode = useAppSelector(state => state.coreMode.mode);
+
+  if (mode.kind === 'unset') {
+    return (
+      <div className="px-4 py-3 mb-3 rounded-lg border border-coral-300 bg-coral-50">
+        <div className="text-sm font-semibold text-coral-900">Core mode: not set</div>
+        <div className="text-xs text-coral-800 mt-0.5">
+          The boot-check picker hasn&apos;t been confirmed yet. Use Switch mode on the picker to
+          choose Local or Cloud.
+        </div>
+      </div>
+    );
+  }
+
+  if (mode.kind === 'local') {
+    return (
+      <div className="px-4 py-3 mb-3 rounded-lg border border-ocean-300 bg-ocean-50">
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-0.5 rounded-full bg-ocean-600 text-white text-[11px] font-medium">
+            Local
+          </span>
+          <span className="text-sm font-semibold text-ocean-900">Embedded core sidecar</span>
+        </div>
+        <div className="text-xs text-ocean-800 mt-1">
+          Spawned in-process by the Tauri shell on app launch.
+        </div>
+      </div>
+    );
+  }
+
+  // Cloud — show URL + token status. Token value itself is never rendered.
+  return (
+    <div className="px-4 py-3 mb-3 rounded-lg border border-sage-300 bg-sage-50">
+      <div className="flex items-center gap-2">
+        <span className="px-2 py-0.5 rounded-full bg-sage-600 text-white text-[11px] font-medium">
+          Cloud
+        </span>
+        <span className="text-sm font-semibold text-sage-900">Remote core RPC</span>
+      </div>
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+        <dt className="text-sage-700">URL:</dt>
+        <dd className="font-mono text-sage-900 truncate" title={mode.url}>
+          {mode.url}
+        </dd>
+        <dt className="text-sage-700">Token:</dt>
+        <dd className="text-sage-900">
+          {mode.token ? (
+            <span className="font-mono">••••••{mode.token.slice(-4)}</span>
+          ) : (
+            <span className="text-coral-600">not set — RPC will 401</span>
+          )}
+        </dd>
+      </dl>
+    </div>
+  );
+};
+
 type SentryTestStatus =
   | { kind: 'idle' }
   | { kind: 'sending' }
@@ -341,6 +408,7 @@ const DeveloperOptionsPanel = () => {
       />
 
       <div>
+        <CoreModeBadge />
         <LogsFolderRow />
         {showSentryTest && <SentryTestRow />}
         {developerItems.map((item, index) => (

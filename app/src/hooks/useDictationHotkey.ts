@@ -18,26 +18,21 @@
  *   - `activationMode`: "toggle" or "push"
  *   - `hotkey`: the configured hotkey string
  */
-import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 
-import { callCoreRpc } from '../services/coreRpcClient';
-import { CORE_RPC_URL } from '../utils/config';
+import { callCoreRpc, getCoreHttpBaseUrl } from '../services/coreRpcClient';
 
-/** Resolve the core process base URL (without /rpc suffix) for Socket.IO. */
+/** Resolve the core process base URL (without /rpc suffix) for Socket.IO.
+ *
+ *  Delegates to `getCoreHttpBaseUrl` so the cloud-mode override set in the
+ *  BootCheckGate picker is honoured — previously this called
+ *  `invoke('core_rpc_url')` directly and would fall back to
+ *  `http://127.0.0.1:7788` whenever the user picked cloud mode (no local
+ *  sidecar to reply to the invoke), spamming `ERR_CONNECTION_REFUSED`.
+ */
 async function resolveCoreSocketUrl(): Promise<string> {
-  let rpcUrl = CORE_RPC_URL;
-  if (isTauri()) {
-    try {
-      const url = await invoke<string>('core_rpc_url');
-      if (url) rpcUrl = String(url);
-    } catch {
-      // fall through to default
-    }
-  }
-  const trimmed = rpcUrl.trim().replace(/\/+$/, '');
-  return trimmed.endsWith('/rpc') ? trimmed.slice(0, -4) : trimmed;
+  return getCoreHttpBaseUrl();
 }
 
 interface DictationSettings {

@@ -5,25 +5,38 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  clearStoredCoreMode,
+  clearStoredCoreToken,
   clearStoredRpcUrl,
   getDefaultRpcUrl,
+  getStoredCoreMode,
+  getStoredCoreToken,
   getStoredRpcUrl,
   isValidRpcUrl,
   normalizeRpcUrl,
+  peekStoredRpcUrl,
+  storeCoreMode,
+  storeCoreToken,
   storeRpcUrl,
 } from '../configPersistence';
 
 const STORAGE_KEY = 'openhuman_core_rpc_url';
+const TOKEN_STORAGE_KEY = 'openhuman_core_rpc_token';
+const MODE_STORAGE_KEY = 'openhuman_core_mode';
 
 describe('configPersistence', () => {
   beforeEach(() => {
     // Clear localStorage before each test
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(MODE_STORAGE_KEY);
   });
 
   afterEach(() => {
     // Clean up after each test
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(MODE_STORAGE_KEY);
   });
 
   describe('getStoredRpcUrl', () => {
@@ -262,6 +275,95 @@ describe('configPersistence', () => {
       } finally {
         getItemSpy.mockRestore();
       }
+    });
+  });
+
+  describe('getStoredCoreToken / storeCoreToken / clearStoredCoreToken', () => {
+    it('returns null when no token is stored', () => {
+      expect(getStoredCoreToken()).toBeNull();
+    });
+
+    it('returns the stored token', () => {
+      localStorage.setItem(TOKEN_STORAGE_KEY, 'abc-123');
+      expect(getStoredCoreToken()).toBe('abc-123');
+    });
+
+    it('trims whitespace around the stored token', () => {
+      localStorage.setItem(TOKEN_STORAGE_KEY, '   xyz   ');
+      expect(getStoredCoreToken()).toBe('xyz');
+    });
+
+    it('treats whitespace-only / empty stored values as null', () => {
+      localStorage.setItem(TOKEN_STORAGE_KEY, '   ');
+      expect(getStoredCoreToken()).toBeNull();
+      localStorage.setItem(TOKEN_STORAGE_KEY, '');
+      expect(getStoredCoreToken()).toBeNull();
+    });
+
+    it('storeCoreToken persists trimmed value', () => {
+      storeCoreToken('  hello  ');
+      expect(localStorage.getItem(TOKEN_STORAGE_KEY)).toBe('hello');
+    });
+
+    it('storeCoreToken with empty string clears the stored value', () => {
+      localStorage.setItem(TOKEN_STORAGE_KEY, 'something');
+      storeCoreToken('');
+      expect(localStorage.getItem(TOKEN_STORAGE_KEY)).toBeNull();
+    });
+
+    it('clearStoredCoreToken removes the value', () => {
+      localStorage.setItem(TOKEN_STORAGE_KEY, 'something');
+      clearStoredCoreToken();
+      expect(localStorage.getItem(TOKEN_STORAGE_KEY)).toBeNull();
+    });
+
+    it('returns null when localStorage is unavailable', () => {
+      const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        throw new Error('blocked');
+      });
+      try {
+        expect(getStoredCoreToken()).toBeNull();
+      } finally {
+        getItemSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('peekStoredRpcUrl', () => {
+    it('returns null when nothing is stored', () => {
+      expect(peekStoredRpcUrl()).toBeNull();
+    });
+
+    it('returns the stored value (trimmed) — even when it equals the build-time default', () => {
+      // Regression: legacy `getStoredRpcUrl !== CORE_RPC_URL` check threw away
+      // user-explicit URLs that happened to equal the default, silently
+      // routing cloud-mode RPC back to the local sidecar.
+      localStorage.setItem(STORAGE_KEY, '  http://127.0.0.1:7788/rpc  ');
+      expect(peekStoredRpcUrl()).toBe('http://127.0.0.1:7788/rpc');
+    });
+  });
+
+  describe('getStoredCoreMode / storeCoreMode / clearStoredCoreMode', () => {
+    it('returns null by default', () => {
+      expect(getStoredCoreMode()).toBeNull();
+    });
+
+    it('round-trips local and cloud markers', () => {
+      storeCoreMode('local');
+      expect(getStoredCoreMode()).toBe('local');
+      storeCoreMode('cloud');
+      expect(getStoredCoreMode()).toBe('cloud');
+    });
+
+    it('treats unrecognised stored values as null', () => {
+      localStorage.setItem(MODE_STORAGE_KEY, 'gibberish');
+      expect(getStoredCoreMode()).toBeNull();
+    });
+
+    it('clearStoredCoreMode removes the marker', () => {
+      storeCoreMode('cloud');
+      clearStoredCoreMode();
+      expect(getStoredCoreMode()).toBeNull();
     });
   });
 });

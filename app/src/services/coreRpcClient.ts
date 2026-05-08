@@ -3,7 +3,7 @@ import debug from 'debug';
 
 import { dispatchLocalAiMethod } from '../lib/ai/localCoreAiMemory';
 import { CORE_RPC_TIMEOUT_MS, CORE_RPC_URL } from '../utils/config';
-import { getStoredRpcUrl } from '../utils/configPersistence';
+import { getStoredCoreToken, peekStoredRpcUrl } from '../utils/configPersistence';
 import { sanitizeError } from '../utils/sanitize';
 import { normalizeRpcMethod } from './rpcMethods';
 
@@ -49,6 +49,18 @@ export function clearCoreRpcUrlCache(): void {
   resolvedCoreRpcUrl = null;
   resolvingCoreRpcUrl = null;
 }
+
+/**
+ * Invalidate the cached core RPC bearer token so the next call to
+ * `getCoreRpcToken()` re-resolves from `getStoredCoreToken()` or the Tauri
+ * sidecar. Call after the user saves a new cloud-mode token (or switches
+ * mode) so in-flight changes take effect without a full reload.
+ */
+export function clearCoreRpcTokenCache(): void {
+  resolvedCoreRpcToken = null;
+  didResolveCoreRpcToken = false;
+  resolvingCoreRpcToken = null;
+}
 const coreRpcLog = debug('core-rpc');
 const coreRpcError = debug('core-rpc:error');
 
@@ -78,14 +90,13 @@ export async function getCoreRpcUrl(): Promise<string> {
   }
 
   if (!coreIsTauri()) {
-    // Web environment: check for user-configured RPC URL first
-    const storedUrl = getStoredRpcUrl();
-    if (storedUrl && storedUrl !== CORE_RPC_URL) {
-      resolvedCoreRpcUrl = storedUrl;
-      return storedUrl;
-    }
-    resolvedCoreRpcUrl = CORE_RPC_URL;
-    return CORE_RPC_URL;
+    // Web environment: respect any user-stored URL (including one that
+    // happens to equal the build-time default). `peekStoredRpcUrl` returns
+    // null when nothing is stored, which lets us distinguish "user hasn't
+    // chosen yet" from "user chose a value identical to the default".
+    const storedUrl = peekStoredRpcUrl();
+    resolvedCoreRpcUrl = storedUrl ?? CORE_RPC_URL;
+    return resolvedCoreRpcUrl;
   }
 
   if (resolvingCoreRpcUrl) {
@@ -94,9 +105,14 @@ export async function getCoreRpcUrl(): Promise<string> {
 
   const resolvePromise: Promise<string> = (async () => {
     try {
-      // Tauri: check for user-configured URL first
-      const storedUrl = getStoredRpcUrl();
-      if (storedUrl && storedUrl !== CORE_RPC_URL) {
+      // Tauri: any user-stored URL (cloud picker output) wins. Without this
+      // a cloud-mode user whose picker URL coincides with the build-time
+      // `VITE_OPENHUMAN_CORE_RPC_URL` would be silently routed to whatever
+      // `core_rpc_url` returns (typically the local sidecar's
+      // `http://127.0.0.1:<port>/rpc`), producing ERR_CONNECTION_REFUSED in
+      // cloud mode where no local sidecar is running.
+      const storedUrl = peekStoredRpcUrl();
+      if (storedUrl) {
         resolvedCoreRpcUrl = storedUrl;
         return storedUrl;
       }
@@ -104,9 +120,6 @@ export async function getCoreRpcUrl(): Promise<string> {
       const url = await invoke<string>('core_rpc_url');
       const trimmed = String(url || '').trim();
       if (!trimmed) {
-        // The Tauri command succeeded but returned an empty string. That's
-        // almost certainly a shell misconfiguration — prefer the build-time
-        // default but make the fallback visible rather than silent.
         coreRpcError('core_rpc_url returned empty; using build-time default', {
           fallback: CORE_RPC_URL,
         });
@@ -114,11 +127,11 @@ export async function getCoreRpcUrl(): Promise<string> {
       resolvedCoreRpcUrl = trimmed || CORE_RPC_URL;
       return resolvedCoreRpcUrl || CORE_RPC_URL;
     } catch (err) {
-      // Fallback to a stored override first, then the build-time default.
-      // Keep the underlying invoke failure visible so port mismatches and
-      // shell misconfiguration are diagnosable in dev logs.
-      const storedUrl = getStoredRpcUrl();
-      resolvedCoreRpcUrl = storedUrl || CORE_RPC_URL;
+      // Tauri invoke failed — fall back to stored URL if any, then the
+      // build-time default. Keep the underlying invoke failure visible so
+      // port mismatches and shell misconfiguration are diagnosable.
+      const storedUrl = peekStoredRpcUrl();
+      resolvedCoreRpcUrl = storedUrl ?? CORE_RPC_URL;
       coreRpcError('core_rpc_url invoke failed; using fallback RPC URL', {
         fallback: resolvedCoreRpcUrl,
         usedStoredUrl: Boolean(storedUrl),
@@ -135,15 +148,30 @@ export async function getCoreRpcUrl(): Promise<string> {
 }
 
 /**
- * Returns the per-process RPC bearer token written by the core binary to
- * `~/.openhuman/core.token` at startup.  The token is fetched once via a
- * Tauri command and then cached for the lifetime of the frontend process.
+ * Returns the bearer token for authenticating against the core RPC endpoint.
  *
- * Returns `null` in non-Tauri environments (e.g. Vitest) where the command
- * is not available so existing tests remain unaffected.
+ * Resolution order:
+ *   1. `getStoredCoreToken()` — token entered by the user in the cloud-mode
+ *      picker. When set, the desktop is talking to a remote core and the
+ *      local-sidecar token would be wrong. Takes priority so cloud mode
+ *      always sends the user's own token.
+ *   2. Tauri `core_rpc_token` command — the embedded sidecar's per-process
+ *      token, written by the core binary to `~/.openhuman/core.token` at
+ *      startup. Cached for the lifetime of the frontend process.
+ *   3. `null` in non-Tauri environments (e.g. Vitest, web preview) when no
+ *      stored token is set so existing tests remain unaffected.
  */
 async function getCoreRpcToken(): Promise<string | null> {
   if (didResolveCoreRpcToken) return resolvedCoreRpcToken;
+
+  const storedToken = getStoredCoreToken();
+  if (storedToken) {
+    resolvedCoreRpcToken = storedToken;
+    didResolveCoreRpcToken = true;
+    coreRpcLog('core RPC token loaded from cloud-mode persistence');
+    return resolvedCoreRpcToken;
+  }
+
   if (!coreIsTauri()) return null;
   if (resolvingCoreRpcToken) return resolvingCoreRpcToken;
 
@@ -177,9 +205,15 @@ async function getCoreRpcToken(): Promise<string | null> {
  * inside the service per the project guideline ("Keep Tauri IPC and RPC
  * client calls localized to services … do not scatter `invoke()` or
  * direct RPC calls throughout components").
+ *
+ * `tokenOverride` lets the cloud-mode picker test a freshly-typed token
+ * before it's persisted; without it, falls back to the normal resolution.
  */
-export async function testCoreRpcConnection(url: string): Promise<Response> {
-  const token = await getCoreRpcToken();
+export async function testCoreRpcConnection(
+  url: string,
+  tokenOverride?: string
+): Promise<Response> {
+  const token = tokenOverride?.trim() || (await getCoreRpcToken());
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) {
     headers.Authorization = `Bearer ${token}`;

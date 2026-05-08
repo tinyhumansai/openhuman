@@ -12,13 +12,61 @@
  */
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
-export type CoreMode = { kind: 'unset' } | { kind: 'local' } | { kind: 'cloud'; url: string };
+export type CoreMode =
+  | { kind: 'unset' }
+  | { kind: 'local' }
+  | {
+      kind: 'cloud';
+      url: string;
+      /**
+       * Bearer token for the remote core. Cloud cores require auth (see
+       * `OPENHUMAN_CORE_TOKEN` in docs/CLOUD_DEPLOY.md). Optional in the type
+       * so persisted state from older builds (which stored cloud mode without
+       * a token) still hydrates; the BootCheckGate picker requires a value.
+       */
+      token?: string;
+    };
 
 export interface CoreModeState {
   mode: CoreMode;
 }
 
-const initialState: CoreModeState = { mode: { kind: 'unset' } };
+/** Synchronous localStorage keys mirrored by `configPersistence.ts`. */
+const RPC_URL_STORAGE_KEY = 'openhuman_core_rpc_url';
+const CORE_TOKEN_STORAGE_KEY = 'openhuman_core_rpc_token';
+const CORE_MODE_STORAGE_KEY = 'openhuman_core_mode';
+
+/**
+ * Derive the initial mode synchronously from `localStorage`.
+ *
+ * redux-persist saves slice state asynchronously (debounced). When the app
+ * reloads (e.g. `handleIdentityFlip` → `restartApp` after the cloud core
+ * returns a logged-in user that doesn't match the device's seed), the
+ * persisted `coreMode` blob may not have been flushed before the reload.
+ * Falling back to plain unset would put the user back on the picker even
+ * though they just chose cloud, producing an infinite picker → reload loop.
+ *
+ * The picker writes `openhuman_core_rpc_url`, `openhuman_core_rpc_token`,
+ * and `openhuman_core_mode` synchronously before any async dispatch, so we
+ * can recover the exact mode on reload regardless of the persist flush race.
+ */
+function deriveInitialMode(): CoreMode {
+  if (typeof localStorage === 'undefined') return { kind: 'unset' };
+  try {
+    const mode = localStorage.getItem(CORE_MODE_STORAGE_KEY)?.trim();
+    if (mode === 'local') return { kind: 'local' };
+    if (mode === 'cloud') {
+      const url = localStorage.getItem(RPC_URL_STORAGE_KEY)?.trim();
+      const token = localStorage.getItem(CORE_TOKEN_STORAGE_KEY)?.trim();
+      if (url && token) return { kind: 'cloud', url, token };
+    }
+  } catch {
+    /* localStorage unavailable — fall through to unset */
+  }
+  return { kind: 'unset' };
+}
+
+const initialState: CoreModeState = { mode: deriveInitialMode() };
 
 const coreModeSlice = createSlice({
   name: 'coreMode',
