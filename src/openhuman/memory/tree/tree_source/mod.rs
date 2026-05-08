@@ -18,6 +18,7 @@
 pub mod bucket_seal;
 pub mod flush;
 pub mod registry;
+pub mod source_file;
 pub mod store;
 pub mod summariser;
 pub mod types;

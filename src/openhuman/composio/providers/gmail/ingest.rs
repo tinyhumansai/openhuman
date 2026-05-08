@@ -25,9 +25,8 @@ use crate::openhuman::memory::tree::canonicalize::email::{EmailMessage, EmailThr
 use crate::openhuman::memory::tree::canonicalize::email_clean::{
     extract_email, parse_message_date,
 };
-use crate::openhuman::memory::tree::content_store::paths::slugify_source_id;
 use crate::openhuman::memory::tree::content_store::raw::{
-    self as raw_store, slug_account_email, RawItem,
+    self as raw_store, raw_rel_path, slug_account_email, RawItem, RawKind,
 };
 use crate::openhuman::memory::tree::ingest::{ingest_email, IngestResult};
 use crate::openhuman::memory::tree::store::{set_chunk_raw_refs, RawRef};
@@ -222,7 +221,7 @@ fn parse_address_list(v: Option<&Value>) -> Vec<String> {
 ///
 /// In addition to the chunked content_store output, we mirror every
 /// admitted message as a verbatim `.md` under
-/// `<content_root>/raw/<source_slug>/<created_at_ms>_<message_id>.md`.
+/// `<content_root>/raw/<source_slug>/emails/<created_at_ms>_<message_id>.md`.
 /// Useful for debugging, Obsidian browsing, and as a stable archive
 /// independent of the chunker / summariser.
 ///
@@ -334,7 +333,6 @@ async fn ingest_per_message(
     owner: &str,
     page_messages: &[Value],
 ) -> usize {
-    let source_slug = slugify_source_id(source_id);
     let mut total_chunks = 0usize;
     for raw in page_messages {
         let id = raw
@@ -349,11 +347,11 @@ async fn ingest_per_message(
             continue;
         };
 
-        let raw_path = format!(
-            "raw/{}/{}_{}.md",
-            source_slug,
+        let raw_path = raw_rel_path(
+            source_id,
+            RawKind::Email,
             sent_at.timestamp_millis(),
-            sanitize_uid_for_path(msg_id)
+            msg_id,
         );
 
         let thread_subject = pick_thread_subject(std::slice::from_ref(&message));
@@ -393,27 +391,9 @@ async fn ingest_per_message(
     total_chunks
 }
 
-/// Same character map the raw-archive writer uses for filenames.
-/// Mirrors `raw_store::write_raw_items::sanitize_uid` but local so a
-/// future rule change on either side stays decoupled.
-fn sanitize_uid_for_path(uid: &str) -> String {
-    let cleaned: String = uid
-        .chars()
-        .map(|c| match c {
-            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | ' ' => '-',
-            other => other,
-        })
-        .collect();
-    if cleaned.is_empty() {
-        "unknown".into()
-    } else {
-        cleaned
-    }
-}
-
 /// Mirror a page of raw Gmail messages into the on-disk raw archive.
 ///
-/// Files land under `<content_root>/raw/<source_slug>/<ts_ms>_<msg_id>.md`.
+/// Files land under `<content_root>/raw/<source_slug>/emails/<ts_ms>_<msg_id>.md`.
 /// We write the **backend-produced markdown verbatim** — the
 /// `markdown` field on each message is the per-message slice of the
 /// response-level `markdownFormatted`, pinned by
@@ -493,6 +473,7 @@ fn write_raw_archive(config: &Config, source_id: &str, page: &[Value]) -> Result
             uid: id,
             created_at_ms: *ts,
             markdown: md.as_str(),
+            kind: RawKind::Email,
         })
         .collect();
 

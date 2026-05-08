@@ -9,7 +9,10 @@
 
 use std::path::Path;
 
-use super::compose::{rewrite_summary_tags as compose_rewrite_summary_tags, rewrite_tags};
+use super::compose::{
+    rewrite_summary_tags as compose_rewrite_summary_tags, rewrite_tags, scan_fm_field, source_tag,
+    split_front_matter,
+};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::score::store::list_entity_ids_for_node;
 use crate::openhuman::memory::tree::store::get_summary_content_pointers;
@@ -38,7 +41,11 @@ pub fn update_chunk_tags(abs_path: &Path, tags: &[String]) -> anyhow::Result<()>
     let old_bytes =
         std::fs::read(abs_path).map_err(|e| anyhow::anyhow!("read {:?}: {e}", abs_path))?;
 
-    let new_bytes = rewrite_tags(&old_bytes, tags)
+    // Re-seed the `source/<slug>` tag so it survives every rewrite.
+    // Pulled from the existing frontmatter's `source_id:` field — the
+    // body is already on disk, so we don't need the caller to know.
+    let augmented = augment_with_source_tag_for_chunk(&old_bytes, tags);
+    let new_bytes = rewrite_tags(&old_bytes, &augmented)
         .map_err(|e| anyhow::anyhow!("rewrite_tags {:?}: {e}", abs_path))?;
 
     // Write the new content atomically via a sibling temp file.
@@ -128,6 +135,9 @@ pub fn update_summary_tags(config: &Config, summary_id: &str) -> anyhow::Result<
     let old_bytes = std::fs::read(&abs_path)
         .map_err(|e| anyhow::anyhow!("read summary {:?}: {e}", abs_path))?;
 
+    // Re-seed `source/<slug>` for source-tree summaries. Skip for
+    // global / topic trees where the source isn't a single value.
+    let tags = augment_with_source_tag_for_summary(&old_bytes, &tags);
     let new_bytes = compose_rewrite_summary_tags(&old_bytes, &tags)
         .map_err(|e| anyhow::anyhow!("rewrite_summary_tags {:?}: {e}", abs_path))?;
 
@@ -260,6 +270,58 @@ fn capitalise(s: &str) -> String {
     }
 }
 
+/// Read `source_id:` out of a chunk file's existing frontmatter and
+/// return `[source/<slug>, ...tags]` (deduped). Falls back to `tags`
+/// unchanged if the frontmatter can't be parsed — better to keep the
+/// caller's tags than to error out a best-effort rewrite path.
+fn augment_with_source_tag_for_chunk(file_bytes: &[u8], tags: &[String]) -> Vec<String> {
+    let Ok(text) = std::str::from_utf8(file_bytes) else {
+        return tags.to_vec();
+    };
+    let Some((fm, _body)) = split_front_matter(text) else {
+        return tags.to_vec();
+    };
+    let Some(source_id) = scan_fm_field(fm, "source_id") else {
+        return tags.to_vec();
+    };
+    let st = source_tag(&source_id);
+    let mut out = Vec::with_capacity(tags.len() + 1);
+    out.push(st.clone());
+    for t in tags {
+        if t != &st {
+            out.push(t.clone());
+        }
+    }
+    out
+}
+
+/// Same as `augment_with_source_tag_for_chunk` but for summary files —
+/// pulls `tree_scope:` and only seeds the source tag when `tree_kind:`
+/// is `source`. Global / topic trees pass through unchanged.
+fn augment_with_source_tag_for_summary(file_bytes: &[u8], tags: &[String]) -> Vec<String> {
+    let Ok(text) = std::str::from_utf8(file_bytes) else {
+        return tags.to_vec();
+    };
+    let Some((fm, _body)) = split_front_matter(text) else {
+        return tags.to_vec();
+    };
+    if scan_fm_field(fm, "tree_kind").as_deref() != Some("source") {
+        return tags.to_vec();
+    }
+    let Some(scope) = scan_fm_field(fm, "tree_scope") else {
+        return tags.to_vec();
+    };
+    let st = source_tag(&scope);
+    let mut out = Vec::with_capacity(tags.len() + 1);
+    out.push(st.clone());
+    for t in tags {
+        if t != &st {
+            out.push(t.clone());
+        }
+    }
+    out
+}
+
 fn crate_temp_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let ns = SystemTime::now()
@@ -317,8 +379,20 @@ mod tests {
         assert!(updated.contains("  - person/Alice-Smith"));
         assert!(updated.contains("  - project/Phoenix"));
         assert!(!updated.contains("  - old/Tag"));
+        // Source tag re-seeded automatically from the existing frontmatter.
+        assert!(updated.contains("  - source/slack-eng"));
         // Body unchanged.
         assert!(updated.ends_with("hello from tags test"));
+    }
+
+    #[test]
+    fn compose_chunk_file_seeds_source_tag() {
+        let chunk = sample_chunk();
+        let (full, _) = compose_chunk_file(&chunk);
+        let text = std::str::from_utf8(&full).unwrap();
+        assert!(text.contains("  - source/slack-eng"), "{text}");
+        // Existing meta tag survives alongside the seed.
+        assert!(text.contains("  - old/Tag"), "{text}");
     }
 
     #[test]
@@ -383,9 +457,9 @@ mod tests {
         let path = dir.path().join("sum.md");
         write_if_new(&path, composed.full.as_bytes()).unwrap();
 
-        // Original must have `tags: []`
+        // Original starts with the seeded source tag for the source tree.
         let original = std::fs::read_to_string(&path).unwrap();
-        assert!(original.contains("tags: []"));
+        assert!(original.contains("  - source/"), "{original}");
 
         // Rewrite the tags block
         let new_tags = vec!["person/Alice-Smith".to_string(), "topic/Memory".to_string()];

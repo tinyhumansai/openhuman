@@ -78,6 +78,7 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "auth.configure_tool_access",
         "settings.manage_service",
         "settings.clear_app_data",
+        "meet.join_call",
     ] {
         assert!(
             ids.contains(expected),

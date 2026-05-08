@@ -37,6 +37,7 @@ pub mod heartbeat;
 pub mod integrations;
 pub mod learning;
 pub mod local_ai;
+pub mod meet;
 pub mod memory;
 pub mod migration;
 pub mod node_runtime;

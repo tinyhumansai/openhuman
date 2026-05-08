@@ -74,5 +74,11 @@ allow = [
     # backing commands.
     "logs_folder_path",
     "reveal_logs_folder",
+    # Meet call: open / close a dedicated CEF webview window pointed at a
+    # https://meet.google.com/<code> URL with an isolated per-call data
+    # directory. Surfaced from Intelligence > Calls. Without these allow
+    # entries the invoke is rejected with "Command not found".
+    "meet_call_open_window",
+    "meet_call_close_window",
 ]
 deny = []
