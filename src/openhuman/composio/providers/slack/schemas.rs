@@ -1,5 +1,8 @@
 //! Controller schemas + JSON-RPC handler dispatch for the Slack
-//! ingestion path.
+//! memory ingestion path.
+//!
+//! Moved from `memory::slack_ingestion::schemas` into this module so the
+//! entire Slack integration lives under `composio::providers::slack`.
 //!
 //! Registered JSON-RPC methods (namespace `slack_memory`):
 //! - `openhuman.slack_memory_sync_trigger` — run the Composio-backed
@@ -10,21 +13,21 @@
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
+use super::rpc as slack_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::memory::slack_ingestion::rpc as slack_rpc;
 use crate::rpc::RpcOutcome;
 
 const NAMESPACE: &str = "slack_memory";
 
 /// Returns every schema published by the Slack-ingestion namespace.
-pub fn all_controller_schemas() -> Vec<ControllerSchema> {
+pub fn all_slack_memory_controller_schemas() -> Vec<ControllerSchema> {
     vec![schemas("sync_trigger"), schemas("sync_status")]
 }
 
 /// Returns every controller (schema + handler pair) for the Slack-ingestion namespace.
-pub fn all_registered_controllers() -> Vec<RegisteredController> {
+pub fn all_slack_memory_registered_controllers() -> Vec<RegisteredController> {
     vec![
         RegisteredController {
             schema: schemas("sync_trigger"),

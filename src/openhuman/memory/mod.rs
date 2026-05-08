@@ -13,7 +13,6 @@ pub mod ops;
 pub mod rpc_models;
 pub mod safety;
 pub mod schemas;
-pub mod slack_ingestion;
 pub mod store;
 pub mod sync_status;
 pub mod traits;
@@ -30,9 +29,6 @@ pub use rpc_models::*;
 pub use schemas::{
     all_controller_schemas as all_memory_controller_schemas,
     all_registered_controllers as all_memory_registered_controllers,
-};
-pub use slack_ingestion::{
-    all_slack_ingestion_controller_schemas, all_slack_ingestion_registered_controllers,
 };
 pub use store::{
     create_memory, create_memory_for_migration, create_memory_with_storage,
