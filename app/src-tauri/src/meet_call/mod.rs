@@ -124,6 +124,27 @@ pub async fn meet_call_open_window<R: Runtime>(
         args.display_name.clone(),
     );
 
+    // Start the live meet-agent audio loop: registers a CEF audio
+    // handler keyed by the meet URL, opens a core session, and spawns
+    // the speak-pump poller. Fire-and-forget — failures here must not
+    // prevent the user from at least seeing the join page, so we log
+    // and continue. The teardown below mirrors this on window close.
+    {
+        let app_for_audio = app.clone();
+        let request_id_for_audio = request_id.clone();
+        let url_for_audio = parsed.to_string();
+        tauri::async_runtime::spawn(async move {
+            if let Err(err) =
+                crate::meet_audio::start(app_for_audio, request_id_for_audio.clone(), url_for_audio)
+                    .await
+            {
+                log::warn!(
+                    "[meet-call] meet_audio start failed request_id={request_id_for_audio} err={err}"
+                );
+            }
+        });
+    }
+
     // Emit a `closed` event when the user dismisses the window AND clean
     // up the per-call data directory. The data dir holds an isolated CEF
     // profile (cookies, cache) we explicitly want to throw away after
@@ -151,6 +172,25 @@ pub async fn meet_call_open_window<R: Runtime>(
                 log::info!(
                     "[meet-call] window destroyed label={label_for_event} request_id={request_id_for_event}"
                 );
+                // Tear down the meet-agent audio loop *before* the
+                // data dir wipe so the audio handler registration
+                // releases CEF cleanly while the browser is still
+                // shutting down.
+                {
+                    let app_for_audio = app_for_event.clone();
+                    let request_id_for_audio = request_id_for_event.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(err) =
+                            crate::meet_audio::stop(app_for_audio, request_id_for_audio.clone())
+                                .await
+                        {
+                            log::debug!(
+                                "[meet-call] meet_audio stop err request_id={request_id_for_audio} err={err}"
+                            );
+                        }
+                    });
+                }
+
                 // CEF may still be flushing the profile to disk on
                 // teardown; do the rmdir off the UI thread so any
                 // last-second writes don't race the delete.
