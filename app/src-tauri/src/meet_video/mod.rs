@@ -89,8 +89,14 @@ fn svg_to_data_uri(svg: &str) -> String {
             // Sub-delims + path-safe that don't trip data-URI parsers
             // and keep the SVG body itself parseable. Notably: '/'
             // and ':' are fine inside path components per RFC 3986.
+            //
+            // Apostrophe ('\'') is deliberately NOT on this list: the
+            // resulting URI is interpolated into single-quoted JS
+            // string literals in `camera_bridge.js`, so a raw '\'' in
+            // the SVG would terminate the string and break the bridge
+            // load. It gets percent-encoded as %27.
             | b'/' | b':' | b';' | b'=' | b',' | b'(' | b')'
-            | b'*' | b'!' | b'\''
+            | b'*' | b'!'
         )
     }
 
@@ -118,6 +124,18 @@ mod tests {
         assert!(!js.contains("__OPENHUMAN_MASCOT_THINKING_DATAURI__"));
         let count = js.matches("data:image/svg+xml;charset=utf-8,").count();
         assert!(count >= 2, "expected at least 2 data URIs, got {count}");
+    }
+
+    #[test]
+    fn url_encoding_escapes_single_quote_for_js_string_context() {
+        // The data URI is interpolated into single-quoted JS literals
+        // in `camera_bridge.js` (e.g. `MASCOTS = { idle: '...' }`), so
+        // a raw apostrophe would terminate the string and break the
+        // bridge. Must come back as `%27`.
+        let uri = svg_to_data_uri("<svg data-name='mascot'/>");
+        let body = uri.trim_start_matches("data:image/svg+xml;charset=utf-8,");
+        assert!(!body.contains('\''));
+        assert!(body.contains("%27"));
     }
 
     #[test]
