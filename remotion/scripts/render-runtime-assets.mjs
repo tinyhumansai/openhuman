@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -32,7 +35,30 @@ function resolveWebpBinary(name) {
 const cwebpBinary = resolveWebpBinary('cwebp');
 const webpmuxBinary = resolveWebpBinary('webpmux');
 
-const colors = ['yellow', 'burgundy', 'black', 'navy', 'green'];
+const ALL_COLORS = ['yellow', 'burgundy', 'black', 'navy', 'green'];
+
+function resolveColorSet() {
+  const raw = (process.env.MASCOT_COLORS ?? '').trim();
+  if (!raw) return ['yellow'];
+  if (raw.toLowerCase() === 'all') return ALL_COLORS;
+  const requested = raw
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  const unknown = requested.filter(c => !ALL_COLORS.includes(c));
+  if (unknown.length > 0) {
+    throw new Error(
+      `[remotion-runtime-assets] unknown mascot color(s): ${unknown.join(', ')}. Allowed: ${ALL_COLORS.join(', ')}, or "all".`
+    );
+  }
+  if (!requested.includes('yellow')) {
+    requested.unshift('yellow');
+  }
+  return requested;
+}
+
+const colors = resolveColorSet();
+console.log(`[remotion-runtime-assets] rendering colors: ${colors.join(', ')}`);
 const baseVariants = [
   { composition: 'yellow-MascotIdle', profile: 'default', props: {} },
   { composition: 'yellow-MascotTalking', profile: 'default', props: {} },
@@ -138,18 +164,41 @@ function listFrames(frameDir, extension) {
 
 async function convertPngFramesToWebp(frameDir) {
   const pngFrames = listFrames(frameDir, '.png');
-  const webpFrames = [];
+  const webpFrames = new Array(pngFrames.length);
+  const concurrency = Math.max(1, Math.min(os.cpus()?.length ?? 4, 8));
+  let nextIndex = 0;
+  let completed = 0;
+  const total = pngFrames.length;
 
-  for (const pngFrame of pngFrames) {
-    const webpFrame = pngFrame.replace(/\.png$/u, '.webp');
-    run(
-      cwebpBinary,
-      ['-quiet', '-q', '82', '-m', '6', '-alpha_q', '100', pngFrame, '-o', webpFrame],
-      remotionRoot
-    );
-    webpFrames.push(webpFrame);
+  async function worker() {
+    while (true) {
+      const idx = nextIndex++;
+      if (idx >= total) return;
+      const pngFrame = pngFrames[idx];
+      const webpFrame = pngFrame.replace(/\.png$/u, '.webp');
+      try {
+        await execFileAsync(
+          cwebpBinary,
+          ['-quiet', '-q', '82', '-m', '4', '-alpha_q', '100', pngFrame, '-o', webpFrame],
+          { cwd: remotionRoot }
+        );
+      } catch (error) {
+        if (error?.code === 'ENOENT') {
+          throw new Error(
+            `[remotion-runtime-assets] missing required executable "${cwebpBinary}". Install it and ensure it is on PATH.`
+          );
+        }
+        throw error;
+      }
+      webpFrames[idx] = webpFrame;
+      completed += 1;
+      if (completed === total || completed % 30 === 0) {
+        console.log(`[remotion-runtime-assets]   cwebp ${completed}/${total} frames`);
+      }
+    }
   }
 
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
   return webpFrames;
 }
 

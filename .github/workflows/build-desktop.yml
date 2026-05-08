@@ -166,6 +166,11 @@ jobs:
       - name: Install mascot build dependencies (Windows only)
         if: matrix.settings.platform == 'windows-latest'
         run: choco install ffmpeg -y
+      - name: Cache mascot rendered assets
+        uses: actions/cache@v4
+        with:
+          path: app/public/generated/remotion
+          key: mascot-assets-${{ matrix.settings.platform }}-${{ hashFiles('remotion/scripts/render-runtime-assets.mjs', 'remotion/src/**', 'remotion/package.json') }}
       - name: Dump missing shared libs (debug)
         if: matrix.settings.platform == 'ubuntu-22.04'
         shell: bash
@@ -423,6 +428,7 @@ jobs:
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
           MATRIX_ARGS: ${{ matrix.settings.args }}
           PROFILE_FLAG: ${{ inputs.build_profile == 'debug' && '--debug' || '' }}
+          MASCOT_COLORS: all
         run: |
           # Inline NODE_OPTIONS so it reaches the vite child spawned by
           # beforeBuildCommand. Step-level env was observed not to propagate

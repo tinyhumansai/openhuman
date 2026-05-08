@@ -59,6 +59,11 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install mascot build dependencies
         run: apt-get update && apt-get install -y ffmpeg
+      - name: Cache mascot rendered assets
+        uses: actions/cache@v4
+        with:
+          path: app/public/generated/remotion
+          key: mascot-assets-${{ runner.os }}-${{ hashFiles('remotion/scripts/render-runtime-assets.mjs', 'remotion/src/**', 'remotion/package.json') }}
       # Core is linked into the Tauri binary as a path dep — no separate
       # sidecar build / stage step needed.
       - name: Build Tauri app (CEF default)
@@ -70,6 +75,7 @@ jobs:
           cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
         env:
           NODE_ENV: production
+          MASCOT_COLORS: all
           CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
           CARGO_PROFILE_RELEASE_LTO: "false"

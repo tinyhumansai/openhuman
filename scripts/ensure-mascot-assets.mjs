@@ -12,9 +12,26 @@ const remotionRoot = join(repoRoot, 'remotion');
 const remotionNodeModules = join(remotionRoot, 'node_modules');
 const manifestPath = join(generatedRoot, 'manifest.json');
 
-const colors = ['yellow', 'burgundy', 'black', 'navy', 'green'];
+const ALL_COLORS = ['yellow', 'burgundy', 'black', 'navy', 'green'];
 const profiles = ['default', 'compact'];
 const compositions = ['yellow-MascotIdle', 'yellow-MascotTalking', 'yellow-MascotThinking'];
+
+function resolveColorSet() {
+  const raw = (process.env.MASCOT_COLORS ?? '').trim();
+  if (!raw) return ['yellow'];
+  if (raw.toLowerCase() === 'all') return ALL_COLORS;
+  const requested = raw
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .filter(c => ALL_COLORS.includes(c));
+  if (!requested.includes('yellow')) {
+    requested.unshift('yellow');
+  }
+  return requested.length > 0 ? requested : ['yellow'];
+}
+
+const colors = resolveColorSet();
 
 function run(command, args, cwd) {
   execFileSync(command, args, {
@@ -40,16 +57,28 @@ function manifestLooksCurrent() {
   try {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
     const variants = manifest.variants ?? [];
-    return (
-      variants.length === colors.length * profiles.length * compositions.length &&
-      variants.every(variant =>
-        colors.includes(variant.color ?? '') &&
-        profiles.includes(variant.profile ?? '') &&
-        compositions.includes(variant.composition ?? '') &&
-        typeof variant.path === 'string' &&
-        variant.path.endsWith('.webp')
-      )
+    // Allow caches that include MORE colors than requested (e.g. CI cache restored locally)
+    const presentTuples = new Set(
+      variants
+        .filter(variant =>
+          ALL_COLORS.includes(variant.color ?? '') &&
+          profiles.includes(variant.profile ?? '') &&
+          compositions.includes(variant.composition ?? '') &&
+          typeof variant.path === 'string' &&
+          variant.path.endsWith('.webp')
+        )
+        .map(variant => `${variant.profile}/${variant.color}/${variant.composition}`)
     );
+    for (const profile of profiles) {
+      for (const color of colors) {
+        for (const composition of compositions) {
+          if (!presentTuples.has(`${profile}/${color}/${composition}`)) {
+            return false;
+          }
+        }
+      }
+    }
+    return true;
   } catch {
     return false;
   }

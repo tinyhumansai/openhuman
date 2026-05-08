@@ -1,4 +1,5 @@
 import type { MascotFace } from './Ghosty';
+import { isMascotColorAvailable } from './mascotManifest';
 import type { MascotColor } from './mascotPalette';
 
 export type YellowMascotAssetProfile = 'default' | 'compact';
@@ -67,7 +68,8 @@ export function selectYellowMascotAsset(
   }
 
   const variant = resolveVariant(request.face);
-  const mascotColor = request.mascotColor ?? 'yellow';
+  const requested = request.mascotColor ?? 'yellow';
+  const mascotColor: MascotColor = isMascotColorAvailable(requested) ? requested : 'yellow';
   return {
     profile,
     variant,
