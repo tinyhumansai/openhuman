@@ -1,28 +1,23 @@
 import React from "react";
 import { AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { z } from "zod";
-import { zColor } from "@remotion/zod-types";
-import { RecordingFace } from "../../Ghosty/lib/RecordingFace";
-import { LoadingFace } from "../../Ghosty/lib/LoadingFace";
 import { getMascotPalette, type MascotColor } from "./mascotPalette";
 
 export const mascotSchema = z.object({
   arm: z.enum(["wave", "none", "steady"]).default("wave"),
-  face: z.enum(["normal", "recording", "loading"]).default("normal"),
+  face: z.enum(["normal"]).default("normal"),
   talking: z.boolean().default(false),
   sleeping: z.boolean().default(false),
   thinking: z.boolean().default(false),
   greeting: z.boolean().default(false),
   mascotColor: z.enum(["yellow", "burgundy", "black", "navy", "green"]).default("yellow"),
-  recordingColor: zColor().default("#ff3b30"),
-  loadingColor: zColor().default("#ffffff"),
 });
 
 export type MascotProps = z.infer<typeof mascotSchema>;
 
 /**
- * Mascot character — drives the custom yellow mascot SVG with the same
- * animation system as Ghosty: body bob, head-dot drift/squash, arm wave, blink.
+ * Mascot character — drives the custom yellow mascot SVG with the shared
+ * Remotion animation system: body bob, head-dot drift/squash, arm wave, blink.
  *
  * Use distinct `idPrefix` values if two instances appear in the same SVG tree
  * so filter/gradient IDs don't collide.
@@ -36,6 +31,10 @@ type ThinkingTiming = {
   thinkOutStartSec?: number;
   /** Seconds at which the thinking→idle ramp completes. Required if thinkOutStartSec is set. */
   thinkOutEndSec?: number;
+  /** Seconds at which the awake→sleep ramp begins. Default 2.5. */
+  sleepStartSec?: number;
+  /** Seconds at which the awake→sleep ramp completes. Default 4.0. */
+  sleepFullSec?: number;
 };
 
 export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & ThinkingTiming> = ({
@@ -46,13 +45,13 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
   thinking = false,
   greeting = false,
   mascotColor = "yellow",
-  recordingColor = "#ff3b30",
-  loadingColor = "#ffffff",
   idPrefix = "mascot",
   thinkInStartSec = 1.0,
   thinkInEndSec = 2.0,
   thinkOutStartSec,
   thinkOutEndSec,
+  sleepStartSec = 2.5,
+  sleepFullSec = 4.0,
 }) => {
   const palette = getMascotPalette(mascotColor as MascotColor);
   const frame = useCurrentFrame();
@@ -104,17 +103,19 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
   const blinkScale = inBlink ? 0.12 : 1;
 
   // Sleep animation — slow eye-close then floating Zzz.
-  const sleepStartFrame = sleeping ? Math.round(fps * 2.5) : 99999;
-  const sleepFullFrame  = sleeping ? Math.round(fps * 4.0) : 99999;
+  const sleepStartFrame = sleeping ? Math.round(fps * sleepStartSec) : 99999;
+  const sleepFullFrame  = sleeping ? Math.round(fps * sleepFullSec) : 99999;
   const inSleepTransition = sleeping && frame >= sleepStartFrame;
   const sleepProgress = sleeping
-    ? interpolate(frame, [sleepStartFrame, sleepFullFrame], [0, 1], {
+    ? sleepFullFrame <= sleepStartFrame
+      ? 1
+      : interpolate(frame, [sleepStartFrame, sleepFullFrame], [0, 1], {
         extrapolateLeft: "clamp",
         extrapolateRight: "clamp",
         easing: Easing.inOut(Easing.cubic),
       })
     : 0;
-  const isAsleep = sleeping && frame >= sleepFullFrame;
+  const isAsleep = sleeping && (sleepFullFrame <= sleepStartFrame || frame >= sleepFullFrame);
 
   // Eye openness: normal blink while awake, slow droop during sleep transition.
   const eyeScale = inSleepTransition ? Math.max(0, 1 - sleepProgress) : blinkScale;
@@ -147,7 +148,9 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
   const thinkOutStartFrame = hasOutRamp ? Math.round(fps * (thinkOutStartSec as number)) : 99999;
   const thinkOutEndFrame   = hasOutRamp ? Math.round(fps * (thinkOutEndSec as number))   : 99999;
   const thinkInProgress = thinking
-    ? interpolate(frame, [thinkStartFrame, thinkFullFrame], [0, 1], {
+    ? thinkFullFrame <= thinkStartFrame
+      ? 1
+      : interpolate(frame, [thinkStartFrame, thinkFullFrame], [0, 1], {
         extrapolateLeft: "clamp",
         extrapolateRight: "clamp",
         easing: Easing.inOut(Easing.cubic),
@@ -565,21 +568,6 @@ export const MascotCharacter: React.FC<MascotProps & { idPrefix?: string } & Thi
                   <ellipse cx={483} cy={526} rx={7} ry={4} fill="#E07070" opacity={tongueOpacity * 0.85} />
                 </g>
               )}
-            </g>
-          )}
-
-          {/* Recording face — pulsing dot, centered at (495, 495): 25px lower + 70% scale.
-              Transform: place at target center → scale → undo RecordingFace's own offset (520,555). */}
-          {face === "recording" && (
-            <g transform="translate(495, 495) scale(0.7) translate(-520, -555)">
-              <RecordingFace frame={frame} fps={fps} color={recordingColor} />
-            </g>
-          )}
-
-          {/* Loading face — spinning ring, same center/scale as recording dot (495, 495, 70%). */}
-          {face === "loading" && (
-            <g transform="translate(495, 495) scale(0.7) translate(-520, -555)">
-              <LoadingFace frame={frame} fps={fps} color={loadingColor} />
             </g>
           )}
 

@@ -1,21 +1,19 @@
 import React from "react";
 import {
   AbsoluteFill,
-  Easing,
+  Img,
   interpolate,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
 
+type Props = {
+  accessory?: string;
+};
+
 /**
- * NewMascotLove — idelMascot.svg style idle animation with a heart-eye moment.
- *
- * Timeline (270 frames / 9 s @ 30 fps):
- *   0  – 89  : normal idle  (body bob, head drift, gentle arm sway, blink)
- *   90 – 120 : heart eyes fade IN  (cross-fade over 30 frames)
- *   120 – 210: heart eyes pulse rhythmically, cheeks flush, mini hearts float up
- *   210 – 240: heart eyes fade OUT (cross-fade back to round eyes)
- *   240 – 270: normal idle again  → clean loop
+ * NewMascotLove — full-loop love pose with heart eyes and floating hearts.
  *
  * Heart eye paths are from the love-face SVG (730×953 viewBox, head cx=379.614 cy=114).
  * They are placed into the 1000×1000 idelMascot coordinate space via
@@ -26,19 +24,9 @@ export const NewMascotLove: React.FC<Props> = ({ accessory = "none" }) => {
   const { fps, width, height } = useVideoConfig();
   const p = (k: string) => `nmlv-${k}`;
 
-  // ── Heart transition ────────────────────────────────────────────────────────
-  const heartProgress = interpolate(
-    frame,
-    [90, 120, 210, 240],
-    [0, 1, 1, 0],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-      easing: Easing.inOut(Easing.cubic),
-    }
-  );
-  const normalEyeOpacity = 1 - heartProgress;
-  const heartEyeOpacity = heartProgress;
+  const heartProgress = 1;
+  const normalEyeOpacity = 0;
+  const heartEyeOpacity = 1;
 
   // Heart pulse: 2 beats/s, amplitude grows with heartProgress
   const heartBeat = 1 + Math.sin((frame / fps) * Math.PI * 4) * 0.09 * heartProgress;
@@ -59,9 +47,7 @@ export const NewMascotLove: React.FC<Props> = ({ accessory = "none" }) => {
   const rightSway = Math.sin((frame / fps) * Math.PI * 1.3 + 1.0) * 6;
 
   // ── Blink — only during normal eye phase ────────────────────────────────
-  const blinkPeriod = Math.round(fps * 2.8);
-  const blinkOffset = Math.round(blinkPeriod / 2);
-  const inBlink = heartProgress < 0.1 && (frame + blinkOffset) % blinkPeriod < 5;
+  const inBlink = false;
   const eyeScaleNormal = inBlink ? 0.1 : 1;
 
   // ── Cheek — flushes more during heart phase ──────────────────────────────
@@ -70,33 +56,36 @@ export const NewMascotLove: React.FC<Props> = ({ accessory = "none" }) => {
     Math.sin((frame / fps) * Math.PI * 1.1 + 1.0) * 0.06;
 
   // ── Floating mini hearts ─────────────────────────────────────────────────
-  // Three hearts staggered across the 90-frame heart window.
+  // Three hearts loop continuously with a light stagger.
   // Returns {x, y (with bob), opacity (gated by heartProgress), scale}.
-  const floatHeart = (startF: number, x: number, baseY: number, sz: number) => {
-    const prog = interpolate(frame, [startF, startF + 48], [0, 1], {
+  const floatHeart = (loopFrame: number, startF: number, x: number, baseY: number, sz: number) => {
+    const localFrame = (loopFrame - startF + 84) % 84;
+    const prog = interpolate(localFrame, [0, 48], [0, 1], {
       extrapolateLeft: "clamp",
       extrapolateRight: "clamp",
     });
     const y = baseY - 72 * prog + bob;
     const op =
       interpolate(
-        frame,
-        [startF, startF + 6, startF + 38, startF + 48],
+        localFrame,
+        [0, 6, 38, 48],
         [0, 0.9, 0.9, 0],
         { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
       ) * heartProgress;
     const sc =
       sz *
-      interpolate(frame, [startF, startF + 8], [0.5, 1], {
+      interpolate(localFrame, [0, 8], [0.5, 1], {
         extrapolateLeft: "clamp",
         extrapolateRight: "clamp",
       });
     return { x, y, op, sc };
   };
 
-  const hA = floatHeart(124, 415, 388, 0.9);
-  const hB = floatHeart(152, 568, 382, 0.8);
-  const hC = floatHeart(176, 490, 358, 1.0);
+  const loopSpan = 84;
+  const loopFrame = frame % loopSpan;
+  const hA = floatHeart(loopFrame, 0, 415, 388, 0.9);
+  const hB = floatHeart(loopFrame, 20, 568, 382, 0.8);
+  const hC = floatHeart(loopFrame, 40, 490, 358, 1.0);
 
   const size = Math.min(width, height) * 0.82;
 

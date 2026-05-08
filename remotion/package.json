@@ -30,7 +30,7 @@
     "upgrade": "remotion upgrade",
     "lint": "eslint src && tsc",
     "render": "./scripts/render-transparent.sh",
-    "render:all": "./scripts/render-transparent.sh GhostyWave GhostyIdle GhostyRecording GhostyLoading GhostyPickup",
+    "render:all": "./scripts/render-transparent.sh mascot-yellow-wave mascot-yellow-idle mascot-yellow-pickup mascot-yellow-talking mascot-yellow-thinking mascot-yellow-sleep",
     "render:runtime-assets": "node ./scripts/render-runtime-assets.mjs"
   },
   "sideEffects": [

@@ -7,7 +7,7 @@ export const yellowMascotSleepSchema = mascotSchema.extend({
 });
 export type YellowMascotSleepProps = z.infer<typeof yellowMascotSleepSchema>;
 
-// Variant: mascot blinks a few times, slowly closes eyes, then floats Zzz.
+// Variant: full-loop sleeping pose with continuous Zzz.
 export const YellowMascotSleep: React.FC<YellowMascotSleepProps> = (props) => (
   <MascotCharacter
     {...props}
@@ -15,6 +15,8 @@ export const YellowMascotSleep: React.FC<YellowMascotSleepProps> = (props) => (
     face="normal"
     talking={false}
     sleeping={true}
+    sleepStartSec={0}
+    sleepFullSec={0}
     idPrefix="mascot-sleep"
   />
 );

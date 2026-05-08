@@ -1,19 +1,13 @@
 import React from "react";
 import {
   AbsoluteFill,
-  Easing,
   interpolate,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
 
 /**
- * NewMascotWink — wink.svg brought to life.
- *
- * Timeline:
- *   0–60   : idle — both eyes open, gentle bob
- *   60–78  : right eye closes from open → wink
- *   78–270 : full wink held — right arm waves, left eye blinks periodically
+ * NewMascotWink — full-loop wink animation.
  */
 export const NewMascotWink: React.FC = () => {
   const frame = useCurrentFrame();
@@ -31,26 +25,16 @@ export const NewMascotWink: React.FC = () => {
   const headSquashY = 1 - 0.07 * press;
   const headSquashX = 1 + 0.05 * press;
 
-  // ── Wink transition: right eye open → wink ──────────────────────────────
-  const winkProgress = interpolate(frame, [60, 78], [0, 1], {
-    easing: Easing.inOut(Easing.quad),
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  const openRightEyeOpacity = 1 - winkProgress;
-  const winkEyeOpacity = winkProgress;
+  const openRightEyeOpacity = 0;
+  const winkEyeOpacity = 1;
 
-  // Slight head tilt as wink comes in
-  const headTilt = interpolate(frame, [60, 85], [0, 4], {
-    easing: Easing.out(Easing.quad),
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  // Slight continuous head tilt with a gentle oscillation.
+  const headTilt = 4 + Math.sin((frame / fps) * Math.PI * 0.45) * 0.9;
 
-  // ── Left eye blink — only after wink is set (frame 95+) ─────────────────
+  // ── Left eye blink — loops immediately ──────────────────────────────────
   const blinkPeriod = Math.round(fps * 3.5);
   const blinkDur = Math.round(fps * 0.14);
-  const blinkOffset = frame < 95 ? 0 : (frame - 95) % blinkPeriod;
+  const blinkOffset = frame % blinkPeriod;
   const leftEyeScaleY =
     blinkOffset < blinkDur
       ? interpolate(
@@ -61,14 +45,8 @@ export const NewMascotWink: React.FC = () => {
         )
       : 1;
 
-  // ── Right arm — waves only after wink is set ────────────────────────────
-  const rightArmWave = interpolate(frame, [70, 95], [0, 1], {
-    easing: Easing.out(Easing.quad),
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  const rightArmAngle =
-    (10 + Math.sin((frame / fps) * Math.PI * 2.5) * 22) * rightArmWave;
+  // ── Right arm — waves for the full loop ─────────────────────────────────
+  const rightArmAngle = 10 + Math.sin((frame / fps) * Math.PI * 2.5) * 22;
 
   // ── Left arm — gentle idle sway ─────────────────────────────────────────
   const leftArmAngle = Math.sin((frame / fps) * Math.PI * 0.9) * 7;

@@ -1,9 +1,15 @@
 import React from "react";
 import {
   AbsoluteFill,
+  Img,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
+
+type Props = {
+  accessory?: string;
+};
 
 /**
  * NewMascotListening — idelMascot.svg paths with an attentive "listening" animation.

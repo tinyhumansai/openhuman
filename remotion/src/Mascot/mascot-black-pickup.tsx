@@ -3,7 +3,7 @@ import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remo
 
 /**
  * Black pickup mascot — uses exact paths and filters from BlackIdelmascot.svg
- * with the same bouncy squash-and-stretch animation as yellow-MascotPickup,
+ * with the same bouncy squash-and-stretch animation as `mascot-yellow-pickup`,
  * plus the idle bob, head-drift, arm-sway, and blink.
  */
 export const BlackMascotPickup: React.FC = () => {

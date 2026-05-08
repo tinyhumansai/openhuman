@@ -2,13 +2,19 @@ import React from "react";
 import {
   AbsoluteFill,
   Easing,
+  Img,
   interpolate,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
 
+type Props = {
+  accessory?: string;
+};
+
 /**
- * NewMascotWave — new-mascot.svg paths with a "say hi" wave animation.
+ * Alternate yellow wave animation using the `new-mascot.svg` paths.
  * No pop-in: mascot is idle on screen from frame 0.
  *   • body bob, head drift + squash
  *   • right arm rises over ~25 frames then waves enthusiastically in a loop

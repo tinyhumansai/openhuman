@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Render one or more Ghosty compositions as transparent ProRes 4444 .mov files.
+# Render one or more mascot compositions as transparent ProRes 4444 .mov files.
 #
 # Usage:
-#   ./scripts/render-transparent.sh                       # renders GhostyWave by default
-#   ./scripts/render-transparent.sh GhostyRecording       # renders one composition
-#   ./scripts/render-transparent.sh GhostyWave GhostyIdle # renders multiple
+#   ./scripts/render-transparent.sh                                      # renders mascot-yellow-wave by default
+#   ./scripts/render-transparent.sh mascot-yellow-talking                # renders one composition
+#   ./scripts/render-transparent.sh mascot-yellow-wave mascot-black-wave # renders multiple
 #   pnpm render:all                                       # renders every variant
 #
 # Output: out/<CompositionId>.mov
@@ -15,7 +15,7 @@ mkdir -p out
 
 COMPS=("$@")
 if [ ${#COMPS[@]} -eq 0 ]; then
-  COMPS=("GhostyWave")
+  COMPS=("mascot-yellow-wave")
 fi
 
 for comp in "${COMPS[@]}"; do

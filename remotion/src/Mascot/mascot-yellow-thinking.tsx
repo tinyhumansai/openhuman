@@ -7,8 +7,7 @@ export const yellowMascotThinkingSchema = mascotSchema.extend({
 });
 export type YellowMascotThinkingProps = z.infer<typeof yellowMascotThinkingSchema>;
 
-// Variant: starts idle, then transitions into a thinking pose —
-// right arm raises, head tilts, eyes look up, smile becomes a thoughtful "hmm".
+// Variant: full-loop thinking pose.
 export const YellowMascotThinking: React.FC<YellowMascotThinkingProps> = (props) => (
   <MascotCharacter
     {...props}
@@ -17,6 +16,8 @@ export const YellowMascotThinking: React.FC<YellowMascotThinkingProps> = (props)
     talking={false}
     sleeping={false}
     thinking={true}
+    thinkInStartSec={0}
+    thinkInEndSec={0}
     idPrefix="mascot-thinking"
   />
 );

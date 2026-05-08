@@ -60,21 +60,21 @@ function resolveColorSet() {
 const colors = resolveColorSet();
 console.log(`[remotion-runtime-assets] rendering colors: ${colors.join(', ')}`);
 const baseVariants = [
-  { composition: 'yellow-MascotIdle', profile: 'default', props: {} },
-  { composition: 'yellow-MascotTalking', profile: 'default', props: {} },
-  { composition: 'yellow-MascotThinking', profile: 'default', props: {} },
+  { composition: 'mascot-yellow-idle', profile: 'default', props: {} },
+  { composition: 'mascot-yellow-talking', profile: 'default', props: {} },
+  { composition: 'mascot-yellow-thinking', profile: 'default', props: {} },
   {
-    composition: 'yellow-MascotIdle',
+    composition: 'mascot-yellow-idle',
     profile: 'compact',
     props: { groundShadowOpacity: 0.75, compactArmShading: true },
   },
   {
-    composition: 'yellow-MascotTalking',
+    composition: 'mascot-yellow-talking',
     profile: 'compact',
     props: { groundShadowOpacity: 0.75, compactArmShading: true },
   },
   {
-    composition: 'yellow-MascotThinking',
+    composition: 'mascot-yellow-thinking',
     profile: 'compact',
     props: { groundShadowOpacity: 0.75, compactArmShading: true },
   },

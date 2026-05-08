@@ -28,7 +28,7 @@ pnpm dev
 **Render a single variant** (produces `out/<CompositionId>.mov` — transparent ProRes 4444)
 
 ```console
-pnpm render GhostyWave
+pnpm render mascot-yellow-wave
 ```
 
 **Render all variants**

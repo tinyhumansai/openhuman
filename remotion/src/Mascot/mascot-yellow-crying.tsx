@@ -1,19 +1,13 @@
 import React from "react";
 import {
   AbsoluteFill,
-  Easing,
   interpolate,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
 
 /**
- * NewMascotCrying — idle state transitions into a crying animation.
- *
- * Timeline (300 frames / 10 s @ 30 fps):
- *   0  –  60 : normal idle  (body bob, normal eyes, smile, arm sway, blink)
- *   60 –  90 : transition   (eyes scrunch, mouth droops, sob tremor begins)
- *   90 – 300 : full crying  (squinted eyes, sad frown, falling tears, sob bob)
+ * NewMascotCrying — full-loop crying animation.
  *
  * Crying eye and mouth paths are taken directly from Crying.svg.
  */
@@ -22,14 +16,9 @@ export const NewMascotCrying: React.FC = () => {
   const { fps, width, height } = useVideoConfig();
   const p = (k: string) => `nmcry-${k}`;
 
-  // ── Cry transition ────────────────────────────────────────────────────────
-  const cryProgress = interpolate(frame, [60, 90], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: Easing.inOut(Easing.cubic),
-  });
-  const normalFaceOpacity = 1 - cryProgress;
-  const cryFaceOpacity = cryProgress;
+  const cryProgress = 1;
+  const normalFaceOpacity = 0;
+  const cryFaceOpacity = 1;
 
   // ── Body bob — calm idle blends into faster sob shudder ───────────────────
   const idleBob = Math.sin((frame / fps) * Math.PI * 1.2) * 14;
@@ -69,7 +58,7 @@ export const NewMascotCrying: React.FC = () => {
   const tearPeriod = Math.round(fps * 1.6);
 
   const getTear = (delayFrames: number, eyeX: number, eyeStartY: number) => {
-    const startAt = 90 + delayFrames;
+    const startAt = delayFrames;
     if (frame < startAt) return { x: eyeX, y: eyeStartY, opacity: 0 };
     const cycleFrame = (frame - startAt) % tearPeriod;
     const t = cycleFrame / tearPeriod;
