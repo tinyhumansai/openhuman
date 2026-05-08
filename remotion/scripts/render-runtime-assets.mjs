@@ -208,8 +208,15 @@ async function transcodeAnimatedWebp(inputMov, outputWebp, frameDir) {
   const frameDurationMs = String(Math.round(1000 / outputFps));
   const args = ['-loop', '0', '-bgcolor', '0,0,0,0'];
 
+  // webpmux frame options: +duration+xoff+yoff+dispose+blend
+  //   dispose=1 → clear canvas to background (transparent) before drawing the
+  //     next frame. Without this, frames composite over previous ones and
+  //     transparent mascot poses ghost on top of each other.
+  //   -b → no blending; the frame's RGBA replaces the canvas pixels. With
+  //     blending the alpha of the prior frame leaks through even after a
+  //     dispose, producing a faint overlay around the silhouette.
   for (const framePath of webpFrames) {
-    args.push('-frame', framePath, `+${frameDurationMs}`);
+    args.push('-frame', framePath, `+${frameDurationMs}+0+0+1-b`);
   }
 
   args.push('-o', outputWebp);
