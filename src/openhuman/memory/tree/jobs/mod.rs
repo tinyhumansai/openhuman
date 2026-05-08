@@ -26,6 +26,7 @@
 //! See [`store::enqueue_tx`] for the in-tx producer entry point.
 
 mod handlers;
+mod redact;
 pub mod scheduler;
 pub mod store;
 pub mod testing;

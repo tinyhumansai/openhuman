@@ -22,6 +22,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::tree::jobs::redact::scrub_for_log;
 use crate::openhuman::memory::tree::jobs::types::{Job, JobKind, JobStatus, NewJob};
 use crate::openhuman::memory::tree::store::with_connection;
 
@@ -202,10 +203,14 @@ pub fn mark_failed(config: &Config, job: &Job, error: &str) -> Result<()> {
     with_connection(config, |conn| {
         let now_ms = Utc::now().timestamp_millis();
 
+        // `error` is free-form (anyhow chain or handler-supplied text) and
+        // may carry credential-shaped substrings; scrub before logging,
+        // but keep the original in the DB column for diagnostics.
+        let error_for_log = scrub_for_log(error);
         if attempts >= max_attempts {
             log::warn!(
                 "[memory_tree::jobs] terminal failure id={job_id} \
-                 attempts={attempts}/{max_attempts} err={error}"
+                 attempts={attempts}/{max_attempts} err={error_for_log}"
             );
             let n = conn.execute(
                 "UPDATE mem_tree_jobs
@@ -229,7 +234,7 @@ pub fn mark_failed(config: &Config, job: &Job, error: &str) -> Result<()> {
             let next_at = now_ms.saturating_add(backoff);
             log::info!(
                 "[memory_tree::jobs] retry id={job_id} attempt={attempts}/{max_attempts} \
-                 next_at_ms={next_at} err={error}"
+                 next_at_ms={next_at} err={error_for_log}"
             );
             let n = conn.execute(
                 "UPDATE mem_tree_jobs
@@ -529,6 +534,61 @@ mod tests {
         assert_eq!(row.status, JobStatus::Failed);
         assert_eq!(row.last_error.as_deref(), Some("fatal"));
         assert!(row.completed_at_ms.is_some());
+    }
+
+    /// `mark_failed` scrubs only the log emission, not the persisted
+    /// `last_error` column. A reader of `mem_tree_jobs` should still see
+    /// the full anyhow / handler-supplied chain so they can root-cause
+    /// the failure; the scrub is a defense-in-depth for the log sink only.
+    #[test]
+    fn mark_failed_persists_full_error_unredacted() {
+        let (_tmp, cfg) = test_config();
+        let payload = AppendBufferPayload {
+            node: NodeRef::Leaf {
+                chunk_id: "c1".into(),
+            },
+            target: AppendTarget::Source {
+                source_id: "slack:#x".into(),
+            },
+        };
+        let mut nj = NewJob::append_buffer(&payload).unwrap();
+        nj.max_attempts = Some(1);
+        let id = enqueue(&cfg, &nj).unwrap().unwrap();
+
+        let claim = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        let raw = "upstream returned 401: Bearer abc123.def-456 token rejected";
+        mark_failed(&cfg, &claim, raw).unwrap();
+
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(row.status, JobStatus::Failed);
+        // The persisted column keeps the full original — the scrub is
+        // applied at log emission only.
+        assert_eq!(row.last_error.as_deref(), Some(raw));
+    }
+
+    /// Same contract for `mark_deferred`: the log line is scrubbed in
+    /// `worker::run_once`, but the persisted `last_error` keeps the
+    /// full handler-supplied reason for diagnostics.
+    #[test]
+    fn mark_deferred_persists_full_reason_unredacted() {
+        let (_tmp, cfg) = test_config();
+        let payload = AppendBufferPayload {
+            node: NodeRef::Leaf {
+                chunk_id: "c2".into(),
+            },
+            target: AppendTarget::Source {
+                source_id: "slack:#y".into(),
+            },
+        };
+        let nj = NewJob::append_buffer(&payload).unwrap();
+        let id = enqueue(&cfg, &nj).unwrap().unwrap();
+
+        let claim = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        let raw = "rate_limited by api_key=hunter2; retry after 30s";
+        mark_deferred(&cfg, &claim, 0, raw).unwrap();
+
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(row.last_error.as_deref(), Some(raw));
     }
 
     #[test]

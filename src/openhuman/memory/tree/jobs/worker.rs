@@ -16,6 +16,7 @@ use tokio::sync::Notify;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::jobs::handlers;
+use crate::openhuman::memory::tree::jobs::redact::scrub_for_log;
 use crate::openhuman::memory::tree::jobs::store::{
     claim_next, mark_deferred, mark_done, mark_failed, recover_stale_locks,
     DEFAULT_LOCK_DURATION_MS,
@@ -164,26 +165,31 @@ pub async fn run_once(config: &Config) -> Result<bool> {
             // claim toward the failure-attempt budget. `mark_deferred`
             // reverts the bump applied by `claim_next` so the row's
             // attempts counter stays where it was before this claim.
+            //
+            // `reason` is handler-supplied free-form text and may
+            // include upstream provider responses; scrub for log
+            // emission while keeping the original in DB state.
             log::info!(
                 "[memory_tree::jobs] deferred id={} kind={} until_ms={} reason={}",
                 job.id,
                 job.kind.as_str(),
                 until_ms,
-                reason
+                scrub_for_log(&reason)
             );
             mark_deferred(config, &job, until_ms, &reason)?;
         }
         Err(err) => {
             // Preserve the full anyhow cause chain in the persisted
             // last_error so a reader of mem_tree_jobs can see the root
-            // cause, not just the top-level message. Mirrors the {:#}
-            // log format used right above.
+            // cause, not just the top-level message. The log line gets
+            // the same chain after `scrub_for_log`, since anyhow chains
+            // commonly embed upstream HTTP bodies / auth headers.
             let message = format!("{err:#}");
             log::warn!(
-                "[memory_tree::jobs] job failed id={} kind={} err={:#}",
+                "[memory_tree::jobs] job failed id={} kind={} err={}",
                 job.id,
                 job.kind.as_str(),
-                err
+                scrub_for_log(&message)
             );
             mark_failed(config, &job, &message)?;
         }
