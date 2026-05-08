@@ -436,8 +436,7 @@ mod tests {
         let doc = DocumentInput {
             provider: "notion".into(),
             title: "Launch plan".into(),
-            body: "Phoenix ships Friday after staging review. alice@example.com owns this."
-                .into(),
+            body: "Phoenix ships Friday after staging review. alice@example.com owns this.".into(),
             modified_at: Utc.timestamp_millis_opt(1_700_000_000_000).unwrap(),
             source_ref: Some("notion://page/abc".into()),
         };
