@@ -24,8 +24,12 @@ export interface YellowMascotProps {
 }
 
 const FPS = 30;
-// Composition canvas matches the Remotion side (1080x1080); Player scales it.
-const CANVAS = 1080;
+// Composition canvas. Render at 480×480 — the SVG is vector so the Player
+// scales it up to the on-screen size via CSS, and we pay roughly (480/1080)² ≈
+// 5× less per-frame filter rasterization (each `feColorMatrix` + inner shadow
+// is fundamentally O(canvas pixels)). At typical UI sizes the difference vs
+// 1080 is invisible; dropping below ~360 starts to soften antialiased edges.
+const CANVAS = 480;
 // Loop length per state. The Thinking variant we authored loops cleanly at 6s.
 const DURATION_FRAMES = FPS * 6;
 
