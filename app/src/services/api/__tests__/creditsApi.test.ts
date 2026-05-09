@@ -159,6 +159,40 @@ describe('normalizeTeamUsage', () => {
     expect(typeof result.cycleEndsAt).toBe('string');
   });
 
+  it('maps bypassRateLimit to bypassCycleLimit', () => {
+    const result = normalizeTeamUsage({ bypassRateLimit: true });
+    expect(result.bypassCycleLimit).toBe(true);
+  });
+
+  it('handles invalid payload types gracefully', () => {
+    expect(() => normalizeTeamUsage('string payload')).not.toThrow();
+    expect(() => normalizeTeamUsage(12345)).not.toThrow();
+    expect(() => normalizeTeamUsage(true)).not.toThrow();
+    expect(() => normalizeTeamUsage([])).not.toThrow();
+
+    const stringResult = normalizeTeamUsage('string payload');
+    expect(stringResult.remainingUsd).toBe(0);
+
+    const arrayResult = normalizeTeamUsage(['a', 'b']);
+    // Arrays pass typeof object check but don't have the expected properties
+    expect(arrayResult.remainingUsd).toBe(0);
+  });
+
+  it('falls back to current time for invalid date fields', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-10T12:00:00.000Z'));
+
+    const result = normalizeTeamUsage({
+      cycleStartDate: 12345, // invalid type
+      cycleEndsAt: null, // invalid type
+    });
+
+    expect(result.cycleStartDate).toBe('2026-05-10T12:00:00.000Z');
+    expect(result.cycleEndsAt).toBe('2026-05-10T12:00:00.000Z');
+
+    vi.useRealTimers();
+  });
+
   it('does not crash on null or undefined input', () => {
     expect(() => normalizeTeamUsage(null)).not.toThrow();
     expect(() => normalizeTeamUsage(undefined)).not.toThrow();
