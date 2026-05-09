@@ -45,3 +45,86 @@ fn rejects_wrong_length() {
     let err = key_bytes_from_string("tooshort").unwrap_err();
     assert!(err.to_string().contains("must decode to 32 raw bytes"));
 }
+
+use super::user_id_from_profile_payload;
+use serde_json::json;
+
+#[test]
+fn extracts_id_from_root() {
+    let payload1 = json!({ "id": "123" });
+    let payload2 = json!({ "_id": "456" });
+    let payload3 = json!({ "userId": "789" });
+
+    assert_eq!(user_id_from_profile_payload(&payload1).unwrap(), "123");
+    assert_eq!(user_id_from_profile_payload(&payload2).unwrap(), "456");
+    assert_eq!(user_id_from_profile_payload(&payload3).unwrap(), "789");
+}
+
+#[test]
+fn extracts_id_from_data_nested() {
+    let payload = json!({
+        "data": { "id": "abc" }
+    });
+    assert_eq!(user_id_from_profile_payload(&payload).unwrap(), "abc");
+}
+
+#[test]
+fn extracts_id_from_user_nested() {
+    let payload = json!({
+        "user": { "id": "def" }
+    });
+    assert_eq!(user_id_from_profile_payload(&payload).unwrap(), "def");
+}
+
+#[test]
+fn extracts_id_from_data_user_nested() {
+    let payload = json!({
+        "data": {
+            "user": { "userId": "ghi" }
+        }
+    });
+    assert_eq!(user_id_from_profile_payload(&payload).unwrap(), "ghi");
+}
+
+#[test]
+fn ignores_whitespace_only_ids() {
+    let payload = json!({
+        "data": {
+            "id": "   ",
+            "_id": "real_id"
+        }
+    });
+    assert_eq!(user_id_from_profile_payload(&payload).unwrap(), "real_id");
+}
+
+#[test]
+fn trims_extracted_ids() {
+    let payload = json!({
+        "id": "  padded_id  "
+    });
+    assert_eq!(user_id_from_profile_payload(&payload).unwrap(), "padded_id");
+}
+
+#[test]
+fn rejects_non_string_ids() {
+    let payload = json!({
+        "id": 123,
+        "_id": ["not_a_string"],
+        "userId": "valid_id"
+    });
+    assert_eq!(user_id_from_profile_payload(&payload).unwrap(), "valid_id");
+}
+
+#[test]
+fn returns_none_for_missing_ids() {
+    let payload = json!({
+        "data": { "name": "alice" }
+    });
+    assert!(user_id_from_profile_payload(&payload).is_none());
+}
+
+#[test]
+fn returns_none_for_non_object_payload() {
+    let payload = json!("just a string");
+    assert!(user_id_from_profile_payload(&payload).is_none());
+}
