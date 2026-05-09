@@ -9,15 +9,148 @@ vi.mock('../../coreCommandClient', () => ({
 const { creditsApi, normalizeCouponRedeemResult, normalizeRedeemedCoupon, normalizeTeamUsage } =
   await import('../creditsApi');
 
-describe('creditsApi coupon helpers', () => {
-  beforeEach(() => {
-    mockCallCoreCommand.mockReset();
-  });
-
+describe('normalizeCouponRedeemResult', () => {
   it('normalizes redeem payloads from backend data shape', () => {
     expect(
       normalizeCouponRedeemResult({ couponCode: 'SAVE-2026', amount_usd: '4.5', pending: 0 })
     ).toEqual({ couponCode: 'SAVE-2026', amountUsd: 4.5, pending: false });
+  });
+
+  it('returns safe defaults for empty object', () => {
+    expect(normalizeCouponRedeemResult({})).toEqual({
+      couponCode: '',
+      amountUsd: 0,
+      pending: false,
+    });
+  });
+
+  it('returns safe defaults for null/undefined/non-object inputs', () => {
+    const expected = { couponCode: '', amountUsd: 0, pending: false };
+    expect(normalizeCouponRedeemResult(null)).toEqual(expected);
+    expect(normalizeCouponRedeemResult(undefined)).toEqual(expected);
+    expect(normalizeCouponRedeemResult('not an object')).toEqual(expected);
+    expect(normalizeCouponRedeemResult(123)).toEqual(expected);
+    expect(normalizeCouponRedeemResult([])).toEqual(expected);
+  });
+
+  it('unwraps nested { data: ... } envelopes', () => {
+    expect(
+      normalizeCouponRedeemResult({
+        data: { couponCode: 'NESTED-20', amountUsd: 20, pending: true },
+      })
+    ).toEqual({ couponCode: 'NESTED-20', amountUsd: 20, pending: true });
+  });
+
+  it('ignores data field if it is not an object', () => {
+    expect(
+      normalizeCouponRedeemResult({
+        data: 'not an object',
+        couponCode: 'TOP-LEVEL',
+        amountUsd: 15,
+      })
+    ).toEqual({ couponCode: 'TOP-LEVEL', amountUsd: 15, pending: false });
+  });
+
+  it('falls back to code if couponCode is missing or invalid', () => {
+    expect(
+      normalizeCouponRedeemResult({ code: 'CODE-ONLY', amountUsd: 10 })
+    ).toEqual({ couponCode: 'CODE-ONLY', amountUsd: 10, pending: false });
+
+    // couponCode exists but is empty/whitespace, should fall back to code
+    expect(
+      normalizeCouponRedeemResult({ couponCode: '   ', code: 'FALLBACK', amountUsd: 10 })
+    ).toEqual({ couponCode: 'FALLBACK', amountUsd: 10, pending: false });
+
+    // couponCode exists but is not a string
+    expect(
+      normalizeCouponRedeemResult({ couponCode: 123, code: 'FALLBACK2', amountUsd: 10 })
+    ).toEqual({ couponCode: 'FALLBACK2', amountUsd: 10, pending: false });
+  });
+
+  it('trims whitespace from coupon codes', () => {
+    expect(normalizeCouponRedeemResult({ couponCode: '  SPACEY  ', amountUsd: 5 })).toEqual({
+      couponCode: 'SPACEY',
+      amountUsd: 5,
+      pending: false,
+    });
+
+    expect(normalizeCouponRedeemResult({ code: '  SPACEY-CODE  ', amountUsd: 5 })).toEqual({
+      couponCode: 'SPACEY-CODE',
+      amountUsd: 5,
+      pending: false,
+    });
+  });
+
+  it('normalizes amountUsd vs amount_usd', () => {
+    expect(normalizeCouponRedeemResult({ amountUsd: 5.5 })).toEqual({
+      couponCode: '',
+      amountUsd: 5.5,
+      pending: false,
+    });
+
+    expect(normalizeCouponRedeemResult({ amount_usd: 6.5 })).toEqual({
+      couponCode: '',
+      amountUsd: 6.5,
+      pending: false,
+    });
+
+    // Valid string amounts
+    expect(normalizeCouponRedeemResult({ amountUsd: '7.5' })).toEqual({
+      couponCode: '',
+      amountUsd: 7.5,
+      pending: false,
+    });
+
+    // amountUsd should take precedence over amount_usd if both exist
+    expect(normalizeCouponRedeemResult({ amountUsd: 8.5, amount_usd: 9.5 })).toEqual({
+      couponCode: '',
+      amountUsd: 8.5,
+      pending: false,
+    });
+  });
+
+  it('handles truthy/falsy values for pending', () => {
+    expect(normalizeCouponRedeemResult({ pending: true })).toEqual({
+      couponCode: '',
+      amountUsd: 0,
+      pending: true,
+    });
+
+    expect(normalizeCouponRedeemResult({ pending: 1 })).toEqual({
+      couponCode: '',
+      amountUsd: 0,
+      pending: true,
+    });
+
+    expect(normalizeCouponRedeemResult({ pending: 'yes' })).toEqual({
+      couponCode: '',
+      amountUsd: 0,
+      pending: true,
+    });
+
+    expect(normalizeCouponRedeemResult({ pending: false })).toEqual({
+      couponCode: '',
+      amountUsd: 0,
+      pending: false,
+    });
+
+    expect(normalizeCouponRedeemResult({ pending: 0 })).toEqual({
+      couponCode: '',
+      amountUsd: 0,
+      pending: false,
+    });
+
+    expect(normalizeCouponRedeemResult({ pending: null })).toEqual({
+      couponCode: '',
+      amountUsd: 0,
+      pending: false,
+    });
+  });
+});
+
+describe('creditsApi coupon helpers', () => {
+  beforeEach(() => {
+    mockCallCoreCommand.mockReset();
   });
 
   it('normalizes redeemed coupon rows', () => {
