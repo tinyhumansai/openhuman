@@ -43,18 +43,16 @@ describe('normalizeCouponRedeemResult', () => {
 
   it('ignores data field if it is not an object', () => {
     expect(
-      normalizeCouponRedeemResult({
-        data: 'not an object',
-        couponCode: 'TOP-LEVEL',
-        amountUsd: 15,
-      })
+      normalizeCouponRedeemResult({ data: 'not an object', couponCode: 'TOP-LEVEL', amountUsd: 15 })
     ).toEqual({ couponCode: 'TOP-LEVEL', amountUsd: 15, pending: false });
   });
 
   it('falls back to code if couponCode is missing or invalid', () => {
-    expect(
-      normalizeCouponRedeemResult({ code: 'CODE-ONLY', amountUsd: 10 })
-    ).toEqual({ couponCode: 'CODE-ONLY', amountUsd: 10, pending: false });
+    expect(normalizeCouponRedeemResult({ code: 'CODE-ONLY', amountUsd: 10 })).toEqual({
+      couponCode: 'CODE-ONLY',
+      amountUsd: 10,
+      pending: false,
+    });
 
     // couponCode exists but is empty/whitespace, should fall back to code
     expect(
