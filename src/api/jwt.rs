@@ -18,7 +18,10 @@ mod tests {
         assert_eq!(bearer_authorization_value("my_token"), "Bearer my_token");
 
         // Token with leading/trailing spaces
-        assert_eq!(bearer_authorization_value("  spaced_token  "), "Bearer spaced_token");
+        assert_eq!(
+            bearer_authorization_value("  spaced_token  "),
+            "Bearer spaced_token"
+        );
 
         // Empty string
         assert_eq!(bearer_authorization_value(""), "Bearer ");
@@ -27,6 +30,9 @@ mod tests {
         assert_eq!(bearer_authorization_value("   "), "Bearer ");
 
         // Token with internal spaces (should not be trimmed)
-        assert_eq!(bearer_authorization_value("token with spaces"), "Bearer token with spaces");
+        assert_eq!(
+            bearer_authorization_value("token with spaces"),
+            "Bearer token with spaces"
+        );
     }
 }
