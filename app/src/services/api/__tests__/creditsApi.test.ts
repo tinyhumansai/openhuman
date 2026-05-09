@@ -58,7 +58,9 @@ describe('creditsApi coupon helpers', () => {
 
   it('normalizes redeemed coupon falls back to couponCode if code is absent or empty', () => {
     expect(normalizeRedeemedCoupon({ couponCode: 'FALLBACK-CODE' }).code).toBe('FALLBACK-CODE');
-    expect(normalizeRedeemedCoupon({ code: '  ', couponCode: 'FALLBACK-CODE' }).code).toBe('FALLBACK-CODE');
+    expect(normalizeRedeemedCoupon({ code: '  ', couponCode: 'FALLBACK-CODE' }).code).toBe(
+      'FALLBACK-CODE'
+    );
   });
 
   it('normalizes redeemed coupon handles camelCase variants of fields', () => {
