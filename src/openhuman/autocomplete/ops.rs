@@ -394,24 +394,19 @@ pub async fn autocomplete_start_cli(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use once_cell::sync::Lazy;
+    use tokio::sync::Mutex;
+
+    /// Global lock to serialize tests that touch the shared autocomplete engine singleton.
+    static TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     // ── autocomplete_status ────────────────────────────────────────────────────
-    //
-    // TODO: These tests share the process-global autocomplete::global_engine()
-    // singleton (via autocomplete_status / autocomplete_stop / autocomplete_start).
-    // They are currently stable because start() always errors on non-macOS, keeping
-    // the engine in an idle state. Once macOS support lands -- or if concurrent tests
-    // transition the engine -- races on the global state will cause flakiness.
-    //
-    // Fix when that happens: serialize engine-touching tests with a
-    // process-wide tokio::sync::Mutex guard (or the `serial_test` crate), or
-    // refactor to accept an injected engine instance instead of going through
-    // global_engine().
 
     /// Happy path: `autocomplete_status` always succeeds and produces exactly
     /// two log lines with the expected key tokens.
     #[tokio::test]
     async fn status_returns_outcome_with_two_log_lines() {
+        let _lock = TEST_LOCK.lock().await;
         let outcome = autocomplete_status()
             .await
             .expect("autocomplete_status must not return Err");
@@ -437,6 +432,7 @@ mod tests {
     /// The status payload has the expected boolean/string fields and a non-empty phase.
     #[tokio::test]
     async fn status_payload_has_expected_fields() {
+        let _lock = TEST_LOCK.lock().await;
         let outcome = autocomplete_status()
             .await
             .expect("autocomplete_status must not return Err");
@@ -462,6 +458,7 @@ mod tests {
     /// and produces two log lines.
     #[tokio::test]
     async fn stop_without_reason_returns_stopped_true_and_two_logs() {
+        let _lock = TEST_LOCK.lock().await;
         let outcome = autocomplete_stop(None)
             .await
             .expect("autocomplete_stop must not return Err");
@@ -486,6 +483,7 @@ mod tests {
     /// When a `reason` is supplied, the structured log line must include it.
     #[tokio::test]
     async fn stop_with_reason_includes_reason_in_log() {
+        let _lock = TEST_LOCK.lock().await;
         let payload = Some(AutocompleteStopParams {
             reason: Some("test-shutdown".to_string()),
         });
@@ -505,6 +503,7 @@ mod tests {
     /// When no reason is supplied, the structured log line must record "none".
     #[tokio::test]
     async fn stop_without_reason_logs_none_as_reason() {
+        let _lock = TEST_LOCK.lock().await;
         let outcome = autocomplete_stop(None)
             .await
             .expect("autocomplete_stop must not return Err");
@@ -525,6 +524,7 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[tokio::test]
     async fn start_returns_err_on_non_macos() {
+        let _lock = TEST_LOCK.lock().await;
         let result = autocomplete_start(AutocompleteStartParams { debounce_ms: None }).await;
         assert!(
             result.is_err(),
@@ -544,6 +544,7 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[tokio::test]
     async fn start_cli_plain_path_returns_err_on_non_macos() {
+        let _lock = TEST_LOCK.lock().await;
         let opts = AutocompleteStartCliOptions {
             debounce_ms: None,
             serve: false,
