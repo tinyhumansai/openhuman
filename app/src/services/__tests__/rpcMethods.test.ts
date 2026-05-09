@@ -5,13 +5,41 @@ import { describe, expect, test } from 'vitest';
 import { CORE_RPC_METHODS, LEGACY_METHOD_ALIASES, normalizeRpcMethod } from '../rpcMethods';
 
 describe('rpcMethods catalog', () => {
-  test('normalizes legacy aliases and prefixes', () => {
-    expect(normalizeRpcMethod('openhuman.get_config')).toBe(CORE_RPC_METHODS.configGet);
-    expect(normalizeRpcMethod('openhuman.auth.get_state')).toBe('openhuman.auth_get_state');
-    expect(normalizeRpcMethod('openhuman.accessibility_status')).toBe(
-      CORE_RPC_METHODS.screenIntelligenceStatus
-    );
-    expect(normalizeRpcMethod('openhuman.threads_list')).toBe('openhuman.threads_list');
+  describe('normalizeRpcMethod', () => {
+    test('resolves all legacy aliases to their canonical core method', () => {
+      for (const [legacyMethod, coreMethod] of Object.entries(LEGACY_METHOD_ALIASES)) {
+        expect(normalizeRpcMethod(legacyMethod)).toBe(coreMethod);
+      }
+    });
+
+    test('transforms auth methods by replacing dots with underscores', () => {
+      expect(normalizeRpcMethod('openhuman.auth.login')).toBe('openhuman.auth_login');
+      expect(normalizeRpcMethod('openhuman.auth.get.state')).toBe('openhuman.auth_get_state');
+      expect(normalizeRpcMethod('openhuman.auth.a.b.c')).toBe('openhuman.auth_a_b_c');
+    });
+
+    test('transforms accessibility prefix to screen_intelligence prefix', () => {
+      expect(normalizeRpcMethod('openhuman.accessibility_status')).toBe(
+        'openhuman.screen_intelligence_status'
+      );
+      expect(normalizeRpcMethod('openhuman.accessibility_enable')).toBe(
+        'openhuman.screen_intelligence_enable'
+      );
+    });
+
+    test('returns unmapped or unrecognized methods unchanged', () => {
+      expect(normalizeRpcMethod('openhuman.threads_list')).toBe('openhuman.threads_list');
+      expect(normalizeRpcMethod('openhuman.unknown_method')).toBe('openhuman.unknown_method');
+      expect(normalizeRpcMethod('')).toBe('');
+      expect(normalizeRpcMethod('random_string')).toBe('random_string');
+    });
+
+    test('trims whitespace and converts to lower case', () => {
+      expect(normalizeRpcMethod('  OpenHuman.Auth.Login  ')).toBe('openhuman.auth_login');
+      expect(normalizeRpcMethod('  OPENHUMAN.GET_CONFIG ')).toBe(CORE_RPC_METHODS.configGet);
+      expect(normalizeRpcMethod('OpenHuman.Accessibility_Status  ')).toBe('openhuman.screen_intelligence_status');
+      expect(normalizeRpcMethod('   some_RANDOM_method  ')).toBe('some_random_method');
+    });
   });
 
   test('legacy aliases point at canonical method values', () => {

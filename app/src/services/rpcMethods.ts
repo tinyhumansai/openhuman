@@ -30,17 +30,19 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
 };
 
 export function normalizeRpcMethod(method: string): string {
-  if (method in LEGACY_METHOD_ALIASES) {
-    return LEGACY_METHOD_ALIASES[method];
+  const normalized = method.trim().toLowerCase();
+
+  if (normalized in LEGACY_METHOD_ALIASES) {
+    return LEGACY_METHOD_ALIASES[normalized];
   }
 
-  if (method.startsWith('openhuman.auth.')) {
-    return `openhuman.auth_${method.slice('openhuman.auth.'.length).split('.').join('_')}`;
+  if (normalized.startsWith('openhuman.auth.')) {
+    return `openhuman.auth_${normalized.slice('openhuman.auth.'.length).split('.').join('_')}`;
   }
 
-  if (method.startsWith('openhuman.accessibility_')) {
-    return method.replace('openhuman.accessibility_', 'openhuman.screen_intelligence_');
+  if (normalized.startsWith('openhuman.accessibility_')) {
+    return normalized.replace('openhuman.accessibility_', 'openhuman.screen_intelligence_');
   }
 
-  return method;
+  return normalized;
 }
