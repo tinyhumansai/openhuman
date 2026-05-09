@@ -95,10 +95,11 @@ export interface ConfirmationModal {
   message: string;
   confirmText?: string;
   cancelText?: string;
-  onConfirm: () => void;
+  onConfirm: (dontShowAgain?: boolean) => void;
   onCancel: () => void;
   destructive?: boolean;
   showDontShowAgain?: boolean;
+  preferenceKey?: string;
 }
 
 // Chat message type

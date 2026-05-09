@@ -13,11 +13,15 @@ export function ConfirmationModal({ modal, onClose }: ConfirmationModalProps) {
   if (!modal.isOpen) return null;
 
   const handleConfirm = () => {
-    modal.onConfirm();
+    modal.onConfirm(dontShowAgain);
     onClose();
-    // TODO: Handle dontShowAgain preference storage
-    if (dontShowAgain) {
-      console.log('User chose to not show similar confirmations again');
+
+    if (dontShowAgain && modal.preferenceKey) {
+      try {
+        localStorage.setItem(modal.preferenceKey, 'true');
+      } catch (err) {
+        console.warn('Failed to save dontShowAgain preference to localStorage:', err);
+      }
     }
   };
 
