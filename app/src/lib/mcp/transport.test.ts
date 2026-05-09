@@ -108,13 +108,22 @@ describe('SocketIOMCPTransportImpl — on / off', () => {
     expect(handler).toHaveBeenCalledWith({ data: 42 });
   });
 
-  // TODO: transport.off() passes the original handler reference to socket.off() instead of
-  // the wrapped handler registered via socket.on(). This means the wrapped handler may still
-  // fire after off() is called — the deregistration is a no-op in practice. Fix the bug in
-  // transport.ts first, then replace this todo with a behavioural assertion.
-  it.todo(
-    'off removes the handler (pending fix: off() passes original instead of wrapped handler)'
-  );
+  it('off removes the handler by resolving the wrapped handler', () => {
+    const socket = makeSocket();
+    const transport = new SocketIOMCPTransportImpl(socket as never);
+    const handler = vi.fn();
+
+    transport.on('tool_call', handler);
+    // Trigger via the raw socket to ensure it works
+    socket.trigger('mcp:tool_call', { data: 42 });
+    expect(handler).toHaveBeenCalledWith({ data: 42 });
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    transport.off('tool_call', handler);
+    // Trigger again, the handler should NOT be called
+    socket.trigger('mcp:tool_call', { data: 84 });
+    expect(handler).toHaveBeenCalledTimes(1); // Still 1
+  });
 });
 
 describe('SocketIOMCPTransportImpl — request / response routing', () => {

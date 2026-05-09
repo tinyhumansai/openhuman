@@ -11,6 +11,7 @@ import type { MCPRequest, MCPResponse, SocketIOMCPTransport } from './types';
 export class SocketIOMCPTransportImpl implements SocketIOMCPTransport {
   private socket: Socket | null | undefined;
   private requestHandlers = new Map<string | number, (response: MCPResponse) => void>();
+  private eventHandlers = new Map<string, Map<Function, Function>>();
   private readonly eventPrefix = 'mcp:';
   private responseHandler = (response: MCPResponse): void => {
     mcpLog(
@@ -86,12 +87,29 @@ export class SocketIOMCPTransportImpl implements SocketIOMCPTransport {
       mcpLog('Received event', createSafeLogData({ event: fullEvent }, data));
       handler(data);
     };
+
+    let handlersForEvent = this.eventHandlers.get(fullEvent);
+    if (!handlersForEvent) {
+      handlersForEvent = new Map();
+      this.eventHandlers.set(fullEvent, handlersForEvent);
+    }
+    handlersForEvent.set(handler, wrappedHandler);
+
     this.socket.on(fullEvent, wrappedHandler);
   }
 
   off(event: string, handler: (data: unknown) => void): void {
     if (!this.socket) return;
-    this.socket.off(`${this.eventPrefix}${event}`, handler);
+    const fullEvent = `${this.eventPrefix}${event}`;
+    const handlersForEvent = this.eventHandlers.get(fullEvent);
+    const wrappedHandler = handlersForEvent?.get(handler);
+
+    if (wrappedHandler) {
+      this.socket.off(fullEvent, wrappedHandler as any);
+      handlersForEvent?.delete(handler);
+    } else {
+      this.socket.off(fullEvent, handler);
+    }
   }
 
   async request(request: MCPRequest, timeoutMs = 30000): Promise<MCPResponse> {
