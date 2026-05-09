@@ -41,6 +41,65 @@ describe('creditsApi coupon helpers', () => {
     });
   });
 
+  it('normalizes redeemed coupon handles null/undefined/empty object safely', () => {
+    const expectedDefaults = {
+      code: '',
+      amountUsd: 0,
+      redeemedAt: null,
+      activationType: 'IMMEDIATE',
+      fulfilled: false,
+      fulfilledAt: null,
+      activationCondition: null,
+    };
+    expect(normalizeRedeemedCoupon(null)).toEqual(expectedDefaults);
+    expect(normalizeRedeemedCoupon(undefined)).toEqual(expectedDefaults);
+    expect(normalizeRedeemedCoupon({})).toEqual(expectedDefaults);
+  });
+
+  it('normalizes redeemed coupon falls back to couponCode if code is absent or empty', () => {
+    expect(normalizeRedeemedCoupon({ couponCode: 'FALLBACK-CODE' }).code).toBe('FALLBACK-CODE');
+    expect(normalizeRedeemedCoupon({ code: '  ', couponCode: 'FALLBACK-CODE' }).code).toBe('FALLBACK-CODE');
+  });
+
+  it('normalizes redeemed coupon handles camelCase variants of fields', () => {
+    expect(
+      normalizeRedeemedCoupon({
+        code: 'CAMEL',
+        amountUsd: 10,
+        redeemedAt: '2026-04-10T12:00:00.000Z',
+        activationType: 'MANUAL',
+        fulfilledAt: '2026-04-10T12:05:00.000Z',
+        activationCondition: 'SOME_CONDITION',
+      })
+    ).toEqual({
+      code: 'CAMEL',
+      amountUsd: 10,
+      redeemedAt: '2026-04-10T12:00:00.000Z',
+      activationType: 'MANUAL',
+      fulfilled: false,
+      fulfilledAt: '2026-04-10T12:05:00.000Z',
+      activationCondition: 'SOME_CONDITION',
+    });
+  });
+
+  it('normalizes redeemed coupon coerces fulfilled to boolean', () => {
+    expect(normalizeRedeemedCoupon({ fulfilled: 1 }).fulfilled).toBe(true);
+    expect(normalizeRedeemedCoupon({ fulfilled: 'yes' }).fulfilled).toBe(true);
+    expect(normalizeRedeemedCoupon({ fulfilled: 0 }).fulfilled).toBe(false);
+    expect(normalizeRedeemedCoupon({ fulfilled: '' }).fulfilled).toBe(false);
+  });
+
+  it('normalizes redeemed coupon handles empty strings as null for nullable string fields', () => {
+    const result = normalizeRedeemedCoupon({
+      redeemedAt: '   ',
+      fulfilledAt: '',
+      activationCondition: ' ',
+    });
+    expect(result.redeemedAt).toBeNull();
+    expect(result.fulfilledAt).toBeNull();
+    expect(result.activationCondition).toBeNull();
+  });
+
   it('redeemCoupon unwraps and normalizes the core RPC payload', async () => {
     mockCallCoreCommand.mockResolvedValueOnce({
       couponCode: 'APRL-2026',
