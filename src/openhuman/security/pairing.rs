@@ -42,7 +42,7 @@ impl PairingGuard {
     /// Existing tokens are accepted in both forms:
     /// - Plaintext (`zc_...`): hashed on load for backward compatibility
     /// - Already hashed (64-char hex): stored as-is
-    pub fn new(require_pairing: bool, existing_tokens: &[String]) -> Self {
+    pub fn new(require_pairing: bool, existing_tokens: &[String]) -> (Self, Option<String>) {
         let tokens: HashSet<String> = existing_tokens
             .iter()
             .map(|t| {
@@ -64,12 +64,13 @@ impl PairingGuard {
             tokens.len(),
             code.is_some()
         );
-        Self {
+        let guard = Self {
             require_pairing,
-            pairing_code: Arc::new(Mutex::new(code)),
+            pairing_code: Arc::new(Mutex::new(code.clone())),
             paired_tokens: Arc::new(Mutex::new(tokens)),
             failed_attempts: Arc::new(Mutex::new((0, None))),
-        }
+        };
+        (guard, code)
     }
 
     /// The one-time pairing code (only set when no tokens exist yet).

@@ -215,14 +215,14 @@ fn telegram_user_denied_when_none_of_identities_match() {
     assert!(!ch.is_any_user_allowed(["unknown", "123456789"]));
 }
 
-#[test]
-fn telegram_pairing_enabled_with_empty_allowlist() {
+#[tokio::test]
+async fn telegram_pairing_enabled_with_empty_allowlist() {
     let ch = TelegramChannel::new("t".into(), vec![], false);
     assert!(ch.pairing_code_active());
 }
 
-#[test]
-fn telegram_pairing_disabled_with_nonempty_allowlist() {
+#[tokio::test]
+async fn telegram_pairing_disabled_with_nonempty_allowlist() {
     let ch = TelegramChannel::new("t".into(), vec!["alice".into()], false);
     assert!(!ch.pairing_code_active());
 }

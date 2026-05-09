@@ -5,27 +5,27 @@ use tokio::test;
 
 #[test]
 async fn new_guard_generates_code_when_no_tokens() {
-    let guard = PairingGuard::new(true, &[]);
+    let (guard, _) = PairingGuard::new(true, &[]);
     assert!(guard.pairing_code().is_some());
     assert!(!guard.is_paired());
 }
 
 #[test]
 async fn new_guard_no_code_when_tokens_exist() {
-    let guard = PairingGuard::new(true, &["zc_existing".into()]);
+    let (guard, _) = PairingGuard::new(true, &["zc_existing".into()]);
     assert!(guard.pairing_code().is_none());
     assert!(guard.is_paired());
 }
 
 #[test]
 async fn new_guard_no_code_when_pairing_disabled() {
-    let guard = PairingGuard::new(false, &[]);
+    let (guard, _) = PairingGuard::new(false, &[]);
     assert!(guard.pairing_code().is_none());
 }
 
 #[test]
 async fn try_pair_correct_code() {
-    let guard = PairingGuard::new(true, &[]);
+    let (guard, _) = PairingGuard::new(true, &[]);
     let code = guard.pairing_code().unwrap().to_string();
     let token = guard.try_pair(&code).await.unwrap();
     assert!(token.is_some());
@@ -35,7 +35,7 @@ async fn try_pair_correct_code() {
 
 #[test]
 async fn try_pair_wrong_code() {
-    let guard = PairingGuard::new(true, &[]);
+    let (guard, _) = PairingGuard::new(true, &[]);
     let result = guard.try_pair("000000").await.unwrap();
     // Might succeed if code happens to be 000000, but extremely unlikely
     // Just check it returns Ok(None) normally
@@ -44,14 +44,14 @@ async fn try_pair_wrong_code() {
 
 #[test]
 async fn try_pair_empty_code() {
-    let guard = PairingGuard::new(true, &[]);
+    let (guard, _) = PairingGuard::new(true, &[]);
     assert!(guard.try_pair("").await.unwrap().is_none());
 }
 
 #[test]
 async fn is_authenticated_with_valid_token() {
     // Pass plaintext token — PairingGuard hashes it on load
-    let guard = PairingGuard::new(true, &["zc_valid".into()]);
+    let (guard, _) = PairingGuard::new(true, &["zc_valid".into()]);
     assert!(guard.is_authenticated("zc_valid"));
 }
 
@@ -59,26 +59,26 @@ async fn is_authenticated_with_valid_token() {
 async fn is_authenticated_with_prehashed_token() {
     // Pass an already-hashed token (64 hex chars)
     let hashed = hash_token("zc_valid");
-    let guard = PairingGuard::new(true, &[hashed]);
+    let (guard, _) = PairingGuard::new(true, &[hashed]);
     assert!(guard.is_authenticated("zc_valid"));
 }
 
 #[test]
 async fn is_authenticated_with_invalid_token() {
-    let guard = PairingGuard::new(true, &["zc_valid".into()]);
+    let (guard, _) = PairingGuard::new(true, &["zc_valid".into()]);
     assert!(!guard.is_authenticated("zc_invalid"));
 }
 
 #[test]
 async fn is_authenticated_when_pairing_disabled() {
-    let guard = PairingGuard::new(false, &[]);
+    let (guard, _) = PairingGuard::new(false, &[]);
     assert!(guard.is_authenticated("anything"));
     assert!(guard.is_authenticated(""));
 }
 
 #[test]
 async fn tokens_returns_hashes() {
-    let guard = PairingGuard::new(true, &["zc_a".into(), "zc_b".into()]);
+    let (guard, _) = PairingGuard::new(true, &["zc_a".into(), "zc_b".into()]);
     let tokens = guard.tokens();
     assert_eq!(tokens.len(), 2);
     // Tokens should be stored as 64-char hex hashes, not plaintext
@@ -91,7 +91,7 @@ async fn tokens_returns_hashes() {
 
 #[test]
 async fn pair_then_authenticate() {
-    let guard = PairingGuard::new(true, &[]);
+    let (guard, _) = PairingGuard::new(true, &[]);
     let code = guard.pairing_code().unwrap().to_string();
     let token = guard.try_pair(&code).await.unwrap().unwrap();
     assert!(guard.is_authenticated(&token));
@@ -203,7 +203,7 @@ async fn generate_token_has_prefix_and_hex_payload() {
 
 #[test]
 async fn brute_force_lockout_after_max_attempts() {
-    let guard = PairingGuard::new(true, &[]);
+    let (guard, _) = PairingGuard::new(true, &[]);
     // Exhaust all attempts with wrong codes
     for i in 0..MAX_PAIR_ATTEMPTS {
         let result = guard.try_pair(&format!("wrong_{i}")).await;
@@ -225,7 +225,7 @@ async fn brute_force_lockout_after_max_attempts() {
 
 #[test]
 async fn correct_code_resets_failed_attempts() {
-    let guard = PairingGuard::new(true, &[]);
+    let (guard, _) = PairingGuard::new(true, &[]);
     let code = guard.pairing_code().unwrap().to_string();
     // Fail a few times
     for _ in 0..3 {
@@ -238,7 +238,7 @@ async fn correct_code_resets_failed_attempts() {
 
 #[test]
 async fn lockout_returns_remaining_seconds() {
-    let guard = PairingGuard::new(true, &[]);
+    let (guard, _) = PairingGuard::new(true, &[]);
     for _ in 0..MAX_PAIR_ATTEMPTS {
         let _ = guard.try_pair("wrong").await;
     }

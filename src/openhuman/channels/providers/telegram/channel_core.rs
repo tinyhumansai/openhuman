@@ -15,8 +15,8 @@ impl TelegramChannel {
     pub fn new(bot_token: String, allowed_users: Vec<String>, mention_only: bool) -> Self {
         let normalized_allowed = Self::normalize_allowed_users(allowed_users);
         let pairing = if normalized_allowed.is_empty() {
-            let guard = PairingGuard::new(true, &[]);
-            if let Some(code) = guard.pairing_code() {
+            let (guard, code_opt) = PairingGuard::new(true, &[]);
+            if let Some(code) = code_opt {
                 println!("  🔐 Telegram pairing required. One-time bind code: {code}");
                 println!("     Send `{TELEGRAM_BIND_COMMAND} <code>` from your Telegram account.");
             }
