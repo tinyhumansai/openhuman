@@ -544,6 +544,8 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     [refresh, refreshTeams]
   );
 
+  const lastReauthAtRef = useRef(0);
+
   const clearSession = useCallback(async () => {
     logoutGuardUntilRef.current = Date.now() + 5_000;
     snapshotRequestIdRef.current += 1;
@@ -567,6 +569,40 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       log('refresh failed after clearSession: %O', sanitizeError(err));
     });
   }, [commitState, refresh]);
+
+  useEffect(() => {
+    const onAuthExpired = (event: Event) => {
+      const customEvent = event as CustomEvent<{ method?: string; source?: string }>;
+      const now = Date.now();
+      // Multiple parallel RPC chains (usage pill + upsell banner + threads
+      // poll) can each surface a 401 within the same frame after a token
+      // expires. Debounce so clearSession only runs once per real auth-loss
+      // event — the 10s window covers any straggler chains without blocking
+      // a legitimate re-login that immediately fails again.
+      if (now - lastReauthAtRef.current < 10_000) {
+        log(
+          'auth-expired debounced (method=%s source=%s)',
+          customEvent.detail?.method ?? 'unknown',
+          customEvent.detail?.source ?? 'unknown'
+        );
+        return;
+      }
+      lastReauthAtRef.current = now;
+      log(
+        'auth-expired: clearing session (method=%s source=%s)',
+        customEvent.detail?.method ?? 'unknown',
+        customEvent.detail?.source ?? 'unknown'
+      );
+      void clearSession().catch(err => {
+        log('clearSession failed after auth-expired: %O', sanitizeError(err));
+      });
+    };
+
+    window.addEventListener('core-rpc-auth-expired', onAuthExpired as EventListener);
+    return () => {
+      window.removeEventListener('core-rpc-auth-expired', onAuthExpired as EventListener);
+    };
+  }, [clearSession]);
 
   const patchSnapshot = useCallback(
     (patch: Partial<CoreAppSnapshot>) => {

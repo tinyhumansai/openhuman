@@ -132,6 +132,71 @@ describe('useUsageState', () => {
     expect(result.current.shouldShowBudgetCompletedMessage).toBe(false);
   });
 
+  it('swallows CoreRpcError(kind=auth_expired) so it cannot leak to window.unhandledrejection (#1472)', async () => {
+    const { useUsageState } = await import('./useUsageState');
+    const { CoreRpcError } = await import('../services/coreRpcClient');
+
+    mockGetCurrentPlan.mockResolvedValue({
+      plan: 'FREE',
+      hasActiveSubscription: false,
+      planExpiry: null,
+      subscription: null,
+      monthlyBudgetUsd: 0,
+      weeklyBudgetUsd: 0,
+      fiveHourCapUsd: 0,
+    });
+    mockGetTeamUsage.mockRejectedValue(
+      new CoreRpcError(
+        'GET /teams failed (401 Unauthorized): Session expired. Please log in again.',
+        'auth_expired',
+        401
+      )
+    );
+
+    const unhandled = vi.fn();
+    window.addEventListener('unhandledrejection', unhandled);
+    try {
+      const { result } = renderHook(() => useUsageState());
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+      // Hook must NOT have a teamUsage value (auth-expired leg fell back to
+      // null) and the rejection must NOT have surfaced as unhandled.
+      expect(result.current.teamUsage).toBeNull();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('unhandledrejection', unhandled);
+    }
+  });
+
+  it('swallows non-auth transport errors silently (does not throw past Promise.all)', async () => {
+    const { useUsageState } = await import('./useUsageState');
+
+    mockGetCurrentPlan.mockResolvedValue({
+      plan: 'FREE',
+      hasActiveSubscription: false,
+      planExpiry: null,
+      subscription: null,
+      monthlyBudgetUsd: 0,
+      weeklyBudgetUsd: 0,
+      fiveHourCapUsd: 0,
+    });
+    mockGetTeamUsage.mockRejectedValue(new Error('ECONNREFUSED 127.0.0.1:7788'));
+
+    const unhandled = vi.fn();
+    window.addEventListener('unhandledrejection', unhandled);
+    try {
+      const { result } = renderHook(() => useUsageState());
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+      expect(result.current.teamUsage).toBeNull();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('unhandledrejection', unhandled);
+    }
+  });
+
   it('refetches when a global usage refresh is requested', async () => {
     const { useUsageState } = await import('./useUsageState');
     const { requestUsageRefresh } = await import('./usageRefresh');
