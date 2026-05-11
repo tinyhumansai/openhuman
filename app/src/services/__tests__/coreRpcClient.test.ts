@@ -1,10 +1,10 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { dispatchLocalAiMethod } from '../../lib/ai/localCoreAiMemory';
 import { CORE_RPC_TIMEOUT_MS } from '../../utils/config';
 import type { AccessibilityStatus, CommandResponse } from '../../utils/tauriCommands';
-import { callCoreRpc } from '../coreRpcClient';
+import { callCoreRpc, classifyRpcError, CoreRpcError } from '../coreRpcClient';
 
 function sampleAccessibilityStatus(
   overrides: Partial<AccessibilityStatus> = {}
@@ -492,6 +492,155 @@ describe('coreRpcClient', () => {
       expect(response).toBe(probe);
       expect(response.status).toBe(405);
     });
+  });
+});
+
+describe('classifyRpcError', () => {
+  test.each([
+    ['GET /teams failed (401 Unauthorized): {"success":false}', undefined, 'auth_expired'],
+    ['Session expired. Please log in again.', undefined, 'auth_expired'],
+    ['some prefix Session expired suffix', undefined, 'auth_expired'],
+    ['HTTP 429 rate-limit exceeded', undefined, 'rate_limited'],
+    ['Budget exceeded for current period', undefined, 'budget_exceeded'],
+    ['Insufficient budget for request', undefined, 'budget_exceeded'],
+    ['error sending request for url', undefined, 'transport'],
+    ['client error (Connect) inner: dns', undefined, 'transport'],
+    ['operation timed out after 30s', undefined, 'transport'],
+    ['ECONNREFUSED 127.0.0.1:7788', undefined, 'transport'],
+    ['some random message', undefined, 'unknown'],
+  ] as const)('%s => %s', (message, status, expected) => {
+    expect(classifyRpcError(message, status)).toBe(expected);
+  });
+
+  test('http status 401 wins over message text', () => {
+    expect(classifyRpcError('anything', 401)).toBe('auth_expired');
+  });
+
+  test('http status 429 wins over message text', () => {
+    expect(classifyRpcError('anything', 429)).toBe('rate_limited');
+  });
+});
+
+describe('coreRpcClient — typed errors + auth-expired event', () => {
+  const authExpiredHandler = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', vi.fn());
+    authExpiredHandler.mockReset();
+    window.addEventListener('core-rpc-auth-expired', authExpiredHandler);
+  });
+
+  afterEach(() => {
+    window.removeEventListener('core-rpc-auth-expired', authExpiredHandler);
+  });
+
+  test('throws CoreRpcError(kind=auth_expired) on Session expired payload and fires event once', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 1,
+        error: {
+          code: -32000,
+          message: 'GET /teams failed (401 Unauthorized): Session expired. Please log in again.',
+        },
+      }),
+    } as Response);
+
+    await expect(callCoreRpc({ method: 'openhuman.team_get_usage' })).rejects.toMatchObject({
+      name: 'CoreRpcError',
+      kind: 'auth_expired',
+    });
+
+    expect(authExpiredHandler).toHaveBeenCalledTimes(1);
+    const evt = authExpiredHandler.mock.calls[0][0] as CustomEvent<{
+      method: string;
+      source: string;
+    }>;
+    expect(evt.type).toBe('core-rpc-auth-expired');
+    expect(evt.detail.method).toBe('openhuman.team_get_usage');
+    expect(evt.detail.source).toBe('rpc');
+  });
+
+  test('throws CoreRpcError(kind=auth_expired) on HTTP 401 (non-ok response) and fires event', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => 'session expired',
+    } as Response);
+
+    const err = await callCoreRpc({ method: 'openhuman.threads_list' }).catch(e => e);
+    expect(err).toBeInstanceOf(CoreRpcError);
+    expect((err as CoreRpcError).kind).toBe('auth_expired');
+    expect((err as CoreRpcError).httpStatus).toBe(401);
+    expect(authExpiredHandler).toHaveBeenCalledTimes(1);
+  });
+
+  test('classifies budget_exceeded without firing the auth-expired event', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 1,
+        error: { code: -32000, message: 'Budget exceeded for current period' },
+      }),
+    } as Response);
+
+    const err = await callCoreRpc({ method: 'openhuman.team_get_usage' }).catch(e => e);
+    expect(err).toBeInstanceOf(CoreRpcError);
+    expect((err as CoreRpcError).kind).toBe('budget_exceeded');
+    expect(authExpiredHandler).not.toHaveBeenCalled();
+  });
+
+  test('classifies rate_limited without firing the auth-expired event', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      text: async () => 'rate-limit exceeded',
+    } as Response);
+
+    const err = await callCoreRpc({ method: 'openhuman.team_get_usage' }).catch(e => e);
+    expect(err).toBeInstanceOf(CoreRpcError);
+    expect((err as CoreRpcError).kind).toBe('rate_limited');
+    expect((err as CoreRpcError).httpStatus).toBe(429);
+    expect(authExpiredHandler).not.toHaveBeenCalled();
+  });
+
+  test('network error wrapped as CoreRpcError(kind=transport) with no auth event', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockRejectedValueOnce(
+      new Error('error sending request for url (http://x): ECONNREFUSED')
+    );
+
+    const err = await callCoreRpc({ method: 'openhuman.threads_list' }).catch(e => e);
+    expect(err).toBeInstanceOf(CoreRpcError);
+    expect((err as CoreRpcError).kind).toBe('transport');
+    expect(authExpiredHandler).not.toHaveBeenCalled();
+  });
+
+  test('unknown error preserves message', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 1,
+        error: { code: -32000, message: 'something weird' },
+      }),
+    } as Response);
+
+    const err = await callCoreRpc({ method: 'openhuman.threads_list' }).catch(e => e);
+    expect(err).toBeInstanceOf(CoreRpcError);
+    expect((err as CoreRpcError).kind).toBe('unknown');
+    expect((err as Error).message).toBe('something weird');
+    expect(authExpiredHandler).not.toHaveBeenCalled();
   });
 });
 
