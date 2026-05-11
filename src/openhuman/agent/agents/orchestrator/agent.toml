@@ -106,4 +106,13 @@ named = [
     # touch files itself.
     "todowrite",
     "plan_exit",
+    # Self-update — lets the orchestrator answer "am I up to date" /
+    # "update OpenHuman" without sending the user to Settings →
+    # Developer Options. `update_check` is read-only; `update_apply`
+    # is dangerous, requires explicit user consent through
+    # `ask_user_clarification`, and respects
+    # `config.update.rpc_mutations_enabled`. Implementation re-uses
+    # `src/openhuman/update/` end-to-end — no parallel release logic.
+    "update_check",
+    "update_apply",
 ]
