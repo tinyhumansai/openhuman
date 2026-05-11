@@ -1,6 +1,9 @@
 //! Unit tests for the Gmail provider.
 
-use super::sync::{cursor_to_gmail_after_filter, extract_messages, extract_page_token};
+use super::sync::{
+    cursor_to_gmail_after_epoch_filter, cursor_to_gmail_after_filter, extract_messages,
+    extract_page_token,
+};
 use super::GmailProvider;
 use crate::openhuman::composio::providers::ComposioProvider;
 use serde_json::json;
@@ -79,6 +82,31 @@ fn default_impl_matches_new() {
     let _a = GmailProvider::new();
     let _b = GmailProvider::default();
     // Both are unit structs — constructing via Default is the cover target.
+}
+
+#[test]
+fn epoch_filter_is_preferred_over_day_filter_for_typical_internal_date() {
+    // The provider tries `cursor_to_gmail_after_epoch_filter` first
+    // and only falls back to the day filter if the parse fails. Both
+    // helpers must accept the same internalDate (epoch millis) input
+    // so the fallback path is genuinely a fallback, not a divergence.
+    let internal_date = "1774915200000"; // 2026-03-31 UTC
+    let epoch = cursor_to_gmail_after_epoch_filter(internal_date).unwrap();
+    let day = cursor_to_gmail_after_filter(internal_date).unwrap();
+    assert_eq!(epoch, "1774915200");
+    assert_eq!(day, "2026/03/31");
+    // Sanity bound: the epoch filter must be after 2020 and before
+    // year 2100, otherwise we shipped a regression in the cursor
+    // converter that would silently let queries land on year 1970.
+    let secs: i64 = epoch.parse().unwrap();
+    assert!(
+        secs > 1_577_836_800,
+        "epoch filter must be after 2020-01-01"
+    );
+    assert!(
+        secs < 4_102_444_800,
+        "epoch filter must be before 2100-01-01"
+    );
 }
 
 // Note: full `sync` / `fetch_user_profile` / `on_trigger` paths require a
