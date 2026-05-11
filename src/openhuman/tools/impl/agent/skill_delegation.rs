@@ -129,7 +129,20 @@ impl Tool for SkillDelegationTool {
             .unwrap_or("")
             .trim()
             .to_string();
+        log::debug!(
+            "[skill-delegation] execute start tool='{}' raw_toolkit={:?} prompt_chars={}",
+            self.tool_name,
+            raw_toolkit,
+            args.get("prompt")
+                .and_then(|v| v.as_str())
+                .map(|s| s.chars().count())
+                .unwrap_or(0)
+        );
         if raw_toolkit.is_empty() {
+            log::debug!(
+                "[skill-delegation] reject: missing `toolkit` argument for tool='{}'",
+                self.tool_name
+            );
             return Ok(ToolResult::error(format!(
                 "{}: `toolkit` is required and must match a connected integration slug",
                 self.tool_name
@@ -146,6 +159,12 @@ impl Tool for SkillDelegationTool {
                 .iter()
                 .map(|(slug, _)| slug.as_str())
                 .collect();
+            log::debug!(
+                "[skill-delegation] reject: toolkit '{}' (sanitised='{}') not in connected set {:?}",
+                raw_toolkit,
+                slug,
+                allowed
+            );
             return Ok(ToolResult::error(format!(
                 "{}: toolkit `{raw_toolkit}` is not connected — allowed: [{}]",
                 self.tool_name,
@@ -160,12 +179,22 @@ impl Tool for SkillDelegationTool {
             .trim()
             .to_string();
         if prompt.is_empty() {
+            log::debug!(
+                "[skill-delegation] reject: empty `prompt` for tool='{}' toolkit='{}'",
+                self.tool_name,
+                slug
+            );
             return Ok(ToolResult::error(format!(
                 "{}: `prompt` is required",
                 self.tool_name
             )));
         }
 
+        log::debug!(
+            "[skill-delegation] dispatching toolkit='{}' to integrations_agent (prompt_chars={})",
+            slug,
+            prompt.chars().count()
+        );
         super::dispatch_subagent("integrations_agent", &self.tool_name, &prompt, Some(&slug)).await
     }
 }
