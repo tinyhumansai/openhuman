@@ -274,17 +274,45 @@ mod tests {
             "Calendar.".to_string(),
         )])
         .unwrap();
-        // Pre-flight rejects "GMail" because it's not connected — even after slug it'd be `gmail`.
+        // "GMail" sanitises to `gmail` — NOT in the connected set, so it
+        // must be rejected with the unknown-toolkit message that
+        // enumerates the allowed slugs.
         let bad = tool
             .execute(json!({"toolkit": "GMail", "prompt": "x"}))
             .await
             .unwrap();
         assert!(bad.is_error);
-        // "Google-Calendar" sanitises to `google_calendar`, which IS connected;
-        // dispatch will fail in the test runtime (no agent registry) but the
-        // toolkit gate has already passed, so the error should NOT mention
-        // unknown-toolkit anymore. Just assert we got past the gate.
-        let normalised_input = sanitise_slug("Google-Calendar");
-        assert_eq!(normalised_input, "google_calendar");
+        let bad_body = bad.output();
+        assert!(
+            bad_body.contains("not connected"),
+            "expected unknown-toolkit error path, got: {bad_body}"
+        );
+        assert!(bad_body.contains("google_calendar"));
+
+        // "Google-Calendar" sanitises to `google_calendar`, which IS in
+        // the connected set, so the toolkit gate must let it through.
+        // Dispatch will then fail because no agent registry is wired up
+        // in this unit-test process — but the error must NOT be the
+        // unknown-toolkit branch, because that branch was supposed to
+        // be bypassed by the slug normalisation.
+        let ok = tool
+            .execute(json!({"toolkit": "Google-Calendar", "prompt": "do thing"}))
+            .await;
+        match ok {
+            Ok(result) => {
+                let body = result.output();
+                assert!(
+                    !body.contains("not connected"),
+                    "normalised slug should pass the toolkit gate, got: {body}"
+                );
+            }
+            Err(err) => {
+                let msg = err.to_string();
+                assert!(
+                    !msg.contains("not connected"),
+                    "normalised slug should pass the toolkit gate, got: {msg}"
+                );
+            }
+        }
     }
 }

@@ -133,27 +133,40 @@ pub fn collect_orchestrator_tools(
                 // toolkit slug as an argument; the description enumerates
                 // the connected toolkits so the orchestrator still
                 // discovers which integrations are routable.
-                let connected: Vec<(String, String)> = connected_integrations
-                    .iter()
-                    .filter(|integration| {
-                        if !integration.connected {
-                            log::debug!(
-                                "[orchestrator_tools] skipping unconnected integration: {}",
-                                integration.toolkit
-                            );
-                            return false;
-                        }
-                        true
-                    })
-                    .map(|integration| {
-                        // Slug the toolkit name into a tool-name-safe
-                        // (and argument-safe) form so the LLM-facing
-                        // enum stays predictable across odd toolkit
-                        // names (dashes, dots, spaces, mixed case).
-                        let slug = sanitise_slug(&integration.toolkit);
-                        (slug, integration.description.clone())
-                    })
-                    .collect();
+                // `sanitise_slug` is lossy — `Slack.Bot` and `Slack-Bot`
+                // both collapse to `slack_bot`. Once the raw id is
+                // discarded, one upstream integration would silently
+                // shadow the other. Detect the collision here, drop
+                // every duplicate after the first, and warn so routing
+                // stays unambiguous (the first arrival keeps the slug;
+                // later arrivals are unreachable through this enum and
+                // safer to omit than silently re-target).
+                let mut connected: Vec<(String, String)> = Vec::new();
+                let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+                for integration in connected_integrations {
+                    if !integration.connected {
+                        log::debug!(
+                            "[orchestrator_tools] skipping unconnected integration: {}",
+                            integration.toolkit
+                        );
+                        continue;
+                    }
+                    // Slug the toolkit name into a tool-name-safe
+                    // (and argument-safe) form so the LLM-facing
+                    // enum stays predictable across odd toolkit
+                    // names (dashes, dots, spaces, mixed case).
+                    let slug = sanitise_slug(&integration.toolkit);
+                    if !seen.insert(slug.clone()) {
+                        log::warn!(
+                            "[orchestrator_tools] duplicate sanitised slug '{slug}' from raw \
+                             toolkit '{raw}' — dropping to keep collapsed delegation routing \
+                             unambiguous",
+                            raw = integration.toolkit
+                        );
+                        continue;
+                    }
+                    connected.push((slug, integration.description.clone()));
+                }
                 match SkillDelegationTool::for_connected(connected) {
                     Some(tool) => {
                         log::debug!(
@@ -462,5 +475,43 @@ mod tests {
         let enum_vals = schema["properties"]["toolkit"]["enum"].as_array().unwrap();
         let slugs: Vec<&str> = enum_vals.iter().map(|v| v.as_str().unwrap()).collect();
         assert_eq!(slugs, vec!["google_calendar", "slack_bot"]);
+    }
+
+    /// Two upstream toolkits whose names sanitise to the same slug
+    /// must not silently both land in the collapsed enum — the second
+    /// arrival is dropped (with a warn log) so the orchestrator's
+    /// routing handle stays unambiguous. Without this guard,
+    /// `Slack.Bot` and `Slack-Bot` would both render as `slack_bot`
+    /// in the enum and the orchestrator could no longer distinguish
+    /// them.
+    #[test]
+    fn duplicate_sanitised_slug_drops_later_collisions() {
+        let mut orch = def("orchestrator", "t", None);
+        orch.subagents = vec![SubagentEntry::Skills(SkillsWildcard { skills: "*".into() })];
+        let reg = registry_with_targets();
+        let integrations = vec![
+            integration("Slack.Bot", "First slack."),
+            integration("Slack-Bot", "Second slack — must be dropped."),
+            integration("Notion", "Pages."),
+        ];
+        let tools = collect_orchestrator_tools(&orch, &reg, &integrations);
+        let delegate_tool = tools
+            .iter()
+            .find(|t| t.name() == "delegate_to_integrations_agent")
+            .expect("collapsed tool present");
+        let schema = delegate_tool.parameters_schema();
+        let enum_vals = schema["properties"]["toolkit"]["enum"].as_array().unwrap();
+        let slugs: Vec<&str> = enum_vals.iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(
+            slugs,
+            vec!["slack_bot", "notion"],
+            "second slack_bot collision must be dropped, not silently shadowed"
+        );
+        // The dropped description must not appear in the tool description
+        // either — otherwise the orchestrator would think there's a route
+        // it can't actually distinguish.
+        let desc = delegate_tool.description();
+        assert!(desc.contains("First slack."));
+        assert!(!desc.contains("Second slack"));
     }
 }
