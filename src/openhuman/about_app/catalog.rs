@@ -35,6 +35,18 @@ const MODEL_DOWNLOAD: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     destinations: &["Hugging Face"],
 });
 
+// Self-update flows talk to GitHub Releases directly, not the OpenHuman
+// backend. The outbound payload is metadata only (release list query for
+// `update.check`, asset download URL request for `update.apply`) so
+// `data_kind: Metadata` is the right label — but the destination must
+// reflect that this is a third-party host, otherwise the capability
+// catalog under-reports where the user's request actually goes.
+const GITHUB_RELEASES_METADATA: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Metadata,
+    destinations: &["GitHub Releases"],
+});
+
 const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "conversation.create",
@@ -917,7 +929,7 @@ const CAPABILITIES: &[Capability] = &[
                       user can ask 'am I up to date?' in chat.",
         how_to: "Settings > Developer Options > Check for Updates, or ask the orchestrator in chat.",
         status: CapabilityStatus::Beta,
-        privacy: DIAGNOSTICS_TO_BACKEND,
+        privacy: GITHUB_RELEASES_METADATA,
     },
     Capability {
         id: "update.apply",
@@ -931,7 +943,7 @@ const CAPABILITIES: &[Capability] = &[
                       invoking) and the `config.update.rpc_mutations_enabled` policy switch.",
         how_to: "Settings > Developer Options > Apply Update, or confirm an in-chat update prompt from the orchestrator.",
         status: CapabilityStatus::Beta,
-        privacy: None,
+        privacy: GITHUB_RELEASES_METADATA,
     },
 ];
 
