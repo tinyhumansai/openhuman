@@ -92,6 +92,9 @@ export function MicCloudComposer({
   // a button so the shortcut never steals a keystroke from real input.
   useEffect(() => {
     function shouldIgnoreFocus(target: EventTarget | null): boolean {
+      // Non-HTMLElement targets (SVG nodes, `document` itself) are
+      // never text inputs, so the spacebar shortcut is safe to fire —
+      // returning `false` here means "do not suppress".
       if (!(target instanceof HTMLElement)) return false;
       const tag = target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') {
@@ -130,7 +133,7 @@ export function MicCloudComposer({
       if (shouldIgnoreFocus(event.target ?? document.activeElement)) {
         composerLog(
           'spacebar ignored — focus inside editable target=%s',
-          (event.target as HTMLElement | null)?.tagName ?? '<non-html>',
+          (event.target as HTMLElement | null)?.tagName ?? '<non-html>'
         );
         return;
       }
@@ -155,6 +158,10 @@ export function MicCloudComposer({
     // `state` is the only changing dependency the handler reads; the
     // refs are stable and `disabled` is captured via closure. Re-binding
     // on every state transition is cheap and keeps the snapshot in sync.
+    // `startRecording` / `stopRecording` are plain function declarations
+    // hoisted inside the component body — their identity is stable within
+    // each render, so omitting them from the dep list is intentional, not
+    // a stale-closure risk.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, disabled]);
 
