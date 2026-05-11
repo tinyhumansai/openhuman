@@ -3,9 +3,10 @@
 //! The orchestrator follows a direct-first policy: respond directly or use
 //! cheap direct tools whenever possible, and delegate only for specialised
 //! execution. It never executes Composio actions itself; the integration
-//! block points to `delegate_{toolkit}` tools (synthesised by
-//! `orchestrator_tools::collect_orchestrator_tools`) for true
-//! external-service operations. That prose lives here (not in the shared
+//! block points to the single collapsed `delegate_to_integrations_agent`
+//! tool (synthesised by `orchestrator_tools::collect_orchestrator_tools`,
+//! #1335) for true external-service operations, with the toolkit slug
+//! passed as an argument. That prose lives here (not in the shared
 //! prompts module) so the skill-executor voice stays in
 //! `integrations_agent/prompt.rs` and nobody has to branch on `agent_id`
 //! in a shared section impl.

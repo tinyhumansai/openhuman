@@ -499,7 +499,8 @@ async fn resolve_target_agent(channel: &str) -> AgentScoping {
 /// * every tool name in the agent's `[tools] named = [...]` list
 ///   (when the scope is [`ToolScope::Named`]); and
 /// * every name produced by the per-turn synthesised delegation tools
-///   in `extra_tools` (e.g. `research`, `delegate_gmail`).
+///   in `extra_tools` (e.g. `research`, `plan`,
+///   `delegate_to_integrations_agent`).
 ///
 /// When the agent's tool scope is [`ToolScope::Wildcard`] **and** there
 /// are no `extra_tools`, returns `None` to preserve the legacy
@@ -632,9 +633,11 @@ mod scoping_tests {
 
     /// `ToolScope::Named` with extras returns the union of the TOML
     /// named list and the extras' names. This is the orchestrator's
-    /// path: 4 direct tools from the TOML + N synthesised delegation
-    /// tools (`research`, `plan`, `delegate_gmail`, …) → all of them
-    /// visible to the orchestrator's LLM.
+    /// path: direct tools from the TOML + the synthesised delegation
+    /// tools (`research`, `plan`, `delegate_to_integrations_agent`)
+    /// → all of them visible to the orchestrator's LLM. The stub
+    /// names in this test are arbitrary; they exercise the union
+    /// logic, not the real synthesiser.
     #[test]
     fn named_scope_with_extras_returns_union() {
         let def = def_with_scope(ToolScope::Named(vec![

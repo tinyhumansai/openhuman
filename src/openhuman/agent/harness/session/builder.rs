@@ -848,8 +848,10 @@ impl Agent {
         //
         // For an agent with `subagents = [...]` in its TOML (today:
         // orchestrator), `collect_orchestrator_tools` synthesises one
-        // `ArchetypeDelegationTool` per named sub-agent plus one
-        // `SkillDelegationTool` per connected Composio toolkit.
+        // `ArchetypeDelegationTool` per named sub-agent plus a single
+        // collapsed `SkillDelegationTool`
+        // (`delegate_to_integrations_agent`) whose `toolkit` argument
+        // selects among the connected Composio toolkits (#1335).
         //
         // For an agent without `subagents` (today: welcome, critic,
         // archivist, etc.), no delegation tools are synthesised — the
