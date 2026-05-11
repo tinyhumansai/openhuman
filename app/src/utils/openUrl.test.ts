@@ -71,15 +71,23 @@ describe('openUrl', () => {
     tauriOpenUrlMock.mockRejectedValue(new Error('scheme not allowed'));
 
     const { openUrl } = await import('./openUrl');
-    await expect(openUrl('obsidian://open?path=/x')).rejects.toThrow('scheme not allowed');
+    await expect(openUrl('obsidian://open?path=/Users/me/Vault')).rejects.toThrow(
+      'scheme not allowed'
+    );
     expect(windowOpenMock).not.toHaveBeenCalled();
+    // Non-http schemes log only the protocol — the rest of the URL (here the
+    // vault path) is the payload itself and must not leak to Sentry.
     expect(addBreadcrumbMock).toHaveBeenCalledWith(
       expect.objectContaining({
         category: 'ipc',
         level: 'warning',
         message: 'tauriOpenUrl failed; evaluating fallback',
+        data: expect.objectContaining({ url: 'obsidian:' }),
       })
     );
+    const call = addBreadcrumbMock.mock.calls[0]?.[0] as { data?: { url?: string } } | undefined;
+    expect(call?.data?.url).not.toContain('Vault');
+    expect(call?.data?.url).not.toContain('/Users/me');
   });
 
   it('falls back to window.open when tauriOpenUrl rejects on an http URL (CEF IPC race recovery, #1472)', async () => {
@@ -93,20 +101,25 @@ describe('openUrl', () => {
     tauriOpenUrlMock.mockRejectedValue(ipcError);
 
     const { openUrl } = await import('./openUrl');
-    await openUrl('https://tinyhumans.ai/dashboard');
+    await openUrl('https://tinyhumans.ai/dashboard?token=secret-redact-me');
 
     expect(windowOpenMock).toHaveBeenCalledWith(
-      'https://tinyhumans.ai/dashboard',
+      'https://tinyhumans.ai/dashboard?token=secret-redact-me',
       '_blank',
       'noopener,noreferrer'
     );
+    // Breadcrumb keeps only origin for http(s) — pathname + query (which may
+    // carry tokens / emails / vault paths) must not be sent to Sentry.
     expect(addBreadcrumbMock).toHaveBeenCalledWith(
       expect.objectContaining({
         category: 'ipc',
         level: 'warning',
         message: 'tauriOpenUrl failed; evaluating fallback',
-        data: expect.objectContaining({ url: 'https://tinyhumans.ai/dashboard' }),
+        data: expect.objectContaining({ url: 'https://tinyhumans.ai' }),
       })
     );
+    const call = addBreadcrumbMock.mock.calls[0]?.[0] as { data?: { url?: string } } | undefined;
+    expect(call?.data?.url).not.toContain('secret-redact-me');
+    expect(call?.data?.url).not.toContain('/dashboard');
   });
 });

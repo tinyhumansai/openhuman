@@ -5,6 +5,26 @@ import { openUrl as tauriOpenUrl } from '@tauri-apps/plugin-opener';
 const isHttpUrl = (url: string): boolean => /^https?:\/\//i.test(url);
 
 /**
+ * Returns a low-PII representation of `url` for telemetry breadcrumbs.
+ * For http(s) we keep only the origin so the host is identifiable but the
+ * pathname/query/fragment (which may carry tokens, emails, or local paths)
+ * never leave the device. For other schemes (`mailto:`, `obsidian://`, …)
+ * we keep only the protocol — the rest of the URL is the payload itself
+ * (the email address, the vault path) and must not be logged.
+ */
+const getTelemetryUrl = (url: string): string => {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.origin;
+    }
+    return parsed.protocol;
+  } catch {
+    return 'invalid-url';
+  }
+};
+
+/**
  * Opens a URL using the host OS's default handler.
  *
  * Inside Tauri the call is dispatched through `tauri-plugin-opener`
@@ -36,7 +56,7 @@ export const openUrl = async (url: string): Promise<void> => {
         category: 'ipc',
         level: 'warning',
         message: 'tauriOpenUrl failed; evaluating fallback',
-        data: { url, error: String(err) },
+        data: { url: getTelemetryUrl(url), error: String(err) },
       });
       if (!isHttpUrl(url)) {
         throw err;
