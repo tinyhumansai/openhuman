@@ -62,7 +62,20 @@ impl Tool for UpdateCheckTool {
         for log in &outcome.logs {
             tracing::debug!(target: "update_check", "{log}");
         }
+        // `update_check` is read-only — both "newer release available"
+        // and "you're already on the latest version" are normal success
+        // outcomes here, so we only error out when the underlying RPC
+        // explicitly surfaces an `error` key (e.g. release feed
+        // unreachable, asset metadata malformed). The applied=false
+        // tightening that `update_apply` performs is intentionally NOT
+        // mirrored — read-only callers must keep treating "no update"
+        // as a happy answer.
         let is_error = outcome.value.get("error").is_some();
+        tracing::debug!(
+            is_error,
+            body_len = body.len(),
+            "[update_check] execute done"
+        );
         Ok(if is_error {
             ToolResult::error(body)
         } else {
