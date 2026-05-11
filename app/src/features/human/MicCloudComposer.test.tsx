@@ -201,4 +201,91 @@ describe('MicCloudComposer', () => {
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     expect(onError).toHaveBeenCalledWith(expect.stringMatching(/not available/i));
   });
+
+  // ── Spacebar shortcut (#1471) ────────────────────────────────────────────
+
+  it('spacebar starts recording when idle and stops + submits on second press', async () => {
+    transcribeCloudMock.mockResolvedValueOnce('voice via space');
+    const onSubmit = vi.fn();
+    render(<MicCloudComposer disabled={false} onSubmit={onSubmit} />);
+
+    fireEvent.keyDown(window, { code: 'Space' });
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+
+    fireEvent.keyDown(window, { code: 'Space' });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('voice via space'));
+  });
+
+  it('spacebar ignores key repeat so holding the key does not flap the recorder', () => {
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} />);
+    fireEvent.keyDown(window, { code: 'Space', repeat: true });
+    expect(getUserMediaMock).not.toHaveBeenCalled();
+  });
+
+  it('spacebar ignores modifier combinations so Shift-Space etc. stay free', () => {
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} />);
+    fireEvent.keyDown(window, { code: 'Space', shiftKey: true });
+    fireEvent.keyDown(window, { code: 'Space', ctrlKey: true });
+    fireEvent.keyDown(window, { code: 'Space', metaKey: true });
+    fireEvent.keyDown(window, { code: 'Space', altKey: true });
+    expect(getUserMediaMock).not.toHaveBeenCalled();
+  });
+
+  it('spacebar does not trigger when focus is inside a text input', () => {
+    render(
+      <>
+        <input data-testid="text-field" type="text" />
+        <MicCloudComposer disabled={false} onSubmit={vi.fn()} />
+      </>
+    );
+    const input = screen.getByTestId('text-field');
+    input.focus();
+    fireEvent.keyDown(input, { code: 'Space' });
+    expect(getUserMediaMock).not.toHaveBeenCalled();
+  });
+
+  it('spacebar does not trigger when focus is inside a textarea', () => {
+    render(
+      <>
+        <textarea data-testid="ta" />
+        <MicCloudComposer disabled={false} onSubmit={vi.fn()} />
+      </>
+    );
+    const ta = screen.getByTestId('ta');
+    ta.focus();
+    fireEvent.keyDown(ta, { code: 'Space' });
+    expect(getUserMediaMock).not.toHaveBeenCalled();
+  });
+
+  it('spacebar does not trigger when focus is inside a contenteditable surface', () => {
+    render(
+      <>
+        <div data-testid="ce" contentEditable suppressContentEditableWarning>
+          x
+        </div>
+        <MicCloudComposer disabled={false} onSubmit={vi.fn()} />
+      </>
+    );
+    const ce = screen.getByTestId('ce');
+    ce.focus();
+    fireEvent.keyDown(ce, { code: 'Space' });
+    expect(getUserMediaMock).not.toHaveBeenCalled();
+  });
+
+  it('spacebar is a no-op while the composer is disabled', () => {
+    render(<MicCloudComposer disabled={true} onSubmit={vi.fn()} />);
+    fireEvent.keyDown(window, { code: 'Space' });
+    expect(getUserMediaMock).not.toHaveBeenCalled();
+  });
+
+  it('removes the window keydown listener on unmount', () => {
+    const removeSpy = vi.spyOn(window, 'removeEventListener');
+    const { unmount } = render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} />);
+    unmount();
+    expect(removeSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
+    removeSpy.mockRestore();
+  });
 });
