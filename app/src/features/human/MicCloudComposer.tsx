@@ -127,12 +127,22 @@ export function MicCloudComposer({
       // Bare spacebar only. Modifier combinations (Shift-Space etc.) are
       // owned by the rest of the app and must keep flowing through.
       if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
-      if (shouldIgnoreFocus(event.target ?? document.activeElement)) return;
+      if (shouldIgnoreFocus(event.target ?? document.activeElement)) {
+        composerLog(
+          'spacebar ignored — focus inside editable target=%s',
+          (event.target as HTMLElement | null)?.tagName ?? '<non-html>',
+        );
+        return;
+      }
       // Prevent the default page-scroll behaviour and any focused-button
       // click activation (the user might be tabbed onto the mic button
       // itself, which would otherwise fire twice).
       event.preventDefault();
-      if (disabled || state === 'transcribing') return;
+      if (disabled || state === 'transcribing') {
+        composerLog('spacebar ignored — disabled=%s state=%s', disabled, state);
+        return;
+      }
+      composerLog('spacebar toggle state=%s', state);
       if (state === 'recording') {
         stopRecording();
       } else {
