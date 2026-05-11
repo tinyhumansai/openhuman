@@ -73,7 +73,15 @@ async fn rejects_in_read_only_mode_even_with_consent() {
         .await
         .unwrap();
     assert!(result.is_error);
-    assert!(result.output().contains("autonomy is read-only"));
+    // The autonomy gate now delegates to `SecurityPolicy::enforce_tool_operation`,
+    // whose canonical read-only message is `"Security policy: read-only
+    // mode, cannot perform '<op_name>'"` — assert against that phrasing
+    // and the operation name rather than the old hand-rolled string.
+    let body = result.output();
+    assert!(
+        body.contains("read-only mode") && body.contains("update_apply"),
+        "expected shared enforcer's read-only message, got: {body}"
+    );
 }
 
 #[tokio::test]
@@ -86,5 +94,5 @@ async fn consent_check_runs_before_autonomy_check() {
     let result = tool.execute(json!({})).await.unwrap();
     assert!(result.is_error);
     assert!(result.output().contains("user consent"));
-    assert!(!result.output().contains("autonomy is read-only"));
+    assert!(!result.output().contains("read-only mode"));
 }

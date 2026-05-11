@@ -24,7 +24,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use crate::openhuman::update;
 
@@ -37,19 +37,18 @@ impl UpdateApplyTool {
         Self { security }
     }
 
+    /// Delegate to the shared `SecurityPolicy::enforce_tool_operation`
+    /// path so this tool stays in lock-step with every other act-level
+    /// tool's autonomy + rate-limit handling. Hand-rolling
+    /// `can_act` + `record_action` here used to drift from the canonical
+    /// `[openhuman:policy]` log format and would silently miss any
+    /// future gate the enforcer grows (token budget, supervised
+    /// approval, etc.).
     fn require_write_access(&self) -> Option<ToolResult> {
-        if !self.security.can_act() {
-            return Some(ToolResult::error(
-                "update_apply blocked: autonomy is read-only — confirm with the user and \
-                 raise autonomy before retrying",
-            ));
-        }
-        if !self.security.record_action() {
-            return Some(ToolResult::error(
-                "update_apply blocked: autonomy rate limit exceeded",
-            ));
-        }
-        None
+        self.security
+            .enforce_tool_operation(ToolOperation::Act, "update_apply")
+            .err()
+            .map(ToolResult::error)
     }
 
     fn require_consent(args: &Value) -> Option<ToolResult> {
