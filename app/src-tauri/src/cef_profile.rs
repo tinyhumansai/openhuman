@@ -414,12 +414,16 @@ mod tests {
     static APP_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn with_clean_app_env<R>(body: impl FnOnce() -> R) -> R {
-        let guard = APP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // `_guard` holds the lock for the whole function so concurrent tests
+        // can't race the env-var swap. If `body()` panics we still need to
+        // restore the env before unwinding, otherwise the leaked state poisons
+        // every subsequent test in the same process.
+        let _guard = APP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prior_primary = std::env::var("OPENHUMAN_APP_ENV").ok();
         let prior_vite = std::env::var("VITE_OPENHUMAN_APP_ENV").ok();
         std::env::remove_var("OPENHUMAN_APP_ENV");
         std::env::remove_var("VITE_OPENHUMAN_APP_ENV");
-        let result = body();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
         match prior_primary {
             Some(v) => std::env::set_var("OPENHUMAN_APP_ENV", v),
             None => std::env::remove_var("OPENHUMAN_APP_ENV"),
@@ -428,8 +432,10 @@ mod tests {
             Some(v) => std::env::set_var("VITE_OPENHUMAN_APP_ENV", v),
             None => std::env::remove_var("VITE_OPENHUMAN_APP_ENV"),
         }
-        drop(guard);
-        result
+        match result {
+            Ok(v) => v,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
     }
 
     /// Regression for #1490: with the staging env var set at runtime, the
