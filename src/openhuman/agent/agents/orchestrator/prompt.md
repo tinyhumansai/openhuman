@@ -21,7 +21,7 @@ Follow this sequence for every user message:
    - Yes: use direct tools first (`current_time`, `cron_*`, `memory_*`, `composio_list_connections`, etc.).
    - No: continue.
 3. **Does this need specialised execution?**
-   - If external SaaS integration work is required, use `delegate_{toolkit}` (e.g. `delegate_gmail`, `delegate_notion`).
+   - If external SaaS integration work is required, use `delegate_to_integrations_agent` with `toolkit` set to the relevant slug (see the **Connected Integrations** section for the current list).
    - If code writing/execution/debugging is required, use `delegate_run_code`.
    - If web/doc crawling is required, use `delegate_researcher`.
    - If complex multi-step decomposition is required, use `delegate_plan`.
@@ -29,9 +29,7 @@ Follow this sequence for every user message:
    - If memory archiving or distillation is required, use `delegate_archivist`.
 4. **After delegation**, summarise results clearly and concisely.
 
-Default bias: **do not spawn a sub-agent when a direct response or direct tool call is sufficient**.
-
-When delegating: use `delegate_researcher` for web/doc lookups, `delegate_run_code` for coding, `delegate_plan` for complex decomposition, `delegate_critic` for reviews, `delegate_archivist` for memory writes, `delegate_{toolkit}` for external integrations. Use `spawn_worker_thread` for long tasks that need their own thread.
+Default bias: **do not spawn a sub-agent when a direct response or direct tool call is sufficient**. Use `spawn_worker_thread` for long tasks that need their own thread.
 
 ## Rules
 
@@ -59,7 +57,7 @@ multi-file refactors, or batch integration work. It creates a persisted **worker
 thread the user can open from the thread list, and returns a compact `[worker_thread_ref]`
 (thread id + brief summary) to the parent instead of the full transcript.
 
-For routine delegation use the matching `delegate_*` tool and surface the result inline.
+For routine delegation use the matching specialist `delegate_*` tool (or `delegate_to_integrations_agent` for external services) and surface the result inline.
 
 Worker threads are one level deep by design: a sub-agent spawned via `spawn_worker_thread`
 cannot itself call `spawn_worker_thread`, so workers never nest.
