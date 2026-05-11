@@ -3,10 +3,16 @@
 //! The orchestrator agent is direct-first and only delegates specialised
 //! work. Rather than exposing a single generic
 //! `spawn_subagent(agent_id, prompt)` mega-tool, we synthesise one named
-//! tool per entry in the orchestrator's `subagents = [...]` TOML field,
-//! so the LLM's function-calling schema contains discoverable, well-named
-//! tools like `research`, `plan`, `run_code`, `delegate_gmail`,
-//! `delegate_github`, etc.
+//! tool per [`SubagentEntry::AgentId`] in the orchestrator's
+//! `subagents = [...]` TOML field, so the LLM's function-calling schema
+//! contains discoverable, well-named tools like `research`, `plan`,
+//! `run_code`, etc.
+//!
+//! For [`SubagentEntry::Skills`] wildcard expansions (#1335) we synthesise
+//! a single collapsed `delegate_to_integrations_agent` tool that takes the
+//! toolkit slug as an argument — keeping the orchestrator's schema cost
+//! constant in the integration dimension instead of scaling with the
+//! number of connected toolkits.
 //!
 //! Each synthesised tool's description is pulled live from the target
 //! agent's [`AgentDefinition::when_to_use`] (for
@@ -41,18 +47,23 @@ use super::{ArchetypeDelegationTool, SkillDelegationTool, SpawnWorkerThreadTool,
 /// `when_to_use` — so editing an agent's TOML description immediately
 /// updates the tool schema the orchestrator LLM sees, with zero drift.
 ///
-/// Each [`SubagentEntry::Skills`] wildcard expands to one
-/// [`SkillDelegationTool`] per connected Composio integration in
-/// `connected_integrations`. The synthesised tool routes to the generic
-/// `integrations_agent` with `skill_filter = Some("{toolkit_slug}")` pre-set.
+/// Each [`SubagentEntry::Skills`] wildcard expands to a single
+/// collapsed [`SkillDelegationTool`] named
+/// `delegate_to_integrations_agent` whose `toolkit` argument selects
+/// among the slugs of every connected Composio integration in
+/// `connected_integrations`. The tool routes to the generic
+/// `integrations_agent` with the chosen toolkit's slug passed as
+/// `skill_filter`. The collapsed form keeps the orchestrator's
+/// function-calling schema constant in the integration dimension
+/// (#1335).
 ///
 /// Entries that reference unknown agent ids (not in the registry) are
 /// logged at `warn` and skipped — the orchestrator still builds, just
 /// without the broken delegation. Entries that reference Skills wildcards
 /// with an empty `connected_integrations` slice produce zero tools, which
 /// is the correct behaviour when the user has not yet connected any
-/// integrations (the LLM should not see phantom `delegate_gmail` tools
-/// for unconnected toolkits).
+/// integrations (the LLM should not see a `delegate_to_integrations_agent`
+/// tool with an empty enum).
 ///
 /// Returns an empty Vec when `definition.subagents` is empty — callers
 /// (notably the builder) handle this by not extending the visible-tool
@@ -165,7 +176,22 @@ pub fn collect_orchestrator_tools(
                         );
                         continue;
                     }
-                    connected.push((slug, integration.description.clone()));
+                    // Empty integration descriptions otherwise render as a
+                    // bare ` - slug` line in the collapsed tool description,
+                    // which gives the orchestrator LLM no hint about what
+                    // the toolkit actually does. Fall back to the
+                    // generic per-toolkit phrasing the old fan-out path
+                    // used so brand-new or under-populated toolkits stay
+                    // informative.
+                    let description = if integration.description.trim().is_empty() {
+                        format!(
+                            "External integration via {} — see the toolkit docs for available actions.",
+                            integration.toolkit
+                        )
+                    } else {
+                        integration.description.clone()
+                    };
+                    connected.push((slug, description));
                 }
                 match SkillDelegationTool::for_connected(connected) {
                     Some(tool) => {
@@ -484,6 +510,38 @@ mod tests {
     /// `Slack.Bot` and `Slack-Bot` would both render as `slack_bot`
     /// in the enum and the orchestrator could no longer distinguish
     /// them.
+    /// An integration with an empty description must not render as a
+    /// bare ` - slug` line in the collapsed tool description — the
+    /// orchestrator LLM would have no signal about what the toolkit
+    /// does. The synthesiser falls back to a generic descriptive
+    /// phrase keyed on the raw toolkit name.
+    #[test]
+    fn empty_integration_description_falls_back_to_generic_label() {
+        let mut orch = def("orchestrator", "t", None);
+        orch.subagents = vec![SubagentEntry::Skills(SkillsWildcard { skills: "*".into() })];
+        let reg = registry_with_targets();
+        let integrations = vec![
+            ConnectedIntegration {
+                toolkit: "Brand.New".into(),
+                description: "   ".into(),
+                tools: vec![],
+                connected: true,
+            },
+            integration("gmail", "Email."),
+        ];
+        let tools = collect_orchestrator_tools(&orch, &reg, &integrations);
+        let delegate_tool = tools
+            .iter()
+            .find(|t| t.name() == "delegate_to_integrations_agent")
+            .expect("collapsed tool present");
+        let desc = delegate_tool.description();
+        assert!(
+            desc.contains("External integration via Brand.New"),
+            "expected fallback phrasing, got: {desc}"
+        );
+        assert!(desc.contains("Email."));
+    }
+
     #[test]
     fn duplicate_sanitised_slug_drops_later_collisions() {
         let mut orch = def("orchestrator", "t", None);
