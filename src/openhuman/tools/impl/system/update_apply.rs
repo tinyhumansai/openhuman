@@ -121,7 +121,28 @@ impl Tool for UpdateApplyTool {
             tracing::debug!(target: "update_apply", "{log}");
         }
         let body = serde_json::to_string_pretty(&outcome.value)?;
-        let is_error = outcome.value.get("error").is_some();
+        // `RpcOutcome<Value>` does not carry an explicit status flag, so
+        // we have to read the shape: a `{"error": …}` body is the obvious
+        // failure case, but `update_run`'s soft-failure paths
+        // ("already current", "no platform asset for this target",
+        // "download/stage failed") return `applied: false` with a
+        // descriptive `message` and no `error` key. Surfacing those as
+        // `ToolResult::success` would mean the user sees a green tick in
+        // chat even though nothing was installed — treat any non-applied
+        // outcome as a tool error so the LLM has to acknowledge it.
+        let applied = outcome
+            .value
+            .get("applied")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let has_error_key = outcome.value.get("error").is_some();
+        let is_error = has_error_key || !applied;
+        tracing::debug!(
+            applied,
+            has_error_key,
+            is_error,
+            "[update_apply] execute done"
+        );
         Ok(if is_error {
             ToolResult::error(body)
         } else {
