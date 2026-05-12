@@ -2078,7 +2078,16 @@ pub fn run() {
                 );
                 }
             }
-            #[cfg(target_os = "macos")]
+            // Intercept the main window's close request on macOS AND Windows
+            // so the user can re-open the app from the tray icon. Letting the
+            // OS destroy the webview makes `get_webview_window("main")` return
+            // None on the next tray-click and surfaces as
+            // `[tray] failed to show main window from tray click: main window
+            // not found` (OPENHUMAN-TAURI-2X — 21 events, Windows only).
+            // Linux is left out: `setup_tray` early-returns on Linux because
+            // tray creation panics inside GTK during packaged runs, so the
+            // hide-on-close behavior would strand the user with no way back.
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             RunEvent::WindowEvent {
                 label,
                 event: WindowEvent::CloseRequested { api, .. },
