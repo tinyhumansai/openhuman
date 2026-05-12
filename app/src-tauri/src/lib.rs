@@ -2092,6 +2092,20 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+            #[cfg(target_os = "windows")]
+            RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { api, .. },
+                ..
+            } if label == "main" => {
+                log::info!(
+                    "[window] close requested on main window — hiding to tray instead of destroying"
+                );
+                api.prevent_close();
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
             #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => {
                 log::info!("[window] reopen event — showing main window");
