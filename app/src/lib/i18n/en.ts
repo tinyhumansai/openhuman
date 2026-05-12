@@ -182,6 +182,7 @@ const en: TranslationMap = {
   'memory.tab.dreams': 'Dreams',
   'memory.tab.calls': 'Calls',
   'memory.tab.settings': 'Settings',
+  'memory.analyzeNow': 'Analyze Now',
 
   // Notifications / Alerts
   'alerts.title': 'Alerts',
@@ -244,6 +245,8 @@ const en: TranslationMap = {
   'webhooks.url': 'URL',
   'webhooks.secret': 'Secret',
   'webhooks.events': 'Events',
+  'webhooks.archiveDirectory': 'Archive Directory',
+  'webhooks.todayFile': "Today's File",
 
   // Invites
   'invites.title': 'Invites',

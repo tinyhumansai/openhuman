@@ -181,6 +181,7 @@ const zhCN: TranslationMap = {
   'memory.tab.dreams': '梦境',
   'memory.tab.calls': '调用记录',
   'memory.tab.settings': '设置',
+  'memory.analyzeNow': '立即分析',
 
   // Notifications / Alerts
   'alerts.title': '通知',
@@ -243,6 +244,8 @@ const zhCN: TranslationMap = {
   'webhooks.url': 'URL',
   'webhooks.secret': '密钥',
   'webhooks.events': '事件',
+  'webhooks.archiveDirectory': '归档目录',
+  'webhooks.todayFile': '今日文件',
 
   // Invites
   'invites.title': '邀请',

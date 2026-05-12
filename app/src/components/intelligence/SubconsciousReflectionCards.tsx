@@ -57,6 +57,8 @@ function kindLabel(kind: ReflectionKind, t: (key: string) => string): string {
       return t('reflections.kind.risk');
     case 'opportunity':
       return t('reflections.kind.opportunity');
+    default:
+      return kind;
   }
 }
 
@@ -67,18 +69,15 @@ function kindLabel(kind: ReflectionKind, t: (key: string) => string): string {
  * than ~7 days falls back to a fixed `MMM D` so cards aren't ambiguous
  * when the user scrolls into older reflections.
  */
-function formatRelativeTime(
-  epochSeconds: number,
-  t: (key: string, params?: Record<string, string>) => string
-): string {
+function formatRelativeTime(epochSeconds: number, t: (key: string) => string): string {
   const nowMs = Date.now();
   const tsMs = epochSeconds * 1000;
-  const diffSec = Math.max(0, Math.round((nowMs - tsMs) / 1000));
+  const diffSec = Math.max(0, Math.floor((nowMs - tsMs) / 1000));
   if (diffSec < 45) return t('notifications.justNow');
-  if (diffSec < 3600) return t('notifications.minAgo', { n: String(Math.round(diffSec / 60)) });
-  if (diffSec < 86_400) return t('notifications.hrAgo', { n: String(Math.round(diffSec / 3600)) });
+  if (diffSec < 3600) return t('notifications.minAgo').replace('{n}', String(Math.floor(diffSec / 60)));
+  if (diffSec < 86_400) return t('notifications.hrAgo').replace('{n}', String(Math.floor(diffSec / 3600)));
   if (diffSec < 604_800)
-    return t('notifications.dayAgo', { n: String(Math.round(diffSec / 86_400)) });
+    return t('notifications.dayAgo').replace('{n}', String(Math.floor(diffSec / 86_400)));
   return new Date(tsMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
