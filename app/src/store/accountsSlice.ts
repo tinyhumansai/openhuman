@@ -1,4 +1,6 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import debug from 'debug';
+import { REHYDRATE } from 'redux-persist';
 
 import type {
   Account,
@@ -8,6 +10,21 @@ import type {
   IngestedMessage,
 } from '../types/accounts';
 import { resetUserScopedState } from './resetActions';
+
+const log = debug('accounts:rehydrate');
+
+// Statuses that describe a *live* webview session, not durable account
+// state. Persisting any of these across an app restart would mean the
+// next session paints stale UI (a spinner for a webview that no longer
+// exists, or — issue #1379 — a "taking longer than expected" overlay
+// before the new session has even tried to load).
+const TRANSIENT_ACCOUNT_STATUSES: ReadonlySet<AccountStatus> = new Set([
+  'pending',
+  'loading',
+  'timeout',
+  'open',
+  'error',
+]);
 
 const MAX_MESSAGES_PER_ACCOUNT = 200;
 const MAX_LOG_LINES_PER_ACCOUNT = 100;
@@ -130,6 +147,31 @@ const accountsSlice = createSlice({
   },
   extraReducers: builder => {
     builder.addCase(resetUserScopedState, () => initialState);
+    // Issue #1379 — every account's webview is destroyed when the app
+    // closes, so any non-`closed` status persisted from the previous
+    // session is stale. Reset transient statuses on rehydrate so the
+    // next session starts from a fresh load state instead of replaying
+    // last session's `timeout` / `loading` / `pending` overlay before
+    // the new webview spawn has even started.
+    builder.addCase(REHYDRATE, (state, action) => {
+      const rehydrateAction = action as {
+        type: typeof REHYDRATE;
+        key: string;
+        payload?: Partial<AccountsState>;
+      };
+      if (rehydrateAction.key !== 'accounts') return;
+      const reset: Array<{ id: string; previous: AccountStatus }> = [];
+      for (const acct of Object.values(state.accounts)) {
+        if (TRANSIENT_ACCOUNT_STATUSES.has(acct.status)) {
+          reset.push({ id: acct.id, previous: acct.status });
+          acct.status = 'closed';
+          acct.lastError = undefined;
+        }
+      }
+      if (reset.length > 0) {
+        log('reset %d transient account status(es) on rehydrate: %o', reset.length, reset);
+      }
+    });
   },
 });
 
