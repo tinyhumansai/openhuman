@@ -112,7 +112,7 @@ jobs:
             target: x86_64-apple-darwin
             artifact_suffix: x86_64-apple-darwin
           - platform: ubuntu-22.04
-            args: --target x86_64-unknown-linux-gnu --bundles deb
+            args: --target x86_64-unknown-linux-gnu --bundles deb appimage
             target: x86_64-unknown-linux-gnu
             artifact_suffix: ubuntu
           - platform: windows-latest
@@ -524,6 +524,8 @@ jobs:
               "$root"/deb/*.deb \
               "$root"/appimage/*.AppImage \
               "$root"/appimage/*.AppImage.sig \
+              "$root"/appimage/*.AppImage.tar.gz \
+              "$root"/appimage/*.AppImage.tar.gz.sig \
               "$root"/msi/*.msi \
               "$root"/msi/*.msi.sig \
               "$root"/nsis/*-setup.exe \

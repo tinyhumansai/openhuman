@@ -49,7 +49,7 @@ For local development instead of production build:
 pnpm dev
 ```
 
-## Install latest stable release (macOS/Linux)
+## Install latest stable release (macOS/Linux x64)
 
 Primary install command:
 
@@ -63,7 +63,7 @@ Installer behavior:
 - Validates artifact digest when available
 - Installs locally (no sudo by default)
 - macOS: installs `OpenHuman.app` into `~/Applications`
-- Linux: installs AppImage as `~/.local/bin/openhuman` and writes a desktop entry
+- Linux x64: installs AppImage as `~/.local/bin/openhuman` and writes a desktop entry
 
 Useful flags:
 
