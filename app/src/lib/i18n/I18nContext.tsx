@@ -12,8 +12,18 @@ interface I18nContextValue {
 
 const translations: Record<Locale, Record<string, string>> = { en, 'zh-CN': zhCN };
 
+// Resolve the English map accounting for CJS/ESM interop in test runners
+// where `export default` may produce `{ default: { ... } }` instead of the
+// raw object. `en` could also be empty if tree-shaken in certain bundlers.
+const enMap: Record<string, string> =
+  en != null && typeof en === 'object' && 'default' in (en as Record<string, unknown>)
+    ? ((en as Record<string, unknown>).default as Record<string, string>)
+    : (en as unknown as Record<string, string>);
+const enFallback: Record<string, string> =
+  enMap && Object.keys(enMap).length > 0 ? enMap : translations.en;
+
 const I18nContext = createContext<I18nContextValue>({
-  t: (key: string) => translations.en[key] ?? key,
+  t: (key: string) => enFallback[key] ?? key,
   locale: 'en',
 });
 
@@ -22,8 +32,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const t = useCallback(
     (key: string): string => {
-      const map = translations[locale] ?? translations.en;
-      return map[key] ?? translations.en[key] ?? key;
+      const map = translations[locale] ?? enFallback;
+      return map[key] ?? enFallback[key] ?? key;
     },
     [locale]
   );
