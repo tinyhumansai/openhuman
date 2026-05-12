@@ -13,6 +13,7 @@ import { isTauri } from '@tauri-apps/api/core';
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { type BootCheckResult, runBootCheck } from '../../lib/bootCheck';
 import { bootCheckTransport } from '../../services/bootCheckService';
 import {
@@ -81,6 +82,7 @@ type TestStatus =
 const DESKTOP_DOWNLOAD_URL = 'https://github.com/tinyhumansai/openhuman/releases/latest';
 
 function ModePicker({ onConfirm }: PickerProps) {
+  const { t } = useT();
   // Web build cannot spawn a local sidecar, so the only viable choice is
   // cloud. Default the selection accordingly and hide the local option in
   // the render path below.
@@ -107,24 +109,24 @@ function ModePicker({ onConfirm }: PickerProps) {
   const validateInputs = (): { url: string; token: string } | null => {
     const trimmedUrl = cloudUrl.trim();
     if (!trimmedUrl) {
-      setUrlError('Please enter a core URL.');
+      setUrlError(t('bootCheck.invalidUrl'));
       return null;
     }
     try {
       const parsed = new URL(trimmedUrl);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        setUrlError('URL must start with http:// or https://');
+        setUrlError(t('bootCheck.urlMustStartWith'));
         return null;
       }
     } catch {
-      setUrlError('Please enter a valid URL (e.g. https://core.example.com/rpc)');
+      setUrlError(t('bootCheck.validUrlRequired'));
       return null;
     }
     setUrlError(null);
 
     const trimmedToken = cloudToken.trim();
     if (!trimmedToken) {
-      setTokenError('Please enter the core auth token.');
+      setTokenError(t('bootCheck.tokenRequired'));
       return null;
     }
     setTokenError(null);
@@ -191,25 +193,25 @@ function ModePicker({ onConfirm }: PickerProps) {
   return (
     <Panel>
       <h2 className="text-xl font-semibold text-white">
-        {isDesktop ? 'Choose core mode' : 'Connect to your core'}
+        {isDesktop ? t('bootCheck.chooseCoreMode') : t('bootCheck.connectToCore')}
       </h2>
       <p className="mt-2 text-sm text-stone-300">
         {isDesktop
-          ? 'OpenHuman needs a running core to operate. Choose how you want to connect.'
-          : 'OpenHuman on the web connects to a remote core you control. Enter its URL and auth token, or install the desktop app to run one locally.'}
+          ? t('bootCheck.desktopDescription')
+          : t('bootCheck.webDescription')}
       </p>
 
       {!isDesktop && (
         <div
           className="mt-4 rounded-xl border border-stone-700 bg-stone-800/60 p-3 text-xs text-stone-300"
           data-testid="web-download-cta">
-          Prefer to run everything on your own device?{' '}
+          {t('bootCheck.preferDesktop')}{' '}
           <a
             href={DESKTOP_DOWNLOAD_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="text-ocean-400 underline hover:text-ocean-300">
-            Download the desktop app
+            {t('bootCheck.downloadDesktop')}
           </a>
           .
         </div>
@@ -226,9 +228,9 @@ function ModePicker({ onConfirm }: PickerProps) {
                 ? 'border-ocean-500 bg-ocean-500/10 text-white'
                 : 'border-stone-700 text-stone-300 hover:border-stone-500 hover:bg-stone-800'
             }`}>
-            <div className="font-medium">Local (recommended)</div>
+            <div className="font-medium">{t('bootCheck.localRecommended')}</div>
             <div className="mt-0.5 text-xs text-stone-400">
-              Embedded core runs on this device — fastest, no configuration required.
+              {t('bootCheck.localDescription')}
             </div>
           </button>
         )}
@@ -243,9 +245,9 @@ function ModePicker({ onConfirm }: PickerProps) {
                 ? 'border-ocean-500 bg-ocean-500/10 text-white'
                 : 'border-stone-700 text-stone-300 hover:border-stone-500 hover:bg-stone-800'
             }`}>
-            <div className="font-medium">Cloud</div>
+            <div className="font-medium">{t('bootCheck.cloudMode')}</div>
             <div className="mt-0.5 text-xs text-stone-400">
-              Connect to a remote core at a custom URL.
+              {t('bootCheck.cloudDescription')}
             </div>
           </button>
         )}
@@ -253,10 +255,10 @@ function ModePicker({ onConfirm }: PickerProps) {
         {selected === 'cloud' && (
           <div className="mt-1 flex flex-col gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-stone-300">Core RPC URL</label>
+              <label className="text-xs font-medium text-stone-300">{t('bootCheck.coreRpcUrl')}</label>
               <input
                 type="url"
-                placeholder="https://core.example.com/rpc"
+                placeholder={t('bootCheck.rpcUrlPlaceholder')}
                 value={cloudUrl}
                 onChange={e => {
                   setCloudUrl(e.target.value);
@@ -269,13 +271,13 @@ function ModePicker({ onConfirm }: PickerProps) {
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-stone-300">
-                Auth token (<code className="text-[10px]">OPENHUMAN_CORE_TOKEN</code>)
+                {t('bootCheck.authToken')} (<code className="text-[10px]">OPENHUMAN_CORE_TOKEN</code>)
               </label>
               <input
                 type="password"
                 autoComplete="off"
                 spellCheck={false}
-                placeholder="Bearer token configured on the remote core"
+                placeholder={t('bootCheck.bearerTokenPlaceholder')}
                 value={cloudToken}
                 onChange={e => {
                   setCloudToken(e.target.value);
@@ -286,7 +288,7 @@ function ModePicker({ onConfirm }: PickerProps) {
               />
               {tokenError && <p className="text-xs text-coral-400">{tokenError}</p>}
               <p className="text-[11px] text-stone-500">
-                Stored on this device only. Required for remote cores — the desktop sends it as{' '}
+                {t('bootCheck.storedLocally')}{' '}
                 <code>Authorization: Bearer …</code> on every RPC.
               </p>
             </div>
@@ -297,21 +299,21 @@ function ModePicker({ onConfirm }: PickerProps) {
                 onClick={handleTestConnection}
                 disabled={testStatus.kind === 'testing'}
                 className="rounded-lg border border-stone-600 px-3 py-1.5 text-xs text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-                {testStatus.kind === 'testing' ? 'Testing…' : 'Test connection'}
+                {testStatus.kind === 'testing' ? t('bootCheck.testing') : t('bootCheck.testConnection')}
               </button>
               {testStatus.kind === 'ok' && (
                 <span className="text-xs text-emerald-400" data-testid="test-status-ok">
-                  Connected ✓
+                  {t('bootCheck.connectedOk')}
                 </span>
               )}
               {testStatus.kind === 'auth' && (
                 <span className="text-xs text-coral-400" data-testid="test-status-auth">
-                  Auth failed — check the token (got 401/403).
+                  {t('bootCheck.authFailed')}
                 </span>
               )}
               {testStatus.kind === 'unreachable' && (
                 <span className="text-xs text-coral-400" data-testid="test-status-unreachable">
-                  Unreachable: {testStatus.reason}
+                  {t('bootCheck.unreachablePrefix')} {testStatus.reason}
                 </span>
               )}
             </div>
@@ -324,7 +326,7 @@ function ModePicker({ onConfirm }: PickerProps) {
           type="button"
           onClick={handleContinue}
           className="rounded-lg bg-ocean-500 px-5 py-2 text-sm font-medium text-white hover:bg-ocean-600">
-          Continue
+          {t('common.continue')}
         </button>
       </div>
     </Panel>
@@ -336,11 +338,12 @@ function ModePicker({ onConfirm }: PickerProps) {
 // ---------------------------------------------------------------------------
 
 function CheckingScreen() {
+  const { t } = useT();
   return (
     <Panel>
       <div className="flex flex-col items-center gap-4 py-4">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-600 border-t-ocean-500" />
-        <p className="text-sm text-stone-300">Checking core…</p>
+        <p className="text-sm text-stone-300">{t('bootCheck.checkingCore')}</p>
       </div>
     </Panel>
   );
@@ -369,14 +372,15 @@ function ResultScreen({
   actionError,
   onAction,
 }: ResultScreenProps) {
+  const { t } = useT();
   if (result.kind === 'match') return null;
 
   if (result.kind === 'unreachable') {
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-white">Could not reach core</h2>
+        <h2 className="text-xl font-semibold text-white">{t('bootCheck.cannotReach')}</h2>
         <p className="mt-2 text-sm text-stone-300">
-          {result.reason || 'The core process is unreachable. Try switching to a different mode.'}
+          {result.reason || t('bootCheck.cannotReachDesc')}
         </p>
         {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
         <div className="mt-5 flex gap-3">
@@ -385,19 +389,19 @@ function ResultScreen({
             onClick={onRetry}
             disabled={actionBusy}
             className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-            Retry
+            {t('common.retry')}
           </button>
           <button
             type="button"
             onClick={onSwitchMode}
             className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800">
-            Switch mode
+            {t('bootCheck.switchMode')}
           </button>
           <button
             type="button"
             onClick={onQuit}
             className="rounded-lg bg-coral-500 px-4 py-2 text-sm font-medium text-white hover:bg-coral-600">
-            Quit
+            {t('bootCheck.quit')}
           </button>
         </div>
       </Panel>
@@ -407,10 +411,9 @@ function ResultScreen({
   if (result.kind === 'daemonDetected') {
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-white">Legacy background core detected</h2>
+        <h2 className="text-xl font-semibold text-white">{t('bootCheck.legacyDetected')}</h2>
         <p className="mt-2 text-sm text-stone-300">
-          A separately-installed OpenHuman daemon is running on this device. It must be removed
-          before the embedded core can take over.
+          {t('bootCheck.legacyDescription')}
         </p>
         {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
         <div className="mt-5 flex gap-3">
@@ -419,14 +422,14 @@ function ResultScreen({
             onClick={onAction}
             disabled={actionBusy}
             className="rounded-lg bg-coral-500 px-4 py-2 text-sm font-medium text-white hover:bg-coral-600 disabled:opacity-60">
-            {actionBusy ? 'Removing…' : 'Remove and continue'}
+            {actionBusy ? t('bootCheck.removing') : t('bootCheck.removeContinue')}
           </button>
           <button
             type="button"
             onClick={onSwitchMode}
             disabled={actionBusy}
             className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-            Switch mode
+            {t('bootCheck.switchMode')}
           </button>
         </div>
       </Panel>
@@ -436,10 +439,9 @@ function ResultScreen({
   if (result.kind === 'outdatedLocal') {
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-white">Local core needs a restart</h2>
+        <h2 className="text-xl font-semibold text-white">{t('bootCheck.localNeedsRestart')}</h2>
         <p className="mt-2 text-sm text-stone-300">
-          The local core version does not match this app build. Restarting it will load the correct
-          version.
+          {t('bootCheck.localNeedsRestartDesc')}
         </p>
         {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
         <div className="mt-5 flex gap-3">
@@ -448,14 +450,14 @@ function ResultScreen({
             onClick={onAction}
             disabled={actionBusy}
             className="rounded-lg bg-ocean-500 px-4 py-2 text-sm font-medium text-white hover:bg-ocean-600 disabled:opacity-60">
-            {actionBusy ? 'Restarting…' : 'Restart core'}
+            {actionBusy ? t('bootCheck.restarting') : t('bootCheck.restartCore')}
           </button>
           <button
             type="button"
             onClick={onSwitchMode}
             disabled={actionBusy}
             className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-            Switch mode
+            {t('bootCheck.switchMode')}
           </button>
         </div>
       </Panel>
@@ -465,10 +467,9 @@ function ResultScreen({
   if (result.kind === 'outdatedCloud') {
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-white">Cloud core needs an update</h2>
+        <h2 className="text-xl font-semibold text-white">{t('bootCheck.cloudNeedsUpdate')}</h2>
         <p className="mt-2 text-sm text-stone-300">
-          The cloud core version does not match this app build. Run the core updater to resolve the
-          mismatch.
+          {t('bootCheck.cloudNeedsUpdateDesc')}
         </p>
         {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
         <div className="mt-5 flex gap-3">
@@ -477,14 +478,14 @@ function ResultScreen({
             onClick={onAction}
             disabled={actionBusy}
             className="rounded-lg bg-ocean-500 px-4 py-2 text-sm font-medium text-white hover:bg-ocean-600 disabled:opacity-60">
-            {actionBusy ? 'Updating…' : 'Update cloud core'}
+            {actionBusy ? t('bootCheck.updating') : t('bootCheck.updateCloudCore')}
           </button>
           <button
             type="button"
             onClick={onSwitchMode}
             disabled={actionBusy}
             className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-            Switch mode
+            {t('bootCheck.switchMode')}
           </button>
         </div>
       </Panel>
@@ -494,10 +495,9 @@ function ResultScreen({
   // noVersionMethod — treat like outdated, user picks which flavor of action
   return (
     <Panel>
-      <h2 className="text-xl font-semibold text-white">Core version check failed</h2>
+      <h2 className="text-xl font-semibold text-white">{t('bootCheck.versionCheckFailed')}</h2>
       <p className="mt-2 text-sm text-stone-300">
-        The core is running but does not expose a version endpoint. It may be outdated. Restart or
-        update the core to continue.
+        {t('bootCheck.versionCheckFailedDesc')}
       </p>
       {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
       <div className="mt-5 flex gap-3">
@@ -506,14 +506,14 @@ function ResultScreen({
           onClick={onAction}
           disabled={actionBusy}
           className="rounded-lg bg-ocean-500 px-4 py-2 text-sm font-medium text-white hover:bg-ocean-600 disabled:opacity-60">
-          {actionBusy ? 'Working…' : 'Restart / update core'}
+          {actionBusy ? t('bootCheck.working') : t('bootCheck.restartUpdateCore')}
         </button>
         <button
           type="button"
           onClick={onSwitchMode}
           disabled={actionBusy}
           className="rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-          Switch mode
+          {t('bootCheck.switchMode')}
         </button>
       </div>
     </Panel>
@@ -529,6 +529,7 @@ interface BootCheckGateProps {
 }
 
 export default function BootCheckGate({ children }: BootCheckGateProps) {
+  const { t } = useT();
   const dispatch = useAppDispatch();
   const coreMode = useAppSelector(state => state.coreMode.mode);
 
@@ -575,7 +576,7 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
         setPhase('result');
         setResult({
           kind: 'unreachable',
-          reason: err instanceof Error ? err.message : 'Unexpected boot-check error',
+          reason: err instanceof Error ? err.message : t('bootCheck.unexpectedError'),
         });
       } finally {
         runningRef.current = false;
@@ -694,7 +695,7 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
       }
     } catch (err) {
       logError('[boot-check] gate — action error: %o', err);
-      setActionError(err instanceof Error ? err.message : 'Action failed — please try again.');
+      setActionError(err instanceof Error ? err.message : t('bootCheck.actionFailed'));
     } finally {
       setActionBusy(false);
     }

@@ -1,6 +1,7 @@
 import debug from 'debug';
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import {
   type Capability,
@@ -38,6 +39,7 @@ const PrivacyPanel = () => {
   const { snapshot, setAnalyticsEnabled, setMeetAutoOrchestratorHandoff } = useCoreState();
   const analyticsEnabled = snapshot.analyticsEnabled;
   const meetAutoHandoff = snapshot.meetAutoOrchestratorHandoff;
+  const { t } = useT();
 
   const [capabilities, setCapabilities] = useState<AnnotatedCapability[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -86,7 +88,7 @@ const PrivacyPanel = () => {
   return (
     <div data-testid="settings-privacy-panel">
       <SettingsHeader
-        title="Privacy & Security"
+        title={t('privacy.title')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -97,21 +99,19 @@ const PrivacyPanel = () => {
           {/* What leaves my computer */}
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-3 px-1">
-              What leaves your computer
+              {t('privacy.whatLeavesComputer')}
             </h3>
             <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
               {loadState === 'loading' && (
-                <p className="p-4 text-xs text-stone-500">Loading privacy details&hellip;</p>
+                <p className="p-4 text-xs text-stone-500">{t('privacy.loading')}</p>
               )}
               {loadState === 'error' && (
                 <p className="p-4 text-xs text-stone-500" data-testid="privacy-load-error">
-                  Couldn&rsquo;t load the live privacy list. Analytics controls below still work.
+                  {t('privacy.loadError')}
                 </p>
               )}
               {loadState === 'ready' && capabilities.length === 0 && (
-                <p className="p-4 text-xs text-stone-500">
-                  No capabilities currently disclose data movement.
-                </p>
+                <p className="p-4 text-xs text-stone-500">{t('privacy.noCapabilities')}</p>
               )}
               {loadState === 'ready' && capabilities.length > 0 && (
                 <ul className="divide-y divide-stone-100" data-testid="privacy-capability-list">
@@ -125,7 +125,7 @@ const PrivacyPanel = () => {
                           </p>
                           {cap.privacy.destinations.length > 0 && (
                             <p className="text-xs text-stone-400 mt-1">
-                              Sent to: {cap.privacy.destinations.join(', ')}
+                              {t('privacy.sentTo')}: {cap.privacy.destinations.join(', ')}
                             </p>
                           )}
                         </div>
@@ -135,7 +135,9 @@ const PrivacyPanel = () => {
                             {KIND_LABEL[cap.privacy.data_kind]}
                           </span>
                           <span className="text-[10px] text-stone-500">
-                            {cap.privacy.leaves_device ? 'Leaves device' : 'Stays local'}
+                            {cap.privacy.leaves_device
+                              ? t('privacy.leavesDevice')
+                              : t('privacy.staysLocal')}
                           </span>
                         </div>
                       </div>
@@ -149,16 +151,16 @@ const PrivacyPanel = () => {
           {/* Analytics Section */}
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-3 px-1">
-              Anonymized Analytics
+              {t('privacy.anonymizedAnalytics')}
             </h3>
             <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
               <div className="flex items-center justify-between p-4">
                 <div className="flex-1 mr-4">
-                  <p className="text-sm font-medium text-stone-900">Share Anonymized Usage Data</p>
+                  <p className="text-sm font-medium text-stone-900">
+                    {t('privacy.shareAnonymizedData')}
+                  </p>
                   <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-                    Help improve OpenHuman by sharing anonymous crash reports and usage analytics.
-                    All data is fully anonymized &mdash; no personal data, messages, wallet keys, or
-                    session information is ever collected.
+                    {t('privacy.shareAnonymizedDataDesc')}
                   </p>
                 </div>
                 <button
@@ -181,18 +183,16 @@ const PrivacyPanel = () => {
           {/* Meeting Follow-ups Section (#1299) */}
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-3 px-1">
-              Meeting follow-ups
+              {t('privacy.meetingFollowUps')}
             </h3>
             <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
               <div className="flex items-center justify-between p-4">
                 <div className="flex-1 mr-4">
                   <p className="text-sm font-medium text-stone-900">
-                    Auto-handoff Google Meet transcripts to the orchestrator
+                    {t('privacy.autoHandoffMeet')}
                   </p>
                   <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-                    When a Google Meet call ends, OpenHuman&rsquo;s orchestrator can read the
-                    transcript and may take actions like drafting messages, scheduling follow-ups,
-                    or posting summaries to your connected Slack workspace. Off by default.
+                    {t('privacy.autoHandoffMeetDesc')}
                   </p>
                 </div>
                 <button
@@ -229,10 +229,7 @@ const PrivacyPanel = () => {
               </svg>
               <div>
                 <p className="text-xs text-stone-500 leading-relaxed">
-                  All analytics and bug reports are fully anonymized. When enabled, we collect only
-                  crash information, device type, and the file location of errors. We never access
-                  your messages, session data, wallet keys, API keys, or any personally identifiable
-                  information. You can change this setting at any time.
+                  {t('privacy.analyticsDisclaimer')}
                 </p>
               </div>
             </div>

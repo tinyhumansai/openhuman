@@ -19,6 +19,7 @@ import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
 import AppWalkthrough from './components/walkthrough/AppWalkthrough';
 import { MascotFrameProducer } from './features/meet/MascotFrameProducer';
+import { I18nProvider } from './lib/i18n/I18nContext';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { isWelcomeLocked } from './lib/coreState/store';
 import { startNativeNotificationsService } from './lib/nativeNotifications';
@@ -51,24 +52,26 @@ function App() {
       )}>
       <Provider store={store}>
         <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
-          <BootCheckGate>
-            <CoreStateProvider>
-              <SocketProvider>
-                <ChatRuntimeProvider>
-                  <Router>
-                    <CommandProvider>
-                      <ServiceBlockingGate>
-                        <AppShell />
-                        <DictationHotkeyManager />
-                        <LocalAIDownloadSnackbar />
-                        <AppUpdatePrompt />
-                      </ServiceBlockingGate>
-                    </CommandProvider>
-                  </Router>
-                </ChatRuntimeProvider>
-              </SocketProvider>
-            </CoreStateProvider>
-          </BootCheckGate>
+          <I18nProvider>
+            <BootCheckGate>
+              <CoreStateProvider>
+                <SocketProvider>
+                  <ChatRuntimeProvider>
+                    <Router>
+                      <CommandProvider>
+                        <ServiceBlockingGate>
+                          <AppShell />
+                          <DictationHotkeyManager />
+                          <LocalAIDownloadSnackbar />
+                          <AppUpdatePrompt />
+                        </ServiceBlockingGate>
+                      </CommandProvider>
+                    </Router>
+                  </ChatRuntimeProvider>
+                </SocketProvider>
+              </CoreStateProvider>
+            </BootCheckGate>
+          </I18nProvider>
         </PersistGate>
       </Provider>
     </Sentry.ErrorBoundary>

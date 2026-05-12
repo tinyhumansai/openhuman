@@ -1,6 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { triggerSentryTestEvent } from '../../../services/analytics';
 import { useAppSelector } from '../../../store/hooks';
 import { APP_ENVIRONMENT } from '../../../utils/config';
@@ -57,25 +58,6 @@ const developerItems = [
       </svg>
     ),
   },
-  // Screen Awareness Debug, Memory Data, and Memory Debug hidden — routes
-  // retained in `pages/Settings.tsx` for re-enable.
-  // {
-  //   id: 'screen-awareness-debug',
-  //   title: 'Screen Awareness Debug',
-  //   description: 'FPS tuning, vision model config, capture tests, and session diagnostics',
-  //   route: 'screen-awareness-debug',
-  //   icon: (
-  //     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-  //       <path
-  //         strokeLinecap="round"
-  //         strokeLinejoin="round"
-  //         strokeWidth={2}
-  //         d="M3 5h18v12H3zM8 21h8m-4-4v4"
-  //       />
-  //     </svg>
-  //   ),
-  // },
-  // Autocomplete Debug + Voice Debug hidden per #717 (routes retained for re-enable).
   {
     id: 'local-model-debug',
     title: 'Local Model Debug',
@@ -108,38 +90,6 @@ const developerItems = [
       </svg>
     ),
   },
-  // {
-  //   id: 'memory-data',
-  //   title: 'Memory Data',
-  //   description: 'Knowledge graph, insights, activity heatmap, and file management',
-  //   route: 'memory-data',
-  //   icon: (
-  //     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-  //       <path
-  //         strokeLinecap="round"
-  //         strokeLinejoin="round"
-  //         strokeWidth={2}
-  //         d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-  //       />
-  //     </svg>
-  //   ),
-  // },
-  // {
-  //   id: 'memory-debug',
-  //   title: 'Memory Debug',
-  //   description: 'Inspect memory documents, namespaces, and test query/recall',
-  //   route: 'memory-debug',
-  //   icon: (
-  //     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-  //       <path
-  //         strokeLinecap="round"
-  //         strokeLinejoin="round"
-  //         strokeWidth={2}
-  //         d="M9 12h6m2 8H7a2 2 0 01-2-2V6a2 2 0 012-2h6l6 6v8a2 2 0 01-2 2z"
-  //       />
-  //     </svg>
-  //   ),
-  // },
   {
     id: 'intelligence',
     title: 'Intelligence',
@@ -212,25 +162,15 @@ const developerItems = [
   },
 ];
 
-/**
- * Small badge showing whether the desktop is talking to the embedded local
- * core or a user-configured remote (cloud) core. Read straight from the
- * `coreMode` Redux slice so it always reflects what `coreRpcClient` will
- * resolve on the next call. For cloud mode also surfaces the (masked) URL
- * + a "token set" indicator so users debugging a misconfigured cloud
- * deployment can verify they actually entered both pieces in the picker.
- */
 const CoreModeBadge = () => {
+  const { t } = useT();
   const mode = useAppSelector(state => state.coreMode.mode);
 
   if (mode.kind === 'unset') {
     return (
       <div className="px-4 py-3 mb-3 rounded-lg border border-coral-300 bg-coral-50">
-        <div className="text-sm font-semibold text-coral-900">Core mode: not set</div>
-        <div className="text-xs text-coral-800 mt-0.5">
-          The boot-check picker hasn&apos;t been confirmed yet. Use Switch mode on the picker to
-          choose Local or Cloud.
-        </div>
+        <div className="text-sm font-semibold text-coral-900">{t('devOptions.coreModeNotSet')}</div>
+        <div className="text-xs text-coral-800 mt-0.5">{t('devOptions.coreModeNotSetDesc')}</div>
       </div>
     );
   }
@@ -240,37 +180,36 @@ const CoreModeBadge = () => {
       <div className="px-4 py-3 mb-3 rounded-lg border border-ocean-300 bg-ocean-50">
         <div className="flex items-center gap-2">
           <span className="px-2 py-0.5 rounded-full bg-ocean-600 text-white text-[11px] font-medium">
-            Local
+            {t('devOptions.local')}
           </span>
-          <span className="text-sm font-semibold text-ocean-900">Embedded core sidecar</span>
+          <span className="text-sm font-semibold text-ocean-900">
+            {t('devOptions.embeddedCoreSidecar')}
+          </span>
         </div>
-        <div className="text-xs text-ocean-800 mt-1">
-          Spawned in-process by the Tauri shell on app launch.
-        </div>
+        <div className="text-xs text-ocean-800 mt-1">{t('devOptions.sidecarSpawned')}</div>
       </div>
     );
   }
 
-  // Cloud — show URL + token status. Token value itself is never rendered.
   return (
     <div className="px-4 py-3 mb-3 rounded-lg border border-sage-300 bg-sage-50">
       <div className="flex items-center gap-2">
         <span className="px-2 py-0.5 rounded-full bg-sage-600 text-white text-[11px] font-medium">
-          Cloud
+          {t('devOptions.cloud')}
         </span>
-        <span className="text-sm font-semibold text-sage-900">Remote core RPC</span>
+        <span className="text-sm font-semibold text-sage-900">{t('devOptions.remoteCoreRpc')}</span>
       </div>
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
         <dt className="text-sage-700">URL:</dt>
         <dd className="font-mono text-sage-900 truncate" title={mode.url}>
           {mode.url}
         </dd>
-        <dt className="text-sage-700">Token:</dt>
+        <dt className="text-sage-700">{t('devOptions.token')}:</dt>
         <dd className="text-sage-900">
           {mode.token ? (
             <span className="font-mono">••••••{mode.token.slice(-4)}</span>
           ) : (
-            <span className="text-coral-600">not set — RPC will 401</span>
+            <span className="text-coral-600">{t('devOptions.tokenNotSet')}</span>
           )}
         </dd>
       </dl>
@@ -284,9 +223,8 @@ type SentryTestStatus =
   | { kind: 'sent'; eventId: string | undefined }
   | { kind: 'error'; message: string };
 
-// Staging-only Sentry pipeline check (issue #1072). Removed once the
-// staging dashboard confirms events are landing with the right tags.
 const SentryTestRow = () => {
+  const { t } = useT();
   const [status, setStatus] = useState<SentryTestStatus>({ kind: 'idle' });
 
   const onClick = async () => {
@@ -303,29 +241,24 @@ const SentryTestRow = () => {
     <div className="px-4 py-3 mb-3 rounded-lg border border-amber-300 bg-amber-50">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-amber-900">Trigger Sentry Test (staging)</div>
+          <div className="text-sm font-semibold text-amber-900">
+            {t('devOptions.triggerSentryTest')}
+          </div>
           <div className="text-xs text-amber-800 mt-0.5">
-            Fires a tagged error to verify the Sentry pipeline. Issue #1072 — remove after
-            verification.
+            {t('devOptions.triggerSentryTestDesc')}
           </div>
         </div>
         <button
           onClick={onClick}
           disabled={status.kind === 'sending'}
           className="shrink-0 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium transition-colors disabled:opacity-60">
-          {status.kind === 'sending' ? 'Sending…' : 'Send test event'}
+          {status.kind === 'sending' ? 'Sending…' : t('devOptions.sendTestEvent')}
         </button>
       </div>
-      {/*
-       * Single live region so screen readers announce the result when
-       * status flips from `sending` to `sent` / `error`. `aria-live=polite`
-       * waits for any in-flight speech to finish; `aria-atomic` makes the
-       * reader re-read the whole region rather than only the diff.
-       */}
       <div role="status" aria-live="polite" aria-atomic="true" className="mt-2 text-xs">
         {status.kind === 'sent' && (
           <span className="text-amber-900">
-            Event sent.{' '}
+            {t('devOptions.eventSent')}.{' '}
             {status.eventId ? (
               <span className="font-mono">id: {status.eventId}</span>
             ) : (
@@ -334,19 +267,17 @@ const SentryTestRow = () => {
           </span>
         )}
         {status.kind === 'error' && (
-          <span className="text-coral-600">Failed: {status.message}</span>
+          <span className="text-coral-600">
+            {t('devOptions.failed')}: {status.message}
+          </span>
         )}
       </div>
     </div>
   );
 };
 
-// Surfaces the on-disk log folder so users running into "stuck on
-// Initializing OpenHuman..." (and similar startup issues) can grab today's
-// `openhuman-YYYY-MM-DD.log` and send it to support without hunting through
-// `~/.openhuman/logs/`. Invokes the `reveal_logs_folder` Tauri command which
-// `open`/`explorer`/`xdg-open`s the directory in the platform file manager.
 const LogsFolderRow = () => {
+  const { t } = useT();
   const [path, setPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -374,17 +305,14 @@ const LogsFolderRow = () => {
     <div className="px-4 py-3 mb-3 rounded-lg border border-slate-200 bg-slate-50">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-slate-900">App logs</div>
-          <div className="text-xs text-slate-700 mt-0.5">
-            Open the folder containing rolling daily log files. Attach the most recent file when
-            reporting an issue.
-          </div>
+          <div className="text-sm font-semibold text-slate-900">{t('devOptions.appLogs')}</div>
+          <div className="text-xs text-slate-700 mt-0.5">{t('devOptions.appLogsDesc')}</div>
           {path && <div className="text-[11px] text-slate-500 mt-1 font-mono truncate">{path}</div>}
         </div>
         <button
           onClick={onClick}
           className="shrink-0 px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium transition-colors">
-          Open logs folder
+          {t('devOptions.openLogsFolder')}
         </button>
       </div>
       {error && (
@@ -397,13 +325,14 @@ const LogsFolderRow = () => {
 };
 
 const DeveloperOptionsPanel = () => {
+  const { t } = useT();
   const { navigateToSettings, navigateBack, breadcrumbs } = useSettingsNavigation();
   const showSentryTest = APP_ENVIRONMENT === 'staging';
 
   return (
     <div className="z-10 relative">
       <SettingsHeader
-        title="Developer Options"
+        title={t('devOptions.title')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}

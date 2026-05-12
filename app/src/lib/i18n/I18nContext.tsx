@@ -1,0 +1,38 @@
+import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react';
+
+import { useAppSelector } from '../../store/hooks';
+import type { Locale } from './types';
+import en from './en';
+import zhCN from './zh-CN';
+
+const translations: Record<Locale, Record<string, string>> = {
+  en,
+  'zh-CN': zhCN,
+};
+
+const I18nContext = createContext<{ t: (key: string) => string; locale: Locale }>({
+  t: (key: string) => key,
+  locale: 'en',
+});
+
+export function I18nProvider({ children }: { children: ReactNode }) {
+  const locale = useAppSelector(state => state.locale.current);
+
+  const t = useCallback(
+    (key: string): string => {
+      const map = translations[locale] ?? translations.en;
+      return map[key] ?? translations.en[key] ?? key;
+    },
+    [locale]
+  );
+
+  const value = useMemo(() => ({ t, locale }), [t, locale]);
+
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+}
+
+export function useT(): { t: (key: string) => string; locale: Locale } {
+  return useContext(I18nContext);
+}
+
+export { type Locale } from './types';

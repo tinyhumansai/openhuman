@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import LottieAnimation from '../components/LottieAnimation';
 import { persistLocalWalletFromMnemonic } from '../features/wallet/setupLocalWalletFromMnemonic';
+import { useT } from '../lib/i18n/I18nContext';
 import { useCoreState } from '../providers/CoreStateProvider';
 import {
   generateMnemonicPhrase,
@@ -16,6 +17,7 @@ const BIP39_IMPORT_LENGTHS = [12, 15, 18, 21, 24] as const;
 const IMPORT_SLOTS_INITIAL = MNEMONIC_GENERATE_WORD_COUNT;
 
 const Mnemonic = () => {
+  const { t } = useT();
   const navigate = useNavigate();
   const { snapshot, setEncryptionKey } = useCoreState();
   const user = snapshot.currentUser;
@@ -191,11 +193,9 @@ const Mnemonic = () => {
           {mode === 'generate' ? (
             <>
               <div className="text-center mb-4">
-                <h1 className="text-xl font-bold mb-2">Your Recovery Phrase</h1>
+                <h1 className="text-xl font-bold mb-2">{t('mnemonic.title')}</h1>
                 <p className="opacity-70 text-sm">
-                  Write down these {MNEMONIC_GENERATE_WORD_COUNT} words in order and store them
-                  somewhere safe. This phrase unlocks your local encryption key and your EVM, BTC,
-                  Solana, and Tron wallet identities, and can never be recovered if lost.
+                  {t('mnemonic.warning').replace('{count}', String(MNEMONIC_GENERATE_WORD_COUNT))}
                 </p>
               </div>
 
@@ -229,7 +229,7 @@ const Mnemonic = () => {
                       strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
-                    <span className="text-sage-600">Copied to Clipboard</span>
+                    <span className="text-sage-600">{t('mnemonic.copied')}</span>
                   </>
                 ) : (
                   <>
@@ -245,7 +245,7 @@ const Mnemonic = () => {
                         d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
                       />
                     </svg>
-                    <span>Copy to Clipboard</span>
+                    <span>{t('common.copy')}</span>
                   </>
                 )}
               </button>
@@ -254,7 +254,7 @@ const Mnemonic = () => {
               <button
                 onClick={() => setMode('import')}
                 className="w-full text-center text-sm text-primary-500 hover:text-primary-600 transition-colors mb-3">
-                I already have a recovery phrase
+                {t('mnemonic.reveal')}
               </button>
 
               {/* Confirmation Checkbox */}
@@ -265,20 +265,14 @@ const Mnemonic = () => {
                   onChange={e => setConfirmed(e.target.checked)}
                   className="mt-0.5 w-4 h-4 rounded border-stone-300 text-primary-500 focus:ring-primary-500"
                 />
-                <span className="text-sm text-stone-600">
-                  I saved this phrase and consent to using it for local wallet setup on this device
-                </span>
+                <span className="text-sm text-stone-600">{t('mnemonic.warning')}</span>
               </label>
             </>
           ) : (
             <>
               <div className="text-center mb-4">
-                <h1 className="text-xl font-bold mb-2">Import Recovery Phrase</h1>
-                <p className="opacity-70 text-sm">
-                  Enter your recovery phrase below to restore your local encryption key and wallet
-                  identities, or paste the full phrase into any field (12 words for new backups;
-                  24-word phrases from older versions still work).
-                </p>
+                <h1 className="text-xl font-bold mb-2">{t('mnemonic.title')}</h1>
+                <p className="opacity-70 text-sm">{t('mnemonic.copyWarning')}</p>
               </div>
 
               {/* Import Word Inputs Grid */}
@@ -323,7 +317,7 @@ const Mnemonic = () => {
                     strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
-                  <span>Valid recovery phrase</span>
+                  <span>{t('common.success')}</span>
                 </div>
               )}
 
@@ -331,7 +325,7 @@ const Mnemonic = () => {
               <button
                 onClick={() => setMode('generate')}
                 className="w-full text-center text-sm text-primary-500 hover:text-primary-600 transition-colors mb-3">
-                Generate a new recovery phrase instead
+                {t('mnemonic.reveal')}
               </button>
             </>
           )}
@@ -345,10 +339,10 @@ const Mnemonic = () => {
             className="w-full flex items-center justify-center space-x-3 bg-blue-500 hover:bg-blue-600 active:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-2.5 text-sm rounded-xl transition-all duration-300 hover:shadow-medium">
             <span>
               {loading
-                ? 'Securing Your Data...'
+                ? t('misc.checkingServices')
                 : mode === 'import'
-                  ? 'Import & Continue'
-                  : "I'm Ready! Let's Go!"}
+                  ? t('common.continue')
+                  : t('common.finish')}
             </span>
           </button>
         </div>

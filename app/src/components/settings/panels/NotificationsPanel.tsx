@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { getBypassPrefs, setGlobalDnd } from '../../../services/webviewAccountService';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { type NotificationCategory, setPreference } from '../../../store/notificationSlice';
@@ -41,6 +42,7 @@ const CATEGORIES: { id: NotificationCategory; title: string; description: string
 ];
 
 const NotificationsPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const preferences = useAppSelector(s => s.notifications.preferences);
   const dispatch = useAppDispatch();
@@ -77,7 +79,7 @@ const NotificationsPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Notifications"
+        title={t('settings.notifications')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -88,14 +90,16 @@ const NotificationsPanel = () => {
           {/* Do Not Disturb */}
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-2 px-1">
-              Do Not Disturb
+              {t('settings.notifications.doNotDisturb')}
             </h3>
             <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
               <div className="flex items-center justify-between p-4">
                 <div className="flex-1 mr-4">
-                  <p className="text-sm font-medium text-stone-900">Suppress all notifications</p>
+                  <p className="text-sm font-medium text-stone-900">
+                    {t('settings.notifications.suppressAll')}
+                  </p>
                   <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-                    Block all OS notification toasts from embedded apps regardless of focus state.
+                    {t('settings.notifications.suppressAllDesc')}
                   </p>
                 </div>
                 {dndLoading ? (
@@ -111,7 +115,7 @@ const NotificationsPanel = () => {
                     }`}
                     role="switch"
                     aria-checked={dnd}
-                    aria-label="Toggle Do Not Disturb">
+                    aria-label={t('settings.notifications.toggleDnd')}>
                     <span
                       className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
                         dnd ? 'translate-x-5' : 'translate-x-0'
@@ -126,7 +130,7 @@ const NotificationsPanel = () => {
           {/* Categories */}
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-2 px-1">
-              Categories
+              {t('settings.notifications.categories')}
             </h3>
             <div className="bg-white rounded-xl border border-stone-200 overflow-hidden divide-y divide-stone-100">
               {CATEGORIES.map(cat => {
@@ -159,8 +163,7 @@ const NotificationsPanel = () => {
             </div>
 
             <p className="text-xs text-stone-500 leading-relaxed px-1 mt-2">
-              Disabling a category stops new notifications of that type from appearing in the
-              notification center. Existing notifications remain until cleared.
+              {t('settings.notifications.categoryFooter')}
             </p>
           </div>
         </div>

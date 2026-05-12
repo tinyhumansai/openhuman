@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { useT } from '../lib/i18n/I18nContext';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { isWelcomeLocked } from '../lib/coreState/store';
 import { useCoreState } from '../providers/CoreStateProvider';
@@ -8,10 +9,10 @@ import { useAppSelector } from '../store/hooks';
 import { selectUnreadCount } from '../store/notificationSlice';
 import { isAccountsFullscreen } from '../utils/accountsFullscreen';
 
-const tabs = [
+const makeTabs = (t: (key: string) => string) => [
   {
     id: 'home',
-    label: 'Home',
+    label: t('nav.home'),
     path: '/home',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -26,7 +27,7 @@ const tabs = [
   },
   {
     id: 'human',
-    label: 'Human',
+    label: t('nav.human'),
     path: '/human',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -41,7 +42,7 @@ const tabs = [
   },
   {
     id: 'chat',
-    label: 'Chat',
+    label: t('nav.chat'),
     path: '/chat',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -56,7 +57,7 @@ const tabs = [
   },
   {
     id: 'skills',
-    label: 'Connections',
+    label: t('nav.connections'),
     path: '/skills',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -71,7 +72,7 @@ const tabs = [
   },
   {
     id: 'intelligence',
-    label: 'Memory',
+    label: t('nav.memory'),
     path: '/intelligence',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -86,7 +87,7 @@ const tabs = [
   },
   {
     id: 'notifications',
-    label: 'Alerts',
+    label: t('nav.alerts'),
     path: '/notifications',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -101,7 +102,7 @@ const tabs = [
   },
   {
     id: 'rewards',
-    label: 'Rewards',
+    label: t('nav.rewards'),
     path: '/rewards',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -116,7 +117,7 @@ const tabs = [
   },
   {
     id: 'settings',
-    label: 'Settings',
+    label: t('nav.settings'),
     path: '/settings',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -138,6 +139,8 @@ const tabs = [
 ];
 
 const BottomTabBar = () => {
+  const { t } = useT();
+  const tabs = useMemo(() => makeTabs(t), [t]);
   const location = useLocation();
   const navigate = useNavigate();
   const { snapshot } = useCoreState();
@@ -230,7 +233,7 @@ const BottomTabBar = () => {
                 }`}
                 aria-label={
                   tab.id === 'notifications' && unreadCount > 0
-                    ? `${tab.label} (${unreadCount} unread)`
+                    ? `${tab.label} (${unreadCount} ${t('alerts.unread')})`
                     : tab.label
                 }>
                 <span className="relative inline-flex flex-shrink-0">

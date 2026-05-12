@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const TeamInvitesPanel = () => {
+  const { t } = useT();
   const { teamId } = useParams<{ teamId: string }>();
   const location = useLocation();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
@@ -103,7 +105,7 @@ const TeamInvitesPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Invites"
+        title={t('invites.title')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}

@@ -9,12 +9,14 @@
 import { useState } from 'react';
 
 import { useAppUpdate } from '../../../hooks/useAppUpdate';
+import { useT } from '../../../lib/i18n/I18nContext';
 import { APP_VERSION, LATEST_APP_DOWNLOAD_URL } from '../../../utils/config';
 import { openUrl } from '../../../utils/openUrl';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const AboutPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   // The auto-cadence is already running via the global <AppUpdatePrompt />;
   // disable it here so opening the panel doesn't double-trigger probes.
@@ -33,7 +35,7 @@ const AboutPanel = () => {
   return (
     <div className="z-10 relative">
       <SettingsHeader
-        title="About"
+        title={t('settings.about')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -41,11 +43,11 @@ const AboutPanel = () => {
 
       <div className="p-4 space-y-4">
         <div className="rounded-xl border border-stone-200 bg-white p-4">
-          <div className="text-xs text-stone-500">Version</div>
+          <div className="text-xs text-stone-500">{t('settings.about.version')}</div>
           <div className="mt-1 text-lg font-semibold text-stone-900">v{APP_VERSION}</div>
           {info?.available && info.available_version && (
             <div className="mt-1 text-xs text-primary-500">
-              v{info.available_version} is available
+              v{info.available_version} {t('settings.about.updateAvailable')}
             </div>
           )}
         </div>
@@ -53,11 +55,13 @@ const AboutPanel = () => {
         <div className="rounded-xl border border-stone-200 bg-white p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-stone-900">Software updates</div>
+              <div className="text-sm font-medium text-stone-900">
+                {t('settings.about.softwareUpdates')}
+              </div>
               <div className="mt-1 text-xs text-stone-500 leading-relaxed">{summary}</div>
               {lastCheckedAt && (
                 <div className="mt-1 text-[11px] text-stone-400">
-                  Last checked {formatRelative(lastCheckedAt)}
+                  {t('settings.about.lastChecked')} {formatRelative(lastCheckedAt)}
                 </div>
               )}
             </div>
@@ -66,15 +70,15 @@ const AboutPanel = () => {
               onClick={handleCheck}
               disabled={isChecking}
               className="shrink-0 px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-400 text-white text-xs font-medium transition-colors disabled:opacity-50">
-              {isChecking ? 'Checking…' : 'Check for updates'}
+              {isChecking ? t('settings.about.checking') : t('settings.about.checkForUpdates')}
             </button>
           </div>
         </div>
 
         <div className="rounded-xl border border-stone-200 bg-white p-4">
-          <div className="text-sm font-medium text-stone-900">Releases</div>
+          <div className="text-sm font-medium text-stone-900">{t('settings.about.releases')}</div>
           <p className="mt-1 text-xs text-stone-500 leading-relaxed">
-            Browse release notes and earlier builds on GitHub.
+            {t('settings.about.releasesDesc')}
           </p>
           <button
             type="button"
@@ -82,7 +86,7 @@ const AboutPanel = () => {
               void openUrl(LATEST_APP_DOWNLOAD_URL);
             }}
             className="mt-3 px-3 py-1.5 rounded-lg border border-stone-200 text-stone-700 hover:bg-stone-100 text-xs transition-colors">
-            Open GitHub releases
+            {t('settings.about.openReleases')}
           </button>
         </div>
       </div>

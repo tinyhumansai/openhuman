@@ -16,6 +16,7 @@ import accountsReducer from './accountsSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
 import coreModeReducer from './coreModeSlice';
+import localeReducer from './localeSlice';
 import notificationReducer from './notificationSlice';
 import providerSurfacesReducer from './providerSurfaceSlice';
 import socketReducer from './socketSlice';
@@ -71,6 +72,9 @@ const coreModePersistConfig = {
 };
 const persistedCoreModeReducer = persistReducer(coreModePersistConfig, coreModeReducer);
 
+const localePersistConfig = { key: 'locale', storage: localStorageAdapter, whitelist: ['current'] };
+const persistedLocaleReducer = persistReducer(localePersistConfig, localeReducer);
+
 const channelConnectionsPersistConfig = {
   key: 'channelConnections',
   storage,
@@ -114,6 +118,7 @@ export const store = configureStore({
     notifications: persistedNotificationReducer,
     providerSurfaces: providerSurfacesReducer,
     coreMode: persistedCoreModeReducer,
+    locale: persistedLocaleReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({

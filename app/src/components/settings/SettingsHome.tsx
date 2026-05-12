@@ -1,8 +1,12 @@
 import { ReactNode, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import { useT } from '../../lib/i18n/I18nContext';
+import type { Locale } from '../../lib/i18n/types';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { persistor } from '../../store';
+import { useAppDispatch, useAppSelector } from '../../store/hooks';
+import { setLocale } from '../../store/localeSlice';
 import { BILLING_DASHBOARD_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
 import {
@@ -25,8 +29,9 @@ interface SettingsItem {
   title: string;
   description: string;
   icon: ReactNode;
-  onClick: () => void;
+  onClick?: () => void;
   dangerous?: boolean;
+  rightElement?: ReactNode;
 }
 
 // Subtle uppercase section header label separating settings groups
@@ -42,6 +47,9 @@ const SettingsHome = () => {
   const navigate = useNavigate();
   const { navigateToSettings } = useSettingsNavigation();
   const { clearSession, snapshot } = useCoreState();
+  const { t } = useT();
+  const dispatch = useAppDispatch();
+  const currentLocale = useAppSelector(state => state.locale.current);
   const [showLogoutAndClearModal, setShowLogoutAndClearModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +59,7 @@ const SettingsHome = () => {
       await clearSession();
     } catch (err) {
       console.warn('[Settings] Rust logout failed:', err);
-      setError('Failed to log out. Please try again.');
+      setError(t('clearData.failedLogout'));
     }
   };
 
@@ -110,7 +118,7 @@ const SettingsHome = () => {
       setError(null);
       await clearAllAppData(); // This will redirect to login
     } catch (_error) {
-      setError('Failed to clear data and logout. Please try again.');
+      setError(t('clearData.failed'));
     } finally {
       setIsLoading(false);
     }
@@ -118,12 +126,12 @@ const SettingsHome = () => {
 
   const settingsSections: SettingsSection[] = [
     {
-      label: 'General',
+      label: t('settings.general'),
       items: [
         {
           id: 'account',
-          title: 'Account',
-          description: 'Recovery phrase, team, connections, and privacy',
+          title: t('settings.account'),
+          description: t('settings.accountDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -138,8 +146,8 @@ const SettingsHome = () => {
         },
         {
           id: 'notifications',
-          title: 'Notifications',
-          description: 'Do Not Disturb and per-account notification controls',
+          title: t('settings.notifications'),
+          description: t('settings.notificationsDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -152,15 +160,39 @@ const SettingsHome = () => {
           ),
           onClick: () => navigateToSettings('notifications'),
         },
+        {
+          id: 'language',
+          title: t('settings.language'),
+          description: t('settings.languageDesc'),
+          icon: (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"
+              />
+            </svg>
+          ),
+          rightElement: (
+            <select
+              value={currentLocale}
+              onChange={e => dispatch(setLocale(e.target.value as Locale))}
+              className="text-sm border border-stone-300 rounded-lg px-3 py-1.5 bg-white text-stone-700 focus:outline-none focus:ring-2 focus:ring-ocean-500/30 cursor-pointer">
+              <option value="en">English</option>
+              <option value="zh-CN">简体中文</option>
+            </select>
+          ),
+        },
       ],
     },
     {
-      label: 'Features & AI',
+      label: t('settings.featuresAndAI'),
       items: [
         {
           id: 'features',
-          title: 'Features',
-          description: 'Screen awareness, messaging, and tools',
+          title: t('settings.features'),
+          description: t('settings.featuresDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -175,8 +207,8 @@ const SettingsHome = () => {
         },
         {
           id: 'ai-models',
-          title: 'AI & Models',
-          description: 'Local AI model setup, downloads, and LLM provider',
+          title: t('settings.aiModels'),
+          description: t('settings.aiModelsDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -192,12 +224,12 @@ const SettingsHome = () => {
       ],
     },
     {
-      label: 'Billing & Rewards',
+      label: t('settings.billingAndRewards'),
       items: [
         {
           id: 'billing',
-          title: 'Billing & Usage',
-          description: 'Subscription plan, credits, and payment methods',
+          title: t('settings.billingUsage'),
+          description: t('settings.billingUsageDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -214,8 +246,8 @@ const SettingsHome = () => {
         },
         {
           id: 'rewards',
-          title: 'Rewards',
-          description: 'Referrals, coupons, and earned credits',
+          title: t('settings.rewards'),
+          description: t('settings.rewardsDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -231,12 +263,12 @@ const SettingsHome = () => {
       ],
     },
     {
-      label: 'Support',
+      label: t('settings.support'),
       items: [
         {
           id: 'restart-tour',
-          title: 'Restart Tour',
-          description: 'Replay the product walkthrough from the beginning',
+          title: t('settings.restartTour'),
+          description: t('settings.restartTourDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -254,8 +286,8 @@ const SettingsHome = () => {
         },
         {
           id: 'about',
-          title: 'About',
-          description: 'App version and software updates',
+          title: t('settings.about'),
+          description: t('settings.aboutDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -271,12 +303,12 @@ const SettingsHome = () => {
       ],
     },
     {
-      label: 'Advanced',
+      label: t('settings.advanced'),
       items: [
         {
           id: 'developer-options',
-          title: 'Developer Options',
-          description: 'Diagnostics, debug panels, webhooks, and memory inspection',
+          title: t('settings.developerOptions'),
+          description: t('settings.developerOptionsDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -297,8 +329,8 @@ const SettingsHome = () => {
   const destructiveItems: SettingsItem[] = [
     {
       id: 'logout-and-clear',
-      title: 'Clear App Data',
-      description: 'Sign out and permanently clear all local app data',
+      title: t('settings.clearAppData'),
+      description: t('settings.clearAppDataDesc'),
       icon: (
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -314,8 +346,8 @@ const SettingsHome = () => {
     },
     {
       id: 'logout',
-      title: 'Log out',
-      description: 'Sign out of your account',
+      title: t('settings.logOut'),
+      description: t('settings.logOutDesc'),
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -352,13 +384,14 @@ const SettingsHome = () => {
                 dangerous={item.dangerous}
                 isFirst={index === 0}
                 isLast={index === section.items.length - 1}
+                rightElement={item.rightElement}
               />
             ))}
           </div>
         ))}
 
         {/* Danger Zone */}
-        <SectionHeader label="Danger Zone" />
+        <SectionHeader label={t('settings.dangerZone')} />
         {destructiveItems.map((item, index) => (
           <SettingsMenuItem
             key={item.id}
@@ -393,20 +426,20 @@ const SettingsHome = () => {
                 </svg>
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-stone-900">Clear App Data</h3>
+                <h3 className="text-lg font-semibold text-stone-900">{t('clearData.title')}</h3>
               </div>
             </div>
 
             <div className="mb-6">
               <div className="text-stone-700 text-sm leading-relaxed">
-                <p>This will sign you out and permanently delete local app data including:</p>
+                <p>{t('clearData.warning')}</p>
                 <ul className="list-disc pl-5 mt-2 space-y-1">
-                  <li>App settings and conversations</li>
-                  <li>All local integration cache data</li>
-                  <li>Workspace data</li>
-                  <li>All other local data</li>
+                  <li>{t('clearData.bulletSettings')}</li>
+                  <li>{t('clearData.bulletCache')}</li>
+                  <li>{t('clearData.bulletWorkspace')}</li>
+                  <li>{t('clearData.bulletOther')}</li>
                 </ul>
-                <p className="mt-3">This action cannot be undone.</p>
+                <p className="mt-3">{t('clearData.irreversible')}</p>
               </div>
 
               {error && (
@@ -424,7 +457,7 @@ const SettingsHome = () => {
                 }}
                 disabled={isLoading}
                 className="flex-1 px-4 py-2 rounded-lg border border-stone-200 text-stone-700 hover:bg-stone-100 transition-colors disabled:opacity-50">
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleLogoutAndClearData}
@@ -447,7 +480,7 @@ const SettingsHome = () => {
                     />
                   </svg>
                 )}
-                {isLoading ? 'Clearing App Data...' : 'Clear App Data'}
+                {isLoading ? t('clearData.clearing') : t('clearData.title')}
               </button>
             </div>
           </div>

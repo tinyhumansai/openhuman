@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import {
   capabilityForModel,
   type ModelDescriptor,
@@ -80,6 +81,7 @@ interface CatalogRowProps {
 }
 
 function CatalogRow({ model, installed, active, onDownload, onUse, onDelete }: CatalogRowProps) {
+  const { t } = useT();
   const [state, setState] = useState<RowState>('idle');
   const [progress, setProgress] = useState(0);
 
@@ -156,36 +158,35 @@ function CatalogRow({ model, installed, active, onDownload, onUse, onDelete }: C
         <span>·</span>
         <span className="text-stone-400">{model.note}</span>
         {capabilityForModel(model) === null && (
-          <span className="text-amber-600 ml-auto">no capability binding</span>
+          <span className="text-amber-600 ml-auto">{t('catalog.noCapabilityBinding')}</span>
         )}
       </div>
       {state === 'error' && (
-        <div className="mt-2 text-[11px] text-coral-700">
-          Download failed — check Ollama is running and try again.
-        </div>
+        <div className="mt-2 text-[11px] text-coral-700">{t('catalog.downloadFailed')}</div>
       )}
     </div>
   );
 }
 
 function StatusChip({ status }: { status: 'active' | 'installed' | 'available' }) {
+  const { t } = useT();
   if (status === 'active') {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] uppercase tracking-wider rounded-full bg-sage-50 text-sage-700 border border-sage-100">
-        active
+        {t('catalog.active')}
       </span>
     );
   }
   if (status === 'installed') {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] uppercase tracking-wider rounded-full bg-stone-100 text-stone-600 border border-stone-200">
-        installed
+        {t('catalog.installed')}
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] uppercase tracking-wider rounded-full bg-white text-stone-500 border border-stone-200">
-      not downloaded
+      {t('catalog.notDownloaded')}
     </span>
   );
 }
@@ -199,9 +200,12 @@ interface ActionButtonProps {
 }
 
 function ActionButton({ status, hasDelete, onDownload, onUse, onDelete }: ActionButtonProps) {
+  const { t } = useT();
   if (status === 'active') {
     return (
-      <span className="px-3 py-1.5 text-xs text-stone-500 border border-transparent">in use</span>
+      <span className="px-3 py-1.5 text-xs text-stone-500 border border-transparent">
+        {t('catalog.inUse')}
+      </span>
     );
   }
   if (status === 'installed') {
@@ -211,15 +215,15 @@ function ActionButton({ status, hasDelete, onDownload, onUse, onDelete }: Action
           type="button"
           onClick={onUse}
           className="px-3 py-1.5 text-xs font-medium bg-primary-50 hover:bg-primary-100 text-primary-700 border border-primary-100 rounded-lg transition-colors">
-          Use
+          {t('catalog.use')}
         </button>
         {hasDelete && onDelete && (
           <button
             type="button"
             onClick={onDelete}
             className="px-2 py-1.5 text-xs text-stone-500 hover:text-coral-700 border border-stone-200 rounded-lg transition-colors"
-            aria-label="Delete model">
-            Delete
+            aria-label={t('catalog.deleteModel')}>
+            {t('common.delete')}
           </button>
         )}
       </div>
@@ -230,7 +234,7 @@ function ActionButton({ status, hasDelete, onDownload, onUse, onDelete }: Action
       type="button"
       onClick={onDownload}
       className="px-3 py-1.5 text-xs font-medium bg-white hover:bg-stone-50 text-stone-700 border border-stone-200 rounded-lg transition-colors">
-      Download
+      {t('catalog.download')}
     </button>
   );
 }

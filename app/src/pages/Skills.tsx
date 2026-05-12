@@ -33,6 +33,7 @@ import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
 import { useComposioIntegrations } from '../lib/composio/hooks';
 import { canonicalizeComposioToolkitSlug } from '../lib/composio/toolkitSlug';
 import { type ComposioConnection, deriveComposioState } from '../lib/composio/types';
+import { useT } from '../lib/i18n/I18nContext';
 import { skillsApi, type SkillSummary } from '../services/api/skillsApi';
 import { useAppSelector } from '../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../types/channels';
@@ -125,17 +126,18 @@ function ComposioConnectorTile({
   onOpen,
   onRetryGlobal,
 }: ComposioConnectorTileProps) {
+  const { t } = useT();
   const state = hasComposioError ? 'error' : deriveComposioState(connection);
   const statusLabel = hasComposioError ? 'Status unavailable' : composioStatusLabel(connection);
   const ctaLabel = hasComposioError
-    ? 'Retry'
+    ? t('common.retry')
     : state === 'connected'
-      ? 'Manage'
+      ? t('skills.configure')
       : state === 'pending'
-        ? 'Waiting'
+        ? t('skills.connect')
         : state === 'error'
-          ? 'Retry'
-          : 'Connect';
+          ? t('common.retry')
+          : t('skills.connect');
 
   const isConnected = state === 'connected';
   const isPending = state === 'pending';
@@ -190,11 +192,12 @@ interface ChannelTileProps {
 }
 
 function ChannelTile({ def, status, icon, onOpen }: ChannelTileProps) {
+  const { t } = useT();
   const isConnected = status === 'connected';
   const isPending = status === 'connecting';
   const isError = status === 'error';
   const statusLabel = channelStatusLabel(status);
-  const ctaLabel = isConnected ? 'Manage' : 'Setup';
+  const ctaLabel = isConnected ? t('skills.configure') : t('channels.setup');
 
   return (
     <button
@@ -268,6 +271,7 @@ interface SkillItem {
 // ─── Main Skills Page ──────────────────────────────────────────────────────────
 
 export default function Skills() {
+  const { t } = useT();
   const location = useLocation();
   const navigate = useNavigate();
   const { definitions: channelDefs } = useChannelDefinitions();
@@ -657,7 +661,7 @@ export default function Skills() {
                 icon={item.icon}
                 title={item.name}
                 description={item.description}
-                ctaLabel="Settings"
+                ctaLabel={t('nav.settings')}
                 onCtaClick={() => navigate(item.route!)}
               />
             );
@@ -666,12 +670,12 @@ export default function Skills() {
           if (item.kind === 'discovered') {
             const skill = item.discoveredSkill!;
             const scopeLabel = skill.legacy
-              ? 'Legacy'
+              ? t('scope.legacy')
               : skill.scope === 'user'
-                ? 'User'
+                ? t('scope.user')
                 : skill.scope === 'project'
-                  ? 'Project'
-                  : 'Legacy';
+                  ? t('scope.project')
+                  : t('scope.legacy');
             const scopeColor = skill.legacy
               ? 'text-stone-600'
               : skill.scope === 'user'
@@ -688,7 +692,7 @@ export default function Skills() {
                 description={item.description}
                 statusLabel={scopeLabel}
                 statusColor={scopeColor}
-                ctaLabel="View"
+                ctaLabel={t('common.seeAll')}
                 onCtaClick={() => {
                   console.debug('[skills][discovered] open drawer', { skillId: skill.id });
                   setSelectedSkill(skill);
@@ -697,7 +701,7 @@ export default function Skills() {
                   canUninstall
                     ? [
                         {
-                          label: 'Uninstall',
+                          label: t('skills.disconnect'),
                           testId: `uninstall-skill-${skill.id}`,
                           icon: (
                             <svg
@@ -765,7 +769,7 @@ export default function Skills() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h2 className="text-sm font-semibold text-amber-900">
-                      Connections are showing stale status
+                      {t('misc.somethingWentWrong')}
                     </h2>
                     <p className="mt-1 text-xs leading-relaxed text-amber-800">{composioError}</p>
                   </div>
@@ -773,7 +777,7 @@ export default function Skills() {
                     type="button"
                     onClick={() => void refreshComposio()}
                     className="flex-shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-medium text-amber-800 transition-colors hover:bg-amber-100">
-                    Retry
+                    {t('common.retry')}
                   </button>
                 </div>
               </div>
@@ -793,12 +797,10 @@ export default function Skills() {
                             className={skillCategoryHeadingClassName('Channels')}
                           />
                         </span>
-                        Channels
+                        {t('skills.channels')}
                       </h2>
                       <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500">
-                        Connect messaging platforms so your agent can chat where you already are.
-                        Note that you will need to have OpenHuman running either on your desktop or
-                        in your own cloud.
+                        {t('channels.defaultMessaging')}
                       </p>
                     </div>
                     <div
@@ -822,11 +824,10 @@ export default function Skills() {
                     <h2
                       className="text-sm font-semibold text-stone-900"
                       data-walkthrough="skills-grid">
-                      Integrations
+                      {t('skills.integrations')}
                     </h2>
                     <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500">
-                      Connect external apps. Connected services give your agent access to the tools
-                      it needs to perform tasks.
+                      {t('skills.available')}
                     </p>
                   </div>
                   <div className="space-y-3 px-1 pb-3">
@@ -854,7 +855,7 @@ export default function Skills() {
                     </div>
                   ) : (
                     <p className="px-1 py-4 text-center text-xs text-stone-400">
-                      No integrations match your search.
+                      {t('skills.noResults')}
                     </p>
                   )}
                 </div>
@@ -954,8 +955,8 @@ export default function Skills() {
             });
             addToast({
               type: 'success',
-              title: 'Skill uninstalled',
-              message: `"${result.name}" was removed successfully.`,
+              title: t('skills.disconnect'),
+              message: `"${result.name}" ${t('common.success')}`,
             });
             // If the detail drawer was showing the skill we just removed,
             // close it — the resource tree is now stale and any `read_resource`

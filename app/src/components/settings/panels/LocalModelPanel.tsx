@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   formatBytes,
   formatEta,
@@ -29,6 +30,7 @@ const formatRamGb = (bytes: number): string => {
 };
 
 const LocalModelPanel = () => {
+  const { t } = useT();
   const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
   const [downloads, setDownloads] = useState<LocalAiDownloadsProgress | null>(null);
@@ -175,7 +177,7 @@ const LocalModelPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Local AI Model"
+        title={t('settings.ai.localSetup')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -197,7 +199,7 @@ const LocalModelPanel = () => {
 
         {/* Simplified download status */}
         <section className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">Model Status</h3>
+          <h3 className="text-sm font-semibold text-stone-900">{t('localModel.modelStatus')}</h3>
 
           <div className="text-sm text-stone-600">
             State:{' '}
@@ -249,13 +251,13 @@ const LocalModelPanel = () => {
               onClick={() => void triggerDownload(false)}
               disabled={isTriggeringDownload}
               className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
-              {isTriggeringDownload ? 'Downloading…' : 'Download Models'}
+              {isTriggeringDownload ? 'Downloading…' : t('localModel.downloadModels')}
             </button>
             <button
               type="button"
               onClick={() => void loadStatus()}
               className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-2 text-sm text-stone-700">
-              Refresh
+              {t('common.refresh')}
             </button>
           </div>
 
@@ -268,10 +270,8 @@ const LocalModelPanel = () => {
 
         <section className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
           <div>
-            <h3 className="text-sm font-semibold text-stone-900">Usage</h3>
-            <p className="text-xs text-stone-500 mt-0.5">
-              Choose which subsystems run on the local model. Anything off uses the cloud.
-            </p>
+            <h3 className="text-sm font-semibold text-stone-900">{t('localModel.usage')}</h3>
+            <p className="text-xs text-stone-500 mt-0.5">{t('localModel.usageDesc')}</p>
           </div>
 
           <label className="flex items-start gap-3 cursor-pointer">
@@ -283,11 +283,8 @@ const LocalModelPanel = () => {
               onChange={e => void updateUsage({ runtime_enabled: e.target.checked })}
             />
             <div>
-              <div className="text-sm text-stone-900">Enable local AI runtime</div>
-              <div className="text-xs text-stone-500">
-                Master switch. Off by default — Ollama stays idle. When on, the tree summarizer,
-                screen intelligence, and autocomplete always use the local model.
-              </div>
+              <div className="text-sm text-stone-900">{t('localModel.enableRuntime')}</div>
+              <div className="text-xs text-stone-500">{t('localModel.enableRuntimeDesc')}</div>
             </div>
           </label>
 
@@ -343,7 +340,7 @@ const LocalModelPanel = () => {
           type="button"
           onClick={() => navigateToSettings('local-model-debug')}
           className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-600 transition-colors">
-          Advanced settings
+          {t('localModel.advancedSettings')}
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>

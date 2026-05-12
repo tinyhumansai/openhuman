@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import type { Backend } from '../../lib/intelligence/settingsApi';
 
 interface BackendChooserProps {
@@ -28,13 +29,17 @@ export default function BackendChooser({
   costEstimate = '$0.42 / mo est.',
   busy = false,
 }: BackendChooserProps) {
+  const { t } = useT();
   const [hoveredCloud, setHoveredCloud] = useState(false);
 
   const cardBase =
     'flex-1 min-h-[160px] px-6 py-5 rounded-2xl text-left transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed';
 
   return (
-    <div className="flex gap-4 flex-col sm:flex-row" role="radiogroup" aria-label="AI backend">
+    <div
+      className="flex gap-4 flex-col sm:flex-row"
+      role="radiogroup"
+      aria-label={t('backend.aiBackend')}>
       {/* Cloud */}
       <button
         type="button"
@@ -54,14 +59,14 @@ export default function BackendChooser({
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <RadioDot active={value === 'cloud'} />
-            <span className="text-sm font-semibold text-stone-900">Cloud</span>
+            <span className="text-sm font-semibold text-stone-900">{t('backend.cloud')}</span>
             <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-100">
-              Recommended
+              {t('backend.recommended')}
             </span>
           </div>
         </div>
         <p className="text-xs text-stone-600 leading-relaxed mb-3">
-          Runs on OpenHuman servers. Costs credits. No local CPU.
+          {t('backend.cloudDescription')}
         </p>
         <div className="font-mono text-[11px] text-stone-500">{costEstimate}</div>
         {/* Privacy reassurance — appears on hover/focus of the Cloud card. */}
@@ -70,7 +75,7 @@ export default function BackendChooser({
             hoveredCloud ? 'opacity-100' : 'opacity-0'
           }`}
           aria-live="polite">
-          Your data still stays local. bge-m3 embedder runs on your machine regardless.
+          {t('backend.privacyNote')}
         </div>
       </button>
 
@@ -89,14 +94,14 @@ export default function BackendChooser({
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <RadioDot active={value === 'local'} />
-            <span className="text-sm font-semibold text-stone-900">Local</span>
+            <span className="text-sm font-semibold text-stone-900">{t('backend.local')}</span>
             <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-stone-100 text-stone-600 border border-stone-200">
-              Advanced
+              {t('backend.advanced')}
             </span>
           </div>
         </div>
         <p className="text-xs text-stone-600 leading-relaxed mb-3">
-          Runs on your machine. Free. Uses your CPU and battery.
+          {t('backend.localDescription')}
         </p>
         <div className="flex items-center gap-1.5 text-[11px] text-amber-700">
           <svg
@@ -111,7 +116,7 @@ export default function BackendChooser({
               d="M12 9v3.75m0 3.75h.008v.008H12v-.008zM21 12a9 9 0 11-18 0 9 9 0 0118 0z"
             />
           </svg>
-          <span>≥8 GB RAM recommended</span>
+          <span>{t('backend.ramRecommended')}</span>
         </div>
       </button>
     </div>

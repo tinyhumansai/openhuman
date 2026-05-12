@@ -5,6 +5,7 @@ import BinanceIcon from '../../../assets/icons/binance.svg';
 import GoogleIcon from '../../../assets/icons/GoogleIcon';
 import MetamaskIcon from '../../../assets/icons/metamask.svg';
 import NotionIcon from '../../../assets/icons/notion.svg';
+import { useT } from '../../../lib/i18n/I18nContext';
 import { fetchWalletStatus, type WalletStatus } from '../../../services/walletApi';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -19,26 +20,24 @@ interface ConnectOption {
   skillId?: string;
 }
 
-/**
- * Renders a connection option row with its real-time status badge.
- * Uses useSkillConnectionStatus hook for skill-backed connections.
- */
 function ConnectionOptionRow({
   option,
   isFirst,
   isLast,
   onConnect,
+  t,
 }: {
   option: ConnectOption;
   isFirst: boolean;
   isLast: boolean;
   onConnect: (option: ConnectOption) => void;
+  t: (key: string) => string;
 }) {
   const isDisabled = option.comingSoon;
 
   const badge = option.comingSoon ? (
     <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-stone-100 text-stone-500 border border-stone-200">
-      Coming soon
+      {t('connections.comingSoon')}
     </span>
   ) : option.statusLabel ? (
     <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-sage-50 text-sage-700 border border-sage-200">
@@ -46,7 +45,7 @@ function ConnectionOptionRow({
     </span>
   ) : (
     <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-primary-50 text-primary-600 border border-primary-100">
-      Set up
+      {t('connections.setUp')}
     </span>
   );
 
@@ -76,11 +75,8 @@ function ConnectionOptionRow({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main panel
-// ---------------------------------------------------------------------------
-
 const ConnectionsPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const navigate = useNavigate();
   const [walletStatus, setWalletStatus] = useState<WalletStatus | null>(null);
@@ -129,20 +125,20 @@ const ConnectionsPanel = () => {
       id: 'wallet',
       name: 'Web3 Wallet',
       description: walletConfigured
-        ? 'Local EVM, BTC, Solana, and Tron identities are configured from your recovery phrase.'
+        ? t('connections.walletConfigured')
         : walletReady
-          ? 'Set up local EVM, BTC, Solana, and Tron identities from one recovery phrase.'
+          ? t('connections.walletReady')
           : walletStatusState === 'error'
-            ? 'Could not check wallet status. Tap to retry from the Recovery Phrase panel.'
-            : 'Checking wallet status…',
+            ? t('connections.walletError')
+            : t('connections.walletChecking'),
       icon: <img src={MetamaskIcon} alt="Metamask" className="w-5 h-5" />,
       statusLabel: walletConfigured
-        ? 'Configured'
+        ? t('connections.configured')
         : walletReady
           ? undefined
           : walletStatusState === 'error'
-            ? 'Unavailable'
-            : 'Checking…',
+            ? t('connections.unavailable')
+            : t('connections.checking'),
     },
     {
       id: 'exchange',
@@ -165,7 +161,7 @@ const ConnectionsPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Connections"
+        title={t('settings.account.connections')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -173,7 +169,6 @@ const ConnectionsPanel = () => {
 
       <div>
         <div className="p-4 space-y-4">
-          {/* Connection Options */}
           <div className="rounded-2xl border border-stone-200 overflow-hidden bg-white">
             {connectOptions.map((option, index) => (
               <ConnectionOptionRow
@@ -182,6 +177,7 @@ const ConnectionsPanel = () => {
                 isFirst={index === 0}
                 isLast={index === connectOptions.length - 1}
                 onConnect={handleConnect}
+                t={t}
               />
             ))}
           </div>
@@ -189,10 +185,10 @@ const ConnectionsPanel = () => {
           {walletConfigured && walletStatus ? (
             <div className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
               <div>
-                <p className="font-medium text-stone-900 text-sm">Wallet identities</p>
-                <p className="text-xs text-stone-500 mt-1">
-                  Derived locally from your recovery phrase and stored as safe metadata only.
+                <p className="font-medium text-stone-900 text-sm">
+                  {t('connections.walletIdentities')}
                 </p>
+                <p className="text-xs text-stone-500 mt-1">{t('connections.walletDerived')}</p>
               </div>
               <div className="grid gap-2">
                 {walletStatus.accounts.map(account => (
@@ -213,7 +209,6 @@ const ConnectionsPanel = () => {
             </div>
           ) : null}
 
-          {/* Security notice — palette aligned with Privacy & Security panel for cross-surface trust coherence */}
           <div className="p-4 bg-stone-50 rounded-xl border border-stone-200">
             <div className="flex items-start space-x-3">
               <svg
@@ -227,10 +222,11 @@ const ConnectionsPanel = () => {
                 />
               </svg>
               <div>
-                <p className="font-medium text-stone-900 text-sm">Privacy & Security</p>
+                <p className="font-medium text-stone-900 text-sm">
+                  {t('connections.privacySecurity')}
+                </p>
                 <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-                  All data and credentials are stored locally with zero-data retention policy. Your
-                  information is encrypted and never shared with third parties.
+                  {t('connections.privacySecurityDesc')}
                 </p>
               </div>
             </div>

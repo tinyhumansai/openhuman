@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   openhumanGetVoiceServerSettings,
   openhumanLocalAiAssetsStatus,
@@ -16,6 +17,7 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const VoicePanel = () => {
+  const { t } = useT();
   const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
   const [settings, setSettings] = useState<VoiceServerSettings | null>(null);
   const [savedSettings, setSavedSettings] = useState<VoiceServerSettings | null>(null);
@@ -123,9 +125,9 @@ const VoicePanel = () => {
           activation_mode: settings.activation_mode,
           skip_cleanup: settings.skip_cleanup,
         });
-        setNotice('Voice server restarted with the new settings.');
+        setNotice(t('voice.serverRestarted'));
       } else {
-        setNotice('Voice settings saved.');
+        setNotice(t('voice.settingsSaved'));
       }
 
       await loadData(true);
@@ -158,7 +160,7 @@ const VoicePanel = () => {
         activation_mode: settings.activation_mode,
         skip_cleanup: settings.skip_cleanup,
       });
-      setNotice('Voice server started.');
+      setNotice(t('voice.serverStarted'));
       await loadData(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to start voice server';
@@ -174,7 +176,7 @@ const VoicePanel = () => {
     setNotice(null);
     try {
       await openhumanVoiceServerStop();
-      setNotice('Voice server stopped.');
+      setNotice(t('voice.serverStopped'));
       await loadData(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to stop voice server';
@@ -190,7 +192,7 @@ const VoicePanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Voice Dictation"
+        title={t('voice.title')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -200,16 +202,14 @@ const VoicePanel = () => {
         <section className={`space-y-3 ${disabled ? 'opacity-60' : ''}`}>
           <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-4">
             <div>
-              <h3 className="text-sm font-semibold text-stone-900">Voice Settings</h3>
-              <p className="text-xs text-stone-500 mt-1">
-                Hold the hotkey to dictate and insert text into the active field.
-              </p>
+              <h3 className="text-sm font-semibold text-stone-900">{t('voice.settings')}</h3>
+              <p className="text-xs text-stone-500 mt-1">{t('voice.settingsDesc')}</p>
             </div>
 
             {!disabled && settings && (
               <>
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium text-stone-600">Hotkey</span>
+                  <span className="text-xs font-medium text-stone-600">{t('voice.hotkey')}</span>
                   <input
                     value={settings.hotkey}
                     onChange={e => updateSetting('hotkey', e.target.value)}
@@ -220,26 +220,30 @@ const VoicePanel = () => {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <label className="block space-y-1">
-                    <span className="text-xs font-medium text-stone-600">Activation Mode</span>
+                    <span className="text-xs font-medium text-stone-600">
+                      {t('voice.activationMode')}
+                    </span>
                     <select
                       value={settings.activation_mode}
                       onChange={e =>
                         updateSetting('activation_mode', e.target.value as 'tap' | 'push')
                       }
                       className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-400">
-                      <option value="push">Push to talk</option>
-                      <option value="tap">Tap to toggle</option>
+                      <option value="push">{t('voice.pushToTalk')}</option>
+                      <option value="tap">{t('voice.tapToToggle')}</option>
                     </select>
                   </label>
 
                   <label className="block space-y-1">
-                    <span className="text-xs font-medium text-stone-600">Writing Style</span>
+                    <span className="text-xs font-medium text-stone-600">
+                      {t('voice.writingStyle')}
+                    </span>
                     <select
                       value={settings.skip_cleanup ? 'verbatim' : 'natural'}
                       onChange={e => updateSetting('skip_cleanup', e.target.value === 'verbatim')}
                       className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-400">
-                      <option value="verbatim">Verbatim transcription</option>
-                      <option value="natural">Natural cleanup</option>
+                      <option value="verbatim">{t('voice.verbatimTranscription')}</option>
+                      <option value="natural">{t('voice.naturalCleanup')}</option>
                     </select>
                   </label>
                 </div>
@@ -251,15 +255,15 @@ const VoicePanel = () => {
                     onChange={e => updateSetting('auto_start', e.target.checked)}
                     className="h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
                   />
-                  Start voice server automatically with the core
+                  {t('voice.autoStart')}
                 </label>
 
                 <div className="space-y-2">
                   <div>
-                    <span className="text-xs font-medium text-stone-600">Custom Dictionary</span>
-                    <p className="text-[11px] text-stone-400">
-                      Add names, technical terms, and domain words to improve recognition accuracy.
-                    </p>
+                    <span className="text-xs font-medium text-stone-600">
+                      {t('voice.customDictionary')}
+                    </span>
+                    <p className="text-[11px] text-stone-400">{t('voice.customDictionaryDesc')}</p>
                   </div>
                   <div className="flex gap-2">
                     <input
@@ -278,7 +282,7 @@ const VoicePanel = () => {
                           setNewDictWord('');
                         }
                       }}
-                      placeholder="Add a word..."
+                      placeholder={t('voice.addWord')}
                       className="flex-1 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
                     />
                     <button
@@ -292,7 +296,7 @@ const VoicePanel = () => {
                       }}
                       disabled={!newDictWord.trim()}
                       className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
-                      Add
+                      {t('common.add')}
                     </button>
                   </div>
                   {settings.custom_dictionary.length > 0 && (
@@ -323,14 +327,12 @@ const VoicePanel = () => {
 
             {disabled && (
               <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 space-y-3">
-                <div>
-                  Voice dictation is disabled until the local STT model is downloaded and ready.
-                </div>
+                <div>{t('voice.sttDisabled')}</div>
                 <button
                   type="button"
                   onClick={() => navigateToSettings('local-model')}
                   className="px-3 py-1.5 text-xs rounded-md bg-amber-600 hover:bg-amber-700 text-white">
-                  Open Local AI Model
+                  {t('voice.openLocalAiModel')}
                 </button>
               </div>
             )}
@@ -352,21 +354,21 @@ const VoicePanel = () => {
                 onClick={() => void saveSettings(true)}
                 disabled={disabled || isSaving || !hasUnsavedChanges}
                 className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
-                {isSaving ? 'Saving…' : 'Save Voice Settings'}
+                {isSaving ? 'Saving…' : t('voice.saveVoiceSettings')}
               </button>
               <button
                 type="button"
                 onClick={() => void startServer()}
                 disabled={disabled || isStarting}
                 className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white">
-                {isStarting ? 'Starting…' : 'Start Voice Server'}
+                {isStarting ? 'Starting…' : t('voice.startVoiceServer')}
               </button>
               <button
                 type="button"
                 onClick={() => void stopServer()}
                 disabled={!isRunning || isStopping}
                 className="px-3 py-1.5 text-xs rounded-md border border-stone-300 hover:border-stone-400 disabled:opacity-60 text-stone-700">
-                {isStopping ? 'Stopping…' : 'Stop Voice Server'}
+                {isStopping ? 'Stopping…' : t('voice.stopVoiceServer')}
               </button>
             </div>
           </div>
@@ -376,7 +378,7 @@ const VoicePanel = () => {
           type="button"
           onClick={() => navigateToSettings('voice-debug')}
           className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-600 transition-colors">
-          Advanced settings
+          {t('settings.advanced')}
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>

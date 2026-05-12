@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
+
 interface MemoryHeatmapProps {
   /** Array of document/relation timestamps (unix epoch seconds). */
   timestamps: number[];
@@ -41,6 +43,7 @@ function formatDate(date: Date): string {
 }
 
 export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
+  const { t } = useT();
   const [hoveredCell, setHoveredCell] = useState<{
     date: Date;
     count: number;
@@ -124,7 +127,9 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
   if (loading) {
     return (
       <div className="rounded-xl border border-stone-200 bg-stone-50 p-5">
-        <h3 className="text-sm font-semibold text-stone-900 mb-3">Ingestion Activity</h3>
+        <h3 className="text-sm font-semibold text-stone-900 mb-3">
+          {t('memory.ingestionActivity')}
+        </h3>
         <div className="h-28 rounded-lg bg-stone-200 animate-pulse" />
       </div>
     );
@@ -134,14 +139,21 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
     <div className="rounded-xl border border-stone-200 bg-stone-50 p-5">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-stone-900">Ingestion Activity</h3>
+          <h3 className="text-sm font-semibold text-stone-900">{t('memory.ingestionActivity')}</h3>
           <p className="text-xs text-stone-500 mt-0.5">
-            {totalEvents} event{totalEvents !== 1 ? 's' : ''} over the last {MONTHS} months
-            {maxDailyCount > 0 && <> · peak: {maxDailyCount}/day</>}
+            {totalEvents} {totalEvents !== 1 ? t('memory.events') : t('memory.event')}{' '}
+            {t('memory.overTheLast')} {MONTHS} {t('memory.months')}
+            {maxDailyCount > 0 && (
+              <>
+                {' '}
+                · {t('memory.peak')}: {maxDailyCount}
+                {t('memory.perDay')}
+              </>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-1 text-[10px] text-stone-500">
-          <span>Less</span>
+          <span>{t('memory.less')}</span>
           {INTENSITY_COLORS.map((color, i) => (
             <div
               key={i}
@@ -149,7 +161,7 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
               style={{ backgroundColor: color }}
             />
           ))}
-          <span>More</span>
+          <span>{t('memory.more')}</span>
         </div>
       </div>
 
@@ -229,9 +241,11 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
           className="fixed z-50 px-2 py-1 rounded-md bg-white border border-stone-200 text-[11px] text-stone-900 shadow-lg pointer-events-none"
           style={{ left: hoveredCell.x, top: hoveredCell.y - 32, transform: 'translateX(-50%)' }}>
           <span className="font-medium">
-            {hoveredCell.count} event{hoveredCell.count !== 1 ? 's' : ''}
+            {hoveredCell.count} {hoveredCell.count !== 1 ? t('memory.events') : t('memory.event')}
           </span>{' '}
-          <span className="text-stone-400">on {formatDate(hoveredCell.date)}</span>
+          <span className="text-stone-400">
+            {t('memory.on')} {formatDate(hoveredCell.date)}
+          </span>
         </div>
       )}
     </div>

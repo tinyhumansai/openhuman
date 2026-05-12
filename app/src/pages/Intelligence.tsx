@@ -16,6 +16,7 @@ import {
 import { useIntelligenceStats } from '../hooks/useIntelligenceStats';
 import { useMemoryIngestionStatus } from '../hooks/useMemoryIngestionStatus';
 import { useSubconscious } from '../hooks/useSubconscious';
+import { useT } from '../lib/i18n/I18nContext';
 import type {
   ConfirmationModal as ConfirmationModalType,
   ToastNotification,
@@ -24,6 +25,7 @@ import type {
 type IntelligenceTab = 'memory' | 'subconscious' | 'calls' | 'dreams' | 'settings';
 
 export default function Intelligence() {
+  const { t } = useT();
   const { aiStatus } = useIntelligenceStats();
   const { status: ingestionStatus } = useMemoryIngestionStatus();
 
@@ -104,18 +106,18 @@ export default function Intelligence() {
         : aiStatus;
 
   const systemStatusLabel = isRunning
-    ? 'Analyzing…'
+    ? t('common.loading')
     : systemStatus === 'ready'
-      ? 'System Ready'
+      ? t('common.success')
       : systemStatus === 'loading'
-        ? 'Loading…'
+        ? t('common.loading')
         : systemStatus === 'disconnected'
-          ? 'Connecting…'
+          ? t('welcome.connecting')
           : systemStatus === 'initializing'
-            ? 'Initializing…'
+            ? t('welcome.connecting')
             : systemStatus === 'error'
-              ? 'System Error'
-              : 'System Idle';
+              ? t('common.error')
+              : t('misc.rehydrating');
 
   const systemStatusDot =
     isRunning || systemStatus === 'loading'
@@ -129,11 +131,11 @@ export default function Intelligence() {
             : 'bg-stone-600';
 
   const tabs: { id: IntelligenceTab; label: string; comingSoon?: boolean }[] = [
-    { id: 'memory', label: 'Memory' },
-    { id: 'subconscious', label: 'Subconscious' },
-    { id: 'calls', label: 'Calls' },
-    { id: 'dreams', label: 'Dreams', comingSoon: true },
-    { id: 'settings', label: 'Settings' },
+    { id: 'memory', label: t('memory.tab.memory') },
+    { id: 'subconscious', label: t('memory.tab.subconscious') },
+    { id: 'calls', label: t('memory.tab.calls') },
+    { id: 'dreams', label: t('memory.tab.dreams'), comingSoon: true },
+    { id: 'settings', label: t('memory.tab.settings') },
   ];
 
   return (
@@ -156,7 +158,7 @@ export default function Intelligence() {
                         ? 'border-white/30 bg-white/15 text-white'
                         : 'border-stone-200 bg-stone-50 text-stone-500'
                     }`}>
-                    Soon
+                    {t('misc.beta')}
                   </span>
                 )}
               </span>
@@ -172,7 +174,7 @@ export default function Intelligence() {
                 <h1
                   className="text-xl font-bold text-stone-900"
                   data-walkthrough="intelligence-header">
-                  Intelligence
+                  {t('memory.title')}
                 </h1>
                 {/* Header count badge was sourced from `stats.total` which
                     in turn came from the legacy actionable-items pipeline

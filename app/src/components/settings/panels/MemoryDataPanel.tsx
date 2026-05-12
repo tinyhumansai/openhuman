@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../../types/intelligence';
 import { MemoryWorkspace } from '../../intelligence/MemoryWorkspace';
 import { ToastContainer } from '../../intelligence/Toast';
@@ -8,6 +9,7 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const MemoryDataPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
@@ -37,7 +39,7 @@ const MemoryDataPanel = () => {
   return (
     <div className="z-10 relative">
       <SettingsHeader
-        title="Memory Data"
+        title={t('memory.title')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}

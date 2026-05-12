@@ -1,4 +1,5 @@
 import WhatLeavesLink from '../../../features/privacy/WhatLeavesLink';
+import { useT } from '../../../lib/i18n/I18nContext';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 
 interface WelcomeStepProps {
@@ -6,6 +7,7 @@ interface WelcomeStepProps {
 }
 
 const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
+  const { t } = useT();
   return (
     <div
       data-testid="onboarding-welcome-step"
@@ -13,15 +15,14 @@ const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
       <div className="flex flex-col items-center text-center">
         <img src="/logo.png" alt="OpenHuman" className="w-20 h-20 rounded-2xl mb-5" />
         <h1 className="text-3xl font-display text-stone-900 mb-3 leading-tight">
-          Hi. I'm OpenHuman.
+          {t('onboarding.welcome')}
         </h1>
         <p className="text-stone-500 text-sm leading-relaxed max-w-sm">
-          Your super-intelligent AI assistant that runs on your computer. Private, simple, and
-          extremely powerful.
+          {t('onboarding.welcomeDesc')}
         </p>
       </div>
       <div className="mt-8">
-        <OnboardingNextButton label="Let's Start" onClick={onNext} />
+        <OnboardingNextButton label={t('onboarding.getStarted')} onClick={onNext} />
       </div>
       <div className="mt-4 flex justify-center">
         <WhatLeavesLink />

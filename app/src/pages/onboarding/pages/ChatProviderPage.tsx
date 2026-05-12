@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 import { useOnboardingContext } from '../OnboardingContext';
 
@@ -12,6 +13,7 @@ import { useOnboardingContext } from '../OnboardingContext';
  * scaffolding can ship on its own.
  */
 const ChatProviderPage = () => {
+  const { t } = useT();
   const { completeAndExit } = useOnboardingContext();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,14 +34,14 @@ const ChatProviderPage = () => {
       data-testid="onboarding-chat-provider-step"
       className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-5">
-        <h1 className="text-xl font-bold mb-2 text-stone-900">Pick your chat provider</h1>
+        <h1 className="text-xl font-bold mb-2 text-stone-900">{t('onboarding.chatProvider')}</h1>
         <p className="text-stone-500 text-sm leading-relaxed max-w-sm mx-auto">
-          Choose one chat provider to start with. You can connect more later from Skills.
+          {t('onboarding.chatProviderDesc')}
         </p>
       </div>
 
       <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 p-6 mb-5 text-center text-sm text-stone-500">
-        Provider picker coming soon.
+        {t('misc.beta')}
       </div>
 
       {error && <p className="text-coral-400 text-sm mb-3 text-center">{error}</p>}
@@ -47,8 +49,8 @@ const ChatProviderPage = () => {
       <OnboardingNextButton
         onClick={handleFinish}
         loading={loading}
-        loadingLabel="Finishing…"
-        label="Finish"
+        loadingLabel={t('common.finish')}
+        label={t('common.finish')}
       />
     </div>
   );

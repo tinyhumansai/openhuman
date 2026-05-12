@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { whatsappListChats } from '../../utils/tauriCommands/memory';
 
 interface WhatsAppMemorySectionProps {
@@ -7,6 +8,7 @@ interface WhatsAppMemorySectionProps {
 }
 
 export function WhatsAppMemorySection({ pollIntervalMs = 30000 }: WhatsAppMemorySectionProps) {
+  const { t } = useT();
   const [chatCount, setChatCount] = useState<number | null>(null);
   const [lastSyncTs, setLastSyncTs] = useState<number | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -52,7 +54,8 @@ export function WhatsAppMemorySection({ pollIntervalMs = 30000 }: WhatsAppMemory
           <WhatsAppIcon />
           <span className="text-sm font-semibold text-stone-800">WhatsApp</span>
           <span className="text-xs text-stone-500">
-            {chatCount.toLocaleString()} chat{chatCount !== 1 ? 's' : ''} synced
+            {chatCount.toLocaleString()}{' '}
+            {chatCount !== 1 ? t('whatsapp.chatsSynced') : t('whatsapp.chatSynced')}
             {lastSyncTs !== null && <> · {relativeTime(lastSyncTs)}</>}
           </span>
         </div>
@@ -66,7 +69,7 @@ export function WhatsAppMemorySection({ pollIntervalMs = 30000 }: WhatsAppMemory
                      disabled:cursor-not-allowed disabled:opacity-50
                      focus:outline-none focus:ring-2 focus:ring-primary-200">
           <RefreshIcon spinning={syncing} />
-          {syncing ? 'Syncing…' : 'Sync'}
+          {syncing ? t('sync.syncing') : t('sync.sync')}
         </button>
       </div>
     </div>

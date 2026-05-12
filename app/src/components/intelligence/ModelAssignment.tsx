@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n/I18nContext';
 import {
   DEFAULT_EXTRACT_MODEL,
   DEFAULT_SUMMARISER_MODEL,
@@ -34,6 +35,7 @@ export default function ModelAssignment({
   memoryModel,
   onChangeMemory,
 }: ModelAssignmentProps) {
+  const { t } = useT();
   // Ollama returns tags as `<name>:latest` for default-tag models. The
   // catalog stores bare names (e.g. `bge-m3`). Strip the `:latest` suffix
   // on the installed side so the bare-name comparison matches.
@@ -47,13 +49,16 @@ export default function ModelAssignment({
   return (
     <div className="border border-stone-200 rounded-2xl overflow-hidden">
       <Row
-        label="Memory LLM"
-        sublabel={describeMemory(memoryOptions.find(opt => opt.id === memoryModel))}>
+        label={t('assignment.memoryLlm')}
+        sublabel={describeMemory(
+          t,
+          memoryOptions.find(opt => opt.id === memoryModel)
+        )}>
         <select
           value={memoryModel}
           onChange={e => onChangeMemory(e.target.value)}
           className="w-full sm:w-64 px-3 py-1.5 text-sm bg-white border border-stone-200 rounded-lg text-stone-900 focus:outline-none focus:border-primary-500/50 transition-colors"
-          aria-label="Memory LLM (extract + summarise)">
+          aria-label={t('assignment.memoryLlmAria')}>
           {memoryOptions.map(opt => (
             <option key={opt.id} value={opt.id}>
               {opt.label ?? opt.id}
@@ -63,7 +68,7 @@ export default function ModelAssignment({
       </Row>
 
       <Row
-        label="Embedder"
+        label={t('assignment.embedder')}
         sublabel={
           embedderDescriptor
             ? `${embedderDescriptor.size} · required · 1024-dim`
@@ -82,10 +87,10 @@ export default function ModelAssignment({
                 strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
-              loaded
+              {t('assignment.loaded')}
             </span>
           ) : (
-            <span className="text-amber-700 text-xs">not downloaded</span>
+            <span className="text-amber-700 text-xs">{t('assignment.notDownloaded')}</span>
           )}
         </div>
       </Row>
@@ -115,8 +120,8 @@ function Row({ label, sublabel, last, children }: RowProps) {
   );
 }
 
-function describeMemory(model?: ModelDescriptor): string {
-  if (!model) return 'used for extract + summarise';
+function describeMemory(t: (key: string) => string, model?: ModelDescriptor): string {
+  if (!model) return t('assignment.usedForExtractSummarise');
   return `${model.size} · ${model.ramHint} · ${model.category}`;
 }
 

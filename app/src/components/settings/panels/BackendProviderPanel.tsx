@@ -1,6 +1,7 @@
 import debug from 'debug';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   type ClientConfig,
   type ModelRoute,
@@ -185,6 +186,7 @@ function detectPreset(apiUrl: string): ProviderPreset {
  * persisted.
  */
 const BackendProviderPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [loaded, setLoaded] = useState(false);
   const [client, setClient] = useState<ClientConfig | null>(null);
@@ -316,7 +318,7 @@ const BackendProviderPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="LLM Provider"
+        title={t('settings.ai.llmProvider')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}

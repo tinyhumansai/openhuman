@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import {
   formatBytes,
   formatEta,
@@ -53,6 +54,7 @@ const statusTone = (state: string): string => {
 };
 
 const LocalModelDebugPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
@@ -338,7 +340,7 @@ const LocalModelDebugPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Local Model Debug"
+        title={t('localModel.debugTitle')}
         showBackButton={true}
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}

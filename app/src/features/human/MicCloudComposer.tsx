@@ -1,6 +1,7 @@
 import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { transcribeCloud } from './voice/sttClient';
 import { encodeBlobToWav } from './voice/wavEncoder';
 
@@ -53,6 +54,7 @@ export function MicCloudComposer({
   onError,
   language = 'en',
 }: MicCloudComposerProps) {
+  const { t } = useT();
   const [state, setState] = useState<RecordingState>('idle');
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -181,7 +183,7 @@ export function MicCloudComposer({
   async function startRecording() {
     if (state !== 'idle' || disabled || startInFlightRef.current) return;
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      onError?.('Microphone access is not available in this runtime.');
+      onError?.(t('mic.unavailable'));
       return;
     }
     startInFlightRef.current = true;
@@ -207,7 +209,7 @@ export function MicCloudComposer({
       startInFlightRef.current = false;
       const msg = err instanceof Error ? err.message : String(err);
       composerLog('getUserMedia rejected: %s', msg);
-      onError?.(`Microphone permission denied: ${msg}`);
+      onError?.(`${t('mic.permissionDenied')}: ${msg}`);
       return;
     }
 
@@ -232,7 +234,7 @@ export function MicCloudComposer({
       stream.getTracks().forEach(t => t.stop());
       startInFlightRef.current = false;
       const msg = err instanceof Error ? err.message : String(err);
-      onError?.(`Failed to start recorder: ${msg}`);
+      onError?.(`${t('mic.failedToStartRecorder')}: ${msg}`);
       return;
     }
 
@@ -357,18 +359,18 @@ export function MicCloudComposer({
   const buttonDisabled = disabled || isBusy;
 
   const label = isBusy
-    ? 'Transcribing…'
+    ? t('mic.transcribing')
     : isRecording
-      ? 'Tap to send'
+      ? t('mic.tapToSend')
       : disabled
-        ? 'Waiting for the agent…'
-        : 'Tap and speak';
+        ? t('mic.waitingForAgent')
+        : t('mic.tapAndSpeak');
 
   return (
     <div className="flex items-center justify-center gap-3">
       <button
         type="button"
-        aria-label={isRecording ? 'Stop recording and send' : 'Start recording'}
+        aria-label={isRecording ? t('mic.stopRecording') : t('mic.startRecording')}
         onClick={() => (isRecording ? stopRecording() : void startRecording())}
         disabled={buttonDisabled}
         className={`relative w-14 h-14 flex items-center justify-center rounded-full text-white shadow-soft transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${

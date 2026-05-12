@@ -11,6 +11,7 @@ import {
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import { useUsageState } from '../hooks/useUsageState';
 import { useUser } from '../hooks/useUser';
+import { useT } from '../lib/i18n/I18nContext';
 import { useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
 import { APP_VERSION } from '../utils/config';
@@ -39,6 +40,7 @@ export function resolveHomeUserName(user: unknown): string {
 }
 
 const Home = () => {
+  const { t } = useT();
   const { user } = useUser();
   const navigate = useNavigate();
   const { isRateLimited, shouldShowBudgetCompletedMessage } = useUsageState();
@@ -72,11 +74,9 @@ const Home = () => {
   // / "Disconnected").
   const socketStatus = useAppSelector(selectSocketStatus);
   const statusCopy = {
-    connected:
-      'Your device is connected. Keep the app running to keep the connection alive. Message your agent with the button below.',
-    connecting: 'Connecting. Hang tight, this usually takes a second.',
-    disconnected:
-      'Your device is offline right now. Check your network or restart the app to reconnect.',
+    connected: t('misc.checkingServices'),
+    connecting: t('welcome.connecting'),
+    disconnected: t('misc.serviceUnavailable'),
   }[socketStatus];
 
   // Open in-app chat.
@@ -177,7 +177,7 @@ const Home = () => {
             data-walkthrough="home-cta"
             onClick={handleStartCooking}
             className="w-full py-3 bg-primary-500 hover:bg-primary-600 text-white font-medium rounded-xl transition-colors duration-200">
-            Message OpenHuman
+            {t('home.askAssistant')}
           </button>
         </div>
 
