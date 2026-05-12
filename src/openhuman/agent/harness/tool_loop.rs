@@ -408,7 +408,7 @@ pub(crate) async fn run_tool_call_loop(
                     )
                 }
                 Err(e) => {
-                    crate::core::observability::report_error(
+                    crate::core::observability::report_error_or_expected(
                         &e,
                         "agent",
                         "provider_chat",

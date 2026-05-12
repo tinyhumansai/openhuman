@@ -60,7 +60,7 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
             // boundary condition (auth handler clears the local token and the
             // UI re-auths). Don't spam Sentry with it.
             if !is_session_expired_error(&message) {
-                crate::core::observability::report_error(
+                crate::core::observability::report_error_or_expected(
                     message.as_str(),
                     "rpc",
                     "invoke_method",

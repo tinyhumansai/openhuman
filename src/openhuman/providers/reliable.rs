@@ -413,7 +413,7 @@ impl Provider for ReliableProvider {
             "All providers/models failed. Attempts:\n{}",
             failures.join("\n")
         );
-        crate::core::observability::report_error(
+        crate::core::observability::report_error_or_expected(
             aggregate.as_str(),
             "llm_provider",
             "reliable_chat_with_system",
@@ -534,7 +534,7 @@ impl Provider for ReliableProvider {
             "All providers/models failed. Attempts:\n{}",
             failures.join("\n")
         );
-        crate::core::observability::report_error(
+        crate::core::observability::report_error_or_expected(
             aggregate.as_str(),
             "llm_provider",
             "reliable_chat_with_history",
@@ -691,7 +691,7 @@ impl Provider for ReliableProvider {
             "All providers/models failed. Attempts:\n{}",
             failures.join("\n")
         );
-        crate::core::observability::report_error(
+        crate::core::observability::report_error_or_expected(
             aggregate.as_str(),
             "llm_provider",
             "reliable_chat",
@@ -813,7 +813,7 @@ impl Provider for ReliableProvider {
             "All providers/models failed. Attempts:\n{}",
             failures.join("\n")
         );
-        crate::core::observability::report_error(
+        crate::core::observability::report_error_or_expected(
             aggregate.as_str(),
             "llm_provider",
             "reliable_chat_with_tools",
