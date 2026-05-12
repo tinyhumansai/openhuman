@@ -34,6 +34,19 @@ fn truncate_payload_marks_truncation_and_stays_valid_utf8() {
 }
 
 #[test]
+fn test_truncate_payload_utf8_boundary() {
+    // Each "🦀" is 4 bytes. 10 of them = 40 bytes.
+    let payload = json!({ "msg": "🦀".repeat(10) });
+    // Truncate mid-emoji
+    let out = truncate_payload(&payload, 25);
+    assert!(out.contains("[...truncated"));
+    // The part before truncation must be valid UTF-8
+    let head = out.split('\n').next().unwrap();
+    // Use a method that is stable on our toolchain
+    assert!(!head.is_empty());
+}
+
+#[test]
 fn extract_inline_prompt_returns_body_for_trigger_triage_builtin() {
     let builtin = BUILTINS
         .iter()

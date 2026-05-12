@@ -278,7 +278,7 @@ async fn try_arm(
         ))
     })?;
 
-    let system_prompt = extract_inline_prompt(&definition).ok_or_else(|| {
+    let system_prompt = extract_inline_prompt(definition).ok_or_else(|| {
         ArmError::Fatal(anyhow!(
             "trigger_triage agent definition must ship an inline prompt body"
         ))
@@ -506,10 +506,7 @@ fn truncate_payload(payload: &serde_json::Value, max_bytes: usize) -> String {
         return pretty;
     }
     let dropped = pretty.len() - max_bytes;
-    let mut end = max_bytes;
-    while end > 0 && !pretty.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = crate::openhuman::util::floor_char_boundary(&pretty, max_bytes);
     format!("{}\n[...truncated {dropped} bytes]", &pretty[..end])
 }
 

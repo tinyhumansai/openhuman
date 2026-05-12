@@ -193,17 +193,7 @@ fn scan_for_matches(
         let rel = path.strip_prefix(workspace).unwrap_or(path);
         for (lineno, line) in contents.lines().enumerate() {
             if regex.is_match(line) {
-                let display_line = if line.len() > MAX_LINE_BYTES {
-                    // Walk back to a UTF-8 char boundary; slicing `&str` at a
-                    // non-boundary byte panics at runtime.
-                    let mut cut = MAX_LINE_BYTES;
-                    while cut > 0 && !line.is_char_boundary(cut) {
-                        cut -= 1;
-                    }
-                    format!("{}…", &line[..cut])
-                } else {
-                    line.to_string()
-                };
+                let display_line = crate::openhuman::util::truncate_with_suffix(line, MAX_LINE_BYTES, "…");
                 matches.push(format!("{}:{}:{}", rel.display(), lineno + 1, display_line));
                 if matches.len() >= max_matches {
                     truncated = true;

@@ -83,17 +83,7 @@ pub fn scrub_secret_patterns(input: &str) -> String {
 /// Sanitize API error text by scrubbing secrets and truncating length.
 pub fn sanitize_api_error(input: &str) -> String {
     let scrubbed = scrub_secret_patterns(input);
-
-    if scrubbed.chars().count() <= MAX_API_ERROR_CHARS {
-        return scrubbed;
-    }
-
-    let mut end = MAX_API_ERROR_CHARS;
-    while end > 0 && !scrubbed.is_char_boundary(end) {
-        end -= 1;
-    }
-
-    format!("{}...", &scrubbed[..end])
+    crate::openhuman::util::truncate_with_ellipsis(&scrubbed, MAX_API_ERROR_CHARS)
 }
 
 const TRANSPORT_ERROR_MAX_CHARS: usize = 1200;
@@ -108,14 +98,7 @@ pub fn format_error_chain(err: &dyn std::error::Error) -> String {
     }
     let joined = parts.join(" | ");
     let scrubbed = scrub_secret_patterns(&joined);
-    if scrubbed.chars().count() <= TRANSPORT_ERROR_MAX_CHARS {
-        return scrubbed;
-    }
-    let mut end = TRANSPORT_ERROR_MAX_CHARS;
-    while end > 0 && !scrubbed.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &scrubbed[..end])
+    crate::openhuman::util::truncate_with_suffix(&scrubbed, TRANSPORT_ERROR_MAX_CHARS, "…")
 }
 
 /// Cause chain from [`anyhow::Error`] (e.g. responses fallback), scrubbed and length-limited.
@@ -126,14 +109,7 @@ pub fn format_anyhow_chain(err: &anyhow::Error) -> String {
         .collect::<Vec<_>>()
         .join(" | ");
     let scrubbed = scrub_secret_patterns(&joined);
-    if scrubbed.chars().count() <= TRANSPORT_ERROR_MAX_CHARS {
-        return scrubbed;
-    }
-    let mut end = TRANSPORT_ERROR_MAX_CHARS;
-    while end > 0 && !scrubbed.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &scrubbed[..end])
+    crate::openhuman::util::truncate_with_suffix(&scrubbed, TRANSPORT_ERROR_MAX_CHARS, "…")
 }
 
 /// Provider label used by the OpenHuman backend inference path
@@ -445,5 +421,15 @@ mod tests {
         assert!(should_report_provider_http_failure(
             reqwest::StatusCode::SERVICE_UNAVAILABLE
         ));
+    }
+
+    #[test]
+    fn test_sanitize_api_error_utf8() {
+        let input = "🦀".repeat(MAX_API_ERROR_CHARS + 10);
+        let sanitized = sanitize_api_error(&input);
+        assert!(sanitized.ends_with("..."));
+        // Should truncate at MAX_API_ERROR_CHARS crabs
+        let crabs_count = sanitized.chars().filter(|c| *c == '🦀').count();
+        assert_eq!(crabs_count, MAX_API_ERROR_CHARS);
     }
 }
