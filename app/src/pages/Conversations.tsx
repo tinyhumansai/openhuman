@@ -288,6 +288,11 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
         } else {
           void handleCreateNewThread();
         }
+      })
+      .catch(err => {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err?.message ?? err);
+        console.warn('[conversations] loadThreads failed on mount:', message);
       });
 
     return () => {
