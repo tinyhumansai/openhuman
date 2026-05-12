@@ -4,8 +4,7 @@ pub fn redact(value: &str) -> String {
     if value.chars().count() <= 4 {
         "***".to_string()
     } else {
-        let truncated = crate::openhuman::util::truncate_with_suffix(value, 4, "***");
-        truncated
+        crate::openhuman::util::truncate_with_suffix(value, 4, "***")
     }
 }
 

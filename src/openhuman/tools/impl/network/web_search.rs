@@ -61,8 +61,7 @@ impl WebSearchTool {
             if let Some(first) = result.excerpts.first() {
                 let excerpt = first.trim();
                 if !excerpt.is_empty() {
-                    let truncated =
-                        crate::openhuman::util::truncate_with_ellipsis(excerpt, 500);
+                    let truncated = crate::openhuman::util::truncate_with_ellipsis(excerpt, 500);
                     lines.push(format!("   {}", truncated));
                 }
             }
@@ -92,8 +91,7 @@ impl WebSearchTool {
             if let Some(first) = r.excerpts.first() {
                 let excerpt = first.trim();
                 if !excerpt.is_empty() {
-                    let truncated =
-                        crate::openhuman::util::truncate_with_suffix(excerpt, 500, "…");
+                    let truncated = crate::openhuman::util::truncate_with_suffix(excerpt, 500, "…");
                     out.push_str(&format!("> {truncated}\n"));
                 }
             }
@@ -318,7 +316,10 @@ mod tests {
         assert!(result.contains("..."));
         // Should have 500 crabs + "..."
         let excerpt_line = result.lines().find(|l| l.contains('🦀')).unwrap();
-        assert_eq!(excerpt_line.trim().chars().filter(|c| *c == '🦀').count(), 500);
+        assert_eq!(
+            excerpt_line.trim().chars().filter(|c| *c == '🦀').count(),
+            500
+        );
     }
 
     #[tokio::test]

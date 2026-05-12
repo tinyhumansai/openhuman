@@ -193,7 +193,8 @@ fn scan_for_matches(
         let rel = path.strip_prefix(workspace).unwrap_or(path);
         for (lineno, line) in contents.lines().enumerate() {
             if regex.is_match(line) {
-                let display_line = crate::openhuman::util::truncate_with_suffix(line, MAX_LINE_BYTES, "…");
+                let display_line =
+                    crate::openhuman::util::truncate_with_suffix(line, MAX_LINE_BYTES, "…");
                 matches.push(format!("{}:{}:{}", rel.display(), lineno + 1, display_line));
                 if matches.len() >= max_matches {
                     truncated = true;
