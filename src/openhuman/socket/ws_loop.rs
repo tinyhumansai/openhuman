@@ -491,7 +491,18 @@ async fn connect_with_redirects(
                     ws_url,
                     next_url
                 );
-                record_redirect_warning(shared, &original, &next_url);
+                // Only persist a stale-BACKEND_URL warning for permanent
+                // redirects (301 / 308). Temporary redirects (302 / 307) say
+                // "this time, go elsewhere" — the configured BACKEND_URL is
+                // still correct, and surfacing a "please update config" hint
+                // for a transient hop would be misleading. Per CodeRabbit
+                // review on PR #1547.
+                if matches!(
+                    response.status(),
+                    StatusCode::MOVED_PERMANENTLY | StatusCode::PERMANENT_REDIRECT
+                ) {
+                    record_redirect_warning(shared, &original, &next_url);
+                }
                 *ws_url = next_url;
             }
             Err(e) => return Err(e),
