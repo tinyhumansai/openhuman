@@ -398,7 +398,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       setSendError(
         chatSendError(
           'safety_timeout',
-          'No response from the agent after 2 minutes. Try again or check your connection.'
+          t('chat.safetyTimeout')
         )
       );
       dispatch(clearRuntimeForThread({ threadId }));

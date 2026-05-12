@@ -604,7 +604,7 @@ const zhCN: TranslationMap = {
   'common.enable': '启用',
 
   // Chat (additional)
-  'chat.safetyTimeout': '安全超时已到达',
+  'chat.safetyTimeout': '助手 2 分钟内未响应。请重试或检查你的连接。',
   'chat.filter.all': '全部',
   'chat.filter.work': '工作',
   'chat.filter.briefing': '简报',
