@@ -82,10 +82,7 @@ describe('formatTimelineEntry', () => {
           argsBuffer: JSON.stringify({ toolkit: 'slack_bot', prompt: 'post update' }),
         })
       )
-    ).toEqual({
-      title: 'Checking your Slack Bot',
-      detail: 'post update',
-    });
+    ).toEqual({ title: 'Checking your Slack Bot', detail: 'post update' });
   });
 
   it('formats delegate_to_integrations_agent without a toolkit arg as a generic connected-app label', () => {
@@ -96,10 +93,7 @@ describe('formatTimelineEntry', () => {
           argsBuffer: JSON.stringify({ prompt: 'do something useful' }),
         })
       )
-    ).toEqual({
-      title: 'Checking your connected app',
-      detail: 'do something useful',
-    });
+    ).toEqual({ title: 'Checking your connected app', detail: 'do something useful' });
   });
 
   it('formats delegate_tools_agent with toolkit context from args', () => {

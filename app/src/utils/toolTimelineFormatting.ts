@@ -77,10 +77,7 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
       title = humanizeIdentifier(entry.name);
     }
 
-    return {
-      title,
-      detail: entry.detail ?? parsedArgs?.prompt,
-    };
+    return { title, detail: entry.detail ?? parsedArgs?.prompt };
   }
 
   return {
