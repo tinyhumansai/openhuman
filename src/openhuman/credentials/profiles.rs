@@ -373,13 +373,23 @@ impl AuthProfilesStore {
             return Ok(PersistedAuthProfiles::default());
         }
 
-        let mut persisted: PersistedAuthProfiles =
-            serde_json::from_slice(&bytes).with_context(|| {
-                format!(
-                    "Failed to parse auth profile store at {}",
-                    self.path.display()
-                )
-            })?;
+        let mut persisted: PersistedAuthProfiles = match serde_json::from_slice(&bytes) {
+            Ok(p) => p,
+            Err(err) => {
+                let quarantined = quarantine_corrupt_store(&self.path)?;
+                let quarantined_file = quarantined
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("auth-profiles.corrupt");
+                tracing::warn!(
+                    path_file = PROFILES_FILENAME,
+                    quarantined_file = quarantined_file,
+                    error = %err,
+                    "[credentials] auth profile store unparseable; quarantined and reset to empty"
+                );
+                return Ok(PersistedAuthProfiles::default());
+            }
+        };
 
         if persisted.schema_version == 0 {
             persisted.schema_version = CURRENT_SCHEMA_VERSION;
@@ -452,9 +462,8 @@ impl AuthProfilesStore {
 
     fn acquire_lock(&self) -> Result<AuthProfileLockGuard> {
         if let Some(parent) = self.lock_path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create lock directory at {}", parent.display())
-            })?;
+            fs::create_dir_all(parent)
+                .with_context(|| "Failed to create auth profile lock directory".to_string())?;
         }
 
         let mut waited = 0_u64;
@@ -472,21 +481,14 @@ impl AuthProfilesStore {
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     if waited >= LOCK_TIMEOUT_MS {
-                        anyhow::bail!(
-                            "Timed out waiting for auth profile lock at {}",
-                            self.lock_path.display()
-                        );
+                        anyhow::bail!("Timed out waiting for auth profile lock");
                     }
                     thread::sleep(Duration::from_millis(LOCK_WAIT_MS));
                     waited = waited.saturating_add(LOCK_WAIT_MS);
                 }
                 Err(e) => {
-                    return Err(e).with_context(|| {
-                        format!(
-                            "Failed to create auth profile lock at {}",
-                            self.lock_path.display()
-                        )
-                    });
+                    return Err(e)
+                        .with_context(|| "Failed to create auth profile lock".to_string());
                 }
             }
         }
@@ -596,6 +598,33 @@ fn parse_datetime_with_fallback(value: &str) -> DateTime<Utc> {
 
 pub fn profile_id(provider: &str, profile_name: &str) -> String {
     format!("{}:{}", provider.trim(), profile_name.trim())
+}
+
+fn quarantine_corrupt_store(path: &Path) -> Result<PathBuf> {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("auth-profiles");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("json");
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mut candidate = parent.join(format!("{stem}.corrupt-{ts}.{ext}"));
+    let mut suffix = 0u32;
+    while candidate.exists() {
+        suffix += 1;
+        candidate = parent.join(format!("{stem}.corrupt-{ts}-{suffix}.{ext}"));
+    }
+    fs::rename(path, &candidate).with_context(|| {
+        format!(
+            "Failed to quarantine corrupt auth profile store {} -> {}",
+            path.display(),
+            candidate.display()
+        )
+    })?;
+    Ok(candidate)
 }
 
 #[cfg(test)]

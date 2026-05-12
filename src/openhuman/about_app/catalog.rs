@@ -35,6 +35,18 @@ const MODEL_DOWNLOAD: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     destinations: &["Hugging Face"],
 });
 
+// Self-update flows talk to GitHub Releases directly, not the OpenHuman
+// backend. The outbound payload is metadata only (release list query for
+// `update.check`, asset download URL request for `update.apply`) so
+// `data_kind: Metadata` is the right label — but the destination must
+// reflect that this is a third-party host, otherwise the capability
+// catalog under-reports where the user's request actually goes.
+const GITHUB_RELEASES_METADATA: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Metadata,
+    destinations: &["GitHub Releases"],
+});
+
 const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "conversation.create",
@@ -926,20 +938,26 @@ const CAPABILITIES: &[Capability] = &[
         name: "Check for Core Updates",
         domain: "update",
         category: CapabilityCategory::Settings,
-        description: "Query GitHub Releases to see if a newer core binary is available.",
-        how_to: "Settings > Developer Options > Check for Updates",
+        description: "Query GitHub Releases to see if a newer core binary is available. \
+                      Available to the orchestrator agent as the `update_check` tool so the \
+                      user can ask 'am I up to date?' in chat.",
+        how_to: "Settings > Developer Options > Check for Updates, or ask the orchestrator in chat.",
         status: CapabilityStatus::Beta,
-        privacy: DIAGNOSTICS_TO_BACKEND,
+        privacy: GITHUB_RELEASES_METADATA,
     },
     Capability {
         id: "update.apply",
         name: "Apply Core Update",
         domain: "update",
         category: CapabilityCategory::Settings,
-        description: "Download and stage a newer core binary. Desktop builds can self-restart; headless deployments can hand restart off to a supervisor.",
-        how_to: "Settings > Developer Options > Apply Update",
+        description: "Download and stage a newer core binary. Desktop builds can self-restart; \
+                      headless deployments can hand restart off to a supervisor. Exposed to \
+                      the orchestrator agent as the `update_apply` tool, gated behind explicit \
+                      user consent (the agent must confirm via `ask_user_clarification` before \
+                      invoking) and the `config.update.rpc_mutations_enabled` policy switch.",
+        how_to: "Settings > Developer Options > Apply Update, or confirm an in-chat update prompt from the orchestrator.",
         status: CapabilityStatus::Beta,
-        privacy: None,
+        privacy: GITHUB_RELEASES_METADATA,
     },
 ];
 

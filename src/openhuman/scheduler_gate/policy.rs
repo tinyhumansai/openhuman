@@ -19,6 +19,12 @@ pub enum PauseReason {
     OnBattery,
     /// CPU pressure exceeded the gate threshold (#1073).
     CpuPressure,
+    /// No active app session — background AI work is suspended until the
+    /// user signs in again. Trumps every other signal: while signed out
+    /// the host should do *no* LLM-bound work, period. Set by
+    /// `gate::set_signed_out(true)` from the credentials lifecycle and
+    /// from 401-detection sites.
+    SignedOut,
     /// Pause reason not yet classified — placeholder while #1073 is in flight.
     Unknown,
 }
@@ -29,6 +35,7 @@ impl PauseReason {
             Self::UserDisabled => "user_disabled",
             Self::OnBattery => "on_battery",
             Self::CpuPressure => "cpu_pressure",
+            Self::SignedOut => "signed_out",
             Self::Unknown => "unknown",
         }
     }
@@ -205,6 +212,7 @@ mod tests {
         assert_eq!(PauseReason::UserDisabled.as_str(), "user_disabled");
         assert_eq!(PauseReason::OnBattery.as_str(), "on_battery");
         assert_eq!(PauseReason::CpuPressure.as_str(), "cpu_pressure");
+        assert_eq!(PauseReason::SignedOut.as_str(), "signed_out");
         assert_eq!(PauseReason::Unknown.as_str(), "unknown");
     }
 

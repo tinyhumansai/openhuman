@@ -246,6 +246,25 @@ class SocketService {
     this.socket.on('channel:connection-updated', handleChannelConnectionUpdated);
     this.socket.on('channel_connection_updated', handleChannelConnectionUpdated);
 
+    // Core-side session expiry (401 from the OpenHuman backend or jsonrpc).
+    // The server has already published SessionExpired on its event bus,
+    // the credentials subscriber has cleared the JWT, and the scheduler
+    // gate is flipped to signed-out. All the UI needs to do is mirror
+    // that locally and route to onboarding. CoreStateProvider listens
+    // for the window event below and calls its own `clearSession`.
+    const handleSessionExpired = (data: unknown) => {
+      const source =
+        (data && typeof data === 'object' && 'source' in data && typeof data.source === 'string'
+          ? data.source
+          : undefined) ?? 'unknown';
+      socketLog('Session expired notification received', { source });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openhuman:session-expired', { detail: { source } }));
+      }
+    };
+    this.socket.on('auth:session_expired', handleSessionExpired);
+    this.socket.on('auth_session_expired', handleSessionExpired);
+
     this.socket.on('channel:managed-dm-verified', data => {
       const obj = data as Record<string, unknown> | null;
       if (!obj || typeof obj !== 'object') return;

@@ -23,8 +23,11 @@
 use anyhow::{Context, Result};
 use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
 use chacha20poly1305::{AeadCore, ChaCha20Poly1305, Key, Nonce};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 /// Length of the random encryption key in bytes (256-bit, matches `ChaCha20`).
 const KEY_LEN: usize = 32;
@@ -168,11 +171,33 @@ impl SecretStore {
     }
 
     /// Load the encryption key from disk, or create one if it doesn't exist.
+    ///
+    /// The decoded key is cached process-wide keyed by `key_path`, so repeated
+    /// callers (e.g. every `app_state_snapshot` poll) hit memory instead of
+    /// disk. This also rides over transient Windows sharing violations that
+    /// can occur when an AV scanner briefly locks the file — once we've read
+    /// it successfully, we never need to read it again for this process.
     fn load_or_create_key(&self) -> Result<Vec<u8>> {
+        // Normalize the path once so all callers share the same cache slot
+        // regardless of how `key_path` was spelled (relative vs absolute,
+        // symlinks, case-variants on Windows).
+        let cache_key_path = normalize_cache_path(&self.key_path);
+
+        if let Some(cached) = cached_key(&cache_key_path) {
+            return Ok(cached);
+        }
+
         if self.key_path.exists() {
-            let hex_key =
-                fs::read_to_string(&self.key_path).context("Failed to read secret key file")?;
-            hex_decode(hex_key.trim()).context("Secret key file is corrupt")
+            let hex_key = read_key_file_with_retry(&self.key_path)
+                .context("Failed to read secret key file")?;
+            let key = hex_decode(hex_key.trim()).context("Secret key file is corrupt")?;
+            anyhow::ensure!(
+                key.len() == KEY_LEN,
+                "Secret key file has wrong length: expected {KEY_LEN} bytes, got {}",
+                key.len()
+            );
+            cache_key(&cache_key_path, &key);
+            Ok(key)
         } else {
             let key = generate_random_key();
             if let Some(parent) = self.key_path.parent() {
@@ -197,6 +222,7 @@ impl SecretStore {
                         "USERNAME environment variable is empty; \
                          cannot restrict key file permissions via icacls"
                     );
+                    cache_key(&cache_key_path, &key);
                     return Ok(key);
                 };
 
@@ -221,9 +247,85 @@ impl SecretStore {
                 }
             }
 
+            cache_key(&cache_key_path, &key);
             Ok(key)
         }
     }
+}
+
+/// Normalize a path into a stable cache key. Tries `canonicalize` first (so
+/// symlinks, relative paths, and Windows case-variants all collapse to the
+/// same key), falls back to `std::path::absolute` when the file does not yet
+/// exist (e.g. the create branch in `load_or_create_key`), and finally to the
+/// raw path so a normalization failure never breaks the cache.
+fn normalize_cache_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path)
+        .or_else(|_| std::path::absolute(path))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Process-wide cache of decoded key bytes keyed by absolute path.
+///
+/// Loading the key once per process is both faster and more reliable than
+/// re-reading `.secret_key` on every decrypt. On Windows the file can be
+/// transiently inaccessible (AV scanners holding a handle), and re-reading
+/// turned that transient failure into a perma-failure for every subsequent
+/// RPC call.
+fn key_cache() -> &'static Mutex<HashMap<PathBuf, Vec<u8>>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Vec<u8>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_key(path: &Path) -> Option<Vec<u8>> {
+    key_cache().lock().ok()?.get(path).cloned()
+}
+
+fn cache_key(path: &Path, key: &[u8]) {
+    if let Ok(mut cache) = key_cache().lock() {
+        cache.insert(path.to_path_buf(), key.to_vec());
+    }
+}
+
+/// Clear the cached key for `path`. Test-only — production code should never
+/// need to invalidate the cache, since the key file is write-once.
+#[cfg(test)]
+pub(super) fn clear_cached_key(path: &Path) {
+    let normalized = normalize_cache_path(path);
+    if let Ok(mut cache) = key_cache().lock() {
+        cache.remove(&normalized);
+    }
+}
+
+/// Read the key file, retrying transient errors a handful of times.
+///
+/// Windows AV scanners (Defender, etc.) routinely hold short-lived read
+/// handles right after a file is created, which surfaces as
+/// `ERROR_SHARING_VIOLATION` (raw OS error 32) or `PermissionDenied`. A few
+/// short backoffs are enough to ride over the lock; the typical successful
+/// path returns on the first attempt with zero added latency.
+fn read_key_file_with_retry(path: &Path) -> std::io::Result<String> {
+    use std::io::ErrorKind;
+
+    const MAX_ATTEMPTS: u32 = 5;
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        match fs::read_to_string(path) {
+            Ok(contents) => return Ok(contents),
+            Err(err) => {
+                let transient = matches!(
+                    err.kind(),
+                    ErrorKind::PermissionDenied | ErrorKind::Interrupted | ErrorKind::WouldBlock
+                ) || err.raw_os_error() == Some(32); // ERROR_SHARING_VIOLATION (Windows)
+                last_err = Some(err);
+                if !transient || attempt + 1 == MAX_ATTEMPTS {
+                    break;
+                }
+                let backoff_ms = 10u64 << attempt; // 10, 20, 40, 80 ms
+                std::thread::sleep(Duration::from_millis(backoff_ms));
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| std::io::Error::other("read_to_string failed")))
 }
 
 /// XOR cipher with repeating key. Same function for encrypt and decrypt.

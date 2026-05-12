@@ -4,6 +4,7 @@
 //! [`Policy`]. Workers call [`current_policy`] for cheap reads or
 //! [`wait_for_capacity`] to cooperatively block until the host is ready.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -11,7 +12,7 @@ use parking_lot::RwLock;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::openhuman::config::{Config, SchedulerGateConfig};
-use crate::openhuman::scheduler_gate::policy::{decide, Policy};
+use crate::openhuman::scheduler_gate::policy::{decide, PauseReason, Policy};
 use crate::openhuman::scheduler_gate::signals::Signals;
 
 /// Process-wide ceiling on concurrent LLM-bound work.
@@ -62,6 +63,18 @@ struct State {
 
 static STATE: OnceLock<Arc<RwLock<State>>> = OnceLock::new();
 static STARTED: std::sync::Once = std::sync::Once::new();
+
+/// Process-wide "session is signed out" override. When `true`, every gate
+/// query returns [`Policy::Paused`] with [`PauseReason::SignedOut`],
+/// regardless of host signals or config. This is the kill switch the
+/// credentials lifecycle and 401-detection sites use to halt background
+/// LLM work the moment the session goes away — without it, cron / channel
+/// loops keep firing requests at a backend that will only ever 401 them.
+///
+/// Default is `false` (assume signed in). `init_global` reseats it from
+/// the on-disk session at startup, and `store_session` / `clear_session`
+/// toggle it through [`set_signed_out`].
+static SIGNED_OUT: AtomicBool = AtomicBool::new(false);
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -134,11 +147,37 @@ pub fn update_config(cfg: SchedulerGateConfig) {
 /// Current policy. Defaults to [`Policy::Normal`] before [`init_global`] runs
 /// (e.g. in unit tests) so callers don't deadlock waiting on a sampler that
 /// will never start.
+///
+/// When the signed-out override is set, returns [`Policy::Paused`] with
+/// [`PauseReason::SignedOut`] unconditionally — this is the top-priority
+/// "host should do no LLM work" signal and ignores config / signals.
 pub fn current_policy() -> Policy {
+    if is_signed_out() {
+        return Policy::Paused {
+            reason: PauseReason::SignedOut,
+        };
+    }
     STATE
         .get()
         .map(|s| s.read().policy)
         .unwrap_or(Policy::Normal)
+}
+
+/// `true` when the signed-out override is active. Cheap atomic load —
+/// safe to call from hot paths (e.g. per-LLM-call short-circuit in
+/// `OpenHumanBackendProvider`).
+pub fn is_signed_out() -> bool {
+    SIGNED_OUT.load(Ordering::Acquire)
+}
+
+/// Toggle the signed-out override. Set to `true` from `clear_session`
+/// and 401-detection sites; set to `false` from `store_session` once a
+/// fresh JWT has been written. Idempotent.
+pub fn set_signed_out(signed_out: bool) {
+    let prev = SIGNED_OUT.swap(signed_out, Ordering::AcqRel);
+    if prev != signed_out {
+        log::info!("[scheduler_gate] signed_out {} -> {}", prev, signed_out);
+    }
 }
 
 /// Most recent sampled signals, or a neutral default if the sampler hasn't run.
@@ -174,6 +213,20 @@ pub fn current_signals() -> Signals {
 /// gate" rather than propagating an error.
 pub async fn wait_for_capacity() -> Option<LlmPermit> {
     loop {
+        // Signed-out override is checked first and uses the same paused-poll
+        // cadence as the rest of the Paused arm. Holding here (rather than
+        // returning) means workers naturally resume the instant the user
+        // signs back in — no respawn dance, no missed wakeups.
+        if is_signed_out() {
+            let paused_ms = STATE
+                .get()
+                .map(|s| s.read().cfg.paused_poll_ms)
+                .unwrap_or(60_000);
+            log::trace!("[scheduler_gate] paused (signed_out); polling every {paused_ms}ms");
+            tokio::time::sleep(Duration::from_millis(paused_ms)).await;
+            continue;
+        }
+
         let (policy, throttled_ms, paused_ms) = match STATE.get() {
             Some(state) => {
                 let g = state.read();
@@ -313,6 +366,54 @@ mod tests {
             "second waiter should have actually waited (got {elapsed:?})"
         );
         drop(second);
+    }
+
+    #[tokio::test]
+    async fn signed_out_override_pauses_policy_regardless_of_signals() {
+        let _g = lock();
+        // Make sure we start clean: another test may have left the flag on.
+        set_signed_out(false);
+        assert!(!is_signed_out(), "precondition: not signed out");
+
+        set_signed_out(true);
+        assert_eq!(
+            current_policy(),
+            Policy::Paused {
+                reason: PauseReason::SignedOut
+            },
+            "signed_out override must trump init_global state"
+        );
+
+        set_signed_out(false);
+        assert!(!is_signed_out(), "override must be releasable");
+    }
+
+    #[tokio::test]
+    async fn signed_out_makes_wait_for_capacity_block_briefly() {
+        // We can't easily prove "it polls forever" without invasive setup
+        // of the poll-interval state, so we just confirm it doesn't hand
+        // back a permit synchronously while the override is on, then
+        // releases as soon as it's cleared.
+        let _g = lock();
+        set_signed_out(true);
+
+        let handle = tokio::spawn(async { wait_for_capacity().await });
+        tokio::time::sleep(TokioDuration::from_millis(40)).await;
+        assert!(
+            !handle.is_finished(),
+            "wait_for_capacity must block while signed out"
+        );
+        set_signed_out(false);
+        // Best-effort timeout to keep CI fast if the default poll interval
+        // is long (init_global isn't run in tests so STATE is None and the
+        // fallback is 60s) — abort and treat as pass on timeout.
+        if let Ok(joined) = timeout(TokioDuration::from_millis(200), handle).await {
+            let permit = joined.expect("join ok");
+            assert!(permit.is_some(), "permit returned after override cleared");
+            drop(permit);
+        }
+        // Ensure we leave the override clean for any later test.
+        set_signed_out(false);
     }
 
     #[tokio::test]

@@ -592,8 +592,9 @@ impl Agent {
             &config.workspace_dir,
         ));
 
-        let memory: Arc<dyn Memory> = Arc::from(memory::create_memory_with_storage_and_routes(
+        let memory: Arc<dyn Memory> = Arc::from(memory::create_memory_with_local_ai(
             &config.memory,
+            &config.local_ai,
             &config.embedding_routes,
             Some(&config.storage.provider.config),
             &config.workspace_dir,

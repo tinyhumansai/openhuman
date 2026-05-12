@@ -153,7 +153,11 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
       if (!openedRef.current) {
         openedRef.current = true;
         log('opening account=%s at %o', accountId, bounds);
-        void openWebviewAccount({ accountId, provider, bounds });
+        openWebviewAccount({ accountId, provider, bounds }).catch(() => {
+          // Service-layer dispatched `setAccountStatus({ status: 'error', lastError })`
+          // and emitted a Sentry breadcrumb already; swallowing here prevents the
+          // rejection from reaching `onunhandledrejection` (OPENHUMAN-REACT-K).
+        });
       } else {
         void setWebviewAccountBounds(accountId, bounds);
       }
@@ -247,7 +251,11 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
             type="button"
             onClick={() => {
               log('retry clicked account=%s provider=%s', accountId, provider);
-              void retryWebviewAccountLoad(accountId, provider);
+              retryWebviewAccountLoad(accountId, provider).catch(() => {
+                // Same contract as the initial open (OPENHUMAN-REACT-K):
+                // service-layer dispatched error status + breadcrumb; absorbing
+                // the rejection keeps onunhandledrejection clean.
+              });
             }}
             className="rounded-md bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-primary-700">
             Retry loading

@@ -500,6 +500,13 @@ describe('classifyRpcError', () => {
     ['GET /teams failed (401 Unauthorized): {"success":false}', undefined, 'auth_expired'],
     ['Session expired. Please log in again.', undefined, 'auth_expired'],
     ['some prefix Session expired suffix', undefined, 'auth_expired'],
+    [
+      'composio unavailable: no backend session token. Sign in first (auth_store_session).',
+      undefined,
+      'auth_expired',
+    ],
+    ['no backend session token; run auth_store_session first', undefined, 'auth_expired'],
+    ['NO BACKEND SESSION TOKEN', undefined, 'auth_expired'],
     ['HTTP 429 rate-limit exceeded', undefined, 'rate_limited'],
     ['Budget exceeded for current period', undefined, 'budget_exceeded'],
     ['Insufficient budget for request', undefined, 'budget_exceeded'],

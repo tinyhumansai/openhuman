@@ -77,6 +77,12 @@ export function classifyRpcError(message: string, httpStatus?: number): CoreRpcE
   if (httpStatus === 401) return 'auth_expired';
   if (httpStatus === 429) return 'rate_limited';
   if (/\(401\b.*Unauthorized\)|Session expired/i.test(message)) return 'auth_expired';
+  // Core-side "no backend session token" → the auth profile is gone but the
+  // frontend may still hold a stale sessionToken from an optimistic post-login
+  // patch. Treat as auth-expired so `CoreStateProvider` clears the session and
+  // `ProtectedRoute` bounces the user back to `/` (login) instead of trapping
+  // them on an onboarding step that polls a failing RPC every 5 s.
+  if (/no backend session token/i.test(message)) return 'auth_expired';
   if (/429.*rate.?limit/i.test(message)) return 'rate_limited';
   if (/Budget exceeded|Insufficient budget/i.test(message)) return 'budget_exceeded';
   if (/error sending request|client error \(Connect\)|timed out|ECONNREFUSED/i.test(message)) {

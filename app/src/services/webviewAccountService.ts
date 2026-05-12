@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import debug from 'debug';
@@ -24,6 +25,82 @@ const log = debug('webview-accounts');
 const errLog = debug('webview-accounts:error');
 
 export { isTauri };
+
+/**
+ * Stable classification of a `webview_account_*` Tauri IPC failure. The Rust
+ * shell rejects with raw `String` values (e.g. `"unknown provider: gmail"`,
+ * `"no url for provider: foo"`, `"invalid provider url ..."`); without a typed
+ * wrapper the rejection bubbles as a bare string up to `onunhandledrejection`,
+ * which Sentry captures as `Non-Error promise rejection` with no stack trace.
+ * Callers should branch on `kind` instead of re-parsing the message.
+ */
+export type WebviewAccountErrorKind = 'unknown_provider' | 'invalid_url' | 'no_url' | 'unknown';
+
+export class WebviewAccountError extends Error {
+  readonly kind: WebviewAccountErrorKind;
+  readonly providerName?: string;
+  constructor(message: string, kind: WebviewAccountErrorKind, providerName?: string) {
+    super(message);
+    this.name = 'WebviewAccountError';
+    this.kind = kind;
+    this.providerName = providerName;
+  }
+}
+
+/**
+ * Classify a `webview_account_*` rejection by its surfaced string. Patterns
+ * map to the Rust-side `format!` sites in
+ * `app/src-tauri/src/webview_accounts/mod.rs` — keep in sync when those
+ * error strings change.
+ */
+export function classifyWebviewAccountError(message: string): {
+  kind: WebviewAccountErrorKind;
+  providerName?: string;
+} {
+  const unknownProvider = /^unknown provider:\s*([\w.-]+)/i.exec(message);
+  if (unknownProvider) {
+    return { kind: 'unknown_provider', providerName: unknownProvider[1] };
+  }
+  const noUrl = /^no url for provider:\s*([\w.-]+)/i.exec(message);
+  if (noUrl) {
+    return { kind: 'no_url', providerName: noUrl[1] };
+  }
+  if (/^invalid provider url\b/i.test(message)) {
+    return { kind: 'invalid_url' };
+  }
+  return { kind: 'unknown' };
+}
+
+function toWebviewAccountError(err: unknown): WebviewAccountError {
+  if (err instanceof WebviewAccountError) return err;
+  const message = err instanceof Error ? err.message : String(err);
+  const { kind, providerName } = classifyWebviewAccountError(message);
+  return new WebviewAccountError(message, kind, providerName);
+}
+
+/**
+ * Map a `WebviewAccountErrorKind` to a fixed, user-safe summary string used
+ * for `errLog` output and `setAccountStatus({ lastError })`. The raw Rust
+ * rejection text can still carry the originally requested provider literal —
+ * which a custom-URL debug override could route to anything — so anything
+ * surfaced into Redux (read by the retry overlay UI) or written to the
+ * `debug('webview-accounts:error')` channel must come from this table, not
+ * `wrapped.message`. The original message is preserved on the thrown
+ * `WebviewAccountError` for callers that need internal control flow.
+ */
+function summaryForKind(kind: WebviewAccountErrorKind): string {
+  switch (kind) {
+    case 'unknown_provider':
+      return 'Provider not supported';
+    case 'no_url':
+      return 'Missing URL for provider';
+    case 'invalid_url':
+      return 'Invalid provider URL';
+    case 'unknown':
+    default:
+      return 'Failed to open account';
+  }
+}
 
 interface RecipeEventPayload {
   account_id: string;
@@ -993,13 +1070,22 @@ export async function openWebviewAccount(args: OpenAccountArgs): Promise<void> {
     store.dispatch(setAccountStatus({ accountId: args.accountId, status: 'loading' }));
     void setFocusedAccount(args.accountId);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    errLog('open failed: %s', msg);
+    const wrapped = toWebviewAccountError(err);
+    const summary = summaryForKind(wrapped.kind);
+    // Redact: never log or persist `wrapped.message` — the Rust shell can
+    // include user-supplied provider/url overrides in the rejection text.
+    errLog('open failed: kind=%s provider=%s', wrapped.kind, wrapped.providerName ?? args.provider);
     loadingAccounts.delete(args.accountId);
     store.dispatch(
-      setAccountStatus({ accountId: args.accountId, status: 'error', lastError: msg })
+      setAccountStatus({ accountId: args.accountId, status: 'error', lastError: summary })
     );
-    throw err;
+    Sentry.addBreadcrumb({
+      category: 'webview-account',
+      level: wrapped.kind === 'unknown' ? 'error' : 'warning',
+      message: 'webview_account_open rejected',
+      data: { kind: wrapped.kind, provider: wrapped.providerName ?? args.provider },
+    });
+    throw wrapped;
   }
 }
 

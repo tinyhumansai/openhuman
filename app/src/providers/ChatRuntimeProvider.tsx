@@ -870,6 +870,41 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, [dispatch, resolveVisibleThreadForProactive, socketStatus, refetchSnapshot]);
 
+  // Socket-disconnect reconciliation.
+  //
+  // `activeThreadId` and the per-thread inference lifecycle are only ever
+  // cleared by `chat_done` / `chat_error` events. If the socket drops
+  // mid-turn (Windows sleep/wake, network change, VPN flap) those events
+  // fire on the dead session and never reach us, so the composer stays
+  // disabled until the 2-minute silence timer expires — users perceive
+  // this as being "locked out" of typing.
+  //
+  // When the socket leaves the `connected` state, treat any in-flight
+  // turn on the previous session as unrecoverable: clear the live
+  // inference status, end the lifecycle row, and release `activeThreadId`
+  // so the composer is immediately typeable again. Streaming assistant
+  // text is preserved so the partial reply stays visible.
+  useEffect(() => {
+    if (socketStatus === 'connected') return;
+    const state = store.getState();
+    const lifecycles = state.chatRuntime.inferenceTurnLifecycleByThread;
+    const threadIds = Object.keys(lifecycles);
+    const activeThreadId = state.thread.activeThreadId;
+    if (threadIds.length === 0 && !activeThreadId) return;
+    rtLog('socket_disconnect_reconcile', {
+      socket: socketStatus,
+      inFlight: threadIds.length,
+      active: activeThreadId,
+    });
+    for (const threadId of threadIds) {
+      dispatch(clearInferenceStatusForThread({ threadId }));
+      dispatch(endInferenceTurn({ threadId }));
+    }
+    if (activeThreadId) {
+      dispatch(setActiveThread(null));
+    }
+  }, [socketStatus, dispatch]);
+
   return <>{children}</>;
 };
 

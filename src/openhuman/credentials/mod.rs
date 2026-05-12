@@ -1,5 +1,6 @@
 //! Credential management for app session and provider auth profiles.
 
+pub mod bus;
 pub mod cli;
 mod core;
 pub mod ops;

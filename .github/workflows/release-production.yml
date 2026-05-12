@@ -105,6 +105,8 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
           submodules: recursive
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:

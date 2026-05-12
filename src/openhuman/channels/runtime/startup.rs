@@ -184,8 +184,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
         .clone()
         .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
     let temperature = config.default_temperature;
-    let mem: Arc<dyn Memory> = Arc::from(memory::create_memory_with_storage(
+    let mem: Arc<dyn Memory> = Arc::from(memory::create_memory_with_local_ai(
         &config.memory,
+        &config.local_ai,
+        &[],
         Some(&config.storage.provider.config),
         &config.workspace_dir,
     )?);

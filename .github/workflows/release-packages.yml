@@ -168,6 +168,8 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:

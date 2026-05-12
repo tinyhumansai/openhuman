@@ -741,4 +741,76 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(timeline).toHaveLength(0);
     });
   });
+
+  // Regression: on Windows users report being "locked out" of the composer
+  // after sleep/wake or a network flap — the in-flight turn's `chat_done`
+  // never arrives on the new socket, so `activeThreadId` and the
+  // `started`/`streaming` lifecycle stay set and the textarea remains
+  // disabled. The reconcile effect releases them on disconnect so the
+  // composer becomes typeable again immediately.
+  describe('socket-disconnect reconciliation (#WindowsLockout)', () => {
+    it('clears activeThreadId and in-flight lifecycle when the socket drops mid-turn', async () => {
+      const threadId = 't-disconnect';
+      renderProvider();
+
+      await act(async () => {
+        const { setActiveThread } = await import('../../store/threadSlice');
+        const { beginInferenceTurn, setInferenceStatusForThread } =
+          await import('../../store/chatRuntimeSlice');
+        store.dispatch(setActiveThread(threadId));
+        store.dispatch(beginInferenceTurn({ threadId }));
+        store.dispatch(
+          setInferenceStatusForThread({
+            threadId,
+            status: { phase: 'thinking', iteration: 1, maxIterations: 10 },
+          })
+        );
+      });
+
+      expect(store.getState().thread.activeThreadId).toBe(threadId);
+      expect(store.getState().chatRuntime.inferenceTurnLifecycleByThread[threadId]).toBe('started');
+
+      await act(async () => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'disconnected' }));
+      });
+
+      await waitFor(() => {
+        expect(store.getState().thread.activeThreadId).toBeNull();
+        expect(
+          store.getState().chatRuntime.inferenceTurnLifecycleByThread[threadId]
+        ).toBeUndefined();
+        expect(store.getState().chatRuntime.inferenceStatusByThread[threadId]).toBeUndefined();
+      });
+    });
+
+    it('preserves streamingAssistant text so the partial reply stays visible after disconnect', async () => {
+      const threadId = 't-disconnect-streaming';
+      renderProvider();
+
+      await act(async () => {
+        const { setActiveThread } = await import('../../store/threadSlice');
+        const { beginInferenceTurn, setStreamingAssistantForThread } =
+          await import('../../store/chatRuntimeSlice');
+        store.dispatch(setActiveThread(threadId));
+        store.dispatch(beginInferenceTurn({ threadId }));
+        store.dispatch(
+          setStreamingAssistantForThread({
+            threadId,
+            streaming: { requestId: 'req-1', content: 'Hello there, partial', thinking: '' },
+          })
+        );
+      });
+
+      await act(async () => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'disconnected' }));
+      });
+
+      await waitFor(() => {
+        expect(store.getState().thread.activeThreadId).toBeNull();
+      });
+      expect(store.getState().chatRuntime.streamingAssistantByThread[threadId]).toMatchObject({
+        content: 'Hello there, partial',
+      });
+    });
+  });
 });

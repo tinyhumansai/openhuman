@@ -65,6 +65,21 @@ enum ThreadLogEntry {
         thread_id: String,
         deleted_at: String,
     },
+    /// Single message appended to a thread. Increments `message_count` by 1
+    /// and overwrites `last_message_at`. Emitted by `append_message` to keep
+    /// list_threads O(threads.jsonl) instead of O(total messages).
+    MessageAppended {
+        thread_id: String,
+        last_message_at: String,
+    },
+    /// Absolute stat snapshot — overrides the running count + timestamp.
+    /// Used to backfill legacy threads whose messages were written before
+    /// `MessageAppended` existed.
+    Stats {
+        thread_id: String,
+        message_count: usize,
+        last_message_at: String,
+    },
 }
 
 impl ConversationStore {
@@ -133,6 +148,17 @@ impl ConversationStore {
                 .map_err(|e| format!("create conversation dir {}: {e}", parent.display()))?;
         }
         append_jsonl(&path, &message)?;
+        // Bump the threads-log stat trail so subsequent `list_threads`
+        // calls can compute (message_count, last_message_at) without
+        // re-reading this file.
+        let threads_path = self.root_dir().join(THREADS_FILENAME);
+        append_jsonl(
+            &threads_path,
+            &ThreadLogEntry::MessageAppended {
+                thread_id: thread_id.to_string(),
+                last_message_at: message.created_at.clone(),
+            },
+        )?;
         debug!(
             "{LOG_PREFIX} appended message thread_id={} message_id={} path={}",
             thread_id,
@@ -319,19 +345,98 @@ impl ConversationStore {
     }
 
     fn list_threads_unlocked(&self) -> Result<Vec<ConversationThread>, String> {
-        let index = self.thread_index_unlocked()?;
-        let mut threads = Vec::with_capacity(index.len());
-        for thread_id in index.keys() {
-            if let Some(summary) = self.thread_summary_unlocked(thread_id)? {
-                threads.push(summary);
+        let mut index = self.thread_index_unlocked()?;
+        // Backfill stats for any thread with no MessageAppended/Stats history
+        // yet (legacy data). The slow per-thread file read happens at most
+        // once per thread — we persist a `Stats` snapshot so subsequent
+        // list_threads calls hit the fast path.
+        let needs_backfill: Vec<String> = index
+            .iter()
+            .filter_map(|(id, entry)| {
+                if entry.message_count.is_none() {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !needs_backfill.is_empty() {
+            let threads_path = self.ensure_root()?.join(THREADS_FILENAME);
+            for thread_id in &needs_backfill {
+                let (count, last_message_at) = self.measure_messages_unlocked(thread_id)?;
+                // Treat created_at as last_message_at when there are no
+                // messages — keeps the sort key meaningful and matches the
+                // pre-refactor semantics.
+                let resolved_last = last_message_at.unwrap_or_else(|| {
+                    index
+                        .get(thread_id)
+                        .map(|e| e.created_at.clone())
+                        .unwrap_or_default()
+                });
+                append_jsonl(
+                    &threads_path,
+                    &ThreadLogEntry::Stats {
+                        thread_id: thread_id.clone(),
+                        message_count: count,
+                        last_message_at: resolved_last.clone(),
+                    },
+                )?;
+                if let Some(entry) = index.get_mut(thread_id) {
+                    entry.message_count = Some(count);
+                    entry.last_message_at = Some(resolved_last);
+                }
+                debug!(
+                    "{LOG_PREFIX} backfilled stats thread_id={} count={}",
+                    thread_id, count
+                );
             }
         }
+
+        let mut threads: Vec<ConversationThread> = index
+            .iter()
+            .map(|(thread_id, entry)| {
+                let message_count = entry.message_count.unwrap_or(0);
+                let last_message_at = entry
+                    .last_message_at
+                    .clone()
+                    .unwrap_or_else(|| entry.created_at.clone());
+                ConversationThread {
+                    id: thread_id.clone(),
+                    title: entry.title.clone(),
+                    chat_id: None,
+                    is_active: true,
+                    message_count,
+                    last_message_at,
+                    created_at: entry.created_at.clone(),
+                    parent_thread_id: entry.parent_thread_id.clone(),
+                    labels: entry.labels.clone(),
+                }
+            })
+            .collect();
         threads.sort_by(|a, b| {
             b.last_message_at
                 .cmp(&a.last_message_at)
                 .then_with(|| b.created_at.cmp(&a.created_at))
         });
         Ok(threads)
+    }
+
+    /// Count messages and find the newest timestamp by reading the
+    /// per-thread JSONL file. Slow path — used only when the threads-log
+    /// stat history is missing (legacy data) so we can write a one-time
+    /// `Stats` snapshot.
+    fn measure_messages_unlocked(
+        &self,
+        thread_id: &str,
+    ) -> Result<(usize, Option<String>), String> {
+        let path = self.thread_messages_path(thread_id);
+        if !path.exists() {
+            return Ok((0, None));
+        }
+        let messages = read_jsonl::<ConversationMessage>(&path)?;
+        let count = messages.len();
+        let last = messages.last().map(|m| m.created_at.clone());
+        Ok((count, last))
     }
 
     fn thread_summary_unlocked(
@@ -343,12 +448,17 @@ impl ConversationStore {
             Some(entry) => entry,
             None => return Ok(None),
         };
-        let messages = read_jsonl::<ConversationMessage>(&self.thread_messages_path(thread_id))?;
-        let message_count = messages.len();
-        let last_message_at = messages
-            .last()
-            .map(|message| message.created_at.clone())
-            .unwrap_or_else(|| entry.created_at.clone());
+        // Prefer the index-tracked stats (cheap). Fall back to a single
+        // per-thread file read for legacy threads with no stat history —
+        // list_threads is responsible for permanently backfilling those.
+        let (message_count, last_message_at) =
+            match (entry.message_count, entry.last_message_at.as_ref()) {
+                (Some(count), Some(last_at)) => (count, last_at.clone()),
+                _ => {
+                    let (count, last_at) = self.measure_messages_unlocked(thread_id)?;
+                    (count, last_at.unwrap_or_else(|| entry.created_at.clone()))
+                }
+            };
         Ok(Some(ConversationThread {
             id: thread_id.to_string(),
             title: entry.title.clone(),
@@ -380,18 +490,25 @@ impl ConversationStore {
                     labels,
                     ..
                 } => {
-                    let (created_at_value, parent_thread_id_value, labels_value) =
-                        match index.get(&thread_id) {
-                            Some(existing) => (
-                                existing.created_at.clone(),
-                                parent_thread_id.or_else(|| existing.parent_thread_id.clone()),
-                                labels.unwrap_or_else(|| existing.labels.clone()),
-                            ),
-                            None => {
-                                let inferred = labels.unwrap_or_else(|| infer_labels(&thread_id));
-                                (created_at, parent_thread_id, inferred)
-                            }
-                        };
+                    let (
+                        created_at_value,
+                        parent_thread_id_value,
+                        labels_value,
+                        message_count_value,
+                        last_message_at_value,
+                    ) = match index.get(&thread_id) {
+                        Some(existing) => (
+                            existing.created_at.clone(),
+                            parent_thread_id.or_else(|| existing.parent_thread_id.clone()),
+                            labels.unwrap_or_else(|| existing.labels.clone()),
+                            existing.message_count,
+                            existing.last_message_at.clone(),
+                        ),
+                        None => {
+                            let inferred = labels.unwrap_or_else(|| infer_labels(&thread_id));
+                            (created_at, parent_thread_id, inferred, None, None)
+                        }
+                    };
                     index.insert(
                         thread_id,
                         ThreadIndexEntry {
@@ -399,11 +516,40 @@ impl ConversationStore {
                             created_at: created_at_value,
                             parent_thread_id: parent_thread_id_value,
                             labels: labels_value,
+                            message_count: message_count_value,
+                            last_message_at: last_message_at_value,
                         },
                     );
                 }
                 ThreadLogEntry::Delete { thread_id, .. } => {
                     index.remove(&thread_id);
+                }
+                ThreadLogEntry::MessageAppended {
+                    thread_id,
+                    last_message_at,
+                } => {
+                    if let Some(entry) = index.get_mut(&thread_id) {
+                        // Increment from a known baseline. If we have no
+                        // baseline yet (legacy thread with messages but no
+                        // Stats snapshot), leave count as `None` so the
+                        // backfill path in `list_threads_unlocked` can do
+                        // the one-shot file read instead of producing a
+                        // wrong "1" here.
+                        if let Some(count) = entry.message_count.as_mut() {
+                            *count += 1;
+                        }
+                        entry.last_message_at = Some(last_message_at);
+                    }
+                }
+                ThreadLogEntry::Stats {
+                    thread_id,
+                    message_count,
+                    last_message_at,
+                } => {
+                    if let Some(entry) = index.get_mut(&thread_id) {
+                        entry.message_count = Some(message_count);
+                        entry.last_message_at = Some(last_message_at);
+                    }
                 }
             }
         }
@@ -426,6 +572,12 @@ struct ThreadIndexEntry {
     created_at: String,
     parent_thread_id: Option<String>,
     labels: Vec<String>,
+    /// Folded message count. `None` means we have no `MessageAppended` /
+    /// `Stats` history for this thread yet (legacy data) — `list_threads`
+    /// backfills by doing a one-shot read of the per-thread messages file.
+    message_count: Option<usize>,
+    /// Timestamp of the newest message, or `None` if unknown (legacy).
+    last_message_at: Option<String>,
 }
 
 fn infer_labels(thread_id: &str) -> Vec<String> {
