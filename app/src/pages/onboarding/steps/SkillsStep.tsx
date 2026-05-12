@@ -149,11 +149,7 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
                     ? 'border-amber-200 bg-amber-50 text-amber-700'
                     : 'border-primary-200 bg-primary-50 text-primary-700'
               }`}>
-              {gmailConnected
-                ? t('skills.configure')
-                : gmailState === 'pending'
-                  ? t('skills.connect')
-                  : t('skills.connect')}
+              {gmailConnected ? t('skills.configure') : t('skills.connect')}
             </span>
           </button>
         )}
