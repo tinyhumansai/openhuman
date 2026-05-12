@@ -78,6 +78,30 @@ function toWebviewAccountError(err: unknown): WebviewAccountError {
   return new WebviewAccountError(message, kind, providerName);
 }
 
+/**
+ * Map a `WebviewAccountErrorKind` to a fixed, user-safe summary string used
+ * for `errLog` output and `setAccountStatus({ lastError })`. The raw Rust
+ * rejection text can still carry the originally requested provider literal —
+ * which a custom-URL debug override could route to anything — so anything
+ * surfaced into Redux (read by the retry overlay UI) or written to the
+ * `debug('webview-accounts:error')` channel must come from this table, not
+ * `wrapped.message`. The original message is preserved on the thrown
+ * `WebviewAccountError` for callers that need internal control flow.
+ */
+function summaryForKind(kind: WebviewAccountErrorKind): string {
+  switch (kind) {
+    case 'unknown_provider':
+      return 'Provider not supported';
+    case 'no_url':
+      return 'Missing URL for provider';
+    case 'invalid_url':
+      return 'Invalid provider URL';
+    case 'unknown':
+    default:
+      return 'Failed to open account';
+  }
+}
+
 interface RecipeEventPayload {
   account_id: string;
   provider: string;
@@ -1047,10 +1071,13 @@ export async function openWebviewAccount(args: OpenAccountArgs): Promise<void> {
     void setFocusedAccount(args.accountId);
   } catch (err) {
     const wrapped = toWebviewAccountError(err);
-    errLog('open failed: kind=%s msg=%s', wrapped.kind, wrapped.message);
+    const summary = summaryForKind(wrapped.kind);
+    // Redact: never log or persist `wrapped.message` — the Rust shell can
+    // include user-supplied provider/url overrides in the rejection text.
+    errLog('open failed: kind=%s provider=%s', wrapped.kind, wrapped.providerName ?? args.provider);
     loadingAccounts.delete(args.accountId);
     store.dispatch(
-      setAccountStatus({ accountId: args.accountId, status: 'error', lastError: wrapped.message })
+      setAccountStatus({ accountId: args.accountId, status: 'error', lastError: summary })
     );
     Sentry.addBreadcrumb({
       category: 'webview-account',

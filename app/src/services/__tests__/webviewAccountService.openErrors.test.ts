@@ -99,9 +99,17 @@ describe('openWebviewAccount error handling', () => {
     // The rejection is no longer the bare string that Sentry's
     // `onunhandledrejection` handler captures as "Non-Error promise rejection".
     expect(store.getState().accounts.accounts[ACCOUNT_ID]?.status).toBe('error');
+    // `lastError` must NOT carry the raw rejection text — that string can
+    // include a user-supplied provider literal (debug-mode custom URL) so the
+    // store keeps a fixed per-kind summary instead. Original message stays
+    // attached to the thrown WebviewAccountError for internal control flow.
     expect(store.getState().accounts.accounts[ACCOUNT_ID]?.lastError).toBe(
-      'unknown provider: gmail'
+      'Provider not supported'
     );
+    expect(store.getState().accounts.accounts[ACCOUNT_ID]?.lastError).not.toContain(
+      'unknown provider:'
+    );
+    expect(store.getState().accounts.accounts[ACCOUNT_ID]?.lastError).not.toContain('gmail');
   });
 
   it('exposes kind + providerName on the wrapped error', async () => {
