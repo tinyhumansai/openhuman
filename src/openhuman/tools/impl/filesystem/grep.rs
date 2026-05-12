@@ -193,8 +193,14 @@ fn scan_for_matches(
         let rel = path.strip_prefix(workspace).unwrap_or(path);
         for (lineno, line) in contents.lines().enumerate() {
             if regex.is_match(line) {
+                // `MAX_LINE_BYTES` is a BYTE budget — use the byte-aware
+                // helper. The earlier migration to `truncate_with_suffix`
+                // mis-typed this as a char budget; for multi-byte text
+                // (CJK / emoji) the rendered line could balloon to ~3×
+                // the intended cap. Per CodeRabbit critical review on
+                // PR #1549.
                 let display_line =
-                    crate::openhuman::util::truncate_with_suffix(line, MAX_LINE_BYTES, "…");
+                    crate::openhuman::util::truncate_at_byte_boundary(line, MAX_LINE_BYTES);
                 matches.push(format!("{}:{}:{}", rel.display(), lineno + 1, display_line));
                 if matches.len() >= max_matches {
                     truncated = true;
