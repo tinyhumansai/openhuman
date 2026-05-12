@@ -6,13 +6,24 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{Duration, Instant};
-use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{http::StatusCode, Error as WsError, Message as WsMessage},
+};
 
 use crate::api::models::socket::ConnectionStatus;
 
 use super::event_handlers::{handle_sio_event, parse_sio_event};
 use super::manager::{emit_state_change, SharedState};
 use super::types::{ConnectionOutcome, WsStream};
+
+/// Maximum HTTP redirect hops to follow during a single WebSocket connect attempt.
+///
+/// Cloudflare and similar edges return a single 301 (e.g. when the configured
+/// `BACKEND_URL` is `http://...` and the server only serves the upgrade over TLS)
+/// before the upgrade succeeds. Three hops is enough headroom for chained
+/// redirects while still bounding pathological loops.
+const MAX_REDIRECT_HOPS: u8 = 3;
 
 // ---------------------------------------------------------------------------
 // Background loop
@@ -30,6 +41,13 @@ pub(super) async fn ws_loop(
     let mut backoff = Duration::from_millis(1000);
     let max_backoff = Duration::from_secs(30);
 
+    // `ws_url` is the *resolved* socket URL we're currently connecting to.
+    // If the backend responds with an HTTP 3xx during the upgrade (typical when
+    // BACKEND_URL is configured as `http://` and the edge forces TLS), we
+    // follow the Location header and pin the resolved URL here so subsequent
+    // reconnects skip the redirect round-trip entirely.
+    let mut ws_url = crate::api::socket::websocket_url(&url);
+
     loop {
         if *shutdown_rx.borrow() {
             break;
@@ -40,7 +58,7 @@ pub(super) async fn ws_loop(
         emit_state_change(&shared);
 
         let outcome = run_connection(
-            &url,
+            &mut ws_url,
             &token,
             &shared,
             &mut emit_rx,
@@ -93,21 +111,27 @@ pub(super) async fn ws_loop(
 // ---------------------------------------------------------------------------
 
 /// Run a single WebSocket connection through handshake and event loop.
+///
+/// `ws_url` is taken by mutable reference so that any HTTP redirect we follow
+/// during the upgrade (see `connect_with_redirects`) is pinned for the next
+/// reconnect attempt — we don't want to re-hit the redirect every time the
+/// loop backs off and retries.
 async fn run_connection(
-    url: &str,
+    ws_url: &mut String,
     token: &str,
     shared: &Arc<SharedState>,
     emit_rx: &mut mpsc::UnboundedReceiver<String>,
     shutdown_rx: &mut watch::Receiver<bool>,
     internal_tx: &mpsc::UnboundedSender<String>,
 ) -> ConnectionOutcome {
-    // 1. Build WebSocket URL (appends /socket.io/?EIO=4&transport=websocket)
-    let ws_url = crate::api::socket::websocket_url(url);
     log::info!("[socket] WS URL: {}", ws_url);
 
-    // 2. Connect via WebSocket (uses rustls TLS for wss://)
-    let (ws_stream, _response) = match connect_async(&ws_url).await {
-        Ok(r) => r,
+    // 2. Connect via WebSocket (uses rustls TLS for wss://). Follow HTTP 3xx
+    //    redirects up to MAX_REDIRECT_HOPS so a `http://` config behind a
+    //    Cloudflare-style edge that 301s to `https://` connects cleanly
+    //    instead of looping at error-level forever.
+    let ws_stream = match connect_with_redirects(ws_url, shared).await {
+        Ok(stream) => stream,
         Err(e) => return ConnectionOutcome::Failed(format!("WebSocket connect: {e}")),
     };
 
@@ -402,6 +426,143 @@ fn handle_sio_packet(
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Redirect-following connect
+// ---------------------------------------------------------------------------
+
+/// Connect to `ws_url`, following HTTP 3xx redirects up to `MAX_REDIRECT_HOPS`.
+///
+/// Plain `connect_async` returns an error on any non-`101 Switching Protocols`
+/// response, so a Cloudflare-style `http://… → https://…` 301 (which happens
+/// whenever `BACKEND_URL` is configured without TLS) used to be fatal — the
+/// reconnect loop would hammer the same dead URL forever at error level.
+///
+/// On each redirect we:
+///   1. resolve the `Location` header against the current URL (handles relative
+///      Location values),
+///   2. upgrade the scheme so the next attempt is still a WebSocket
+///      (`http` → `ws`, `https` → `wss`; `ws`/`wss` pass through),
+///   3. mutate `ws_url` in place so the redirect target is pinned for
+///      subsequent reconnects (no need to re-hit the redirect every retry),
+///   4. record a one-shot warning in `SharedState.error` the first time we
+///      follow a redirect so the UI can surface "your `BACKEND_URL` is stale".
+///
+/// On non-redirect failures the original error is returned and the caller
+/// counts it toward the exponential backoff like before.
+async fn connect_with_redirects(
+    ws_url: &mut String,
+    shared: &Arc<SharedState>,
+) -> Result<WsStream, WsError> {
+    let original = ws_url.clone();
+    for hop in 0..=MAX_REDIRECT_HOPS {
+        match connect_async(ws_url.as_str()).await {
+            Ok((stream, _response)) => return Ok(stream),
+            Err(WsError::Http(response)) if is_redirect_status(response.status()) => {
+                if hop == MAX_REDIRECT_HOPS {
+                    log::error!(
+                        "[socket] Exceeded {MAX_REDIRECT_HOPS} redirect hops starting from {original}; giving up"
+                    );
+                    return Err(WsError::Http(response));
+                }
+                let location = match extract_location_header(&response) {
+                    Some(loc) => loc,
+                    None => {
+                        log::error!(
+                            "[socket] Redirect {} from {ws_url} missing Location header",
+                            response.status()
+                        );
+                        return Err(WsError::Http(response));
+                    }
+                };
+                let next_url = match resolve_redirect_target(ws_url, &location) {
+                    Ok(url) => url,
+                    Err(e) => {
+                        log::error!(
+                            "[socket] Cannot follow redirect to {location} from {ws_url}: {e}"
+                        );
+                        return Err(WsError::Http(response));
+                    }
+                };
+                log::warn!(
+                    "[socket] Server redirected ({}) {} → {}",
+                    response.status(),
+                    ws_url,
+                    next_url
+                );
+                record_redirect_warning(shared, &original, &next_url);
+                *ws_url = next_url;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    // Unreachable: the loop either returns Ok, returns the redirect error after
+    // exhausting hops, or returns a non-redirect Err.
+    unreachable!("connect_with_redirects exited loop without returning")
+}
+
+/// Statuses we treat as "follow the Location and retry".
+///
+/// 308 (Permanent Redirect) and 307 (Temporary Redirect) explicitly preserve
+/// the method; 301/302 historically do too for upgrade requests in practice.
+/// Anything else (300, 304, ...) stays an error.
+fn is_redirect_status(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::MOVED_PERMANENTLY
+            | StatusCode::FOUND
+            | StatusCode::TEMPORARY_REDIRECT
+            | StatusCode::PERMANENT_REDIRECT
+    )
+}
+
+fn extract_location_header(
+    response: &tokio_tungstenite::tungstenite::http::Response<Option<Vec<u8>>>,
+) -> Option<String> {
+    response
+        .headers()
+        .get(tokio_tungstenite::tungstenite::http::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+}
+
+/// Resolve `location` against `current_ws_url` and rewrite the scheme so the
+/// result is still a valid WebSocket URL.
+///
+/// `location` may be absolute (`https://host/path?q=1`) or relative
+/// (`/socket.io/?EIO=4`). We use the `url` crate's relative-URL parser to do
+/// the join the same way browsers do, then map `http`→`ws` / `https`→`wss`.
+fn resolve_redirect_target(current_ws_url: &str, location: &str) -> Result<String, String> {
+    let base = url::Url::parse(current_ws_url).map_err(|e| format!("invalid current URL: {e}"))?;
+    let resolved = base
+        .join(location)
+        .map_err(|e| format!("invalid Location {location:?}: {e}"))?;
+
+    let upgraded_scheme = match resolved.scheme() {
+        "http" => "ws",
+        "https" => "wss",
+        "ws" | "wss" => resolved.scheme(),
+        other => return Err(format!("unsupported scheme in Location: {other}")),
+    };
+
+    let mut next = resolved.clone();
+    next.set_scheme(upgraded_scheme)
+        .map_err(|_| format!("failed to set scheme {upgraded_scheme} on {resolved}"))?;
+    Ok(next.to_string())
+}
+
+/// Persist a one-shot, user-visible warning that the backend redirected the
+/// configured socket URL. Subsequent redirects in the same connect attempt
+/// don't overwrite — the first hop carries the actionable signal.
+fn record_redirect_warning(shared: &Arc<SharedState>, original: &str, resolved: &str) {
+    let mut slot = shared.error.write();
+    if slot.is_some() {
+        return;
+    }
+    *slot = Some(format!(
+        "Backend redirected {original} → {resolved}. Update BACKEND_URL to the resolved URL to avoid the extra hop."
+    ));
 }
 
 #[cfg(test)]

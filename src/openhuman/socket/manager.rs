@@ -51,6 +51,10 @@ pub(super) struct SharedState {
     pub(super) status: RwLock<ConnectionStatus>,
     /// Socket ID assigned by the server.
     pub(super) socket_id: RwLock<Option<String>>,
+    /// Last user-visible connection warning surfaced through `SocketState.error`
+    /// (e.g. "backend redirected ws→wss; update BACKEND_URL"). Cleared on every
+    /// successful handshake and on disconnect.
+    pub(super) error: RwLock<Option<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +86,7 @@ impl SocketManager {
                 webhook_router: RwLock::new(None),
                 status: RwLock::new(ConnectionStatus::Disconnected),
                 socket_id: RwLock::new(None),
+                error: RwLock::new(None),
             }),
             emit_tx: tokio::sync::Mutex::new(None),
             shutdown_tx: tokio::sync::Mutex::new(None),
@@ -105,7 +110,7 @@ impl SocketManager {
         SocketState {
             status: *self.shared.status.read(),
             socket_id: self.shared.socket_id.read().clone(),
-            error: None,
+            error: self.shared.error.read().clone(),
         }
     }
 
@@ -133,6 +138,7 @@ impl SocketManager {
         log::info!("[socket] Connecting to {}", url);
 
         *self.shared.status.write() = ConnectionStatus::Connecting;
+        *self.shared.error.write() = None;
         emit_state_change(&self.shared);
 
         let (emit_tx, emit_rx) = mpsc::unbounded_channel::<String>();
@@ -165,6 +171,7 @@ impl SocketManager {
         }
         *self.shared.status.write() = ConnectionStatus::Disconnected;
         *self.shared.socket_id.write() = None;
+        *self.shared.error.write() = None;
         emit_state_change(&self.shared);
         log::debug!("[socket] Disconnected");
         Ok(())
@@ -247,6 +254,18 @@ mod tests {
         assert_eq!(state.socket_id.as_deref(), Some("sid-abc"));
     }
 
+    #[test]
+    fn get_state_surfaces_stored_error_to_callers() {
+        let mgr = SocketManager::new();
+        *mgr.shared.error.write() =
+            Some("backend redirected ws→wss; update BACKEND_URL".to_string());
+        let state = mgr.get_state();
+        assert_eq!(
+            state.error.as_deref(),
+            Some("backend redirected ws→wss; update BACKEND_URL")
+        );
+    }
+
     #[tokio::test]
     async fn emit_without_connection_errors_without_panic() {
         let mgr = SocketManager::new();
@@ -269,6 +288,7 @@ mod tests {
             webhook_router: RwLock::new(None),
             status: RwLock::new(ConnectionStatus::Connecting),
             socket_id: RwLock::new(None),
+            error: RwLock::new(None),
         };
         // Must not panic even with all default state.
         emit_state_change(&shared);
@@ -280,6 +300,7 @@ mod tests {
             webhook_router: RwLock::new(None),
             status: RwLock::new(ConnectionStatus::Connected),
             socket_id: RwLock::new(Some("x".into())),
+            error: RwLock::new(None),
         };
         // Pure logging — must not touch state or panic.
         emit_server_event(&shared, "any.event", json!({}));
