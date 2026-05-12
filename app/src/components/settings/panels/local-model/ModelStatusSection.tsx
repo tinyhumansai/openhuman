@@ -26,6 +26,7 @@ interface ModelStatusSectionProps {
   speedText: string;
   etaText: string;
   statusTone: (state: string) => string;
+  runtimeEnabled: boolean;
   onRefreshStatus: () => void;
   onTriggerDownload: (force: boolean) => void;
   onSetOllamaPath: () => void;
@@ -67,6 +68,7 @@ const ModelStatusSection = ({
   speedText,
   etaText,
   statusTone,
+  runtimeEnabled,
   onRefreshStatus,
   onTriggerDownload,
   onSetOllamaPath,
@@ -234,7 +236,7 @@ const ModelStatusSection = ({
             ) : (
               <button
                 onClick={() => onTriggerDownload(false)}
-                disabled={isTriggeringDownload}
+                disabled={!runtimeEnabled || isTriggeringDownload}
                 className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
                 {isTriggeringDownload
                   ? 'Triggering...'
@@ -245,7 +247,7 @@ const ModelStatusSection = ({
             )}
             <button
               onClick={() => onTriggerDownload(true)}
-              disabled={isTriggeringDownload}
+              disabled={!runtimeEnabled || isTriggeringDownload}
               className="px-3 py-1.5 text-xs rounded-md border border-stone-200 hover:border-stone-300 disabled:opacity-60 text-stone-600">
               {isTriggeringDownload ? 'Working...' : 'Force Re-bootstrap'}
             </button>

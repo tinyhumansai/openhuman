@@ -24,6 +24,7 @@ const defaultProps = {
   speedText: '',
   etaText: '',
   statusTone: (_state: string) => '',
+  runtimeEnabled: true,
   onRefreshStatus: vi.fn(),
   onTriggerDownload: vi.fn(),
   onSetOllamaPath: vi.fn(),

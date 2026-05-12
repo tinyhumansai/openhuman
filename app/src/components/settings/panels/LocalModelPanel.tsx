@@ -63,6 +63,7 @@ const LocalModelPanel = () => {
     return progressFromStatus(status);
   }, [downloads, status]);
   const currentState = downloads?.state ?? status?.state;
+  const runtimeEnabled = usageFlags.runtime_enabled;
   const isInstalling = currentState === 'installing';
   const isIndeterminateDownload =
     isInstalling ||
@@ -141,16 +142,22 @@ const LocalModelPanel = () => {
   };
 
   useEffect(() => {
-    void loadStatus();
-    void loadPresets();
-    void loadUsage();
-    const timer = setInterval(() => {
+    const initialLoad = window.setTimeout(() => {
+      void loadStatus();
+      void loadPresets();
+      void loadUsage();
+    }, 0);
+    const timer = window.setInterval(() => {
       void loadStatus();
     }, 1500);
-    return () => clearInterval(timer);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.clearInterval(timer);
+    };
   }, []);
 
   const triggerDownload = async (force: boolean) => {
+    if (!runtimeEnabled) return;
     setIsTriggeringDownload(true);
     setStatusError('');
     setBootstrapMessage('');
@@ -247,7 +254,7 @@ const LocalModelPanel = () => {
             <button
               type="button"
               onClick={() => void triggerDownload(false)}
-              disabled={isTriggeringDownload}
+              disabled={!runtimeEnabled || isTriggeringDownload}
               className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
               {isTriggeringDownload ? 'Downloading…' : 'Download Models'}
             </button>
@@ -341,8 +348,11 @@ const LocalModelPanel = () => {
 
         <button
           type="button"
-          onClick={() => navigateToSettings('local-model-debug')}
-          className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-600 transition-colors">
+          onClick={() => {
+            if (runtimeEnabled) navigateToSettings('local-model-debug');
+          }}
+          disabled={!runtimeEnabled}
+          className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-600 transition-colors disabled:opacity-50 disabled:hover:text-stone-400">
           Advanced settings
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
