@@ -443,8 +443,9 @@ async fn bench_contradiction_surfaces_both_with_provenance() {
         .join(" ");
 
     assert!(
-        content_all.to_lowercase().contains("june") || content_all.to_lowercase().contains("jul"),
-        "contradiction hits should include both date references"
+        content_all.to_lowercase().contains("june") && content_all.to_lowercase().contains("july"),
+        "contradiction hits should include both June and July date references from both sources. Got: {}",
+        content_all
     );
 }
 
