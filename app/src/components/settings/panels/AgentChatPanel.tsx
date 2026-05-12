@@ -85,10 +85,7 @@ const AgentChatPanel = () => {
       <div className="p-4 space-y-4">
         <section className="space-y-3">
           <h3 className="text-sm font-semibold text-stone-900">{t('chat.overrides')}</h3>
-          <p className="text-sm text-stone-400">
-            Inference uses your OpenHuman backend (config API URL and session). Optional model and
-            temperature override the defaults for this panel only.
-          </p>
+          <p className="text-sm text-stone-400">{t('chat.agentChatDesc')}</p>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="space-y-2 text-sm text-stone-600">
               {t('chat.model')}
@@ -144,7 +141,7 @@ const AgentChatPanel = () => {
               onChange={event => setInput(event.target.value)}
             />
             <button className="btn btn-primary" onClick={sendMessage} disabled={sending}>
-              {sending ? 'Sending…' : t('chat.sendMessage')}
+              {sending ? t('common.loading') : t('chat.sendMessage')}
             </button>
           </div>
         </section>

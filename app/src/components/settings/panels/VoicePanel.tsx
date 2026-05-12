@@ -354,21 +354,21 @@ const VoicePanel = () => {
                 onClick={() => void saveSettings(true)}
                 disabled={disabled || isSaving || !hasUnsavedChanges}
                 className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
-                {isSaving ? 'Saving…' : t('voice.saveVoiceSettings')}
+                {isSaving ? t('common.loading') : t('voice.saveVoiceSettings')}
               </button>
               <button
                 type="button"
                 onClick={() => void startServer()}
                 disabled={disabled || isStarting}
                 className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white">
-                {isStarting ? 'Starting…' : t('voice.startVoiceServer')}
+                {isStarting ? t('common.loading') : t('voice.startVoiceServer')}
               </button>
               <button
                 type="button"
                 onClick={() => void stopServer()}
                 disabled={!isRunning || isStopping}
                 className="px-3 py-1.5 text-xs rounded-md border border-stone-300 hover:border-stone-400 disabled:opacity-60 text-stone-700">
-                {isStopping ? 'Stopping…' : t('voice.stopVoiceServer')}
+                {isStopping ? t('common.loading') : t('voice.stopVoiceServer')}
               </button>
             </div>
           </div>

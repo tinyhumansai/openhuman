@@ -18,14 +18,6 @@ interface AnnotatedCapability extends Capability {
   privacy: CapabilityPrivacy;
 }
 
-const KIND_LABEL: Record<PrivacyDataKind, string> = {
-  raw: 'Raw user content',
-  derived: 'Derived signals',
-  credentials: 'Credentials',
-  diagnostics: 'Diagnostics',
-  metadata: 'Metadata',
-};
-
 const KIND_BADGE_CLASS: Record<PrivacyDataKind, string> = {
   raw: 'bg-sage-50 text-sage-700 border-sage-200',
   derived: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -33,6 +25,21 @@ const KIND_BADGE_CLASS: Record<PrivacyDataKind, string> = {
   diagnostics: 'bg-primary-50 text-primary-700 border-primary-200',
   metadata: 'bg-stone-50 text-stone-600 border-stone-200',
 };
+
+function kindLabel(kind: PrivacyDataKind, t: (key: string) => string): string {
+  switch (kind) {
+    case 'raw':
+      return t('privacy.dataKind.raw');
+    case 'derived':
+      return t('privacy.dataKind.derived');
+    case 'credentials':
+      return t('privacy.dataKind.credentials');
+    case 'diagnostics':
+      return t('privacy.dataKind.diagnostics');
+    case 'metadata':
+      return t('privacy.dataKind.metadata');
+  }
+}
 
 const PrivacyPanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
@@ -132,7 +139,7 @@ const PrivacyPanel = () => {
                         <div className="flex flex-col items-end gap-1 shrink-0">
                           <span
                             className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border ${KIND_BADGE_CLASS[cap.privacy.data_kind]}`}>
-                            {KIND_LABEL[cap.privacy.data_kind]}
+                            {kindLabel(cap.privacy.data_kind, t)}
                           </span>
                           <span className="text-[10px] text-stone-500">
                             {cap.privacy.leaves_device

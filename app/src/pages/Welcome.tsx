@@ -78,11 +78,15 @@ const Welcome = () => {
         clearCoreRpcUrlCache();
         clearBackendUrlCache();
       } else {
-        setRpcUrlError(`Connection failed: ${response.status} ${response.statusText}`);
+        setRpcUrlError(
+          t('welcome.connectionFailed')
+            .replace('{status}', String(response.status))
+            .replace('{statusText}', response.statusText)
+        );
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : t('misc.serviceUnavailable');
-      setRpcUrlError(`Connection failed: ${message}`);
+      setRpcUrlError(t('welcome.connectionFailedMsg').replace('{message}', message));
     } finally {
       setIsTestingConnection(false);
     }

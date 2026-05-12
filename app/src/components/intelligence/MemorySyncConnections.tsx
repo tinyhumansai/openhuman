@@ -215,7 +215,7 @@ export function MemorySyncConnections({ pollIntervalMs }: MemorySyncConnectionsP
 
   return (
     <section className="memory-sync-connections" data-testid="memory-sync-connections">
-      <h3 className="text-sm font-semibold text-stone-700">Memory sources</h3>
+      <h3 className="text-sm font-semibold text-stone-700">{t('sync.memorySources')}</h3>
       <div className="mt-2 space-y-2">
         {statuses.map(s => (
           <SourceCard key={s.provider} status={s} />

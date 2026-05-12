@@ -101,8 +101,8 @@ const ComposioTriagePanel = () => {
       <div className="p-4 space-y-5">
         <p className="text-sm text-stone-500">
           {t('composio.triageDesc')}{' '}
-          <span className="font-mono">OPENHUMAN_TRIGGER_TRIAGE_DISABLED</span> is set, it overrides
-          these settings and disables triage for all triggers.
+          <span className="font-mono">OPENHUMAN_TRIGGER_TRIAGE_DISABLED</span>{' '}
+          {t('composio.envVarOverrides')}
         </p>
 
         <div className="rounded-2xl border border-stone-200 bg-stone-50/60 p-4 space-y-1">
@@ -156,7 +156,7 @@ const ComposioTriagePanel = () => {
           onClick={handleSave}
           disabled={saving}
           className="w-full py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-500 transition-colors disabled:opacity-50">
-          {saving ? 'Saving…' : t('common.save')}
+          {saving ? t('common.loading') : t('common.save')}
         </button>
 
         {saveStatus === 'saved' && (

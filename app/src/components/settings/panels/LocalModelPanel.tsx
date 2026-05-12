@@ -162,7 +162,9 @@ const LocalModelPanel = () => {
       const freshStatus = await openhumanLocalAiStatus();
       setStatus(freshStatus.result);
       if (freshStatus.result?.state === 'ready') {
-        setBootstrapMessage(force ? 'Re-bootstrap complete' : 'Models verified');
+        setBootstrapMessage(
+          force ? t('localModel.rebootstrapComplete') : t('localModel.modelsVerified')
+        );
       }
       setTimeout(() => setBootstrapMessage(''), 3000);
     } catch (err) {
@@ -251,7 +253,7 @@ const LocalModelPanel = () => {
               onClick={() => void triggerDownload(false)}
               disabled={isTriggeringDownload}
               className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
-              {isTriggeringDownload ? 'Downloading…' : t('localModel.downloadModels')}
+              {isTriggeringDownload ? t('misc.downloading') : t('localModel.downloadModels')}
             </button>
             <button
               type="button"
@@ -293,23 +295,23 @@ const LocalModelPanel = () => {
               [
                 {
                   key: 'usage_embeddings' as const,
-                  label: 'Embeddings',
-                  hint: 'Generate memory embeddings locally instead of in the cloud.',
+                  label: t('localModel.usage.embeddings'),
+                  hint: t('localModel.usage.embeddingsDesc'),
                 },
                 {
                   key: 'usage_heartbeat' as const,
-                  label: 'Heartbeat',
-                  hint: 'Run heartbeat reasoning locally.',
+                  label: t('localModel.usage.heartbeat'),
+                  hint: t('localModel.usage.heartbeatDesc'),
                 },
                 {
                   key: 'usage_learning_reflection' as const,
-                  label: 'Learning / reflection',
-                  hint: 'Run learning and reflection passes locally.',
+                  label: t('localModel.usage.learningReflection'),
+                  hint: t('localModel.usage.learningReflectionDesc'),
                 },
                 {
                   key: 'usage_subconscious' as const,
-                  label: 'Subconscious',
-                  hint: 'Run subconscious evaluation locally.',
+                  label: t('localModel.usage.subconscious'),
+                  hint: t('localModel.usage.subconsciousDesc'),
                 },
               ] as const
             ).map(({ key, label, hint }) => (

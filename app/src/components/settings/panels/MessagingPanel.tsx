@@ -74,7 +74,9 @@ const MessagingPanel = () => {
   const recommendedRoute = useMemo(() => {
     const channel = channelConnections.defaultMessagingChannel;
     const authMode = resolvePreferredAuthModeForChannel(channelConnections, channel);
-    return authMode ? `${channel} via ${authMode}` : t('channels.noActiveRoute');
+    return authMode
+      ? t('channels.activeRouteValue').replace('{channel}', channel).replace('{authMode}', authMode)
+      : t('channels.noActiveRoute');
   }, [channelConnections, t]);
 
   const bestStatus = useCallback(

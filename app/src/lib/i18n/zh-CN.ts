@@ -884,8 +884,7 @@ const zhCN: TranslationMap = {
   'bootCheck.tokenRequired': '请输入核心认证令牌。',
   'bootCheck.chooseCoreMode': '选择核心模式',
   'bootCheck.connectToCore': '连接到你的核心',
-  'bootCheck.desktopDescription':
-    'OpenHuman 需要一个运行中的核心才能工作。请选择连接方式。',
+  'bootCheck.desktopDescription': 'OpenHuman 需要一个运行中的核心才能工作。请选择连接方式。',
   'bootCheck.webDescription':
     '网页版 OpenHuman 连接到由你控制的远程核心。请输入其 URL 和认证令牌，或安装桌面版在本地运行核心。',
   'bootCheck.preferDesktop': '更希望在自己的设备上运行一切？',
@@ -915,8 +914,7 @@ const zhCN: TranslationMap = {
   'bootCheck.removing': '正在移除…',
   'bootCheck.removeContinue': '移除并继续',
   'bootCheck.localNeedsRestart': '本地核心需要重启',
-  'bootCheck.localNeedsRestartDesc':
-    '本地核心版本与此应用构建版本不匹配。重启后将加载正确的版本。',
+  'bootCheck.localNeedsRestartDesc': '本地核心版本与此应用构建版本不匹配。重启后将加载正确的版本。',
   'bootCheck.restarting': '正在重启…',
   'bootCheck.restartCore': '重启核心',
   'bootCheck.cloudNeedsUpdate': '云端核心需要更新',
@@ -931,6 +929,101 @@ const zhCN: TranslationMap = {
   'bootCheck.restartUpdateCore': '重启 / 更新核心',
   'bootCheck.unexpectedError': '意外的启动检查错误',
   'bootCheck.actionFailed': '操作失败 — 请重试。',
+
+  // Notifications: category labels & timestamps
+  'notifications.justNow': '刚刚',
+  'notifications.minAgo': '{n} 分钟前',
+  'notifications.hrAgo': '{n} 小时前',
+  'notifications.dayAgo': '{n} 天前',
+  'notifications.category.messages': '消息',
+  'notifications.category.agents': '智能体',
+  'notifications.category.skills': '技能',
+  'notifications.category.system': '系统',
+  'notifications.category.meetings': '会议',
+  'notifications.category.reminders': '提醒',
+  'notifications.category.important': '重要',
+
+  // About / Updates: status summary phrases
+  'about.update.status.checking': '检查中...',
+  'about.update.status.available': 'v{version} 可用',
+  'about.update.status.availableNoVersion': '更新可用',
+  'about.update.status.downloading': '下载中...',
+  'about.update.status.readyToInstall': 'v{version} 已准备好安装',
+  'about.update.status.readyToInstallNoVersion': '已准备好安装',
+  'about.update.status.installing': '安装中...',
+  'about.update.status.restarting': '重启中...',
+  'about.update.status.upToDate': '已是最新版本',
+  'about.update.status.error': '更新检查失败',
+  'about.update.status.default': '检查更新',
+
+  // Welcome: connection error messages
+  'welcome.connectionFailed': '连接失败: {status} {statusText}',
+  'welcome.connectionFailedMsg': '连接失败: {message}',
+
+  // Chat: Agent chat panel description
+  'chat.agentChatDesc': '与智能体进行直接对话。',
+
+  // Channels: active route interpolated value
+  'channels.activeRouteValue': '{channel} 通过 {authMode}',
+
+  // Privacy: data kind labels for What Leaves My Computer
+  'privacy.dataKind.messages': '消息',
+  'privacy.dataKind.agents': '智能体',
+  'privacy.dataKind.skills': '技能',
+  'privacy.dataKind.system': '系统',
+  'privacy.dataKind.meetings': '会议',
+  'privacy.dataKind.reminders': '提醒',
+  'privacy.dataKind.important': '重要',
+
+  // Onboarding: supplementary keys
+  'onboarding.enableLocalAI': '启用本地 AI',
+  'onboarding.skills.status.available': '可用',
+  'onboarding.skills.status.connected': '已连接',
+  'onboarding.skills.status.connecting': '连接中',
+  'onboarding.skills.status.error': '错误',
+  'onboarding.skills.status.unavailable': '不可用',
+
+  // Composio: miscellaneous
+  'composio.statusUnavailable': '状态不可用',
+  'composio.envVarOverrides': '已设置，将覆盖此设置。',
+
+  // Memory: day-of-week labels for heatmap
+  'memory.day.sun': '日',
+  'memory.day.mon': '一',
+  'memory.day.tue': '二',
+  'memory.day.wed': '三',
+  'memory.day.thu': '四',
+  'memory.day.fri': '五',
+  'memory.day.sat': '六',
+
+  // Memory: ingestion status labels
+  'memory.ingesting': '摄取中',
+  'memory.ingestionQueued': '排队中',
+  'memory.ingestingTitle': '正在摄取 {title}',
+
+  // Mic: error messages
+  'mic.noAudioCaptured': '未捕获到音频',
+  'mic.noSpeechDetected': '未检测到语音',
+  'mic.failedToStopRecording': '停止录音失败: {message}',
+  'mic.transcriptionFailed': '转录失败: {message}',
+
+  // Reflections: kind labels
+  'reflections.kind.retrospective': '回顾',
+  'reflections.kind.derivedFact': '派生事实',
+  'reflections.kind.moodInsight': '情绪洞察',
+  'reflections.kind.relationshipInsight': '关系洞察',
+
+  // Graph: tooltip keys
+  'graph.tooltip.summary': '摘要',
+  'graph.tooltip.contact': '联系人',
+
+  // Local Model: usage labels
+  'localModel.usage.never': '从不',
+  'localModel.usage.mediumLoad': '中等负载',
+  'localModel.usage.lowLoad': '低负载',
+  'localModel.usage.idleMode': '空闲模式',
+  'localModel.rebootstrapComplete': '模型重新引导完成。',
+  'localModel.modelsVerified': '本地模型已验证。',
 };
 
 export default zhCN;

@@ -11,7 +11,9 @@ interface MemoryHeatmapProps {
 const MONTHS = 8;
 const DAYS_PER_WEEK = 7;
 const CELL_GAP = 2;
-const DAY_LABELS = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
+function dayLabels(t: (key: string) => string): string[] {
+  return ['', t('memory.day.mon'), '', t('memory.day.wed'), '', t('memory.day.fri'), ''];
+}
 
 const INTENSITY_COLORS = [
   'rgba(255,255,255,0.04)', // 0 events
@@ -34,7 +36,7 @@ function dateToKey(date: Date): string {
 }
 
 function formatDate(date: Date): string {
-  return date.toLocaleDateString('en-US', {
+  return date.toLocaleDateString(undefined, {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -102,7 +104,7 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
       // Track month labels (on the first Sunday-row cell of each new month)
       if (cellDate.getMonth() !== lastMonth && d === 0) {
         lastMonth = cellDate.getMonth();
-        months.push({ label: cellDate.toLocaleDateString('en-US', { month: 'short' }), weekIdx });
+        months.push({ label: cellDate.toLocaleDateString(undefined, { month: 'short' }), weekIdx });
       }
 
       cursor.setDate(cursor.getDate() + 1);
@@ -171,7 +173,7 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
         preserveAspectRatio="xMinYMin meet"
         className="block">
         {/* Day labels */}
-        {DAY_LABELS.map((label, i) =>
+        {dayLabels(t).map((label, i) =>
           label ? (
             <text
               key={i}

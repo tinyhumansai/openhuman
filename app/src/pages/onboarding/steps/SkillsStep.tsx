@@ -33,14 +33,17 @@ function statusDotClass(connection: ComposioConnection | undefined): string {
   }
 }
 
-function statusLabel(state: ReturnType<typeof deriveComposioState>): string {
+function statusLabel(
+  state: ReturnType<typeof deriveComposioState>,
+  t: (key: string) => string
+): string {
   switch (state) {
     case 'connected':
-      return 'Connected';
+      return t('skills.connected');
     case 'pending':
-      return 'Connecting';
+      return t('channels.status.connecting');
     case 'error':
-      return 'Error';
+      return t('common.error');
     default:
       return '';
   }
@@ -122,13 +125,13 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
                 <span className="truncate text-sm font-semibold text-stone-900">
                   {gmailMeta.name}
                 </span>
-                {statusLabel(gmailState) && (
+                {statusLabel(gmailState, t) && (
                   <>
                     <div
                       className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${statusDotClass(gmailConnection)}`}
                     />
                     <span className={`flex-shrink-0 text-xs ${statusColor(gmailState)}`}>
-                      {statusLabel(gmailState)}
+                      {statusLabel(gmailState, t)}
                     </span>
                   </>
                 )}

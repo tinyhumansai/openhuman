@@ -254,7 +254,7 @@ const Mnemonic = () => {
               <button
                 onClick={() => setMode('import')}
                 className="w-full text-center text-sm text-primary-500 hover:text-primary-600 transition-colors mb-3">
-                {t('mnemonic.reveal')}
+                {t('mnemonic.alreadyHavePhrase')}
               </button>
 
               {/* Confirmation Checkbox */}
@@ -325,7 +325,7 @@ const Mnemonic = () => {
               <button
                 onClick={() => setMode('generate')}
                 className="w-full text-center text-sm text-primary-500 hover:text-primary-600 transition-colors mb-3">
-                {t('mnemonic.reveal')}
+                {t('mnemonic.generateNewPhrase')}
               </button>
             </>
           )}

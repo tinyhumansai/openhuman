@@ -1,14 +1,11 @@
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useMemo } from 'react';
 
 import { useAppSelector } from '../../store/hooks';
-import type { Locale } from './types';
 import en from './en';
+import type { Locale } from './types';
 import zhCN from './zh-CN';
 
-const translations: Record<Locale, Record<string, string>> = {
-  en,
-  'zh-CN': zhCN,
-};
+const translations: Record<Locale, Record<string, string>> = { en, 'zh-CN': zhCN };
 
 const I18nContext = createContext<{ t: (key: string) => string; locale: Locale }>({
   t: (key: string) => key,

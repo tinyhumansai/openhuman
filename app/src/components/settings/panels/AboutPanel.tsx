@@ -24,7 +24,7 @@ const AboutPanel = () => {
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
 
   const isChecking = phase === 'checking';
-  const summary = summaryFor(phase, info, error);
+  const summary = summaryFor(phase, info, error, t);
 
   const handleCheck = async () => {
     console.debug('[app-update] AboutPanel: manual check');
@@ -61,7 +61,7 @@ const AboutPanel = () => {
               <div className="mt-1 text-xs text-stone-500 leading-relaxed">{summary}</div>
               {lastCheckedAt && (
                 <div className="mt-1 text-[11px] text-stone-400">
-                  {t('settings.about.lastChecked')} {formatRelative(lastCheckedAt)}
+                  {t('settings.about.lastChecked')} {formatRelative(lastCheckedAt, t)}
                 </div>
               )}
             </div>
@@ -97,41 +97,42 @@ const AboutPanel = () => {
 function summaryFor(
   phase: ReturnType<typeof useAppUpdate>['phase'],
   info: ReturnType<typeof useAppUpdate>['info'],
-  error: string | null
+  error: string | null,
+  t: (key: string) => string
 ): string {
   switch (phase) {
     case 'checking':
-      return 'Contacting the update server…';
+      return t('about.update.status.checking');
     case 'available':
       return info?.available_version
-        ? `Version ${info.available_version} found — downloading in the background…`
-        : 'A new version was found — downloading…';
+        ? t('about.update.status.available').replace('{version}', info.available_version)
+        : t('about.update.status.availableNoVersion');
     case 'downloading':
-      return 'Downloading the latest version in the background…';
+      return t('about.update.status.downloading');
     case 'ready_to_install':
       return info?.available_version
-        ? `Version ${info.available_version} is downloaded and ready. Use the prompt at the bottom right to restart.`
-        : 'A new version is downloaded and ready. Restart to apply.';
+        ? t('about.update.status.readyToInstall').replace('{version}', info.available_version)
+        : t('about.update.status.readyToInstallNoVersion');
     case 'installing':
-      return 'Installing the update…';
+      return t('about.update.status.installing');
     case 'restarting':
-      return 'Relaunching with the new version…';
+      return t('about.update.status.restarting');
     case 'up_to_date':
-      return 'You are running the latest version.';
+      return t('about.update.status.upToDate');
     case 'error':
-      return error ?? 'Last update check failed. Try again in a moment.';
+      return error ?? t('about.update.status.error');
     default:
-      return 'Click "Check for updates" to look for a newer version.';
+      return t('about.update.status.default');
   }
 }
 
-function formatRelative(date: Date): string {
+function formatRelative(date: Date, t: (key: string) => string): string {
   const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
-  if (seconds < 60) return 'just now';
+  if (seconds < 60) return t('notifications.justNow');
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 60) return t('notifications.minAgo').replace('{n}', String(minutes));
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t('notifications.hrAgo').replace('{n}', String(hours));
   return date.toLocaleString();
 }
 

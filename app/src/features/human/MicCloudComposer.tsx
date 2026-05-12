@@ -265,7 +265,7 @@ export function MicCloudComposer({
       // resets `state`, leaving the UI stuck on "Transcribing…". Recover here.
       composerLog('recorder.stop threw: %s', err);
       const msg = err instanceof Error ? err.message : String(err);
-      onError?.(`Failed to stop recording: ${msg}`);
+      onError?.(t('mic.failedToStopRecording').replace('{message}', msg));
       stopStream();
       recorderRef.current = null;
       setState('idle');
@@ -294,14 +294,14 @@ export function MicCloudComposer({
 
     if (blob.size === 0) {
       setState('idle');
-      onError?.('No audio captured. Try holding the mic a little longer.');
+      onError?.(t('mic.noAudioCaptured'));
       return;
     }
 
     try {
       const transcript = await transcribeWithFallback(blob);
       if (!transcript) {
-        onError?.('No speech detected. Try again.');
+        onError?.(t('mic.noSpeechDetected'));
         setState('idle');
         return;
       }
@@ -309,7 +309,7 @@ export function MicCloudComposer({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       composerLog('transcribe failed: %s', msg);
-      onError?.(`Voice transcription failed: ${msg}`);
+      onError?.(t('mic.transcriptionFailed').replace('{message}', msg));
     } finally {
       setState('idle');
     }

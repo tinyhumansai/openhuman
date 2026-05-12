@@ -954,6 +954,101 @@ const en: TranslationMap = {
   'bootCheck.restartUpdateCore': 'Restart / update core',
   'bootCheck.unexpectedError': 'Unexpected boot-check error',
   'bootCheck.actionFailed': 'Action failed — please try again.',
+
+  // Notifications: category labels & timestamps
+  'notifications.justNow': 'Just now',
+  'notifications.minAgo': '{n} min ago',
+  'notifications.hrAgo': '{n} hr ago',
+  'notifications.dayAgo': '{n} day ago',
+  'notifications.category.messages': 'Messages',
+  'notifications.category.agents': 'Agents',
+  'notifications.category.skills': 'Skills',
+  'notifications.category.system': 'System',
+  'notifications.category.meetings': 'Meetings',
+  'notifications.category.reminders': 'Reminders',
+  'notifications.category.important': 'Important',
+
+  // About / Updates: status summary phrases
+  'about.update.status.checking': 'Checking...',
+  'about.update.status.available': 'v{version} available',
+  'about.update.status.availableNoVersion': 'Update available',
+  'about.update.status.downloading': 'Downloading...',
+  'about.update.status.readyToInstall': 'v{version} ready to install',
+  'about.update.status.readyToInstallNoVersion': 'Ready to install',
+  'about.update.status.installing': 'Installing...',
+  'about.update.status.restarting': 'Restarting...',
+  'about.update.status.upToDate': 'Up to date',
+  'about.update.status.error': 'Update check failed',
+  'about.update.status.default': 'Check for updates',
+
+  // Welcome: connection error messages
+  'welcome.connectionFailed': 'Connection failed: {status} {statusText}',
+  'welcome.connectionFailedMsg': 'Connection failed: {message}',
+
+  // Chat: Agent chat panel description
+  'chat.agentChatDesc': 'Open a direct chat session with the agent.',
+
+  // Channels: active route interpolated value
+  'channels.activeRouteValue': '{channel} via {authMode}',
+
+  // Privacy: data kind labels for What Leaves My Computer
+  'privacy.dataKind.messages': 'Messages',
+  'privacy.dataKind.agents': 'Agents',
+  'privacy.dataKind.skills': 'Skills',
+  'privacy.dataKind.system': 'System',
+  'privacy.dataKind.meetings': 'Meetings',
+  'privacy.dataKind.reminders': 'Reminders',
+  'privacy.dataKind.important': 'Important',
+
+  // Onboarding: supplementary keys
+  'onboarding.enableLocalAI': 'Enable Local AI',
+  'onboarding.skills.status.available': 'Available',
+  'onboarding.skills.status.connected': 'Connected',
+  'onboarding.skills.status.connecting': 'Connecting',
+  'onboarding.skills.status.error': 'Error',
+  'onboarding.skills.status.unavailable': 'Unavailable',
+
+  // Composio: miscellaneous
+  'composio.statusUnavailable': 'Status unavailable',
+  'composio.envVarOverrides': 'is set, it overrides this setting.',
+
+  // Memory: day-of-week labels for heatmap
+  'memory.day.sun': 'Sun',
+  'memory.day.mon': 'Mon',
+  'memory.day.tue': 'Tue',
+  'memory.day.wed': 'Wed',
+  'memory.day.thu': 'Thu',
+  'memory.day.fri': 'Fri',
+  'memory.day.sat': 'Sat',
+
+  // Memory: ingestion status labels
+  'memory.ingesting': 'Ingesting',
+  'memory.ingestionQueued': 'Queued',
+  'memory.ingestingTitle': 'Ingesting {title}',
+
+  // Mic: error messages
+  'mic.noAudioCaptured': 'No audio captured',
+  'mic.noSpeechDetected': 'No speech detected',
+  'mic.failedToStopRecording': 'Failed to stop recording: {message}',
+  'mic.transcriptionFailed': 'Transcription failed: {message}',
+
+  // Reflections: kind labels
+  'reflections.kind.retrospective': 'Retrospective',
+  'reflections.kind.derivedFact': 'Derived Fact',
+  'reflections.kind.moodInsight': 'Mood Insight',
+  'reflections.kind.relationshipInsight': 'Relationship Insight',
+
+  // Graph: tooltip keys
+  'graph.tooltip.summary': 'Summary',
+  'graph.tooltip.contact': 'Contact',
+
+  // Local Model: usage labels
+  'localModel.usage.never': 'Never',
+  'localModel.usage.mediumLoad': 'Medium load',
+  'localModel.usage.lowLoad': 'Low load',
+  'localModel.usage.idleMode': 'Idle mode',
+  'localModel.rebootstrapComplete': 'Model re-bootstrap complete.',
+  'localModel.modelsVerified': 'Local models verified.',
 };
 
 export default en;

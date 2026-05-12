@@ -56,7 +56,7 @@ export function WhatsAppMemorySection({ pollIntervalMs = 30000 }: WhatsAppMemory
           <span className="text-xs text-stone-500">
             {chatCount.toLocaleString()}{' '}
             {chatCount !== 1 ? t('whatsapp.chatsSynced') : t('whatsapp.chatSynced')}
-            {lastSyncTs !== null && <> · {relativeTime(lastSyncTs)}</>}
+            {lastSyncTs !== null && <> · {relativeTime(lastSyncTs, t)}</>}
           </span>
         </div>
         <button
@@ -76,12 +76,13 @@ export function WhatsAppMemorySection({ pollIntervalMs = 30000 }: WhatsAppMemory
   );
 }
 
-function relativeTime(secs: number): string {
+function relativeTime(secs: number, t: (key: string) => string): string {
   const delta = Date.now() / 1000 - secs;
-  if (delta < 60) return 'just now';
-  if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
-  if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
-  return `${Math.floor(delta / 86400)}d ago`;
+  if (delta < 60) return t('notifications.justNow');
+  if (delta < 3600) return t('notifications.minAgo').replace('{n}', String(Math.floor(delta / 60)));
+  if (delta < 86400)
+    return t('notifications.hrAgo').replace('{n}', String(Math.floor(delta / 3600)));
+  return t('notifications.dayAgo').replace('{n}', String(Math.floor(delta / 86400)));
 }
 
 function WhatsAppIcon() {

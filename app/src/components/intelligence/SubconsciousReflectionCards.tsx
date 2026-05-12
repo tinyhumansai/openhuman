@@ -43,14 +43,22 @@ interface SubconsciousReflectionCardsProps {
   initialReflections?: Reflection[];
 }
 
-const KIND_LABEL: Record<ReflectionKind, string> = {
-  hotness_spike: 'Hotness spike',
-  cross_source_pattern: 'Cross-source pattern',
-  daily_digest: 'Daily digest',
-  due_item: 'Due item',
-  risk: 'Risk',
-  opportunity: 'Opportunity',
-};
+function kindLabel(kind: ReflectionKind, t: (key: string) => string): string {
+  switch (kind) {
+    case 'hotness_spike':
+      return t('reflections.kind.hotnessSpike');
+    case 'cross_source_pattern':
+      return t('reflections.kind.crossSourcePattern');
+    case 'daily_digest':
+      return t('reflections.kind.dailyDigest');
+    case 'due_item':
+      return t('reflections.kind.dueItem');
+    case 'risk':
+      return t('reflections.kind.risk');
+    case 'opportunity':
+      return t('reflections.kind.opportunity');
+  }
+}
 
 /**
  * Render a `created_at` (epoch seconds, as Rust serializes `f64` from
@@ -59,14 +67,18 @@ const KIND_LABEL: Record<ReflectionKind, string> = {
  * than ~7 days falls back to a fixed `MMM D` so cards aren't ambiguous
  * when the user scrolls into older reflections.
  */
-function formatRelativeTime(epochSeconds: number): string {
+function formatRelativeTime(
+  epochSeconds: number,
+  t: (key: string, params?: Record<string, string>) => string
+): string {
   const nowMs = Date.now();
   const tsMs = epochSeconds * 1000;
   const diffSec = Math.max(0, Math.round((nowMs - tsMs) / 1000));
-  if (diffSec < 45) return 'Just now';
-  if (diffSec < 3600) return `${Math.round(diffSec / 60)}m ago`;
-  if (diffSec < 86_400) return `${Math.round(diffSec / 3600)}h ago`;
-  if (diffSec < 604_800) return `${Math.round(diffSec / 86_400)}d ago`;
+  if (diffSec < 45) return t('notifications.justNow');
+  if (diffSec < 3600) return t('notifications.minAgo', { n: String(Math.round(diffSec / 60)) });
+  if (diffSec < 86_400) return t('notifications.hrAgo', { n: String(Math.round(diffSec / 3600)) });
+  if (diffSec < 604_800)
+    return t('notifications.dayAgo', { n: String(Math.round(diffSec / 86_400)) });
   return new Date(tsMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
@@ -227,13 +239,13 @@ export default function SubconsciousReflectionCards({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-stone-100 text-stone-600">
-                    {KIND_LABEL[r.kind] ?? r.kind}
+                    {kindLabel(r.kind, t)}
                   </span>
                   <span
                     data-testid={`reflection-timestamp-${r.id}`}
                     className="text-[10px] text-stone-400"
                     title={formatAbsoluteTime(r.created_at)}>
-                    {formatRelativeTime(r.created_at)}
+                    {formatRelativeTime(r.created_at, t)}
                   </span>
                 </div>
                 <p className="text-sm text-stone-900 whitespace-pre-line break-words">{r.body}</p>

@@ -328,7 +328,7 @@ export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: M
                   if (n.kind === 'summary') void openSummaryInObsidian(n, contentRootAbs);
                 }}
                 data-testid={`memory-graph-node-${n.id}`}>
-                <title>{tooltipFor(n)}</title>
+                <title>{tooltipFor(n, t)}</title>
               </circle>
             );
           })}
@@ -370,10 +370,18 @@ export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: M
   );
 }
 
-function tooltipFor(n: GraphNode): string {
+function tooltipFor(
+  n: GraphNode,
+  t: (key: string, params?: Record<string, string>) => string
+): string {
   if (n.kind === 'summary') {
-    return `L${n.level ?? 0} · ${n.tree_kind} · ${n.tree_scope ?? ''} · ${n.child_count ?? 0} children`;
+    return t('graph.tooltip.summary', {
+      level: String(n.level ?? 0),
+      kind: n.tree_kind ?? '',
+      scope: n.tree_scope ?? '',
+      children: String(n.child_count ?? 0),
+    });
   }
-  if (n.kind === 'contact') return `${n.label} (person)`;
-  return n.label || 'document';
+  if (n.kind === 'contact') return t('graph.tooltip.contact', { label: n.label });
+  return n.label || t('graph.document');
 }

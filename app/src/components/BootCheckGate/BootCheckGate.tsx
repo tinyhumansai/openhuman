@@ -13,8 +13,8 @@ import { isTauri } from '@tauri-apps/api/core';
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useT } from '../../lib/i18n/I18nContext';
 import { type BootCheckResult, runBootCheck } from '../../lib/bootCheck';
+import { useT } from '../../lib/i18n/I18nContext';
 import { bootCheckTransport } from '../../services/bootCheckService';
 import {
   clearCoreRpcTokenCache,
@@ -196,9 +196,7 @@ function ModePicker({ onConfirm }: PickerProps) {
         {isDesktop ? t('bootCheck.chooseCoreMode') : t('bootCheck.connectToCore')}
       </h2>
       <p className="mt-2 text-sm text-stone-300">
-        {isDesktop
-          ? t('bootCheck.desktopDescription')
-          : t('bootCheck.webDescription')}
+        {isDesktop ? t('bootCheck.desktopDescription') : t('bootCheck.webDescription')}
       </p>
 
       {!isDesktop && (
@@ -229,9 +227,7 @@ function ModePicker({ onConfirm }: PickerProps) {
                 : 'border-stone-700 text-stone-300 hover:border-stone-500 hover:bg-stone-800'
             }`}>
             <div className="font-medium">{t('bootCheck.localRecommended')}</div>
-            <div className="mt-0.5 text-xs text-stone-400">
-              {t('bootCheck.localDescription')}
-            </div>
+            <div className="mt-0.5 text-xs text-stone-400">{t('bootCheck.localDescription')}</div>
           </button>
         )}
 
@@ -246,16 +242,16 @@ function ModePicker({ onConfirm }: PickerProps) {
                 : 'border-stone-700 text-stone-300 hover:border-stone-500 hover:bg-stone-800'
             }`}>
             <div className="font-medium">{t('bootCheck.cloudMode')}</div>
-            <div className="mt-0.5 text-xs text-stone-400">
-              {t('bootCheck.cloudDescription')}
-            </div>
+            <div className="mt-0.5 text-xs text-stone-400">{t('bootCheck.cloudDescription')}</div>
           </button>
         )}
 
         {selected === 'cloud' && (
           <div className="mt-1 flex flex-col gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-stone-300">{t('bootCheck.coreRpcUrl')}</label>
+              <label className="text-xs font-medium text-stone-300">
+                {t('bootCheck.coreRpcUrl')}
+              </label>
               <input
                 type="url"
                 placeholder={t('bootCheck.rpcUrlPlaceholder')}
@@ -271,7 +267,8 @@ function ModePicker({ onConfirm }: PickerProps) {
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-stone-300">
-                {t('bootCheck.authToken')} (<code className="text-[10px]">OPENHUMAN_CORE_TOKEN</code>)
+                {t('bootCheck.authToken')} (
+                <code className="text-[10px]">OPENHUMAN_CORE_TOKEN</code>)
               </label>
               <input
                 type="password"
@@ -288,8 +285,7 @@ function ModePicker({ onConfirm }: PickerProps) {
               />
               {tokenError && <p className="text-xs text-coral-400">{tokenError}</p>}
               <p className="text-[11px] text-stone-500">
-                {t('bootCheck.storedLocally')}{' '}
-                <code>Authorization: Bearer …</code> on every RPC.
+                {t('bootCheck.storedLocally')} <code>Authorization: Bearer …</code> on every RPC.
               </p>
             </div>
 
@@ -299,7 +295,9 @@ function ModePicker({ onConfirm }: PickerProps) {
                 onClick={handleTestConnection}
                 disabled={testStatus.kind === 'testing'}
                 className="rounded-lg border border-stone-600 px-3 py-1.5 text-xs text-stone-100 hover:bg-stone-800 disabled:opacity-60">
-                {testStatus.kind === 'testing' ? t('bootCheck.testing') : t('bootCheck.testConnection')}
+                {testStatus.kind === 'testing'
+                  ? t('bootCheck.testing')
+                  : t('bootCheck.testConnection')}
               </button>
               {testStatus.kind === 'ok' && (
                 <span className="text-xs text-emerald-400" data-testid="test-status-ok">
@@ -412,9 +410,7 @@ function ResultScreen({
     return (
       <Panel>
         <h2 className="text-xl font-semibold text-white">{t('bootCheck.legacyDetected')}</h2>
-        <p className="mt-2 text-sm text-stone-300">
-          {t('bootCheck.legacyDescription')}
-        </p>
+        <p className="mt-2 text-sm text-stone-300">{t('bootCheck.legacyDescription')}</p>
         {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
         <div className="mt-5 flex gap-3">
           <button
@@ -440,9 +436,7 @@ function ResultScreen({
     return (
       <Panel>
         <h2 className="text-xl font-semibold text-white">{t('bootCheck.localNeedsRestart')}</h2>
-        <p className="mt-2 text-sm text-stone-300">
-          {t('bootCheck.localNeedsRestartDesc')}
-        </p>
+        <p className="mt-2 text-sm text-stone-300">{t('bootCheck.localNeedsRestartDesc')}</p>
         {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
         <div className="mt-5 flex gap-3">
           <button
@@ -468,9 +462,7 @@ function ResultScreen({
     return (
       <Panel>
         <h2 className="text-xl font-semibold text-white">{t('bootCheck.cloudNeedsUpdate')}</h2>
-        <p className="mt-2 text-sm text-stone-300">
-          {t('bootCheck.cloudNeedsUpdateDesc')}
-        </p>
+        <p className="mt-2 text-sm text-stone-300">{t('bootCheck.cloudNeedsUpdateDesc')}</p>
         {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
         <div className="mt-5 flex gap-3">
           <button
@@ -496,9 +488,7 @@ function ResultScreen({
   return (
     <Panel>
       <h2 className="text-xl font-semibold text-white">{t('bootCheck.versionCheckFailed')}</h2>
-      <p className="mt-2 text-sm text-stone-300">
-        {t('bootCheck.versionCheckFailedDesc')}
-      </p>
+      <p className="mt-2 text-sm text-stone-300">{t('bootCheck.versionCheckFailedDesc')}</p>
       {actionError && <p className="mt-3 text-xs text-coral-400">{actionError}</p>}
       <div className="mt-5 flex gap-3">
         <button

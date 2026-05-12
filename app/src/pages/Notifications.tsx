@@ -14,25 +14,15 @@ import {
   selectUnreadCount,
 } from '../store/notificationSlice';
 
-const CATEGORY_LABEL: Record<NotificationCategory, string> = {
-  messages: 'Messages',
-  agents: 'Agents',
-  skills: 'Skills',
-  system: 'System',
-  meetings: 'Meetings',
-  reminders: 'Reminders',
-  important: 'Important',
-};
-
-function formatTime(ts: number): string {
+function formatTime(ts: number, t: (key: string) => string): string {
   const delta = Date.now() - ts;
   const min = Math.floor(delta / 60000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
+  if (min < 1) return t('notifications.justNow');
+  if (min < 60) return t('notifications.minAgo').replace('{n}', String(min));
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
+  if (hr < 24) return t('notifications.hrAgo').replace('{n}', String(hr));
   const d = Math.floor(hr / 24);
-  return `${d}d ago`;
+  return t('notifications.dayAgo').replace('{n}', String(d));
 }
 
 const Notifications = () => {
@@ -41,6 +31,25 @@ const Notifications = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const unread = useMemo(() => selectUnreadCount(items), [items]);
+
+  const categoryLabel = (category: NotificationCategory): string => {
+    switch (category) {
+      case 'messages':
+        return t('notifications.category.messages');
+      case 'agents':
+        return t('notifications.category.agents');
+      case 'skills':
+        return t('notifications.category.skills');
+      case 'system':
+        return t('notifications.category.system');
+      case 'meetings':
+        return t('notifications.category.meetings');
+      case 'reminders':
+        return t('notifications.category.reminders');
+      case 'important':
+        return t('notifications.category.important');
+    }
+  };
 
   const handleClick = (item: NotificationItem) => {
     if (!item.read) dispatch(markRead({ id: item.id }));
@@ -107,7 +116,7 @@ const Notifications = () => {
                           />
                         )}
                         <span className="text-xs uppercase tracking-wide text-stone-400">
-                          {CATEGORY_LABEL[item.category]}
+                          {categoryLabel(item.category)}
                         </span>
                       </div>
                       <p className="mt-1 text-sm font-semibold text-stone-900 truncate">
@@ -116,7 +125,7 @@ const Notifications = () => {
                       <p className="mt-0.5 text-sm text-stone-600 line-clamp-2">{item.body}</p>
                     </div>
                     <span className="text-[11px] text-stone-400 whitespace-nowrap">
-                      {formatTime(item.timestamp)}
+                      {formatTime(item.timestamp, t)}
                     </span>
                   </div>
                 </button>

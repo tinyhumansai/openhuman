@@ -199,13 +199,18 @@ export default function Intelligence() {
                       title={
                         ingestionStatus.running
                           ? ingestionStatus.currentTitle
-                            ? `Ingesting: ${ingestionStatus.currentTitle}`
-                            : 'Memory ingestion running'
-                          : 'Memory ingestion queued'
+                            ? t('memory.ingestingTitle').replace(
+                                '{title}',
+                                ingestionStatus.currentTitle
+                              )
+                            : t('memory.ingesting')
+                          : t('memory.ingestionQueued')
                       }>
                       <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
                       <span className="text-[11px] font-medium">
-                        {ingestionStatus.running ? 'Ingesting' : 'Queued'}
+                        {ingestionStatus.running
+                          ? t('memory.ingesting')
+                          : t('memory.ingestionQueued')}
                         {ingestionStatus.queueDepth > 0 && ` · ${ingestionStatus.queueDepth}`}
                       </span>
                     </div>

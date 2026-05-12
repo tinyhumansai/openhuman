@@ -111,7 +111,7 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
           type="button"
           onClick={handleConsent}
           className="mt-3 w-full text-center text-xs text-stone-400 hover:text-stone-600 transition-colors">
-          {t('onboarding.localAI')}
+          {t('onboarding.enableLocalAI')}
         </button>
       </div>
     );
@@ -167,7 +167,7 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
         type="button"
         onClick={handleConsent}
         className="mt-3 w-full text-center text-xs text-stone-400 hover:text-stone-600 transition-colors">
-        {t('onboarding.localAI')}
+        {t('onboarding.enableLocalAI')}
       </button>
     </div>
   );

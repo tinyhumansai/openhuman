@@ -41,16 +41,16 @@ import type { ToastNotification } from '../types/intelligence';
 import { IS_DEV } from '../utils/config';
 import { subconsciousEscalationsDismiss } from '../utils/tauriCommands';
 
-function channelStatusLabel(status: ChannelConnectionStatus): string {
+function channelStatusLabel(status: ChannelConnectionStatus, t: (key: string) => string): string {
   switch (status) {
     case 'connected':
-      return 'Connected';
+      return t('skills.connected');
     case 'connecting':
-      return 'Connecting';
+      return t('channels.status.connecting');
     case 'error':
-      return 'Error';
+      return t('common.error');
     default:
-      return 'Not configured';
+      return t('channels.status.notConfigured');
   }
 }
 
@@ -71,14 +71,17 @@ function channelStatusColor(status: ChannelConnectionStatus): string {
 // Reuse the same dot/label/color vocabulary as the channel cards so the
 // "Integrations" section sits visually flush with the rest of the grid.
 
-function composioStatusLabel(connection: ComposioConnection | undefined): string {
+function composioStatusLabel(
+  connection: ComposioConnection | undefined,
+  t: (key: string) => string
+): string {
   switch (deriveComposioState(connection)) {
     case 'connected':
-      return 'Connected';
+      return t('skills.connected');
     case 'pending':
-      return 'Connecting';
+      return t('channels.status.connecting');
     case 'error':
-      return 'Error';
+      return t('common.error');
     default:
       return '';
   }
@@ -128,7 +131,9 @@ function ComposioConnectorTile({
 }: ComposioConnectorTileProps) {
   const { t } = useT();
   const state = hasComposioError ? 'error' : deriveComposioState(connection);
-  const statusLabel = hasComposioError ? 'Status unavailable' : composioStatusLabel(connection);
+  const statusLabel = hasComposioError
+    ? t('composio.statusUnavailable')
+    : composioStatusLabel(connection, t);
   const ctaLabel = hasComposioError
     ? t('common.retry')
     : state === 'connected'
@@ -196,7 +201,7 @@ function ChannelTile({ def, status, icon, onOpen }: ChannelTileProps) {
   const isConnected = status === 'connected';
   const isPending = status === 'connecting';
   const isError = status === 'error';
-  const statusLabel = channelStatusLabel(status);
+  const statusLabel = channelStatusLabel(status, t);
   const ctaLabel = isConnected ? t('skills.configure') : t('channels.setup');
 
   return (
