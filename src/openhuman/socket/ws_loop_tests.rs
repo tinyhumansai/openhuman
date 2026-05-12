@@ -625,7 +625,7 @@ async fn connect_with_redirects_fails_when_location_missing() {
     let err = connect_with_redirects(&mut url, &shared)
         .await
         .expect_err("must surface failure when Location is absent");
-    matches!(err, WsError::Http(_));
+    assert!(matches!(err, WsError::Http(_)));
     // No warning recorded because the redirect was never actually followed.
     assert!(shared.error.read().is_none());
 }
