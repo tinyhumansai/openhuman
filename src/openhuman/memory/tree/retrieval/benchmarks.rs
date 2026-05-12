@@ -581,10 +581,12 @@ async fn bench_scale_ingest_20_sources_no_real_data() {
     ];
 
     for (i, (scope, owner)) in platforms.iter().cycle().take(20).enumerate() {
+        let scope_str = scope.to_string();
+        let owner_str = owner.to_string();
         ingest_chat_batch(
             &cfg,
-            scope,
-            owner,
+            &scope_str,
+            &owner_str,
             vec![(
                 owner.into(),
                 format!(
