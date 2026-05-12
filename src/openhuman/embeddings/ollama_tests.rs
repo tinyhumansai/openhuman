@@ -90,6 +90,13 @@ fn rejects_api_endpoint_base_urls() {
 }
 
 #[test]
+fn rejects_credentialed_base_urls() {
+    let err = OllamaEmbedding::try_new("http://user:pass@host:11434", "m", 1).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("without credentials"), "msg: {msg}");
+}
+
+#[test]
 fn rejects_virtual_local_model_ids() {
     let err = OllamaEmbedding::try_new("http://host:11434", "local-v1", 768).unwrap_err();
     let msg = err.to_string();

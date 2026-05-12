@@ -91,6 +91,11 @@ impl OllamaEmbedding {
         if !matches!(url.scheme(), "http" | "https") {
             anyhow::bail!("invalid Ollama base_url `{raw}`: expected an http:// or https:// URL");
         }
+        if !url.username().is_empty() || url.password().is_some() {
+            anyhow::bail!(
+                "invalid Ollama base_url `{raw}`: configure the server root without credentials"
+            );
+        }
         if url.query().is_some() || url.fragment().is_some() {
             anyhow::bail!(
                 "invalid Ollama base_url `{raw}`: query strings and fragments are not supported"

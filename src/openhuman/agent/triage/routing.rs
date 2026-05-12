@@ -104,7 +104,12 @@ pub fn build_local_provider_with_config(config: &Config) -> Option<ResolvedProvi
         ("ollama", format!("{ollama_base}/v1"))
     };
 
-    let auth_style = if local_cfg.api_key.is_some() {
+    let local_api_key = local_cfg
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty());
+    let auth_style = if local_api_key.is_some() {
         AuthStyle::Bearer
     } else {
         AuthStyle::None
@@ -112,7 +117,7 @@ pub fn build_local_provider_with_config(config: &Config) -> Option<ResolvedProvi
     let provider: Arc<dyn Provider> = Arc::new(OpenAiCompatibleProvider::new(
         label,
         &base,
-        local_cfg.api_key.as_deref(),
+        local_api_key,
         auth_style,
     ));
     tracing::debug!(

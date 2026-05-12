@@ -57,6 +57,11 @@ describe('ModelDownloadSection runtime gate', () => {
     expect(summaryButton).toBeDisabled();
     fireEvent.click(summaryButton);
 
+    const promptButton = screen.getByRole('button', { name: 'Run Prompt Test' });
+    expect(promptButton).toBeDisabled();
+    fireEvent.click(promptButton);
+
     expect(props.onRunSummaryTest).not.toHaveBeenCalled();
+    expect(props.onRunPromptTest).not.toHaveBeenCalled();
   });
 });

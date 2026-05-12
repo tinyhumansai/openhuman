@@ -74,7 +74,12 @@ pub fn new_provider(
         )
     };
 
-    let local_auth_style = if local_ai_config.api_key.is_some() {
+    let local_api_key = local_ai_config
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty());
+    let local_auth_style = if local_api_key.is_some() {
         AuthStyle::Bearer
     } else {
         AuthStyle::None
@@ -82,7 +87,7 @@ pub fn new_provider(
     let local: Box<dyn Provider> = Box::new(OpenAiCompatibleProvider::new(
         provider_label,
         &local_base,
-        local_ai_config.api_key.as_deref(),
+        local_api_key,
         local_auth_style,
     ));
 

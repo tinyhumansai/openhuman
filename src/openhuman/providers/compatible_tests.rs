@@ -267,6 +267,18 @@ fn no_auth_style_allows_missing_key() {
     assert!(req.headers().get("x-api-key").is_none());
 }
 
+#[test]
+fn blank_required_key_counts_as_missing() {
+    let p = OpenAiCompatibleProvider::new(
+        "custom",
+        "https://api.example.com",
+        Some("  "),
+        AuthStyle::Bearer,
+    );
+    let err = p.credential_for_request().unwrap_err().to_string();
+    assert!(err.contains("custom API key not set"), "err: {err}");
+}
+
 #[tokio::test]
 async fn all_compatible_providers_fail_without_key() {
     let providers = vec![

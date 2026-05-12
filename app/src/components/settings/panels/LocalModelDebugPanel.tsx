@@ -105,7 +105,7 @@ const LocalModelDebugPanel = () => {
     return progressFromStatus(status);
   }, [downloads, status]);
 
-  const runtimeEnabled = status != null && status.state !== 'disabled';
+  const runtimeEnabled = status?.state !== 'disabled';
   const currentState = downloads?.state ?? status?.state;
   const isInstalling = currentState === 'installing';
   const isIndeterminateDownload =

@@ -167,6 +167,10 @@ describe('LocalModelPanel — usage flags', () => {
     expect(button).toBeDisabled();
     fireEvent.click(button);
 
+    const advancedButton = screen.getByRole('button', { name: 'Advanced settings' });
+    expect(advancedButton).toBeDisabled();
+    fireEvent.click(advancedButton);
+
     expect(openhumanLocalAiDownload).not.toHaveBeenCalled();
     expect(openhumanLocalAiDownloadAllAssets).not.toHaveBeenCalled();
   });

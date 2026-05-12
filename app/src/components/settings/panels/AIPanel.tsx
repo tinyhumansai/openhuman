@@ -131,8 +131,15 @@ const AIPanel = () => {
               <button
                 onClick={async () => {
                   if (!localAiRuntimeEnabled) return;
-                  await openhumanLocalAiDownload(true);
-                  await loadLocalAiStatus();
+                  try {
+                    setError('');
+                    await openhumanLocalAiDownload(true);
+                  } catch (err) {
+                    const message = err instanceof Error ? err.message : 'Failed to retry download';
+                    setError(message);
+                  } finally {
+                    await loadLocalAiStatus();
+                  }
                 }}
                 disabled={!localAiRuntimeEnabled}
                 className="text-sm text-primary-500 hover:text-primary-600 transition-colors disabled:opacity-50 disabled:hover:text-primary-500">

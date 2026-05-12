@@ -329,12 +329,17 @@ impl OpenAiCompatibleProvider {
             return Ok(None);
         }
 
-        self.credential.as_deref().map(Some).ok_or_else(|| {
-            anyhow::anyhow!(
-                "{} API key not set. Configure via the web UI or set the appropriate env var.",
-                self.name
-            )
-        })
+        self.credential
+            .as_deref()
+            .map(str::trim)
+            .filter(|credential| !credential.is_empty())
+            .map(Some)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} API key not set. Configure via the web UI or set the appropriate env var.",
+                    self.name
+                )
+            })
     }
 
     fn apply_auth_header(
