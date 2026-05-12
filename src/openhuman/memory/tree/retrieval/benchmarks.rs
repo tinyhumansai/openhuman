@@ -581,11 +581,11 @@ async fn bench_scale_ingest_20_sources_no_real_data() {
             &scope_str,
             &owner_str,
             vec![(
-                owner.into(),
+                owner_str.clone().into(),
                 format!(
                     "Scale test message {} from {} — verifying retrieval correctness \
                      at volume with deterministic synthetic data. No PII present.",
-                    i, owner
+                    i, owner_str
                 ),
             )],
             1_700_000_000_000 + (i as i64) * 60_000,
