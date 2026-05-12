@@ -156,7 +156,11 @@ impl SiServer {
                 );
             }
             Err(e) => {
-                error!("{LOG_PREFIX} failed to start session: {e}");
+                if !cfg!(target_os = "macos") && e.contains("macOS-only") {
+                    info!("{LOG_PREFIX} failed to start session: {e}");
+                } else {
+                    error!("{LOG_PREFIX} failed to start session: {e}");
+                }
                 *self.last_error.lock().await = Some(e.clone());
                 *self.state.lock().await = ServerState::Stopped;
                 return Err(e);
@@ -330,6 +334,11 @@ pub async fn start_if_enabled(app_config: &Config) {
         return;
     }
 
+    if !cfg!(target_os = "macos") {
+        info!("{LOG_PREFIX} screen intelligence accessibility engine is macOS-only in V1; embedded server autostart skipped on this platform");
+        return;
+    }
+
     let server_config = SiServerConfig {
         ttl_secs: app_config.screen_intelligence.session_ttl_secs,
         log_interval_secs: 10,
@@ -354,7 +363,11 @@ pub async fn start_if_enabled(app_config: &Config) {
 
     tokio::spawn(async move {
         if let Err(e) = server.run(&config_for_run).await {
-            error!("{LOG_PREFIX} embedded server exited with error: {e}");
+            if !cfg!(target_os = "macos") && e.contains("macOS-only") {
+                info!("{LOG_PREFIX} embedded server autostart skipped: {e}");
+            } else {
+                error!("{LOG_PREFIX} embedded server exited with error: {e}");
+            }
         }
     });
 }
@@ -442,5 +455,37 @@ mod tests {
     fn truncate_long() {
         let result = truncate("hello world this is a long string", 10);
         assert!(result.ends_with('…'));
+    }
+
+    #[tokio::test]
+    #[cfg(not(target_os = "macos"))]
+    async fn start_if_enabled_skips_on_non_macos() {
+        let mut config = Config::default();
+        config.screen_intelligence.enabled = true;
+
+        // On non-macOS, this should return early before spawning anything that would log an error.
+        // Since we can't easily check if a task was spawned and then immediately exited without
+        // adding more instrumentation, we just verify it doesn't panic and we rely on the
+        // runtime check we added.
+        start_if_enabled(&config).await;
+
+        if let Some(server) = try_global_server() {
+            let status = server.status().await;
+            assert_eq!(status.state, ServerState::Stopped);
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(target_os = "macos")]
+    async fn start_if_enabled_continues_on_macos() {
+        let mut config = Config::default();
+        config.screen_intelligence.enabled = true;
+
+        // On macOS, it should at least initialize the global server.
+        // We don't necessarily want it to succeed in full run() if permissions are missing,
+        // but it should get past the platform check.
+        start_if_enabled(&config).await;
+
+        assert!(try_global_server().is_some());
     }
 }
