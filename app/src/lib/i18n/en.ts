@@ -127,6 +127,7 @@ const en: TranslationMap = {
   'clearData.clearing': 'Clearing App Data...',
   'clearData.failed': 'Failed to clear data and logout. Please try again.',
   'clearData.failedLogout': 'Failed to log out. Please try again.',
+  'clearData.failedPersist': 'Failed to clear persisted app state. Please try again.',
 
   // Welcome page
   'welcome.title': 'Welcome to OpenHuman',

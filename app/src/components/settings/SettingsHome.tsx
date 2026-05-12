@@ -101,7 +101,7 @@ const SettingsHome = () => {
       await persistor.purge();
     } catch (err) {
       console.warn('[Settings] persistor.purge failed:', err);
-      setError('Failed to clear persisted app state. Please try again.');
+      setError(t('clearData.failedPersist'));
       return;
     }
     window.localStorage.clear();

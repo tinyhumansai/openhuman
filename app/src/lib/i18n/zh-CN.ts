@@ -126,6 +126,7 @@ const zhCN: TranslationMap = {
   'clearData.clearing': '正在清除应用数据...',
   'clearData.failed': '清除数据失败，请重试。',
   'clearData.failedLogout': '退出登录失败，请重试。',
+  'clearData.failedPersist': '清除持久化应用状态失败，请重试。',
 
   // Welcome page
   'welcome.title': '欢迎使用 OpenHuman',
