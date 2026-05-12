@@ -115,7 +115,9 @@ async fn bench_cross_chat_recall() {
     .await;
 
     // Query topic for "phoenix" — should surface alice's original fact
-    let topic_resp = query_topic(&cfg, "topic:phoenix", None, None, 20).await.unwrap();
+    let topic_resp = query_topic(&cfg, "topic:phoenix", None, None, 20)
+        .await
+        .unwrap();
 
     // Assertions
     assert!(
@@ -327,7 +329,9 @@ async fn bench_stale_preference_newer_supersedes() {
     drain_until_idle(&cfg).await.unwrap();
 
     // Query for alice's preference
-    let topic_resp = query_topic(&cfg, "email:alice@example.com", None, None, 20).await.unwrap();
+    let topic_resp = query_topic(&cfg, "email:alice@example.com", None, None, 20)
+        .await
+        .unwrap();
 
     // Find hits mentioning both themes
     let dark_hits: Vec<_> = topic_resp
@@ -395,7 +399,9 @@ async fn bench_contradiction_surfaces_both_with_provenance() {
     drain_until_idle(&cfg).await.unwrap();
 
     // Query for phoenix — should surface both sources
-    let topic_resp = query_topic(&cfg, "topic:phoenix", None, None, 20).await.unwrap();
+    let topic_resp = query_topic(&cfg, "topic:phoenix", None, None, 20)
+        .await
+        .unwrap();
 
     let phoenix_hits: Vec<_> = topic_resp
         .hits
@@ -602,7 +608,9 @@ async fn bench_scale_ingest_20_sources_no_real_data() {
     drain_until_idle(&cfg).await.unwrap();
 
     // query_source should show activity across the window
-    let source_resp = query_source(&cfg, None, None, None, None, 30).await.unwrap();
+    let source_resp = query_source(&cfg, None, None, None, None, 30)
+        .await
+        .unwrap();
 
     // Should have hits from multiple sources
     assert!(
