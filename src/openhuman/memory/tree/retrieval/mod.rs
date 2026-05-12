@@ -28,9 +28,9 @@ pub mod topic;
 pub mod types;
 
 #[cfg(test)]
-mod integration_test;
-#[cfg(test)]
 mod benchmarks;
+#[cfg(test)]
+mod integration_test;
 
 pub use drill_down::drill_down;
 pub use fetch::fetch_leaves;

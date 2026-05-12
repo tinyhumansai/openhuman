@@ -25,11 +25,11 @@ use tempfile::TempDir;
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::tree::canonicalize::chat::{ChatBatch, ChatMessage};
 use crate::openhuman::memory::tree::ingest::ingest_chat;
+use crate::openhuman::memory::tree::jobs::testing::drain_until_idle;
 use crate::openhuman::memory::tree::retrieval::{
     fetch_leaves, query_global, query_source, query_topic, search_entities,
 };
 use crate::openhuman::memory::tree::types::SourceKind;
-use crate::openhuman::memory::tree::jobs::testing::drain_until_idle;
 
 /// Shared test config — disables embedding for deterministic inert behaviour.
 fn bench_config() -> (TempDir, Config) {
@@ -58,7 +58,9 @@ async fn ingest_chat_batch(
             .enumerate()
             .map(|(i, (author, text))| ChatMessage {
                 author,
-                timestamp: Utc.timestamp_millis_opt(base_ts_millis + (i as i64) * 60_000).unwrap(),
+                timestamp: Utc
+                    .timestamp_millis_opt(base_ts_millis + (i as i64) * 60_000)
+                    .unwrap(),
                 text,
                 source_ref: None,
             })
@@ -86,7 +88,10 @@ async fn bench_cross_chat_recall() {
         "slack:#eng",
         "alice",
         vec![
-            ("alice".into(), "Phoenix migration status: landing Friday evening.".into()),
+            (
+                "alice".into(),
+                "Phoenix migration status: landing Friday evening.".into(),
+            ),
             ("bob".into(), "Confirmed, I'll handle the cutover.".into()),
         ],
         1_700_000_000_000,
@@ -99,7 +104,10 @@ async fn bench_cross_chat_recall() {
         "slack:#ops",
         "carol",
         vec![
-            ("carol".into(), "What's the current status of the Phoenix migration?".into()),
+            (
+                "carol".into(),
+                "What's the current status of the Phoenix migration?".into(),
+            ),
             ("dave".into(), "Friday landing confirmed per alice.".into()),
         ],
         1_700_100_000_000,
@@ -107,9 +115,7 @@ async fn bench_cross_chat_recall() {
     .await;
 
     // Query topic for "phoenix" — should surface alice's original fact
-    let topic_resp = query_topic(&cfg, "phoenix", None, None, 20)
-        .await
-        .unwrap();
+    let topic_resp = query_topic(&cfg, "phoenix", None, None, 20).await.unwrap();
 
     // Assertions
     assert!(
@@ -147,9 +153,10 @@ async fn bench_cross_chat_entity_discoverable() {
         &cfg,
         "slack:#eng",
         "alice",
-        vec![
-            ("alice".into(), "alice@example.com is leading the Phoenix migration.".into()),
-        ],
+        vec![(
+            "alice".into(),
+            "alice@example.com is leading the Phoenix migration.".into(),
+        )],
         1_700_000_000_000,
     )
     .await;
@@ -158,9 +165,10 @@ async fn bench_cross_chat_entity_discoverable() {
         &cfg,
         "slack:#ops",
         "carol",
-        vec![
-            ("carol".into(), "alice@example.com confirmed the Friday timeline.".into()),
-        ],
+        vec![(
+            "carol".into(),
+            "alice@example.com confirmed the Friday timeline.".into(),
+        )],
         1_700_100_000_000,
     )
     .await;
@@ -193,12 +201,10 @@ async fn bench_citation_bundle_provenance() {
         &cfg,
         "slack:#eng",
         "alice",
-        vec![
-            (
-                "alice".into(),
-                "RFC-42 v3 is approved. Link: https://example.com/rfc42".into(),
-            ),
-        ],
+        vec![(
+            "alice".into(),
+            "RFC-42 v3 is approved. Link: https://example.com/rfc42".into(),
+        )],
         1_700_000_000_000,
     )
     .await;
@@ -321,9 +327,7 @@ async fn bench_stale_preference_newer_supersedes() {
     drain_until_idle(&cfg).await.unwrap();
 
     // Query for alice's preference
-    let topic_resp = query_topic(&cfg, "alice", None, None, 20)
-        .await
-        .unwrap();
+    let topic_resp = query_topic(&cfg, "alice", None, None, 20).await.unwrap();
 
     // Find hits mentioning both themes
     let dark_hits: Vec<_> = topic_resp
@@ -391,9 +395,7 @@ async fn bench_contradiction_surfaces_both_with_provenance() {
     drain_until_idle(&cfg).await.unwrap();
 
     // Query for phoenix — should surface both sources
-    let topic_resp = query_topic(&cfg, "phoenix", None, None, 20)
-        .await
-        .unwrap();
+    let topic_resp = query_topic(&cfg, "phoenix", None, None, 20).await.unwrap();
 
     let phoenix_hits: Vec<_> = topic_resp
         .hits
@@ -470,21 +472,13 @@ async fn bench_long_source_retrieves_exact_leaf() {
                      design decisions, database sharding strategy, and deployment \
                      pipeline configuration for the Phoenix project. This entry contains \
                      specific implementation details for iteration {}.",
-                    i,
-                    i
+                    i, i
                 ),
             )
         })
         .collect();
 
-    ingest_chat_batch(
-        &cfg,
-        "slack:#eng",
-        "alice",
-        messages,
-        1_700_000_000_000,
-    )
-    .await;
+    ingest_chat_batch(&cfg, "slack:#eng", "alice", messages, 1_700_000_000_000).await;
 
     drain_until_idle(&cfg).await.unwrap();
 
@@ -544,9 +538,7 @@ async fn bench_drill_down_isolates_children() {
     drain_until_idle(&cfg).await.unwrap();
 
     // query_topic for "eng" — should NOT surface ops content
-    let topic_resp = query_topic(&cfg, "eng", None, None, 20)
-        .await
-        .unwrap();
+    let topic_resp = query_topic(&cfg, "eng", None, None, 20).await.unwrap();
 
     let eng_content = topic_resp
         .hits
@@ -593,8 +585,7 @@ async fn bench_scale_ingest_20_sources_no_real_data() {
                 format!(
                     "Scale test message {} from {} — verifying retrieval correctness \
                      at volume with deterministic synthetic data. No PII present.",
-                    i,
-                    owner
+                    i, owner
                 ),
             )],
             1_700_000_000_000 + (i as i64) * 60_000,
