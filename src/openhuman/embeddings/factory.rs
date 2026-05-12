@@ -29,7 +29,10 @@ pub fn create_embedding_provider(
         "cloud" => Ok(Box::new(OpenHumanCloudEmbedding::new(
             None, None, true, model, dims,
         ))),
-        "ollama" => Ok(Box::new(OllamaEmbedding::new("", model, dims))),
+        "ollama" => {
+            let base_url = crate::openhuman::local_ai::ollama_base_url();
+            Ok(Box::new(OllamaEmbedding::try_new(&base_url, model, dims)?))
+        }
         "openai" => Ok(Box::new(OpenAiEmbedding::new(
             "https://api.openai.com",
             "",
