@@ -115,7 +115,7 @@ async fn bench_cross_chat_recall() {
     .await;
 
     // Query topic for "phoenix" — should surface alice's original fact
-    let topic_resp = query_topic(&cfg, "phoenix", None, None, 20).await.unwrap();
+    let topic_resp = query_topic(&cfg, "topic:phoenix", None, None, 20).await.unwrap();
 
     // Assertions
     assert!(
@@ -327,7 +327,7 @@ async fn bench_stale_preference_newer_supersedes() {
     drain_until_idle(&cfg).await.unwrap();
 
     // Query for alice's preference
-    let topic_resp = query_topic(&cfg, "alice", None, None, 20).await.unwrap();
+    let topic_resp = query_topic(&cfg, "email:alice@example.com", None, None, 20).await.unwrap();
 
     // Find hits mentioning both themes
     let dark_hits: Vec<_> = topic_resp
@@ -395,7 +395,7 @@ async fn bench_contradiction_surfaces_both_with_provenance() {
     drain_until_idle(&cfg).await.unwrap();
 
     // Query for phoenix — should surface both sources
-    let topic_resp = query_topic(&cfg, "phoenix", None, None, 20).await.unwrap();
+    let topic_resp = query_topic(&cfg, "topic:phoenix", None, None, 20).await.unwrap();
 
     let phoenix_hits: Vec<_> = topic_resp
         .hits
@@ -488,6 +488,12 @@ async fn bench_long_source_retrieves_exact_leaf() {
         .unwrap();
 
     // Total hits should be bounded (summaries, not all raw chunks)
+    // Add lower-bound guard first
+    assert!(
+        source_resp.total >= 1,
+        "30 messages should have sealed into at least one summary"
+    );
+    // Then upper-bound assertion
     assert!(
         source_resp.total <= 10,
         "long source should not dump all chunks; expected <= 10 summaries, got {}",
@@ -595,13 +601,13 @@ async fn bench_scale_ingest_20_sources_no_real_data() {
 
     drain_until_idle(&cfg).await.unwrap();
 
-    // query_global should show activity across the window
-    let global_resp = query_global(&cfg, 30).await.unwrap();
+    // query_source should show activity across the window
+    let source_resp = query_source(&cfg, None, None, None, None, 30).await.unwrap();
 
     // Should have hits from multiple sources
     assert!(
-        !global_resp.hits.is_empty(),
-        "query_global should return hits after 20-source ingest"
+        !source_resp.hits.is_empty(),
+        "query_source should return hits after 20-source ingest"
     );
 
     // search_entities for each owner should return results
