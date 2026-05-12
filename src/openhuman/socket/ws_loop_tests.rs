@@ -1,12 +1,123 @@
 use super::*;
 use parking_lot::RwLock;
+use tokio_tungstenite::tungstenite::http::{header::LOCATION, Response, StatusCode};
 
 fn make_shared() -> Arc<SharedState> {
     Arc::new(SharedState {
         webhook_router: RwLock::new(None),
         status: RwLock::new(ConnectionStatus::Connected),
         socket_id: RwLock::new(None),
+        error: RwLock::new(None),
     })
+}
+
+// ── Redirect resolution (the real fix for OPENHUMAN-TAURI-9X) ──
+
+#[test]
+fn resolve_redirect_upgrades_http_to_ws_for_absolute_location() {
+    // Cloudflare's exact behaviour: ws://host/path → 301 Location: https://host:443/path.
+    // We must rewrite https→wss so connect_async sees a WebSocket URL.
+    let next = resolve_redirect_target(
+        "ws://api.tinyhumans.ai/socket.io/?EIO=4&transport=websocket",
+        "https://api.tinyhumans.ai:443/socket.io/?EIO=4&transport=websocket",
+    )
+    .expect("scheme upgrade");
+    assert!(
+        next.starts_with("wss://api.tinyhumans.ai"),
+        "expected wss:// after upgrade, got {next}"
+    );
+    assert!(next.contains("/socket.io/?EIO=4&transport=websocket"));
+}
+
+#[test]
+fn resolve_redirect_handles_relative_location_against_current_url() {
+    // RFC 7230 allows a relative Location — must be resolved against the
+    // request URL, not treated as an error.
+    let next = resolve_redirect_target(
+        "ws://api.example.com/socket.io/?EIO=4&transport=websocket",
+        "/v2/socket.io/?EIO=4&transport=websocket",
+    )
+    .expect("relative resolve");
+    assert_eq!(
+        next,
+        "ws://api.example.com/v2/socket.io/?EIO=4&transport=websocket"
+    );
+}
+
+#[test]
+fn resolve_redirect_preserves_ws_and_wss_schemes_verbatim() {
+    let next = resolve_redirect_target("wss://a.example/socket.io/", "wss://b.example/socket.io/")
+        .unwrap();
+    assert!(next.starts_with("wss://b.example"));
+}
+
+#[test]
+fn resolve_redirect_rejects_unsupported_scheme() {
+    let err = resolve_redirect_target("wss://a.example/socket.io/", "ftp://elsewhere/socket.io/")
+        .unwrap_err();
+    assert!(err.contains("ftp"), "{err}");
+}
+
+#[test]
+fn redirect_status_matches_only_followable_codes() {
+    assert!(is_redirect_status(StatusCode::MOVED_PERMANENTLY));
+    assert!(is_redirect_status(StatusCode::FOUND));
+    assert!(is_redirect_status(StatusCode::TEMPORARY_REDIRECT));
+    assert!(is_redirect_status(StatusCode::PERMANENT_REDIRECT));
+    // 304 / 300 / 4xx / 5xx all stay errors that the backoff loop handles.
+    assert!(!is_redirect_status(StatusCode::NOT_MODIFIED));
+    assert!(!is_redirect_status(StatusCode::MULTIPLE_CHOICES));
+    assert!(!is_redirect_status(StatusCode::BAD_REQUEST));
+    assert!(!is_redirect_status(StatusCode::BAD_GATEWAY));
+}
+
+#[test]
+fn extract_location_header_returns_value_when_present() {
+    let resp = Response::builder()
+        .status(StatusCode::MOVED_PERMANENTLY)
+        .header(LOCATION, "https://api.example.com/socket.io/")
+        .body(None)
+        .unwrap();
+    assert_eq!(
+        extract_location_header(&resp).as_deref(),
+        Some("https://api.example.com/socket.io/")
+    );
+}
+
+#[test]
+fn extract_location_header_returns_none_when_missing() {
+    let resp = Response::builder()
+        .status(StatusCode::MOVED_PERMANENTLY)
+        .body(None)
+        .unwrap();
+    assert!(extract_location_header(&resp).is_none());
+}
+
+#[test]
+fn redirect_warning_is_recorded_once_and_pinned_to_first_hop() {
+    // First call records original→resolved. Second call (a second hop in the
+    // same attempt) must NOT overwrite — the first warning carries the
+    // user-actionable signal (your configured BACKEND_URL is stale).
+    let shared = make_shared();
+    record_redirect_warning(
+        &shared,
+        "ws://api.example.com/socket.io/",
+        "wss://api.example.com/socket.io/",
+    );
+    let first = shared.error.read().clone().unwrap();
+    assert!(first.contains("ws://api.example.com"));
+    assert!(first.contains("wss://api.example.com"));
+
+    record_redirect_warning(
+        &shared,
+        "wss://api.example.com/socket.io/",
+        "wss://api.example.com/v2/socket.io/",
+    );
+    let after_second = shared.error.read().clone().unwrap();
+    assert_eq!(
+        after_second, first,
+        "second redirect must not overwrite the first warning"
+    );
 }
 
 // ── handle_eio_message ─────────────────────────────────────────
@@ -382,4 +493,139 @@ fn connect_behavior_variants_are_distinct() {
         ConnectBehavior::Error => panic!(),
         ConnectBehavior::GarbageOpenPacket => {}
     }
+}
+
+// ── End-to-end redirect-follow (the real fix for the 301 noise) ──
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+/// Spawn a one-shot HTTP/1.1 server that replies with a 301 redirect to
+/// `location` and closes — used to prove that `connect_with_redirects`
+/// follows the redirect end-to-end through `connect_async` instead of
+/// surfacing the 301 as a recurring error.
+async fn spawn_mock_301_redirect(location: String) -> std::net::SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        // Drain the incoming upgrade request so the client doesn't see RST.
+        let mut buf = [0u8; 4096];
+        let _ = stream.read(&mut buf).await;
+        let response = format!(
+            "HTTP/1.1 301 Moved Permanently\r\n\
+             Location: {location}\r\n\
+             Content-Length: 0\r\n\
+             Connection: close\r\n\r\n"
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
+        let _ = stream.shutdown().await;
+    });
+    addr
+}
+
+/// Driver-level proof: when the configured URL responds with a 301 pointing
+/// at a working Engine.IO server, `ws_loop` follows the redirect, completes
+/// the handshake, and records a one-shot warning in `SharedState.error` so
+/// the UI can surface the stale-config signal.
+#[tokio::test]
+async fn ws_loop_follows_301_to_working_backend() {
+    // 1. Real EIO server on `ws://127.0.0.1:PORT`.
+    let (fwd_tx, mut fwd_rx) = mpsc::unbounded_channel::<String>();
+    let real_addr = spawn_mock_eio_server(ConnectBehavior::Ack, fwd_tx).await;
+    let real_ws_url = format!("ws://{real_addr}/socket.io/?EIO=4&transport=websocket");
+
+    // 2. Redirect server that 301s every request to the real EIO server.
+    let redirect_addr = spawn_mock_301_redirect(real_ws_url.clone()).await;
+
+    // 3. Drive `ws_loop` with the redirect address as the base URL. This is
+    //    exactly the production failure mode: BACKEND_URL points at a host
+    //    that 301s the WebSocket upgrade.
+    let shared = make_shared();
+    *shared.status.write() = ConnectionStatus::Disconnected;
+    let (emit_tx, emit_rx) = mpsc::unbounded_channel::<String>();
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let internal_tx = emit_tx.clone();
+    drop(emit_tx);
+
+    let loop_shared = Arc::clone(&shared);
+    let handle = tokio::spawn(async move {
+        ws_loop(
+            format!("http://{redirect_addr}"),
+            "redirect-test-token".into(),
+            loop_shared,
+            emit_rx,
+            shutdown_rx,
+            internal_tx,
+        )
+        .await;
+    });
+
+    // The SIO CONNECT frame arriving on the *real* server proves the redirect
+    // was followed and the WebSocket handshake completed against the redirect
+    // target — not the redirect host.
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(5);
+    let mut saw_connect = false;
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(Some(frame)) =
+            tokio::time::timeout(tokio::time::Duration::from_millis(200), fwd_rx.recv()).await
+        {
+            if frame.starts_with("40") && frame.contains("redirect-test-token") {
+                saw_connect = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        saw_connect,
+        "redirect was not followed — SIO CONNECT never reached the real EIO server"
+    );
+
+    for _ in 0..50 {
+        if *shared.status.read() == ConnectionStatus::Connected {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(*shared.status.read(), ConnectionStatus::Connected);
+
+    let warning = shared.error.read().clone();
+    assert!(
+        warning
+            .as_deref()
+            .map(|w| w.contains("redirected") && w.contains("BACKEND_URL"))
+            .unwrap_or(false),
+        "expected redirect warning in SharedState.error, got {warning:?}"
+    );
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(tokio::time::Duration::from_secs(5), handle).await;
+}
+
+/// 301 without a Location header is unrecoverable — must surface as a real
+/// error and not loop forever attempting to follow nothing.
+#[tokio::test]
+async fn connect_with_redirects_fails_when_location_missing() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let mut buf = [0u8; 4096];
+        let _ = stream.read(&mut buf).await;
+        // 301 but no Location header.
+        let _ = stream
+            .write_all(
+                b"HTTP/1.1 301 Moved Permanently\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .await;
+        let _ = stream.shutdown().await;
+    });
+
+    let shared = make_shared();
+    let mut url = format!("ws://{addr}/socket.io/?EIO=4&transport=websocket");
+    let err = connect_with_redirects(&mut url, &shared)
+        .await
+        .expect_err("must surface failure when Location is absent");
+    matches!(err, WsError::Http(_));
+    // No warning recorded because the redirect was never actually followed.
+    assert!(shared.error.read().is_none());
 }
