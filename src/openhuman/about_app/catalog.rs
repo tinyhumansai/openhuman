@@ -747,7 +747,10 @@ const CAPABILITIES: &[Capability] = &[
         name: "Manage Privacy and Analytics",
         domain: "settings",
         category: CapabilityCategory::Settings,
-        description: "Control privacy, analytics, and related data handling preferences.",
+        description: "Control privacy, analytics, and related data handling preferences. \
+            When enabled, anonymous crash reports are sent to Sentry and anonymous usage \
+            analytics (page views, feature engagement) are sent to Google Analytics. \
+            No personal data, messages, or credentials are ever included.",
         how_to: "Settings > Privacy (direct route)",
         status: CapabilityStatus::Stable,
         privacy: DIAGNOSTICS_TO_BACKEND,

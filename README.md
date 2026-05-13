@@ -30,10 +30,10 @@
 
 > **Early Beta**: Under active development. Expect rough edges.
 
-To install or get started, either download from the website over at [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman) or run
+To install or get started, either download from the website over at [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) or run
 
 ```
-# Download DMG, EXEs over at https://tinyhumans.ai/openhuman or run in from your terminal
+# Download DMG, EXEs over at https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme or run in from your terminal
 
 # For MacOS/Linux
 curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash

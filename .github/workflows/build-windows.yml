@@ -25,7 +25,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 24.x
-          cache: yarn
+          package-manager-cache: false
       - name: Install Rust (1.93.0)
         uses: dtolnay/rust-toolchain@1.93.0
         with:
