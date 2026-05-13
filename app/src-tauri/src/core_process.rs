@@ -172,7 +172,11 @@ impl CoreProcessHandle {
                         "Core RPC port {} is in use by something that is not an OpenHuman core ({reason}). Refusing to attach (set OPENHUMAN_CORE_REUSE_EXISTING=1 to override) — quit the other process or set OPENHUMAN_CORE_PORT to a different port and relaunch.",
                         self.port
                     );
-                    log::error!("[core] {msg}");
+                    if is_expected_port_clash(&reason) {
+                        log::warn!("[core] {msg}");
+                    } else {
+                        log::error!("[core] {msg}");
+                    }
                     return Err(msg);
                 }
             }
@@ -342,14 +346,22 @@ impl CoreProcessHandle {
         self.shutdown().await;
 
         if !had_managed_task && self.is_rpc_port_open().await {
-            log::error!(
-                "[core] restart: nothing to stop but port {} is in use — another process owns it",
-                self.port
-            );
-            return Err(format!(
+            let msg = format!(
                 "Core RPC port {} is already in use by another process (OpenHuman did not start it). Quit any `openhuman-core run` in a terminal or set OPENHUMAN_CORE_PORT to a different port, then relaunch the app.",
                 self.port
-            ));
+            );
+            if is_expected_port_clash(&msg) {
+                log::warn!(
+                    "[core] restart: nothing to stop but port {} is in use — another process owns it",
+                    self.port
+                );
+            } else {
+                log::error!(
+                    "[core] restart: nothing to stop but port {} is in use — another process owns it",
+                    self.port
+                );
+            }
+            return Err(msg);
         }
 
         const POLL_MS: u64 = 50;
