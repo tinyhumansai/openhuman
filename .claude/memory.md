@@ -155,9 +155,25 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **FrameProvider loops — sleep animation resets** — `FrameProvider` uses `frame % durationInFrames` so animations loop. Default `DURATION_FRAMES = FPS * 6` (6s). Sleep animation completes at 4s, then eyes re-open at 6s when frame resets to 0. Fix: use a much longer `durationInFrames` for sleep face (e.g. `FPS * 600`) so the loop never triggers while sleeping.
 - **Hover detection needs circular hitbox** — The mascot panel is 79x79 but the character is visually circular. Using the full AABB (`cursor_in_panel`) for hover triggers false positives when cursor is in a panel corner. Use distance-from-center check instead. Also suppress hover events for ~1s after panel shows to let the webview load.
 
+## Google Analytics (Issue #1479)
+
+- **`react-ga4` injects a `<script>` tag at runtime** — It appends a `gtag.js` `<script>` to `<head>` dynamically. This works because `tauri.conf.json` CSP has `https:` in `default-src` and `connect-src`. If CEF ever tightens `script-src` separately, switch to GA4 Measurement Protocol (pure HTTP POST, no script injection).
+- **Analytics module pattern** — `app/src/services/analytics.ts` is the single owner of `initGA`, `trackPageView`, `trackEvent`, plus an `ALLOWED_EVENTS` allowlist. Never call `ReactGA` directly from components; go through this module.
+- **Triple gate before any GA call** — `isAnalyticsEnabled()` (user consent) AND `GA_MEASUREMENT_ID` env var present AND `!IS_DEV`. All three must pass or tracking is silently skipped.
+- **Route tracking location** — `useLocation()` effect wired in AppShell (not individual pages). All page views emit from one place.
+- **Capability catalog must stay in sync** — `src/openhuman/about_app/catalog.rs` needs an entry when a new user-visible feature ships. GA was added there as part of issue #1479.
+
 ## PR Checklist CI
 
 - **N/A items need a checked checkbox** — `scripts/check-pr-checklist.mjs` requires `- [x] N/A: <reason>`. Using `- [ ] N/A:` (unchecked) fails the check even though the text starts with "N/A:".
+
+## Config System (Rust)
+
+- **Config corruption recovery** — `parse_config_with_recovery` in `src/openhuman/config/schema/load.rs`: try primary → try `.bak` → archive corrupt file → `Config::default()`. Guarantees the app always starts even with a corrupt config.
+- **New config fields must use `#[serde(default = "fn_name")]`** — Bare `#[serde(default)]` gives `0`/`false`, not the meaningful domain default. Define a named fn returning the correct value and reference it by name.
+- **`.bak` is now permanent** — `Config::save()` no longer deletes `.bak` on success. It always reflects the last-known-good config before the most recent write.
+- **`load_from_default_paths` has zero callers** — Debug utility only; not user-facing.
+- **Config test module path** — `openhuman::config::schema::load::tests`. Run with `cargo test -- config::schema::load::tests`.
 
 ## Environment
 

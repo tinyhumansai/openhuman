@@ -647,16 +647,7 @@ fn sanitize_error_message(message: &str) -> String {
         sanitized = sanitized.replace(marker, "[redacted]");
     }
 
-    let max_chars = 240;
-    if sanitized.chars().count() <= max_chars {
-        sanitized
-    } else {
-        let mut end = max_chars;
-        while end > 0 && !sanitized.is_char_boundary(end) {
-            end -= 1;
-        }
-        format!("{}...", &sanitized[..end])
-    }
+    crate::openhuman::util::truncate_with_ellipsis(&sanitized, 240)
 }
 
 fn extract_api_error_message(body: &str) -> Option<String> {

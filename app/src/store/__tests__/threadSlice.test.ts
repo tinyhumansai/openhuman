@@ -2,17 +2,21 @@ import { configureStore } from '@reduxjs/toolkit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { threadApi } from '../../services/api/threadApi';
+import { CoreRpcError } from '../../services/coreRpcClient';
 import type { Thread, ThreadMessage } from '../../types/thread';
 import threadReducer, {
   addInferenceResponse,
   addMessageLocal,
   clearAllThreads,
   clearSelectedThread,
+  clearStaleThread,
+  generateThreadTitleIfNeeded,
   loadThreadMessages,
   loadThreads,
   setActiveThread,
   setSelectedThread,
   setWelcomeThreadId,
+  THREAD_NOT_FOUND_MESSAGE,
 } from '../threadSlice';
 
 vi.mock('../../services/api/threadApi', () => ({
@@ -158,6 +162,31 @@ describe('threadSlice synchronous reducers', () => {
     expect(state.activeThreadId).toBeNull();
     expect(state.messages).toEqual([]);
   });
+
+  it('clearStaleThread removes stale selection, cache, and active id', async () => {
+    const store = createStore();
+    mockedThreadApi.getThreads.mockResolvedValueOnce({
+      threads: [makeThread({ id: 't-1' }), makeThread({ id: 't-2' })],
+      count: 2,
+    });
+    await store.dispatch(loadThreads());
+    mockedThreadApi.getThreadMessages.mockResolvedValueOnce({
+      messages: [makeMessage()],
+      count: 1,
+    });
+    await store.dispatch(loadThreadMessages('t-1'));
+    store.dispatch(setSelectedThread('t-1'));
+    store.dispatch(setActiveThread('t-1'));
+
+    store.dispatch(clearStaleThread('t-1'));
+
+    const state = store.getState().thread;
+    expect(state.threads.map(thread => thread.id)).toEqual(['t-2']);
+    expect(state.messagesByThreadId['t-1']).toBeUndefined();
+    expect(state.selectedThreadId).toBeNull();
+    expect(state.activeThreadId).toBeNull();
+    expect(state.messages).toEqual([]);
+  });
 });
 
 describe('threadSlice loadThreads thunk', () => {
@@ -285,6 +314,37 @@ describe('threadSlice addMessageLocal thunk', () => {
 
     expect(mockedThreadApi.generateTitleIfNeeded).not.toHaveBeenCalled();
   });
+
+  it('clears stale thread state and does not retry append on ThreadNotFound', async () => {
+    const store = createStore();
+    mockedThreadApi.getThreads.mockResolvedValueOnce({
+      threads: [makeThread({ id: 't-1' })],
+      count: 1,
+    });
+    await store.dispatch(loadThreads());
+    store.dispatch(setSelectedThread('t-1'));
+    store.dispatch(setActiveThread('t-1'));
+
+    mockedThreadApi.appendMessage.mockRejectedValueOnce(
+      new CoreRpcError('thread t-1 not found', 'thread_not_found', undefined, {
+        kind: 'ThreadNotFound',
+        thread_id: 't-1',
+      })
+    );
+    mockedThreadApi.getThreads.mockResolvedValueOnce({ threads: [], count: 0 });
+
+    const result = await store.dispatch(
+      addMessageLocal({ threadId: 't-1', message: makeMessage() })
+    );
+
+    expect(result.type).toBe('thread/addMessageLocal/rejected');
+    expect(result.payload).toBe(THREAD_NOT_FOUND_MESSAGE);
+    expect(mockedThreadApi.appendMessage).toHaveBeenCalledTimes(1);
+    expect(mockedThreadApi.generateTitleIfNeeded).not.toHaveBeenCalled();
+    expect(mockedThreadApi.getThreads).toHaveBeenCalledTimes(2);
+    expect(store.getState().thread.selectedThreadId).toBeNull();
+    expect(store.getState().thread.activeThreadId).toBeNull();
+  });
 });
 
 describe('threadSlice addInferenceResponse thunk', () => {
@@ -325,5 +385,56 @@ describe('threadSlice addInferenceResponse thunk', () => {
     const result = await store.dispatch(addInferenceResponse({ content: 'ack' }));
     expect(result.type).toBe('thread/addInferenceResponse/rejected');
     expect(mockedThreadApi.appendMessage).not.toHaveBeenCalled();
+  });
+
+  it('clears stale active thread when assistant append returns ThreadNotFound', async () => {
+    const store = createStore();
+    store.dispatch(setActiveThread('t-active'));
+    mockedThreadApi.appendMessage.mockRejectedValueOnce(
+      new CoreRpcError('thread t-active not found', 'thread_not_found', undefined, {
+        kind: 'ThreadNotFound',
+        thread_id: 't-active',
+      })
+    );
+    mockedThreadApi.getThreads.mockResolvedValueOnce({ threads: [], count: 0 });
+
+    const result = await store.dispatch(addInferenceResponse({ content: 'ack' }));
+
+    expect(result.type).toBe('thread/addInferenceResponse/rejected');
+    expect(result.payload).toBe(THREAD_NOT_FOUND_MESSAGE);
+    expect(mockedThreadApi.appendMessage).toHaveBeenCalledTimes(1);
+    expect(store.getState().thread.activeThreadId).toBeNull();
+  });
+});
+
+describe('threadSlice generateThreadTitleIfNeeded thunk', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('clears stale thread state and refreshes list on ThreadNotFound', async () => {
+    const store = createStore();
+    mockedThreadApi.getThreads.mockResolvedValueOnce({
+      threads: [makeThread({ id: 't-1' })],
+      count: 1,
+    });
+    await store.dispatch(loadThreads());
+    store.dispatch(setSelectedThread('t-1'));
+
+    mockedThreadApi.generateTitleIfNeeded.mockRejectedValueOnce(
+      new CoreRpcError('thread t-1 not found', 'thread_not_found', undefined, {
+        kind: 'ThreadNotFound',
+        thread_id: 't-1',
+      })
+    );
+    mockedThreadApi.getThreads.mockResolvedValueOnce({ threads: [], count: 0 });
+
+    const result = await store.dispatch(generateThreadTitleIfNeeded({ threadId: 't-1' }));
+
+    expect(result.type).toBe('thread/generateThreadTitleIfNeeded/rejected');
+    expect(result.payload).toBe(THREAD_NOT_FOUND_MESSAGE);
+    expect(mockedThreadApi.generateTitleIfNeeded).toHaveBeenCalledTimes(1);
+    expect(mockedThreadApi.getThreads).toHaveBeenCalledTimes(2);
+    expect(store.getState().thread.selectedThreadId).toBeNull();
   });
 });

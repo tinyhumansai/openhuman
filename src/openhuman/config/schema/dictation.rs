@@ -16,6 +16,7 @@ pub enum DictationActivationMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct DictationConfig {
     /// Whether voice dictation is enabled.
     #[serde(default = "default_enabled")]

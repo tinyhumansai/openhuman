@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use futures_util::stream::{self, StreamExt};
 use std::path::PathBuf;
 
-const PROVIDER_LABEL: &str = "OpenHuman";
+pub const PROVIDER_LABEL: &str = "OpenHuman";
 
 /// Routes chat to `config.api_url` + `/openai` with `Authorization: Bearer` from the `app-session` profile.
 pub struct OpenHumanBackendProvider {

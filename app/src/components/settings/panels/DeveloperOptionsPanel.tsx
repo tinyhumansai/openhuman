@@ -1,10 +1,11 @@
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { triggerSentryTestEvent } from '../../../services/analytics';
 import { useAppSelector } from '../../../store/hooks';
 import { APP_ENVIRONMENT } from '../../../utils/config';
+import { isTauri } from '../../../utils/tauriCommands/common';
 import SettingsHeader from '../components/SettingsHeader';
 import SettingsMenuItem from '../components/SettingsMenuItem';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';

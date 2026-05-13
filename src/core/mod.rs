@@ -14,6 +14,7 @@ pub mod cli;
 pub mod dispatch;
 pub mod event_bus;
 pub mod jsonrpc;
+pub mod legacy_aliases;
 pub mod logging;
 pub mod memory_cli;
 pub mod observability;

@@ -77,14 +77,20 @@ impl LocalAiService {
         serve_cmd
             .arg("serve")
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            // Pipe stderr so we can detect specific failure modes — most
+            // importantly Windows Controlled Folder Access blocks, which
+            // surface as "Access is denied" / "operation was blocked" /
+            // 0x80070005 in Ollama's own stderr when CFA refuses writes
+            // to the model cache or even prevents the binary from running.
+            .stderr(std::process::Stdio::piped());
         apply_no_window(&mut serve_cmd);
-        match serve_cmd.spawn() {
-            Ok(_) => {
+        let mut serve_child = match serve_cmd.spawn() {
+            Ok(child) => {
                 log::debug!(
                     "[local_ai] spawned `ollama serve` from {}",
                     ollama_cmd.display()
                 );
+                child
             }
             Err(err) => {
                 log::warn!(
@@ -96,6 +102,35 @@ impl LocalAiService {
                     ollama_cmd.display()
                 ));
             }
+        };
+
+        // Drain stderr into a bounded buffer in the background. We keep
+        // the last ~16KB so we can quote it back to the user / Sentry on
+        // failure but don't grow unbounded if Ollama logs heavily.
+        let stderr_buffer = std::sync::Arc::new(parking_lot::Mutex::new(String::new()));
+        if let Some(stderr) = serve_child.stderr.take() {
+            let buf = std::sync::Arc::clone(&stderr_buffer);
+            tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                while reader
+                    .read_line(&mut line)
+                    .await
+                    .map(|n| n > 0)
+                    .unwrap_or(false)
+                {
+                    let mut b = buf.lock();
+                    let new_len = b.len() + line.len();
+                    if new_len > 16 * 1024 {
+                        let drop_n = new_len - 16 * 1024;
+                        let drop_n = std::cmp::min(drop_n, b.len());
+                        b.drain(0..drop_n);
+                    }
+                    b.push_str(&line);
+                    line.clear();
+                }
+            });
         }
 
         for _ in 0..20 {
@@ -105,6 +140,40 @@ impl LocalAiService {
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
 
+        // Health probe timed out. The serve child is unhealthy and may be
+        // holding the Ollama port — kill it before returning so the next
+        // bootstrap attempt isn't blocked by a zombie listener.
+        if let Err(err) = serve_child.kill().await {
+            log::warn!("[local_ai] failed to kill unhealthy `ollama serve` child: {err}");
+        }
+
+        // Classify the failure from captured stderr.
+        let stderr_snapshot = stderr_buffer.lock().clone();
+        let lowered = stderr_snapshot.to_ascii_lowercase();
+        // Match only explicit Controlled Folder Access markers. Generic
+        // strings like "access is denied" or "is not recognized as a trusted"
+        // appear in many unrelated Windows errors and previously caused us
+        // to surface a misleading CFA remediation message.
+        let cfa_signatures = ["controlled folder access", "operation was blocked"];
+        let cfa_hit = cfa_signatures.iter().any(|sig| lowered.contains(sig));
+        if cfa_hit {
+            log::warn!(
+                "[local_ai] Ollama failed to start — Controlled Folder Access blocked it. \
+                 stderr tail: {stderr_snapshot}"
+            );
+            self.status.lock().error_detail = Some(stderr_snapshot);
+            return Err(format!(
+                "Ollama was blocked by Windows Controlled Folder Access. \
+                 Open Windows Security → Ransomware protection → Allow an app \
+                 through Controlled folder access, and add `{}`.",
+                ollama_cmd.display()
+            ));
+        }
+        // Non-CFA timeout — surface the stderr tail anyway for diagnosis.
+        if !stderr_snapshot.is_empty() {
+            log::warn!("[local_ai] Ollama not reachable. stderr tail: {stderr_snapshot}");
+            self.status.lock().error_detail = Some(stderr_snapshot);
+        }
         Err("Ollama runtime is not reachable after fresh install. Start `ollama serve` manually and retry.".to_string())
     }
 
@@ -185,6 +254,71 @@ impl LocalAiService {
         tokio::fs::create_dir_all(&install_dir)
             .await
             .map_err(|e| format!("failed to create Ollama install directory: {e}"))?;
+
+        // Crash-resume guard: Inno Setup's installer is spawned via
+        // PowerShell's `Start-Process`, which creates a top-level process.
+        // It outlives OpenHuman crashing, the user closing the app, or
+        // the bootstrap task being cancelled. If a prior launch left an
+        // OllamaSetup.exe running, wait for it instead of starting a
+        // second one — two concurrent installers race on the same dir
+        // and corrupt the install.
+        if crate::openhuman::local_ai::install::is_ollama_installer_running() {
+            log::info!(
+                "[local_ai] detected in-flight OllamaSetup.exe — \
+                 waiting for it to finish before deciding whether to install"
+            );
+            {
+                let mut status = self.status.lock();
+                status.state = "installing".to_string();
+                status.warning = Some("Resuming Ollama install from a previous launch".to_string());
+                status.error_detail = None;
+                status.error_category = None;
+            }
+            // Bounded wait: a stuck OllamaSetup.exe (e.g. Inno Setup dialog
+            // waiting on user input) must not block app startup forever. Five
+            // minutes covers a slow download + UAC prompt; past that we mark
+            // the install as failed-but-recoverable and let the caller decide.
+            let wait_start = std::time::Instant::now();
+            const INSTALLER_WAIT_TIMEOUT: std::time::Duration =
+                std::time::Duration::from_secs(5 * 60);
+            let mut timed_out = false;
+            while crate::openhuman::local_ai::install::is_ollama_installer_running() {
+                if wait_start.elapsed() >= INSTALLER_WAIT_TIMEOUT {
+                    timed_out = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+            if timed_out {
+                log::warn!(
+                    "[local_ai] OllamaSetup.exe still running after {}s — giving up the wait",
+                    INSTALLER_WAIT_TIMEOUT.as_secs()
+                );
+                let mut status = self.status.lock();
+                status.state = "install_failed".to_string();
+                status.warning = None;
+                status.error_category = Some("install_stuck".to_string());
+                status.error_detail = Some(format!(
+                    "Previous OllamaSetup.exe install was still running after {}s. \
+                     Cancel the installer (System tray / Task Manager) and retry.",
+                    INSTALLER_WAIT_TIMEOUT.as_secs()
+                ));
+                return Err("Previous Ollama installer is stuck. Cancel it and retry.".to_string());
+            }
+            // The prior installer is gone. If it succeeded, our regular
+            // discovery paths will find the binary and we can short-circuit
+            // the install entirely. If it failed, fall through and run a
+            // fresh install below.
+            if find_workspace_ollama_binary(config).is_some()
+                || find_system_ollama_binary().is_some()
+            {
+                log::info!("[local_ai] resumed prior install completed successfully");
+                return Ok(());
+            }
+            log::warn!(
+                "[local_ai] prior installer exited but binary not found — running fresh install"
+            );
+        }
 
         {
             let mut status = self.status.lock();
@@ -271,6 +405,36 @@ impl LocalAiService {
             .await
             .map(|r| r.status().is_success())
             .unwrap_or(false)
+    }
+
+    /// Filesystem-only precondition: is *any* Ollama binary discoverable?
+    ///
+    /// This is the cheapest possible check — no process spawns, no HTTP, no
+    /// timeouts. Callers that need to decide whether it's even worth talking
+    /// to `/api/tags` should consult this first. Returning `false` here means
+    /// the UI should drive the user to install Ollama instead of polling for
+    /// model state that can never appear.
+    pub(in crate::openhuman::local_ai::service) fn ollama_binary_present(
+        &self,
+        config: &Config,
+    ) -> bool {
+        if let Some(ref custom) = config.local_ai.ollama_binary_path {
+            if PathBuf::from(custom).is_file() {
+                return true;
+            }
+        }
+        if let Some(env_path) = std::env::var("OLLAMA_BIN")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+        {
+            if PathBuf::from(env_path).is_file() {
+                return true;
+            }
+        }
+        if find_workspace_ollama_binary(config).is_some() {
+            return true;
+        }
+        find_system_ollama_binary().is_some()
     }
 
     pub(in crate::openhuman::local_ai::service) async fn ensure_models_available(
@@ -909,9 +1073,23 @@ impl LocalAiService {
         &self,
         model: &str,
     ) -> Result<bool, String> {
+        // Issue the /api/tags GET directly. We previously short-circuited via
+        // ollama_healthy(), but that doubled the number of /api/tags round-trips
+        // on healthy polls (one probe + one tags fetch). With three has_model()
+        // calls per assets_status poll (chat, vision, embedding) that was 6
+        // network calls instead of 3. The 500ms connect_timeout on the shared
+        // reqwest client (set in bootstrap.rs) bounds the cost when the server
+        // is down — the connect failure surfaces as Err, same as ollama_healthy()
+        // would have surfaced as `false`.
+        log::debug!("[local_ai] has_model: checking for model `{model}`");
         let response = self
             .http
             .get(format!("{}/api/tags", ollama_base_url()))
+            // Per-request timeout matches list_models (5s). The shared client's
+            // connect_timeout only bounds the TCP handshake; without this a
+            // hung server (accepted connection, no response body) would block
+            // assets_status polls indefinitely.
+            .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
             .map_err(|e| format!("ollama tags request failed: {e}"))?;

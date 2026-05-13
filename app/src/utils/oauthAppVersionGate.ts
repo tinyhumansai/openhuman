@@ -1,8 +1,8 @@
 import { getVersion } from '@tauri-apps/api/app';
-import { isTauri } from '@tauri-apps/api/core';
 
 import { LATEST_APP_DOWNLOAD_URL, MINIMUM_SUPPORTED_APP_VERSION } from './config';
 import { isVersionAtLeast, parseSemverParts } from './semver';
+import { isTauri } from './tauriCommands/common';
 
 export type OAuthAppVersionGateResult =
   | { ok: true }

@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/react';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import debug from 'debug';
 
@@ -13,7 +13,9 @@ import {
 import { addIntegrationNotification } from '../store/notificationSlice';
 import { fetchRespondQueue } from '../store/providerSurfaceSlice';
 import type { AccountProvider, IngestedMessage } from '../types/accounts';
+import { isTauri } from '../utils/tauriCommands/common';
 import { openhumanGetMeetSettings } from '../utils/tauriCommands/config';
+import { trackEvent } from './analytics';
 import { threadApi } from './api/threadApi';
 import { chatSend } from './chatService';
 import { callCoreRpc } from './coreRpcClient';
@@ -24,6 +26,10 @@ const MEET_ORCHESTRATOR_MODEL = 'reasoning-v1';
 const log = debug('webview-accounts');
 const errLog = debug('webview-accounts:error');
 
+// Re-export the canonical Tauri guard so existing imports
+// `import { isTauri } from '.../webviewAccountService'` keep working.
+// The implementation lives in `utils/tauriCommands/common.ts` and accounts
+// for the CEF IPC injection race (see comment there).
 export { isTauri };
 
 /**
@@ -309,6 +315,11 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
   const bounds = lastBoundsByAccount.get(accountId);
   log('load finished account=%s state=%s reveal=%s', accountId, payload.state, Boolean(bounds));
   const trigger = payload.trigger === 'watchdog' ? 'watchdog' : 'load';
+
+  const provider = store.getState().accounts.accounts[accountId]?.provider;
+  const connectSuccessParams = provider ? { provider } : undefined;
+  const shouldTrackConnectSuccess = payload.state !== 'reused';
+
   if (bounds) {
     invoke('webview_account_reveal', { args: { account_id: accountId, bounds, trigger } })
       .catch(err => {
@@ -316,9 +327,15 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
       })
       .finally(() => {
         store.dispatch(setAccountStatus({ accountId, status: 'open' }));
+        if (shouldTrackConnectSuccess) {
+          trackEvent('account_connect_success', connectSuccessParams);
+        }
       });
   } else {
     store.dispatch(setAccountStatus({ accountId, status: 'open' }));
+    if (shouldTrackConnectSuccess) {
+      trackEvent('account_connect_success', connectSuccessParams);
+    }
   }
 }
 

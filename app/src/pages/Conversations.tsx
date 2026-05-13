@@ -16,6 +16,7 @@ import MicCloudComposer from '../features/human/MicCloudComposer';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
 import { useT } from '../lib/i18n/I18nContext';
+import { trackEvent } from '../services/analytics';
 // [#1123] getCoreStateSnapshot and isWelcomeLocked commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { getCoreStateSnapshot, isWelcomeLocked } from '../lib/coreState/store';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
@@ -39,6 +40,7 @@ import {
   persistReaction,
   setActiveThread,
   setSelectedThread,
+  THREAD_NOT_FOUND_MESSAGE,
 } from '../store/threadSlice';
 import type { ConfirmationModal as ConfirmationModalType } from '../types/intelligence';
 import type { ThreadMessage } from '../types/thread';
@@ -582,6 +584,14 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     try {
       await dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage })).unwrap();
     } catch (error) {
+      // RTK's unwrap() re-throws the rejectWithValue payload directly (a plain
+      // string, not an Error). Check for the stale-thread sentinel before
+      // coercing to a display string so this guard doesn't accidentally match
+      // unrelated errors whose `.toString()` happens to equal the sentinel.
+      if (error === THREAD_NOT_FOUND_MESSAGE) {
+        setSendError(null);
+        return;
+      }
       const msg = error instanceof Error ? error.message : String(error);
       setSendError(chatSendError('cloud_send_failed', msg));
       return;
@@ -605,6 +615,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     // (auto-react, autocomplete, etc.) — never as a primary chat path.
     try {
       await chatSend({ threadId: sendingThreadId, message: trimmed, model: CHAT_MODEL_ID });
+      trackEvent('chat_message_sent');
 
       // Active-thread reset happens in the global ChatRuntimeProvider events.
     } catch (err) {

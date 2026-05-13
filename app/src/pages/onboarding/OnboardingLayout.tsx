@@ -11,6 +11,7 @@ import { setWalkthroughPending } from '../../components/walkthrough/AppWalkthrou
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../../constants/onboardingChat';
 import { useCoreState } from '../../providers/CoreStateProvider';
+import { trackEvent } from '../../services/analytics';
 import { userApi } from '../../services/api/userApi';
 import { getDefaultEnabledTools } from '../../utils/toolDefinitions';
 import BetaBanner from './components/BetaBanner';
@@ -128,6 +129,9 @@ const OnboardingLayout = () => {
     //     console.warn('[onboarding] failed to fire welcome trigger', e);
     //   }
     // }
+
+    // Fire onboarding_complete analytics event before navigation.
+    trackEvent('onboarding_complete');
 
     // Flag the Joyride walkthrough as pending so it auto-starts on /home.
     // Best-effort: localStorage failures must not block navigation.

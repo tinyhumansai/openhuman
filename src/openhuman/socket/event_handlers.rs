@@ -244,6 +244,7 @@ mod tests {
             webhook_router: RwLock::new(None),
             status: RwLock::new(ConnectionStatus::Disconnected),
             socket_id: RwLock::new(None),
+            error: RwLock::new(None),
         })
     }
 

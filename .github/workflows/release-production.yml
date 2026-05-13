@@ -94,10 +94,10 @@ jobs:
           exit 1
       - name: Generate GitHub App token
         id: app-token
-        uses: tibdex/github-app-token@v1
+        uses: actions/create-github-app-token@v2
         with:
-          app_id: ${{ secrets.XGITHUB_APP_ID }}
-          private_key: ${{ secrets.XGITHUB_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.XGITHUB_APP_ID }}
+          private-key: ${{ secrets.XGITHUB_APP_PRIVATE_KEY }}
       - name: Checkout main
         uses: actions/checkout@v5
         with:
@@ -111,6 +111,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 24.x
+          package-manager-cache: false
       - name: Configure Git
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -566,6 +567,27 @@ jobs:
       && needs.build-docker.result == 'success'
       && needs.publish-updater-manifest.result == 'success'
     steps:
+      - name: Checkout validation scripts
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare-build.outputs.build_ref }}
+          fetch-depth: 1
+
+      - name: Validate release assets match latest.json
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare-build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" > /tmp/openhuman-release.json
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern latest.json \
+            --dir /tmp \
+            --clobber
+          scripts/validate-release-assets.sh /tmp/openhuman-release.json /tmp/latest.json
+
       - name: Validate required installer assets exist
         uses: actions/github-script@v8
         with:
@@ -583,6 +605,9 @@ jobs:
               /OpenHuman_.*_aarch64\.dmg$/,
               /OpenHuman_.*_x64\.dmg$/,
               /(OpenHuman_.*_x64-setup\.exe$|OpenHuman_.*_x64.*\.msi$)/,
+              // Linux desktop installer consumed by scripts/install.sh and
+              // advertised in latest.json as linux-x86_64.
+              /OpenHuman_.*_amd64\.AppImage$/,
               // Auto-updater manifest — without this, installed clients can't
               // discover new releases via plugins.updater.endpoints.
               /^latest\.json$/,

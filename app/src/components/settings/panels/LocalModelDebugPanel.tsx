@@ -107,6 +107,7 @@ const LocalModelDebugPanel = () => {
     return progressFromStatus(status);
   }, [downloads, status]);
 
+  const runtimeEnabled = status?.state !== 'disabled';
   const currentState = downloads?.state ?? status?.state;
   const isInstalling = currentState === 'installing';
   const isIndeterminateDownload =
@@ -146,14 +147,20 @@ const LocalModelDebugPanel = () => {
   };
 
   useEffect(() => {
-    void loadStatus();
-    const timer = setInterval(() => {
+    const initialLoad = window.setTimeout(() => {
+      void loadStatus();
+    }, 0);
+    const timer = window.setInterval(() => {
       void loadStatus();
     }, 1500);
-    return () => clearInterval(timer);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.clearInterval(timer);
+    };
   }, []);
 
   const triggerDownload = async (force: boolean) => {
+    if (!runtimeEnabled) return;
     setIsTriggeringDownload(true);
     setStatusError('');
     setBootstrapMessage('');
@@ -176,7 +183,7 @@ const LocalModelDebugPanel = () => {
   };
 
   const runSummaryTest = async () => {
-    if (!summaryInput.trim()) return;
+    if (!runtimeEnabled || !summaryInput.trim()) return;
     setIsSummaryLoading(true);
     setSummaryOutput('');
     setStatusError('');
@@ -192,7 +199,7 @@ const LocalModelDebugPanel = () => {
   };
 
   const runPromptTest = async () => {
-    if (!promptInput.trim()) return;
+    if (!runtimeEnabled || !promptInput.trim()) return;
     setIsPromptLoading(true);
     setPromptOutput('');
     setPromptError('');
@@ -208,7 +215,7 @@ const LocalModelDebugPanel = () => {
   };
 
   const runVisionTest = async () => {
-    if (!visionPromptInput.trim() || !visionImageInput.trim()) return;
+    if (!runtimeEnabled || !visionPromptInput.trim() || !visionImageInput.trim()) return;
     setIsVisionLoading(true);
     setVisionOutput('');
     setStatusError('');
@@ -228,7 +235,7 @@ const LocalModelDebugPanel = () => {
   };
 
   const runEmbeddingTest = async () => {
-    if (!embeddingInput.trim()) return;
+    if (!runtimeEnabled || !embeddingInput.trim()) return;
     setIsEmbeddingLoading(true);
     setEmbeddingOutput(null);
     setStatusError('');
@@ -248,7 +255,7 @@ const LocalModelDebugPanel = () => {
   };
 
   const runTranscribeTest = async () => {
-    if (!audioPathInput.trim()) return;
+    if (!runtimeEnabled || !audioPathInput.trim()) return;
     setIsTranscribeLoading(true);
     setTranscribeOutput(null);
     setStatusError('');
@@ -264,7 +271,7 @@ const LocalModelDebugPanel = () => {
   };
 
   const runTtsTest = async () => {
-    if (!ttsInput.trim()) return;
+    if (!runtimeEnabled || !ttsInput.trim()) return;
     setIsTtsLoading(true);
     setTtsOutput(null);
     setStatusError('');
@@ -285,6 +292,7 @@ const LocalModelDebugPanel = () => {
   const triggerAssetDownload = async (
     capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts'
   ) => {
+    if (!runtimeEnabled) return;
     setAssetDownloadBusy(prev => ({ ...prev, [capability]: true }));
     setStatusError('');
     try {
@@ -367,6 +375,7 @@ const LocalModelDebugPanel = () => {
           speedText={speedText}
           etaText={etaText}
           statusTone={statusTone}
+          runtimeEnabled={runtimeEnabled}
           onRefreshStatus={() => void loadStatus()}
           onTriggerDownload={force => void triggerDownload(force)}
           onSetOllamaPath={() => void handleSetOllamaPath()}
@@ -380,6 +389,7 @@ const LocalModelDebugPanel = () => {
           assets={assets}
           assetDownloadBusy={assetDownloadBusy}
           statusTone={statusTone}
+          runtimeEnabled={runtimeEnabled}
           onTriggerAssetDownload={capability => void triggerAssetDownload(capability)}
           summaryInput={summaryInput}
           summaryOutput={summaryOutput}

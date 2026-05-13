@@ -43,20 +43,24 @@ pub fn resolved_port() -> u16 {
 /// Start the server. Idempotent: after the first successful call any
 /// subsequent call is a no-op. Returns the bound port.
 ///
-/// Port selection: if `PORT_ENV` is set and non-zero, bind that port
-/// (caller gets a deterministic port across runs — useful in dev);
-/// otherwise bind `127.0.0.1:0` and let the OS pick.
+/// Port selection: always bind `127.0.0.1:0` and let the OS pick an
+/// ephemeral port. The resolved port is then exported via `PORT_ENV`
+/// (by the caller in `lib.rs`) so the core sidecar can discover it.
+///
+/// We deliberately ignore any pre-existing `PORT_ENV` value here:
+/// honouring it caused Sentry OPENHUMAN-TAURI-82 on Windows — if a
+/// previous run wrote `PORT_ENV=49342` into the user's environment
+/// (or the env was inherited from a parent process / leftover dev
+/// session), the next launch would attempt to re-bind that exact
+/// port and fail with WSAEADDRINUSE / os error 10048 whenever the
+/// socket was still held by another process or stuck in TIME_WAIT.
+/// `PORT_ENV` is an *output* of the bridge, not an input.
 pub async fn start() -> Result<u16, String> {
     if STARTED.get().is_some() {
         return Ok(resolved_port());
     }
 
-    let requested = std::env::var(PORT_ENV)
-        .ok()
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(0);
-
-    let addr: SocketAddr = format!("127.0.0.1:{requested}")
+    let addr: SocketAddr = "127.0.0.1:0"
         .parse()
         .map_err(|e| format!("[webview_apis] bad addr: {e}"))?;
     let listener = TcpListener::bind(addr)
@@ -69,7 +73,7 @@ pub async fn start() -> Result<u16, String> {
     RESOLVED_PORT.store(port, Ordering::SeqCst);
     let _ = STARTED.set(());
 
-    log::info!("[webview_apis] server listening on {bound}");
+    log::info!("[webview_apis] server listening on {bound} (OS-assigned ephemeral)");
 
     let accept_handle = tokio::spawn(async move {
         loop {
@@ -261,6 +265,70 @@ impl Response {
             ok: false,
             result: None,
             error: Some(error.into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test for Sentry OPENHUMAN-TAURI-82.
+    ///
+    /// If `PORT_ENV` carries a stale value pointing at a port that is
+    /// already in use (the failure mode reported on Windows: a previous
+    /// run wrote `49342` into the env, then the same port was held by
+    /// another process / stuck in TIME_WAIT), `start()` must still
+    /// succeed by binding a fresh OS-assigned ephemeral port instead of
+    /// trying to re-bind the stale port.
+    // Single-threaded runtime: `std::env::set_var` mutates process-global
+    // state and is not thread-safe in Rust. Under the default multi-threaded
+    // tokio test runtime, threads spawned by the same test could observe
+    // the env between `set_var` and the restore. `current_thread` eliminates
+    // that intra-test window (cross-test races between OS threads from
+    // OTHER tests are still possible — see the save/restore pattern below
+    // for that part). Per graycyrus review on PR #1543.
+    #[tokio::test(flavor = "current_thread")]
+    async fn start_ignores_stale_port_env_and_binds_ephemeral() {
+        // Occupy a port so `PORT_ENV` points at something that would
+        // definitely fail if `start()` honoured it.
+        let blocker = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("blocker bind");
+        let stale_port = blocker.local_addr().expect("blocker addr").port();
+        // Save+restore `PORT_ENV` so parallel tests in the same process
+        // don't see this test's mutation. (Per CodeRabbit feedback on PR
+        // #1543.) `std::env::set_var` is process-global; without the
+        // restore, an unrelated test asserting on `PORT_ENV` could observe
+        // `stale_port` and flake.
+        let prev_port_env = std::env::var(PORT_ENV).ok();
+        std::env::set_var(PORT_ENV, stale_port.to_string());
+
+        let bound = start()
+            .await
+            .expect("start should succeed despite stale PORT_ENV");
+
+        assert_ne!(
+            bound, stale_port,
+            "start() must pick a fresh ephemeral port, not the stale one in PORT_ENV"
+        );
+        assert_eq!(resolved_port(), bound);
+
+        // Hold `blocker` until after `start()` so the kernel definitely
+        // can't satisfy a bind on `stale_port` — defends against the
+        // exact race the Sentry issue describes.
+        drop(blocker);
+        // Note: `stop()` only aborts the accept loop — it does NOT (and
+        // cannot) reset the `STARTED` OnceLock. If a second test in this
+        // binary later calls `start()` it'll hit the idempotency
+        // early-return and silently observe this test's port. A future
+        // refactor to `AtomicBool`-based singleton would let `stop()`
+        // fully tear down. Tracked as graycyrus feedback on PR #1543;
+        // currently inert because this is the only test in the module.
+        stop();
+        match prev_port_env {
+            Some(v) => std::env::set_var(PORT_ENV, v),
+            None => std::env::remove_var(PORT_ENV),
         }
     }
 }

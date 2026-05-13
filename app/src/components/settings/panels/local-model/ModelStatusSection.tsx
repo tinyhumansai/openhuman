@@ -26,6 +26,7 @@ interface ModelStatusSectionProps {
   speedText: string;
   etaText: string;
   statusTone: (state: string) => string;
+  runtimeEnabled: boolean;
   onRefreshStatus: () => void;
   onTriggerDownload: (force: boolean) => void;
   onSetOllamaPath: () => void;
@@ -67,6 +68,7 @@ const ModelStatusSection = ({
   speedText,
   etaText,
   statusTone,
+  runtimeEnabled,
   onRefreshStatus,
   onTriggerDownload,
   onSetOllamaPath,
@@ -76,6 +78,113 @@ const ModelStatusSection = ({
   onRunDiagnostics,
   onRepairAction,
 }: ModelStatusSectionProps) => {
+  // Core reports `ollama_available: false` when no Ollama binary is
+  // discoverable on disk. The backend short-circuits all `has_model` HTTP
+  // probes in that state, so model rows below will all read "missing". Surface
+  // a clear install CTA up front so users don't have to interpret the empty
+  // model state on their own.
+  const showInstallOllamaCta = downloads?.ollama_available === false;
+
+  if (showInstallOllamaCta) {
+    // No Ollama on disk — the runtime-status card and diagnostics panels
+    // below would just read "n/a" / "missing" everywhere, which is more
+    // confusing than helpful. Render only the install CTA, with the binary
+    // path setter inline for users who installed Ollama in a non-standard
+    // location that auto-discovery can't find.
+    return (
+      <section className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-3">
+        <div className="flex items-start gap-3">
+          <svg
+            className="h-5 w-5 flex-shrink-0 text-amber-600 mt-0.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            />
+          </svg>
+          <div className="flex-1 space-y-1">
+            <div className="text-sm font-semibold text-amber-900">Ollama is not installed</div>
+            <div className="text-xs text-amber-800">
+              Local AI features (chat, vision, embedding) need the Ollama runtime. Install it below
+              — the installer runs silently and lands in your workspace; no console window will
+              appear.
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => onTriggerDownload(true)}
+            disabled={isTriggeringDownload}
+            className="px-3 py-1.5 text-xs rounded-md bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-medium">
+            {isTriggeringDownload ? 'Installing...' : 'Install Ollama'}
+          </button>
+          <a
+            href="https://ollama.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 text-xs rounded-md border border-amber-300 hover:border-amber-400 text-amber-800">
+            Install manually
+          </a>
+        </div>
+
+        {isInstallError && status?.error_detail && (
+          <div className="space-y-1 pt-2 border-t border-amber-200">
+            <button
+              type="button"
+              onClick={onToggleErrorDetail}
+              className="text-xs text-red-700 hover:text-red-600 underline">
+              {showErrorDetail ? 'Hide error details' : 'Show install error details'}
+            </button>
+            {showErrorDetail && (
+              <pre className="max-h-40 overflow-auto rounded bg-red-50 border border-red-200 p-2 text-[10px] text-red-700 leading-tight whitespace-pre-wrap break-words">
+                {status.error_detail}
+              </pre>
+            )}
+          </div>
+        )}
+
+        <div className="pt-2 border-t border-amber-200 space-y-1">
+          <div className="text-amber-900 text-xs font-medium">
+            Already installed in a custom location?
+          </div>
+          <div className="text-[11px] text-amber-800">
+            Point us at the binary and we&apos;ll use it instead of running the installer.
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <input
+              type="text"
+              value={ollamaPathInput}
+              onChange={e => onSetOllamaPathInput(e.target.value)}
+              placeholder="C:\Users\you\AppData\Local\Programs\Ollama\ollama.exe"
+              className="flex-1 rounded-md border border-amber-300 bg-white px-2 py-1.5 text-xs text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={onSetOllamaPath}
+              disabled={isSettingPath || !ollamaPathInput.trim()}
+              className="px-2 py-1.5 text-xs rounded-md bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white whitespace-nowrap">
+              {isSettingPath ? 'Setting...' : 'Set Path'}
+            </button>
+            {ollamaPathInput && (
+              <button
+                type="button"
+                onClick={onClearOllamaPath}
+                disabled={isSettingPath}
+                className="px-2 py-1.5 text-xs rounded-md border border-amber-300 hover:border-amber-400 disabled:opacity-60 text-amber-800 whitespace-nowrap">
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <>
       <section className="space-y-3">
@@ -234,7 +343,7 @@ const ModelStatusSection = ({
             ) : (
               <button
                 onClick={() => onTriggerDownload(false)}
-                disabled={isTriggeringDownload}
+                disabled={!runtimeEnabled || isTriggeringDownload}
                 className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
                 {isTriggeringDownload
                   ? 'Triggering...'
@@ -245,7 +354,7 @@ const ModelStatusSection = ({
             )}
             <button
               onClick={() => onTriggerDownload(true)}
-              disabled={isTriggeringDownload}
+              disabled={!runtimeEnabled || isTriggeringDownload}
               className="px-3 py-1.5 text-xs rounded-md border border-stone-200 hover:border-stone-300 disabled:opacity-60 text-stone-600">
               {isTriggeringDownload ? 'Working...' : 'Force Re-bootstrap'}
             </button>

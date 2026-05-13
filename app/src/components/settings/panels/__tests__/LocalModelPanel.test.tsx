@@ -160,6 +160,21 @@ describe('LocalModelPanel — usage flags', () => {
     });
   });
 
+  it('does not invoke model downloads while runtime is disabled', async () => {
+    renderWithProviders(<LocalModelPanel />, { initialEntries: ['/settings/local-model'] });
+
+    const button = await screen.findByRole('button', { name: 'Download Models' });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+
+    const advancedButton = screen.getByRole('button', { name: 'Advanced settings' });
+    expect(advancedButton).toBeDisabled();
+    fireEvent.click(advancedButton);
+
+    expect(openhumanLocalAiDownload).not.toHaveBeenCalled();
+    expect(openhumanLocalAiDownloadAllAssets).not.toHaveBeenCalled();
+  });
+
   it('surfaces an error when the initial config load fails', async () => {
     vi.mocked(openhumanGetConfig).mockRejectedValueOnce(new Error('boom: get_config'));
     renderWithProviders(<LocalModelPanel />, { initialEntries: ['/settings/local-model'] });

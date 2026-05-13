@@ -31,3 +31,6 @@ pub use gate::{
 };
 pub use policy::{PauseReason, Policy};
 pub use signals::Signals;
+
+#[cfg(test)]
+pub(crate) use gate::SignedOutTestGuard;

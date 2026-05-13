@@ -74,11 +74,21 @@ pub fn new_provider(
         )
     };
 
+    let local_api_key = local_ai_config
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty());
+    let local_auth_style = if local_api_key.is_some() {
+        AuthStyle::Bearer
+    } else {
+        AuthStyle::None
+    };
     let local: Box<dyn Provider> = Box::new(OpenAiCompatibleProvider::new(
         provider_label,
         &local_base,
-        local_ai_config.api_key.as_deref(),
-        AuthStyle::Bearer,
+        local_api_key,
+        local_auth_style,
     ));
 
     IntelligentRoutingProvider::new(

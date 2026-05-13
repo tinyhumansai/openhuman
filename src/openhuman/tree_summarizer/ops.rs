@@ -168,8 +168,8 @@ fn create_local_ai_provider(
     let inner = OpenAiCompatibleProvider::new_no_responses_fallback(
         "ollama-local",
         &base_url,
-        Some("ollama"), // Ollama ignores auth but the provider requires a non-None credential
-        AuthStyle::Bearer,
+        None,
+        AuthStyle::None,
     );
 
     let providers: Vec<(

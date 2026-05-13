@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ChannelsConfig {
     pub cli: bool,
     pub telegram: Option<TelegramConfig>,
@@ -298,6 +299,7 @@ pub struct SecurityConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct SandboxConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -330,6 +332,7 @@ pub enum SandboxBackend {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ResourceLimitsConfig {}
 
 impl Default for ResourceLimitsConfig {
@@ -339,6 +342,7 @@ impl Default for ResourceLimitsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct AuditConfig {
     #[serde(default = "default_audit_enabled")]
     pub enabled: bool,

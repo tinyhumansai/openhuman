@@ -20,7 +20,17 @@ const DB_DIR: &str = "memory_tree";
 const DB_FILE: &str = "chunks.db";
 const DEFAULT_LIST_LIMIT: usize = 100;
 const MAX_LIST_LIMIT: usize = 10_000;
-const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+// 15s gives the busy-handler enough headroom that transient write-lock
+// contention (4 job workers + scheduler + ingest producers all writing the
+// same `memory_tree/chunks.db`) is absorbed inside rusqlite instead of
+// surfacing as `SQLITE_BUSY` to callers. Workers still treat busy as a
+// soft signal (see `memory::tree::jobs::worker`) so even if this is
+// exceeded, the only effect is a one-poll backoff — but 15s is
+// comfortably above realistic peer-write durations and shrinks the rate
+// at which we have to fall back to that path. The previous 5s was tight
+// enough on contended Windows hosts that we were observing avoidable
+// busy returns (see OPENHUMAN-TAURI-BP).
+const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Chunk lifecycle: freshly persisted, awaiting the async extract job.
 pub const CHUNK_STATUS_PENDING_EXTRACTION: &str = "pending_extraction";

@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.53.30"
+version = "0.53.32"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -110,7 +110,7 @@ tower = { version = "0.5", default-features = false }
 opentelemetry = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "metrics", "http-proto", "reqwest-client", "reqwest-rustls-webpki-roots"] }
-sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "tracing", "debug-images", "reqwest", "rustls"] }
+sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "tracing", "debug-images", "reqwest", "rustls", "test"] }
 tokio-stream = { version = "0.1.18", features = ["full"] }
 url = "2"
 socketioxide = { version = "0.15", features = ["extensions"] }
@@ -156,6 +156,13 @@ landlock = { version = "0.4", optional = true }
 rppal = { version = "0.22", optional = true }
 
 [dev-dependencies]
+# Enable sentry's TestTransport for runtime smoke of the observability
+# before_send filter (see tests/observability_smoke.rs). `default-features
+# = false` here is load-bearing — sentry's default feature set pulls in
+# actix-web / actix-http / actix-server / sentry-actix and ~13 transitive
+# crates we never use (and that bloat the dev Cargo.lock noticeably).
+# TestTransport only needs the `test` feature.
+sentry = { version = "0.47.0", default-features = false, features = ["test"] }
 
 [features]
 sandbox-landlock = ["dep:landlock"]

@@ -5,18 +5,21 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(default)]
 pub struct StorageConfig {
     #[serde(default)]
     pub provider: StorageProviderSection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(default)]
 pub struct StorageProviderSection {
     #[serde(default)]
     pub config: StorageProviderConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct StorageProviderConfig {
     #[serde(default)]
     pub provider: String,
@@ -32,8 +35,11 @@ impl Default for StorageProviderConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::struct_excessive_bools)]
+#[serde(default)]
 pub struct MemoryConfig {
+    #[serde(default = "default_memory_backend")]
     pub backend: String,
+    #[serde(default = "default_true")]
     pub auto_save: bool,
     #[serde(default = "default_embedding_provider")]
     pub embedding_provider: String,
@@ -45,6 +51,14 @@ pub struct MemoryConfig {
     pub min_relevance_score: f64,
     #[serde(default)]
     pub sqlite_open_timeout_secs: Option<u64>,
+}
+
+fn default_memory_backend() -> String {
+    "sqlite".into()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_embedding_provider() -> String {
@@ -70,8 +84,8 @@ fn default_min_relevance_score() -> f64 {
 impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
-            backend: "sqlite".into(),
-            auto_save: true,
+            backend: default_memory_backend(),
+            auto_save: default_true(),
             embedding_provider: default_embedding_provider(),
             embedding_model: default_embedding_model(),
             embedding_dimensions: default_embedding_dims(),
@@ -165,6 +179,7 @@ fn default_cloud_llm_model() -> Option<String> {
 /// - `OPENHUMAN_MEMORY_TREE_LLM_BACKEND` (cloud|local)
 /// - `OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct MemoryTreeConfig {
     /// Ollama endpoint for the embedder (e.g. `http://localhost:11434`).
     /// `None` disables the Ollama path — see `embedding_strict` for the

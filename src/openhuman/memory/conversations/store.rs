@@ -140,7 +140,7 @@ impl ConversationStore {
     ) -> Result<ConversationMessage, String> {
         let _guard = CONVERSATION_STORE_LOCK.lock();
         if !self.thread_exists_unlocked(thread_id)? {
-            return Err(format!("thread {} does not exist", thread_id));
+            return Err(format!("thread {} not found", thread_id));
         }
         let path = self.thread_messages_path(thread_id);
         if let Some(parent) = path.parent() {
@@ -179,7 +179,7 @@ impl ConversationStore {
         let index = self.thread_index_unlocked()?;
         let entry = index
             .get(thread_id)
-            .ok_or_else(|| format!("thread {} does not exist", thread_id))?;
+            .ok_or_else(|| format!("thread {} not found", thread_id))?;
         let threads_path = self.ensure_root()?.join(THREADS_FILENAME);
         append_jsonl(
             &threads_path,
@@ -213,7 +213,7 @@ impl ConversationStore {
         let index = self.thread_index_unlocked()?;
         let entry = index
             .get(thread_id)
-            .ok_or_else(|| format!("thread {} does not exist", thread_id))?;
+            .ok_or_else(|| format!("thread {} not found", thread_id))?;
         let threads_path = self.ensure_root()?.join(THREADS_FILENAME);
         append_jsonl(
             &threads_path,

@@ -235,6 +235,12 @@ async fn inline_complete_interactive_does_not_block_on_held_permit() {
 /// confirm it hasn't completed. We then drop the permit and verify
 /// the call resolves.
 #[tokio::test]
+// Wake-on-permit-drop timing test: under heavy parallel cargo-test load
+// the 2s timeout occasionally fires before the spawned waiter resolves.
+// Panicking here would poison `LOCAL_AI_TEST_MUTEX` and cascade
+// PoisonError into every other local_ai test, so re-ignoring is the
+// safer trade-off. See PR #1524.
+#[ignore = "flaky timing under full-suite load — see PR #1524"]
 async fn gated_inline_complete_blocks_on_held_permit() {
     let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
         .lock()

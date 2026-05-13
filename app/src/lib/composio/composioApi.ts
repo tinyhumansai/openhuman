@@ -73,11 +73,17 @@ export async function listTools(toolkits?: string[]): Promise<ComposioToolsRespo
  * Begin an OAuth handoff for `toolkit`. The returned `connectUrl`
  * must be opened in a browser for the user to complete the flow.
  * The core publishes a `ComposioConnectionCreated` event on success.
+ *
+ * `extraParams` is merged into the backend request body. Required for
+ * toolkits that need additional fields (e.g. `whatsapp` needs `waba_id`).
  */
-export async function authorize(toolkit: string): Promise<ComposioAuthorizeResponse> {
+export async function authorize(
+  toolkit: string,
+  extraParams?: Record<string, string>
+): Promise<ComposioAuthorizeResponse> {
   const raw = await callCoreRpc<unknown>({
     method: 'openhuman.composio_authorize',
-    params: { toolkit },
+    params: extraParams ? { toolkit, extra_params: extraParams } : { toolkit },
   });
   return unwrapCliEnvelope<ComposioAuthorizeResponse>(raw);
 }

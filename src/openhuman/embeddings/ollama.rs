@@ -24,6 +24,7 @@ pub const DEFAULT_OLLAMA_DIMENSIONS: usize = 768;
 /// Ollama must be running and have the configured model pulled.
 /// On first embed call, if the model isn't available, Ollama will
 /// auto-pull it (this may take a moment on first use).
+#[derive(Debug)]
 pub struct OllamaEmbedding {
     base_url: String,
     model: String,
@@ -36,17 +37,9 @@ impl OllamaEmbedding {
     /// - `base_url`: Ollama server URL (default: `http://localhost:11434`)
     /// - `model`: Model name (default: `nomic-embed-text:latest`)
     /// - `dims`: Expected embedding dimensions (default: 768)
-    pub fn new(base_url: &str, model: &str, dims: usize) -> Self {
-        let base_url = if base_url.trim().is_empty() {
-            DEFAULT_OLLAMA_URL.to_string()
-        } else {
-            base_url.trim_end_matches('/').to_string()
-        };
-        let model = if model.trim().is_empty() {
-            DEFAULT_OLLAMA_MODEL.to_string()
-        } else {
-            model.trim().to_string()
-        };
+    pub fn try_new(base_url: &str, model: &str, dims: usize) -> anyhow::Result<Self> {
+        let base_url = Self::normalize_base_url(base_url)?;
+        let model = Self::normalize_model(model)?;
         let dims = if dims == 0 {
             DEFAULT_OLLAMA_DIMENSIONS
         } else {
@@ -58,20 +51,17 @@ impl OllamaEmbedding {
             "[embeddings] OllamaEmbedding created: url={base_url}, model={model}, dims={dims}"
         );
 
-        Self {
+        Ok(Self {
             base_url,
             model,
             dims,
-        }
+        })
     }
 
-    /// Creates a provider with all defaults.
-    pub fn default() -> Self {
-        Self::new(
-            DEFAULT_OLLAMA_URL,
-            DEFAULT_OLLAMA_MODEL,
-            DEFAULT_OLLAMA_DIMENSIONS,
-        )
+    /// Creates a new Ollama embedding provider, panicking if the configuration
+    /// is invalid. Prefer [`Self::try_new`] at runtime boundaries.
+    pub fn new(base_url: &str, model: &str, dims: usize) -> Self {
+        Self::try_new(base_url, model, dims).expect("invalid Ollama embedding configuration")
     }
 
     /// Returns the configured base URL.
@@ -89,9 +79,85 @@ impl OllamaEmbedding {
         crate::openhuman::config::build_runtime_proxy_client("embeddings.ollama")
     }
 
+    fn normalize_base_url(base_url: &str) -> anyhow::Result<String> {
+        let raw = if base_url.trim().is_empty() {
+            DEFAULT_OLLAMA_URL
+        } else {
+            base_url.trim()
+        };
+
+        let url = reqwest::Url::parse(raw)
+            .map_err(|e| anyhow::anyhow!("invalid Ollama base_url `{raw}`: {e}"))?;
+        if !matches!(url.scheme(), "http" | "https") {
+            anyhow::bail!("invalid Ollama base_url `{raw}`: expected an http:// or https:// URL");
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            anyhow::bail!(
+                "invalid Ollama base_url `{raw}`: configure the server root without credentials"
+            );
+        }
+        if url.query().is_some() || url.fragment().is_some() {
+            anyhow::bail!(
+                "invalid Ollama base_url `{raw}`: query strings and fragments are not supported"
+            );
+        }
+
+        let segments: Vec<String> = url
+            .path_segments()
+            .map(|parts| {
+                parts
+                    .filter(|part| !part.is_empty())
+                    .map(|part| part.to_ascii_lowercase())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let has_api_suffix = segments.iter().any(|part| part == "api" || part == "v1");
+        let is_chat_completions_endpoint = segments.len() >= 2
+            && segments[segments.len() - 2] == "chat"
+            && segments[segments.len() - 1] == "completions";
+        if has_api_suffix || is_chat_completions_endpoint {
+            anyhow::bail!(
+                "invalid Ollama base_url `{raw}`: configure the Ollama server root \
+                 (for example {DEFAULT_OLLAMA_URL}), not an API endpoint such as \
+                 /api, /v1, or /chat/completions"
+            );
+        }
+
+        Ok(url.as_str().trim_end_matches('/').to_string())
+    }
+
+    fn normalize_model(model: &str) -> anyhow::Result<String> {
+        let model = if model.trim().is_empty() {
+            DEFAULT_OLLAMA_MODEL.to_string()
+        } else {
+            model.trim().to_string()
+        };
+        if model.to_ascii_lowercase().starts_with("local-") {
+            anyhow::bail!(
+                "invalid Ollama embedding model `{model}`: `local-*` model IDs are virtual \
+                 routing aliases. Configure a real Ollama embedding model such as \
+                 `{DEFAULT_OLLAMA_MODEL}`."
+            );
+        }
+        Ok(model)
+    }
+
     /// The embed endpoint URL.
-    fn embed_url(&self) -> String {
-        format!("{}/api/embed", self.base_url)
+    fn embed_url(&self) -> anyhow::Result<String> {
+        let _ = reqwest::Url::parse(&self.base_url)
+            .map_err(|e| anyhow::anyhow!("invalid Ollama base_url `{}`: {e}", self.base_url))?;
+        Ok(format!("{}/api/embed", self.base_url))
+    }
+}
+
+impl Default for OllamaEmbedding {
+    fn default() -> Self {
+        Self::try_new(
+            DEFAULT_OLLAMA_URL,
+            DEFAULT_OLLAMA_MODEL,
+            DEFAULT_OLLAMA_DIMENSIONS,
+        )
+        .expect("default Ollama embedding configuration must be valid")
     }
 }
 
@@ -158,7 +224,7 @@ impl EmbeddingProvider for OllamaEmbedding {
 
         let resp = self
             .http_client()
-            .post(self.embed_url())
+            .post(self.embed_url()?)
             .json(&OllamaEmbedRequest {
                 model: self.model.clone(),
                 input: input.clone(),

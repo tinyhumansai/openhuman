@@ -24,9 +24,21 @@ impl LocalAiService {
         let stt_model = model_ids::effective_stt_model_id(config);
         let tts_voice = model_ids::effective_tts_voice_id(config);
 
-        let chat_ready = self.has_model(&chat_model).await.unwrap_or(false);
-        let vision_ready = self.has_model(&vision_model).await.unwrap_or(false);
-        let embedding_ready = self.has_model(&embedding_model).await.unwrap_or(false);
+        // Pre-flight precondition: if no Ollama binary exists anywhere
+        // discoverable, every `has_model` call will fail (or time out). Skip
+        // the HTTP probes entirely and report a clean "missing" state with
+        // `ollama_available: false` so the UI can render an "Install Ollama"
+        // CTA instead of perpetually-empty model state.
+        let ollama_available = self.ollama_binary_present(config);
+        let (chat_ready, vision_ready, embedding_ready) = if ollama_available {
+            (
+                self.has_model(&chat_model).await.unwrap_or(false),
+                self.has_model(&vision_model).await.unwrap_or(false),
+                self.has_model(&embedding_model).await.unwrap_or(false),
+            )
+        } else {
+            (false, false, false)
+        };
         let stt_resolve = resolve_stt_model_path(config);
         let tts_resolve = resolve_tts_voice_path(config);
 
@@ -134,6 +146,7 @@ impl LocalAiService {
                 warning: tts_warning,
             },
             quantization: model_ids::effective_quantization(config),
+            ollama_available,
         })
     }
 
@@ -250,6 +263,7 @@ impl LocalAiService {
             embedding,
             stt,
             tts,
+            ollama_available: assets.ollama_available,
         })
     }
 

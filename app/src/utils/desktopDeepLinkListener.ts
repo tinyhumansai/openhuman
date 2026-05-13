@@ -1,5 +1,4 @@
 import * as Sentry from '@sentry/react';
-import { isTauri as coreIsTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
@@ -14,6 +13,7 @@ import { BILLING_DASHBOARD_URL } from './links';
 import { evaluateOAuthAppVersionGate } from './oauthAppVersionGate';
 import { openUrl } from './openUrl';
 import { storeSession } from './tauriCommands';
+import { isTauri as coreIsTauri } from './tauriCommands/common';
 
 const SESSION_TOKEN_UPDATED_EVENT = 'core-state:session-token-updated';
 

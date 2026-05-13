@@ -30,30 +30,11 @@ pub(crate) fn extract_error_detail(body: &str, max_bytes: usize) -> String {
         if let Some(msg) = v.get("error").and_then(|e| e.as_str()) {
             let trimmed = msg.trim();
             if !trimmed.is_empty() {
-                return truncate_at_char_boundary(trimmed, max_bytes);
+                return crate::openhuman::util::truncate_at_byte_boundary(trimmed, max_bytes);
             }
         }
     }
-    truncate_at_char_boundary(body, max_bytes)
-}
-
-fn truncate_at_char_boundary(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    // Reserve space for the trailing `…` so the returned string never
-    // exceeds `max` bytes. Without this, a 500-byte cap could return
-    // 503 bytes (500 raw + 3-byte ellipsis), breaking the hard cap that
-    // Sentry tag values and user-facing toasts rely on.
-    let ellipsis_len = '…'.len_utf8();
-    if max < ellipsis_len {
-        return String::new();
-    }
-    let mut end = max - ellipsis_len;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &s[..end])
+    crate::openhuman::util::truncate_at_byte_boundary(body, max_bytes)
 }
 
 /// Shared client for all integration tools. Holds backend URL, auth token,
