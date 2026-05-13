@@ -408,6 +408,32 @@ jobs:
           # Inline NODE_OPTIONS so it reaches the vite child spawned by
           # beforeBuildCommand. Step-level env was observed not to propagate
           # on macos-arm64 runners, causing OOM at node's ~2GB auto default.
+          #
+          # Linux AppImage bundler note: the vendored tauri-cef bundler
+          # invokes `quick-sharun.sh`, which runs `lib4bin` → `ldd` on the
+          # staged OpenHuman binary. CEF (libcef.so) is downloaded into
+          # `~/.cache/tauri-cef/<version>/<os-arch>/` at cargo-build time and
+          # copied into the AppDir at usr/lib/libcef.so, but the binary's
+          # RUNPATH does not include either location, so plain `ldd` reports
+          # `libcef.so => not found` and lib4bin aborts with the generic
+          # "is missing libraries! Aborting..." banner. To get past it we:
+          #   1. Run `cargo tauri build --no-bundle` first so the cef-dll-sys
+          #      build script downloads libcef.so into the cache dir.
+          #   2. Re-invoke `cargo tauri build` (incremental — cargo skips the
+          #      already-compiled artifacts) with that cache dir on
+          #      LD_LIBRARY_PATH so the bundler's ldd call resolves libcef.so.
+          # macOS / Windows take the original single-call path.
+          if [ "${RUNNER_OS}" = "Linux" ]; then
+            echo "[appimage-fix] linux split build: compile first to fetch CEF"
+            NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build --no-bundle $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+            CEF_LIB_DIR="$(find "$HOME/.cache/tauri-cef" -name libcef.so -printf '%h\n' 2>/dev/null | head -1)"
+            if [ -z "$CEF_LIB_DIR" ]; then
+              echo "::error::libcef.so not found under ~/.cache/tauri-cef after --no-bundle compile; cannot satisfy lib4bin ldd resolution." >&2
+              exit 1
+            fi
+            echo "[appimage-fix] prepending CEF lib dir to LD_LIBRARY_PATH: $CEF_LIB_DIR"
+            export LD_LIBRARY_PATH="$CEF_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          fi
           NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
 
       # Diagnostic for the recurring quick-sharun "is missing libraries!

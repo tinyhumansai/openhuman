@@ -440,7 +440,7 @@ encrypt = false
     async fn execute_task_routes_to_cloud_when_local_disabled() {
         let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
             .lock()
-            .expect("test env lock");
+            .unwrap_or_else(|e| e.into_inner());
         test_mocks::reset();
         let tmp = tempdir().expect("tempdir");
         let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
@@ -462,7 +462,7 @@ encrypt = false
     async fn execute_task_routes_to_local_when_local_enabled() {
         let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
             .lock()
-            .expect("test env lock");
+            .unwrap_or_else(|e| e.into_inner());
         test_mocks::reset();
         let tmp = tempdir().expect("tempdir");
         let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());

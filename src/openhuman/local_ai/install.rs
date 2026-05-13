@@ -468,6 +468,33 @@ mod tests {
     #[test]
     fn find_system_ollama_binary_detects_macos_app_bundle_in_applications() {
         let _lock = env_lock();
+        // `find_system_ollama_binary` probes a fixed priority list on macOS:
+        //   1. /usr/local/bin/ollama   (intel homebrew, hand-installed)
+        //   2. /opt/homebrew/bin/ollama (apple-silicon homebrew)
+        //   3. /Applications/Ollama.app/Contents/Resources/ollama
+        //   4. $HOME/Applications/Ollama.app/Contents/Resources/ollama
+        // The test exercises (4) by pointing $HOME at a tempdir and clearing
+        // PATH/OLLAMA_BIN. Paths (1)–(3) are absolute and cannot be redirected
+        // — if a dev machine already has Ollama installed at either homebrew
+        // location or in the system /Applications dir, the function returns
+        // that real binary first and the assertion below fails. Skip when any
+        // earlier candidate already resolves so this test stays a regression
+        // gate on the ~/Applications branch and not a "is Ollama installed on
+        // this CI runner" probe.
+        let unmaskable_real_install = [
+            "/usr/local/bin/ollama",
+            "/opt/homebrew/bin/ollama",
+            "/Applications/Ollama.app/Contents/Resources/ollama",
+        ]
+        .iter()
+        .any(|p| std::path::Path::new(p).is_file());
+        if unmaskable_real_install {
+            eprintln!(
+                "skipping: host has a real Ollama install at a higher-priority absolute path \
+                 the test cannot mock"
+            );
+            return;
+        }
         let tmp = tempfile::tempdir().unwrap();
         // Build a fake /Applications/Ollama.app/Contents/Resources/ollama tree.
         let bundle_bin = tmp

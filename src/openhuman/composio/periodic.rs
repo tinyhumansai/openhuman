@@ -285,7 +285,7 @@ mod tests {
     async fn run_one_tick_returns_ok_when_no_client() {
         // Isolate the workspace/env so config loading doesn't contend with
         // sibling tests mutating OPENHUMAN_WORKSPACE in parallel.
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempdir().expect("tempdir");
         unsafe {
             std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());

@@ -119,6 +119,27 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
     }
 }
 
+/// Distinct `tracing::Metadata::target()` we set on the diagnostic
+/// `tracing::error!` emitted from [`report_error_message`].
+///
+/// Sentry capture for this helper happens via an explicit
+/// `sentry::capture_message` call below — not via the `sentry-tracing`
+/// layer scooping up the `tracing::error!` event. The production
+/// `sentry_tracing_layer()` in `core::logging` filters events with this
+/// target to `EventFilter::Ignore` so we never double-report (one direct
+/// `capture_message`, one tracing-bridge capture of the same condition).
+///
+/// Why direct capture instead of relying on the bridge: the bridge worked
+/// in steady-state but flaked under parallel test scheduling
+/// (`thread_not_found_rpc_error_does_not_report_to_sentry` repeatedly hit
+/// `events.len() == 0` in CI even with a thread-default subscriber wired
+/// up — likely a Linux-only thread-local ordering quirk in
+/// `sentry-tracing`'s `Hub::current()` lookup at event-emit time). Direct
+/// `sentry::capture_message` synchronously routes through the active hub
+/// and is deterministic, which keeps both production reporting and tests
+/// honest.
+pub const REPORT_ERROR_TRACING_TARGET: &str = "openhuman::observability::report_error";
+
 pub(crate) fn report_error_message(
     message: &str,
     domain: &str,
@@ -134,7 +155,15 @@ pub(crate) fn report_error_message(
             }
         },
         || {
+            // Direct, synchronous Sentry capture — see
+            // `REPORT_ERROR_TRACING_TARGET` for why we don't rely on the
+            // `sentry-tracing` layer for this call site.
+            sentry::capture_message(message, sentry::Level::Error);
+            // Diagnostic log line for stderr / file appenders. Tagged with
+            // the marker target so the production sentry-tracing layer
+            // skips it (no double Sentry event).
             tracing::error!(
+                target: REPORT_ERROR_TRACING_TARGET,
                 domain = domain,
                 operation = operation,
                 error = %message,

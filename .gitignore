@@ -29,6 +29,12 @@ dist-web
 .env.local
 .env.*.local
 
+# pnpm local store (created when --store-dir points into the repo)
+.pnpm-store/
+
+# E2E test artifacts (screenshots, logs, traces — never checked in)
+app/test/e2e/artifacts/
+
 my_docs
 
 # Local prompt dumps written by `scripts/debug-agent-prompts.sh`.

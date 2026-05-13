@@ -1676,6 +1676,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               disabled={composerInteractionBlocked || !selectedThreadId}
               onSubmit={text => handleSendMessage(text)}
               onError={message => setSendError(chatSendError('voice_transcription', message))}
+              showDeviceSelector
             />
           ) : inputMode === 'text' ? (
             <div className="flex items-end gap-3">

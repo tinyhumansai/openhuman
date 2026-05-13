@@ -735,10 +735,19 @@ async fn thread_not_found_rpc_error_does_not_report_to_sentry() {
     let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
 
     let subscriber = tracing_subscriber::registry().with(
-        sentry::integrations::tracing::layer().event_filter(|metadata| match *metadata.level() {
-            Level::ERROR => sentry::integrations::tracing::EventFilter::Event,
-            Level::WARN | Level::INFO => sentry::integrations::tracing::EventFilter::Breadcrumb,
-            _ => sentry::integrations::tracing::EventFilter::Ignore,
+        sentry::integrations::tracing::layer().event_filter(|metadata| {
+            // Mirror the production sentry-tracing layer: events emitted from
+            // `report_error_message` are captured directly via
+            // `sentry::capture_message` and must not be picked up here too
+            // (otherwise this test sees double events).
+            if metadata.target() == crate::core::observability::REPORT_ERROR_TRACING_TARGET {
+                return sentry::integrations::tracing::EventFilter::Ignore;
+            }
+            match *metadata.level() {
+                Level::ERROR => sentry::integrations::tracing::EventFilter::Event,
+                Level::WARN | Level::INFO => sentry::integrations::tracing::EventFilter::Breadcrumb,
+                _ => sentry::integrations::tracing::EventFilter::Ignore,
+            }
         }),
     );
     let _subscriber_guard = tracing::subscriber::set_default(subscriber);

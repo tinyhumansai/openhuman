@@ -822,7 +822,96 @@ fn mascot_native_window_is_open() -> bool {
     false
 }
 
+/// Hide or show the OS top-level main-window frame on Windows by enumerating
+/// this process's top-level windows and matching the visible
+/// `Chrome_WidgetWin_1` host. `WebviewWindow::hwnd()` from the vendored CEF
+/// runtime returns a `cef::Window` internal handle that `ShowWindow` rejects,
+/// so we walk the OS window list instead (#1607). Empirically there is one
+/// matching top-level frame; the single-instance lock window uses class
+/// `com.openhuman.app-sic` and is excluded.
+///
+/// `SW_HIDE` removes the frame from screen AND taskbar — full hide-to-tray as
+/// PR #1548 intended. On restore, the IsWindowVisible filter excludes hidden
+/// windows, so we also accept currently-hidden Chrome_WidgetWin_1 frames when
+/// `hide=false`.
+#[cfg(target_os = "windows")]
+fn set_main_window_hidden(hide: bool) {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE,
+        SW_SHOW,
+    };
+
+    struct EnumCtx {
+        target_pid: u32,
+        action: i32,
+        require_visible: bool,
+        matched: u32,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = unsafe { &mut *(lparam as *mut EnumCtx) };
+        let mut pid: u32 = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+        if pid != ctx.target_pid {
+            return 1;
+        }
+        if ctx.require_visible && unsafe { IsWindowVisible(hwnd) } == 0 {
+            return 1;
+        }
+        let mut class_buf = [0u16; 64];
+        let n = unsafe { GetClassNameW(hwnd, class_buf.as_mut_ptr(), class_buf.len() as i32) };
+        if n <= 0 {
+            return 1;
+        }
+        let class = OsString::from_wide(&class_buf[..n as usize])
+            .to_string_lossy()
+            .into_owned();
+        if class != "Chrome_WidgetWin_1" {
+            return 1;
+        }
+        unsafe { ShowWindow(hwnd, ctx.action) };
+        ctx.matched += 1;
+        1
+    }
+
+    let action = if hide { SW_HIDE } else { SW_SHOW };
+    let mut ctx = EnumCtx {
+        target_pid: std::process::id(),
+        action,
+        // Hide path: only touch currently-visible frames. Show path: also
+        // pick up frames already in the SW_HIDE state.
+        require_visible: hide,
+        matched: 0,
+    };
+    unsafe { EnumWindows(Some(enum_proc), &mut ctx as *mut _ as LPARAM) };
+    log::info!(
+        "[window-hide] EnumWindows: action={} matched={} pid={}",
+        if hide { "SW_HIDE" } else { "SW_SHOW" },
+        ctx.matched,
+        ctx.target_pid,
+    );
+}
+
 fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
+    // On Windows: surface the OS top-level Chrome_WidgetWin_1 frame BEFORE
+    // any Tauri lookups. After our close handler's SW_HIDE the runtime
+    // briefly drops the `WebviewWindow` record for "main" (CEF treats the
+    // hidden host as gone), so `get_webview_window("main")` returns None
+    // and the early `?` below would abort before SW_SHOW fires (#1607).
+    // EnumWindows + SW_SHOW operates directly on the OS HWND that
+    // survived independently, and the runtime re-tracks the window once
+    // it's visible again.
+    #[cfg(target_os = "windows")]
+    {
+        set_main_window_hidden(false);
+        if let Some(webview) = app.get_webview("main") {
+            let _ = webview.show();
+            let _ = webview.set_focus();
+        }
+    }
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
@@ -1372,7 +1461,16 @@ pub fn run() {
                 }
             };
         if let Some(path) = fake_camera_arg {
-            args.push(("--use-fake-device-for-media-stream", None));
+            // `--use-file-for-fake-video-capture` alone (CEF 146 / Chromium 128+)
+            // injects the Y4M as the video capture source without replacing the
+            // audio capture device. The old belt-and-suspenders flag
+            // `--use-fake-device-for-media-stream` is deliberately omitted here:
+            // it replaced ALL media capture devices — including audio — with fake
+            // ones, causing a sine-wave test tone (beeping) to be recorded instead
+            // of the real microphone whenever `getUserMedia({audio:true})` was
+            // called from the main app WebView (e.g. the mascot voice composer).
+            // `--use-fake-ui-for-media-stream` is kept so Meet's permission prompt
+            // is auto-granted without interrupting the join flow.
             args.push(("--use-fake-ui-for-media-stream", None));
             args.push(("--use-file-for-fake-video-capture", Some(path)));
         }
@@ -2097,16 +2195,23 @@ pub fn run() {
                 );
                 }
             }
-            // Intercept the main window's close request on macOS AND Windows
-            // so the user can re-open the app from the tray icon. Letting the
-            // OS destroy the webview makes `get_webview_window("main")` return
-            // None on the next tray-click and surfaces as
-            // `[tray] failed to show main window from tray click: main window
-            // not found` (OPENHUMAN-TAURI-2X — 21 events, Windows only).
+            // Intercept the main window's close request on macOS so the user
+            // can re-open the app from the tray icon. Letting the OS destroy
+            // the webview makes `get_webview_window("main")` return None on
+            // the next tray-click and surfaces as `[tray] failed to show main
+            // window from tray click: main window not found`
+            // (OPENHUMAN-TAURI-2X — 21 events, Windows only).
+            //
+            // macOS uses `window.hide()` because the vendored CEF runtime
+            // routes that through `set_application_visibility(false)` at the
+            // NSApplication level (`tauri-runtime-cef/src/lib.rs:588`), which
+            // hides the CEF browser surface together with the host window.
+            // Windows is handled in the separate arm below — see issue #1607.
+            //
             // Linux is left out: `setup_tray` early-returns on Linux because
             // tray creation panics inside GTK during packaged runs, so the
             // hide-on-close behavior would strand the user with no way back.
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            #[cfg(target_os = "macos")]
             RunEvent::WindowEvent {
                 label,
                 event: WindowEvent::CloseRequested { api, .. },
@@ -2120,6 +2225,17 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+            // Windows: full hide-to-tray.
+            //
+            // PR #1548 routed Windows X click into the same prevent_close +
+            // `window.hide()` branch as macOS, but on Windows the vendored
+            // CEF runtime's WindowMessage::Hide / Minimize / Restore
+            // (`tauri-runtime-cef/src/cef_impl.rs`) only operate on a
+            // `cef::Window` internal handle that does not correspond to the
+            // visible `Chrome_WidgetWin_1` top-level frame — `ShowWindow`
+            // calls against it are silent no-ops. We bypass the runtime
+            // entirely and walk the OS window list to issue SW_HIDE / SW_SHOW
+            // directly on the matching top-level frame (issue #1607).
             #[cfg(target_os = "windows")]
             RunEvent::WindowEvent {
                 label,
@@ -2127,12 +2243,20 @@ pub fn run() {
                 ..
             } if label == "main" => {
                 log::info!(
-                    "[window] close requested on main window — hiding to tray instead of destroying"
+                    "[window] close requested on main window — hiding to tray"
                 );
                 api.prevent_close();
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.hide();
-                }
+                // Hide the OS top-level Chrome_WidgetWin_1 frame via
+                // EnumWindows + SW_HIDE — full hide-to-tray as PR #1548
+                // intended. `window.hide()` and `window.minimize()` through
+                // the vendored CEF runtime are no-ops on Windows because
+                // `WebviewWindow::hwnd()` returns a cef::Window proxy handle
+                // rather than the visible top-level frame; we walk the OS
+                // window list directly instead (#1607). SW_HIDE on the host
+                // frame cascades to all child HWNDs (including the CEF
+                // browser surface), so no separate `webview.hide()` is
+                // needed and `show_main_window` only has to issue SW_SHOW.
+                set_main_window_hidden(true);
             }
             #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => {
