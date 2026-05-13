@@ -1,5 +1,6 @@
 //! Runtime smoke for the Sentry `before_send` filters that drop per-attempt
-//! transient-upstream provider, backend_api, and integrations failures.
+//! transient-upstream provider, backend_api, and integrations failures plus
+//! budget-exhausted user-state 400s (OPENHUMAN-TAURI-3M / 12 / 13).
 //!
 //! Unit tests in `src/core/observability.rs` exercise the pure filter
 //! function. This integration test wires the actual `sentry::init` →
@@ -8,7 +9,7 @@
 //! and aggregate `all_exhausted` events still surface.
 
 use openhuman_core::core::observability::{
-    is_transient_backend_api_failure, is_transient_integrations_failure,
+    is_budget_event, is_transient_backend_api_failure, is_transient_integrations_failure,
     is_transient_provider_http_failure,
 };
 use sentry::protocol::Event;
@@ -58,6 +59,7 @@ fn count_captured(events: Vec<Event<'static>>) -> usize {
             if is_transient_provider_http_failure(&event)
                 || is_transient_backend_api_failure(&event)
                 || is_transient_integrations_failure(&event)
+                || is_budget_event(&event)
             {
                 None
             } else {
@@ -109,6 +111,42 @@ fn drops_integrations_transient_transport_timeout() {
         count_captured(vec![event]),
         0,
         "transient integrations timeouts must be filtered in before_send"
+    );
+}
+
+#[test]
+fn drops_budget_exhausted_400() {
+    let event = event_with_tags_and_message(
+        &[
+            ("domain", "llm_provider"),
+            ("failure", "non_2xx"),
+            ("status", "400"),
+        ],
+        r#"OpenHuman API error (400 Bad Request): {"success":false,"error":"Insufficient budget"}"#,
+    );
+
+    assert_eq!(
+        count_captured(vec![event]),
+        0,
+        "budget-exhausted 400s must be filtered in before_send"
+    );
+}
+
+#[test]
+fn keeps_non_budget_400() {
+    let event = event_with_tags_and_message(
+        &[
+            ("domain", "llm_provider"),
+            ("failure", "non_2xx"),
+            ("status", "400"),
+        ],
+        "Bad request: missing field",
+    );
+
+    assert_eq!(
+        count_captured(vec![event]),
+        1,
+        "non-budget 400s must still reach Sentry"
     );
 }
 
