@@ -273,6 +273,113 @@ fn upsert_preserves_created_at_on_update() {
     assert_eq!(loaded.created_at, created);
 }
 
+// --- Issue #1612: stale auth-profiles.lock recovery -----------------------
+
+/// A pid we expect to be safely above any real process id on macOS / Linux /
+/// Windows test runners. Used to simulate a lock file written by a process
+/// that has since exited.
+const SYNTHETIC_DEAD_PID: u32 = i32::MAX as u32;
+
+#[test]
+fn is_pid_alive_detects_current_process() {
+    assert!(is_pid_alive(std::process::id()));
+}
+
+#[test]
+fn is_pid_alive_returns_false_for_synthetic_dead_pid() {
+    assert!(!is_pid_alive(SYNTHETIC_DEAD_PID));
+}
+
+#[test]
+fn acquire_lock_clears_stale_lock_with_dead_pid() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, format!("pid={SYNTHETIC_DEAD_PID}\n")).unwrap();
+    assert!(lock_path.exists());
+
+    // A no-op call that goes through acquire_lock should succeed quickly
+    // by recognising the previous lock as stale and removing it.
+    let data = store.load().unwrap();
+    assert!(data.profiles.is_empty());
+    assert!(
+        !lock_path.exists(),
+        "guard should have removed the lock on drop"
+    );
+}
+
+#[test]
+fn acquire_lock_recovers_after_upsert_when_dead_pid_lock_left_behind() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    // Pre-existing lock from a crashed previous run.
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, format!("pid={SYNTHETIC_DEAD_PID}\n")).unwrap();
+
+    let profile = AuthProfile::new_token("openai", "default", "tok".into());
+    let id = profile.id.clone();
+    store.upsert_profile(profile, true).unwrap();
+
+    let data = store.load().unwrap();
+    assert!(data.profiles.contains_key(&id));
+    assert!(!lock_path.exists());
+}
+
+#[test]
+fn clear_lock_if_stale_leaves_live_pid_alone() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, format!("pid={}\n", std::process::id())).unwrap();
+
+    assert!(!store.clear_lock_if_stale());
+    assert!(lock_path.exists(), "lock for live pid must not be removed");
+}
+
+#[test]
+fn clear_lock_if_stale_leaves_malformed_lock_alone() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, "garbage without a pid line\n").unwrap();
+
+    assert!(!store.clear_lock_if_stale());
+    assert!(
+        lock_path.exists(),
+        "malformed lock should not be auto-removed; fall back to busy-wait + timeout"
+    );
+}
+
+#[test]
+fn clear_lock_if_stale_is_noop_when_lock_missing() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    assert!(!store.clear_lock_if_stale());
+}
+
+#[test]
+fn acquire_lock_writes_pid_so_future_callers_can_recover() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    // Drive a real acquire/release cycle and snapshot the on-disk lock
+    // while the guard is held.
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    let observed = {
+        let _guard = store.acquire_lock().unwrap();
+        std::fs::read_to_string(&lock_path).unwrap()
+    };
+    assert!(
+        observed.contains(&format!("pid={}", std::process::id())),
+        "lock file should embed the owning pid, got {observed:?}"
+    );
+    assert!(!lock_path.exists(), "guard must remove lock on drop");
+}
+
 #[test]
 fn auth_profile_kind_serde_roundtrip() {
     let json = serde_json::to_string(&AuthProfileKind::OAuth).unwrap();
