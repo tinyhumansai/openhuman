@@ -61,6 +61,7 @@ pub enum ExpectedErrorKind {
     LocalAiBinaryMissing,
     BackendUserError,
     LocalAiCapabilityUnavailable,
+    BudgetExhausted,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -85,6 +86,9 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if is_local_ai_capability_unavailable_message(&lower) {
         return Some(ExpectedErrorKind::LocalAiCapabilityUnavailable);
+    }
+    if crate::openhuman::providers::is_budget_exhausted_message(message) {
+        return Some(ExpectedErrorKind::BudgetExhausted);
     }
     None
 }
@@ -319,6 +323,22 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected local-ai capability-unavailable error: {message}"
+            );
+        }
+        ExpectedErrorKind::BudgetExhausted => {
+            // User-state condition: the backend reports the user is out of
+            // budget / credits / balance (HTTP 400 from the OpenHuman backend,
+            // surfaced by `providers::is_budget_exhausted_message`). The UI
+            // already surfaces this as an actionable toast — Sentry would
+            // turn each affected turn into noise (OPENHUMAN-TAURI-3M / -12 /
+            // -13). Demote to info so it still appears in breadcrumbs but
+            // never spawns a Sentry error event.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "budget",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected budget-exhausted error: {message}"
             );
         }
     }
