@@ -229,9 +229,10 @@ const PrivacyPanel = () => {
               </svg>
               <div>
                 <p className="text-xs text-stone-500 leading-relaxed">
-                  All analytics and bug reports are fully anonymized. When enabled, we collect only
-                  crash information, device type, and the file location of errors. We never access
-                  your messages, session data, wallet keys, API keys, or any personally identifiable
+                  All analytics and bug reports are fully anonymized. When enabled, we collect crash
+                  information and device type (via Sentry), plus anonymous usage analytics such as
+                  page views and feature engagement (via Google Analytics). We never access your
+                  messages, session data, wallet keys, API keys, or any personally identifiable
                   information. You can change this setting at any time.
                 </p>
               </div>

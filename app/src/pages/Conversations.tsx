@@ -15,6 +15,7 @@ import MicCloudComposer from '../features/human/MicCloudComposer';
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../constants/onboardingChat';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
+import { trackEvent } from '../services/analytics';
 // [#1123] getCoreStateSnapshot and isWelcomeLocked commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { getCoreStateSnapshot, isWelcomeLocked } from '../lib/coreState/store';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
@@ -603,6 +604,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     // (auto-react, autocomplete, etc.) — never as a primary chat path.
     try {
       await chatSend({ threadId: sendingThreadId, message: trimmed, model: CHAT_MODEL_ID });
+      trackEvent('chat_message_sent');
 
       // Active-thread reset happens in the global ChatRuntimeProvider events.
     } catch (err) {

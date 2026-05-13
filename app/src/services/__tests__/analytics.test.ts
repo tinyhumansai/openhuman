@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // Hoisted mocks so tests can swap return values per case.
 const hoisted = vi.hoisted(() => ({
+  // Sentry stubs
   getClient: vi.fn(),
   captureException: vi.fn(),
   captureMessage: vi.fn(),
@@ -15,8 +16,16 @@ const hoisted = vi.hoisted(() => ({
   browserApiErrorsIntegration: vi.fn(() => ({ name: 'BrowserApiErrors' })),
   globalHandlersIntegration: vi.fn(() => ({ name: 'GlobalHandlers' })),
   httpContextIntegration: vi.fn(() => ({ name: 'HttpContext' })),
+  // GA stubs
+  gaInitialize: vi.fn(),
+  gaSet: vi.fn(),
+  gaSend: vi.fn(),
+  gaEvent: vi.fn(),
+  // Config state
   analyticsEnabled: false,
   appEnvironment: 'staging' as 'staging' | 'production' | 'development',
+  gaMeasurementId: 'G-TEST12345' as string | undefined,
+  isDev: false,
 }));
 
 vi.mock('@sentry/react', () => ({
@@ -33,6 +42,16 @@ vi.mock('@sentry/react', () => ({
   httpContextIntegration: hoisted.httpContextIntegration,
 }));
 
+// Mock react-ga4 with hoisted stubs so tests can assert on GA calls.
+vi.mock('react-ga4', () => ({
+  default: {
+    initialize: (...args: unknown[]) => hoisted.gaInitialize(...args),
+    set: (...args: unknown[]) => hoisted.gaSet(...args),
+    send: (...args: unknown[]) => hoisted.gaSend(...args),
+    event: (...args: unknown[]) => hoisted.gaEvent(...args),
+  },
+}));
+
 // `initSentry()` reads `getCoreStateSnapshot().snapshot.analyticsEnabled` to
 // decide whether non-test events get dropped. Mock it so each test can flip
 // consent without instantiating the real Redux/persistence stack.
@@ -46,11 +65,17 @@ vi.mock('../../lib/coreState/store', () => ({
 // false. Mock the whole config module so we control both gates. Use a
 // getter for APP_ENVIRONMENT so tests can flip staging/production per-case
 // to exercise the defense-in-depth gates added for the consent bypass.
+// Getters for GA_MEASUREMENT_ID and IS_DEV allow per-test overrides.
 vi.mock('../../utils/config', () => ({
   get APP_ENVIRONMENT() {
     return hoisted.appEnvironment;
   },
-  IS_DEV: false,
+  get IS_DEV() {
+    return hoisted.isDev;
+  },
+  get GA_MEASUREMENT_ID() {
+    return hoisted.gaMeasurementId;
+  },
   SENTRY_DSN: 'https://abc@example.ingest.sentry.io/1',
   SENTRY_RELEASE: 'openhuman@test+abc',
   SENTRY_SMOKE_TEST: false,
@@ -271,5 +296,168 @@ describe('initSentry beforeSend manual-staging bypass', () => {
       contexts: {},
     });
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GA4 tests
+//
+// Each test calls `vi.resetModules()` and re-imports `analytics` so that the
+// module-level `gaInitialized` / `gaEnabled` flags start fresh. This mirrors
+// the Sentry test pattern above (dynamic `import('../analytics')` per-test).
+// ---------------------------------------------------------------------------
+
+/** Reset all GA stubs and config state, then return a fresh analytics module. */
+async function freshAnalytics() {
+  vi.resetModules();
+  hoisted.gaInitialize.mockReset();
+  hoisted.gaSet.mockReset();
+  hoisted.gaSend.mockReset();
+  hoisted.gaEvent.mockReset();
+  return import('../analytics');
+}
+
+describe('initGA', () => {
+  beforeEach(() => {
+    hoisted.analyticsEnabled = false;
+    hoisted.gaMeasurementId = 'G-TEST12345';
+    hoisted.isDev = false;
+  });
+
+  test('does nothing when GA_MEASUREMENT_ID is empty', async () => {
+    hoisted.gaMeasurementId = '';
+    const { initGA } = await freshAnalytics();
+    initGA();
+    expect(hoisted.gaInitialize).not.toHaveBeenCalled();
+  });
+
+  test('does nothing when GA_MEASUREMENT_ID is undefined', async () => {
+    hoisted.gaMeasurementId = undefined;
+    const { initGA } = await freshAnalytics();
+    initGA();
+    expect(hoisted.gaInitialize).not.toHaveBeenCalled();
+  });
+
+  test('does nothing when IS_DEV is true', async () => {
+    hoisted.isDev = true;
+    const { initGA } = await freshAnalytics();
+    initGA();
+    expect(hoisted.gaInitialize).not.toHaveBeenCalled();
+  });
+
+  test('calls ReactGA.initialize with correct measurement ID and disables auto send_page_view', async () => {
+    hoisted.analyticsEnabled = true;
+    const { initGA } = await freshAnalytics();
+    initGA();
+    expect(hoisted.gaInitialize).toHaveBeenCalledTimes(1);
+    const [measurementId, opts] = hoisted.gaInitialize.mock.calls[0] as [
+      string,
+      { gaOptions: { send_page_view: boolean } },
+    ];
+    expect(measurementId).toBe('G-TEST12345');
+    // Automatic send_page_view must be disabled — we send page views manually.
+    expect(opts.gaOptions.send_page_view).toBe(false);
+    // Ad personalization signals must be disabled unconditionally.
+    expect(hoisted.gaSet).toHaveBeenCalledWith({ allow_ad_personalization_signals: false });
+  });
+});
+
+describe('trackPageView', () => {
+  beforeEach(() => {
+    hoisted.analyticsEnabled = true;
+    hoisted.gaMeasurementId = 'G-TEST12345';
+    hoisted.isDev = false;
+  });
+
+  test('sends a pageview when consent is on and GA is initialized', async () => {
+    const { initGA, trackPageView } = await freshAnalytics();
+    initGA();
+    trackPageView('/home');
+    expect(hoisted.gaSend).toHaveBeenCalledWith({ hitType: 'pageview', page: '/home' });
+  });
+
+  test('is a no-op when consent is off', async () => {
+    const { initGA, syncAnalyticsConsent, trackPageView } = await freshAnalytics();
+    initGA();
+    syncAnalyticsConsent(false);
+    trackPageView('/home');
+    expect(hoisted.gaSend).not.toHaveBeenCalled();
+  });
+
+  test('is a no-op when GA was never initialized', async () => {
+    // No initGA() call — gaInitialized stays false inside the fresh module.
+    const { trackPageView } = await freshAnalytics();
+    trackPageView('/home');
+    expect(hoisted.gaSend).not.toHaveBeenCalled();
+  });
+});
+
+describe('trackEvent', () => {
+  beforeEach(() => {
+    hoisted.analyticsEnabled = true;
+    hoisted.gaMeasurementId = 'G-TEST12345';
+    hoisted.isDev = false;
+  });
+
+  test('sends allowed events with correct params', async () => {
+    const { initGA, trackEvent } = await freshAnalytics();
+    initGA();
+    trackEvent('app_open', { version: '1.0.0' });
+    expect(hoisted.gaEvent).toHaveBeenCalledWith('app_open', { version: '1.0.0' });
+  });
+
+  test('drops events not in the allowlist and logs a warning', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { initGA, trackEvent } = await freshAnalytics();
+    initGA();
+    trackEvent('internal_debug_event');
+    expect(hoisted.gaEvent).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('internal_debug_event'));
+    warnSpy.mockRestore();
+  });
+
+  test('is a no-op when consent is off', async () => {
+    const { initGA, syncAnalyticsConsent, trackEvent } = await freshAnalytics();
+    initGA();
+    syncAnalyticsConsent(false);
+    trackEvent('app_open');
+    expect(hoisted.gaEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('syncAnalyticsConsent GA integration', () => {
+  beforeEach(() => {
+    hoisted.getClient.mockReset();
+    hoisted.flush.mockReset();
+    hoisted.flush.mockReturnValue(Promise.resolve(true));
+    hoisted.analyticsEnabled = true;
+    hoisted.gaMeasurementId = 'G-TEST12345';
+    hoisted.isDev = false;
+  });
+
+  test('syncAnalyticsConsent(false) prevents subsequent GA events', async () => {
+    const { initGA, syncAnalyticsConsent, trackEvent } = await freshAnalytics();
+    initGA();
+    syncAnalyticsConsent(false);
+    trackEvent('app_open');
+    expect(hoisted.gaEvent).not.toHaveBeenCalled();
+  });
+
+  test('syncAnalyticsConsent(true) re-enables GA events after disable', async () => {
+    const { initGA, syncAnalyticsConsent, trackEvent } = await freshAnalytics();
+    initGA();
+    syncAnalyticsConsent(false);
+    syncAnalyticsConsent(true);
+    trackEvent('app_open');
+    expect(hoisted.gaEvent).toHaveBeenCalledWith('app_open', undefined);
+  });
+
+  test('syncAnalyticsConsent does not redundantly call ReactGA.set (ad personalization already disabled in initGA)', async () => {
+    const { initGA, syncAnalyticsConsent } = await freshAnalytics();
+    initGA();
+    hoisted.gaSet.mockReset();
+    syncAnalyticsConsent(true);
+    // allow_ad_personalization_signals is set once in initGA, not on every consent toggle
+    expect(hoisted.gaSet).not.toHaveBeenCalled();
   });
 });

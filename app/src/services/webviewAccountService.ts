@@ -14,6 +14,7 @@ import { addIntegrationNotification } from '../store/notificationSlice';
 import { fetchRespondQueue } from '../store/providerSurfaceSlice';
 import type { AccountProvider, IngestedMessage } from '../types/accounts';
 import { openhumanGetMeetSettings } from '../utils/tauriCommands/config';
+import { trackEvent } from './analytics';
 import { threadApi } from './api/threadApi';
 import { chatSend } from './chatService';
 import { callCoreRpc } from './coreRpcClient';
@@ -309,6 +310,11 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
   const bounds = lastBoundsByAccount.get(accountId);
   log('load finished account=%s state=%s reveal=%s', accountId, payload.state, Boolean(bounds));
   const trigger = payload.trigger === 'watchdog' ? 'watchdog' : 'load';
+
+  const provider = store.getState().accounts.accounts[accountId]?.provider;
+  const connectSuccessParams = provider ? { provider } : undefined;
+  const shouldTrackConnectSuccess = payload.state !== 'reused';
+
   if (bounds) {
     invoke('webview_account_reveal', { args: { account_id: accountId, bounds, trigger } })
       .catch(err => {
@@ -316,9 +322,15 @@ function handleWebviewAccountLoad(payload: WebviewAccountLoadPayload) {
       })
       .finally(() => {
         store.dispatch(setAccountStatus({ accountId, status: 'open' }));
+        if (shouldTrackConnectSuccess) {
+          trackEvent('account_connect_success', connectSuccessParams);
+        }
       });
   } else {
     store.dispatch(setAccountStatus({ accountId, status: 'open' }));
+    if (shouldTrackConnectSuccess) {
+      trackEvent('account_connect_success', connectSuccessParams);
+    }
   }
 }
 
