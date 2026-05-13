@@ -175,6 +175,7 @@ jobs:
         with:
           node-version: 24.x
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
       - name: Set version and publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

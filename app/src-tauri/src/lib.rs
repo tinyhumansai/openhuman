@@ -835,6 +835,26 @@ fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     window
         .set_focus()
         .map_err(|err| format!("failed to focus main window: {err}"))?;
+    // `WebviewWindow::set_focus` only dispatches `WindowMessage::SetFocus`
+    // (vendor/tauri-cef cef_impl.rs `WindowMessage::SetFocus` → `window.request_focus()`),
+    // which lifts the OS window but does NOT call `CefBrowserHost::SetFocus(true)`.
+    // Without that CEF-level focus call the renderer never gets wired as the
+    // keyboard input target on cold launch: the chat textarea accepts focus
+    // (cursor blinks) but `WM_KEYDOWN` messages aren't forwarded to it, so
+    // typing is silently dead until the user click-outside / click-back
+    // triggers `WM_KILLFOCUS`+`WM_SETFOCUS` and CEF's window handler routes
+    // through `host.set_focus(1)` internally.
+    //
+    // Explicitly dispatch `WebviewMessage::SetFocus` (cef_impl.rs handler
+    // for that variant), which is what actually invokes
+    // `CefBrowserHost::SetFocus(true)`.
+    let webview: &tauri::Webview<AppRuntime> = window.as_ref();
+    if let Err(err) = webview.set_focus() {
+        log::warn!(
+            "[show_main_window] CEF webview set_focus failed (non-fatal — \
+             keyboard routing may not initialize until user click-outside-and-back): {err}"
+        );
+    }
     Ok(())
 }
 #[cfg(target_os = "linux")]
@@ -1594,6 +1614,89 @@ pub fn run() {
                 if !daemon_mode {
                     if let Err(err) = window.show() {
                         log::warn!("[window-state] show main window failed: {err}");
+                    }
+                    // CEF keyboard routing fix — cold launch:
+                    //
+                    // `window.show()` does not wire the renderer as the
+                    // keyboard input target. `Window::set_focus` only
+                    // dispatches `WindowMessage::SetFocus` → `request_focus`,
+                    // which lifts the OS window but does not call
+                    // `CefBrowserHost::SetFocus(true)`. Without that
+                    // CEF-level focus, the textarea accepts focus on cold
+                    // launch (cursor blinks) but `WM_KEYDOWN` messages
+                    // never reach the renderer — typing is silently dead
+                    // until the user click-outside / click-back triggers
+                    // `WM_KILLFOCUS`+`WM_SETFOCUS`, which CEF's window
+                    // handler routes through `host.set_focus(1)` internally.
+                    //
+                    // We need to call `webview.set_focus()` (which dispatches
+                    // `WebviewMessage::SetFocus` → `host.set_focus(1)`)
+                    // *after* CEF has finished creating the browser — too
+                    // early and `browser()`/`host()` return None and the
+                    // call silently no-ops. Defer the call to a spawned
+                    // task with a small delay so CEF's browser-create
+                    // settles. Then call it again after another delay as
+                    // belt-and-suspenders for slower init paths.
+                    // Previous attempts at calling `webview.set_focus()` alone
+                    // confirmed the dispatch reaches CEF (both returned Ok),
+                    // but keyboard routing stayed broken. `host.set_focus(1)`
+                    // alone is insufficient — CEF's internal focus state
+                    // needs a blur-then-focus *cycle* to wire keyboard
+                    // routing on cold launch (matches the user-discovered
+                    // workaround: click outside the window, then click back).
+                    //
+                    // The vendored tauri-cef doesn't expose `set_focus(false)`,
+                    // so we mimic the cycle at the OS-window level:
+                    // minimize triggers `WM_KILLFOCUS` (CEF's window handler
+                    // propagates this to `host.set_focus(0)`), unminimize
+                    // restores the window and triggers `WM_SETFOCUS` →
+                    // `host.set_focus(1)`. Pair with explicit `set_focus`
+                    // calls on both Window and Webview to cover the case
+                    // where minimize/unminimize raced ahead of CEF's
+                    // browser-create.
+                    // Windows-only: the bug class (CEF host-renderer focus
+                    // desync after a `visible: false` → `show()` transition
+                    // without a real `WM_KILLFOCUS`+`WM_SETFOCUS` edge)
+                    // manifests on the Windows CEF integration. macOS and
+                    // Linux CEF use different focus propagation paths and
+                    // don't exhibit the symptom, so running the
+                    // minimize/unminimize cycle there would just be a
+                    // visible flicker for no benefit. (Per CodeRabbit
+                    // review on PR #1528.)
+                    #[cfg(target_os = "windows")]
+                    {
+                    log::info!("[focus-fix] scheduling deferred CEF focus-cycle");
+                    let webview_window_clone = window.clone();
+                    tauri::async_runtime::spawn(async move {
+                        // Wait for CEF to finish creating the browser host
+                        // (synchronous setup() returns before this completes).
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        // Blur-then-focus cycle via minimize/unminimize.
+                        // This is what the manual click-outside / click-back
+                        // workaround does at the Win32 level.
+                        log::info!("[focus-fix] starting minimize→unminimize focus cycle");
+                        if let Err(err) = webview_window_clone.minimize() {
+                            log::warn!("[focus-fix] minimize failed: {err}");
+                        }
+                        // Tiny pause so Windows actually processes the
+                        // minimize before we ask to restore.
+                        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                        if let Err(err) = webview_window_clone.unminimize() {
+                            log::warn!("[focus-fix] unminimize failed: {err}");
+                        }
+                        // Belt-and-suspenders: explicit Window + Webview focus
+                        // after the cycle in case the minimize→restore path
+                        // didn't propagate.
+                        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+                        if let Err(err) = webview_window_clone.set_focus() {
+                            log::warn!("[focus-fix] post-cycle window.set_focus failed: {err}");
+                        }
+                        let webview: &tauri::Webview<AppRuntime> = webview_window_clone.as_ref();
+                        if let Err(err) = webview.set_focus() {
+                            log::warn!("[focus-fix] post-cycle webview.set_focus failed: {err}");
+                        }
+                        log::info!("[focus-fix] focus cycle complete");
+                    });
                     }
                 }
             }
