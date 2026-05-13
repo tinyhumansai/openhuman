@@ -117,11 +117,19 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                 // string still propagates up to here; re-reporting at error level
                 // would re-create the very Sentry noise the lower-layer demote
                 // was meant to avoid (#8Z, #93, #8W, #96).
+                //
+                // Redact before logging — `display_message` is upstream-derived
+                // (backend / provider response) and can carry URL fragments,
+                // query params, or pasted-through provider error text that
+                // includes tokens. `sanitize_api_error` runs the same scrub
+                // used in the SessionExpired publish path below.
+                let redacted =
+                    crate::openhuman::providers::ops::sanitize_api_error(&display_message);
                 tracing::warn!(
                     method = %method,
                     elapsed_ms = ms as u64,
-                    "[rpc] transient downstream failure — not reporting to Sentry: {}",
-                    display_message
+                    error = %redacted,
+                    "[rpc] transient downstream failure — not reporting to Sentry (message redacted)"
                 );
             } else {
                 crate::core::observability::report_error_or_expected(
