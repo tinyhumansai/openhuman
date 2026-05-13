@@ -82,7 +82,6 @@ impl Tool for GmailUnsubscribeTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use crate::openhuman::tools::traits::ToolContent;
 
     #[tokio::test]
@@ -125,7 +124,9 @@ mod tests {
             .unwrap();
 
         assert!(result.is_error);
-        assert!(result.text().contains("without a valid List-Unsubscribe link"));
+        assert!(result
+            .text()
+            .contains("without a valid List-Unsubscribe link"));
     }
 
     #[tokio::test]
@@ -139,6 +140,8 @@ mod tests {
             .unwrap();
 
         assert!(result.is_error);
-        assert!(result.text().contains("without a valid List-Unsubscribe link"));
+        assert!(result
+            .text()
+            .contains("without a valid List-Unsubscribe link"));
     }
 }
