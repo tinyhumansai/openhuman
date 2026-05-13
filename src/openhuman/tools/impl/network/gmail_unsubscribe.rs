@@ -99,11 +99,14 @@ mod tests {
         let mut has_json = false;
         for content in result.content {
             if let ToolContent::Json { data: value } = content {
-                assert_eq!(value["status"], "pending_approval");
-                assert_eq!(value["action"], "unsubscribe");
-                assert_eq!(value["metadata"]["sender"], "marketing@example.com");
+                assert_eq!(value["status"].as_str().unwrap(), "pending_approval");
+                assert_eq!(value["action"].as_str().unwrap(), "unsubscribe");
                 assert_eq!(
-                    value["metadata"]["unsubscribe_link"],
+                    value["metadata"]["sender"].as_str().unwrap(),
+                    "marketing@example.com"
+                );
+                assert_eq!(
+                    value["metadata"]["unsubscribe_link"].as_str().unwrap(),
                     "https://example.com/unsub"
                 );
                 has_json = true;
