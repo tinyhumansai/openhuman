@@ -79,7 +79,7 @@ pub fn canonicalise(
         }
         md.push_str(&format!("Subject: {}\n", msg.subject));
         md.push_str(&format!("Date: {}\n", msg.sent_at.to_rfc3339()));
-        
+
         if let Some(unsub) = &msg.list_unsubscribe {
             md.push_str(&format!("List-Unsubscribe: {}\n", unsub));
         }

@@ -1,11 +1,11 @@
 mod composio;
 mod curl;
 mod gitbooks;
+mod gmail_unsubscribe;
 mod http_request;
 mod url_guard;
 mod web_fetch;
 mod web_search;
-mod gmail_unsubscribe;
 
 pub use composio::{ComposioAction, ComposioTool};
 pub use curl::CurlTool;

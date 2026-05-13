@@ -36,11 +36,19 @@ impl Tool for GmailUnsubscribeTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let sender = args.get("sender").and_then(|v| v.as_str()).unwrap_or("Unknown Sender");
-        let link = args.get("unsubscribe_link").and_then(|v| v.as_str()).unwrap_or("");
+        let sender = args
+            .get("sender")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown Sender");
+        let link = args
+            .get("unsubscribe_link")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         if link.is_empty() {
-            return Ok(ToolResult::error("Cannot unsubscribe without a valid List-Unsubscribe link."));
+            return Ok(ToolResult::error(
+                "Cannot unsubscribe without a valid List-Unsubscribe link.",
+            ));
         }
 
         // Return a structured JSON block indicating a Pending Action.

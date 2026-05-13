@@ -24,7 +24,7 @@ export const UnsubscribeApprovalCard: React.FC<Props> = ({ payload }) => {
       // or instruct the agent to proceed.
       await callCoreRpc({
         method: 'tools::execute_unsubscribe',
-        params: { link: payload.metadata.unsubscribe_link }
+        params: { link: payload.metadata.unsubscribe_link },
       });
       setStatus('approved');
     } catch (e) {
