@@ -167,6 +167,14 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 
 - **N/A items need a checked checkbox** — `scripts/check-pr-checklist.mjs` requires `- [x] N/A: <reason>`. Using `- [ ] N/A:` (unchecked) fails the check even though the text starts with "N/A:".
 
+## Config System (Rust)
+
+- **Config corruption recovery** — `parse_config_with_recovery` in `src/openhuman/config/schema/load.rs`: try primary → try `.bak` → archive corrupt file → `Config::default()`. Guarantees the app always starts even with a corrupt config.
+- **New config fields must use `#[serde(default = "fn_name")]`** — Bare `#[serde(default)]` gives `0`/`false`, not the meaningful domain default. Define a named fn returning the correct value and reference it by name.
+- **`.bak` is now permanent** — `Config::save()` no longer deletes `.bak` on success. It always reflects the last-known-good config before the most recent write.
+- **`load_from_default_paths` has zero callers** — Debug utility only; not user-facing.
+- **Config test module path** — `openhuman::config::schema::load::tests`. Run with `cargo test -- config::schema::load::tests`.
+
 ## Environment
 
 - **Core sidecar port** — `7788` (default). Check with `lsof -i :7788`.

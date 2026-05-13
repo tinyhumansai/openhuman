@@ -928,6 +928,148 @@ async fn resolve_runtime_config_dirs_with_empty_env_falls_back_to_default() {
     );
 }
 
+// ── parse_config_with_recovery ─────────────────────────────────
+
+#[tokio::test]
+async fn test_corrupt_config_no_backup_falls_back_to_defaults() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+
+    // Write invalid TOML — no .bak present.
+    std::fs::write(&config_path, b"this is [not valid toml !!!").unwrap();
+
+    let result = parse_config_with_recovery(&config_path, "this is [not valid toml !!!").await;
+
+    // Must return default config values.
+    assert!(
+        (result.default_temperature - 0.7).abs() < f64::EPSILON,
+        "expected default temperature 0.7, got {}",
+        result.default_temperature
+    );
+    // The corrupt file should have been archived.
+    let corrupt_path = config_path.with_extension("toml.corrupt");
+    assert!(
+        corrupt_path.exists(),
+        "corrupt config should be archived to .corrupt"
+    );
+}
+
+#[tokio::test]
+async fn test_corrupt_config_valid_backup_recovers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let backup_path = config_path.with_extension("toml.bak");
+
+    // Write invalid primary TOML.
+    std::fs::write(&config_path, b"not [ valid toml").unwrap();
+
+    // Write a valid backup with a distinguishable field value.
+    let bak_toml = "default_temperature = 1.5\n";
+    std::fs::write(&backup_path, bak_toml).unwrap();
+
+    let result = parse_config_with_recovery(&config_path, "not [ valid toml").await;
+
+    assert!(
+        (result.default_temperature - 1.5).abs() < f64::EPSILON,
+        "expected backup temperature 1.5, got {}",
+        result.default_temperature
+    );
+}
+
+#[tokio::test]
+async fn test_corrupt_config_corrupt_backup_falls_back_to_defaults() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let backup_path = config_path.with_extension("toml.bak");
+
+    // Both files contain invalid TOML.
+    std::fs::write(&config_path, b"invalid primary").unwrap();
+    std::fs::write(&backup_path, b"invalid backup").unwrap();
+
+    let result = parse_config_with_recovery(&config_path, "invalid primary").await;
+
+    assert!(
+        (result.default_temperature - 0.7).abs() < f64::EPSILON,
+        "expected default temperature 0.7 after double-corrupt, got {}",
+        result.default_temperature
+    );
+}
+
+#[test]
+fn test_missing_default_temperature_uses_correct_default() {
+    // TOML with no `default_temperature` field — serde should apply the
+    // `default_temperature_value()` fn (0.7), not the bare Default (0.0).
+    let toml_without_temperature = "api_url = \"https://example.com\"\n";
+    let config: Config = toml::from_str(toml_without_temperature).unwrap();
+    assert!(
+        (config.default_temperature - 0.7).abs() < f64::EPSILON,
+        "expected serde default 0.7 when field is absent, got {}",
+        config.default_temperature
+    );
+}
+
+#[tokio::test]
+async fn test_save_preserves_backup_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let backup_path = tmp.path().join("config.toml.bak");
+
+    let mut config = Config {
+        config_path: config_path.clone(),
+        workspace_dir: tmp.path().join("workspace"),
+        ..Default::default()
+    };
+
+    // First save — creates config.toml (no prior file, so no .bak yet).
+    config.save().await.unwrap();
+    assert!(
+        config_path.exists(),
+        "config.toml must exist after first save"
+    );
+
+    // Second save — had_existing_config=true → .bak is written.
+    config.save().await.unwrap();
+    assert!(
+        backup_path.exists(),
+        "config.toml.bak must exist after second save"
+    );
+}
+
+#[tokio::test]
+async fn test_save_then_corrupt_then_recover() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+
+    let mut config = Config {
+        config_path: config_path.clone(),
+        workspace_dir: tmp.path().join("workspace"),
+        default_temperature: 1.3,
+        ..Default::default()
+    };
+
+    // First save writes config.toml.
+    config.save().await.unwrap();
+    // Second save copies to .bak and writes new primary.
+    config.save().await.unwrap();
+
+    // Verify .bak exists.
+    let backup_path = config_path.with_extension("toml.bak");
+    assert!(backup_path.exists(), ".bak must exist after save");
+
+    // Now corrupt the primary.
+    tokio::fs::write(&config_path, b"totally broken toml [[[")
+        .await
+        .unwrap();
+
+    // Recovery should use .bak and return the saved temperature.
+    let recovered = parse_config_with_recovery(&config_path, "totally broken toml [[[").await;
+    assert!(
+        (recovered.default_temperature - 1.3).abs() < f64::EPSILON,
+        "expected recovered temperature 1.3, got {}",
+        recovered.default_temperature
+    );
+}
+
 #[test]
 fn apply_env_overrides_commits_side_effects_to_runtime_proxy() {
     use crate::openhuman::config::schema::proxy::{runtime_proxy_config, set_runtime_proxy_config};

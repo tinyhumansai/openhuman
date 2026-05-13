@@ -32,6 +32,9 @@ use std::io::Write as _;
 use std::path::Path;
 use std::sync::OnceLock;
 
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+
 use axum::http::{header, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -189,7 +192,6 @@ fn write_token_file(path: &Path, token: &str) -> anyhow::Result<()> {
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt as _;
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -238,7 +240,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn token_file_has_owner_only_permissions() {
-        use std::os::unix::fs::PermissionsExt as _;
         let tmp = std::env::temp_dir().join(format!("core-auth-perms-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("core.token");
