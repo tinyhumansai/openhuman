@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to OpenHuman. This guide is the fast path for getting a fresh checkout running locally, validating changes, and opening a pull request without having to piece together setup notes from multiple files.
 
+> **New to open source or coding?** Start with [`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md) — it walks you through every step from installing tools to opening your first PR.
+
 For deeper architecture and subsystem references, use the GitBook under [`gitbooks/developing/`](gitbooks/developing/). For coding-agent and repository-specific implementation rules, see [`AGENTS.md`](AGENTS.md) and [`CLAUDE.md`](CLAUDE.md).
 
 ## Table of Contents
