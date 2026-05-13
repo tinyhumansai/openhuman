@@ -83,6 +83,7 @@ impl Tool for GmailUnsubscribeTool {
 mod tests {
     use super::*;
     use serde_json::json;
+    use crate::openhuman::tools::traits::ToolContent;
 
     #[tokio::test]
     async fn test_gmail_unsubscribe_valid() {
@@ -95,8 +96,10 @@ mod tests {
             .await
             .unwrap();
 
-        match result {
-            ToolResult::Json(value) => {
+        assert!(!result.is_error);
+        let mut has_json = false;
+        for content in result.content {
+            if let ToolContent::Json { data: value } = content {
                 assert_eq!(value["status"], "pending_approval");
                 assert_eq!(value["action"], "unsubscribe");
                 assert_eq!(value["metadata"]["sender"], "marketing@example.com");
@@ -104,9 +107,10 @@ mod tests {
                     value["metadata"]["unsubscribe_link"],
                     "https://example.com/unsub"
                 );
+                has_json = true;
             }
-            _ => panic!("Expected JSON result"),
         }
+        assert!(has_json, "Expected JSON result");
     }
 
     #[tokio::test]
@@ -120,12 +124,8 @@ mod tests {
             .await
             .unwrap();
 
-        match result {
-            ToolResult::Error(msg) => {
-                assert!(msg.contains("without a valid List-Unsubscribe link"));
-            }
-            _ => panic!("Expected Error result"),
-        }
+        assert!(result.is_error);
+        assert!(result.text().contains("without a valid List-Unsubscribe link"));
     }
 
     #[tokio::test]
@@ -138,11 +138,7 @@ mod tests {
             .await
             .unwrap();
 
-        match result {
-            ToolResult::Error(msg) => {
-                assert!(msg.contains("without a valid List-Unsubscribe link"));
-            }
-            _ => panic!("Expected Error result"),
-        }
+        assert!(result.is_error);
+        assert!(result.text().contains("without a valid List-Unsubscribe link"));
     }
 }
