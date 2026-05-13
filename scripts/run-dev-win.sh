@@ -199,7 +199,7 @@ if [[ -z "${WindowsSdkDir:-}" || "${WindowsSDKVersion:-}" == "\\" || -z "${Windo
   if [[ -d "$sdk_root_unix/Lib" ]]; then
     sdk_version="$(ls -d "$sdk_root_unix"/Lib/*/ 2>/dev/null \
       | sort -V | tail -n1 \
-      | sed 's|.*/||; s|/||g')"
+      | sed 's|/$||; s|.*/||')"
     if [[ -n "$sdk_version" && -f "$sdk_root_unix/Lib/$sdk_version/um/x64/kernel32.lib" ]]; then
       sdk_root_win="$(cygpath -w "$sdk_root_unix")"
       export WindowsSdkDir="${sdk_root_win}\\"
@@ -527,8 +527,19 @@ export PATH="$PATH_PREFIX:$PATH"
 # destination, so subsequent dev runs are essentially free.
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ -n "${CEF_RUNTIME_PATH:-}" && -f "$CEF_RUNTIME_PATH/libcef.dll" ]]; then
-  CARGO_TARGET_DIR_UNIX="$(to_unix_path "${CARGO_TARGET_DIR:-$REPO_ROOT/target}" 2>/dev/null || printf '%s' "${CARGO_TARGET_DIR:-$REPO_ROOT/target}")"
-  CEF_STAGE_DIR="$CARGO_TARGET_DIR_UNIX/debug"
+  # The dev OpenHuman.exe is produced by the *Tauri shell* crate
+  # (app/src-tauri/Cargo.toml), not the root core crate. When
+  # CARGO_TARGET_DIR is set both workspaces share it; when unset, the
+  # Tauri shell builds into app/src-tauri/target while the root crate
+  # builds into target/. Stage CEF next to where OpenHuman.exe will
+  # actually live so Windows' DLL search order finds libcef.dll
+  # regardless of how the exe is launched (terminal, OAuth deep-link,
+  # double-click, etc).
+  if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+    CEF_STAGE_DIR="$(to_unix_path "$CARGO_TARGET_DIR" 2>/dev/null || printf '%s' "$CARGO_TARGET_DIR")/debug"
+  else
+    CEF_STAGE_DIR="$REPO_ROOT/app/src-tauri/target/debug"
+  fi
   mkdir -p "$CEF_STAGE_DIR"
   if [[ ! -f "$CEF_STAGE_DIR/libcef.dll" \
         || "$CEF_RUNTIME_PATH/libcef.dll" -nt "$CEF_STAGE_DIR/libcef.dll" ]]; then
@@ -546,4 +557,28 @@ fi
 # Use the vendored tauri-cef CLI (via the pnpm tauri script) so the
 # CEF runtime is correctly bundled. APPLE_SIGNING_IDENTITY is macOS-only
 # and is intentionally omitted here.
-"$PNPM_EXE" tauri dev
+#
+# OPENHUMAN_DEV_PORT lets parallel worktree dev sessions avoid the
+# hardcoded 1420 collision. Vite reads the same env var directly; the
+# tauri-cli inline override patches tauri.conf.json's `devUrl` so the
+# shell connects to the right Vite instance.
+# Validate OPENHUMAN_DEV_PORT before interpolating into JSON — a stray
+# space, alphabetic char, or out-of-range value would produce an invalid
+# devUrl and tauri would refuse to start (or worse, drift from Vite's
+# own numeric fallback). Trim whitespace, require pure digits in
+# [1, 65535], fall back to 1420 with a warning otherwise.
+raw_dev_port="${OPENHUMAN_DEV_PORT:-1420}"
+raw_dev_port="${raw_dev_port//[[:space:]]/}"
+if [[ "$raw_dev_port" =~ ^[0-9]+$ ]] && (( raw_dev_port >= 1 && raw_dev_port <= 65535 )); then
+  DEV_PORT="$raw_dev_port"
+else
+  echo "[run-dev-win] WARNING: invalid OPENHUMAN_DEV_PORT='$raw_dev_port'; falling back to 1420" >&2
+  DEV_PORT=1420
+fi
+
+if (( DEV_PORT != 1420 )); then
+  echo "[run-dev-win] OPENHUMAN_DEV_PORT=$DEV_PORT — overriding tauri devUrl"
+  "$PNPM_EXE" tauri dev -c "{\"build\":{\"devUrl\":\"http://localhost:$DEV_PORT\"}}"
+else
+  "$PNPM_EXE" tauri dev
+fi

@@ -293,16 +293,22 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
         //   return;
         // }
         const threadStateForSelect = store.getState().thread;
-        if (data.threads.length > 0) {
+        // Worker/subagent threads are hidden from the conversation list
+        // (see tinyhumansai/openhuman#1624). Match the sidebar filter here so
+        // initial/resume selection can't auto-pick a hidden thread and leave
+        // the UI showing a thread that isn't in the list.
+        const visibleThreads = data.threads.filter(t => !t.parentThreadId);
+        if (visibleThreads.length > 0) {
           // Prefer the thread the user was last viewing (persisted across
           // reloads via redux-persist on the `thread` slice). Only fall
           // through to "most recent" if that thread no longer exists
-          // server-side (deleted, purged, or different user).
+          // server-side (deleted, purged, or different user) — or is now
+          // hidden because it's a worker thread.
           const persistedId = threadStateForSelect.selectedThreadId;
           const resumeId =
-            persistedId && data.threads.some(t => t.id === persistedId)
+            persistedId && visibleThreads.some(t => t.id === persistedId)
               ? persistedId
-              : data.threads[0].id;
+              : visibleThreads[0].id;
           dispatch(setSelectedThread(resumeId));
           void dispatch(loadThreadMessages(resumeId));
         } else {
@@ -940,6 +946,10 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
 
   const filteredThreads = useMemo(() => {
     const base = threads.filter(t => {
+      // Hide worker/subagent threads from the conversation list. They are
+      // currently surfaced inline inside the parent thread via WorkerThreadRefCard.
+      // A dedicated showcase is tracked in tinyhumansai/openhuman#1624.
+      if (t.parentThreadId) return false;
       if (selectedLabel === 'all') return true;
       return t.labels?.includes(selectedLabel);
     });

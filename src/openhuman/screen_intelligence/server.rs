@@ -156,7 +156,7 @@ impl SiServer {
                 );
             }
             Err(e) => {
-                if is_expected_macos_only_failure(&e) {
+                if is_expected_benign_start_session_failure(&e) {
                     info!("{LOG_PREFIX} failed to start session: {e}");
                 } else {
                     error!("{LOG_PREFIX} failed to start session: {e}");
@@ -363,7 +363,7 @@ pub async fn start_if_enabled(app_config: &Config) {
 
     tokio::spawn(async move {
         if let Err(e) = server.run(&config_for_run).await {
-            if is_expected_macos_only_failure(&e) {
+            if is_expected_benign_start_session_failure(&e) {
                 info!("{LOG_PREFIX} embedded server autostart skipped: {e}");
             } else {
                 error!("{LOG_PREFIX} embedded server exited with error: {e}");
@@ -380,6 +380,34 @@ pub async fn start_if_enabled(app_config: &Config) {
 /// `server.run` future.
 fn is_expected_macos_only_failure(err: &str) -> bool {
     !cfg!(target_os = "macos") && err.contains("macOS-only")
+}
+
+/// True when an engine-side `start_session` error is a benign idempotency
+/// signal — the engine already has a live session, so the embedded server's
+/// own `start_session` call is a duplicate, not a failure. Canonical wire
+/// shape from `engine::start_session`:
+///
+/// ```text
+/// "session already active"
+/// ```
+///
+/// Reaches the server when the engine session was created via a different
+/// entry point before the embedded `run()` got there — typically
+/// `screen_intelligence.enable` invoked over RPC, or a prior `run()` cycle
+/// that left the engine session in place across a server restart
+/// (OPENHUMAN-TAURI-5H). The session is *running*, so the right behaviour
+/// is to step aside, not log an error event to Sentry.
+fn is_expected_session_already_active_failure(err: &str) -> bool {
+    err.contains("session already active")
+}
+
+/// Union of the two known-benign `start_session` failure shapes (`macOS-only`
+/// on non-macOS hosts and `session already active`). Use this at every site
+/// that decides between `info!` and `error!` for a `SiServer::run` failure —
+/// keeps the two classifiers in lockstep across `SiServer::run` itself and
+/// `start_if_enabled`'s spawned future.
+fn is_expected_benign_start_session_failure(err: &str) -> bool {
+    is_expected_macos_only_failure(err) || is_expected_session_already_active_failure(err)
 }
 
 /// Run the screen intelligence server standalone (blocking). Intended for CLI usage.
@@ -520,6 +548,51 @@ mod tests {
             assert!(!is_expected_macos_only_failure(macos_marker));
             assert!(!is_expected_macos_only_failure(other_error));
         }
+    }
+
+    #[test]
+    fn is_expected_session_already_active_failure_classifies_known_signal() {
+        // OPENHUMAN-TAURI-5H: the canonical wire shape returned by
+        // `engine::start_session` when the engine already has a live
+        // session. Must classify on every platform — the duplicate is
+        // benign idempotency regardless of host OS.
+        assert!(is_expected_session_already_active_failure(
+            "session already active"
+        ));
+        // Substring match so wrapped / prefixed forms still classify.
+        assert!(is_expected_session_already_active_failure(
+            "screen intelligence: session already active"
+        ));
+        // Unrelated session-domain errors must NOT classify — they're real
+        // failures that should still surface as Sentry events.
+        assert!(!is_expected_session_already_active_failure(
+            "accessibility permission is not granted"
+        ));
+        assert!(!is_expected_session_already_active_failure(
+            "session start failed: io error: broken pipe"
+        ));
+    }
+
+    #[test]
+    fn is_expected_benign_start_session_failure_is_union_of_classifiers() {
+        // The union helper is what every call site (`SiServer::run`,
+        // `start_if_enabled`'s spawned future) consumes. It must return
+        // `true` for either known-benign shape and `false` for genuine
+        // engine failures.
+        assert!(is_expected_benign_start_session_failure(
+            "session already active"
+        ));
+        assert!(!is_expected_benign_start_session_failure(
+            "accessibility permission is not granted"
+        ));
+        assert!(!is_expected_benign_start_session_failure(
+            "screen recording permission is not granted"
+        ));
+
+        #[cfg(not(target_os = "macos"))]
+        assert!(is_expected_benign_start_session_failure(
+            "accessibility automation is macOS-only in V1"
+        ));
     }
 
     #[tokio::test]

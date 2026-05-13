@@ -53,47 +53,25 @@ repo=$(resolve_repo)
 
 echo "[review] PR #$pr status on $repo:"
 pr_status_json=$(gh pr view "$pr" -R "$repo" \
-  --json state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup)
-jq '{state, mergeable, mergeStateStatus, reviewDecision,
+  --json state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,isDraft,body,reviews)
+jq '{state, mergeable, mergeStateStatus, reviewDecision, isDraft,
      checks: [.statusCheckRollup[]? | {name: (.name // .context), status, conclusion}]}' \
   <<<"$pr_status_json"
 
-# Merge gate: all required checks green + at least one maintainer approval.
-# GitHub already folds both into mergeStateStatus:
-#   CLEAN    — approved, required checks pass, mergeable
-#   UNSTABLE — approved, required pass, non-required failing (OK to merge)
-#   BLOCKED  — missing review, failing required check, or branch-protection block
-#   DIRTY    — merge conflicts
-# We require reviewDecision=APPROVED too, so a repo without branch protection
-# (which would leave mergeStateStatus=CLEAN even without a review) still blocks.
 ensure_merge_ready() {
-  local state review merge_state
-  state=$(jq -r '.state' <<<"$pr_status_json")
-  review=$(jq -r '.reviewDecision // "NONE"' <<<"$pr_status_json")
-  merge_state=$(jq -r '.mergeStateStatus' <<<"$pr_status_json")
+  local failures=0 total=8
 
-  local ok=1
-  if [ "$state" != "OPEN" ]; then
-    echo "[review] ! PR state is $state (expected OPEN)" >&2
-    ok=0
+  # ── Check 1: Not a draft ──
+  local is_draft
+  is_draft=$(jq -r '.isDraft' <<<"$pr_status_json")
+  if [ "$is_draft" = "true" ]; then
+    fail "PR is still in draft"
+    failures=$((failures + 1))
+  else
+    pass "PR is not a draft"
   fi
-  case "$review" in
-    APPROVED) ;;
-    *)
-      echo "[review] ! reviewDecision is $review (expected APPROVED — need a maintainer approval)" >&2
-      ok=0
-      ;;
-  esac
-  case "$merge_state" in
-    CLEAN|UNSTABLE|HAS_HOOKS) ;;
-    *)
-      echo "[review] ! mergeStateStatus is $merge_state (expected CLEAN/UNSTABLE — required checks may still be pending or failing)" >&2
-      ok=0
-      ;;
-  esac
 
-  # Enumerate any required-looking checks that aren't SUCCESS/NEUTRAL/SKIPPED
-  # for a clearer error. mergeStateStatus already covers this; this is just UX.
+  # ── Check 2: CI passing ──
   local bad_checks
   bad_checks=$(jq -r '
       .statusCheckRollup[]?
@@ -104,21 +82,126 @@ ensure_merge_ready() {
           | ($s | IN("COMPLETED","")) as $okStatus
           | (($okConc and $okStatus) | not)
         )
-      | "  - \((.name // .context)): status=\(.status // "?"), conclusion=\(.conclusion // "?")"
+      | "    \((.name // .context)): status=\(.status // "?"), conclusion=\(.conclusion // "?")"
     ' <<<"$pr_status_json")
   if [ -n "$bad_checks" ]; then
-    echo "[review] ! checks not green:" >&2
+    fail "CI checks not all green:"
     printf '%s\n' "$bad_checks" >&2
-    ok=0
+    failures=$((failures + 1))
+  else
+    pass "All CI checks passing"
   fi
 
-  if [ "$ok" != "1" ]; then
+  # ── Check 3: No merge conflicts ──
+  local mergeable
+  mergeable=$(jq -r '.mergeable' <<<"$pr_status_json")
+  case "$mergeable" in
+    MERGEABLE) pass "No merge conflicts" ;;
+    CONFLICTING)
+      fail "PR has merge conflicts"
+      failures=$((failures + 1))
+      ;;
+    *)
+      fail "Merge status unknown ($mergeable)"
+      failures=$((failures + 1))
+      ;;
+  esac
+
+  # ── Check 4: All review threads resolved ──
+  local unresolved
+  unresolved=$(gh api graphql -f query='
+    query($owner:String!,$repo:String!,$pr:Int!) {
+      repository(owner:$owner,name:$repo) {
+        pullRequest(number:$pr) {
+          reviewThreads(first:100) {
+            nodes { isResolved isOutdated }
+          }
+        }
+      }
+    }' -f owner="${repo%%/*}" -f repo="${repo##*/}" -F pr="$pr" \
+    --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false)] | length')
+  if [ "${unresolved:-0}" -gt 0 ]; then
+    fail "$unresolved unresolved review thread(s)"
+    failures=$((failures + 1))
+  else
+    pass "All review threads resolved"
+  fi
+
+  # ── Check 5: At least one approval ──
+  local review_decision
+  review_decision=$(jq -r '.reviewDecision // "NONE"' <<<"$pr_status_json")
+  if [ "$review_decision" = "APPROVED" ]; then
+    pass "Has at least one approval"
+  else
+    fail "Review decision is $review_decision (need APPROVED)"
+    failures=$((failures + 1))
+  fi
+
+  # ── Check 6: No REQUEST_CHANGES pending ──
+  # Get the latest review state per author — a later APPROVED supersedes an earlier REQUEST_CHANGES
+  local pending_changes
+  pending_changes=$(jq -r '
+    [.reviews // [] | sort_by(.submittedAt) | group_by(.author.login)[]
+     | last | select(.state == "CHANGES_REQUESTED")]
+    | length' <<<"$pr_status_json")
+  if [ "${pending_changes:-0}" -gt 0 ]; then
+    fail "$pending_changes reviewer(s) still requesting changes"
+    failures=$((failures + 1))
+  else
+    pass "No pending change requests"
+  fi
+
+  # ── Check 7: Coverage gate passed ──
+  local cov_status
+  cov_status=$(jq -r '
+    [.statusCheckRollup[]?
+     | select((.name // .context) | test("coverage"; "i"))]
+    | if length == 0 then "MISSING"
+      elif all(.conclusion == "SUCCESS") then "SUCCESS"
+      else (map(select(.conclusion != "SUCCESS"))[0].conclusion // "UNKNOWN")
+      end' <<<"$pr_status_json")
+  case "$cov_status" in
+    SUCCESS) pass "Coverage gate passed" ;;
+    MISSING)
+      warn "Coverage check not found in status checks"
+      fail "Coverage gate status unknown"
+      failures=$((failures + 1))
+      ;;
+    *)
+      fail "Coverage gate: $cov_status"
+      failures=$((failures + 1))
+      ;;
+  esac
+
+  # ── Check 8: PR description has required sections ──
+  local body
+  body=$(jq -r '.body // ""' <<<"$pr_status_json")
+  local missing_sections=()
+  for section in "Summary" "Problem" "Solution"; do
+    if ! grep -qiE "^##[[:space:]]+${section}" <<<"$body"; then
+      missing_sections+=("$section")
+    fi
+  done
+  if [ ${#missing_sections[@]} -gt 0 ]; then
+    fail "PR description missing sections: ${missing_sections[*]}"
+    failures=$((failures + 1))
+  else
+    pass "PR description has required sections"
+  fi
+
+  # ── Summary ──
+  local passed=$((total - failures))
+  echo ""
+  if [ "$failures" -gt 0 ]; then
+    info "${_B}${passed}/${total} checks passed${_0}"
     if [ "$force" = "1" ]; then
-      echo "[review] --force: proceeding despite merge gate failures." >&2
+      warn "--force: proceeding despite $failures failure(s)."
       return 0
     fi
-    echo "[review] refusing to merge. Re-run with --force to override." >&2
+    fail "Refusing to merge. Re-run with --force to override."
     exit 1
+  else
+    info "${_G}${total}/${total} checks passed${_0} — ready to merge"
   fi
 }
 

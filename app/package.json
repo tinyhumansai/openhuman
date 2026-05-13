@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.53.35",
+  "version": "0.53.41",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"

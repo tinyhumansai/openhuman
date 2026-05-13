@@ -337,7 +337,14 @@ pub async fn start_chat(
                     client_id_task, thread_id_task, request_id_task, err
                 );
                 let (classified_type, classified_message) = classify_inference_error(&err);
-                crate::core::observability::report_error(
+                // Route through `report_error_or_expected` so transport-level
+                // connection failures (DNS/TCP/TLS handshake, ISP blocks —
+                // see OPENHUMAN-TAURI-32 for a RU user who couldn't reach
+                // `api.tinyhumans.ai` at all) get logged as warn-level
+                // breadcrumbs instead of error events. Sentry has no signal
+                // to act on these — no status, no trace, no payload — and
+                // every retry exhaustion produces another noisy event.
+                crate::core::observability::report_error_or_expected(
                     detailed.as_str(),
                     "web_channel",
                     "run_chat_task",

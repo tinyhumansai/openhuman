@@ -118,8 +118,27 @@ const handleAuthDeepLink = async (parsed: URL) => {
     completeDeepLinkAuthProcessing();
   } catch (error) {
     console.error('[DeepLink][auth] failed to complete login:', error);
-    failDeepLinkAuthProcessing('Sign-in failed. Please try again.');
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    if (isDecryptionFailure(rawMessage)) {
+      failDeepLinkAuthProcessing(
+        "Sign-in failed because OpenHuman couldn't decrypt locally stored data. " +
+          'This usually means the encryption key on this device no longer matches ' +
+          'your stored secrets. Clear app data to start fresh.',
+        { requiresAppDataReset: true }
+      );
+    } else {
+      failDeepLinkAuthProcessing('Sign-in failed. Please try again.');
+    }
   }
+};
+
+const isDecryptionFailure = (message: string): boolean => {
+  const lowered = message.toLowerCase();
+  return (
+    lowered.includes('decryption failed') ||
+    lowered.includes('wrong key or tampered data') ||
+    lowered.includes('corrupt data')
+  );
 };
 
 /**

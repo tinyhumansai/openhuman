@@ -105,12 +105,25 @@ pub async fn check_available() -> Result<UpdateInfo, String> {
         .await
         .map_err(|e| {
             let msg = format!("failed to fetch latest release: {e}");
-            crate::core::observability::report_error(
-                msg.as_str(),
-                "update",
-                "check_releases",
-                &[("failure", "transport")],
-            );
+            if is_transport_network_failure(&e) {
+                // OPENHUMAN-TAURI-2F: reqwest's transport-level failure fires
+                // before any HTTP status when DNS / TCP / TLS handshake fails,
+                // or the user's ISP / firewall blocks api.github.com. No
+                // status, no trace, no payload — Sentry has no signal to act
+                // on, and every scheduled poll generates another noisy event.
+                // Log a warn so it shows up in local diagnostics and the next
+                // tick can retry, without paging.
+                log::warn!(
+                    "[update] check_releases skipped transport-level failure (will retry next poll): {msg}"
+                );
+            } else {
+                crate::core::observability::report_error(
+                    msg.as_str(),
+                    "update",
+                    "check_releases",
+                    &[("failure", "transport")],
+                );
+            }
             msg
         })?;
 
@@ -203,12 +216,22 @@ pub async fn download_and_stage_with_version(
 
     let response = client.get(download_url).send().await.map_err(|e| {
         let msg = format!("failed to download update: {e}");
-        crate::core::observability::report_error(
-            msg.as_str(),
-            "update",
-            "download",
-            &[("asset", asset_name), ("failure", "transport")],
-        );
+        if is_transport_network_failure(&e) {
+            // Same transport-level shape as `check_releases` above
+            // (OPENHUMAN-TAURI-2F) — DNS / TCP / TLS / firewall failure that
+            // carries no actionable Sentry signal. The user-visible error is
+            // still returned; Sentry just doesn't get spammed.
+            log::warn!(
+                "[update] download skipped transport-level failure asset={asset_name}: {msg}"
+            );
+        } else {
+            crate::core::observability::report_error(
+                msg.as_str(),
+                "update",
+                "download",
+                &[("asset", asset_name), ("failure", "transport")],
+            );
+        }
         msg
     })?;
 
@@ -290,6 +313,25 @@ pub async fn download_and_stage_with_version(
     })
 }
 
+/// Classify a reqwest failure as a user-environment transport problem (DNS
+/// resolution, TCP connect refused/reset, TLS handshake, request timeout,
+/// or any other `reqwest` "request sending" failure that fires before an
+/// HTTP response is received).
+///
+/// These conditions have no actionable Sentry signal — no status, no trace,
+/// no payload — and routinely show up when the user is offline, on a flaky
+/// VPN, behind a captive portal, or in a region where api.github.com is
+/// blocked. Filtering them at the call site keeps Sentry focused on real
+/// regressions while leaving local `warn`-level diagnostics intact.
+///
+/// Reqwest 0.12's `is_request()` is the catch-all for `Kind::Request`
+/// failures emitted by the underlying transport; `is_connect()` and
+/// `is_timeout()` cover narrower buckets that may not always set
+/// `is_request()`. Together they describe "the request could not be sent".
+fn is_transport_network_failure(err: &reqwest::Error) -> bool {
+    err.is_connect() || err.is_timeout() || err.is_request()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,5 +349,28 @@ mod tests {
     #[test]
     fn current_version_is_not_empty() {
         assert!(!current_version().is_empty());
+    }
+
+    /// OPENHUMAN-TAURI-2F regression guard. A reqwest call to an unroutable
+    /// host (port 1 on TEST-NET-1, RFC 5737 documentation range — guaranteed
+    /// never to answer) must classify as a transport failure so the
+    /// `check_releases` / `download` call sites skip the Sentry report. If
+    /// reqwest ever changes its error taxonomy and connection failures stop
+    /// setting `is_connect` / `is_request` / `is_timeout`, this test breaks
+    /// and the call sites would silently start paging again — that's the
+    /// signal we want.
+    #[tokio::test]
+    async fn transport_failure_classifier_catches_unreachable_host() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(250))
+            .no_proxy()
+            .build()
+            .expect("build reqwest client");
+        let result = client.get("http://192.0.2.1:1/").send().await;
+        let err = result.expect_err("connect to TEST-NET-1:1 must fail");
+        assert!(
+            is_transport_network_failure(&err),
+            "unreachable-host reqwest error must classify as transport: {err}"
+        );
     }
 }

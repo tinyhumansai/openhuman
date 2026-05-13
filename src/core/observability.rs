@@ -39,6 +39,8 @@ pub const TRANSIENT_PROVIDER_HTTP_STATUSES: &[u16] = &[408, 429, 502, 503, 504];
 pub enum ExpectedErrorKind {
     LocalAiDisabled,
     ApiKeyMissing,
+    NetworkUnreachable,
+    TransientUpstreamHttp,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -49,7 +51,60 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("api key not set") || lower.contains("missing api key") {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
+    if is_network_unreachable_message(&lower) {
+        return Some(ExpectedErrorKind::NetworkUnreachable);
+    }
+    if is_transient_upstream_http_message(&lower) {
+        return Some(ExpectedErrorKind::TransientUpstreamHttp);
+    }
     None
+}
+
+/// Detect transport-level connection failures that fire before any HTTP status
+/// is observed — DNS resolution failures, TCP connect refused/reset, TLS
+/// handshake failures, or ISP/firewall blocks. The canonical shape is
+/// reqwest's `"error sending request for url (…)"`, which surfaces from any
+/// HTTP call site (provider chat, embeddings, backend RPC) when the request
+/// can't reach the server at all.
+///
+/// These are user-environment problems — VPN drop, captive portal, ISP-level
+/// block (OPENHUMAN-TAURI-32: user in RU couldn't reach `api.tinyhumans.ai`),
+/// firewall — that no amount of retry / fallback on our side can resolve.
+/// Sentry has no signal to act on (no status, no trace, no payload), so each
+/// occurrence is pure noise. Classify them as expected so the report site
+/// logs a breadcrumb rather than spawning an error event.
+fn is_network_unreachable_message(lower: &str) -> bool {
+    lower.contains("error sending request for url")
+        || lower.contains("dns error")
+        || lower.contains("connection refused")
+        || lower.contains("connection reset")
+        || lower.contains("network is unreachable")
+        || lower.contains("no route to host")
+        || lower.contains("tls handshake")
+        || lower.contains("certificate verify failed")
+}
+
+/// Detect transient upstream HTTP failures that have bubbled up out of the
+/// provider layer and into higher-level domains (`agent`, `web_channel`, …).
+///
+/// The reliable-provider stack already retries / falls back on
+/// [`TRANSIENT_PROVIDER_HTTP_STATUSES`] (408/429/502/503/504), and the
+/// `before_send` filter drops the per-attempt provider events that carry
+/// `domain=llm_provider`. But the same error is *also* returned via
+/// `Result::Err` and re-reported by callers that wrap the provider — e.g.
+/// `agent.run_single` (OPENHUMAN-TAURI-5Z), `web_channel.run_chat_task`,
+/// scheduler tick handlers — under a different `domain` tag, escaping the
+/// provider-scoped filter and producing one Sentry event per failed turn.
+///
+/// The canonical wire format from `providers::ops::api_error` is:
+/// `"<provider> API error (<status>): <sanitized>"` — e.g.
+/// `"OpenHuman API error (504 Gateway Timeout): error code: 504"`. Pin the
+/// match to that exact `"api error (<status>"` prefix so an unrelated message
+/// that merely mentions "504" (a log line, a doc URL) is not silenced.
+fn is_transient_upstream_http_message(lower: &str) -> bool {
+    TRANSIENT_PROVIDER_HTTP_STATUSES
+        .iter()
+        .any(|code| lower.contains(&format!("api error ({code}")))
 }
 
 /// Capture an error to Sentry with structured tags.
@@ -114,6 +169,22 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected API-key configuration error: {message}"
+            );
+        }
+        ExpectedErrorKind::NetworkUnreachable => {
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected network-unreachable error: {message}"
+            );
+        }
+        ExpectedErrorKind::TransientUpstreamHttp => {
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                error = %message,
+                "[observability] {domain}.{operation} skipped transient upstream HTTP error: {message}"
             );
         }
     }
@@ -245,6 +316,117 @@ mod tests {
         );
         assert_eq!(
             expected_error_kind("ollama embed failed with status 500"),
+            None
+        );
+    }
+
+    #[test]
+    fn classifies_network_unreachable_errors() {
+        // OPENHUMAN-TAURI-32: reqwest's transport-level error wrapped by the
+        // web_channel error site. The classifier must catch it even when
+        // embedded in caller context, since `report_error_or_expected` runs
+        // `expected_error_kind` on the full anyhow chain.
+        assert_eq!(
+            expected_error_kind(
+                "run_chat_task failed client_id=abc thread_id=t1 request_id=r1 \
+                 error=error sending request for url (https://api.tinyhumans.ai/openai/v1/chat/completions)"
+            ),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+        for raw in [
+            "error sending request for url (https://api.example.com/x)",
+            "provider failed: dns error: failed to lookup address information",
+            "tcp connect: connection refused (os error 61)",
+            "stream closed: connection reset by peer",
+            "network is unreachable (os error 51)",
+            "no route to host",
+            "tls handshake eof",
+            "certificate verify failed: unable to get local issuer certificate",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::NetworkUnreachable),
+                "should classify as network-unreachable: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_provider_errors_as_network() {
+        // Status-bearing provider failures (404, 500, …) are surfaced via
+        // their HTTP status path and must NOT be silenced by the
+        // network-unreachable classifier — the body text doesn't hit any of
+        // the transport-level markers.
+        assert_eq!(
+            expected_error_kind("OpenAI API error (404): model gpt-x not found"),
+            None
+        );
+        assert_eq!(
+            expected_error_kind("OpenAI API error (500): internal server error"),
+            None
+        );
+    }
+
+    #[test]
+    fn classifies_transient_upstream_http_errors() {
+        // OPENHUMAN-TAURI-5Z: the canonical shape emitted by
+        // `providers::ops::api_error` and re-raised through `agent.run_single`.
+        assert_eq!(
+            expected_error_kind("OpenHuman API error (504 Gateway Timeout): error code: 504"),
+            Some(ExpectedErrorKind::TransientUpstreamHttp)
+        );
+
+        // Every transient code must classify, whether the status renders as
+        // bare digits or "<digits> <reason>".
+        for raw in [
+            "OpenHuman API error (408): request timeout",
+            "OpenAI API error (429 Too Many Requests): rate limit",
+            "Anthropic API error (502 Bad Gateway): upstream unhealthy",
+            "OpenHuman API error (503): service unavailable",
+            "Provider API error (504): upstream timed out",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::TransientUpstreamHttp),
+                "should classify as transient upstream HTTP: {raw}"
+            );
+        }
+
+        // Wrapped in an anyhow chain (as it reaches the agent layer) must
+        // still classify — `expected_error_kind` is substring-based.
+        assert_eq!(
+            expected_error_kind(
+                "agent turn failed: OpenHuman API error (504 Gateway Timeout): \
+                 error code: 504"
+            ),
+            Some(ExpectedErrorKind::TransientUpstreamHttp)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_actionable_provider_errors_as_transient_upstream() {
+        // 4xx (other than 408/429) and non-transient 5xx must continue to
+        // reach Sentry — those are real bugs (wrong model name, malformed
+        // request, internal exception) that need to be triaged.
+        for raw in [
+            "OpenAI API error (400): bad request",
+            "OpenAI API error (401): unauthorized",
+            "OpenAI API error (403): forbidden",
+            "OpenAI API error (404): model not found",
+            "OpenAI API error (500): internal server error",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "must NOT silence actionable provider error: {raw}"
+            );
+        }
+
+        // A free-form message that merely mentions "504" without the
+        // `api error (` prefix must not be classified — pin the match to
+        // the canonical shape from `ops::api_error`.
+        assert_eq!(
+            expected_error_kind("see runbook for 504 handling at https://example.com/504"),
             None
         );
     }

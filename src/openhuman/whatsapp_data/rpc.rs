@@ -40,8 +40,15 @@ pub async fn whatsapp_data_ingest(req: IngestRequest) -> Result<RpcOutcome<Inges
     );
     let store = require_store()?;
     let result = ops::ingest(&store, req).map_err(|e| {
-        log::warn!("[whatsapp_data][rpc] ingest error: {e}");
-        format!("[whatsapp_data] ingest failed: {e}")
+        // {e:#} renders the full anyhow chain — store::upsert_chats wraps
+        // the rusqlite error with `.with_context("upsert wa_chat <jid>")`,
+        // so plain Display ({e}) only emits the outer context and drops
+        // the underlying SQLite cause (database locked, schema mismatch,
+        // FK violation, …) before it reaches Sentry. See OPENHUMAN-TAURI-6B
+        // / TAURI-B2 for the canonical instance where this masked the
+        // real failure.
+        log::warn!("[whatsapp_data][rpc] ingest error: {e:#}");
+        format!("[whatsapp_data] ingest failed: {e:#}")
     })?;
     log::debug!(
         "[whatsapp_data][rpc] ingest ok chats={} messages={} pruned={}",
@@ -67,8 +74,8 @@ pub async fn whatsapp_data_list_chats(
     );
     let store = require_store()?;
     let chats = ops::list_chats(&store, req).map_err(|e| {
-        log::warn!("[whatsapp_data][rpc] list_chats error: {e}");
-        format!("[whatsapp_data] list_chats failed: {e}")
+        log::warn!("[whatsapp_data][rpc] list_chats error: {e:#}");
+        format!("[whatsapp_data] list_chats failed: {e:#}")
     })?;
     log::debug!("[whatsapp_data][rpc] list_chats ok count={}", chats.len());
     Ok(RpcOutcome::single_log(
@@ -87,8 +94,8 @@ pub async fn whatsapp_data_list_messages(
     );
     let store = require_store()?;
     let msgs = ops::list_messages(&store, req).map_err(|e| {
-        log::warn!("[whatsapp_data][rpc] list_messages error: {e}");
-        format!("[whatsapp_data] list_messages failed: {e}")
+        log::warn!("[whatsapp_data][rpc] list_messages error: {e:#}");
+        format!("[whatsapp_data] list_messages failed: {e:#}")
     })?;
     log::debug!("[whatsapp_data][rpc] list_messages ok count={}", msgs.len());
     Ok(RpcOutcome::single_log(
@@ -108,8 +115,8 @@ pub async fn whatsapp_data_search_messages(
     );
     let store = require_store()?;
     let results = ops::search_messages(&store, req).map_err(|e| {
-        log::warn!("[whatsapp_data][rpc] search_messages error: {e}");
-        format!("[whatsapp_data] search_messages failed: {e}")
+        log::warn!("[whatsapp_data][rpc] search_messages error: {e:#}");
+        format!("[whatsapp_data] search_messages failed: {e:#}")
     })?;
     log::debug!(
         "[whatsapp_data][rpc] search_messages ok count={}",

@@ -324,21 +324,26 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(threadApi.appendMessage).toHaveBeenCalledTimes(2);
     });
 
-    it('reconciles when segments are present but not in full_response order', async () => {
+    it('does not reconcile when all segments arrived even if full_response differs (trim/joiner)', async () => {
+      // Regression: the server's segmenter trims each segment and joins with
+      // "\n\n", while chat_done.full_response is the raw LLM text. A strict
+      // byte-equality check used to fire reconciliation on every multi-segment
+      // turn — once we have all expected segment_index values, delivery is
+      // complete regardless of full_response content.
       const listeners = renderProvider();
 
       act(() => {
         listeners.onSegment?.({
-          thread_id: 't-out-of-order',
-          request_id: 'r-out-of-order',
-          full_response: 'Alpha',
+          thread_id: 't-trim',
+          request_id: 'r-trim',
+          full_response: 'Hello.',
           segment_index: 0,
           segment_total: 2,
         });
         listeners.onSegment?.({
-          thread_id: 't-out-of-order',
-          request_id: 'r-out-of-order',
-          full_response: 'Beta',
+          thread_id: 't-trim',
+          request_id: 'r-trim',
+          full_response: 'World.',
           segment_index: 1,
           segment_total: 2,
         });
@@ -348,9 +353,44 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
 
       act(() => {
         listeners.onDone?.({
-          thread_id: 't-out-of-order',
-          request_id: 'r-out-of-order',
-          full_response: 'BetaAlpha',
+          thread_id: 't-trim',
+          request_id: 'r-trim',
+          // Raw LLM output: leading/trailing whitespace + paragraph break.
+          // segments.join('') === 'Hello.World.' !== full_response, but
+          // delivery is still complete.
+          full_response: '\nHello.\n\nWorld.\n',
+          rounds_used: 1,
+          total_input_tokens: 10,
+          total_output_tokens: 20,
+          segment_total: 2,
+        });
+      });
+
+      await waitFor(() => expect(mockRefetchSnapshot).toHaveBeenCalledTimes(1));
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('reconciles when a segment is missing', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onSegment?.({
+          thread_id: 't-missing',
+          request_id: 'r-missing',
+          full_response: 'Part one.',
+          segment_index: 0,
+          segment_total: 2,
+        });
+        // segment_index 1 never arrives.
+      });
+
+      await waitFor(() => expect(threadApi.appendMessage).toHaveBeenCalledTimes(1));
+
+      act(() => {
+        listeners.onDone?.({
+          thread_id: 't-missing',
+          request_id: 'r-missing',
+          full_response: 'Part one.\n\nPart two.',
           rounds_used: 1,
           total_input_tokens: 10,
           total_output_tokens: 20,
@@ -360,11 +400,11 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
 
       await waitFor(() =>
         expect(threadApi.appendMessage).toHaveBeenCalledWith(
-          't-out-of-order',
-          expect.objectContaining({ content: 'BetaAlpha', sender: 'agent' })
+          't-missing',
+          expect.objectContaining({ content: 'Part one.\n\nPart two.', sender: 'agent' })
         )
       );
-      expect(threadApi.appendMessage).toHaveBeenCalledTimes(3);
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(2);
     });
 
     it('expires stale segment delivery state before chat_done reconciliation', async () => {

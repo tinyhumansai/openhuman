@@ -131,7 +131,11 @@ fn default_vision_model_id() -> String {
 }
 
 fn default_embedding_model_id() -> String {
-    "all-minilm:latest".to_string()
+    // bge-m3 (1024 dims, 8192-token context). Required by the memory tree's
+    // fixed on-disk embedding format (EMBEDDING_DIM=1024) — `all-minilm`
+    // (384 dims) and `nomic-embed-text` (768 dims) would fail the
+    // post-call dim validator at `memory::tree::score::embed::mod::embed`.
+    "bge-m3".to_string()
 }
 
 fn default_stt_model_id() -> String {

@@ -2,7 +2,7 @@
 
 **AI-powered assistant for communities — React + Tauri v2 desktop app with a Rust core (JSON-RPC / CLI) and sandboxed QuickJS skills.**
 
-This file orients contributors and coding agents. Authoritative narrative architecture: [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md). Frontend layout: [`gitbooks/developing/frontend.md`](gitbooks/developing/frontend.md). Tauri shell: [`gitbooks/developing/tauri-shell.md`](gitbooks/developing/tauri-shell.md).
+This file orients contributors and coding agents. Authoritative narrative architecture: [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md). Frontend layout: [`gitbooks/developing/architecture/frontend.md`](gitbooks/developing/architecture/frontend.md). Tauri shell: [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md).
 
 ---
 
@@ -292,7 +292,7 @@ Bundled prompts live under **`src/openhuman/agent/prompts/`** at the **repositor
 
 Thin desktop host: window management, daemon health bridging, **core process lifecycle** (`core_process`, `CoreProcessHandle`), and **JSON-RPC relay** to the **`openhuman-core`** sidecar (`core_rpc_relay`, `core_rpc`).
 
-Registered IPC commands (see [`gitbooks/developing/tauri-shell.md`](gitbooks/developing/tauri-shell.md)) include **`greet`**, **`write_ai_config_file`**, **`ai_get_config`**, **`ai_refresh_config`**, **`core_rpc_relay`**, **window** commands, and **OpenHuman service / daemon host** helpers (`openhuman_*`).
+Registered IPC commands (see [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md)) include **`greet`**, **`write_ai_config_file`**, **`ai_get_config`**, **`ai_refresh_config`**, **`core_rpc_relay`**, **window** commands, and **OpenHuman service / daemon host** helpers (`openhuman_*`).
 
 Deep link plugin is registered where supported; behavior is platform-specific (see platform notes below).
 
@@ -455,7 +455,7 @@ let resp: BillingChargeResponse = request_native_global(
 
 ## App theme & design system
 
-**Design intent**: Premium, calm visual language — ocean primary (`#4A83DD`), sage / amber / coral semantic colors, Inter + Cabinet Grotesk + JetBrains Mono, Tailwind with custom radii/spacing/shadows. Details: [`gitbooks/resources/design-language.md`](gitbooks/resources/design-language.md).
+**Design intent**: Premium, calm visual language — ocean primary (`#4A83DD`), sage / amber / coral semantic colors, Inter + Cabinet Grotesk + JetBrains Mono, Tailwind with custom radii/spacing/shadows. Implementation tokens live in [`app/tailwind.config.js`](app/tailwind.config.js).
 
 ## Desktop shell (Tauri) vs application code
 
@@ -522,7 +522,7 @@ Follow this order so behavior is **specified**, **proven in Rust**, **proven ove
 
 ## Platform notes
 
-- **macOS deep links**: Often require a built **`.app`** bundle; not only `tauri dev`. See [`docs/telegram-login-desktop.md`](docs/telegram-login-desktop.md) if applicable.
+- **macOS deep links**: Often require a built **`.app`** bundle; not only `tauri dev`.
 - **`window.__TAURI__`**: Not assumed at module load; guard Tauri usage accordingly.
 - **Core sidecar**: Must be staged/built so `core_rpc` can reach the `openhuman-core` binary (see `scripts/stage-core-sidecar.mjs`).
 

@@ -74,6 +74,19 @@ require_pr_number() {
   esac
 }
 
+# ── Coloured output ────────────────────────────────────────────────
+# Disable colour when stdout is not a terminal (piped / CI).
+if [ -t 1 ]; then
+  _R=$'\033[0;31m' _G=$'\033[0;32m' _Y=$'\033[0;33m' _B=$'\033[1m' _0=$'\033[0m'
+else
+  _R="" _G="" _Y="" _B="" _0=""
+fi
+
+pass()  { printf '%s[PASS]%s %s\n' "$_G" "$_0" "$*"; }
+fail()  { printf '%s[FAIL]%s %s\n' "$_R" "$_0" "$*" >&2; }
+warn()  { printf '%s[WARN]%s %s\n' "$_Y" "$_0" "$*" >&2; }
+info()  { printf '%s[INFO]%s %s\n' "$_B" "$_0" "$*"; }
+
 # Fetch PR head into local branch pr/<num>, merge main in, wire upstream +
 # pushRemote so `git push` lands on the contributor's fork.
 sync_pr() {

@@ -502,7 +502,16 @@ impl Agent {
             }
             Err(err) => {
                 let sanitized_message = Self::sanitize_event_error_message(&err);
-                crate::core::observability::report_error(
+                // OPENHUMAN-TAURI-5Z: upstream transient HTTP failures
+                // (408/429/502/503/504) are already retried + filtered at the
+                // provider layer. When retries exhaust they bubble up here via
+                // `Result::Err`, and re-reporting under `domain=agent` escapes
+                // the `domain=llm_provider` filter — one Sentry event per
+                // failed turn for a transient infrastructure blip. Route
+                // through `report_error_or_expected` so the classifier demotes
+                // those (and other expected user-state errors) to a warn-level
+                // breadcrumb while preserving the AgentError publish + return.
+                crate::core::observability::report_error_or_expected(
                     &err,
                     "agent",
                     "run_single",

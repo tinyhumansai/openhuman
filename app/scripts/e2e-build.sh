@@ -36,8 +36,8 @@ fi
 
 export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT:-18473}"
 
-# Stage rust-core sidecar for bundle.externalBin (see app/src-tauri/tauri.conf.json).
-node "$REPO_ROOT/scripts/stage-core-sidecar.mjs"
+# Core is compiled in-process into the Tauri shell as of PR #1061; the old
+# scripts/stage-core-sidecar.mjs staging step is no longer needed.
 
 # Disable updater artifacts for E2E bundles to avoid signing-key requirements.
 TAURI_CONFIG_OVERRIDE='{"bundle":{"createUpdaterArtifacts":false}}'
@@ -45,14 +45,29 @@ TAURI_CONFIG_OVERRIDE='{"bundle":{"createUpdaterArtifacts":false}}'
 case "${CI:-}" in 1) export CI=true ;; 0) export CI=false ;; esac
 
 OS="$(uname)"
-if [ "$OS" = "Linux" ]; then
-  # Linux: build debug binary only (no bundle needed for tauri-driver)
-  echo "Building for Linux (debug binary, no bundle)..."
-  pnpm exec tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle
-else
-  # macOS: build .app bundle for Appium Mac2
-  echo "Building for macOS (.app bundle)..."
-  pnpm exec tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug
-fi
+case "$OS" in
+  Linux)
+    # Linux: build debug binary only (no bundle needed for tauri-driver)
+    echo "Building for Linux (debug binary, no bundle)..."
+    pnpm exec tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle
+    ;;
+  Darwin)
+    # macOS: build .app bundle for Appium Mac2 (wdio.conf points at
+    # src-tauri/target/debug/bundle/macos/OpenHuman.app).
+    echo "Building for macOS (.app bundle)..."
+    pnpm exec tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug
+    ;;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    # Windows: bare .exe at src-tauri/target/debug/OpenHuman.exe is what
+    # wdio.conf launches via tauri-driver. NSIS/MSI bundling adds time we
+    # don't need for the driver path.
+    echo "Building for Windows (.exe, no bundle)..."
+    pnpm exec tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle
+    ;;
+  *)
+    echo "ERROR: unsupported OS for e2e build: $OS" >&2
+    exit 1
+    ;;
+esac
 
 echo "E2E build complete."

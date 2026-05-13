@@ -2,14 +2,9 @@ import { ReactNode, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useCoreState } from '../../providers/CoreStateProvider';
-import { persistor } from '../../store';
+import { clearAllAppData } from '../../utils/clearAllAppData';
 import { BILLING_DASHBOARD_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
-import {
-  resetOpenHumanDataAndRestartCore,
-  restartApp,
-  scheduleCefProfilePurge,
-} from '../../utils/tauriCommands';
 import { resetWalkthrough } from '../walkthrough/AppWalkthrough';
 import SettingsHeader from './components/SettingsHeader';
 import SettingsMenuItem from './components/SettingsMenuItem';
@@ -55,60 +50,12 @@ const SettingsHome = () => {
     }
   };
 
-  const clearAllAppData = async () => {
-    const currentUserId = snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
-
-    // Queue the current user-scoped CEF profile for deletion on next launch.
-    // The active CEF browser process may still hold SQLite/cache file handles,
-    // so we delete after the shell restarts rather than relying on in-process
-    // removal to succeed everywhere.
-    try {
-      await scheduleCefProfilePurge(currentUserId);
-    } catch (err) {
-      console.warn('[Settings] Failed to queue CEF profile purge:', err);
-    }
-
-    // 1. Logout — clear session in core (auth_clear_session). Best-effort:
-    //    if the core process is wedged we still want to wipe local data.
-    try {
-      await clearSession();
-    } catch (err) {
-      console.warn('[Settings] Rust logout failed during clearAllAppData:', err);
-    }
-
-    // 2. Delete workspace folder + restart core. The core RPC removes both
-    //    the active openhuman_dir and the default ~/.openhuman, then we
-    //    restart the sidecar so it boots from a clean slate.
-    try {
-      await resetOpenHumanDataAndRestartCore();
-    } catch (err) {
-      console.warn('[Settings] Failed to reset OpenHuman data dir and restart core:', err);
-      throw err;
-    }
-
-    // 3. Purge redux-persist storage + browser storage. `persistor.purge()`
-    //    wipes the persisted backend; localStorage/sessionStorage clears
-    //    everything else (auth flags, theme, etc.).
-    try {
-      await persistor.purge();
-    } catch (err) {
-      console.warn('[Settings] persistor.purge failed:', err);
-      setError('Failed to clear persisted app state. Please try again.');
-      return;
-    }
-    window.localStorage.clear();
-    window.sessionStorage.clear();
-
-    // 4. Full app restart so the CEF runtime reboots into the fresh
-    //    pre-login profile instead of keeping the old browser process alive.
-    await restartApp();
-  };
-
   const handleLogoutAndClearData = async () => {
     try {
       setIsLoading(true);
       setError(null);
-      await clearAllAppData(); // This will redirect to login
+      const currentUserId = snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
+      await clearAllAppData({ clearSession, userId: currentUserId }); // restarts the app
     } catch (_error) {
       setError('Failed to clear data and logout. Please try again.');
     } finally {

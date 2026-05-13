@@ -128,13 +128,15 @@ pub fn all_presets() -> Vec<ModelPreset> {
                 "Battery-friendly local summarization preset. Uses the 1B Gemma model with vision disabled.",
             chat_model_id: "gemma3:1b-it-qat",
             vision_model_id: "",
-            embedding_model_id: "all-minilm:latest",
+            // bge-m3 — 1024 dims required by memory tree's on-disk format
+            // and 8192-token context for long-chunk embeds.
+            embedding_model_id: "bge-m3",
             quantization: "qat",
             vision_mode: VisionMode::Disabled,
             supports_screen_summary: false,
             target_ram_gb: 2,
             min_ram_gb: 2,
-            approx_download_gb: 1.1,
+            approx_download_gb: 2.3,
         },
         ModelPreset {
             tier: ModelTier::Ram4To8Gb,

@@ -1,3 +1,4 @@
+import createDebug from 'debug';
 import { useState } from 'react';
 
 import OAuthProviderButton from '../components/oauth/OAuthProviderButton';
@@ -6,6 +7,7 @@ import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
 import { clearBackendUrlCache } from '../services/backendUrl';
 import { clearCoreRpcUrlCache, testCoreRpcConnection } from '../services/coreRpcClient';
 import { useDeepLinkAuthState } from '../store/deepLinkAuthState';
+import { clearAllAppData } from '../utils/clearAllAppData';
 import {
   clearStoredRpcUrl,
   getDefaultRpcUrl,
@@ -15,14 +17,33 @@ import {
   storeRpcUrl,
 } from '../utils/configPersistence';
 
+const log = createDebug('app:welcome');
+
 const Welcome = () => {
-  const { isProcessing, errorMessage } = useDeepLinkAuthState();
+  const { isProcessing, errorMessage, requiresAppDataReset } = useDeepLinkAuthState();
 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [rpcUrl, setRpcUrl] = useState(getStoredRpcUrl());
   const [rpcUrlError, setRpcUrlError] = useState<string | null>(null);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isClearingAppData, setIsClearingAppData] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+
+  const handleClearAppData = async () => {
+    setIsClearingAppData(true);
+    setResetError(null);
+    try {
+      // No live session at the Welcome screen — skip the core-side
+      // `clearSession` step, just wipe local data and restart.
+      await clearAllAppData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log('clearAllAppData failed: %s', message);
+      setResetError('Could not clear app data. Please quit and reopen OpenHuman, then try again.');
+      setIsClearingAppData(false);
+    }
+  };
 
   const handleRpcUrlChange = (value: string) => {
     setRpcUrl(value);
@@ -175,7 +196,32 @@ const Welcome = () => {
             <div
               role="alert"
               className="mb-5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {errorMessage}
+              <p>{errorMessage}</p>
+              {requiresAppDataReset ? (
+                <div className="mt-3 space-y-2">
+                  <button
+                    type="button"
+                    onClick={handleClearAppData}
+                    disabled={isClearingAppData}
+                    className="w-full rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60">
+                    {isClearingAppData ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <span className="h-3 w-3 animate-spin rounded-full border border-white border-t-transparent" />
+                        Clearing app data...
+                      </span>
+                    ) : (
+                      'Clear app data & restart'
+                    )}
+                  </button>
+                  <p className="text-[11px] leading-4 text-red-600/80">
+                    This wipes locally stored secrets and accounts on this device. Your cloud
+                    account is unaffected — you can sign in again right after.
+                  </p>
+                  {resetError ? (
+                    <p className="text-[11px] leading-4 font-medium text-red-700">{resetError}</p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
 

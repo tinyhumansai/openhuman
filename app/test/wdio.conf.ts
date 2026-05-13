@@ -57,11 +57,13 @@ function getAppPath(): string {
 /**
  * Build capabilities for the current platform.
  *
- * - Linux: tauri-driver (W3C WebDriver, port 4444)
- * - macOS: Appium Mac2 (XCUITest, port 4723)
+ * - Linux:   tauri-driver (W3C WebDriver, port 4444)
+ * - Windows: tauri-driver (W3C WebDriver, port 4444) — same as Linux,
+ *            launches the bare .exe rather than a bundle.
+ * - macOS:   Appium Mac2 (XCUITest, port 4723)
  */
 function getPlatformCapabilities(): Record<string, unknown>[] {
-  if (process.platform === 'linux') {
+  if (process.platform === 'linux' || process.platform === 'win32') {
     return [{ 'tauri:options': { application: getAppPath() } }];
   }
 
@@ -77,8 +79,8 @@ function getPlatformCapabilities(): Record<string, unknown>[] {
 }
 
 /** Port for the automation driver: tauri-driver (4444) or Appium (4723). */
-const isLinuxDriver = process.platform === 'linux';
-const driverPort = isLinuxDriver
+const isTauriDriverHost = process.platform === 'linux' || process.platform === 'win32';
+const driverPort = isTauriDriverHost
   ? parseInt(process.env.TAURI_DRIVER_PORT || '4444', 10)
   : parseInt(process.env.APPIUM_PORT || '4723', 10);
 
@@ -95,8 +97,8 @@ export const config: Options.Testrunner & Record<string, unknown> = {
   waitforTimeout: 10_000,
   // Linux tauri-driver can take longer to establish the initial session on
   // loaded CI runners; keep macOS defaults while giving Linux more headroom.
-  connectionRetryTimeout: isLinuxDriver ? 240_000 : 120_000,
-  connectionRetryCount: isLinuxDriver ? 5 : 3,
+  connectionRetryTimeout: isTauriDriverHost ? 240_000 : 120_000,
+  connectionRetryCount: isTauriDriverHost ? 5 : 3,
   // No appium/tauri-driver service — driver is started externally via scripts.
   framework: 'mocha',
   reporters: ['spec'],
