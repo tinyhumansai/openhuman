@@ -365,6 +365,12 @@ pub fn is_transient_backend_api_failure(event: &sentry::protocol::Event<'_>) -> 
     is_transient_domain_failure(event, "backend_api")
 }
 
+/// Transient integrations / Composio failures (timeout, connection reset,
+/// gateway hiccups).
+pub fn is_transient_integrations_failure(event: &sentry::protocol::Event<'_>) -> bool {
+    is_transient_domain_failure(event, "integrations")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -747,6 +753,69 @@ mod tests {
         );
         assert!(
             !is_transient_backend_api_failure(&non_matching_transport),
+            "transport failures without an allowlisted phrase must stay visible"
+        );
+    }
+
+    #[test]
+    fn integrations_filter_drops_transient_statuses() {
+        for status in TRANSIENT_HTTP_STATUSES {
+            let event = event_with_tags(&[
+                ("domain", "integrations"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                is_transient_integrations_failure(&event),
+                "integrations status {status} must be classified as transient"
+            );
+        }
+    }
+
+    #[test]
+    fn integrations_filter_drops_transient_transport_phrases() {
+        for phrase in TRANSIENT_TRANSPORT_PHRASES {
+            let event = event_with_tags_and_message(
+                &[("domain", "integrations"), ("failure", "transport")],
+                &format!("GET /agent-integrations/tools failed: {phrase}"),
+            );
+            assert!(
+                is_transient_integrations_failure(&event),
+                "integrations transport phrase {phrase} must be classified as transient"
+            );
+        }
+    }
+
+    #[test]
+    fn integrations_filter_keeps_non_transient_failures() {
+        for status in ["404", "500"] {
+            let event = event_with_tags(&[
+                ("domain", "integrations"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                !is_transient_integrations_failure(&event),
+                "integrations status {status} must stay visible"
+            );
+        }
+
+        let wrong_domain = event_with_tags(&[
+            ("domain", "composio"),
+            ("failure", "non_2xx"),
+            ("status", "503"),
+        ]);
+        assert!(
+            !is_transient_integrations_failure(&wrong_domain),
+            "domain scoping must keep composio-tagged events visible"
+        );
+
+        let non_matching_transport = event_with_tags_and_message(
+            &[("domain", "integrations"), ("failure", "transport")],
+            "GET /agent-integrations/tools failed: invalid certificate",
+        );
+        assert!(
+            !is_transient_integrations_failure(&non_matching_transport),
             "transport failures without an allowlisted phrase must stay visible"
         );
     }
