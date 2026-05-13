@@ -54,6 +54,10 @@ jobs:
   rust-core-tests:
     name: Rust Core Tests + Quality
     runs-on: ubuntu-22.04
+    # Healthy runtime on this image is ~6 minutes. Cap at 20 so the rare
+    # `LLM_PERMITS` cross-runtime-semaphore deadlock surfaces logs instead
+    # of wedging the runner for the GitHub-Actions default 6h ceiling.
+    timeout-minutes: 20
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
