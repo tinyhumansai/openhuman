@@ -423,7 +423,17 @@ impl BackendOAuthClient {
         }
 
         let response = request.send().await.map_err(|e| {
-            let error_message = e.to_string();
+            // Walk the error source chain so transient markers hidden in nested
+            // causes (reqwest -> hyper -> rustls TLS EOF, etc.) still classify
+            // correctly. The top-level `e.to_string()` often only carries the
+            // outermost wrapper, e.g. "error sending request for url (...)".
+            let mut error_message = e.to_string();
+            let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(&e);
+            while let Some(s) = src {
+                error_message.push_str(" → ");
+                error_message.push_str(&s.to_string());
+                src = s.source();
+            }
             if crate::core::observability::contains_transient_transport_phrase(&error_message) {
                 tracing::warn!(
                     domain = "backend_api",
