@@ -1,3 +1,4 @@
+pub mod billing_error;
 pub mod compatible;
 pub mod openhuman_backend;
 pub mod ops;
@@ -12,4 +13,5 @@ pub use traits::{
     ProviderDelta, ToolCall, ToolResultMessage, UsageInfo,
 };
 
+pub use billing_error::is_budget_exhausted_message;
 pub use ops::*;
