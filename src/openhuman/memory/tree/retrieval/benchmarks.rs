@@ -48,11 +48,11 @@ fn bench_config() -> (TempDir, Config) {
 /// 1. The regex extractor finds emails (alice@example.com) and hashtags (#phoenix)
 /// 2. Without these, `query_topic` returns 0 hits and all entity-based tests fail
 /// 3. The sealing threshold also needs sufficient content per message
-fn ingest_chat_batch(
+async fn ingest_chat_batch(
     cfg: &Config,
     scope: &str,
     owner: &str,
-    messages: Vec<(String, String)>, // (author, text)
+    messages: Vec<(String, String)>,
     base_ts_millis: i64,
 ) -> Vec<String> {
     let batch = ChatBatch {
