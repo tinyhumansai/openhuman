@@ -121,16 +121,27 @@ impl IntegrationClient {
             let body_text = resp.text().await.unwrap_or_default();
             let detail = extract_error_detail(&body_text, MAX_ERROR_BODY_LEN);
             let status_str = status.as_u16().to_string();
-            crate::core::observability::report_error(
-                format!("Backend returned {status} for POST {url}: {detail}").as_str(),
-                "integrations",
-                "post",
-                &[
-                    ("path", path),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
+            if crate::core::observability::is_transient_http_status_code(status.as_u16()) {
+                tracing::warn!(
+                    domain = "integrations",
+                    operation = "post",
+                    path = path,
+                    status = status_str.as_str(),
+                    failure = "non_2xx",
+                    "[integrations] transient {status} for POST {url}: {detail}",
+                );
+            } else {
+                crate::core::observability::report_error(
+                    format!("Backend returned {status} for POST {url}: {detail}").as_str(),
+                    "integrations",
+                    "post",
+                    &[
+                        ("path", path),
+                        ("status", status_str.as_str()),
+                        ("failure", "non_2xx"),
+                    ],
+                );
+            }
             anyhow::bail!("Backend returned {status} for POST {url}: {detail}");
         }
 
@@ -189,16 +200,27 @@ impl IntegrationClient {
             let body_text = resp.text().await.unwrap_or_default();
             let detail = extract_error_detail(&body_text, MAX_ERROR_BODY_LEN);
             let status_str = status.as_u16().to_string();
-            crate::core::observability::report_error(
-                format!("Backend returned {status} for GET {url}: {detail}").as_str(),
-                "integrations",
-                "get",
-                &[
-                    ("path", path),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
+            if crate::core::observability::is_transient_http_status_code(status.as_u16()) {
+                tracing::warn!(
+                    domain = "integrations",
+                    operation = "get",
+                    path = path,
+                    status = status_str.as_str(),
+                    failure = "non_2xx",
+                    "[integrations] transient {status} for GET {url}: {detail}",
+                );
+            } else {
+                crate::core::observability::report_error(
+                    format!("Backend returned {status} for GET {url}: {detail}").as_str(),
+                    "integrations",
+                    "get",
+                    &[
+                        ("path", path),
+                        ("status", status_str.as_str()),
+                        ("failure", "non_2xx"),
+                    ],
+                );
+            }
             anyhow::bail!("Backend returned {status} for GET {url}: {detail}");
         }
 

@@ -423,16 +423,32 @@ impl BackendOAuthClient {
         }
 
         let response = request.send().await.map_err(|e| {
-            crate::core::observability::report_error(
-                e.to_string().as_str(),
-                "backend_api",
-                "authed_json",
-                &[
-                    ("method", method.as_str()),
-                    ("path", url.path()),
-                    ("failure", "transport"),
-                ],
-            );
+            let error_message = e.to_string();
+            if crate::core::observability::contains_transient_transport_phrase(&error_message) {
+                tracing::warn!(
+                    domain = "backend_api",
+                    operation = "authed_json",
+                    method = method.as_str(),
+                    path = url.path(),
+                    failure = "transport",
+                    error = %error_message,
+                    "[backend_api] transient transport failure on {} {}: {}",
+                    method.as_str(),
+                    url.path(),
+                    error_message,
+                );
+            } else {
+                crate::core::observability::report_error(
+                    error_message.as_str(),
+                    "backend_api",
+                    "authed_json",
+                    &[
+                        ("method", method.as_str()),
+                        ("path", url.path()),
+                        ("failure", "transport"),
+                    ],
+                );
+            }
             anyhow::Error::new(e).context(format!(
                 "backend request {} {}",
                 method.as_str(),
@@ -445,15 +461,19 @@ impl BackendOAuthClient {
         if !status.is_success() {
             let status_code = status.as_u16();
             let status_str = status_code.to_string();
-            // 502/503/504 are transient infrastructure errors (proxy/CDN/backend
+            // These are transient infrastructure errors (proxy/CDN/backend
             // temporarily unavailable). They are not code bugs and callers already
             // implement retry/disable logic, so skip Sentry to avoid noise.
-            let is_transient_infra = matches!(status_code, 502 | 503 | 504);
+            let is_transient_infra =
+                crate::core::observability::is_transient_http_status_code(status_code);
             if is_transient_infra {
                 tracing::warn!(
+                    domain = "backend_api",
+                    operation = "authed_json",
                     method = method.as_str(),
                     path = url.path(),
                     status = status_code,
+                    failure = "non_2xx",
                     "[backend_api] transient {status} on {} {} — not reporting to Sentry",
                     method.as_str(),
                     url.path(),
