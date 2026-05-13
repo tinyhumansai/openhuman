@@ -94,10 +94,10 @@ jobs:
           exit 1
       - name: Generate GitHub App token
         id: app-token
-        uses: tibdex/github-app-token@v1
+        uses: actions/create-github-app-token@v2
         with:
-          app_id: ${{ secrets.XGITHUB_APP_ID }}
-          private_key: ${{ secrets.XGITHUB_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.XGITHUB_APP_ID }}
+          private-key: ${{ secrets.XGITHUB_APP_PRIVATE_KEY }}
       - name: Checkout main
         uses: actions/checkout@v5
         with:
@@ -111,6 +111,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 24.x
+          package-manager-cache: false
       - name: Configure Git
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
