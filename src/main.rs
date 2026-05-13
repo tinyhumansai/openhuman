@@ -59,6 +59,13 @@ fn main() {
             if openhuman_core::core::observability::is_transient_provider_http_failure(&event) {
                 return None;
             }
+            // Defense-in-depth for budget-exhausted 400s. Emit sites demote the
+            // known backend responses before they hit Sentry; this catches any
+            // future non_2xx/status=400 event that carries the same tight body
+            // phrases.
+            if openhuman_core::core::observability::is_budget_event(&event) {
+                return None;
+            }
             // Defense-in-depth: drop max-tool-iterations cap events that
             // slipped past the call-site filters in
             // `agent::harness::session::runtime::run_single`,
