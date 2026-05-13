@@ -63,6 +63,12 @@ jobs:
   rust-core-coverage:
     name: Rust Core Coverage (cargo-llvm-cov)
     runs-on: ubuntu-22.04
+    # See test.yml `rust-core-tests` — same shared-singleton flake risk in
+    # the lib suite. Coverage instrumentation roughly doubles wall time vs.
+    # the plain test runs, so cap at 30 min (vs. 20 in test.yml) so a
+    # deadlock still surfaces logs without prematurely killing a healthy
+    # coverage build.
+    timeout-minutes: 30
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
