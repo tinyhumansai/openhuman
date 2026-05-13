@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { dispatchLocalAiMethod } from '../../lib/ai/localCoreAiMemory';
 import { CORE_RPC_TIMEOUT_MS } from '../../utils/config';
 import type { AccessibilityStatus, CommandResponse } from '../../utils/tauriCommands';
-import { callCoreRpc, classifyRpcError, CoreRpcError } from '../coreRpcClient';
+import {
+  callCoreRpc,
+  classifyRpcError,
+  CoreRpcError,
+  isThreadNotFoundCoreRpcError,
+} from '../coreRpcClient';
 
 function sampleAccessibilityStatus(
   overrides: Partial<AccessibilityStatus> = {}
@@ -526,6 +531,12 @@ describe('classifyRpcError', () => {
   test('http status 429 wins over message text', () => {
     expect(classifyRpcError('anything', 429)).toBe('rate_limited');
   });
+
+  test('structured ThreadNotFound data wins over message text', () => {
+    expect(
+      classifyRpcError('thread thread-123 not found', undefined, { kind: 'ThreadNotFound' })
+    ).toBe('thread_not_found');
+  });
 });
 
 describe('coreRpcClient — typed errors + auth-expired event', () => {
@@ -647,6 +658,33 @@ describe('coreRpcClient — typed errors + auth-expired event', () => {
     expect(err).toBeInstanceOf(CoreRpcError);
     expect((err as CoreRpcError).kind).toBe('unknown');
     expect((err as Error).message).toBe('something weird');
+    expect(authExpiredHandler).not.toHaveBeenCalled();
+  });
+
+  test('classifies structured ThreadNotFound data without firing the auth-expired event', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 1,
+        error: {
+          code: -32000,
+          message: 'thread thread-123 not found',
+          data: {
+            kind: 'ThreadNotFound',
+            thread_id: 'thread-123',
+            method: 'openhuman.threads_message_append',
+          },
+        },
+      }),
+    } as Response);
+
+    const err = await callCoreRpc({ method: 'openhuman.threads_message_append' }).catch(e => e);
+    expect(err).toBeInstanceOf(CoreRpcError);
+    expect((err as CoreRpcError).kind).toBe('thread_not_found');
+    expect(isThreadNotFoundCoreRpcError(err, 'thread-123')).toBe(true);
+    expect(isThreadNotFoundCoreRpcError(err, 'thread-other')).toBe(false);
     expect(authExpiredHandler).not.toHaveBeenCalled();
   });
 });

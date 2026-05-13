@@ -119,7 +119,12 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
     }
 }
 
-fn report_error_message(message: &str, domain: &str, operation: &str, extra: &[Tag<'_>]) {
+pub(crate) fn report_error_message(
+    message: &str,
+    domain: &str,
+    operation: &str,
+    extra: &[Tag<'_>],
+) {
     sentry::with_scope(
         |scope| {
             scope.set_tag("domain", domain);

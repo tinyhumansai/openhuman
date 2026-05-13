@@ -39,6 +39,7 @@ import {
   persistReaction,
   setActiveThread,
   setSelectedThread,
+  THREAD_NOT_FOUND_MESSAGE,
 } from '../store/threadSlice';
 import type { ConfirmationModal as ConfirmationModalType } from '../types/intelligence';
 import type { ThreadMessage } from '../types/thread';
@@ -581,6 +582,14 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     try {
       await dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage })).unwrap();
     } catch (error) {
+      // RTK's unwrap() re-throws the rejectWithValue payload directly (a plain
+      // string, not an Error). Check for the stale-thread sentinel before
+      // coercing to a display string so this guard doesn't accidentally match
+      // unrelated errors whose `.toString()` happens to equal the sentinel.
+      if (error === THREAD_NOT_FOUND_MESSAGE) {
+        setSendError(null);
+        return;
+      }
       const msg = error instanceof Error ? error.message : String(error);
       setSendError(chatSendError('cloud_send_failed', msg));
       return;

@@ -130,6 +130,62 @@ fn generic_inference_error_user_message() -> &'static str {
     "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>"
 }
 
+fn classify_inference_error(err: &str) -> (&'static str, &'static str) {
+    let lower = err.to_lowercase();
+    if lower.contains("rate limit") || lower.contains("429") {
+        (
+            "rate_limited",
+            "You're being rate-limited. Please wait a moment and try again.",
+        )
+    } else if lower.contains("timeout") || lower.contains("timed out") {
+        (
+            "timeout",
+            "The request timed out. Please check your connection and try again.",
+        )
+    } else if lower.contains("401") || lower.contains("unauthorized") || lower.contains("api key") {
+        (
+            "auth_error",
+            "There's an authentication issue with the AI provider. Please check your API key in settings.",
+        )
+    } else if lower.contains("402")
+        || lower.contains("payment required")
+        || lower.contains("insufficient balance")
+    {
+        (
+            "budget_exhausted",
+            "Insufficient credits. Please top up to continue.",
+        )
+    } else if lower.contains("500")
+        || lower.contains("internal server")
+        || lower.contains("service unavailable")
+        || lower.contains("503")
+    {
+        (
+            "provider_error",
+            "The AI provider is temporarily unavailable. Please try again later.",
+        )
+    } else if lower.contains("context")
+        && (lower.contains("length")
+            || lower.contains("limit")
+            || lower.contains("exceed")
+            || lower.contains("token"))
+    {
+        (
+            "context_overflow",
+            "The conversation is too long. Please start a new chat.",
+        )
+    } else if lower.contains("model")
+        && (lower.contains("not found") || lower.contains("unavailable"))
+    {
+        (
+            "model_unavailable",
+            "The selected model is not available. Please check your model settings.",
+        )
+    } else {
+        ("inference", generic_inference_error_user_message())
+    }
+}
+
 fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
     match action {
         PromptEnforcementAction::Allow => "Message accepted.",
@@ -280,13 +336,14 @@ pub async fn start_chat(
                     "run_chat_task failed client_id={} thread_id={} request_id={} error={}",
                     client_id_task, thread_id_task, request_id_task, err
                 );
+                let (classified_type, classified_message) = classify_inference_error(&err);
                 crate::core::observability::report_error(
                     detailed.as_str(),
                     "web_channel",
                     "run_chat_task",
                     &[
                         ("channel", "web"),
-                        ("error_type", "inference"),
+                        ("error_type", classified_type),
                         ("thread_id", thread_id_task.as_str()),
                         ("request_id", request_id_task.as_str()),
                     ],
@@ -297,8 +354,8 @@ pub async fn start_chat(
                     thread_id: thread_id_task.clone(),
                     request_id: request_id_task.clone(),
                     full_response: None,
-                    message: Some(generic_inference_error_user_message().to_string()),
-                    error_type: Some("inference".to_string()),
+                    message: Some(classified_message.to_string()),
+                    error_type: Some(classified_type.to_string()),
                     tool_name: None,
                     skill_id: None,
                     args: None,

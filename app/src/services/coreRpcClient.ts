@@ -53,16 +53,19 @@ export type CoreRpcErrorKind =
   | 'transport'
   | 'rate_limited'
   | 'budget_exceeded'
+  | 'thread_not_found'
   | 'unknown';
 
 export class CoreRpcError extends Error {
   readonly kind: CoreRpcErrorKind;
   readonly httpStatus?: number;
-  constructor(message: string, kind: CoreRpcErrorKind, httpStatus?: number) {
+  readonly data?: unknown;
+  constructor(message: string, kind: CoreRpcErrorKind, httpStatus?: number, data?: unknown) {
     super(message);
     this.name = 'CoreRpcError';
     this.kind = kind;
     this.httpStatus = httpStatus;
+    this.data = data;
   }
 }
 
@@ -74,7 +77,12 @@ const AUTH_EXPIRED_EVENT = 'core-rpc-auth-expired';
  * produced by `src/openhuman/backend_api/*` (`authed_json`, rate limiter,
  * budget guard) and `reqwest::Error`'s connect/timeout variants.
  */
-export function classifyRpcError(message: string, httpStatus?: number): CoreRpcErrorKind {
+export function classifyRpcError(
+  message: string,
+  httpStatus?: number,
+  data?: unknown
+): CoreRpcErrorKind {
+  if (isThreadNotFoundRpcData(data)) return 'thread_not_found';
   if (httpStatus === 401) return 'auth_expired';
   if (httpStatus === 429) return 'rate_limited';
   if (/\(401\b.*Unauthorized\)|Session expired/i.test(message)) return 'auth_expired';
@@ -90,6 +98,32 @@ export function classifyRpcError(message: string, httpStatus?: number): CoreRpcE
     return 'transport';
   }
   return 'unknown';
+}
+
+function isThreadNotFoundRpcData(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false;
+  // The server only ever emits kind === 'ThreadNotFound' (see
+  // src/openhuman/threads/error.rs THREAD_NOT_FOUND_KIND). The snake_case
+  // variant is not produced anywhere; keep only the canonical form.
+  return (data as { kind?: unknown }).kind === 'ThreadNotFound';
+}
+
+function threadIdFromRpcData(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null;
+  const record = data as { thread_id?: unknown; threadId?: unknown };
+  if (typeof record.thread_id === 'string') return record.thread_id;
+  if (typeof record.threadId === 'string') return record.threadId;
+  return null;
+}
+
+export function isThreadNotFoundCoreRpcError(
+  error: unknown,
+  threadId?: string
+): error is CoreRpcError {
+  if (!(error instanceof CoreRpcError) || error.kind !== 'thread_not_found') return false;
+  if (!threadId) return true;
+  const errorThreadId = threadIdFromRpcData(error.data);
+  return !errorThreadId || errorThreadId === threadId;
 }
 
 function dispatchAuthExpired(method: string): void {
@@ -368,9 +402,9 @@ export async function callCoreRpc<T>({
         error: json.error,
       });
       const rawMessage = json.error.message || 'Core RPC returned an error';
-      const kind = classifyRpcError(rawMessage);
+      const kind = classifyRpcError(rawMessage, undefined, json.error.data);
       if (kind === 'auth_expired') dispatchAuthExpired(payload.method);
-      throw new CoreRpcError(rawMessage, kind);
+      throw new CoreRpcError(rawMessage, kind, undefined, json.error.data);
     }
     if (!Object.prototype.hasOwnProperty.call(json, 'result')) {
       throw new Error('Core RPC response missing result');

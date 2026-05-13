@@ -1,9 +1,12 @@
-import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
+import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
 import { threadApi } from '../services/api/threadApi';
+import { isThreadNotFoundCoreRpcError } from '../services/coreRpcClient';
 import type { Thread, ThreadMessage } from '../types/thread';
 import { IS_DEV } from '../utils/config';
 import { resetUserScopedState } from './resetActions';
+
+export const THREAD_NOT_FOUND_MESSAGE = 'This thread is no longer available.';
 
 interface ThreadState {
   threads: Thread[];
@@ -117,6 +120,38 @@ export const loadThreadMessages = createAsyncThunk(
   }
 );
 
+/**
+ * Shared stale-thread handler used by write thunks.
+ *
+ * When `isThreadNotFoundCoreRpcError` is true the thunk should:
+ *   1. Evict the stale thread from Redux state immediately.
+ *   2. Reload the thread list so the sidebar reflects backend state.
+ *   3. Reject with `THREAD_NOT_FOUND_MESSAGE` so callers can branch on it
+ *      without inspecting error message strings.
+ *
+ * The `loadThreads` failure is swallowed — a network hiccup on the refresh
+ * should not surface an additional error on top of the stale-thread UX.
+ */
+/**
+ * Side-effect half of stale-thread cleanup: evict the thread from Redux state
+ * and reload the thread list. Separated from the `rejectWithValue` call so the
+ * thunk return type is inferred purely from `rejectWithValue(THREAD_NOT_FOUND_MESSAGE)`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function evictStaleThread(threadId: string, dispatch: (action: any) => any): Promise<void> {
+  dispatch(clearStaleThread(threadId));
+  try {
+    await dispatch(loadThreads()).unwrap();
+  } catch (refreshError) {
+    if (IS_DEV) {
+      console.debug('[threadSlice] stale-thread list refresh failed', {
+        threadId,
+        error: refreshError,
+      });
+    }
+  }
+}
+
 export const addMessageLocal = createAsyncThunk(
   'thread/addMessageLocal',
   async (payload: { threadId: string; message: ThreadMessage }, { dispatch, rejectWithValue }) => {
@@ -136,6 +171,10 @@ export const addMessageLocal = createAsyncThunk(
       }
       return { threadId: payload.threadId, message: persisted };
     } catch (error) {
+      if (isThreadNotFoundCoreRpcError(error, payload.threadId)) {
+        await evictStaleThread(payload.threadId, dispatch);
+        return rejectWithValue(THREAD_NOT_FOUND_MESSAGE);
+      }
       return rejectWithValue(error instanceof Error ? error.message : 'Failed to save message');
     }
   }
@@ -151,7 +190,7 @@ export const addInferenceResponse = createAsyncThunk(
       type?: string;
       extraMetadata?: Record<string, unknown>;
     },
-    { getState, rejectWithValue }
+    { dispatch, getState, rejectWithValue }
   ) => {
     const state = getState() as { thread: ThreadState };
     const targetThreadId = payload.threadId ?? state.thread.activeThreadId;
@@ -172,6 +211,10 @@ export const addInferenceResponse = createAsyncThunk(
       const persisted = await threadApi.appendMessage(targetThreadId, message);
       return { threadId: targetThreadId, message: persisted };
     } catch (error) {
+      if (isThreadNotFoundCoreRpcError(error, targetThreadId)) {
+        await evictStaleThread(targetThreadId, dispatch);
+        return rejectWithValue(THREAD_NOT_FOUND_MESSAGE);
+      }
       return rejectWithValue(error instanceof Error ? error.message : 'Failed to save response');
     }
   }
@@ -187,6 +230,10 @@ export const generateThreadTitleIfNeeded = createAsyncThunk(
     try {
       thread = await threadApi.generateTitleIfNeeded(payload.threadId, payload.assistantMessage);
     } catch (error) {
+      if (isThreadNotFoundCoreRpcError(error, payload.threadId)) {
+        await evictStaleThread(payload.threadId, dispatch);
+        return rejectWithValue(THREAD_NOT_FOUND_MESSAGE);
+      }
       return rejectWithValue(
         error instanceof Error ? error.message : 'Failed to generate thread title'
       );
@@ -283,6 +330,22 @@ const threadSlice = createSlice({
     setActiveThread: (state, action: { payload: string | null }) => {
       state.activeThreadId = action.payload;
     },
+    clearStaleThread: (state, action: PayloadAction<string>) => {
+      const threadId = action.payload;
+      state.threads = state.threads.filter(thread => thread.id !== threadId);
+      delete state.messagesByThreadId[threadId];
+      if (state.selectedThreadId === threadId) {
+        state.selectedThreadId = null;
+        state.messages = [];
+        state.messagesError = null;
+      }
+      if (state.activeThreadId === threadId) {
+        state.activeThreadId = null;
+      }
+      if (state.welcomeThreadId === threadId) {
+        state.welcomeThreadId = null;
+      }
+    },
     clearAllThreads: state => {
       state.threads = [];
       state.messagesByThreadId = {};
@@ -319,6 +382,15 @@ const threadSlice = createSlice({
       .addCase(loadThreads.fulfilled, (state, action) => {
         state.isLoadingThreads = false;
         state.threads = action.payload.threads;
+        const liveThreadIds = new Set(action.payload.threads.map(thread => thread.id));
+        if (state.selectedThreadId && !liveThreadIds.has(state.selectedThreadId)) {
+          state.selectedThreadId = null;
+          state.messages = [];
+          state.messagesError = null;
+        }
+        if (state.activeThreadId && !liveThreadIds.has(state.activeThreadId)) {
+          state.activeThreadId = null;
+        }
       })
       .addCase(loadThreads.rejected, state => {
         state.isLoadingThreads = false;
@@ -374,6 +446,7 @@ export const {
   setSelectedThread,
   clearSelectedThread,
   setActiveThread,
+  clearStaleThread,
   clearAllThreads,
   resetThreadCachesPreservingSelection,
   setWelcomeThreadId,
