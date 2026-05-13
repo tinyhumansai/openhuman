@@ -78,3 +78,71 @@ impl Tool for GmailUnsubscribeTool {
         })))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_gmail_unsubscribe_valid() {
+        let tool = GmailUnsubscribeTool;
+        let result = tool
+            .execute(json!({
+                "sender": "marketing@example.com",
+                "unsubscribe_link": "https://example.com/unsub"
+            }))
+            .await
+            .unwrap();
+
+        match result {
+            ToolResult::Json(value) => {
+                assert_eq!(value["status"], "pending_approval");
+                assert_eq!(value["action"], "unsubscribe");
+                assert_eq!(value["metadata"]["sender"], "marketing@example.com");
+                assert_eq!(
+                    value["metadata"]["unsubscribe_link"],
+                    "https://example.com/unsub"
+                );
+            }
+            _ => panic!("Expected JSON result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_gmail_unsubscribe_empty_link() {
+        let tool = GmailUnsubscribeTool;
+        let result = tool
+            .execute(json!({
+                "sender": "marketing@example.com",
+                "unsubscribe_link": ""
+            }))
+            .await
+            .unwrap();
+
+        match result {
+            ToolResult::Error(msg) => {
+                assert!(msg.contains("without a valid List-Unsubscribe link"));
+            }
+            _ => panic!("Expected Error result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_gmail_unsubscribe_missing_link() {
+        let tool = GmailUnsubscribeTool;
+        let result = tool
+            .execute(json!({
+                "sender": "marketing@example.com"
+            }))
+            .await
+            .unwrap();
+
+        match result {
+            ToolResult::Error(msg) => {
+                assert!(msg.contains("without a valid List-Unsubscribe link"));
+            }
+            _ => panic!("Expected Error result"),
+        }
+    }
+}
