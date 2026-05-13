@@ -58,6 +58,53 @@ fn trailing_slash_stripped() {
 }
 
 #[test]
+fn base_url_edge_cases_build_embed_url() {
+    let cases = [
+        ("http://host:11434/", "http://host:11434/api/embed"),
+        ("http://[::1]:11434", "http://[::1]:11434/api/embed"),
+        ("http://host", "http://host/api/embed"),
+    ];
+
+    for (base_url, expected) in cases {
+        let p = OllamaEmbedding::try_new(base_url, "m", 1).unwrap();
+        assert_eq!(p.embed_url().unwrap(), expected);
+    }
+}
+
+#[test]
+fn rejects_api_endpoint_base_urls() {
+    for base_url in [
+        "http://host:11434/v1",
+        "http://host:11434/api",
+        "http://host:11434/api/embed",
+        "http://host:11434/v1/chat/completions",
+        "http://host:11434/chat/completions",
+    ] {
+        let err = OllamaEmbedding::try_new(base_url, "m", 1).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Ollama server root"),
+            "should reject pre-suffixed base URL {base_url}: {msg}"
+        );
+    }
+}
+
+#[test]
+fn rejects_credentialed_base_urls() {
+    let err = OllamaEmbedding::try_new("http://user:pass@host:11434", "m", 1).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("without credentials"), "msg: {msg}");
+}
+
+#[test]
+fn rejects_virtual_local_model_ids() {
+    let err = OllamaEmbedding::try_new("http://host:11434", "local-v1", 768).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("local-*"), "msg: {msg}");
+    assert!(msg.contains(DEFAULT_OLLAMA_MODEL), "msg: {msg}");
+}
+
+#[test]
 fn model_trimmed() {
     let p = OllamaEmbedding::new("", "  nomic-embed-text  ", 768);
     assert_eq!(p.model, "nomic-embed-text");
@@ -66,7 +113,7 @@ fn model_trimmed() {
 #[test]
 fn embed_url_format() {
     let p = OllamaEmbedding::default();
-    assert_eq!(p.embed_url(), "http://localhost:11434/api/embed");
+    assert_eq!(p.embed_url().unwrap(), "http://localhost:11434/api/embed");
 }
 
 #[test]

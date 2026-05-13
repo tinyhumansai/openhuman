@@ -27,13 +27,18 @@
 //!
 //! ## Startup / port coordination
 //!
-//! The server picks its port at boot:
-//!   1. If `OPENHUMAN_WEBVIEW_APIS_PORT` is set, try that port first.
-//!   2. Else bind `127.0.0.1:0` and let the OS pick.
+//! The server always binds `127.0.0.1:0` and lets the OS pick an
+//! ephemeral port. The resolved port is exposed via [`resolved_port`]
+//! and pushed into the core sidecar's environment as
+//! `OPENHUMAN_WEBVIEW_APIS_PORT` by `core_process::spawn_core` so the
+//! client side can find it.
 //!
-//! Either way the resolved port is exposed via
-//! [`resolved_port`] and pushed into the core sidecar's environment
-//! as `OPENHUMAN_WEBVIEW_APIS_PORT` by `core_process::spawn_core`.
+//! `OPENHUMAN_WEBVIEW_APIS_PORT` is an **output** of the bridge — it is
+//! intentionally never read as input. Honouring a pre-existing value
+//! was the cause of Sentry OPENHUMAN-TAURI-82 on Windows: a stale env
+//! value left over from a prior run (or inherited from a parent
+//! process) led the next launch to re-bind the exact same port and
+//! fail with WSAEADDRINUSE (`os error 10048`).
 
 pub mod router;
 pub mod server;

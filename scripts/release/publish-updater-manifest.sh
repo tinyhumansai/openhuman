@@ -91,11 +91,11 @@ read_sig() {
 #
 # Naming conventions emitted by tauri-bundler with createUpdaterArtifacts:
 #   darwin  : <AppName>_<version>_<arch>.app.tar.gz
-#   linux   : <AppName>_<version>_amd64.AppImage.tar.gz
-#   windows : <AppName>_<version>_x64-setup.nsis.zip
+#   linux   : <AppName>_<version>_amd64.AppImage
+#   windows : <AppName>_<version>_x64-setup.exe
 MAC_AARCH64=$(find_asset "^OpenHuman(_| ).*aarch64(-apple-darwin)?\.app\.tar\.gz$")
 MAC_X86_64=$(find_asset  "^OpenHuman(_| ).*(x64|x86_64)(-apple-darwin)?\.app\.tar\.gz$")
-LIN_X86_64=$(find_asset  "^OpenHuman(_| ).*amd64\.AppImage(\.tar\.gz)?$")
+LIN_X86_64=$(find_asset  "^OpenHuman(_| ).*amd64\.AppImage$")
 WIN_X86_64=$(find_asset "^OpenHuman(_| ).*x64-setup\.exe$")
 
 echo "[updater] Resolved updater bundles:"
@@ -134,11 +134,16 @@ add_platform "darwin-x86_64"  "$MAC_X86_64"
 add_platform "linux-x86_64"   "$LIN_X86_64"
 add_platform "windows-x86_64" "$WIN_X86_64"
 
-# Require at least one platform so we don't publish an empty manifest that
-# would mislead installed clients into thinking no update is ever available.
-platforms=$(jq -r '.platforms | keys | length' "$MANIFEST")
-if [ "$platforms" = "0" ]; then
-  echo "[updater] ERROR: no platforms resolved — refusing to publish empty manifest" >&2
+# Require every platform advertised by the public installers. A partial
+# latest.json leaves install.sh resolving a documented platform to nothing.
+missing_platforms=$(jq -r '
+  ["darwin-aarch64", "darwin-x86_64", "linux-x86_64", "windows-x86_64"]
+  - (.platforms | keys)
+  | join(", ")
+' "$MANIFEST")
+if [ -n "$missing_platforms" ]; then
+  echo "[updater] ERROR: missing required latest.json platform(s): $missing_platforms" >&2
+  echo "[updater] Refusing to publish partial updater manifest." >&2
   exit 1
 fi
 

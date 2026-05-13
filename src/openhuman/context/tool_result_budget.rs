@@ -73,14 +73,7 @@ pub fn apply_tool_result_budget(content: String, budget_bytes: usize) -> (String
 
     // Walk char indices forward until we cross the head capacity. The
     // last char fully inside the head is where we cut.
-    let mut cut = 0usize;
-    for (idx, ch) in content.char_indices() {
-        let next = idx + ch.len_utf8();
-        if next > head_capacity {
-            break;
-        }
-        cut = next;
-    }
+    let mut cut = crate::openhuman::util::floor_char_boundary(&content, head_capacity);
 
     // Extremely short content (single multi-byte char) — guarantee at
     // least one character makes it into the head so we don't emit a

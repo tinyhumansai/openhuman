@@ -50,6 +50,13 @@ export interface LocalAiAssetsStatus {
   stt: LocalAiAssetStatus;
   tts: LocalAiAssetStatus;
   quantization: string;
+  /**
+   * True when the core can find an Ollama binary on disk. When false the UI
+   * should render an "Install Ollama" CTA instead of model state — every
+   * Ollama-backed asset will be reported as `missing` and `/api/tags`
+   * probes are skipped entirely (no 30s timeout).
+   */
+  ollama_available: boolean;
 }
 
 export interface LocalAiDownloadProgressItem {
@@ -78,6 +85,8 @@ export interface LocalAiDownloadsProgress {
   embedding: LocalAiDownloadProgressItem;
   stt: LocalAiDownloadProgressItem;
   tts: LocalAiDownloadProgressItem;
+  /** Mirrors `LocalAiAssetsStatus.ollama_available` — see that field. */
+  ollama_available: boolean;
 }
 
 export interface LocalAiEmbeddingResult {

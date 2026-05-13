@@ -4,6 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ObservabilityConfig {
     /// Sentry DSN for error reporting. Overridden by the
     /// `OPENHUMAN_CORE_SENTRY_DSN` env var (or its legacy alias

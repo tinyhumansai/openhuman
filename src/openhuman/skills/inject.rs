@@ -460,10 +460,7 @@ where
         // footer?
         let max_body = remaining.saturating_sub(header_len + footer_trunc_len);
         // Round down to a char boundary.
-        let mut cut = max_body.min(body.len());
-        while cut > 0 && !body.is_char_boundary(cut) {
-            cut -= 1;
-        }
+        let cut = crate::openhuman::util::floor_char_boundary(&body, max_body);
         let truncated_body = &body[..cut];
 
         rendered.push_str(&header);
@@ -689,6 +686,39 @@ mod tests {
         assert!(inj.rendered.contains("[/SKILL:truncated]"));
         assert!(inj.injected_bytes <= 200);
         assert!(inj.decisions[0].truncated);
+    }
+
+    #[test]
+    fn test_render_injection_utf8_boundary() {
+        let s = skill("utf8", "d");
+        let skills = [s];
+        let matches = match_skills(&skills, "@utf8");
+        // Header: [SKILL:utf8]\n (13 bytes)
+        // Footer (full): \n[/SKILL]\n (10 bytes)
+        // Footer (trunc): \n[/SKILL:truncated]\n (20 bytes)
+        // Body: 🦀🦀 (8 bytes)
+        // Full length: 13 + 8 + 10 = 31 bytes.
+        // Min truncated: 13 + 20 + 1 = 34 bytes.
+
+        // Cap at 35 bytes. Full (31) fits.
+        let inj = render_injection(&matches, 35, |_| Some("🦀🦀".to_string()));
+        assert!(!inj.truncated);
+        assert_eq!(inj.rendered.chars().filter(|c| *c == '🦀').count(), 2);
+
+        // Cap at 35 bytes again, but with a body that just barely fits.
+        // (Just demonstrating it doesn't skip when cap >= min_truncated)
+        assert!(!inj.truncated);
+
+        // To force truncation, body + full footer must exceed cap.
+        // Let body be 20 bytes.
+        // Full length: 13 + 20 + 10 = 43 bytes.
+        // Min truncated: 34 bytes.
+        // Cap at 40 bytes.
+        // max_body = 40 - 33 = 7 bytes.
+        // 7 bytes fits one 🦀 (4 bytes), but not two (8 bytes).
+        let inj = render_injection(&matches, 40, |_| Some("🦀".repeat(5)));
+        assert!(inj.truncated);
+        assert_eq!(inj.rendered.chars().filter(|c| *c == '🦀').count(), 1);
     }
 
     #[test]

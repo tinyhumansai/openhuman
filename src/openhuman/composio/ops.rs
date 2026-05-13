@@ -97,11 +97,12 @@ pub async fn composio_list_connections(
 pub async fn composio_authorize(
     config: &Config,
     toolkit: &str,
+    extra_params: Option<serde_json::Value>,
 ) -> OpResult<RpcOutcome<ComposioAuthorizeResponse>> {
-    tracing::debug!(toolkit = %toolkit, "[composio] rpc authorize");
+    tracing::debug!(toolkit = %toolkit, has_extra_params = extra_params.is_some(), "[composio] rpc authorize");
     let client = resolve_client(config)?;
     let resp = client
-        .authorize(toolkit)
+        .authorize(toolkit, extra_params)
         .await
         .map_err(|e| format!("[composio] authorize failed: {e:#}"))?;
 

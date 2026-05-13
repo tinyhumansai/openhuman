@@ -422,7 +422,7 @@ impl Tool for ComposioAuthorizeTool {
             ));
         }
         tracing::debug!(toolkit = %toolkit, "[composio] tool authorize.execute");
-        match self.client.authorize(&toolkit).await {
+        match self.client.authorize(&toolkit, None).await {
             Ok(resp) => {
                 crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::ComposioConnectionCreated {

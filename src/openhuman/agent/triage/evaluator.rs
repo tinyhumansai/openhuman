@@ -206,10 +206,27 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = Option<LlmPermit>>,
 {
+    // Track whether the cloud arm bailed because of user budget so the
+    // eventual Deferred reason explains *why* we're sitting idle rather
+    // than the generic "both arms failed" copy.
+    let mut cloud_budget_exhausted: Option<anyhow::Error> = None;
+
     // ── Cloud arm ──────────────────────────────────────────────────
     match try_arm(&cloud, envelope, TriageResolutionPath::Cloud).await {
         Ok(run) => return Ok(TriageOutcome::Decision(run)),
         Err(ArmError::Fatal(err)) => return Err(err),
+        Err(ArmError::BudgetExhausted(err)) => {
+            tracing::warn!(
+                source = %envelope.source.slug(),
+                label = %envelope.display_label,
+                external_id = %envelope.external_id,
+                path = TriageResolutionPath::Cloud.as_str(),
+                error = %err,
+                "[triage::evaluator] cloud rejected for budget; \
+                 skipping retry and falling back to local arm"
+            );
+            cloud_budget_exhausted = Some(err);
+        }
         Err(ArmError::Retryable { retry_after_ms, .. }) => {
             // Sleep before the cloud retry. Honour Retry-After when
             // present; otherwise use a short backoff so the second
@@ -228,6 +245,18 @@ where
             match try_arm(&cloud, envelope, TriageResolutionPath::CloudAfterRetry).await {
                 Ok(run) => return Ok(TriageOutcome::Decision(run)),
                 Err(ArmError::Fatal(err)) => return Err(err),
+                Err(ArmError::BudgetExhausted(err)) => {
+                    tracing::warn!(
+                        source = %envelope.source.slug(),
+                        label = %envelope.display_label,
+                        external_id = %envelope.external_id,
+                        path = TriageResolutionPath::CloudAfterRetry.as_str(),
+                        error = %err,
+                        "[triage::evaluator] cloud rejected for budget on retry; \
+                         falling back to local arm"
+                    );
+                    cloud_budget_exhausted = Some(err);
+                }
                 Err(ArmError::Retryable { .. }) => {
                     // Exhausted cloud budget — fall through to local.
                     tracing::warn!(
@@ -244,9 +273,28 @@ where
         // No local arm available at all (runtime disabled, no model
         // configured) — the only honest outcome is a deferral so the
         // next tick retries the whole chain.
+        //
+        // `reason` is part of `TriageOutcome::Deferred` and may be
+        // forwarded into telemetry / UI, so it must stay a stable,
+        // scrubbed string. Raw upstream error text goes to the debug
+        // log instead, where it is operator-visible but not surfaced.
+        let reason = match &cloud_budget_exhausted {
+            Some(err) => {
+                tracing::debug!(
+                    target: "[triage::evaluator]",
+                    source = %envelope.source.slug(),
+                    label = %envelope.display_label,
+                    external_id = %envelope.external_id,
+                    error = %err,
+                    "cloud budget exhausted; no local arm — full upstream error"
+                );
+                "cloud budget exhausted; local arm unavailable".to_string()
+            }
+            None => "cloud retry exhausted; local arm unavailable".to_string(),
+        };
         return Ok(TriageOutcome::Deferred {
             defer_until_ms: now_ms().saturating_add(DEFER_WAKEUP_MS),
-            reason: "cloud retry exhausted; local arm unavailable".to_string(),
+            reason,
         });
     };
 
@@ -256,15 +304,34 @@ where
 
     match try_arm(&local, envelope, TriageResolutionPath::LocalFallback).await {
         Ok(run) => Ok(TriageOutcome::Decision(run)),
-        Err(ArmError::Fatal(err)) | Err(ArmError::Retryable { source: err, .. }) => {
+        Err(ArmError::Fatal(err))
+        | Err(ArmError::BudgetExhausted(err))
+        | Err(ArmError::Retryable { source: err, .. }) => {
             // Local also failed — defer rather than surface a hard
             // error. Today's "hard fail" is the wrong default for a
             // transient blocker per #1257.
-            let reason = format!("cloud + local both failed: {err}");
+            //
+            // `reason` is part of the public Deferred outcome and may
+            // flow into telemetry / UI, so keep it scrubbed. Raw error
+            // text from cloud + local lives in the structured warn
+            // fields below — visible to operators, not callers.
+            let reason = match cloud_budget_exhausted.as_ref() {
+                Some(_) => "cloud budget exhausted; local arm also failed".to_string(),
+                None => "cloud retry exhausted; local arm also failed".to_string(),
+            };
             tracing::warn!(
-                error = %reason,
+                target: "[triage::evaluator]",
+                source = %envelope.source.slug(),
+                label = %envelope.display_label,
+                external_id = %envelope.external_id,
+                local_error = %err,
+                cloud_error = cloud_budget_exhausted
+                    .as_ref()
+                    .map(|e| e.to_string())
+                    .unwrap_or_default(),
                 defer_ms = DEFER_WAKEUP_MS,
-                "[triage::evaluator] both arms failed; deferring"
+                reason = %reason,
+                "both arms failed; deferring"
             );
             Ok(TriageOutcome::Deferred {
                 defer_until_ms: now_ms().saturating_add(DEFER_WAKEUP_MS),
@@ -287,6 +354,13 @@ enum ArmError {
     /// Auth failure, missing model, prompt parse error, registry
     /// missing, etc. — retry / fallback would not change the result.
     Fatal(anyhow::Error),
+    /// Cloud upstream rejected the call because the user is out of
+    /// budget / credits. Retrying the cloud arm would just burn the
+    /// same wall, but the local arm has no upstream cost — so we
+    /// skip cloud retry, try local, and defer if local also fails.
+    /// This is **not** a fatal error: the user takes an explicit
+    /// action (top up) to fix it, so it must not page Sentry.
+    BudgetExhausted(anyhow::Error),
 }
 
 /// Run a single arm: dispatch the agent turn through the native bus
@@ -321,7 +395,7 @@ async fn try_arm(
         ))
     })?;
 
-    let system_prompt = extract_inline_prompt(&definition).ok_or_else(|| {
+    let system_prompt = extract_inline_prompt(definition).ok_or_else(|| {
         ArmError::Fatal(anyhow!(
             "trigger_triage agent definition must ship an inline prompt body"
         ))
@@ -438,7 +512,59 @@ fn classify_error(message: String) -> ArmError {
             source: err,
         };
     }
+    // Budget-exceeded is technically a 400 (not 5xx/429), so the
+    // generic transient checks above won't catch it — but it is a
+    // user-actionable upstream blocker, not a code bug, so we route
+    // it through `BudgetExhausted` to avoid Sentry pages.
+    if is_inference_budget_exceeded(&message) {
+        return ArmError::BudgetExhausted(err);
+    }
     ArmError::Fatal(err)
+}
+
+/// Returns `true` when `message` signals that the upstream rejected the
+/// call because the user's inference budget or credit balance is empty —
+/// meaning a retry would hit the same wall.
+///
+/// The vocabulary matches the OpenHuman backend's error copy and common
+/// third-party provider phrasing. It does **not** mirror the
+/// *semantics* of `channels/providers/web.rs` (a different code path);
+/// it is an independent, conservative allowlist evaluated inline so the
+/// triage evaluator carries no cross-domain import.
+///
+/// Kept conservative on purpose: a false positive would silently
+/// reclassify a real `Fatal` error as `BudgetExhausted`, hiding it from
+/// Sentry.
+fn is_inference_budget_exceeded(message: &str) -> bool {
+    // Normalize: lowercase, replace non-alphanumeric with spaces, then
+    // split into whitespace-separated tokens. This lets us do
+    // whole-word matching: a raw `contains("top up")` against the
+    // normalized text would also fire on "stop updating" (which
+    // contains the substring "top up" across word boundaries).
+    let normalized: String = message
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
+        .collect();
+    let words: Vec<&str> = normalized.split_whitespace().collect();
+    const NEEDLES: &[&str] = &[
+        "budget exceeded",
+        "budget exceeds",
+        "top up",
+        "add credits",
+        "out of credits",
+        "no remaining credits",
+    ];
+    NEEDLES.iter().any(|needle| {
+        let needle_tokens: Vec<&str> = needle.split_whitespace().collect();
+        if needle_tokens.is_empty() || words.len() < needle_tokens.len() {
+            return false;
+        }
+        words
+            .windows(needle_tokens.len())
+            .any(|window| window == needle_tokens.as_slice())
+    })
 }
 
 /// Heuristic for transient cloud failures the provider stack didn't
@@ -549,10 +675,7 @@ fn truncate_payload(payload: &serde_json::Value, max_bytes: usize) -> String {
         return pretty;
     }
     let dropped = pretty.len() - max_bytes;
-    let mut end = max_bytes;
-    while end > 0 && !pretty.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = crate::openhuman::util::floor_char_boundary(&pretty, max_bytes);
     format!("{}\n[...truncated {dropped} bytes]", &pretty[..end])
 }
 

@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 /// `config.toml` and fall back to the defaults shipped in
 /// [`ContextConfig::default`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ContextConfig {
     /// Master switch. When `false`, [`crate::openhuman::context::ContextManager`]
     /// skips every reduction stage and the summarizer is never invoked.

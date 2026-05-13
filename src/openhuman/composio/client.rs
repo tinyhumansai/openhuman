@@ -65,13 +65,39 @@ impl ComposioClient {
     /// `POST /agent-integrations/composio/authorize` — begin an OAuth
     /// handoff for `toolkit` and return the hosted `connectUrl` the user
     /// must open in a browser.
-    pub async fn authorize(&self, toolkit: &str) -> Result<ComposioAuthorizeResponse> {
+    ///
+    /// `extra_params` is an optional JSON object whose key/value pairs are
+    /// merged into the request body. Some toolkits (e.g. `whatsapp`) require
+    /// additional fields (e.g. `waba_id`) that Composio will reject the
+    /// authorization without.
+    pub async fn authorize(
+        &self,
+        toolkit: &str,
+        extra_params: Option<serde_json::Value>,
+    ) -> Result<ComposioAuthorizeResponse> {
         let toolkit = toolkit.trim();
         if toolkit.is_empty() {
             anyhow::bail!("composio.authorize: toolkit must not be empty");
         }
-        tracing::debug!(toolkit = %toolkit, "[composio] authorize");
-        let body = json!({ "toolkit": toolkit });
+        tracing::debug!(toolkit = %toolkit, has_extra_params = extra_params.is_some(), "[composio] authorize");
+        let mut body = serde_json::json!({ "toolkit": toolkit });
+        if let Some(extra) = extra_params {
+            const RESERVED: &[&str] = &["toolkit", "toolkit_version", "auth", "client_id"];
+            let extra_obj = extra.as_object().ok_or_else(|| {
+                anyhow::anyhow!("composio.authorize: extra_params must be a JSON object")
+            })?;
+            let obj = body.as_object_mut().ok_or_else(|| {
+                anyhow::anyhow!("composio.authorize: internal payload must be an object")
+            })?;
+            for (k, v) in extra_obj {
+                if RESERVED.contains(&k.as_str()) {
+                    anyhow::bail!(
+                        "composio.authorize: extra_params cannot override reserved key '{k}'"
+                    );
+                }
+                obj.insert(k.clone(), v.clone());
+            }
+        }
         self.inner
             .post::<ComposioAuthorizeResponse>("/agent-integrations/composio/authorize", &body)
             .await

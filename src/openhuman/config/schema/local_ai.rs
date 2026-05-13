@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 /// `LocalAiConfig::runtime_enabled` — when that is `false` every helper
 /// method below returns `false` regardless of these values.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct LocalAiUsage {
     /// When true (and `runtime_enabled`), use the local model for embedding
     /// generation instead of the cloud backend.
@@ -39,6 +40,7 @@ impl Default for LocalAiUsage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct LocalAiConfig {
     /// Master runtime switch. Defaults to `false` — Ollama is OFF by default.
     /// Note: the old on-disk field was `enabled`; that key is now unknown to

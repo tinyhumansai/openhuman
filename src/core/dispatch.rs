@@ -3,6 +3,7 @@
 //! This module coordinates the routing of incoming requests to either the
 //! core subsystem or the OpenHuman domain-specific handlers.
 
+use crate::core::legacy_aliases::resolve_legacy;
 use crate::core::rpc_log;
 use crate::core::types::{AppState, InvocationResult};
 use serde_json::{json, Map, Value};
@@ -30,11 +31,41 @@ pub async fn dispatch(
     method: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    let method = if let Some(canonical) = normalize_legacy_method(method) {
+        log::debug!(
+            "[rpc] legacy method '{}' rewritten to '{}'",
+            method,
+            canonical
+        );
+        canonical
+    } else {
+        method
+    };
+
     log::trace!(
         "[rpc:dispatch] enter method={} params={}",
         method,
         rpc_log::redact_params_for_log(&params)
     );
+
+    // Tier 0: Rewrite legacy method names to their canonical form before
+    // any subsystem lookup. Symmetric with the frontend's
+    // `normalizeRpcMethod` (`app/src/services/rpcMethods.ts`): the
+    // frontend rewrites outgoing names for clients that just updated, the
+    // core rewrites incoming names for clients that haven't yet. See
+    // `crate::core::legacy_aliases` for the shared table.
+    let resolved = resolve_legacy(method);
+    if resolved != method {
+        // Per-rewrite log at debug to keep the dispatcher hot path quiet
+        // at scale (per graycyrus review on PR #1544). Aggregate
+        // visibility belongs in the observability layer, not here.
+        log::debug!(
+            "[rpc-legacy-alias] rewrite method={} -> canonical={}",
+            method,
+            resolved
+        );
+    }
+    let method = resolved;
 
     // Tier 1: Internal core methods.
     // These are handled directly within the core module and don't require
@@ -64,6 +95,44 @@ pub async fn dispatch(
 
     log::warn!("[rpc:dispatch] unknown_method method={}", method);
     Err(format!("unknown method: {method}"))
+}
+
+/// Normalizes legacy un-namespaced method names to their canonical equivalents.
+///
+/// This provides defense-in-depth against stale or unbalanced callers that may
+/// still be using old method names.
+///
+/// Source of truth: `app/src/services/rpcMethods.ts` (`LEGACY_METHOD_ALIASES`)
+fn normalize_legacy_method(method: &str) -> Option<&'static str> {
+    match method {
+        "openhuman.get_analytics_settings" => Some("openhuman.config_get_analytics_settings"),
+        "openhuman.get_composio_trigger_settings" => {
+            Some("openhuman.config_get_composio_trigger_settings")
+        }
+        "openhuman.get_config" => Some("openhuman.config_get"),
+        "openhuman.get_runtime_flags" => Some("openhuman.config_get_runtime_flags"),
+        "openhuman.ping" => Some("core.ping"),
+        "openhuman.set_browser_allow_all" => Some("openhuman.config_set_browser_allow_all"),
+        "openhuman.update_analytics_settings" => Some("openhuman.config_update_analytics_settings"),
+        "openhuman.update_browser_settings" => Some("openhuman.config_update_browser_settings"),
+        "openhuman.update_composio_trigger_settings" => {
+            Some("openhuman.config_update_composio_trigger_settings")
+        }
+        "openhuman.update_local_ai_settings" => Some("openhuman.config_update_local_ai_settings"),
+        "openhuman.update_memory_settings" => Some("openhuman.config_update_memory_settings"),
+        "openhuman.update_model_settings" => Some("openhuman.config_update_model_settings"),
+        "openhuman.update_runtime_settings" => Some("openhuman.config_update_runtime_settings"),
+        "openhuman.update_screen_intelligence_settings" => {
+            Some("openhuman.config_update_screen_intelligence_settings")
+        }
+        "openhuman.workspace_onboarding_flag_exists" => {
+            Some("openhuman.config_workspace_onboarding_flag_exists")
+        }
+        "openhuman.workspace_onboarding_flag_set" => {
+            Some("openhuman.config_workspace_onboarding_flag_set")
+        }
+        _ => None,
+    }
 }
 
 /// Handles internal core-level RPC methods.
@@ -161,6 +230,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dispatch_rewrites_legacy_alias_before_lookup() {
+        // `openhuman.ping` is a legacy alias for `core.ping` in the shared
+        // alias table. Going through the dispatcher must rewrite it and
+        // route successfully to Tier 1 instead of falling through to the
+        // unknown-method error path.
+        let out = dispatch(test_state(), "openhuman.ping", json!({}))
+            .await
+            .expect("legacy alias openhuman.ping must resolve to core.ping");
+        assert_eq!(out, json!({ "ok": true }));
+    }
+
+    #[tokio::test]
     async fn dispatch_unknown_method_returns_error() {
         let err = dispatch(test_state(), "does.not.exist", json!({}))
             .await
@@ -215,5 +296,110 @@ mod tests {
             .expect("core.version must produce InvocationResult");
         assert_eq!(result.value, json!({ "version": "0.0.0-abc" }));
         assert!(result.logs.is_empty());
+    }
+
+    #[test]
+    fn test_normalize_legacy_method_all_aliases() {
+        let cases = vec![
+            (
+                "openhuman.get_analytics_settings",
+                "openhuman.config_get_analytics_settings",
+            ),
+            (
+                "openhuman.get_composio_trigger_settings",
+                "openhuman.config_get_composio_trigger_settings",
+            ),
+            ("openhuman.get_config", "openhuman.config_get"),
+            (
+                "openhuman.get_runtime_flags",
+                "openhuman.config_get_runtime_flags",
+            ),
+            ("openhuman.ping", "core.ping"),
+            (
+                "openhuman.set_browser_allow_all",
+                "openhuman.config_set_browser_allow_all",
+            ),
+            (
+                "openhuman.update_analytics_settings",
+                "openhuman.config_update_analytics_settings",
+            ),
+            (
+                "openhuman.update_browser_settings",
+                "openhuman.config_update_browser_settings",
+            ),
+            (
+                "openhuman.update_composio_trigger_settings",
+                "openhuman.config_update_composio_trigger_settings",
+            ),
+            (
+                "openhuman.update_local_ai_settings",
+                "openhuman.config_update_local_ai_settings",
+            ),
+            (
+                "openhuman.update_memory_settings",
+                "openhuman.config_update_memory_settings",
+            ),
+            (
+                "openhuman.update_model_settings",
+                "openhuman.config_update_model_settings",
+            ),
+            (
+                "openhuman.update_runtime_settings",
+                "openhuman.config_update_runtime_settings",
+            ),
+            (
+                "openhuman.update_screen_intelligence_settings",
+                "openhuman.config_update_screen_intelligence_settings",
+            ),
+            (
+                "openhuman.workspace_onboarding_flag_exists",
+                "openhuman.config_workspace_onboarding_flag_exists",
+            ),
+            (
+                "openhuman.workspace_onboarding_flag_set",
+                "openhuman.config_workspace_onboarding_flag_set",
+            ),
+        ];
+
+        for (legacy, canonical) in cases {
+            assert_eq!(
+                normalize_legacy_method(legacy),
+                Some(canonical),
+                "Legacy method {} should normalize to {}",
+                legacy,
+                canonical
+            );
+        }
+    }
+
+    #[test]
+    fn test_normalize_legacy_method_none_for_unknown_or_canonical() {
+        assert!(normalize_legacy_method("core.ping").is_none());
+        assert!(normalize_legacy_method("openhuman.config_get").is_none());
+        assert!(normalize_legacy_method("unknown.method").is_none());
+    }
+
+    #[tokio::test]
+    async fn dispatch_legacy_ping_rewrites_and_succeeds() {
+        let out = dispatch(test_state(), "openhuman.ping", json!({}))
+            .await
+            .expect("openhuman.ping should be rewritten to core.ping and succeed");
+        assert_eq!(out, json!({ "ok": true }));
+    }
+
+    #[tokio::test]
+    async fn dispatch_legacy_alias_routes_to_registry() {
+        // openhuman.get_analytics_settings should rewrite to openhuman.config_get_analytics_settings.
+        // This is a read-only call and should succeed if the registry is wired up.
+        let out = dispatch(test_state(), "openhuman.get_analytics_settings", json!({}))
+            .await
+            .expect("openhuman.get_analytics_settings should be rewritten and succeed");
+
+        // The registry-wrapped payload has a "result" field.
+        assert!(
+            out.get("enabled").is_some() || out.get("result").is_some(),
+            "Payload should have 'enabled' or 'result', got: {}",
+            out
+        );
     }
 }

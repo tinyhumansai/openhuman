@@ -809,7 +809,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         finishChatDoneTurn(event, 'ordinary');
       },
       onError: event => {
-        const eventKey = `error:${event.thread_id}:${event.request_id ?? 'none'}:${event.error_type}:${event.message}`;
+        const eventKey = `error:${event.thread_id}:${event.request_id ?? 'none'}:${event.error_type}`;
         if (
           !markChatEventSeen(eventKey, { threadId: event.thread_id, requestId: event.request_id })
         )
@@ -840,14 +840,17 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           const currentState = store.getState();
           const threadMessages = currentState.thread.messagesByThreadId[event.thread_id] ?? [];
           const lastMsg = threadMessages[threadMessages.length - 1];
-          if (
-            !(lastMsg?.sender === 'agent' && lastMsg?.content === USER_FACING_AGENT_ERROR_MESSAGE)
-          ) {
+          // For the generic 'inference' type the server may send a raw internal error string;
+          // use the safe user-facing constant instead. For all other classified types
+          // (rate_limited, timeout, auth_error, etc.) the message comes from
+          // classify_inference_error() in web.rs and is already user-friendly.
+          const errorContent =
+            event.error_type === 'inference'
+              ? USER_FACING_AGENT_ERROR_MESSAGE
+              : event.message || USER_FACING_AGENT_ERROR_MESSAGE;
+          if (!(lastMsg?.sender === 'agent' && lastMsg?.content === errorContent)) {
             void dispatch(
-              addInferenceResponse({
-                content: USER_FACING_AGENT_ERROR_MESSAGE,
-                threadId: event.thread_id,
-              })
+              addInferenceResponse({ content: errorContent, threadId: event.thread_id })
             );
           }
 

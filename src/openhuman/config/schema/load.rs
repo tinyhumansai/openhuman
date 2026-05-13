@@ -448,6 +448,73 @@ pub fn pre_login_user_dir(default_openhuman_dir: &Path) -> PathBuf {
     user_openhuman_dir(default_openhuman_dir, PRE_LOGIN_USER_ID)
 }
 
+/// Try to parse config TOML. On failure, try `.bak`, then fall back to `Config::default()`.
+///
+/// Returns `(config, was_corrupted)` where `was_corrupted == true` means the
+/// primary failed to parse and the caller is responsible for archiving the
+/// corrupt primary and persisting the recovered/default config.
+///
+/// This is a standalone async function (not a method on Config) so it can be
+/// called from both `load_or_init` and `load_from_default_paths`.
+async fn parse_config_with_recovery(config_path: &Path, contents: &str) -> (Config, bool) {
+    let parse_err = match toml::from_str::<Config>(contents) {
+        Ok(config) => {
+            tracing::debug!(
+                path = %config_path.display(),
+                "[config] Config parsed successfully"
+            );
+            return (config, false);
+        }
+        Err(parse_err) => parse_err,
+    };
+
+    let backup_path = config_path.with_extension("toml.bak");
+    if tokio::fs::try_exists(&backup_path).await.unwrap_or(false) {
+        tracing::warn!(
+            path = %config_path.display(),
+            backup = %backup_path.display(),
+            error = %parse_err,
+            "[config] Config file is corrupted — attempting recovery from backup"
+        );
+        match fs::read_to_string(&backup_path).await {
+            Ok(bak_contents) => match toml::from_str::<Config>(&bak_contents) {
+                Ok(bak_config) => {
+                    tracing::info!(
+                        path = %config_path.display(),
+                        backup = %backup_path.display(),
+                        "[config] Recovered config from backup"
+                    );
+                    return (bak_config, true);
+                }
+                Err(bak_err) => {
+                    tracing::warn!(
+                        path = %config_path.display(),
+                        backup = %backup_path.display(),
+                        error = %bak_err,
+                        "[config] Backup is also corrupted; resetting to defaults"
+                    );
+                }
+            },
+            Err(read_err) => {
+                tracing::warn!(
+                    path = %config_path.display(),
+                    backup = %backup_path.display(),
+                    error = %read_err,
+                    "[config] Failed to read backup; resetting to defaults"
+                );
+            }
+        }
+    } else {
+        tracing::warn!(
+            path = %config_path.display(),
+            error = %parse_err,
+            "[config] Config file is corrupted (no backup found); resetting to defaults"
+        );
+    }
+
+    (Config::default(), true)
+}
+
 fn migrate_legacy_autocomplete_disabled_apps(config: &mut Config) {
     // Legacy defaults blocked both terminal and code, which prevented Codex/CLI usage.
     // Migrate only the exact legacy default so custom user preferences remain untouched.
@@ -548,38 +615,55 @@ impl Config {
             let contents = fs::read_to_string(&config_path)
                 .await
                 .context("Failed to read config file")?;
-            let parse_result: Result<Config, _> = toml::from_str(&contents);
-            let mut config: Config = match parse_result {
-                Ok(c) => c,
-                Err(parse_err) => {
-                    let backup_path = config_path.with_extension("toml.bak");
-                    tracing::warn!(
-                        path = %config_path.display(),
-                        backup = %backup_path.display(),
-                        error = %parse_err,
-                        "[config] Config file is corrupted — backing up and resetting to defaults"
-                    );
-                    if let Err(copy_err) = fs::copy(&config_path, &backup_path).await {
-                        tracing::warn!(
-                            path = %config_path.display(),
-                            backup = %backup_path.display(),
-                            error = %copy_err,
-                            "[config] Failed to back up corrupted config; continuing with defaults"
-                        );
-                    }
-                    Config::default()
-                }
-            };
+            let (mut config, config_was_corrupted) =
+                parse_config_with_recovery(&config_path, &contents).await;
             config.config_path = config_path.clone();
             config.workspace_dir = workspace_dir;
             migrate_legacy_autocomplete_disabled_apps(&mut config);
             config.apply_env_overrides();
+
+            if config_was_corrupted {
+                // Rename the corrupted primary away *before* calling save().
+                // save() copies config_path → config_path.bak before the
+                // atomic replace, so if the corrupted file is still at
+                // config_path it would overwrite the good .bak that we just
+                // used for recovery. Only call save() when the rename
+                // succeeds; on failure log and leave recovery for next boot
+                // rather than destroying the good backup.
+                let corrupted_path = config_path.with_extension("toml.corrupted");
+                match fs::rename(&config_path, &corrupted_path).await {
+                    Ok(()) => {
+                        tracing::debug!(
+                            src = %config_path.display(),
+                            dst = %corrupted_path.display(),
+                            "[config] Renamed corrupted config; persisting recovered config"
+                        );
+                        if let Err(e) = config.save().await {
+                            tracing::warn!(
+                                path = %config.config_path.display(),
+                                error = %e,
+                                "[config] Failed to persist recovered config to disk"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            src = %config_path.display(),
+                            dst = %corrupted_path.display(),
+                            error = %e,
+                            "[config] Failed to rename corrupted config; skipping save to \
+                             protect the .bak — will retry recovery on next startup"
+                        );
+                    }
+                }
+            }
 
             tracing::debug!(
                 path = %config.config_path.display(),
                 workspace = %config.workspace_dir.display(),
                 source = resolution_source.as_str(),
                 initialized = false,
+                recovered = config_was_corrupted,
                 "Config loaded"
             );
             Ok(config)
@@ -633,11 +717,12 @@ impl Config {
             return Ok(config);
         }
 
+        // NOTE: no backup recovery here by design — this is the debug-dump path only;
+        // `load_or_init()` is the authoritative startup path that handles corruption.
         let raw = fs::read_to_string(&config_path)
             .await
             .context("reading config.toml from default paths")?;
-        let mut config: Config =
-            toml::from_str(&raw).context("parsing config.toml from default paths")?;
+        let (mut config, _was_corrupted) = parse_config_with_recovery(&config_path, &raw).await;
         config.config_path = config_path;
         config.workspace_dir = workspace_dir;
         config.apply_env_overrides();
@@ -1279,7 +1364,9 @@ impl Config {
             .context("Failed to fsync temporary config file")?;
         drop(temp_file);
 
-        let had_existing_config = self.config_path.exists();
+        let had_existing_config = tokio::fs::try_exists(&self.config_path)
+            .await
+            .unwrap_or(false);
         if had_existing_config {
             fs::copy(&self.config_path, &backup_path)
                 .await
@@ -1303,9 +1390,10 @@ impl Config {
 
         sync_directory(parent_dir).await?;
 
-        if had_existing_config {
-            let _ = fs::remove_file(&backup_path).await;
-        }
+        // Note: we intentionally keep the .bak file after a successful save so
+        // that `parse_config_with_recovery` can use it if the primary is later
+        // corrupted. The .bak is updated on every successful save, so it always
+        // holds the last-known-good config.
 
         Ok(())
     }

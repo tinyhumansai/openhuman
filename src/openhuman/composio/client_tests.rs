@@ -41,9 +41,46 @@ async fn authorize_rejects_empty_toolkit() {
         "test".into(),
     ));
     let client = ComposioClient::new(inner);
-    let err = client.authorize("   ").await.unwrap_err();
+    let err = client.authorize("   ", None).await.unwrap_err();
     assert!(
         err.to_string().contains("toolkit must not be empty"),
+        "unexpected error: {err}"
+    );
+}
+
+/// `authorize()` must reject a non-object `extra_params` before making any HTTP call.
+#[tokio::test]
+async fn authorize_rejects_non_object_extra_params() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+    let err = client
+        .authorize("whatsapp", Some(serde_json::json!("waba-123")))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("extra_params must be a JSON object"),
+        "unexpected error: {err}"
+    );
+}
+
+/// `authorize()` must reject an `extra_params` object that tries to override a reserved key.
+#[tokio::test]
+async fn authorize_rejects_reserved_key_override() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+    let err = client
+        .authorize("whatsapp", Some(serde_json::json!({ "toolkit": "gmail" })))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("cannot override reserved key"),
         "unexpected error: {err}"
     );
 }
@@ -191,9 +228,34 @@ async fn authorize_posts_toolkit_and_returns_connect_url() {
     );
     let base = start_mock_backend(app).await;
     let client = build_client_for(base);
-    let resp = client.authorize("gmail").await.unwrap();
+    let resp = client.authorize("gmail", None).await.unwrap();
     assert!(resp.connect_url.contains("gmail"));
     assert_eq!(resp.connection_id, "conn-abc");
+}
+
+#[tokio::test]
+async fn authorize_forwards_extra_params_and_returns_connect_url() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/authorize",
+        post(|Json(body): Json<Value>| async move {
+            // Assert extra_params are forwarded alongside toolkit.
+            assert_eq!(body["toolkit"].as_str(), Some("whatsapp"));
+            assert_eq!(body["waba_id"].as_str(), Some("waba-123"));
+            Json(json!({
+                "success": true,
+                "data": {
+                    "connectUrl": "https://composio.example/whatsapp/consent",
+                    "connectionId": "conn-xyz"
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let extra = serde_json::json!({ "waba_id": "waba-123" });
+    let resp = client.authorize("whatsapp", Some(extra)).await.unwrap();
+    assert!(resp.connect_url.contains("whatsapp"));
+    assert_eq!(resp.connection_id, "conn-xyz");
 }
 
 #[tokio::test]

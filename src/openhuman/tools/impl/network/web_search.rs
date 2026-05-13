@@ -61,11 +61,7 @@ impl WebSearchTool {
             if let Some(first) = result.excerpts.first() {
                 let excerpt = first.trim();
                 if !excerpt.is_empty() {
-                    let truncated = if let Some((idx, _)) = excerpt.char_indices().nth(500) {
-                        format!("{}...", &excerpt[..idx])
-                    } else {
-                        excerpt.to_string()
-                    };
+                    let truncated = crate::openhuman::util::truncate_with_ellipsis(excerpt, 500);
                     lines.push(format!("   {}", truncated));
                 }
             }
@@ -95,11 +91,7 @@ impl WebSearchTool {
             if let Some(first) = r.excerpts.first() {
                 let excerpt = first.trim();
                 if !excerpt.is_empty() {
-                    let truncated = if let Some((idx, _)) = excerpt.char_indices().nth(500) {
-                        format!("{}…", &excerpt[..idx])
-                    } else {
-                        excerpt.to_string()
-                    };
+                    let truncated = crate::openhuman::util::truncate_with_suffix(excerpt, 500, "…");
                     out.push_str(&format!("> {truncated}\n"));
                 }
             }
@@ -309,6 +301,25 @@ mod tests {
         assert!(result.contains("..."));
         let excerpt_line = result.lines().find(|l| l.trim().starts_with('x')).unwrap();
         assert!(excerpt_line.trim().len() <= 503);
+    }
+
+    #[test]
+    fn test_web_search_truncation_utf8() {
+        let excerpt = "🦀".repeat(600);
+        let results = vec![SearchResultItem {
+            title: "T".into(),
+            url: "https://t.com".into(),
+            publish_date: None,
+            excerpts: vec![excerpt],
+        }];
+        let result = tool().parse_parallel_results(&results, "q").unwrap();
+        assert!(result.contains("..."));
+        // Should have 500 crabs + "..."
+        let excerpt_line = result.lines().find(|l| l.contains('🦀')).unwrap();
+        assert_eq!(
+            excerpt_line.trim().chars().filter(|c| *c == '🦀').count(),
+            500
+        );
     }
 
     #[tokio::test]

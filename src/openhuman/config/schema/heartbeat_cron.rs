@@ -6,14 +6,17 @@ use serde::{Deserialize, Serialize};
 /// Heartbeat configuration — periodic background loop that evaluates
 /// HEARTBEAT.md tasks against workspace state using local model inference.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct HeartbeatConfig {
     /// Enable the heartbeat loop.
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// Tick interval in minutes (minimum 5).
+    #[serde(default = "default_interval_minutes")]
     pub interval_minutes: u32,
     /// Enable subconscious inference (local model evaluation).
     /// When false, the heartbeat only counts tasks without reasoning.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub inference_enabled: bool,
     /// Maximum token budget for the situation report (default 40k).
     #[serde(default = "default_context_budget")]
@@ -47,6 +50,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_interval_minutes() -> u32 {
+    5
+}
+
 fn default_meeting_lookahead_minutes() -> u32 {
     120
 }
@@ -58,9 +65,9 @@ fn default_reminder_lookahead_minutes() -> u32 {
 impl Default for HeartbeatConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            interval_minutes: 5,
-            inference_enabled: true,
+            enabled: default_true(),
+            interval_minutes: default_interval_minutes(),
+            inference_enabled: default_true(),
             context_budget_tokens: default_context_budget(),
             notify_meetings: default_true(),
             notify_reminders: default_true(),
@@ -73,6 +80,7 @@ impl Default for HeartbeatConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct CronConfig {
     #[serde(default = "default_cron_enabled")]
     pub enabled: bool,

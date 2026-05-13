@@ -5,6 +5,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 pub(crate) const SERVICE_LABEL: &str = "com.openhuman.core";
 pub(crate) const LEGACY_SERVICE_LABEL: &str = "com.openhuman.daemon";
 pub(crate) const LEGACY_APP_LABEL: &str = "com.openhuman.app";
@@ -107,7 +110,6 @@ pub(crate) fn xml_escape(input: &str) -> String {
 /// console — visible to users (#1475 follow-up to #731 + #1338).
 #[cfg(windows)]
 fn no_window(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt;
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
 }
 

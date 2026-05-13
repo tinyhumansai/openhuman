@@ -24,6 +24,7 @@ const defaultProps = {
   speedText: '',
   etaText: '',
   statusTone: (_state: string) => '',
+  runtimeEnabled: true,
   onRefreshStatus: vi.fn(),
   onTriggerDownload: vi.fn(),
   onSetOllamaPath: vi.fn(),
@@ -54,6 +55,13 @@ const makeDiagnostics = (overrides: Partial<LocalAiDiagnostics> = {}): LocalAiDi
 });
 
 describe('ModelStatusSection diagnostics', () => {
+  it('disables bootstrap controls when runtime is disabled', () => {
+    render(<ModelStatusSection {...defaultProps} runtimeEnabled={false} />);
+
+    expect(screen.getByRole('button', { name: 'Bootstrap / Resume' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Force Re-bootstrap' })).toBeDisabled();
+  });
+
   it('shows the base URL being checked', () => {
     render(
       <ModelStatusSection

@@ -35,7 +35,7 @@ To install or get started, either download from the website over at [tinyhumans.
 ```
 # Download DMG, EXEs over at https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme or run in from your terminal
 
-# For MacOS/Linux
+# For macOS or Linux x64
 curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
 
 # For Windows

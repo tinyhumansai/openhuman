@@ -33,14 +33,50 @@
 /// assert_eq!(truncate_with_ellipsis("", 10), "");
 /// ```
 pub fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
+    truncate_with_suffix(s, max_chars, "...")
+}
+
+/// Truncate a string to at most `max_chars` characters, appending `suffix` if truncated.
+pub fn truncate_with_suffix(s: &str, max_chars: usize, suffix: &str) -> String {
     match s.char_indices().nth(max_chars) {
         Some((idx, _)) => {
             let truncated = &s[..idx];
             // Trim trailing whitespace for cleaner output
-            format!("{}...", truncated.trim_end())
+            format!("{}{}", truncated.trim_end(), suffix)
         }
         None => s.to_string(),
     }
+}
+
+/// Truncate a string to at most `max_bytes` bytes, appending a single-character
+/// ellipsis `…` (3 bytes) if truncated. The returned string's total byte
+/// length will never exceed `max_bytes`.
+pub fn truncate_at_byte_boundary(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let ellipsis = "…";
+    let ellipsis_len = ellipsis.len();
+    if max_bytes < ellipsis_len {
+        return String::new();
+    }
+    let mut end = max_bytes - ellipsis_len;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &s[..end], ellipsis)
+}
+
+/// Round a byte index DOWN to the nearest UTF-8 character boundary.
+pub fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut end = index;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
 }
 
 /// Utility enum for handling optional values.
@@ -141,5 +177,48 @@ mod tests {
     fn test_truncate_zero_max_chars() {
         // Edge case: max_chars = 0
         assert_eq!(truncate_with_ellipsis("hello", 0), "...");
+    }
+
+    #[test]
+    fn test_truncate_at_byte_boundary() {
+        let s = "Hello 🦀 World"; // 16 bytes total. "🦀" is 4 bytes at index 6-9.
+                                  // No truncation
+        assert_eq!(truncate_at_byte_boundary(s, 16), s);
+        assert_eq!(truncate_at_byte_boundary(s, 20), s);
+
+        // Truncate at index 11 (the space after 🦀)
+        // max_bytes = 14, ellipsis = 3 bytes, target end = 11.
+        assert_eq!(truncate_at_byte_boundary(s, 14), "Hello 🦀 …");
+
+        // Truncate mid-emoji (byte 8 is mid-🦀)
+        // max_bytes = 9, ellipsis = 3 bytes, target end = 6.
+        // should back up to index 6, add "…" (3 bytes) -> 9 bytes total
+        let truncated = truncate_at_byte_boundary(s, 9);
+        assert_eq!(truncated, "Hello …");
+        assert!(truncated.len() <= 9);
+
+        // Very small budget
+        assert_eq!(truncate_at_byte_boundary("abc", 2), "");
+        assert_eq!(truncate_at_byte_boundary("abc", 3), "abc");
+    }
+
+    #[test]
+    fn test_floor_char_boundary() {
+        let s = "A🦀C";
+        assert_eq!(floor_char_boundary(s, 0), 0);
+        assert_eq!(floor_char_boundary(s, 1), 1); // After 'A'
+        assert_eq!(floor_char_boundary(s, 2), 1); // Mid-🦀
+        assert_eq!(floor_char_boundary(s, 3), 1); // Mid-🦀
+        assert_eq!(floor_char_boundary(s, 4), 1); // Mid-🦀
+        assert_eq!(floor_char_boundary(s, 5), 5); // After '🦀'
+        assert_eq!(floor_char_boundary(s, 6), 6); // After 'C'
+        assert_eq!(floor_char_boundary(s, 100), 6);
+    }
+
+    #[test]
+    fn test_truncate_with_suffix() {
+        let s = "Hello World";
+        assert_eq!(truncate_with_suffix(s, 5, "!!!"), "Hello!!!");
+        assert_eq!(truncate_with_suffix(s, 20, "!!!"), "Hello World");
     }
 }

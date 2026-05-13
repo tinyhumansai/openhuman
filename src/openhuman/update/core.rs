@@ -4,6 +4,9 @@
 use std::io::Write;
 use std::path::PathBuf;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
+
 use crate::openhuman::config::UpdateRestartStrategy;
 use crate::openhuman::update::types::{GitHubAsset, GitHubRelease, UpdateApplyResult, UpdateInfo};
 
@@ -265,7 +268,6 @@ pub async fn download_and_stage_with_version(
     // Set executable permission on Unix.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755))
             .map_err(|e| format!("failed to set executable permission: {e}"))?;
     }

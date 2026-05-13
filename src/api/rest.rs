@@ -203,8 +203,22 @@ pub struct BackendOAuthClient {
 
 impl BackendOAuthClient {
     /// Creates a new `BackendOAuthClient` with the given API base URL.
+    ///
+    /// Any path, query, or fragment in `api_base` is stripped so that
+    /// `Url::join` always resolves root-relative REST paths correctly.
+    /// This guards against callers who pass a full LLM completions URL
+    /// (e.g. `https://host/v1/chat/completions`) instead of just the origin:
+    /// without stripping, `join("teams/me/usage")` would produce the wrong
+    /// path `/v1/chat/teams/me/usage` via RFC 3986 relative resolution.
     pub fn new(api_base: &str) -> Result<Self> {
-        let base = Url::parse(api_base.trim()).context("Invalid API base URL")?;
+        let mut base = Url::parse(api_base.trim()).context("Invalid API base URL")?;
+        anyhow::ensure!(
+            matches!(base.scheme(), "http" | "https") && base.host_str().is_some(),
+            "API base URL must be an absolute http(s) URL with host"
+        );
+        base.set_path("");
+        base.set_query(None);
+        base.set_fragment(None);
         let client = build_backend_reqwest_client()?;
         Ok(Self { client, base })
     }
@@ -429,23 +443,40 @@ impl BackendOAuthClient {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         if !status.is_success() {
-            let status_str = status.as_u16().to_string();
-            crate::core::observability::report_error(
-                format!(
-                    "{} {} failed ({status}): {text}",
+            let status_code = status.as_u16();
+            let status_str = status_code.to_string();
+            // 502/503/504 are transient infrastructure errors (proxy/CDN/backend
+            // temporarily unavailable). They are not code bugs and callers already
+            // implement retry/disable logic, so skip Sentry to avoid noise.
+            let is_transient_infra = matches!(status_code, 502 | 503 | 504);
+            if is_transient_infra {
+                tracing::warn!(
+                    method = method.as_str(),
+                    path = url.path(),
+                    status = status_code,
+                    "[backend_api] transient {status} on {} {} — not reporting to Sentry",
                     method.as_str(),
-                    url.path()
-                )
-                .as_str(),
-                "backend_api",
-                "authed_json",
-                &[
-                    ("method", method.as_str()),
-                    ("path", url.path()),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
+                    url.path(),
+                );
+            } else {
+                crate::core::observability::report_error(
+                    format!(
+                        "{} {} failed ({status}); response_body_len={}",
+                        method.as_str(),
+                        url.path(),
+                        text.len()
+                    )
+                    .as_str(),
+                    "backend_api",
+                    "authed_json",
+                    &[
+                        ("method", method.as_str()),
+                        ("path", url.path()),
+                        ("status", status_str.as_str()),
+                        ("failure", "non_2xx"),
+                    ],
+                );
+            }
             anyhow::bail!(
                 "{} {} failed ({status}): {text}",
                 method.as_str(),

@@ -1020,6 +1020,73 @@ async fn json_rpc_thread_labels_create_and_update() {
 }
 
 #[tokio::test]
+async fn json_rpc_thread_not_found_errors_are_structured() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+    let thread_id = "thread-missing";
+
+    let append = post_json_rpc(
+        &rpc_base,
+        9011,
+        "openhuman.threads_message_append",
+        json!({
+            "thread_id": thread_id,
+            "message": {
+                "id": "msg-1",
+                "content": "hello",
+                "type": "text",
+                "extraMetadata": {},
+                "sender": "user",
+                "createdAt": "2026-01-01T00:00:00Z"
+            }
+        }),
+    )
+    .await;
+    let append_err = assert_jsonrpc_error(&append, "threads_message_append missing thread");
+    assert_eq!(append_err["message"], "thread thread-missing not found");
+    assert_eq!(append_err["data"]["kind"], "ThreadNotFound");
+    assert_eq!(append_err["data"]["thread_id"], thread_id);
+    // The transport layer no longer stamps the RPC method into the structured
+    // error data — the domain controller emits a method-agnostic envelope and
+    // jsonrpc.rs surfaces it verbatim. The frontend keys on `kind` +
+    // `thread_id` (see `coreRpcClient.isThreadNotFoundRpcData`), not method.
+    assert!(
+        append_err["data"]["method"].is_null(),
+        "method must not appear in structured error data: the domain envelope is method-agnostic"
+    );
+
+    let title = post_json_rpc(
+        &rpc_base,
+        9012,
+        "openhuman.threads_generate_title",
+        json!({ "thread_id": thread_id }),
+    )
+    .await;
+    let title_err = assert_jsonrpc_error(&title, "threads_generate_title missing thread");
+    assert_eq!(title_err["message"], "thread thread-missing not found");
+    assert_eq!(title_err["data"]["kind"], "ThreadNotFound");
+    assert_eq!(title_err["data"]["thread_id"], thread_id);
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_thread_turn_state_lifecycle() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");

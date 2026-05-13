@@ -37,14 +37,7 @@ fn stream_local_not_supported_error() -> StreamResult<StreamChunk> {
 }
 
 fn truncate_safe(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = crate::openhuman::util::floor_char_boundary(s, max_bytes);
     &s[..end]
 }
 

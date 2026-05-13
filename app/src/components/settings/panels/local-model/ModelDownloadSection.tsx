@@ -10,6 +10,7 @@ interface ModelDownloadSectionProps {
   assets: LocalAiAssetsStatus | null;
   assetDownloadBusy: Record<string, boolean>;
   statusTone: (state: string) => string;
+  runtimeEnabled: boolean;
   onTriggerAssetDownload: (capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts') => void;
 
   summaryInput: string;
@@ -60,6 +61,7 @@ const ModelDownloadSection = ({
   assets,
   assetDownloadBusy,
   statusTone,
+  runtimeEnabled,
   onTriggerAssetDownload,
   summaryInput,
   summaryOutput,
@@ -126,7 +128,7 @@ const ModelDownloadSection = ({
                 )}
                 <button
                   onClick={() => onTriggerAssetDownload(key)}
-                  disabled={assetDownloadBusy[key]}
+                  disabled={!runtimeEnabled || assetDownloadBusy[key]}
                   className="mt-2 px-2 py-1 text-[10px] rounded border border-stone-200 hover:border-stone-300 disabled:opacity-60 text-stone-600">
                   {assetDownloadBusy[key] ? 'Downloading...' : 'Download'}
                 </button>
@@ -151,7 +153,7 @@ const ModelDownloadSection = ({
             </div>
             <button
               onClick={onRunSummaryTest}
-              disabled={isSummaryLoading || !summaryInput.trim()}
+              disabled={!runtimeEnabled || isSummaryLoading || !summaryInput.trim()}
               className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white">
               {isSummaryLoading ? 'Running...' : 'Run Summary Test'}
             </button>
@@ -185,7 +187,7 @@ const ModelDownloadSection = ({
             </label>
             <button
               onClick={onRunPromptTest}
-              disabled={isPromptLoading || !promptInput.trim()}
+              disabled={!runtimeEnabled || isPromptLoading || !promptInput.trim()}
               className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
               {isPromptLoading ? 'Running...' : 'Run Prompt Test'}
             </button>
@@ -226,7 +228,12 @@ const ModelDownloadSection = ({
           />
           <button
             onClick={onRunVisionTest}
-            disabled={isVisionLoading || !visionPromptInput.trim() || !visionImageInput.trim()}
+            disabled={
+              !runtimeEnabled ||
+              isVisionLoading ||
+              !visionPromptInput.trim() ||
+              !visionImageInput.trim()
+            }
             className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white">
             {isVisionLoading ? 'Running...' : 'Run Vision Test'}
           </button>
@@ -249,7 +256,7 @@ const ModelDownloadSection = ({
           />
           <button
             onClick={onRunEmbeddingTest}
-            disabled={isEmbeddingLoading || !embeddingInput.trim()}
+            disabled={!runtimeEnabled || isEmbeddingLoading || !embeddingInput.trim()}
             className="px-3 py-1.5 text-xs rounded-md bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white">
             {isEmbeddingLoading ? 'Running...' : 'Run Embedding Test'}
           </button>
@@ -274,7 +281,7 @@ const ModelDownloadSection = ({
           />
           <button
             onClick={onRunTranscribeTest}
-            disabled={isTranscribeLoading || !audioPathInput.trim()}
+            disabled={!runtimeEnabled || isTranscribeLoading || !audioPathInput.trim()}
             className="px-3 py-1.5 text-xs rounded-md bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white">
             {isTranscribeLoading ? 'Running...' : 'Run Transcription Test'}
           </button>
@@ -307,7 +314,7 @@ const ModelDownloadSection = ({
           />
           <button
             onClick={onRunTtsTest}
-            disabled={isTtsLoading || !ttsInput.trim()}
+            disabled={!runtimeEnabled || isTtsLoading || !ttsInput.trim()}
             className="px-3 py-1.5 text-xs rounded-md bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white">
             {isTtsLoading ? 'Running...' : 'Run TTS Test'}
           </button>

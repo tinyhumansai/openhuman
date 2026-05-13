@@ -11,7 +11,7 @@ const isTauriMock = vi.fn();
 const tauriOpenUrlMock = vi.fn();
 const addBreadcrumbMock = vi.fn();
 
-vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => isTauriMock() }));
+vi.mock('./tauriCommands/common', () => ({ isTauri: () => isTauriMock() }));
 
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (url: string) => tauriOpenUrlMock(url) }));
 

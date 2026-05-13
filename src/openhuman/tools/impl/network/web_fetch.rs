@@ -154,10 +154,7 @@ impl Tool for WebFetchTool {
         }
 
         let (snippet, truncated) = if body.len() > max_bytes {
-            let mut cut = max_bytes;
-            while cut > 0 && !body.is_char_boundary(cut) {
-                cut -= 1;
-            }
+            let cut = crate::openhuman::util::floor_char_boundary(&body, max_bytes);
             (&body[..cut], true)
         } else {
             (body.as_str(), false)
@@ -214,5 +211,16 @@ mod tests {
         let tool = WebFetchTool::new(test_security(), vec!["example.com".into()], None, None);
         let result = tool.execute(json!({ "url": "not-a-url" })).await.unwrap();
         assert!(result.is_error);
+    }
+
+    #[test]
+    fn test_web_fetch_truncation_utf8() {
+        // Mock body with multi-byte char exactly at budget
+        let body = "Hello 🦀 World"; // 🦀 is at index 6-9
+        let max_bytes = 8;
+        // Should truncate at index 6
+        let cut = crate::openhuman::util::floor_char_boundary(body, max_bytes);
+        assert_eq!(cut, 6);
+        assert_eq!(&body[..cut], "Hello ");
     }
 }

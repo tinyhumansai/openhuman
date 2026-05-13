@@ -17,7 +17,7 @@ OpenHuman is a native desktop application, not a browser extension, not an Elect
 | ----------- | -------------------- | -------------------------- |
 | **macOS**   | Intel, Apple Silicon | `.dmg` installer, Homebrew |
 | **Windows** | x64, ARM64           | `.msi` installer           |
-| **Linux**   | x64, ARM64           | AppImage, `.deb`, apt      |
+| **Linux**   | x64                  | AppImage, `.deb`           |
 
 ***
 

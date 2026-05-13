@@ -4,7 +4,32 @@
 //! the async `ops::*` entry points rely on.
 use super::*;
 use crate::openhuman::threads::title::collapse_whitespace;
+use crate::openhuman::threads::ThreadsError;
 use serde_json::{json, Value};
+use std::ffi::OsString;
+use std::path::Path;
+
+struct EnvVarGuard {
+    key: &'static str,
+    old: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set_to_path(key: &'static str, value: &Path) -> Self {
+        let old = std::env::var_os(key);
+        std::env::set_var(key, value.as_os_str());
+        Self { key, old }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.old {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
 
 // ── request_id ────────────────────────────────────────────────
 
@@ -393,4 +418,57 @@ fn title_log_prefix_is_grep_friendly_and_stable() {
     // rule asks contributors to grep for when debugging. It is part
     // of the observable contract — lock it down.
     assert_eq!(THREAD_TITLE_LOG_PREFIX, "[threads:title]");
+}
+
+#[tokio::test]
+async fn message_append_returns_typed_not_found_for_stale_thread() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK.lock().unwrap();
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+    let thread_id = "thread-missing";
+
+    let err = message_append(AppendConversationMessageRequest {
+        thread_id: thread_id.to_string(),
+        message: ConversationMessageRecord {
+            id: "msg-1".to_string(),
+            content: "hello".to_string(),
+            message_type: "text".to_string(),
+            extra_metadata: Value::Null,
+            sender: "user".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        },
+    })
+    .await
+    .expect_err("missing thread must return a typed not-found error");
+
+    assert_eq!(
+        err,
+        ThreadsError::NotFound {
+            thread_id: thread_id.to_string()
+        }
+    );
+    assert_eq!(err.to_string(), "thread thread-missing not found");
+}
+
+#[tokio::test]
+async fn generate_title_returns_typed_not_found_for_stale_thread() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK.lock().unwrap();
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+    let thread_id = "thread-missing";
+
+    let err = thread_generate_title(GenerateConversationThreadTitleRequest {
+        thread_id: thread_id.to_string(),
+        assistant_message: None,
+    })
+    .await
+    .expect_err("missing thread must return a typed not-found error");
+
+    assert_eq!(
+        err,
+        ThreadsError::NotFound {
+            thread_id: thread_id.to_string()
+        }
+    );
+    assert_eq!(err.to_string(), "thread thread-missing not found");
 }

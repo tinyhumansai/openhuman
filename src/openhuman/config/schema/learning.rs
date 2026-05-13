@@ -18,6 +18,7 @@ pub enum ReflectionSource {
 
 /// Configuration for the agent self-learning subsystem.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct LearningConfig {
     /// Master switch. Default: false.
     #[serde(default)]
