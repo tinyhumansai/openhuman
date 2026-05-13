@@ -40,16 +40,30 @@ impl Tool for GmailUnsubscribeTool {
             .get("sender")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown Sender");
+
+        let redacted_sender = if let Some(idx) = sender.find('@') {
+            format!("***{}", &sender[idx..])
+        } else {
+            "***".to_string()
+        };
+        tracing::debug!("GMAIL_UNSUBSCRIBE:ENTRY sender={}", redacted_sender);
+
         let link = args
             .get("unsubscribe_link")
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
         if link.is_empty() {
+            tracing::debug!("GMAIL_UNSUBSCRIBE:VALIDATION:EMPTY_LINK");
             return Ok(ToolResult::error(
                 "Cannot unsubscribe without a valid List-Unsubscribe link.",
             ));
         }
+
+        tracing::debug!(
+            "GMAIL_UNSUBSCRIBE:PENDING_APPROVAL sender={} action=unsubscribe status=pending_approval",
+            redacted_sender
+        );
 
         // Return a structured JSON block indicating a Pending Action.
         // The React UI will intercept this exact payload.

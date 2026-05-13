@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
 import Button from '../ui/Button';
@@ -17,7 +17,13 @@ export const UnsubscribeApprovalCard: React.FC<Props> = ({ payload }) => {
   const [status, setStatus] = useState<'pending' | 'approved' | 'denied'>('pending');
   const [isProcessing, setIsProcessing] = useState(false);
 
+  useEffect(() => {
+    setStatus('pending');
+    setIsProcessing(false);
+  }, [payload]);
+
   const handleApprove = async () => {
+    if (isProcessing || status === 'approved') return;
     setIsProcessing(true);
     try {
       // Typically, you would call a core RPC method to execute the URL/mailto
