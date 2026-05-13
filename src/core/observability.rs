@@ -33,7 +33,7 @@ pub type Tag<'a> = (&'a str, &'a str);
 /// (`openhuman::providers::ops::should_report_provider_http_failure`) and the
 /// `before_send` filter (`is_transient_provider_http_failure`). Update here
 /// and both sites pick it up — keeps the two layers from drifting.
-pub const TRANSIENT_PROVIDER_HTTP_STATUSES: &[u16] = &[408, 429, 502, 503, 504];
+pub const TRANSIENT_PROVIDER_HTTP_STATUSES: &[u16] = &[408, 429, 502, 503, 504, 520];
 
 /// HTTP status codes that represent transient backend / integration transport
 /// failures rather than application bugs. Keep this as strings because Sentry
