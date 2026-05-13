@@ -158,13 +158,6 @@ fn expected_port_clash_classifier_matches_windows_acl_bind_shapes() {
 }
 
 #[test]
-fn expected_port_clash_classifier_matches_restart_precondition() {
-    assert!(is_expected_port_clash(
-        "Core RPC port 7788 is already in use by another process (OpenHuman did not start it)."
-    ));
-}
-
-#[test]
 fn expected_port_clash_classifier_rejects_unknown_probe_shapes() {
     assert!(!is_expected_port_clash(
         "probe GET / failed: TLS handshake failed: protocol error"

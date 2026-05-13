@@ -354,17 +354,14 @@ impl CoreProcessHandle {
                 "Core RPC port {} is already in use by another process (OpenHuman did not start it). Quit any `openhuman-core run` in a terminal or set OPENHUMAN_CORE_PORT to a different port, then relaunch the app.",
                 self.port
             );
-            if is_expected_port_clash(&msg) {
-                log::warn!(
-                    "[core] restart: nothing to stop but port {} is in use — another process owns it",
-                    self.port
-                );
-            } else {
-                log::error!(
-                    "[core] restart: nothing to stop but port {} is in use — another process owns it",
-                    self.port
-                );
-            }
+            // Precondition check: by the time we hit this branch we already
+            // know the port is held by something OpenHuman did not spawn, so
+            // the clash is always benign environment state — no need to gate
+            // through `is_expected_port_clash`.
+            log::warn!(
+                "[core] restart: nothing to stop but port {} is in use — another process owns it",
+                self.port
+            );
             return Err(msg);
         }
 
