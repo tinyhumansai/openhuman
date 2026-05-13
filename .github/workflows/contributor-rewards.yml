@@ -21,6 +21,13 @@ jobs:
   reward:
     name: Invite eligible contributor
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request_target' &&
+        github.event.action == 'closed' &&
+        github.event.pull_request.merged == true) ||
+      (github.event.action == 'labeled' &&
+        github.event.label.name == 'reward user')
     steps:
       - name: Post reward invite when eligible
         uses: actions/github-script@v8
@@ -214,7 +221,7 @@ jobs:
                 `2. Share this ${target.kind} link so maintainers can verify your GitHub handle: ${target.htmlUrl}`,
                 merchLine,
                 '',
-                `_Reason: ${target.reason}. Automatic rewards are idempotent per GitHub user; maintainer-applied "${triggerLabel}" labels can intentionally start the flow for special cases._`,
+                `*Reason: ${target.reason}. Automatic rewards are idempotent per GitHub user; maintainer-applied "${triggerLabel}" labels can intentionally start the flow for special cases.*`,
               ].join('\n');
             }
 
