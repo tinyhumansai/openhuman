@@ -61,10 +61,11 @@ pnpm build
 For local development instead of production build:
 
 ```bash
-# Web-only UI development
+# Web-only UI development: run inside app/ after the `cd app` step above
 pnpm dev
 
-# Desktop app development with the vendored Tauri/CEF CLI
+# Desktop app development with the vendored Tauri/CEF CLI: run from the workspace root
+cd ..
 pnpm --filter openhuman-app dev:app
 ```
 
