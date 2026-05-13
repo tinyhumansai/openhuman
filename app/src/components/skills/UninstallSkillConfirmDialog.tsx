@@ -32,6 +32,7 @@ import {
   type SkillSummary,
   type UninstallSkillResult,
 } from '../../services/api/skillsApi';
+import { trackEvent } from '../../services/analytics';
 
 const log = debug('skills:uninstall-dialog');
 
@@ -81,6 +82,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
       // slug — the backend resolves by slug, so pass `id`.
       const result = await skillsApi.uninstallSkill(skill.id);
       log('confirm: done removedPath=%s', result.removedPath);
+      trackEvent('skill_uninstall', { skill_id: skill.id });
       onUninstalled(result);
       onClose();
     } catch (e) {

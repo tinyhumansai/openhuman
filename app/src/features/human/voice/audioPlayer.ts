@@ -2,6 +2,35 @@
  * Lightweight base64 → playable HTMLAudio wrapper. We don't need WebAudio
  * graph here; the viseme scheduler reads `currentTime` directly.
  */
+
+/**
+ * Sentinel thrown by the `ended` promise when `stop()` is called. Callers that
+ * intentionally cancel playback (e.g. swapping to a new utterance) can detect
+ * this and silence the rejection without masking real audio decoder errors.
+ */
+export class AudioStoppedError extends Error {
+  readonly stopped = true;
+  constructor() {
+    super('stopped');
+    this.name = 'AudioStoppedError';
+  }
+}
+
+export function isAudioStopped(err: unknown): err is AudioStoppedError {
+  if (err instanceof AudioStoppedError) return true;
+  return typeof err === 'object' && err !== null && (err as { stopped?: unknown }).stopped === true;
+}
+
+/**
+ * Use as `.catch(swallowAudioStop)` on an orphan `handle.ended` promise, or
+ * `catch (err) { swallowAudioStop(err); }` around an awaited one. Swallows the
+ * stop sentinel; rethrows anything else so real decoder errors stay visible.
+ */
+export function swallowAudioStop(err: unknown): void {
+  if (isAudioStopped(err)) return;
+  throw err;
+}
+
 export interface PlaybackHandle {
   /** ms elapsed since audio started. Returns -1 after playback ends. */
   currentMs(): number;
@@ -92,7 +121,7 @@ export async function playBase64Audio(
       stopped = true;
       audio.pause();
       cleanup();
-      rejectEnded(new Error('stopped'));
+      rejectEnded(new AudioStoppedError());
     },
     ended,
   };

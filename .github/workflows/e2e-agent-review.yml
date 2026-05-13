@@ -1,10 +1,11 @@
 ---
 name: E2E (Linux) - agent-review
-# DISABLED: Linux E2E via tauri-driver requires WebKitWebDriver (webkit2gtk),
-# but this app uses the CEF runtime (tauri-runtime-cef) which has no WebDriver
-# automation support. tauri-driver sessions time out because WebKitWebDriver
-# cannot drive a CEF-backed webview. Re-enable once the CEF fork adds a
-# ChromeDriver-based automation path or an alternative E2E harness is wired.
+# CEF LIMITATION: Linux E2E via tauri-driver requires WebKitWebDriver
+# (webkit2gtk), but this app uses the CEF runtime (tauri-runtime-cef).
+# WebKitWebDriver cannot drive a CEF-backed WebView, so Linux CEF E2E is not
+# a supported CI gate. Keep this workflow manual/diagnostic until the CEF fork
+# adds a ChromeDriver-based automation path or an alternative harness is wired.
+# Use macOS/Appium for supported local or manual desktop E2E runs.
 # See also: test.yml where the e2e-linux job is commented out for the same reason.
 on:
   workflow_dispatch:
@@ -20,7 +21,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
           submodules: recursive
@@ -35,12 +36,12 @@ jobs:
           fi
       - name: Setup pnpm
         if: steps.gate.outputs.present == 'true'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
           cache: true
       - name: Setup Node.js 24.x
         if: steps.gate.outputs.present == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24.x
       - name: Install Rust (rust-toolchain.toml)
@@ -64,7 +65,7 @@ jobs:
           echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
       - name: Cache Cargo registry and build
         if: steps.gate.outputs.present == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -107,7 +108,7 @@ jobs:
           fi
       - name: Upload E2E artifacts
         if: always() && steps.gate.outputs.present == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: e2e-agent-review-artifacts
           path: |

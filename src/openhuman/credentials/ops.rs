@@ -264,6 +264,11 @@ pub async fn store_session(
     start_login_gated_services(&effective_config).await;
     logs.push("login-gated services started".to_string());
 
+    // Clear the scheduler-gate signed-out override now that a fresh JWT is
+    // in place. Workers that were sleeping in the paused poll loop will
+    // pick this up at their next iteration and resume LLM-bound work.
+    crate::openhuman::scheduler_gate::set_signed_out(false);
+
     Ok(RpcOutcome::new(summarize_auth_profile(&profile), logs))
 }
 
@@ -276,6 +281,12 @@ fn sanitize_stored_session_user(user: Option<serde_json::Value>) -> Option<serde
 }
 
 pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {
+    // Flip the scheduler-gate override first so any background worker that
+    // is mid-iteration (or wakes up while we tear down) stalls at its next
+    // `wait_for_capacity()` call instead of firing requests at a backend
+    // we're about to invalidate. Idempotent.
+    crate::openhuman::scheduler_gate::set_signed_out(true);
+
     let auth = AuthService::from_config(config);
     let removed = auth
         .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)

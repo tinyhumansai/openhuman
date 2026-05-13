@@ -592,8 +592,9 @@ impl Agent {
             &config.workspace_dir,
         ));
 
-        let memory: Arc<dyn Memory> = Arc::from(memory::create_memory_with_storage_and_routes(
+        let memory: Arc<dyn Memory> = Arc::from(memory::create_memory_with_local_ai(
             &config.memory,
+            &config.local_ai,
             &config.embedding_routes,
             Some(&config.storage.provider.config),
             &config.workspace_dir,
@@ -840,6 +841,13 @@ impl Agent {
                 )));
                 log::info!("[learning] tool_tracker hook registered");
             }
+
+            if config.learning.tool_memory_capture_enabled {
+                post_turn_hooks.push(Arc::new(
+                    crate::openhuman::memory::ToolMemoryCaptureHook::new(memory.clone(), true),
+                ));
+                log::info!("[learning] tool_memory_capture hook registered");
+            }
         }
 
         // Resolve the per-agent delegation tool set and visible-tool
@@ -969,6 +977,27 @@ impl Agent {
                 .into_iter()
                 .filter(|t| !existing_names.contains(t.name())),
         );
+
+        // Pre-fetch Critical + High priority tool-scoped memory rules so they
+        // pin into the (compression-resistant) system prompt for the whole
+        // session. Done here — after the tool list is finalised — so we only
+        // fetch rules for tools this agent can actually use.  Skipped when
+        // `learning.enabled` is false (no new rules are written in that mode,
+        // and users who opt out of learning expect no stored rules to surface)
+        // or when the runtime cannot host a synchronous bridge (single-threaded
+        // test harnesses).
+        if config.learning.enabled && config.learning.tool_memory_capture_enabled {
+            let agent_tool_names: Vec<String> =
+                tools.iter().map(|t| t.name().to_string()).collect();
+            let pinned = prefetch_tool_memory_rules_blocking(memory.clone(), &agent_tool_names);
+            if !pinned.is_empty() {
+                log::info!(
+                    "[memory::tool_memory] pinning {} tool-scoped rule(s) into system prompt",
+                    pinned.len()
+                );
+                prompt_builder = prompt_builder.with_tool_memory_rules(pinned);
+            }
+        }
 
         // Build the P-Format registry AFTER the tool list is finalised
         // (including orchestrator tools) so every tool gets a signature
@@ -1151,4 +1180,54 @@ impl Agent {
         }
         builder.build()
     }
+}
+
+/// (#1400) Best-effort synchronous prefetch of eager tool-scoped rules.
+///
+/// `from_config_*` is sync but typically runs inside a multi-threaded
+/// Tokio runtime (the agent harness path from the channels runtime).
+/// We use `block_in_place` + the current runtime handle to call the
+/// async store API without restructuring the whole session builder.
+///
+/// Returns an empty `Vec` (rather than erroring) when:
+///   - no Tokio runtime is active (e.g. a sync CLI bootstrap),
+///   - the runtime is single-threaded (`block_in_place` would panic),
+///   - or the underlying `rules_for_prompt` call returns an error
+///     (e.g. the memory backend isn't ready yet).
+///
+/// Critical / High rules captured later in the session are still
+/// available via the `memory_tool_rules_for_prompt` RPC; this prefetch
+/// merely seeds the rules that exist at session start.
+fn prefetch_tool_memory_rules_blocking(
+    memory: Arc<dyn Memory>,
+    tool_names: &[String],
+) -> Vec<crate::openhuman::memory::ToolMemoryRule> {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return Vec::new();
+    };
+    if handle.runtime_flavor() != tokio::runtime::RuntimeFlavor::MultiThread {
+        return Vec::new();
+    }
+    let tool_names = tool_names.to_vec();
+    tokio::task::block_in_place(|| {
+        handle.block_on(async move {
+            let store = crate::openhuman::memory::ToolMemoryStore::new(memory);
+            match store.rules_for_prompt(&tool_names).await {
+                Ok(grouped) => {
+                    let mut flat: Vec<_> = grouped.into_values().flatten().collect();
+                    flat.sort_by(|a, b| {
+                        b.priority
+                            .cmp(&a.priority)
+                            .then_with(|| a.tool_name.cmp(&b.tool_name))
+                            .then_with(|| a.rule.cmp(&b.rule))
+                    });
+                    flat
+                }
+                Err(err) => {
+                    log::warn!("[memory::tool_memory] prefetch failed: {err}");
+                    Vec::new()
+                }
+            }
+        })
+    })
 }

@@ -333,6 +333,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_overlay = io.clone();
     let io_notify = io.clone();
     let io_transcription = io.clone();
+    let io_auth = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -418,6 +419,69 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             }
         }
         log::debug!("[socketio] core_notification bridge stopped");
+    });
+
+    // 6. SessionExpired events → broadcast to all clients so the UI can
+    //    proactively tear down user-scoped state and route to onboarding
+    //    instead of waiting for the next poll to discover the JWT is gone.
+    //    Subscribes to the global event bus and filters for
+    //    `DomainEvent::SessionExpired`; ignores everything else.
+    tokio::spawn(async move {
+        // Poll until `event_bus::init_global` has run. Socket.IO bridges
+        // spawn from `spawn_web_channel_bridge`, which on some startup
+        // paths runs before `register_domain_subscribers` initialises
+        // the bus. A one-shot check would silently no-op for the rest
+        // of the process; a short polling loop with a hard cap retries
+        // without spinning forever if init genuinely never happens
+        // (e.g. tests that drive the socket layer in isolation).
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — SessionExpired bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (auth bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            if let crate::core::event_bus::DomainEvent::SessionExpired { source, reason } = event {
+                log::info!(
+                    "[socketio] broadcast auth:session_expired source={} reason_len={}",
+                    source,
+                    reason.len()
+                );
+                // The UI doesn't need the raw reason (already logged
+                // server-side and we don't want auth-error strings in the
+                // renderer console). Just send the source slug.
+                let payload = serde_json::json!({ "source": source });
+                let _ = io_auth.emit("auth:session_expired", &payload);
+                let _ = io_auth.emit("auth_session_expired", &payload);
+            }
+        }
+        log::debug!("[socketio] auth session_expired bridge stopped");
     });
 
     // 5. Transcription results → broadcast to all connected clients.

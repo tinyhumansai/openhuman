@@ -208,13 +208,17 @@ fn probe_subcommand_version(path: &std::path::Path, label: &str) -> Option<Strin
     use std::io::Read;
     use wait_timeout::ChildExt;
 
-    let mut child = Command::new(path)
-        .arg("--version")
+    let mut cmd = Command::new(path);
+    cmd.arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = cmd.spawn().ok()?;
 
     let timeout = Duration::from_secs(5);
     let status = match child.wait_timeout(timeout).ok()? {

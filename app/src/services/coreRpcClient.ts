@@ -41,6 +41,69 @@ let didResolveCoreRpcToken = false;
 let resolvingCoreRpcToken: Promise<string | null> | null = null;
 
 /**
+ * Stable classification of an RPC failure. Callers (hooks, providers, Sentry
+ * filters) should branch on `kind` — never on raw message regexes. The shape
+ * exists so a single 401 from the Rust backend (`Session expired. Please log
+ * in again.`) can drive both a silent swallow in usage/credits chains AND
+ * a global reauth signal without every caller re-implementing the regex.
+ */
+export type CoreRpcErrorKind =
+  | 'auth_expired'
+  | 'transport'
+  | 'rate_limited'
+  | 'budget_exceeded'
+  | 'unknown';
+
+export class CoreRpcError extends Error {
+  readonly kind: CoreRpcErrorKind;
+  readonly httpStatus?: number;
+  constructor(message: string, kind: CoreRpcErrorKind, httpStatus?: number) {
+    super(message);
+    this.name = 'CoreRpcError';
+    this.kind = kind;
+    this.httpStatus = httpStatus;
+  }
+}
+
+const AUTH_EXPIRED_EVENT = 'core-rpc-auth-expired';
+
+/**
+ * Classify an RPC error from its surfaced message and (when available) the
+ * HTTP status the core returned. Patterns map to the Rust-side error shapes
+ * produced by `src/openhuman/backend_api/*` (`authed_json`, rate limiter,
+ * budget guard) and `reqwest::Error`'s connect/timeout variants.
+ */
+export function classifyRpcError(message: string, httpStatus?: number): CoreRpcErrorKind {
+  if (httpStatus === 401) return 'auth_expired';
+  if (httpStatus === 429) return 'rate_limited';
+  if (/\(401\b.*Unauthorized\)|Session expired/i.test(message)) return 'auth_expired';
+  // Core-side "no backend session token" → the auth profile is gone but the
+  // frontend may still hold a stale sessionToken from an optimistic post-login
+  // patch. Treat as auth-expired so `CoreStateProvider` clears the session and
+  // `ProtectedRoute` bounces the user back to `/` (login) instead of trapping
+  // them on an onboarding step that polls a failing RPC every 5 s.
+  if (/no backend session token/i.test(message)) return 'auth_expired';
+  if (/429.*rate.?limit/i.test(message)) return 'rate_limited';
+  if (/Budget exceeded|Insufficient budget/i.test(message)) return 'budget_exceeded';
+  if (/error sending request|client error \(Connect\)|timed out|ECONNREFUSED/i.test(message)) {
+    return 'transport';
+  }
+  return 'unknown';
+}
+
+function dispatchAuthExpired(method: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(
+      new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { method, source: 'rpc' } })
+    );
+  } catch {
+    // jsdom in some test paths can throw on CustomEvent constructor edge
+    // cases; never let a telemetry hop fail the original RPC error path.
+  }
+}
+
+/**
  * Invalidate the cached core RPC URL so the next call to getCoreRpcUrl()
  * re-resolves from the user-configured or environment-default value.
  * Call this after the user saves a new RPC URL preference.
@@ -196,7 +259,7 @@ async function getCoreRpcToken(): Promise<string | null> {
 }
 
 /**
- * Probe an arbitrary core RPC URL with `openhuman.ping`. Used by the
+ * Probe an arbitrary core RPC URL with `core.ping`. Used by the
  * Welcome page's "Test Connection" affordance to validate a user-entered
  * RPC URL without going through the cached `getCoreRpcUrl` resolution.
  *
@@ -221,7 +284,7 @@ export async function testCoreRpcConnection(
   return fetch(url, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'openhuman.ping', params: {} }),
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'core.ping', params: {} }),
   });
 }
 
@@ -289,7 +352,10 @@ export async function callCoreRpc<T>({
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Core RPC HTTP ${response.status}: ${text || response.statusText}`);
+      const httpMessage = `Core RPC HTTP ${response.status}: ${text || response.statusText}`;
+      const kind = classifyRpcError(text || response.statusText, response.status);
+      if (kind === 'auth_expired') dispatchAuthExpired(payload.method);
+      throw new CoreRpcError(httpMessage, kind, response.status);
     }
 
     const json = (await response.json()) as JsonRpcResponse<T>;
@@ -300,7 +366,10 @@ export async function callCoreRpc<T>({
         method: payload.method,
         error: json.error,
       });
-      throw new Error(json.error.message || 'Core RPC returned an error');
+      const rawMessage = json.error.message || 'Core RPC returned an error';
+      const kind = classifyRpcError(rawMessage);
+      if (kind === 'auth_expired') dispatchAuthExpired(payload.method);
+      throw new CoreRpcError(rawMessage, kind);
     }
     if (!Object.prototype.hasOwnProperty.call(json, 'result')) {
       throw new Error('Core RPC response missing result');
@@ -310,6 +379,8 @@ export async function callCoreRpc<T>({
     return json.result as T;
   } catch (err) {
     coreRpcError('Core RPC call failed', sanitizeError(err));
-    throw new Error(coreRpcErrorMessage(err));
+    if (err instanceof CoreRpcError) throw err;
+    const message = coreRpcErrorMessage(err);
+    throw new CoreRpcError(message, classifyRpcError(message));
   }
 }

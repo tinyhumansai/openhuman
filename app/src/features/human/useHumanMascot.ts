@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { subscribeChatEvents } from '../../services/chatService';
 import type { MascotFace } from './Mascot';
 import { lerpViseme, VISEMES, type VisemeShape } from './Mascot/visemes';
-import { type PlaybackHandle, playBase64Audio } from './voice/audioPlayer';
+import { type PlaybackHandle, playBase64Audio, swallowAudioStop } from './voice/audioPlayer';
 import {
   proceduralVisemes,
   synthesizeSpeech,
@@ -187,8 +187,15 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       onError: () => {
         // Bump seq to invalidate any in-flight startTtsPlayback awaiters.
         playbackSeqRef.current++;
-        playbackRef.current?.stop();
+        const orphan = playbackRef.current;
         playbackRef.current = null;
+        if (orphan) {
+          orphan.stop();
+          // We're early-returning instead of awaiting `orphan.ended`, so the
+          // stop()-sentinel rejection has no handler — attach one explicitly
+          // or it surfaces as an unhandledrejection in Sentry (#1472).
+          orphan.ended.catch(swallowAudioStop);
+        }
         visemeFramesRef.current = [];
         holdThenIdle('concerned');
       },
@@ -198,16 +205,24 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       clearAckTimer();
       // Same — invalidate in-flight callbacks before tearing down.
       playbackSeqRef.current++;
-      playbackRef.current?.stop();
+      const orphan = playbackRef.current;
       playbackRef.current = null;
+      if (orphan) {
+        orphan.stop();
+        orphan.ended.catch(swallowAudioStop);
+      }
     };
   }, []);
 
   async function startTtsPlayback(text: string): Promise<void> {
     // Cancel any in-flight playback so its handle.ended callback can't reset
     // state belonging to the new run.
-    playbackRef.current?.stop();
+    const prev = playbackRef.current;
     playbackRef.current = null;
+    if (prev) {
+      prev.stop();
+      prev.ended.catch(swallowAudioStop);
+    }
     visemeFramesRef.current = [];
     visemeCursorRef.current = 0;
     clearAckTimer();
@@ -252,6 +267,7 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       const handle = await playBase64Audio(tts.audio_base64, tts.audio_mime ?? 'audio/mpeg');
       if (!isStillCurrent()) {
         handle.stop();
+        handle.ended.catch(swallowAudioStop);
         return;
       }
       if (frames.length === 0) {
@@ -277,8 +293,10 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       );
       try {
         await handle.ended;
-      } catch {
-        // Promise rejects when stop() is called — fall through to cleanup.
+      } catch (err) {
+        // Stop sentinel is expected when a newer turn cancels playback —
+        // rethrow anything else so real decoder errors aren't masked.
+        swallowAudioStop(err);
       }
     } finally {
       if (isStillCurrent()) {

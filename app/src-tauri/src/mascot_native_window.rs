@@ -11,9 +11,9 @@
 //! Trade-offs:
 //!
 //! - macOS-only. Linux/Windows would need a parallel native webview path.
-//! - No Tauri IPC bridge. The mascot window uses `WKScriptMessageHandler`
-//!   for the few host calls it needs (close, future: drag/clickthrough).
-//!   For now we keep the page passive — toggle via the tray menu.
+//! - No Tauri IPC bridge. Toggle via the tray menu. Drag-to-reposition is
+//!   handled entirely from Rust by polling `NSEvent::pressedMouseButtons()`
+//!   in the same Foundation timer that tracks the cursor.
 //! - Page source is dev-server in development, bundled `file://` in
 //!   production. The bundled path uses `loadFileURL:allowingReadAccessToURL:`
 //!   with the resource directory as the read-access root so ESM imports
@@ -43,22 +43,22 @@ use crate::AppRuntime;
 const PANEL_SIZE: f64 = 79.0;
 /// Distance from the bottom-right monitor corner on first show.
 const PANEL_MARGIN: f64 = 0.0;
-/// How often we poll the cursor position to detect hover over the mascot.
-const HOVER_POLL_SECONDS: f64 = 0.05;
+/// How often we poll the cursor position for drag tracking (~60 fps).
+const DRAG_POLL_SECONDS: f64 = 0.016;
 
 /// Holds the panel + webview together so we keep both alive (and drop them
-/// together) for the lifetime of one show/hide cycle. The hover timer is
+/// together) for the lifetime of one show/hide cycle. The drag timer is
 /// stored so we can `invalidate()` it on hide and stop firing into a
 /// dropped webview.
 struct MascotPanel {
     panel: Retained<NSPanel>,
-    _webview: Retained<WKWebView>,
-    hover_timer: Retained<NSTimer>,
+    webview: Retained<WKWebView>,
+    drag_timer: Retained<NSTimer>,
 }
 
 impl MascotPanel {
     fn order_out(&self) {
-        self.hover_timer.invalidate();
+        self.drag_timer.invalidate();
         self.panel.orderOut(None);
     }
 }
@@ -117,13 +117,13 @@ pub(crate) fn show(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     panel.makeKeyAndOrderFront(None);
     panel.orderFrontRegardless();
 
-    let hover_timer = unsafe { spawn_hover_timer(panel.clone(), webview.clone()) };
+    let drag_timer = unsafe { spawn_drag_timer(panel.clone(), webview.clone()) };
 
     MASCOT.with(|cell| {
         *cell.borrow_mut() = Some(MascotPanel {
             panel,
-            _webview: webview,
-            hover_timer,
+            webview,
+            drag_timer,
         });
     });
     log::info!("[mascot-native] panel shown");
@@ -253,11 +253,10 @@ unsafe fn build_panel(mtm: MainThreadMarker, frame: NSRect) -> Retained<NSPanel>
         panel.setBecomesKeyOnlyIfNeeded(true);
         panel.setWorksWhenModal(true);
 
-        // Always click-through. The panel never receives mouse events; the
-        // cursor passes straight to whatever's behind it. Hover is detected
-        // by polling `NSEvent::mouseLocation()` against the panel frame in
-        // a Foundation timer (see `spawn_hover_timer`), and the page CSS
-        // animates the mascot out of the way when the cursor is over it.
+        // Click-through: the panel never receives mouse events directly.
+        // Drag-to-reposition is detected by polling
+        // `NSEvent::pressedMouseButtons()` + `mouseLocation()` against the
+        // panel frame in a Foundation timer (see `spawn_drag_timer`).
         panel.setIgnoresMouseEvents(true);
 
         // Don't show in the Dock / Cmd+Tab.
@@ -267,80 +266,97 @@ unsafe fn build_panel(mtm: MainThreadMarker, frame: NSRect) -> Retained<NSPanel>
     panel
 }
 
-/// Two right-edge resting spots one mascot-height apart. The mascot
-/// alternates between them when the cursor catches up — small hop, not a
-/// trip across the screen.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Slot {
-    Home,
-    HopUp,
-}
-
-fn slot_frame(mtm: MainThreadMarker, slot: Slot) -> NSRect {
-    let screen = primary_screen_frame(mtm);
-    let x = screen.origin.x + screen.size.width - PANEL_SIZE - PANEL_MARGIN;
-    // AppKit origin is bottom-left. `Home` sits at the bottom; `HopUp`
-    // is one full panel-height above it so the mascot completely clears
-    // the cursor's previous position with no visible overlap.
-    let y_home = screen.origin.y + PANEL_MARGIN;
-    let y = match slot {
-        Slot::Home => y_home,
-        Slot::HopUp => y_home + PANEL_SIZE,
-    };
-    NSRect::new(NSPoint::new(x, y), NSSize::new(PANEL_SIZE, PANEL_SIZE))
-}
-
 /// Schedule a repeating Foundation timer on the main run loop that polls
-/// the global cursor position. When the cursor enters the mascot's panel
-/// frame, the panel hops to the *other* right-edge corner with an
-/// animated `setFrame:display:animate:` move so the user can keep working
-/// without the mascot covering the spot they were trying to click. The
-/// panel is `ignoresMouseEvents=true` regardless, so even mid-animation
-/// the cursor passes straight through.
-unsafe fn spawn_hover_timer(
+/// the global cursor position and mouse-button state. When the user holds
+/// the left mouse button while the cursor is inside the panel frame, the
+/// panel tracks the cursor (drag-to-reposition). On release the panel
+/// stays at the new position. The panel remains `ignoresMouseEvents=true`
+/// throughout — the initial click passes through to the window behind,
+/// but the visual drag starts on the next timer tick (~16 ms).
+unsafe fn spawn_drag_timer(
     panel: Retained<NSPanel>,
-    _webview: Retained<WKWebView>,
+    webview: Retained<WKWebView>,
 ) -> Retained<NSTimer> {
-    // Fixed reference rect: the mascot's home position. Cursor entering
-    // this rect makes the panel flee to `HopUp`; leaving it brings it
-    // back to `Home`. We compare against the home rect — not the panel's
-    // current frame — so the cursor moving away from the original spot
-    // is always what triggers the return, regardless of where the panel
-    // has currently hopped to.
-    let mtm_for_home = unsafe { MainThreadMarker::new_unchecked() };
-    let home_rect = slot_frame(mtm_for_home, Slot::Home);
-    let current_slot: Rc<Cell<Slot>> = Rc::new(Cell::new(Slot::Home));
+    let dragging: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    // Offset from cursor to panel origin at drag start so the panel
+    // doesn't snap its corner to the cursor.
+    let drag_offset: Rc<Cell<(f64, f64)>> = Rc::new(Cell::new((0.0, 0.0)));
+    // Track previous hover state so we only dispatch when it changes.
+    let was_hovering: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    // Tick counter — suppress hover events for the first ~1s after panel
+    // shows so the webview can load before we start dispatching JS.
+    let tick_count: Rc<Cell<u32>> = Rc::new(Cell::new(0));
+    // ~60 ticks = ~1 second at DRAG_POLL_SECONDS (0.016s).
+    const HOVER_SUPPRESS_TICKS: u32 = 60;
 
     let block = RcBlock::new(move |_timer: NonNull<NSTimer>| {
-        // Safe: this block only fires on the main run loop the timer was
-        // scheduled on, which is the AppKit main thread.
-        let mtm = unsafe { MainThreadMarker::new_unchecked() };
+        let cursor = NSEvent::mouseLocation();
+        let left_down: bool = {
+            let buttons: u64 = unsafe { msg_send![objc2::class!(NSEvent), pressedMouseButtons] };
+            buttons & 1 != 0
+        };
+        let frame = panel.frame();
+        let cursor_in_panel = cursor.x >= frame.origin.x
+            && cursor.x <= frame.origin.x + frame.size.width
+            && cursor.y >= frame.origin.y
+            && cursor.y <= frame.origin.y + frame.size.height;
 
-        let cursor = unsafe { NSEvent::mouseLocation() };
-        let inside_home = cursor.x >= home_rect.origin.x
-            && cursor.x <= home_rect.origin.x + home_rect.size.width
-            && cursor.y >= home_rect.origin.y
-            && cursor.y <= home_rect.origin.y + home_rect.size.height;
-
-        let desired = if inside_home { Slot::HopUp } else { Slot::Home };
-        if desired == current_slot.get() {
-            return;
-        }
-        current_slot.set(desired);
-        let target = slot_frame(mtm, desired);
-        log::debug!(
-            "[mascot-native] cursor {} home — moving to slot={}",
-            if inside_home { "entered" } else { "left" },
-            match desired {
-                Slot::Home => "Home",
-                Slot::HopUp => "HopUp",
+        if dragging.get() {
+            if left_down {
+                // Continue drag — move panel to track cursor.
+                let (ox, oy) = drag_offset.get();
+                let new_origin = NSPoint::new(cursor.x - ox, cursor.y - oy);
+                unsafe {
+                    let _: () = msg_send![&*panel, setFrameOrigin: new_origin];
+                }
+            } else {
+                // Mouse released — end drag, panel stays put.
+                dragging.set(false);
+                let pos = panel.frame().origin;
+                log::debug!("[mascot-native] drag ended at ({:.0},{:.0})", pos.x, pos.y);
             }
-        );
-        panel.setFrame_display_animate(target, true, true);
+        } else if cursor_in_panel && left_down {
+            // Start drag.
+            dragging.set(true);
+            drag_offset.set((cursor.x - frame.origin.x, cursor.y - frame.origin.y));
+            log::debug!("[mascot-native] drag started");
+        }
+
+        // Hover detection: use a circular hitbox (radius = half panel size)
+        // instead of the full AABB so corners don't trigger false positives.
+        // Suppress for the first ~1s so the webview can finish loading.
+        tick_count.set(tick_count.get().saturating_add(1));
+        let center_x = frame.origin.x + frame.size.width / 2.0;
+        let center_y = frame.origin.y + frame.size.height / 2.0;
+        let dx = cursor.x - center_x;
+        let dy = cursor.y - center_y;
+        let radius = frame.size.width / 2.0;
+        let cursor_in_circle = (dx * dx + dy * dy) <= (radius * radius);
+        let hovering_now = cursor_in_circle
+            && !left_down
+            && !dragging.get()
+            && tick_count.get() > HOVER_SUPPRESS_TICKS;
+        if hovering_now != was_hovering.get() {
+            was_hovering.set(hovering_now);
+            let js_str = if hovering_now {
+                "window.dispatchEvent(new CustomEvent('mascot:hover-state',{detail:{hovering:true}}))"
+            } else {
+                "window.dispatchEvent(new CustomEvent('mascot:hover-state',{detail:{hovering:false}}))"
+            };
+            log::debug!("[mascot-native] hover-state hovering={hovering_now}");
+            let js = NSString::from_str(js_str);
+            unsafe {
+                let _: () = msg_send![
+                    &*webview,
+                    evaluateJavaScript: &*js,
+                    completionHandler: std::ptr::null::<objc2::runtime::AnyObject>()
+                ];
+            }
+        }
     });
 
     unsafe {
-        NSTimer::scheduledTimerWithTimeInterval_repeats_block(HOVER_POLL_SECONDS, true, &block)
+        NSTimer::scheduledTimerWithTimeInterval_repeats_block(DRAG_POLL_SECONDS, true, &block)
     }
 }
 

@@ -421,6 +421,19 @@ pub enum DomainEvent {
     },
     /// A component restart was observed.
     HealthRestarted { component: String },
+
+    // ── Auth ────────────────────────────────────────────────────────────
+    /// The local app session is no longer valid — typically detected when
+    /// the backend returns 401 to an LLM inference call or a JSON-RPC
+    /// method. Subscribers tear down the session and pause background
+    /// LLM-bound work until the user signs back in.
+    ///
+    /// `source` is a short slug (e.g. `"llm_provider.openhuman_backend"`,
+    /// `"jsonrpc.invoke_method"`) so subscribers and logs can attribute
+    /// the trigger. `reason` is the sanitized error message that caused
+    /// detection (already redacted by the call site) — surfaced to logs,
+    /// never to Sentry or the UI verbatim.
+    SessionExpired { source: String, reason: String },
 }
 
 impl DomainEvent {
@@ -490,6 +503,8 @@ impl DomainEvent {
             | Self::SystemShutdownRequested { .. }
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. } => "system",
+
+            Self::SessionExpired { .. } => "auth",
         }
     }
 }

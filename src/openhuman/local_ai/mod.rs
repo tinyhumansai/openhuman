@@ -15,6 +15,7 @@ pub mod sentiment;
 mod install;
 pub(crate) mod model_ids;
 mod ollama_api;
+mod process_util;
 pub(crate) use ollama_api::{ollama_base_url, OLLAMA_BASE_URL};
 mod parse;
 pub(crate) mod paths;

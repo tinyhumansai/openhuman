@@ -488,8 +488,20 @@ mod tests {
 
     // ── update_apply rejection paths ──────────────────────────────
 
+    // `update_apply` reads the mutation-policy config from disk, whose
+    // path is resolved through the process-global `OPENHUMAN_WORKSPACE`
+    // env var. Tests that don't lock against the disabled-mutations
+    // case can race with it: the disabled test sets the env var, the
+    // sibling test (running on another thread) clears or shadows it
+    // between `WorkspaceEnvGuard::set` and the await inside
+    // `update_apply`, and the disabled test then loads a default
+    // policy (where `rpc_mutations_enabled = true`), proceeds past the
+    // gate, and fails its `contains("rpc_mutations_enabled=false")`
+    // assertion. Take `TEST_ENV_LOCK` in every test that calls
+    // `update_apply` so the three cases serialise on the same mutex.
     #[tokio::test]
     async fn update_apply_rejects_non_github_url_before_network_call() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         let outcome = update_apply(
             "https://evil.example.com/asset".to_string(),
             "openhuman-core-x86_64.tar.gz".to_string(),
@@ -505,6 +517,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_apply_rejects_unsafe_asset_name() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         let outcome = update_apply(
             "https://github.com/owner/repo/releases/download/v1/x".to_string(),
             "../etc/passwd".to_string(),

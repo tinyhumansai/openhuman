@@ -8,6 +8,8 @@ mod pushover;
 mod schedule;
 mod shell;
 mod tool_stats;
+mod update_apply;
+mod update_check;
 mod workspace_state;
 
 pub use current_time::CurrentTimeTool;
@@ -20,4 +22,6 @@ pub use pushover::PushoverTool;
 pub use schedule::ScheduleTool;
 pub use shell::ShellTool;
 pub use tool_stats::ToolStatsTool;
+pub use update_apply::UpdateApplyTool;
+pub use update_check::UpdateCheckTool;
 pub use workspace_state::WorkspaceStateTool;

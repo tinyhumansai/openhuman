@@ -17,15 +17,15 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
           submodules: recursive
       - name: Setup Node.js 24.x
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24.x
-          cache: yarn
+          package-manager-cache: false
       - name: Install Rust (1.93.0)
         uses: dtolnay/rust-toolchain@1.93.0
         with:
@@ -38,7 +38,7 @@ jobs:
         run: |
           echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
       - name: Cache Cargo registry and git sources
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -50,7 +50,7 @@ jobs:
       # CEF runtime auto-downloads via cef-dll-sys / vendored tauri-cli. Cache
       # it so we don't re-fetch ~400MB every run.
       - name: Cache CEF binary distribution
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/AppData/Local/tauri-cef
           key: cef-windows-${{ hashFiles('app/src-tauri/Cargo.toml') }}
@@ -58,7 +58,7 @@ jobs:
             cef-windows-
       - name: Cache vendored tauri-cli binary
         id: tauri-cli-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
           key: vendored-tauri-cli-windows-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
@@ -79,7 +79,7 @@ jobs:
         # command at this point (`WITH_UPDATER` defaults to off here so
         # this PR-build matrix doesn't try to mint signed updater
         # artifacts it has no key for).
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const workspacePath = process.env.GITHUB_WORKSPACE.replace(/\\/g, '/');
@@ -103,21 +103,21 @@ jobs:
         run: |
           NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --target x86_64-pc-windows-msvc
       - name: Upload MSI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: windows-msi
           path: |
             app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
             target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
       - name: Upload NSIS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: windows-nsis
           path: |
             app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
       - name: Upload standalone CLI binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: windows-cli
           path: |-

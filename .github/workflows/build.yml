@@ -21,7 +21,7 @@ jobs:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
           submodules: recursive
@@ -37,7 +37,7 @@ jobs:
       # cef-dll-sys + the vendored tauri-cli. Cache it across builds — the
       # payload is ~400MB per platform and fetching every run is painful.
       - name: Cache CEF binary distribution
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/tauri-cef
           key: cef-ubuntu-22.04-${{ hashFiles('app/src-tauri/Cargo.toml') }}
@@ -49,7 +49,7 @@ jobs:
       # .github/Dockerfile), so `cargo tauri build` below resolves to the
       # fork without any per-run compile step.
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.local/share/pnpm/store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}

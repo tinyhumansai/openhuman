@@ -548,9 +548,28 @@ impl Config {
             let contents = fs::read_to_string(&config_path)
                 .await
                 .context("Failed to read config file")?;
-            let mut config: Config = toml::from_str(&contents).with_context(|| {
-                format!("Failed to parse config file {}", config_path.display())
-            })?;
+            let parse_result: Result<Config, _> = toml::from_str(&contents);
+            let mut config: Config = match parse_result {
+                Ok(c) => c,
+                Err(parse_err) => {
+                    let backup_path = config_path.with_extension("toml.bak");
+                    tracing::warn!(
+                        path = %config_path.display(),
+                        backup = %backup_path.display(),
+                        error = %parse_err,
+                        "[config] Config file is corrupted — backing up and resetting to defaults"
+                    );
+                    if let Err(copy_err) = fs::copy(&config_path, &backup_path).await {
+                        tracing::warn!(
+                            path = %config_path.display(),
+                            backup = %backup_path.display(),
+                            error = %copy_err,
+                            "[config] Failed to back up corrupted config; continuing with defaults"
+                        );
+                    }
+                    Config::default()
+                }
+            };
             config.config_path = config_path.clone();
             config.workspace_dir = workspace_dir;
             migrate_legacy_autocomplete_disabled_apps(&mut config);
@@ -877,6 +896,14 @@ impl Config {
                 "1" | "true" | "yes" | "on" => self.learning.tool_tracking_enabled = true,
                 "0" | "false" | "no" | "off" => self.learning.tool_tracking_enabled = false,
                 _ => {}
+            }
+        }
+        if let Some(flag) = env.get("OPENHUMAN_LEARNING_TOOL_MEMORY_CAPTURE_ENABLED") {
+            if let Some(enabled) = parse_env_bool(
+                "OPENHUMAN_LEARNING_TOOL_MEMORY_CAPTURE_ENABLED",
+                flag.as_str(),
+            ) {
+                self.learning.tool_memory_capture_enabled = enabled;
             }
         }
         if let Some(source) = env.get("OPENHUMAN_LEARNING_REFLECTION_SOURCE") {

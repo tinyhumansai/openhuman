@@ -131,8 +131,10 @@ pub(crate) fn uninstall(config: &Config) -> Result<ServiceStatus> {
 }
 
 fn is_task_exists_windows(task_name: &str) -> Result<bool> {
+    use std::os::windows::process::CommandExt;
     let result = Command::new("schtasks")
         .args(["/Query", "/TN", task_name])
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .output();
 
     match result {

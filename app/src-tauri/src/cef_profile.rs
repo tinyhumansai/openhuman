@@ -24,12 +24,19 @@ struct PendingCefPurgeState {
     paths: Vec<String>,
 }
 
+/// Resolves the on-disk OpenHuman root dir name (`.openhuman` vs
+/// `.openhuman-staging`) for the Tauri shell. Delegates to
+/// [`openhuman_core::api::config::app_env_from_env`] so the shell and the
+/// embedded core agree on the channel selection — including the
+/// `option_env!` compile-time fallback that staging CI bakes into the
+/// build. Without that fallback the packaged staging `.app` launched from
+/// Finder has no shell env, picks up `.openhuman` (production), and
+/// collides with any older production install's CEF profile, producing
+/// the startup crash loop reported in #1490.
 fn default_root_dir_name() -> &'static str {
-    let app_env = std::env::var("OPENHUMAN_APP_ENV")
-        .or_else(|_| std::env::var("VITE_OPENHUMAN_APP_ENV"))
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase());
-    if matches!(app_env.as_deref(), Some("staging")) {
+    if openhuman_core::api::config::is_staging_app_env(
+        openhuman_core::api::config::app_env_from_env().as_deref(),
+    ) {
         ".openhuman-staging"
     } else {
         ".openhuman"
@@ -399,6 +406,86 @@ fn drain_pending_purges(default_openhuman_dir: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Serializes tests that mutate `OPENHUMAN_APP_ENV` / `VITE_OPENHUMAN_APP_ENV`
+    // — Rust's test harness runs tests in parallel by default, so concurrent
+    // env writes race and produce spurious failures. Mirrors the pattern in
+    // `lib.rs::tests::ENV_LOCK`.
+    static APP_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_clean_app_env<R>(body: impl FnOnce() -> R) -> R {
+        // `_guard` holds the lock for the whole function so concurrent tests
+        // can't race the env-var swap. If `body()` panics we still need to
+        // restore the env before unwinding, otherwise the leaked state poisons
+        // every subsequent test in the same process.
+        let _guard = APP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prior_primary = std::env::var("OPENHUMAN_APP_ENV").ok();
+        let prior_vite = std::env::var("VITE_OPENHUMAN_APP_ENV").ok();
+        std::env::remove_var("OPENHUMAN_APP_ENV");
+        std::env::remove_var("VITE_OPENHUMAN_APP_ENV");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+        match prior_primary {
+            Some(v) => std::env::set_var("OPENHUMAN_APP_ENV", v),
+            None => std::env::remove_var("OPENHUMAN_APP_ENV"),
+        }
+        match prior_vite {
+            Some(v) => std::env::set_var("VITE_OPENHUMAN_APP_ENV", v),
+            None => std::env::remove_var("VITE_OPENHUMAN_APP_ENV"),
+        }
+        match result {
+            Ok(v) => v,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    /// Regression for #1490: with the staging env var set at runtime, the
+    /// Tauri shell must resolve the dedicated `.openhuman-staging` data
+    /// dir — never the production `.openhuman` dir. Prior to the fix
+    /// this function had its own runtime-only lookup and would diverge
+    /// from `openhuman_core::api::config::app_env_from_env`, producing a
+    /// split-brain datadir (CEF profile under prod, sidecar state under
+    /// staging) that crashed the app on launch.
+    #[test]
+    fn default_root_dir_name_resolves_staging_when_primary_env_set() {
+        with_clean_app_env(|| {
+            std::env::set_var("OPENHUMAN_APP_ENV", "staging");
+            assert_eq!(default_root_dir_name(), ".openhuman-staging");
+        });
+    }
+
+    /// `VITE_OPENHUMAN_APP_ENV` is the secondary alias the frontend bundle
+    /// uses; the shell must accept it too so a build that only sets the
+    /// vite-prefixed variant still resolves the staging dir.
+    #[test]
+    fn default_root_dir_name_resolves_staging_when_vite_alias_set() {
+        with_clean_app_env(|| {
+            std::env::set_var("VITE_OPENHUMAN_APP_ENV", "staging");
+            assert_eq!(default_root_dir_name(), ".openhuman-staging");
+        });
+    }
+
+    /// With neither env var set the shell must default to the production
+    /// `.openhuman` dir. Production CI bakes `OPENHUMAN_APP_ENV=production`
+    /// via `option_env!` so packaged prod builds land here through the
+    /// runtime-empty / compile-time-set path; a bare unit test only covers
+    /// the runtime-empty branch.
+    #[test]
+    fn default_root_dir_name_defaults_to_production_when_unset() {
+        with_clean_app_env(|| {
+            assert_eq!(default_root_dir_name(), ".openhuman");
+        });
+    }
+
+    /// Whitespace and casing are folded by
+    /// `openhuman_core::api::config::app_env_from_env` — confirm the shell
+    /// inherits that behavior rather than re-implementing it.
+    #[test]
+    fn default_root_dir_name_normalizes_staging_casing_and_whitespace() {
+        with_clean_app_env(|| {
+            std::env::set_var("OPENHUMAN_APP_ENV", "  STAGING  ");
+            assert_eq!(default_root_dir_name(), ".openhuman-staging");
+        });
+    }
 
     #[test]
     fn read_active_user_id_ignores_empty_values() {

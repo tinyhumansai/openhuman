@@ -27,11 +27,11 @@ jobs:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.local/share/pnpm/store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -45,7 +45,7 @@ jobs:
           NODE_ENV: test
       - name: Upload coverage reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-report
           path: coverage
@@ -54,6 +54,10 @@ jobs:
   rust-core-tests:
     name: Rust Core Tests + Quality
     runs-on: ubuntu-22.04
+    # Healthy runtime on this image is ~6 minutes. Cap at 20 so the rare
+    # `LLM_PERMITS` cross-runtime-semaphore deadlock surfaces logs instead
+    # of wedging the runner for the GitHub-Actions default 6h ceiling.
+    timeout-minutes: 20
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
@@ -67,7 +71,7 @@ jobs:
       SCCACHE_GHA_ENABLED: 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
           submodules: recursive
@@ -96,7 +100,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
           # Required for app/src-tauri/vendor/tauri-cef — the fork supplies
@@ -116,7 +120,7 @@ jobs:
       # links the Chromium dylib via cef-dll-sys. Cache the download to avoid
       # re-fetching ~400MB every PR run.
       - name: Cache CEF binary distribution
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/tauri-cef
           key: cef-ubuntu-22.04-${{ hashFiles('app/src-tauri/Cargo.toml') }}
@@ -130,22 +134,27 @@ jobs:
       - name: Test Tauri shell (OpenHuman)
         run: cargo test --manifest-path app/src-tauri/Cargo.toml
 
+  # E2E note: OpenHuman's default desktop runtime is CEF. Linux tauri-driver
+  # talks to WebKitWebDriver / webkit2gtk and cannot drive the CEF-backed
+  # WebView, so Linux CEF E2E remains commented out until a CEF-compatible
+  # driver or replacement harness exists. Use macOS/Appium for local or manual
+  # desktop E2E runs.
   # e2e-linux:
   #   name: E2E (Linux / tauri-driver)
   #   runs-on: ubuntu-22.04
   #   timeout-minutes: 60
   #   steps:
   #     - name: Checkout code
-  #       uses: actions/checkout@v4
+  #       uses: actions/checkout@v5
   #       with:
   #         fetch-depth: 1
   #         submodules: recursive
 
   #     - name: Setup Node.js 24.x
-  #       uses: actions/setup-node@v4
+  #       uses: actions/setup-node@v5
   #       with:
   #         node-version: 24.x
-  #         cache: "yarn"
+  #         cache: "pnpm"
 
   #     - name: Install Rust (rust-toolchain.toml)
   #       uses: dtolnay/rust-toolchain@1.93.0
@@ -167,7 +176,7 @@ jobs:
   #         echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
   #     - name: Cache Cargo registry and build
-  #       uses: actions/cache@v4
+  #       uses: actions/cache@v5
   #       with:
   #         path: |
   #           ~/.cargo/registry
@@ -181,7 +190,7 @@ jobs:
   #       run: cargo install tauri-driver --version 2.0.5
 
   #     - name: Install JS dependencies
-  #       run: yarn install --frozen-lockfile
+  #       run: pnpm install --frozen-lockfile
 
   #     - name: Ensure .env exists for E2E build
   #       run: |
@@ -189,17 +198,10 @@ jobs:
   #         touch app/.env
 
   #     - name: Build E2E app
-  #       run: yarn workspace openhuman-app test:e2e:build
+  #       run: pnpm --filter openhuman-app test:e2e:build
 
-  #     - name: Stage sidecar next to app binary
-  #       run: |
-  #  # Tauri resolves externalBin relative to the running binary's directory.
-  #  # Copy the sidecar from binaries/ to target/debug/ so the app can find it.
-  #         cp app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu \
-  #            app/src-tauri/target/debug/openhuman-core-x86_64-unknown-linux-gnu
-  #         chmod +x app/src-tauri/target/debug/openhuman-core-x86_64-unknown-linux-gnu
-  #         echo "Sidecar staged next to app binary:"
-  #         ls -la app/src-tauri/target/debug/openhuman-core-* app/src-tauri/target/debug/OpenHuman
+  #     # Core is linked in-process through the Tauri host; no extra binary
+  #     # staging step is required before launching the app.
 
   #     - name: Run E2E tests under Xvfb
   #       run: |
@@ -212,7 +214,7 @@ jobs:
   #         mkdir -p ~/.local/share/applications
   #         export RUST_BACKTRACE=1
   #         cd app
-  #  # Core specs — must pass on Linux CI
+  #  # Core specs for the old WebKit-compatible Linux harness
   #         FAILED=0
   #         for spec in \
   #           test/e2e/specs/login-flow.spec.ts \
@@ -227,9 +229,10 @@ jobs:
   #             FAILED=1
   #           }
   #         done
-  #  # Extended specs (auth, billing, gmail, notion, payments) are skipped
-  #  # on Linux CI — webkit2gtk text matching differences cause Settings
-  #  # page navigation timeouts. Full suite runs on macOS locally.
+  #  # Extended specs (auth, billing, gmail, notion, payments) were skipped
+  #  # on the old Linux harness because webkit2gtk text matching differences
+  #  # caused Settings page navigation timeouts. Full suite runs through
+  #  # macOS/Appium locally or in a manually dispatched workflow when enabled.
   #         if [ "$FAILED" -eq 1 ]; then
   #           echo "Core E2E specs failed"
   #           exit 1
@@ -242,22 +245,22 @@ jobs:
 #     timeout-minutes: 90
 #     steps:
 #       - name: Checkout code
-#         uses: actions/checkout@v4
+#         uses: actions/checkout@v5
 #         with:
 #           fetch-depth: 1
 #           submodules: recursive
 
 #       - name: Setup Node.js 24.x
-#         uses: actions/setup-node@v4
+#         uses: actions/setup-node@v5
 #         with:
 #           node-version: 24.x
-#           cache: "yarn"
+#           cache: "pnpm"
 
 #       - name: Install Rust (rust-toolchain.toml)
 #         uses: dtolnay/rust-toolchain@1.93.0
 
 #       - name: Install dependencies
-#         run: yarn install --frozen-lockfile
+#         run: pnpm install --frozen-lockfile
 
 #       - name: Ensure .env exists for E2E build
 #         run: |
@@ -270,7 +273,7 @@ jobs:
 #           appium driver install mac2
 
 #       - name: Build E2E app bundle
-#         run: yarn workspace openhuman-app test:e2e:build
+#         run: pnpm --filter openhuman-app test:e2e:build
 
 #       - name: Run all E2E flows
-#         run: yarn workspace openhuman-app test:e2e:all:flows
+#         run: pnpm --filter openhuman-app test:e2e:all:flows

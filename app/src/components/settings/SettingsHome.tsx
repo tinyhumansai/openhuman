@@ -176,7 +176,7 @@ const SettingsHome = () => {
         {
           id: 'ai-models',
           title: 'AI & Models',
-          description: 'Local AI model setup and downloads',
+          description: 'Local AI model setup, downloads, and LLM provider',
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -209,7 +209,7 @@ const SettingsHome = () => {
             </svg>
           ),
           onClick: () => {
-            void openUrl(BILLING_DASHBOARD_URL);
+            openUrl(BILLING_DASHBOARD_URL).catch(() => {});
           },
         },
         {

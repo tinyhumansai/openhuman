@@ -99,12 +99,16 @@ fn detect_gpu(cpu_brand: &str, os_name: &str) -> (bool, Option<String>) {
 /// Probe for an NVIDIA GPU by running `nvidia-smi --query-gpu=name --format=csv,noheader`.
 /// Returns `Some("NVIDIA <name> (CUDA)")` on success, `None` if nvidia-smi is not available.
 fn probe_nvidia_smi() -> Option<String> {
-    let output = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=name", "--format=csv,noheader"])
+    let mut cmd = std::process::Command::new("nvidia-smi");
+    cmd.args(["--query-gpu=name", "--format=csv,noheader"])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let output = cmd.output().ok()?;
 
     if !output.status.success() {
         return None;

@@ -40,6 +40,21 @@ impl OpenHumanBackendProvider {
     }
 
     fn resolve_bearer(&self) -> anyhow::Result<String> {
+        // Fail fast when the scheduler-gate signed-out override is set
+        // (sidecar saw a 401 from this backend, the user logged out, or
+        // boot detected no JWT). Without this guard, every background
+        // producer would still race to the network and earn a 401 each
+        // time — that is exactly the failure mode that generated
+        // 5,414 Sentry events on issue OPENHUMAN-TAURI-1T.
+        //
+        // Return a sentinel that `is_session_expired_error` matches so
+        // any caller that bubbles this up to `jsonrpc.invoke_method`
+        // gets the same teardown path as a real backend 401.
+        if crate::openhuman::scheduler_gate::is_signed_out() {
+            anyhow::bail!(
+                "SESSION_EXPIRED: backend session not active — sign in to resume LLM work"
+            );
+        }
         let auth = AuthService::new(&self.state_dir(), self.options.secrets_encrypt);
         if let Some(t) = auth
             .get_provider_bearer_token(

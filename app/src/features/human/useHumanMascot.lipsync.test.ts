@@ -33,7 +33,16 @@ vi.mock('./voice/ttsClient', async () => {
   return { ...actual, synthesizeSpeech: vi.fn() };
 });
 
-vi.mock('./voice/audioPlayer', () => ({ playBase64Audio: vi.fn() }));
+vi.mock('./voice/audioPlayer', () => ({
+  playBase64Audio: vi.fn(),
+  // Hook's orphan `.catch(swallowAudioStop)` wiring runs in cleanup paths
+  // exercised here — mirror the real helper so stop sentinels are silenced.
+  swallowAudioStop: (err: unknown) => {
+    if (typeof err === 'object' && err !== null && (err as { stopped?: unknown }).stopped === true)
+      return;
+    throw err;
+  },
+}));
 
 let capturedListeners: ChatEventListeners | null = null;
 

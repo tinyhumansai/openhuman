@@ -85,6 +85,86 @@ export function MicCloudComposer({
     };
   }, []);
 
+  // Spacebar = tap-to-toggle (#1471). Scoped to whatever surface mounts
+  // this composer — today only the Human agent page. The listener lives
+  // on the window so the user doesn't have to click the mascot stage
+  // first, but it bails out when focus is inside an editable control or
+  // a button so the shortcut never steals a keystroke from real input.
+  useEffect(() => {
+    function shouldIgnoreFocus(target: EventTarget | null): boolean {
+      // Non-HTMLElement targets (SVG nodes, `document` itself) are
+      // never text inputs, so the spacebar shortcut is safe to fire —
+      // returning `false` here means "do not suppress".
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') {
+        return true;
+      }
+      // contenteditable surfaces (rich-text composers, ProseMirror,
+      // etc.). `target.isContentEditable` is the right check in real
+      // browsers because it walks the inheritance chain, but jsdom
+      // doesn't compute the flag for plain `<div contenteditable>`,
+      // so we additionally walk up via `closest` to cover both the
+      // jsdom + production case.
+      if (target.isContentEditable) return true;
+      const editableAncestor = target.closest('[contenteditable]');
+      if (editableAncestor instanceof HTMLElement) {
+        const value = editableAncestor.getAttribute('contenteditable');
+        // `contenteditable=""` and `contenteditable="true"` both mean
+        // editable; `"false"` explicitly opts out.
+        if (value === '' || value === 'true' || value === 'plaintext-only') {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      // `event.code` is layout-independent — `'Space'` is the physical
+      // bar key on every layout, where `event.key === ' '` would also
+      // match remaps that shouldn't trigger voice. Stick to `code`.
+      if (event.code !== 'Space') return;
+      // Don't fight repeat-key autorepeat — the toggle should be edge-
+      // triggered, not continuous.
+      if (event.repeat) return;
+      // Bare spacebar only. Modifier combinations (Shift-Space etc.) are
+      // owned by the rest of the app and must keep flowing through.
+      if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (shouldIgnoreFocus(event.target ?? document.activeElement)) {
+        composerLog(
+          'spacebar ignored — focus inside editable target=%s',
+          (event.target as HTMLElement | null)?.tagName ?? '<non-html>'
+        );
+        return;
+      }
+      // Prevent the default page-scroll behaviour and any focused-button
+      // click activation (the user might be tabbed onto the mic button
+      // itself, which would otherwise fire twice).
+      event.preventDefault();
+      if (disabled || state === 'transcribing') {
+        composerLog('spacebar ignored — disabled=%s state=%s', disabled, state);
+        return;
+      }
+      composerLog('spacebar toggle state=%s', state);
+      if (state === 'recording') {
+        stopRecording();
+      } else {
+        void startRecording();
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // `state` is the only changing dependency the handler reads; the
+    // refs are stable and `disabled` is captured via closure. Re-binding
+    // on every state transition is cheap and keeps the snapshot in sync.
+    // `startRecording` / `stopRecording` are plain function declarations
+    // hoisted inside the component body — their identity is stable within
+    // each render, so omitting them from the dep list is intentional, not
+    // a stale-closure risk.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, disabled]);
+
   function stopStream() {
     if (streamRef.current) {
       for (const track of streamRef.current.getTracks()) {

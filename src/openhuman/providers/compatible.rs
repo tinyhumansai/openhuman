@@ -366,17 +366,19 @@ impl OpenAiCompatibleProvider {
             let error = response.text().await?;
             let sanitized = super::sanitize_api_error(&error);
             let message = format!("{} Responses API error: {sanitized}", self.name);
-            crate::core::observability::report_error(
-                message.as_str(),
-                "llm_provider",
-                "responses_api",
-                &[
-                    ("provider", self.name.as_str()),
-                    ("model", model),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
+            if super::should_report_provider_http_failure(status) {
+                crate::core::observability::report_error(
+                    message.as_str(),
+                    "llm_provider",
+                    "responses_api",
+                    &[
+                        ("provider", self.name.as_str()),
+                        ("model", model),
+                        ("status", status_str.as_str()),
+                        ("failure", "non_2xx"),
+                    ],
+                );
+            }
             anyhow::bail!(message);
         }
 
@@ -700,17 +702,19 @@ impl OpenAiCompatibleProvider {
                 "{} streaming API error ({}): {}",
                 self.name, status, sanitized
             );
-            crate::core::observability::report_error(
-                message.as_str(),
-                "llm_provider",
-                "streaming_chat",
-                &[
-                    ("provider", self.name.as_str()),
-                    ("model", native_request.model.as_str()),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
+            if super::should_report_provider_http_failure(status) {
+                crate::core::observability::report_error(
+                    message.as_str(),
+                    "llm_provider",
+                    "streaming_chat",
+                    &[
+                        ("provider", self.name.as_str()),
+                        ("model", native_request.model.as_str()),
+                        ("status", status_str.as_str()),
+                        ("failure", "non_2xx"),
+                    ],
+                );
+            }
             anyhow::bail!(message);
         }
 
@@ -1155,17 +1159,19 @@ impl Provider for OpenAiCompatibleProvider {
 
             let status_str = status.as_u16().to_string();
             let message = format!("{} API error ({status}): {sanitized}", self.name);
-            crate::core::observability::report_error(
-                message.as_str(),
-                "llm_provider",
-                "chat_completions",
-                &[
-                    ("provider", self.name.as_str()),
-                    ("model", model),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
+            if super::should_report_provider_http_failure(status) {
+                crate::core::observability::report_error(
+                    message.as_str(),
+                    "llm_provider",
+                    "chat_completions",
+                    &[
+                        ("provider", self.name.as_str()),
+                        ("model", model),
+                        ("status", status_str.as_str()),
+                        ("failure", "non_2xx"),
+                    ],
+                );
+            }
             anyhow::bail!(message);
         }
 
@@ -1552,17 +1558,19 @@ impl Provider for OpenAiCompatibleProvider {
 
             let status_str = status.as_u16().to_string();
             let message = format!("{} API error ({status}): {sanitized}", self.name);
-            crate::core::observability::report_error(
-                message.as_str(),
-                "llm_provider",
-                "native_chat",
-                &[
-                    ("provider", self.name.as_str()),
-                    ("model", model),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
+            if super::should_report_provider_http_failure(status) {
+                crate::core::observability::report_error(
+                    message.as_str(),
+                    "llm_provider",
+                    "native_chat",
+                    &[
+                        ("provider", self.name.as_str()),
+                        ("model", model),
+                        ("status", status_str.as_str()),
+                        ("failure", "non_2xx"),
+                    ],
+                );
+            }
             anyhow::bail!(message);
         }
 
@@ -1678,17 +1686,19 @@ impl Provider for OpenAiCompatibleProvider {
                 };
                 let sanitized_error = super::sanitize_api_error(&raw_error);
                 let message = format!("{}: {}", status, sanitized_error);
-                crate::core::observability::report_error(
-                    message.as_str(),
-                    "llm_provider",
-                    "stream_chat",
-                    &[
-                        ("provider", provider_name.as_str()),
-                        ("model", model_owned.as_str()),
-                        ("status", status_str.as_str()),
-                        ("failure", "non_2xx"),
-                    ],
-                );
+                if super::should_report_provider_http_failure(status) {
+                    crate::core::observability::report_error(
+                        message.as_str(),
+                        "llm_provider",
+                        "stream_chat",
+                        &[
+                            ("provider", provider_name.as_str()),
+                            ("model", model_owned.as_str()),
+                            ("status", status_str.as_str()),
+                            ("failure", "non_2xx"),
+                        ],
+                    );
+                }
                 let _ = tx.send(Err(StreamError::Provider(message))).await;
                 return;
             }

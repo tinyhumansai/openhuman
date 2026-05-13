@@ -15,6 +15,7 @@ pub mod safety;
 pub mod schemas;
 pub mod store;
 pub mod sync_status;
+pub mod tool_memory;
 pub mod traits;
 pub mod tree;
 
@@ -31,14 +32,20 @@ pub use schemas::{
     all_registered_controllers as all_memory_registered_controllers,
 };
 pub use store::{
-    create_memory, create_memory_for_migration, create_memory_with_storage,
-    create_memory_with_storage_and_routes, effective_memory_backend_name, MemoryClient,
-    MemoryClientRef, MemoryItemKind, MemoryState, NamespaceDocumentInput, NamespaceMemoryHit,
-    NamespaceQueryResult, NamespaceRetrievalContext, RetrievalScoreBreakdown, UnifiedMemory,
+    create_memory, create_memory_for_migration, create_memory_with_local_ai,
+    create_memory_with_storage, create_memory_with_storage_and_routes,
+    effective_embedding_settings, effective_memory_backend_name, MemoryClient, MemoryClientRef,
+    MemoryItemKind, MemoryState, NamespaceDocumentInput, NamespaceMemoryHit, NamespaceQueryResult,
+    NamespaceRetrievalContext, RetrievalScoreBreakdown, UnifiedMemory,
 };
 pub use sync_status::{
     all_memory_sync_status_controller_schemas, all_memory_sync_status_registered_controllers,
     FreshnessLabel, MemorySyncStatus,
+};
+pub use tool_memory::{
+    render_tool_memory_rules, tool_memory_namespace, ToolMemoryCaptureHook, ToolMemoryPriority,
+    ToolMemoryRule, ToolMemoryRulesSection, ToolMemorySource, ToolMemoryStore, TOOL_MEMORY_HEADING,
+    TOOL_MEMORY_PROMPT_CAP,
 };
 pub use traits::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 pub use tree::{

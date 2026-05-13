@@ -37,6 +37,7 @@ fn build_install_command(install_dir: &Path) -> Result<tokio::process::Command, 
     #[cfg(target_os = "windows")]
     {
         let mut cmd = tokio::process::Command::new("powershell");
+        crate::openhuman::local_ai::process_util::apply_no_window(&mut cmd);
         cmd.env("OPENHUMAN_OLLAMA_INSTALL_DIR", install_dir);
         cmd.args([
             "-NoProfile",

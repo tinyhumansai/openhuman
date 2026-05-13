@@ -35,6 +35,18 @@ pub struct LearningConfig {
     #[serde(default = "default_true")]
     pub tool_tracking_enabled: bool,
 
+    /// Enable the tool-scoped memory capture hook (see
+    /// [`crate::openhuman::memory::tool_memory::ToolMemoryCaptureHook`]).
+    ///
+    /// When enabled, the hook records user edicts ("never email Sarah")
+    /// as `Critical`-priority rules in the `tool-{name}` memory
+    /// namespace, and tallies repeated tool failures into
+    /// `Normal`-priority observations. Defaults to true when learning
+    /// is enabled — set to false to disable durable rule capture
+    /// without turning off learning entirely.
+    #[serde(default = "default_true")]
+    pub tool_memory_capture_enabled: bool,
+
     /// Which LLM to use for reflection. Default: local (Ollama).
     #[serde(default)]
     pub reflection_source: ReflectionSource,
@@ -91,6 +103,7 @@ impl Default for LearningConfig {
             reflection_enabled: default_true(),
             user_profile_enabled: default_true(),
             tool_tracking_enabled: default_true(),
+            tool_memory_capture_enabled: default_true(),
             reflection_source: ReflectionSource::default(),
             max_reflections_per_session: default_max_reflections(),
             min_turn_complexity: default_min_turn_complexity(),

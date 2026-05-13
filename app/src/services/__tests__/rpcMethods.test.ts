@@ -66,6 +66,8 @@ describe('rpcMethods catalog', () => {
     ].join('\n');
 
     for (const method of Object.values(CORE_RPC_METHODS)) {
+      // core.* methods (e.g. core.ping) are special dispatch methods, not in the schema catalog.
+      if (!method.startsWith('openhuman.')) continue;
       const methodRoot = method.slice('openhuman.'.length);
       const namespace = methodRoot.startsWith('screen_intelligence_')
         ? 'screen_intelligence'

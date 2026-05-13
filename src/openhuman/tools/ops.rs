@@ -144,6 +144,8 @@ pub fn all_tools_with_runtime(
         Box::new(WhatsAppDataSearchMessagesTool),
         Box::new(ScheduleTool::new(security.clone(), root_config.clone())),
         Box::new(ProxyConfigTool::new(config.clone(), security.clone())),
+        Box::new(UpdateCheckTool::new()),
+        Box::new(UpdateApplyTool::new(security.clone())),
         Box::new(GitOperationsTool::new(
             security.clone(),
             workspace_dir.to_path_buf(),
