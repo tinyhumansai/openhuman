@@ -111,6 +111,18 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                 );
             } else if is_session_expired_error(&display_message) {
                 tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, display_message);
+            } else if crate::core::observability::is_transient_message_failure(&display_message) {
+                // Downstream call (backend_api / integrations / provider) already
+                // demoted the underlying transient failure to a warn. The error
+                // string still propagates up to here; re-reporting at error level
+                // would re-create the very Sentry noise the lower-layer demote
+                // was meant to avoid (#8Z, #93, #8W, #96).
+                tracing::warn!(
+                    method = %method,
+                    elapsed_ms = ms as u64,
+                    "[rpc] transient downstream failure — not reporting to Sentry: {}",
+                    display_message
+                );
             } else {
                 crate::core::observability::report_error_or_expected(
                     display_message.as_str(),
