@@ -10,7 +10,7 @@ use crate::openhuman::config::Config;
 pub(crate) const DEFAULT_OLLAMA_MODEL: &str = "gemma3:1b-it-qat";
 pub(crate) const DEFAULT_OLLAMA_VISION_MODEL: &str = "";
 pub(crate) const DEFAULT_LOW_VISION_MODEL: &str = "moondream:1.8b-v2-q4_K_S";
-pub(crate) const DEFAULT_OLLAMA_EMBED_MODEL: &str = "all-minilm:latest";
+pub(crate) const DEFAULT_OLLAMA_EMBED_MODEL: &str = "bge-m3";
 
 /// Chat models allowed in the current MVP build (2–4 GB tier only).
 /// Any resolved chat model ID not listed here is redirected to `MVP_DEFAULT_CHAT_MODEL`.
@@ -22,7 +22,11 @@ const MVP_DEFAULT_CHAT_MODEL: &str = "gemma3:1b-it-qat";
 const MVP_ALLOWED_VISION_MODELS: &[&str] = &[""];
 
 /// Embedding models allowed in MVP (2–4 GB tier uses all-minilm).
-const MVP_ALLOWED_EMBEDDING_MODELS: &[&str] = &["all-minilm:latest"];
+// bge-m3 (1024-dim, 8192-token context) is the canonical local embedder
+// for memory tree's fixed on-disk format. all-minilm (384-dim) is kept
+// for back-compat with users who pulled it under an older default, but
+// new selections should default to bge-m3.
+const MVP_ALLOWED_EMBEDDING_MODELS: &[&str] = &["bge-m3", "all-minilm:latest"];
 
 fn enforce_mvp_chat_allowlist(resolved: &str) -> String {
     let lower = resolved.to_ascii_lowercase();
@@ -193,6 +197,47 @@ mod tests {
         assert_eq!(effective_vision_model_id(&config), "");
         config.local_ai.vision_model_id = "moondream:1.8b".to_string();
         assert_eq!(effective_vision_model_id(&config), "");
+    }
+
+    #[test]
+    fn embedding_model_empty_falls_back_to_bge_m3() {
+        // After the cloud-embeddings unification PR, the default embedder
+        // for the local Ollama path is bge-m3 (1024 dim) to match memory
+        // tree's fixed on-disk format. Empty / whitespace input must
+        // resolve to that default, not the prior all-minilm:latest.
+        let mut config = test_config();
+        config.local_ai.embedding_model_id = String::new();
+        assert_eq!(effective_embedding_model_id(&config), "bge-m3");
+
+        config.local_ai.embedding_model_id = "   ".to_string();
+        assert_eq!(effective_embedding_model_id(&config), "bge-m3");
+    }
+
+    #[test]
+    fn embedding_model_passes_through_allowlisted_legacy() {
+        // all-minilm:latest is kept in MVP_ALLOWED_EMBEDDING_MODELS for
+        // back-compat with users who already pulled it under the prior
+        // default. It is NOT 1024-dim — memory tree's post-call validator
+        // will surface that mismatch at embed time — but the allowlist
+        // enforcer itself must let the value pass through unchanged.
+        let mut config = test_config();
+        config.local_ai.embedding_model_id = "all-minilm:latest".to_string();
+        assert_eq!(effective_embedding_model_id(&config), "all-minilm:latest");
+    }
+
+    #[test]
+    fn embedding_model_rejects_non_allowlisted_and_redirects_to_default() {
+        // Any non-allowlisted value (including legacy nomic-embed-text:latest
+        // and arbitrary user input) is silently redirected to the canonical
+        // default. This is the path that fired the "embedding model not in
+        // MVP allowlist, redirecting to default" warning on every embed
+        // resolution before bge-m3 was added to the allowlist.
+        let mut config = test_config();
+        config.local_ai.embedding_model_id = "nomic-embed-text:latest".to_string();
+        assert_eq!(effective_embedding_model_id(&config), "bge-m3");
+
+        config.local_ai.embedding_model_id = "totally-made-up-model:v0".to_string();
+        assert_eq!(effective_embedding_model_id(&config), "bge-m3");
     }
 
     #[test]

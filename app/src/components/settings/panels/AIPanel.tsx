@@ -20,6 +20,7 @@ const AIPanel = () => {
   );
   const [error, setError] = useState<string>('');
   const [localAiStatus, setLocalAiStatus] = useState<LocalAiStatus | null>(null);
+  const localAiRuntimeEnabled = localAiStatus != null && localAiStatus.state !== 'disabled';
 
   const loadAIPreview = useCallback(async () => {
     setLoading(true);
@@ -48,12 +49,17 @@ const AIPanel = () => {
   }, []);
 
   useEffect(() => {
-    void loadAIPreview();
-    void loadLocalAiStatus();
-    const timer = setInterval(() => {
+    const initialLoad = window.setTimeout(() => {
+      void loadAIPreview();
+      void loadLocalAiStatus();
+    }, 0);
+    const timer = window.setInterval(() => {
       void loadLocalAiStatus();
     }, 5000);
-    return () => clearInterval(timer);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.clearInterval(timer);
+    };
   }, [loadAIPreview, loadLocalAiStatus]);
 
   const refreshConfig = async (target: 'soul' | 'tools' | 'all') => {
@@ -124,10 +130,19 @@ const AIPanel = () => {
               </button>
               <button
                 onClick={async () => {
-                  await openhumanLocalAiDownload(true);
-                  await loadLocalAiStatus();
+                  if (!localAiRuntimeEnabled) return;
+                  try {
+                    setError('');
+                    await openhumanLocalAiDownload(true);
+                  } catch (err) {
+                    const message = err instanceof Error ? err.message : 'Failed to retry download';
+                    setError(message);
+                  } finally {
+                    await loadLocalAiStatus();
+                  }
                 }}
-                className="text-sm text-primary-500 hover:text-primary-600 transition-colors">
+                disabled={!localAiRuntimeEnabled}
+                className="text-sm text-primary-500 hover:text-primary-600 transition-colors disabled:opacity-50 disabled:hover:text-primary-500">
                 Retry Download
               </button>
             </div>

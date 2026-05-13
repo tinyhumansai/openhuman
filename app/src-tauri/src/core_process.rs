@@ -188,6 +188,44 @@ impl CoreProcessHandle {
                 // the same env, matching what a child sidecar would have
                 // received via Command::env.
                 std::env::set_var("OPENHUMAN_CORE_TOKEN", self.rpc_token.as_str());
+
+                // Debug-build only: surface the RPC bearer token at a known
+                // tmpdir path so the e2e test runner (a separate Node process)
+                // can authenticate against the in-process core. Release builds
+                // never write this file. The test harness reads it from
+                // ${tmpdir}/openhuman-e2e-rpc-token.
+                //
+                // Token file is owner-read-write only (mode 0600) on Unix so a
+                // shared dev box doesn't leak the bearer to other local users.
+                #[cfg(debug_assertions)]
+                {
+                    use std::io::Write as _;
+                    let token_path = std::env::temp_dir().join("openhuman-e2e-rpc-token");
+                    let write_result = (|| -> std::io::Result<()> {
+                        let mut options = std::fs::OpenOptions::new();
+                        options.create(true).write(true).truncate(true);
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::OpenOptionsExt as _;
+                            options.mode(0o600);
+                        }
+                        let mut file = options.open(&token_path)?;
+                        file.write_all(self.rpc_token.as_bytes())?;
+                        file.sync_all()?;
+                        Ok(())
+                    })();
+                    if let Err(err) = write_result {
+                        log::warn!(
+                            "[core] failed to write e2e token file at {}: {err}",
+                            token_path.display()
+                        );
+                    } else {
+                        log::debug!(
+                            "[core] wrote e2e token file at {} (debug build only)",
+                            token_path.display()
+                        );
+                    }
+                }
                 log::info!("[core] spawning embedded in-process core server on port {port}");
                 let task = tokio::spawn(async move {
                     if let Err(e) = openhuman_core::core::jsonrpc::run_server_embedded(

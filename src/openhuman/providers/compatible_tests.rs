@@ -248,6 +248,37 @@ fn custom_auth_style() {
     assert!(matches!(p.auth_header, AuthStyle::Custom(_)));
 }
 
+#[test]
+fn no_auth_style_allows_missing_key() {
+    let p =
+        OpenAiCompatibleProvider::new("ollama", "http://localhost:11434/v1", None, AuthStyle::None);
+    assert!(matches!(p.auth_header, AuthStyle::None));
+    assert!(p.credential_for_request().unwrap().is_none());
+
+    let req = p
+        .apply_auth_header(
+            p.http_client()
+                .post("http://localhost:11434/v1/chat/completions"),
+            None,
+        )
+        .build()
+        .unwrap();
+    assert!(req.headers().get("authorization").is_none());
+    assert!(req.headers().get("x-api-key").is_none());
+}
+
+#[test]
+fn blank_required_key_counts_as_missing() {
+    let p = OpenAiCompatibleProvider::new(
+        "custom",
+        "https://api.example.com",
+        Some("  "),
+        AuthStyle::Bearer,
+    );
+    let err = p.credential_for_request().unwrap_err().to_string();
+    assert!(err.contains("custom API key not set"), "err: {err}");
+}
+
 #[tokio::test]
 async fn all_compatible_providers_fail_without_key() {
     let providers = vec![
@@ -330,7 +361,11 @@ fn build_responses_prompt_preserves_multi_turn_history() {
 async fn chat_via_responses_requires_non_system_message() {
     let provider = make_provider("custom", "https://api.example.com", Some("test-key"));
     let err = provider
-        .chat_via_responses("test-key", &[ChatMessage::system("policy")], "gpt-test")
+        .chat_via_responses(
+            Some("test-key"),
+            &[ChatMessage::system("policy")],
+            "gpt-test",
+        )
         .await
         .expect_err("system-only fallback payload should fail");
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Dispatcher for `pnpm review <cmd> <args…>`.
-# Commands: sync | review | fix | merge
+# Commands: sync | review | fix | coverage | merge
 
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,6 +17,11 @@ Commands:
                                           Trailing extra-prompt is appended to the agent prompt.
   fix     <pr> [--agent <tool>] [extra-prompt]
                                           Sync + pr-reviewer (apply fixes) + pr-manager-lite (push)
+                                          Default agent: claude
+                                          Trailing extra-prompt is appended to the agent prompt.
+  coverage <pr> [--agent <tool>] [extra-prompt]
+                                          Sync + gather coverage CI context + agent to fix coverage
+                                          failures, improve coverage, push, and babysit the PR
                                           Default agent: claude
                                           Trailing extra-prompt is appended to the agent prompt.
   merge   <pr> [--squash|--merge|--rebase] [--dry-run] [--force] [--admin|--auto] [--summary-llm <tool>]
@@ -43,7 +48,7 @@ fi
 shift
 
 case "$cmd" in
-  sync|review|fix|merge)
+  sync|review|fix|coverage|merge)
     exec "$here/${cmd}.sh" "$@"
     ;;
   *)

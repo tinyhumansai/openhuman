@@ -13,6 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct MeetConfig {
     /// When `true`, the orchestrator agent receives the transcript of every
     /// completed Google Meet call as a fresh chat thread and is invited to

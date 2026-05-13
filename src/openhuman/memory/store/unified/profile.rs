@@ -44,12 +44,6 @@ CREATE TABLE IF NOT EXISTS user_profile (
 
 CREATE INDEX IF NOT EXISTS idx_profile_type
     ON user_profile(facet_type);
-
-CREATE INDEX IF NOT EXISTS idx_profile_state
-    ON user_profile(state);
-
-CREATE INDEX IF NOT EXISTS idx_profile_class
-    ON user_profile(class);
 "#;
 
 /// Phase 3 ALTER TABLE statements for adding new columns to existing databases.
@@ -63,14 +57,6 @@ pub const PHASE3_COLUMNS_SQL: &[&str] = &[
     "ALTER TABLE user_profile ADD COLUMN evidence_refs_json TEXT",
     "ALTER TABLE user_profile ADD COLUMN class TEXT",
     "ALTER TABLE user_profile ADD COLUMN cue_families_json TEXT",
-];
-
-/// Phase 3 index creation statements. Idempotent (IF NOT EXISTS).
-///
-/// Shared between `migrate_profile_schema` and `init.rs`.
-pub const PHASE3_INDEXES_SQL: &[&str] = &[
-    "CREATE INDEX IF NOT EXISTS idx_profile_state ON user_profile(state)",
-    "CREATE INDEX IF NOT EXISTS idx_profile_class ON user_profile(class)",
 ];
 
 /// Idempotent schema migration for existing databases.
@@ -98,13 +84,6 @@ pub fn migrate_profile_schema(conn: &Arc<Mutex<Connection>>) {
             Err(e) => {
                 tracing::warn!("[profile] schema migration failed (non-fatal): {sql}: {e}");
             }
-        }
-    }
-
-    // Ensure the new indexes exist (idempotent — IF NOT EXISTS).
-    for sql in PHASE3_INDEXES_SQL {
-        if let Err(e) = conn.execute(sql, []) {
-            tracing::warn!("[profile] index creation failed (non-fatal): {sql}: {e}");
         }
     }
 }

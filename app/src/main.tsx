@@ -1,5 +1,4 @@
 // IMPORTANT: Polyfills must be imported FIRST
-import { isTauri as tauriRuntimeAvailable } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
@@ -16,6 +15,7 @@ import { primeActiveUserId } from './store/userScopedStorage';
 import { APP_VERSION } from './utils/config';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 import { getActiveUserIdFromCore } from './utils/tauriCommands';
+import { isTauri as tauriRuntimeAvailable } from './utils/tauriCommands/common';
 
 setStoreForApiClient(() => getCoreStateSnapshot().snapshot.sessionToken);
 
@@ -23,7 +23,10 @@ setStoreForApiClient(() => getCoreStateSnapshot().snapshot.sessionToken);
 // that lives OUTSIDE Tauri's runtime (the vendored tauri-cef can't render
 // transparent windowed-mode browsers). That webview can't read a Tauri
 // window label, so the Rust shell appends `?window=mascot` to the URL it
-// loads. Detect it before we touch any Tauri APIs.
+// loads. Detect it via the URL param so we can skip `getCurrentWindow()`
+// — which would either throw or trigger the CEF IPC-bootstrap gap that
+// `tauriRuntimeAvailable()` (= the hardened `isTauri()`) now guards
+// against by reading `window.__TAURI_INTERNALS__.invoke`.
 const urlWindowParam = (() => {
   try {
     return new URLSearchParams(window.location.search).get('window');

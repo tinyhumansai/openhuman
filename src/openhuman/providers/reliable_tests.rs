@@ -799,6 +799,35 @@ fn upstream_unhealthy_does_not_flag_generic_error() {
     assert!(!is_upstream_unhealthy(&err));
 }
 
+// 408/502/504 must also classify as transient — `ops::api_error` formats
+// the upstream failure as "<provider> API error (<status>): <body>", and the
+// tool-call loop ORs is_rate_limited (429) with is_upstream_unhealthy. Before
+// this fix only 503/text-pattern matched; 408/502/504 leaked per-iteration
+// Sentry events (CodeRabbit review on #1529, OPENHUMAN-TAURI-T/-2E/-84).
+#[test]
+fn upstream_unhealthy_detects_408_request_timeout() {
+    let err = anyhow::anyhow!("OpenAI API error (408 Request Timeout): upstream took too long");
+    assert!(is_upstream_unhealthy(&err));
+}
+
+#[test]
+fn upstream_unhealthy_detects_502_bad_gateway() {
+    let err = anyhow::anyhow!("Anthropic API error (502 Bad Gateway): bad gateway");
+    assert!(is_upstream_unhealthy(&err));
+}
+
+#[test]
+fn upstream_unhealthy_detects_504_gateway_timeout() {
+    let err = anyhow::anyhow!("OpenAI API error (504 Gateway Timeout): upstream timed out");
+    assert!(is_upstream_unhealthy(&err));
+}
+
+#[test]
+fn upstream_unhealthy_detects_503_service_unavailable_with_provider_prefix() {
+    let err = anyhow::anyhow!("OpenAI API error (503 Service Unavailable): backend overloaded");
+    assert!(is_upstream_unhealthy(&err));
+}
+
 #[test]
 fn failure_reason_upstream_unhealthy_wins_over_rate_limited() {
     // Both rate_limited AND upstream_unhealthy — upstream_unhealthy must win.

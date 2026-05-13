@@ -128,7 +128,7 @@ impl Tool for SpawnSubagentTool {
                 },
                 "dedicated_thread": {
                     "type": "boolean",
-                    "description": "Default `false`. Set `true` ONLY for long, complex sub-tasks where the parent thread should not be flooded with sub-agent output. The sub-agent's prompt and final summary land in a fresh worker-labeled thread the user can open from the thread list, and the parent receives a compact reference (worker thread id + brief summary) instead of the full transcript. Worker threads cannot themselves spawn another worker (sub-agents never see this tool), so this is a one-level-deep escape hatch."
+                    "description": "Temporarily disabled (see tinyhumansai/openhuman#1624). Passing `true` causes this tool to return an explicit error. Omit the field or pass `false` until the worker-thread UI surface lands."
                 }
             }
         })
@@ -166,10 +166,25 @@ impl Tool for SpawnSubagentTool {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
 
-        let dedicated_thread = args
+        // Worker-thread spawning is temporarily disabled until a proper UI
+        // showcase lands (see tinyhumansai/openhuman#1624). Return an
+        // explicit error when callers request a dedicated thread so the
+        // behaviour is observable rather than silently downgraded.
+        let dedicated_thread_requested = args
             .get("dedicated_thread")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        if dedicated_thread_requested {
+            log::debug!(
+                "[spawn_subagent] dedicated_thread requested but temporarily \
+                 disabled (see tinyhumansai/openhuman#1624); rejecting call"
+            );
+            return Ok(ToolResult::error(
+                "spawn_subagent: `dedicated_thread` is temporarily disabled \
+                 (see tinyhumansai/openhuman#1624); retry without it.",
+            ));
+        }
+        let dedicated_thread = false;
 
         // ── Validation ─────────────────────────────────────────────────
         if agent_id.is_empty() {

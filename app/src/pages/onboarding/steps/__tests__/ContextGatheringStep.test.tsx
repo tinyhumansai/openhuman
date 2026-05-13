@@ -57,7 +57,7 @@ describe('ContextGatheringStep', () => {
     });
   });
 
-  it('runs the full Gmail -> Apify scrape -> save pipeline and auto-navigates', async () => {
+  it('runs Gmail -> save pipeline with Apify disabled and auto-navigates', async () => {
     const onNext = vi.fn().mockResolvedValue(undefined);
     callCoreRpc.mockImplementation(async (req: { method: string; params: unknown }) => {
       if (req.method === 'openhuman.tools_composio_execute') {
@@ -68,12 +68,6 @@ describe('ContextGatheringStep', () => {
               { messageText: 'Visit https://www.linkedin.com/comm/in/jane-doe?foo=bar to view.' },
             ],
           },
-        };
-      }
-      if (req.method === 'openhuman.tools_apify_linkedin_scrape') {
-        return {
-          data: { name: 'Jane Doe', headline: 'Founder at Acme' },
-          markdown: '# Jane Doe\n\nFounder at Acme. Based in Berlin.',
         };
       }
       if (req.method === 'openhuman.learning_save_profile') {
@@ -89,24 +83,15 @@ describe('ContextGatheringStep', () => {
     await waitFor(() => expect(onNext).toHaveBeenCalled(), { timeout: 5000 });
 
     const calls = callCoreRpc.mock.calls.map((c: Array<{ method: string }>) => c[0].method);
-    expect(calls).toEqual([
-      'openhuman.tools_composio_execute',
-      'openhuman.tools_apify_linkedin_scrape',
-      'openhuman.learning_save_profile',
-    ]);
-
-    const scrapeCall = callCoreRpc.mock.calls.find(
-      (c: Array<{ method: string }>) => c[0].method === 'openhuman.tools_apify_linkedin_scrape'
-    );
-    expect((scrapeCall![0].params as { profile_url: string }).profile_url).toBe(
-      'https://www.linkedin.com/in/jane-doe'
-    );
+    expect(calls).toEqual(['openhuman.tools_composio_execute', 'openhuman.learning_save_profile']);
+    // Apify scrape must not be called — it is disabled during profile build.
+    expect(calls).not.toContain('openhuman.tools_apify_linkedin_scrape');
 
     const saveCall = callCoreRpc.mock.calls.find(
       (c: Array<{ method: string }>) => c[0].method === 'openhuman.learning_save_profile'
     );
     expect(saveCall![0].params.summarize).toBe(true);
-    expect(saveCall![0].params.markdown).toContain('Founder at Acme');
+    expect(saveCall![0].params.markdown).toContain('https://www.linkedin.com/in/jane-doe');
   });
 
   it('skips downstream stages when Gmail finds no LinkedIn URL and auto-navigates', async () => {
@@ -187,7 +172,6 @@ describe('ContextGatheringStep', () => {
     });
 
     it('pipeline saves profile even after user continues and component unmounts', async () => {
-      let resolveScrape!: (v: unknown) => void;
       let resolveSave!: (v: unknown) => void;
 
       callCoreRpc.mockImplementation(async (req: { method: string }) => {
@@ -196,11 +180,6 @@ describe('ContextGatheringStep', () => {
             successful: true,
             data: { messages: [{ messageText: 'https://www.linkedin.com/in/test-user' }] },
           };
-        }
-        if (req.method === 'openhuman.tools_apify_linkedin_scrape') {
-          return new Promise(res => {
-            resolveScrape = res;
-          });
         }
         if (req.method === 'openhuman.learning_save_profile') {
           return new Promise(res => {
@@ -215,24 +194,18 @@ describe('ContextGatheringStep', () => {
         <ContextGatheringStep connectedSources={['composio:gmail']} onNext={onNext} />
       );
 
-      // Wait for Gmail stage to complete and scrape to start
+      // Wait for Gmail stage to complete and save_profile to start
       await act(async () => {
         await Promise.resolve();
         await Promise.resolve();
       });
 
-      // User continues while the scrape is still running, then the route unmounts.
+      // User continues while save_profile is still running, then the route unmounts.
       fireEvent.click(screen.getByRole('button', { name: /continue to chat/i }));
       expect(onNext).toHaveBeenCalled();
       unmount();
 
       // Resolve remaining pipeline stages after unmount
-      await act(async () => {
-        resolveScrape({ data: {}, markdown: '# Test User' });
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
       await act(async () => {
         resolveSave({ path: '/tmp/PROFILE.md', bytes: 128 });
         await Promise.resolve();
@@ -243,6 +216,11 @@ describe('ContextGatheringStep', () => {
         (c: Array<{ method: string }>) => c[0].method === 'openhuman.learning_save_profile'
       );
       expect(saveCalls.length).toBe(1);
+      // Apify must never have been invoked.
+      const apifyCalls = callCoreRpc.mock.calls.filter(
+        (c: Array<{ method: string }>) => c[0].method === 'openhuman.tools_apify_linkedin_scrape'
+      );
+      expect(apifyCalls.length).toBe(0);
     });
   });
 

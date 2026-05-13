@@ -49,8 +49,17 @@ impl LocalAiService {
             last_memory_summary_at: parking_lot::Mutex::new(None),
             http: reqwest::Client::builder()
                 // Local models can take >30s on cold start and first-token generation.
-                // Keep this generous so inline autocomplete and local chat stay reliable.
+                // Keep the total timeout generous so inline autocomplete and local
+                // chat stay reliable.
                 .timeout(std::time::Duration::from_secs(120))
+                // ...but bound the *connect* phase tightly. When the Ollama server
+                // isn't running, the default connect timeout (long on Windows
+                // loopback) cascades through `has_model` × 3 in `assets_status`
+                // and blows past the 30s RPC envelope. 500ms is well under any
+                // realistic loopback connect latency; if the server is up,
+                // reqwest's per-request `.timeout()` still bounds the rest of
+                // the exchange.
+                .connect_timeout(std::time::Duration::from_millis(500))
                 .build()
                 .unwrap_or_else(|e| {
                     log::warn!("[local_ai] reqwest client build failed, falling back to default client: {e}");
@@ -98,6 +107,7 @@ impl LocalAiService {
     }
 
     pub fn mark_degraded(&self, warning: String) {
+        log::warn!("[local_ai] mark_degraded: {warning}");
         let mut status = self.status.lock();
         status.state = "degraded".to_string();
         status.warning = Some(warning);

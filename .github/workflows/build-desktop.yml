@@ -112,7 +112,7 @@ jobs:
             target: x86_64-apple-darwin
             artifact_suffix: x86_64-apple-darwin
           - platform: ubuntu-22.04
-            args: --target x86_64-unknown-linux-gnu --bundles deb
+            args: --target x86_64-unknown-linux-gnu --bundles deb appimage
             target: x86_64-unknown-linux-gnu
             artifact_suffix: ubuntu
           - platform: windows-latest
@@ -159,22 +159,10 @@ jobs:
             libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
             libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
             libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev
-      - name: Dump missing shared libs (debug)
-        if: matrix.settings.platform == 'ubuntu-22.04'
-        shell: bash
-        env:
-          PROFILE: ${{ inputs.build_profile }}
-          MATRIX_TARGET: ${{ matrix.settings.target }}
-        run: |
-          set +e
-          for BIN in \
-            "app/src-tauri/target/${MATRIX_TARGET}/${PROFILE}/OpenHuman" \
-            "target/${MATRIX_TARGET}/${PROFILE}/OpenHuman"; do
-            if [ -x "$BIN" ]; then
-              echo "ldd $BIN"
-              ldd "$BIN" | grep 'not found' || echo "  all resolved"
-            fi
-          done
+      # NOTE: The post-build dump lives further down (after `cargo tauri build`)
+      # so the binary actually exists when ldd runs. Running it here pre-build
+      # silently no-op'd and gave us no signal during the
+      # quick-sharun "missing libraries" failures.
 
       # Skip first 7 lines of Cargo.lock (workspace package version bumps) so the key tracks dependency changes only
       - name: Cargo.lock fingerprint (deps only)
@@ -420,7 +408,60 @@ jobs:
           # Inline NODE_OPTIONS so it reaches the vite child spawned by
           # beforeBuildCommand. Step-level env was observed not to propagate
           # on macos-arm64 runners, causing OOM at node's ~2GB auto default.
+          #
+          # Linux AppImage bundler note: the vendored tauri-cef bundler
+          # invokes `quick-sharun.sh`, which runs `lib4bin` → `ldd` on the
+          # staged OpenHuman binary. CEF (libcef.so) is downloaded into
+          # `~/.cache/tauri-cef/<version>/<os-arch>/` at cargo-build time and
+          # copied into the AppDir at usr/lib/libcef.so, but the binary's
+          # RUNPATH does not include either location, so plain `ldd` reports
+          # `libcef.so => not found` and lib4bin aborts with the generic
+          # "is missing libraries! Aborting..." banner. To get past it we:
+          #   1. Run `cargo tauri build --no-bundle` first so the cef-dll-sys
+          #      build script downloads libcef.so into the cache dir.
+          #   2. Re-invoke `cargo tauri build` (incremental — cargo skips the
+          #      already-compiled artifacts) with that cache dir on
+          #      LD_LIBRARY_PATH so the bundler's ldd call resolves libcef.so.
+          # macOS / Windows take the original single-call path.
+          if [ "${RUNNER_OS}" = "Linux" ]; then
+            echo "[appimage-fix] linux split build: compile first to fetch CEF"
+            NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build --no-bundle $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+            CEF_LIB_DIR="$(find "$HOME/.cache/tauri-cef" -name libcef.so -printf '%h\n' 2>/dev/null | head -1)"
+            if [ -z "$CEF_LIB_DIR" ]; then
+              echo "::error::libcef.so not found under ~/.cache/tauri-cef after --no-bundle compile; cannot satisfy lib4bin ldd resolution." >&2
+              exit 1
+            fi
+            echo "[appimage-fix] prepending CEF lib dir to LD_LIBRARY_PATH: $CEF_LIB_DIR"
+            export LD_LIBRARY_PATH="$CEF_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          fi
           NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+
+      # Diagnostic for the recurring quick-sharun "is missing libraries!
+      # Aborting..." error on the AppImage bundler — the upstream script
+      # only prints a generic banner and swallows lib4bin's actual output,
+      # so we have no visibility into which .so is unresolved. `if: always()`
+      # ensures this still runs when `cargo tauri build` failed at bundling
+      # (the binary itself is produced before bundling starts).
+      - name: Dump linked libraries of built binary (ubuntu debug)
+        if: always() && matrix.settings.platform == 'ubuntu-22.04'
+        shell: bash
+        env:
+          PROFILE: ${{ inputs.build_profile }}
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+        run: |
+          set +e
+          for BIN in \
+            "app/src-tauri/target/${MATRIX_TARGET}/${PROFILE}/OpenHuman" \
+            "app/src-tauri/target/${MATRIX_TARGET}/${PROFILE}/bundle/appimage_deb/data/usr/bin/OpenHuman" \
+            "target/${MATRIX_TARGET}/${PROFILE}/OpenHuman"; do
+            if [ -x "$BIN" ]; then
+              echo "==> ldd $BIN"
+              ldd "$BIN" || true
+              echo "==> unresolved:"
+              ldd "$BIN" | grep 'not found' || echo "  (all resolved)"
+              echo
+            fi
+          done
 
       # Regression guard for #1403: if @sentry/vite-plugin silently no-op'd
       # (e.g. SENTRY_AUTH_TOKEN missing, or the `sourcemaps.assets` glob
@@ -524,6 +565,8 @@ jobs:
               "$root"/deb/*.deb \
               "$root"/appimage/*.AppImage \
               "$root"/appimage/*.AppImage.sig \
+              "$root"/appimage/*.AppImage.tar.gz \
+              "$root"/appimage/*.AppImage.tar.gz.sig \
               "$root"/msi/*.msi \
               "$root"/msi/*.msi.sig \
               "$root"/nsis/*-setup.exe \

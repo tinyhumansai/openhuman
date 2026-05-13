@@ -8,13 +8,14 @@ integration needed.
 | `sync.sh`    | Fetch PR head, check out as `pr/<num>`, merge `main`, wire push/upstream.         |
 | `review.sh`  | `sync` + hand off to the `pr-reviewer` agent to review, comment, and approve.     |
 | `fix.sh`     | `sync` + `pr-reviewer` (apply fixes) + `pr-manager-lite` (commit & push).         |
+| `coverage.sh`| `sync` + gather coverage CI context + agent to fix coverage, push, babysit checks.|
 | `merge.sh`   | LLM-summarized squash body + filtered Co-authored-by trailers + `gh pr merge`.    |
 
 ## LLM flags
 
-- `review` / `fix`: `--agent <tool>` (default `claude`). Picks the CLI that
-  drives the agent prompt. An optional trailing positional `<extra-prompt>` is
-  appended verbatim to the agent's prompt (e.g.
+- `review` / `fix` / `coverage`: `--agent <tool>` (default `claude`). Picks the
+  CLI that drives the agent prompt. An optional trailing positional
+  `<extra-prompt>` is appended verbatim to the agent's prompt (e.g.
   `pnpm review fix 123 "focus on the retry logic"`).
 - `merge`: `--summary-llm <tool>` (default `gemini`). The LLM that condenses the PR
   body + commit messages into a concise squash commit body. Use `--summary-llm none`
@@ -30,6 +31,7 @@ Via pnpm (preferred):
 pnpm review sync 123
 pnpm review review 123
 pnpm review fix 123
+pnpm review coverage 123
 pnpm review merge 123              # --squash
 pnpm review merge 123 --rebase
 pnpm review --help
@@ -41,6 +43,7 @@ Or invoke the scripts directly:
 scripts/review/sync.sh 123
 scripts/review/review.sh 123
 scripts/review/fix.sh 123
+scripts/review/coverage.sh 123
 scripts/review/merge.sh 123
 ```
 
@@ -52,6 +55,6 @@ scripts/review/merge.sh 123
   `Co-authored-by:` entries (default filters copilot / codex / cursor / claude /
   anthropic / openai / chatgpt / `[bot]` / `noreply@github` /
   `users.noreply.github.com`; matched case-insensitively on name or email).
-- Requires `git`, `gh`, `jq`. `review` / `fix` also require the agent CLI
-  (default `claude`); `merge` also requires the summary LLM CLI (default `gemini`)
-  unless `--summary-llm none`.
+- Requires `git`, `gh`, `jq`. `review` / `fix` / `coverage` also require the
+  agent CLI (default `claude`); `merge` also requires the summary LLM CLI
+  (default `gemini`) unless `--summary-llm none`.

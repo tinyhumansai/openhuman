@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/react';
-import { isTauri } from '@tauri-apps/api/core';
 import { openUrl as tauriOpenUrl } from '@tauri-apps/plugin-opener';
+
+import { isTauri } from './tauriCommands/common';
 
 const isHttpUrl = (url: string): boolean => /^https?:\/\//i.test(url);
 

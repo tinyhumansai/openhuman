@@ -11,8 +11,10 @@ use serde::Serialize;
 use serde_json::json;
 
 mod dispatch;
+mod structured_error;
 
 pub use dispatch::try_dispatch;
+pub use structured_error::{StructuredRpcError, STRUCTURED_RPC_ERROR_SENTINEL};
 
 /// Successful RPC handler result: serialized JSON value plus optional log lines.
 ///

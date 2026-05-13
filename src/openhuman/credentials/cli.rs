@@ -181,7 +181,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_auth_login_provider_branch_stores_credentials() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = TempDir::new().unwrap();
         set_workspace(&tmp);
         let result = cli_auth_login(
@@ -204,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_auth_login_with_non_empty_fields_passes_them_through() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = TempDir::new().unwrap();
         set_workspace(&tmp);
         let fields = serde_json::json!({ "org_id": "org-1" });
@@ -216,7 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_auth_logout_provider_branch_reports_no_op_on_empty_store() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = TempDir::new().unwrap();
         set_workspace(&tmp);
         let result = cli_auth_logout("openai".into(), None).await;
@@ -230,7 +230,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_auth_status_provider_branch_lists_for_provider() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = TempDir::new().unwrap();
         set_workspace(&tmp);
         let result = cli_auth_status("openai".into(), None).await;
@@ -245,7 +245,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_auth_list_with_empty_filter_lists_all() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = TempDir::new().unwrap();
         set_workspace(&tmp);
         let out = cli_auth_list(None).await.expect("list ok");
@@ -256,7 +256,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_auth_list_rejects_whitespace_only_filter_as_no_filter() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = TempDir::new().unwrap();
         set_workspace(&tmp);
         let out = cli_auth_list(Some("   ".into())).await.expect("list ok");

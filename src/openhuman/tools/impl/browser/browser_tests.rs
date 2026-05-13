@@ -294,7 +294,7 @@ fn browser_tool_validates_url() {
 
 #[test]
 fn browser_tool_empty_allowlist_blocks() {
-    let _guard = BROWSER_ENV_LOCK.lock().expect("env lock poisoned");
+    let _guard = BROWSER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let security = Arc::new(SecurityPolicy::default());
     let tool = BrowserTool::new(security, vec![], None);
     std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL");
@@ -303,7 +303,7 @@ fn browser_tool_empty_allowlist_blocks() {
 
 #[test]
 fn browser_tool_empty_allowlist_allows_with_env_flag() {
-    let _guard = BROWSER_ENV_LOCK.lock().expect("env lock poisoned");
+    let _guard = BROWSER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let security = Arc::new(SecurityPolicy::default());
     let tool = BrowserTool::new(security, vec![], None);
     std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", "1");

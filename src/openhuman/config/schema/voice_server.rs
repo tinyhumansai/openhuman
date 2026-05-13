@@ -17,6 +17,7 @@ pub enum VoiceActivationMode {
 
 /// Configuration for the voice dictation server.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct VoiceServerConfig {
     /// Whether the voice server should start automatically with the core.
     #[serde(default)]

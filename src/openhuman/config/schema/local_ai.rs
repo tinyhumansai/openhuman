@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 /// `LocalAiConfig::runtime_enabled` — when that is `false` every helper
 /// method below returns `false` regardless of these values.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct LocalAiUsage {
     /// When true (and `runtime_enabled`), use the local model for embedding
     /// generation instead of the cloud backend.
@@ -39,6 +40,7 @@ impl Default for LocalAiUsage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct LocalAiConfig {
     /// Master runtime switch. Defaults to `false` — Ollama is OFF by default.
     /// Note: the old on-disk field was `enabled`; that key is now unknown to
@@ -129,7 +131,11 @@ fn default_vision_model_id() -> String {
 }
 
 fn default_embedding_model_id() -> String {
-    "all-minilm:latest".to_string()
+    // bge-m3 (1024 dims, 8192-token context). Required by the memory tree's
+    // fixed on-disk embedding format (EMBEDDING_DIM=1024) — `all-minilm`
+    // (384 dims) and `nomic-embed-text` (768 dims) would fail the
+    // post-call dim validator at `memory::tree::score::embed::mod::embed`.
+    "bge-m3".to_string()
 }
 
 fn default_stt_model_id() -> String {

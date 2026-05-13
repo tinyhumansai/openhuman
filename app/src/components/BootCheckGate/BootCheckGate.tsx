@@ -9,7 +9,6 @@
  * Visual language follows ServiceBlockingGate.tsx (bg-stone-950/80 overlay,
  * bg-stone-900 panel, ocean-500 / coral-500 semantics).
  */
-import { isTauri } from '@tauri-apps/api/core';
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -29,6 +28,7 @@ import {
   storeCoreToken,
   storeRpcUrl,
 } from '../../utils/configPersistence';
+import { isTauri } from '../../utils/tauriCommands/common';
 
 const log = debug('boot-check');
 const logError = debug('boot-check:error');

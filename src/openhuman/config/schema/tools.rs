@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct MultimodalConfig {
     #[serde(default = "default_multimodal_max_images")]
     pub max_images: usize,
@@ -47,6 +48,7 @@ impl Default for MultimodalConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct BrowserComputerUseConfig {
     #[serde(default = "default_browser_computer_use_endpoint")]
     pub endpoint: String,
@@ -84,6 +86,7 @@ impl Default for BrowserComputerUseConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct BrowserConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -131,6 +134,7 @@ impl Default for BrowserConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(default)]
 pub struct HttpRequestConfig {
     #[serde(default)]
     pub allowed_domains: Vec<String>,
@@ -149,6 +153,7 @@ fn default_http_timeout_secs() -> u64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct CurlConfig {
     /// Subdirectory under `workspace_dir` where downloads land. Inputs
     /// are resolved relative to this root; absolute paths and `..`
@@ -187,6 +192,7 @@ impl Default for CurlConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct GitbooksConfig {
     /// When `true`, register `gitbooks_search` and `gitbooks_get_page`.
     #[serde(default = "defaults::default_true")]
@@ -218,6 +224,7 @@ impl Default for GitbooksConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct WebSearchConfig {
     #[serde(default = "default_web_search_max_results")]
     pub max_results: usize,
@@ -243,6 +250,7 @@ impl Default for WebSearchConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ComposioConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -277,6 +285,7 @@ impl Default for ComposioConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct SecretsConfig {
     #[serde(default = "default_true")]
     pub encrypt: bool,
@@ -293,6 +302,7 @@ impl Default for SecretsConfig {
 // ── Native computer control (mouse + keyboard) ─────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default)]
 pub struct ComputerControlConfig {
     /// Master toggle for mouse and keyboard tools. Disabled by default —
     /// the user must explicitly opt in.
@@ -304,6 +314,7 @@ pub struct ComputerControlConfig {
 
 /// Per-integration on/off toggle.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct IntegrationToggle {
     #[serde(default = "defaults::default_true")]
     pub enabled: bool,
@@ -331,6 +342,7 @@ impl Default for IntegrationToggle {
 /// costs are metered server-side, so there is no client-side toggle
 /// for it.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default)]
 pub struct IntegrationsConfig {
     /// Apify actor execution and scraper integration.
     #[serde(default)]

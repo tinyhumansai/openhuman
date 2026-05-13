@@ -186,12 +186,7 @@ fn append_section(report: &mut String, remaining: &mut usize, section: &str) {
         *remaining -= needed;
     } else {
         let budget = *remaining;
-        let truncate_at = section
-            .char_indices()
-            .map(|(i, ch)| i + ch.len_utf8())
-            .take_while(|end| *end <= budget)
-            .last()
-            .unwrap_or(0);
+        let truncate_at = crate::openhuman::util::floor_char_boundary(section, budget);
         report.push_str(&section[..truncate_at]);
         report.push_str("\n[... truncated — token budget exceeded]\n");
         *remaining = 0;

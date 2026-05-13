@@ -13,7 +13,7 @@
  * keep the Skills page badge in sync too, so the card reflects the new
  * state as soon as the modal closes.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
@@ -73,6 +73,9 @@ export default function ComposioConnectModal({
   );
   const [error, setError] = useState<string | null>(null);
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
+  // WhatsApp Business requires a WABA ID before the OAuth flow can start.
+  const [wabaId, setWabaId] = useState('');
+  const needsWabaId = toolkit.slug === 'whatsapp';
   const [activeConnection, setActiveConnection] = useState<ComposioConnection | undefined>(
     connection
   );
@@ -188,11 +191,16 @@ export default function ComposioConnectModal({
   }, []);
 
   const handleConnect = useCallback(async () => {
+    if (needsWabaId && !wabaId.trim()) {
+      setError('Please enter your WhatsApp Business Account ID (WABA ID) to continue.');
+      return;
+    }
     setPhase('authorizing');
     setError(null);
     setConnectUrl(null);
     try {
-      const resp = await authorize(toolkit.slug);
+      const extraParams = needsWabaId ? { waba_id: wabaId.trim() } : undefined;
+      const resp = await authorize(toolkit.slug, extraParams);
       setConnectUrl(resp.connectUrl);
       await openUrl(resp.connectUrl);
       setPhase('waiting');
@@ -202,7 +210,7 @@ export default function ComposioConnectModal({
       setPhase('error');
       setError(`Authorization failed: ${msg}`);
     }
-  }, [startPolling, toolkit.slug]);
+  }, [needsWabaId, startPolling, toolkit.slug, wabaId]);
 
   // Fetch the stored scope pref whenever the modal lands in the
   // 'connected' phase. Re-fetching each time we transition (rather
@@ -360,6 +368,35 @@ export default function ComposioConnectModal({
                   admin toggles.
                 </p>
               </div>
+              {needsWabaId && (
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="waba-id-input"
+                    className="block text-xs font-medium text-stone-700">
+                    WhatsApp Business Account ID (WABA ID)
+                    <span className="ml-1 text-coral-500">*</span>
+                  </label>
+                  <input
+                    id="waba-id-input"
+                    type="text"
+                    value={wabaId}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      setWabaId(e.target.value);
+                      if (error) setError(null);
+                    }}
+                    placeholder="e.g. 123456789012345"
+                    className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                  />
+                  <p className="text-[11px] leading-relaxed text-stone-400">
+                    Find it via <span className="font-mono">GET /me/businesses</span> then{' '}
+                    <span className="font-mono">
+                      GET /&#123;business_id&#125;/owned_whatsapp_business_accounts
+                    </span>{' '}
+                    using your Meta access token.
+                  </p>
+                </div>
+              )}
+              {error && phase === 'idle' && <p className="text-[11px] text-coral-600">{error}</p>}
               <button
                 type="button"
                 onClick={() => void handleConnect()}

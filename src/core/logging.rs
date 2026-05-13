@@ -354,6 +354,13 @@ where
     S: tracing::Subscriber + for<'a> LookupSpan<'a>,
 {
     sentry::integrations::tracing::layer().event_filter(|md: &tracing::Metadata<'_>| {
+        // Events emitted from `report_error_message` are captured directly via
+        // `sentry::capture_message` at the call site (see
+        // `core::observability::REPORT_ERROR_TRACING_TARGET` for rationale).
+        // Skip them here so we don't double-report.
+        if md.target() == crate::core::observability::REPORT_ERROR_TRACING_TARGET {
+            return sentry::integrations::tracing::EventFilter::Ignore;
+        }
         match *md.level() {
             Level::ERROR => sentry::integrations::tracing::EventFilter::Event,
             Level::WARN | Level::INFO => sentry::integrations::tracing::EventFilter::Breadcrumb,
@@ -372,7 +379,7 @@ mod tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn with_clean_rust_log<R>(f: impl FnOnce() -> R) -> R {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prior = std::env::var("RUST_LOG").ok();
         std::env::remove_var("RUST_LOG");
         let result = f();
@@ -435,7 +442,7 @@ mod tests {
 
     #[test]
     fn seed_rust_log_respects_existing_value() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prior = std::env::var("RUST_LOG").ok();
         std::env::set_var("RUST_LOG", "warn");
         seed_rust_log(true, CliLogDefault::Global);
@@ -456,7 +463,7 @@ mod tests {
 
     #[test]
     fn parse_log_file_constraints_handles_csv_and_whitespace() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prior = std::env::var("OPENHUMAN_LOG_FILE_CONSTRAINTS").ok();
         std::env::set_var("OPENHUMAN_LOG_FILE_CONSTRAINTS", "rpc, , agent ,memory");
         let parsed = parse_log_file_constraints();

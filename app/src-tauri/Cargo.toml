@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.53.31"
+version = "0.53.41"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -152,7 +152,15 @@ notify-rust = { version = "4", default-features = false, features = ["dbus"] }
 # (the `core` subcommand). The main binary itself is windows-subsystem so
 # launching the Tauri app from Explorer does not pop a console; the helper
 # CEF subprocess re-execs inherit that same subsystem.
-windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_Foundation"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_System_Console",
+    "Win32_Foundation",
+    # EnumWindows / ShowWindow / SW_HIDE / SW_SHOW used by the main-window
+    # close handler. tauri-runtime-cef's window.hide() / minimize() target a
+    # cef::Window internal handle, not the visible Chrome_WidgetWin_1
+    # top-level frame, so we walk the OS window list ourselves (#1607).
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [features]
 default = []

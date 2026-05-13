@@ -7,6 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct NodeConfig {
     /// Master switch. When `false`, the Node runtime is not resolved and
     /// `node_exec` / `npm_exec` tools are not registered.

@@ -93,6 +93,12 @@ pub struct LocalAiAssetsStatus {
     pub stt: LocalAiAssetStatus,
     pub tts: LocalAiAssetStatus,
     pub quantization: String,
+    /// True when an Ollama binary is discoverable on disk (workspace install,
+    /// system install, or via `OLLAMA_BIN`/configured path). When false, the
+    /// frontend should render an "Install Ollama" CTA instead of model state —
+    /// querying `/api/tags` against a missing server otherwise lets a 30s
+    /// connect timeout cascade through `has_model`.
+    pub ollama_available: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +129,9 @@ pub struct LocalAiDownloadsProgress {
     pub embedding: LocalAiDownloadProgressItem,
     pub stt: LocalAiDownloadProgressItem,
     pub tts: LocalAiDownloadProgressItem,
+    /// Mirrors `LocalAiAssetsStatus::ollama_available` so a single
+    /// `local_ai.downloads_progress` poll can render the right UI state.
+    pub ollama_available: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

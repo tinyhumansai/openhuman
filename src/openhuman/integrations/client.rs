@@ -30,30 +30,11 @@ pub(crate) fn extract_error_detail(body: &str, max_bytes: usize) -> String {
         if let Some(msg) = v.get("error").and_then(|e| e.as_str()) {
             let trimmed = msg.trim();
             if !trimmed.is_empty() {
-                return truncate_at_char_boundary(trimmed, max_bytes);
+                return crate::openhuman::util::truncate_at_byte_boundary(trimmed, max_bytes);
             }
         }
     }
-    truncate_at_char_boundary(body, max_bytes)
-}
-
-fn truncate_at_char_boundary(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    // Reserve space for the trailing `…` so the returned string never
-    // exceeds `max` bytes. Without this, a 500-byte cap could return
-    // 503 bytes (500 raw + 3-byte ellipsis), breaking the hard cap that
-    // Sentry tag values and user-facing toasts rely on.
-    let ellipsis_len = '…'.len_utf8();
-    if max < ellipsis_len {
-        return String::new();
-    }
-    let mut end = max - ellipsis_len;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &s[..end])
+    crate::openhuman::util::truncate_at_byte_boundary(body, max_bytes)
 }
 
 /// Shared client for all integration tools. Holds backend URL, auth token,
@@ -97,7 +78,7 @@ impl IntegrationClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<T> {
-        let url = format!("{}{}", self.backend_url, path);
+        let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] POST {}", url);
 
         let resp = self
@@ -120,7 +101,13 @@ impl IntegrationClient {
                     chain.push_str(&s.to_string());
                     src = s.source();
                 }
-                crate::core::observability::report_error(
+                // Use `report_error_or_expected` so transport-level shapes
+                // ("error sending request for url", "tls handshake eof",
+                // "connection refused/reset", …) are classified as
+                // `NetworkUnreachable` and skip Sentry — user-environment
+                // problems (VPN drop, captive portal, ISP block, TLS MITM)
+                // that no retry on our side can resolve (OPENHUMAN-TAURI-2G).
+                crate::core::observability::report_error_or_expected(
                     chain.as_str(),
                     "integrations",
                     "post",
@@ -167,7 +154,7 @@ impl IntegrationClient {
 
     /// GET from a backend endpoint and parse the response `data` field.
     pub async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        let url = format!("{}{}", self.backend_url, path);
+        let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] GET {}", url);
 
         let resp = self
@@ -184,7 +171,11 @@ impl IntegrationClient {
                     chain.push_str(&s.to_string());
                     src = s.source();
                 }
-                crate::core::observability::report_error(
+                // Mirrors the post() transport site — classify reqwest
+                // transport-level failures as NetworkUnreachable so they
+                // skip Sentry. OPENHUMAN-TAURI-2G: TLS handshake EOF
+                // against api.tinyhumans.ai from a SG user.
+                crate::core::observability::report_error_or_expected(
                     chain.as_str(),
                     "integrations",
                     "get",

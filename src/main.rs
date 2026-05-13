@@ -46,6 +46,19 @@ fn main() {
         environment: Some(std::borrow::Cow::Owned(resolve_environment())),
         send_default_pii: false,
         before_send: Some(std::sync::Arc::new(|mut event| {
+            // Defense-in-depth: drop transient-upstream provider failures that
+            // slipped past the call-site classifier. The reliable-provider
+            // layer already retries 429/408/502/503/504 with backoff +
+            // fallback, and the aggregate "all providers exhausted" event
+            // still fires for genuine outages. Per-attempt reports flood
+            // Sentry — see OPENHUMAN-TAURI-2E (~1393 events), -84 (~1050),
+            // -T (~871). The primary fix lives in
+            // `openhuman::providers::ops::should_report_provider_http_failure`
+            // (transient codes excluded). This filter catches any future call
+            // site that bypasses it.
+            if openhuman_core::core::observability::is_transient_provider_http_failure(&event) {
+                return None;
+            }
             // Strip server_name (hostname) to avoid leaking machine identity
             event.server_name = None;
             // Attach the cached account uid so Sentry can count unique users

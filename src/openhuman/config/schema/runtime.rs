@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct RuntimeConfig {
     #[serde(default = "default_runtime_kind")]
     pub kind: String,
@@ -16,6 +17,7 @@ pub struct RuntimeConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct DockerRuntimeConfig {
     #[serde(default = "default_docker_image")]
     pub image: String,
@@ -82,6 +84,7 @@ impl Default for RuntimeConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ReliabilityConfig {
     #[serde(default = "default_provider_retries")]
     pub provider_retries: u32,
@@ -141,6 +144,7 @@ impl Default for ReliabilityConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct SchedulerConfig {
     #[serde(default = "default_scheduler_enabled")]
     pub enabled: bool,

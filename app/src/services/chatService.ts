@@ -90,7 +90,18 @@ export interface ChatErrorEvent {
   thread_id: string;
   request_id?: string;
   message: string;
-  error_type: 'network' | 'timeout' | 'tool_error' | 'inference' | 'cancelled';
+  error_type:
+    | 'network'
+    | 'timeout'
+    | 'tool_error'
+    | 'inference'
+    | 'cancelled'
+    | 'rate_limited'
+    | 'auth_error'
+    | 'provider_error'
+    | 'context_overflow'
+    | 'model_unavailable'
+    | 'budget_exhausted';
   round: number | null;
 }
 

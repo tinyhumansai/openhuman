@@ -50,6 +50,7 @@ pub enum ProxyScope {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ProxyConfig {
     #[serde(default)]
     pub enabled: bool,

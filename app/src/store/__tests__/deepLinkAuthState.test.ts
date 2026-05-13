@@ -21,7 +21,11 @@ afterEach(() => {
 describe('deepLinkAuthState transitions', () => {
   it('starts idle with no error message', () => {
     completeDeepLinkAuthProcessing();
-    expect(getDeepLinkAuthState()).toEqual({ isProcessing: false, errorMessage: null });
+    expect(getDeepLinkAuthState()).toEqual({
+      isProcessing: false,
+      errorMessage: null,
+      requiresAppDataReset: false,
+    });
   });
 
   it('beginDeepLinkAuthProcessing flips isProcessing true and clears prior error', () => {
@@ -29,19 +33,40 @@ describe('deepLinkAuthState transitions', () => {
     expect(getDeepLinkAuthState().errorMessage).toBe('prior failure');
 
     beginDeepLinkAuthProcessing();
-    expect(getDeepLinkAuthState()).toEqual({ isProcessing: true, errorMessage: null });
+    expect(getDeepLinkAuthState()).toEqual({
+      isProcessing: true,
+      errorMessage: null,
+      requiresAppDataReset: false,
+    });
   });
 
   it('completeDeepLinkAuthProcessing returns to idle', () => {
     beginDeepLinkAuthProcessing();
     completeDeepLinkAuthProcessing();
-    expect(getDeepLinkAuthState()).toEqual({ isProcessing: false, errorMessage: null });
+    expect(getDeepLinkAuthState()).toEqual({
+      isProcessing: false,
+      errorMessage: null,
+      requiresAppDataReset: false,
+    });
   });
 
   it('failDeepLinkAuthProcessing surfaces message and resets processing flag', () => {
     beginDeepLinkAuthProcessing();
     failDeepLinkAuthProcessing('token expired');
-    expect(getDeepLinkAuthState()).toEqual({ isProcessing: false, errorMessage: 'token expired' });
+    expect(getDeepLinkAuthState()).toEqual({
+      isProcessing: false,
+      errorMessage: 'token expired',
+      requiresAppDataReset: false,
+    });
+  });
+
+  it('failDeepLinkAuthProcessing carries through the requiresAppDataReset hint', () => {
+    failDeepLinkAuthProcessing('cannot decrypt', { requiresAppDataReset: true });
+    expect(getDeepLinkAuthState()).toEqual({
+      isProcessing: false,
+      errorMessage: 'cannot decrypt',
+      requiresAppDataReset: true,
+    });
   });
 });
 
@@ -92,16 +117,28 @@ describe('useDeepLinkAuthState hook', () => {
   it('re-renders when state changes', () => {
     completeDeepLinkAuthProcessing();
     const { result } = renderHook(() => useDeepLinkAuthState());
-    expect(result.current).toEqual({ isProcessing: false, errorMessage: null });
+    expect(result.current).toEqual({
+      isProcessing: false,
+      errorMessage: null,
+      requiresAppDataReset: false,
+    });
 
     act(() => {
       beginDeepLinkAuthProcessing();
     });
-    expect(result.current).toEqual({ isProcessing: true, errorMessage: null });
+    expect(result.current).toEqual({
+      isProcessing: true,
+      errorMessage: null,
+      requiresAppDataReset: false,
+    });
 
     act(() => {
       failDeepLinkAuthProcessing('denied');
     });
-    expect(result.current).toEqual({ isProcessing: false, errorMessage: 'denied' });
+    expect(result.current).toEqual({
+      isProcessing: false,
+      errorMessage: 'denied',
+      requiresAppDataReset: false,
+    });
   });
 });

@@ -1,6 +1,5 @@
-import { isTauri as coreIsTauri } from '@tauri-apps/api/core';
-
 import { BACKEND_URL } from '../utils/config';
+import { isTauri as coreIsTauri } from '../utils/tauriCommands/common';
 import { callCoreRpc } from './coreRpcClient';
 
 let resolvedBackendUrl: string | null = null;

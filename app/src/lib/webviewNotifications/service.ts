@@ -1,4 +1,3 @@
-import { isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import debug from 'debug';
 
@@ -9,6 +8,7 @@ import {
   noteWebviewNotificationFired,
 } from '../../store/accountsSlice';
 import { addIntegrationNotification } from '../../store/notificationSlice';
+import { isTauri } from '../../utils/tauriCommands/common';
 import { WEBVIEW_NOTIFICATION_FIRED_EVENT, type WebviewNotificationFired } from './types';
 
 const log = debug('webview-notifications');

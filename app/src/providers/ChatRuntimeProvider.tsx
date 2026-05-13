@@ -120,6 +120,13 @@ function deleteSegmentDelivery(deliveries: Map<string, SegmentDelivery>, key: st
   deliveries.delete(key);
 }
 
+// Delivery is complete iff every expected segment_index arrived. Do NOT also
+// compare reconstructed segments against event.full_response — the server
+// trims each segment and normalises joiners during segmentation
+// (presentation.rs::segment_for_delivery), while full_response keeps the raw
+// LLM text. A byte-equality check therefore fails on virtually every
+// multi-segment turn and triggers the reconciliation path, producing a
+// duplicate assistant message.
 function hasCompleteSegmentDelivery(
   event: ChatDoneEvent,
   delivery: SegmentDelivery | undefined
@@ -127,14 +134,10 @@ function hasCompleteSegmentDelivery(
   const expected = event.segment_total ?? 0;
   if (expected <= 0 || !delivery) return false;
   if (delivery.segments.size < expected) return false;
-
-  let reconstructed = '';
   for (let i = 0; i < expected; i += 1) {
-    const segment = delivery.segments.get(i);
-    if (segment === undefined) return false;
-    reconstructed += segment;
+    if (!delivery.segments.has(i)) return false;
   }
-  return reconstructed === event.full_response;
+  return true;
 }
 
 function chatDoneExtraMetadata(event: ChatDoneEvent): Record<string, unknown> | undefined {
@@ -809,7 +812,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         finishChatDoneTurn(event, 'ordinary');
       },
       onError: event => {
-        const eventKey = `error:${event.thread_id}:${event.request_id ?? 'none'}:${event.error_type}:${event.message}`;
+        const eventKey = `error:${event.thread_id}:${event.request_id ?? 'none'}:${event.error_type}`;
         if (
           !markChatEventSeen(eventKey, { threadId: event.thread_id, requestId: event.request_id })
         )
@@ -840,14 +843,17 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           const currentState = store.getState();
           const threadMessages = currentState.thread.messagesByThreadId[event.thread_id] ?? [];
           const lastMsg = threadMessages[threadMessages.length - 1];
-          if (
-            !(lastMsg?.sender === 'agent' && lastMsg?.content === USER_FACING_AGENT_ERROR_MESSAGE)
-          ) {
+          // For the generic 'inference' type the server may send a raw internal error string;
+          // use the safe user-facing constant instead. For all other classified types
+          // (rate_limited, timeout, auth_error, etc.) the message comes from
+          // classify_inference_error() in web.rs and is already user-friendly.
+          const errorContent =
+            event.error_type === 'inference'
+              ? USER_FACING_AGENT_ERROR_MESSAGE
+              : event.message || USER_FACING_AGENT_ERROR_MESSAGE;
+          if (!(lastMsg?.sender === 'agent' && lastMsg?.content === errorContent)) {
             void dispatch(
-              addInferenceResponse({
-                content: USER_FACING_AGENT_ERROR_MESSAGE,
-                threadId: event.thread_id,
-              })
+              addInferenceResponse({ content: errorContent, threadId: event.thread_id })
             );
           }
 

@@ -1,0 +1,245 @@
+---
+# Dedicated end-to-end test workflow.
+#
+# Runs the WDIO desktop e2e suite against the mock backend
+# (`scripts/mock-api/`) on three OSes in parallel:
+#
+#   - linux    → containerized in `ghcr.io/tinyhumansai/openhuman_ci:latest`
+#                (the same image used by `unit-tests` and by
+#                `e2e/docker-compose.yml`), Xvfb-backed tauri-driver.
+#                CEF caveat: tauri-driver / webkit2gtk cannot drive the CEF
+#                WebView's DOM, so this leg runs only specs that don't depend
+#                on accessibility-tree queries (smoke).
+#
+#   - macos    → bare runner, Appium Mac2 driver. Canonical e2e runner.
+#                Runs smoke + the mega-flow spec (the latter best-effort
+#                until the BootCheckGate local-mode bypass lands).
+#
+#   - windows  → bare runner, tauri-driver via WebView2. Smoke only for now;
+#                Windows hasn't been wired up for the broader spec suite.
+#
+# Triggers:
+#   - pull_request (smoke only on every PR — cheap signal that the bundle
+#     still builds and launches on every OS).
+#   - workflow_dispatch with `full=true` to run the entire spec suite on
+#     macOS (the only platform where the broader specs are designed to pass
+#     today).
+#
+# All three legs are `continue-on-error` so a known-flaky platform doesn't
+# block the PR — the macOS leg is the source of truth for spec correctness.
+name: E2E
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run the full e2e spec suite on macOS (slow; ~30+ min)
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Linux — build-only. tauri-driver speaks WebKitWebDriver / webkit2gtk and
+  # cannot drive the CEF-backed WebView, so we can't run specs against the
+  # Linux Tauri build yet. We still build the Linux .deb-style debug binary
+  # so a Linux-breaking dep / config / Rust change still fails the PR.
+  # Reuses the project's CI image (same one consumed by
+  # `e2e/docker-compose.yml` and the `unit-tests` job).
+  # ---------------------------------------------------------------------------
+  e2e-linux:
+    name: E2E (Linux build only)
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
+          key: e2e-linux
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure .env exists for E2E build
+        run: |
+          touch .env
+          touch app/.env
+
+      - name: Build E2E app (Linux debug binary)
+        run: pnpm --filter openhuman-app test:e2e:build
+
+  # ---------------------------------------------------------------------------
+  # macOS — Appium Mac2. Canonical e2e runner.
+  # ---------------------------------------------------------------------------
+  e2e-macos:
+    name: E2E (macOS / Appium Mac2)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - name: Install Rust (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@1.93.0
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
+          key: e2e-macos
+
+      - name: Accept Xcode license + first launch
+        run: |
+          sudo xcodebuild -license accept
+          sudo xcodebuild -runFirstLaunch
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure .env exists for E2E build
+        run: |
+          touch .env
+          touch app/.env
+
+      - name: Install Appium and mac2 driver
+        run: |
+          npm install -g appium
+          appium driver install mac2
+
+      - name: Build E2E app bundle
+        run: pnpm --filter openhuman-app test:e2e:build
+
+      - name: Run smoke spec
+        run: bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
+
+      - name: Run mega-flow spec
+        continue-on-error: true
+        run: bash app/scripts/e2e-run-spec.sh test/e2e/specs/mega-flow.spec.ts mega-flow
+
+      - name: Run full e2e suite (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.full == 'true'
+        run: pnpm --filter openhuman-app test:e2e:all:flows
+
+      - name: Upload e2e artifacts on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-artifacts-macos
+          path: app/test/e2e/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Windows — build-only. tauri-driver on Windows uses MSEdgeDriver
+  # (WebView2) which can't drive the CEF-backed WebView the app actually
+  # ships — observed `session not created: Microsoft Edge failed to start:
+  # crashed.` when the driver tried to launch Edge for the WebView2 host
+  # that doesn't exist on our app. Same shape as the Linux block (CEF ↔
+  # webkit2gtk-driver). Build the .exe so a Windows-breaking dep / config
+  # / Rust change still fails the PR; skip the spec run until a
+  # CEF-compatible Windows driver lands.
+  # ---------------------------------------------------------------------------
+  e2e-windows:
+    name: E2E (Windows build only)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - name: Install Rust (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@1.93.0
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
+          # `v2` suffix invalidates the prior cache that ended up pinning
+          # stale .rmeta artifacts (saw `error[E0061]: sys.refresh_processes`
+          # referencing a `local_ai/install.rs` line that doesn't exist on
+          # this branch — cargo cross-referenced an outdated .rmeta).
+          key: e2e-windows-v2
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure .env exists for E2E build
+        shell: bash
+        run: |
+          touch .env
+          touch app/.env
+
+      - name: Build E2E app (Windows debug .exe)
+        run: pnpm --filter openhuman-app test:e2e:build
+
+      - name: Upload e2e artifacts on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-artifacts-windows
+          path: app/test/e2e/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7

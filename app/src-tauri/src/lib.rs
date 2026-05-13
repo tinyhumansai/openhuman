@@ -31,7 +31,7 @@ mod webview_apis;
 mod whatsapp_scanner;
 mod window_state;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use tauri::WindowEvent;
 #[cfg(not(target_os = "linux"))]
 use tauri::{
@@ -822,7 +822,96 @@ fn mascot_native_window_is_open() -> bool {
     false
 }
 
+/// Hide or show the OS top-level main-window frame on Windows by enumerating
+/// this process's top-level windows and matching the visible
+/// `Chrome_WidgetWin_1` host. `WebviewWindow::hwnd()` from the vendored CEF
+/// runtime returns a `cef::Window` internal handle that `ShowWindow` rejects,
+/// so we walk the OS window list instead (#1607). Empirically there is one
+/// matching top-level frame; the single-instance lock window uses class
+/// `com.openhuman.app-sic` and is excluded.
+///
+/// `SW_HIDE` removes the frame from screen AND taskbar — full hide-to-tray as
+/// PR #1548 intended. On restore, the IsWindowVisible filter excludes hidden
+/// windows, so we also accept currently-hidden Chrome_WidgetWin_1 frames when
+/// `hide=false`.
+#[cfg(target_os = "windows")]
+fn set_main_window_hidden(hide: bool) {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE,
+        SW_SHOW,
+    };
+
+    struct EnumCtx {
+        target_pid: u32,
+        action: i32,
+        require_visible: bool,
+        matched: u32,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = unsafe { &mut *(lparam as *mut EnumCtx) };
+        let mut pid: u32 = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+        if pid != ctx.target_pid {
+            return 1;
+        }
+        if ctx.require_visible && unsafe { IsWindowVisible(hwnd) } == 0 {
+            return 1;
+        }
+        let mut class_buf = [0u16; 64];
+        let n = unsafe { GetClassNameW(hwnd, class_buf.as_mut_ptr(), class_buf.len() as i32) };
+        if n <= 0 {
+            return 1;
+        }
+        let class = OsString::from_wide(&class_buf[..n as usize])
+            .to_string_lossy()
+            .into_owned();
+        if class != "Chrome_WidgetWin_1" {
+            return 1;
+        }
+        unsafe { ShowWindow(hwnd, ctx.action) };
+        ctx.matched += 1;
+        1
+    }
+
+    let action = if hide { SW_HIDE } else { SW_SHOW };
+    let mut ctx = EnumCtx {
+        target_pid: std::process::id(),
+        action,
+        // Hide path: only touch currently-visible frames. Show path: also
+        // pick up frames already in the SW_HIDE state.
+        require_visible: hide,
+        matched: 0,
+    };
+    unsafe { EnumWindows(Some(enum_proc), &mut ctx as *mut _ as LPARAM) };
+    log::info!(
+        "[window-hide] EnumWindows: action={} matched={} pid={}",
+        if hide { "SW_HIDE" } else { "SW_SHOW" },
+        ctx.matched,
+        ctx.target_pid,
+    );
+}
+
 fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
+    // On Windows: surface the OS top-level Chrome_WidgetWin_1 frame BEFORE
+    // any Tauri lookups. After our close handler's SW_HIDE the runtime
+    // briefly drops the `WebviewWindow` record for "main" (CEF treats the
+    // hidden host as gone), so `get_webview_window("main")` returns None
+    // and the early `?` below would abort before SW_SHOW fires (#1607).
+    // EnumWindows + SW_SHOW operates directly on the OS HWND that
+    // survived independently, and the runtime re-tracks the window once
+    // it's visible again.
+    #[cfg(target_os = "windows")]
+    {
+        set_main_window_hidden(false);
+        if let Some(webview) = app.get_webview("main") {
+            let _ = webview.show();
+            let _ = webview.set_focus();
+        }
+    }
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
@@ -1142,6 +1231,25 @@ pub fn run() {
         environment: Some(std::borrow::Cow::Owned(resolve_sentry_environment())),
         send_default_pii: false,
         before_send: Some(std::sync::Arc::new(|mut event| {
+            // Drop "dev-server fetch failed" noise: the vendored
+            // `tauri-runtime-cef` dev proxy
+            // (vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) calls
+            // `log::error!("Failed to request {url}: {err}")` whenever the
+            // CEF webview asks for an asset on `http://localhost:1420` (the
+            // Vite dev URL baked into `tauri.conf.json`). That `log::error!`
+            // is bridged into `tracing` and picked up by the sentry-tracing
+            // layer as an Event — see `src/core/logging.rs::sentry_tracing_layer`.
+            // In packaged staging/production builds Vite isn't running, so
+            // the request correctly fails — but the failure is noise we
+            // don't want in Sentry (issue OPENHUMAN-TAURI-V, 66+ events).
+            // See [sentry-localhost-filter] log line below for diagnostics.
+            if event_is_localhost_dev_fetch_noise(&event) {
+                log::debug!(
+                    "[sentry-localhost-filter] dropping dev-server fetch noise event: {:?}",
+                    event.message.as_deref().unwrap_or("<no message>")
+                );
+                return None;
+            }
             // Strip server_name (hostname) to avoid leaking machine identity.
             event.server_name = None;
             event.user = None;
@@ -1353,7 +1461,16 @@ pub fn run() {
                 }
             };
         if let Some(path) = fake_camera_arg {
-            args.push(("--use-fake-device-for-media-stream", None));
+            // `--use-file-for-fake-video-capture` alone (CEF 146 / Chromium 128+)
+            // injects the Y4M as the video capture source without replacing the
+            // audio capture device. The old belt-and-suspenders flag
+            // `--use-fake-device-for-media-stream` is deliberately omitted here:
+            // it replaced ALL media capture devices — including audio — with fake
+            // ones, causing a sine-wave test tone (beeping) to be recorded instead
+            // of the real microphone whenever `getUserMedia({audio:true})` was
+            // called from the main app WebView (e.g. the mascot voice composer).
+            // `--use-fake-ui-for-media-stream` is kept so Meet's permission prompt
+            // is auto-granted without interrupting the join flow.
             args.push(("--use-fake-ui-for-media-stream", None));
             args.push(("--use-file-for-fake-video-capture", Some(path)));
         }
@@ -2078,6 +2195,22 @@ pub fn run() {
                 );
                 }
             }
+            // Intercept the main window's close request on macOS so the user
+            // can re-open the app from the tray icon. Letting the OS destroy
+            // the webview makes `get_webview_window("main")` return None on
+            // the next tray-click and surfaces as `[tray] failed to show main
+            // window from tray click: main window not found`
+            // (OPENHUMAN-TAURI-2X — 21 events, Windows only).
+            //
+            // macOS uses `window.hide()` because the vendored CEF runtime
+            // routes that through `set_application_visibility(false)` at the
+            // NSApplication level (`tauri-runtime-cef/src/lib.rs:588`), which
+            // hides the CEF browser surface together with the host window.
+            // Windows is handled in the separate arm below — see issue #1607.
+            //
+            // Linux is left out: `setup_tray` early-returns on Linux because
+            // tray creation panics inside GTK during packaged runs, so the
+            // hide-on-close behavior would strand the user with no way back.
             #[cfg(target_os = "macos")]
             RunEvent::WindowEvent {
                 label,
@@ -2091,6 +2224,39 @@ pub fn run() {
                 if let Some(window) = app_handle.get_webview_window("main") {
                     let _ = window.hide();
                 }
+            }
+            // Windows: full hide-to-tray.
+            //
+            // PR #1548 routed Windows X click into the same prevent_close +
+            // `window.hide()` branch as macOS, but on Windows the vendored
+            // CEF runtime's WindowMessage::Hide / Minimize / Restore
+            // (`tauri-runtime-cef/src/cef_impl.rs`) only operate on a
+            // `cef::Window` internal handle that does not correspond to the
+            // visible `Chrome_WidgetWin_1` top-level frame — `ShowWindow`
+            // calls against it are silent no-ops. We bypass the runtime
+            // entirely and walk the OS window list to issue SW_HIDE / SW_SHOW
+            // directly on the matching top-level frame (issue #1607).
+            #[cfg(target_os = "windows")]
+            RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { api, .. },
+                ..
+            } if label == "main" => {
+                log::info!(
+                    "[window] close requested on main window — hiding to tray"
+                );
+                api.prevent_close();
+                // Hide the OS top-level Chrome_WidgetWin_1 frame via
+                // EnumWindows + SW_HIDE — full hide-to-tray as PR #1548
+                // intended. `window.hide()` and `window.minimize()` through
+                // the vendored CEF runtime are no-ops on Windows because
+                // `WebviewWindow::hwnd()` returns a cef::Window proxy handle
+                // rather than the visible top-level frame; we walk the OS
+                // window list directly instead (#1607). SW_HIDE on the host
+                // frame cascades to all child HWNDs (including the CEF
+                // browser surface), so no separate `webview.hide()` is
+                // needed and `show_main_window` only has to issue SW_SHOW.
+                set_main_window_hidden(true);
             }
             #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => {
@@ -2159,6 +2325,56 @@ pub fn run_core_from_args(args: &[String]) -> Result<(), String> {
 /// every surface (React frontend, core sidecar, Tauri shell) group under the
 /// same release in Sentry and benefit from the same source-map / debug-info
 /// upload.
+/// Return `true` when the Sentry event is a "Failed to request
+/// http://localhost:…" message originating from the vendored
+/// `tauri-runtime-cef` dev-server proxy.
+///
+/// The proxy logs this message via `log::error!` (see
+/// `app/src-tauri/vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs`)
+/// every time the CEF webview asks for an asset on the Vite dev URL
+/// (`http://localhost:1420` per `tauri.conf.json`). In packaged
+/// staging/production builds Vite isn't running, so the request fails —
+/// but the failure is benign and shouldn't be reported.
+///
+/// The match is conservative: it checks the exact `Failed to request ` +
+/// `http://localhost` / `http://127.0.0.1` prefix that only the dev-proxy
+/// emits. Production HTTP errors from elsewhere in the shell or core use
+/// different message shapes and won't be filtered.
+fn event_is_localhost_dev_fetch_noise(event: &sentry::protocol::Event<'_>) -> bool {
+    // sentry-tracing 0.47 (with default `attach_stacktrace=false`) stores the
+    // log message in `event.message`. Check there first; fall back to the
+    // last exception's `value` for the (currently unused) stacktrace-enabled
+    // path so the filter stays correct if attach_stacktrace ever flips.
+    let direct = event.message.as_deref();
+    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
+    [direct, from_exception]
+        .into_iter()
+        .flatten()
+        .any(message_is_localhost_dev_fetch_noise)
+}
+
+/// Pure prefix check, separated from `event_is_localhost_dev_fetch_noise`
+/// so the matching rule can be unit-tested without constructing a full
+/// Sentry `Event`.
+fn message_is_localhost_dev_fetch_noise(message: &str) -> bool {
+    // The tauri-cef dev proxy formats the message as:
+    //   `Failed to request {url}: {err}`
+    // so anchoring on `Failed to request http://localhost` / `127.0.0.1` is
+    // sufficient and avoids matching unrelated "Failed to request …" errors
+    // elsewhere in the codebase that target real hosts.
+    //
+    // Note: no `[::1]` (IPv6 loopback) entry — the vendored tauri-cef dev
+    // proxy resolves `localhost` to IPv4 via reqwest's default resolver, so
+    // dev-server fetches always surface as `http://localhost:` or
+    // `http://127.0.0.1:`. Add an `[::1]` prefix if that ever changes
+    // (per graycyrus note on PR #1545).
+    const PREFIXES: &[&str] = &[
+        "Failed to request http://localhost:",
+        "Failed to request http://127.0.0.1:",
+    ];
+    PREFIXES.iter().any(|p| message.starts_with(p))
+}
+
 fn build_sentry_release_tag() -> String {
     let version = env!("CARGO_PKG_VERSION");
     let sha = option_env!("OPENHUMAN_BUILD_SHA").unwrap_or("").trim();
@@ -2526,5 +2742,124 @@ mod tests {
             None => std::env::remove_var(key),
         }
         assert_eq!(env, "production");
+    }
+
+    // ── Sentry before_send filter: drop "Failed to request http://localhost:…"
+    //    noise emitted by the vendored tauri-runtime-cef dev proxy in packaged
+    //    builds (issue OPENHUMAN-TAURI-V). Tests target the pure
+    //    `message_is_localhost_dev_fetch_noise` helper so the rule can be
+    //    asserted without standing up a Sentry client.
+
+    #[test]
+    fn localhost_dev_fetch_noise_drops_vite_dev_url_1420() {
+        // The exact message shape reported by the latest event tag in Sentry
+        // (URL repeated by reqwest's `error sending request for url (…)`).
+        let msg = "Failed to request http://localhost:1420/components/skills/SkillCard.tsx: \
+                   error sending request for url (http://localhost:1420/components/skills/SkillCard.tsx)";
+        assert!(
+            message_is_localhost_dev_fetch_noise(msg),
+            "expected Vite dev-server fetch failure to be filtered"
+        );
+    }
+
+    #[test]
+    fn localhost_dev_fetch_noise_drops_127_0_0_1_dev_url() {
+        // Some environments resolve `localhost` to 127.0.0.1 at the reqwest
+        // layer; the formatted message can carry either spelling.
+        let msg = "Failed to request http://127.0.0.1:1420/index.html: \
+                   error sending request for url (http://127.0.0.1:1420/index.html)";
+        assert!(
+            message_is_localhost_dev_fetch_noise(msg),
+            "expected 127.0.0.1 dev-server fetch failure to be filtered"
+        );
+    }
+
+    #[test]
+    fn localhost_dev_fetch_noise_passes_production_url_through() {
+        // Real upstream failures (e.g. backend API errors surfaced via the
+        // same `Failed to request …` wording elsewhere) must NOT be filtered —
+        // they're the high-signal events Sentry exists for.
+        let msg = "Failed to request https://api.openhuman.ai/v1/skills: \
+                   error sending request for url (https://api.openhuman.ai/v1/skills)";
+        assert!(
+            !message_is_localhost_dev_fetch_noise(msg),
+            "production API errors must NOT be filtered out"
+        );
+    }
+
+    #[test]
+    fn localhost_dev_fetch_noise_passes_unrelated_localhost_messages() {
+        // The filter is anchored on the dev-proxy's exact prefix to avoid
+        // accidentally dropping any error that happens to mention localhost
+        // (e.g. core-sidecar transport errors logged from coreRpcClient).
+        let msg =
+            "[core_rpc] transport error: error sending request for url (http://localhost:7788/rpc)";
+        assert!(
+            !message_is_localhost_dev_fetch_noise(msg),
+            "non-tauri-cef localhost errors must NOT be filtered"
+        );
+    }
+
+    #[test]
+    fn event_filter_uses_message_field() {
+        // event-level coverage: when sentry-tracing populates
+        // `event.message` (default with `attach_stacktrace=false`), the
+        // filter should see the noise payload through the primary read
+        // path. Per graycyrus on PR #1545.
+        let mut event = sentry::protocol::Event::new();
+        event.message = Some("Failed to request http://localhost:1420/foo: timeout".into());
+        assert!(
+            event_is_localhost_dev_fetch_noise(&event),
+            "event.message read path must catch noise messages"
+        );
+    }
+
+    #[test]
+    fn event_filter_falls_back_to_last_exception_value() {
+        // event-level coverage: if `attach_stacktrace` is ever turned on,
+        // sentry-tracing populates `event.exception` instead of (or in
+        // addition to) `event.message`. Filter must still see the noise
+        // payload through the exception fallback. Per graycyrus on PR #1545.
+        let mut event = sentry::protocol::Event::new();
+        event.message = None;
+        event.exception.values.push(sentry::protocol::Exception {
+            ty: "log".into(),
+            value: Some("Failed to request http://localhost:1420/foo: timeout".into()),
+            ..Default::default()
+        });
+        assert!(
+            event_is_localhost_dev_fetch_noise(&event),
+            "exception fallback must catch noise messages when event.message is absent"
+        );
+    }
+
+    #[test]
+    fn event_filter_passes_through_when_neither_field_matches() {
+        // Negative event-level case: no noise prefix in either field →
+        // event must NOT be filtered.
+        let mut event = sentry::protocol::Event::new();
+        event.message = Some("genuine production error".into());
+        event.exception.values.push(sentry::protocol::Exception {
+            ty: "log".into(),
+            value: Some("connection refused (10061)".into()),
+            ..Default::default()
+        });
+        assert!(
+            !event_is_localhost_dev_fetch_noise(&event),
+            "legitimate production events must pass through"
+        );
+    }
+
+    #[test]
+    fn localhost_dev_fetch_noise_anchors_to_message_start() {
+        // CodeRabbit (PR #1545) caught that the predicate used
+        // `contains` rather than `starts_with`. Regression: a message
+        // that merely embeds the dev-proxy prefix later in its text
+        // must NOT be filtered — only messages that *begin* with it.
+        let msg = "User report: `Failed to request http://localhost:1420/foo` was logged earlier";
+        assert!(
+            !message_is_localhost_dev_fetch_noise(msg),
+            "messages that merely contain the dev-proxy prefix must NOT be filtered"
+        );
     }
 }

@@ -215,6 +215,39 @@ async fn backend_client_sends_x_core_version_on_auth_requests() {
     );
 }
 
+// Regression: OPENHUMAN-TAURI-8K / Sentry issue 7473650958.
+// When config.api_url is a full LLM completions URL (e.g. /v1/chat/completions),
+// Url::join used to produce wrong paths like /v1/chat/teams/me/usage instead of
+// /teams/me/usage — BackendOAuthClient::new must strip the path to prevent this.
+#[test]
+fn new_strips_path_from_completions_url() {
+    let client = BackendOAuthClient::new("https://api.tinyhumans.ai/v1/chat/completions").unwrap();
+    let url = client.url_for("/teams/me/usage").unwrap();
+    assert_eq!(url.path(), "/teams/me/usage");
+}
+
+#[test]
+fn new_strips_path_from_openai_style_url() {
+    let client = BackendOAuthClient::new("https://api.openai.com/v1/chat/completions").unwrap();
+    let url = client.url_for("/teams/me/usage").unwrap();
+    assert_eq!(url.path(), "/teams/me/usage");
+    assert_eq!(url.host_str(), Some("api.openai.com"));
+}
+
+#[test]
+fn new_works_with_bare_origin() {
+    let client = BackendOAuthClient::new("https://api.tinyhumans.ai").unwrap();
+    let url = client.url_for("/teams/me/usage").unwrap();
+    assert_eq!(url.path(), "/teams/me/usage");
+}
+
+#[test]
+fn new_works_with_trailing_slash() {
+    let client = BackendOAuthClient::new("https://api.tinyhumans.ai/").unwrap();
+    let url = client.url_for("/teams/me/usage").unwrap();
+    assert_eq!(url.path(), "/teams/me/usage");
+}
+
 #[tokio::test]
 async fn backend_raw_client_inherits_x_core_version_default_header() {
     let (base_url, captured) = spawn_header_capture_server().await;

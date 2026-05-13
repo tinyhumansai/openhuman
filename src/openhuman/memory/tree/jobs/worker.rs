@@ -84,12 +84,28 @@ pub fn start(config: Config) {
                             }
                         }
                         Err(err) => {
-                            crate::core::observability::report_error(
-                                &err,
-                                "memory",
-                                "tree_jobs_worker",
-                                &[("worker_idx", &idx.to_string())],
-                            );
+                            // SQLite `BUSY` / `LOCKED` is transient write-lock
+                            // contention (multiple workers + the scheduler +
+                            // ingest producers all write the same DB). The
+                            // configured `busy_timeout` already retries
+                            // inside rusqlite; if we still see it here, the
+                            // right answer is to back off and re-poll — not
+                            // to page Sentry. The next loop iteration will
+                            // try `claim_next` again and almost always
+                            // succeed. See OPENHUMAN-TAURI-BP.
+                            if is_sqlite_busy(&err) {
+                                log::warn!(
+                                    "[memory_tree::jobs] worker {idx} hit SQLite busy/locked, \
+                                     backing off: {err:#}"
+                                );
+                            } else {
+                                crate::core::observability::report_error(
+                                    &err,
+                                    "memory",
+                                    "tree_jobs_worker",
+                                    &[("worker_idx", &idx.to_string())],
+                                );
+                            }
                             tokio::time::sleep(Duration::from_secs(1)).await;
                         }
                     }
@@ -150,6 +166,12 @@ pub async fn run_once(config: &Config) -> Result<bool> {
     let result = handlers::handle_job(config, &job).await;
     drop(llm_permit);
 
+    // A failed settle (`mark_done` / `mark_failed` / `mark_deferred` below)
+    // can also return `SQLITE_BUSY`. The worker's outer `Err` arm in
+    // `start` reclassifies those into a warn-log + backoff (no Sentry
+    // report) via [`is_sqlite_busy`]. On a stale settle the row's
+    // `locked_until_ms` eventually elapses and `recover_stale_locks`
+    // requeues it, so dropping the error here is at-most a re-run.
     match result {
         Ok(JobOutcome::Done) => {
             log::debug!(
@@ -196,4 +218,115 @@ pub async fn run_once(config: &Config) -> Result<bool> {
     }
 
     Ok(true)
+}
+
+/// Classify whether an error from `run_once` is a transient SQLite
+/// write-lock contention (`SQLITE_BUSY` or `SQLITE_LOCKED`).
+///
+/// The configured `busy_timeout` already absorbs short waits inside
+/// rusqlite; this helper catches the residual case where the busy
+/// handler exhausts and the error bubbles up. Treated as a soft signal:
+/// the worker logs a warning and re-polls on the next loop iteration
+/// rather than escalating to Sentry.
+fn is_sqlite_busy(err: &anyhow::Error) -> bool {
+    if let Some(rusqlite::Error::SqliteFailure(sqlite_err, _)) =
+        err.downcast_ref::<rusqlite::Error>()
+    {
+        return matches!(
+            sqlite_err.code,
+            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+        );
+    }
+    // Fallback for chained/wrapped errors: the rusqlite `Error` may sit
+    // a few `context()` layers deep. anyhow's alternate `Display`
+    // joins every cause with ": ", so the SQLite-rendered text is
+    // searchable in the flattened chain. Match the two well-known
+    // phrases SQLite emits for these codes.
+    let msg = format!("{err:#}").to_ascii_lowercase();
+    msg.contains("database is locked") || msg.contains("database table is locked")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Raw `rusqlite::Error::SqliteFailure` with the `DatabaseBusy` code
+    /// is what surfaces when the `busy_timeout` is exhausted on a write.
+    #[test]
+    fn is_sqlite_busy_matches_database_busy_code() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DatabaseBusy,
+                extended_code: 5, // SQLITE_BUSY
+            },
+            Some("database is locked".into()),
+        );
+        let err = anyhow::Error::from(raw);
+        assert!(is_sqlite_busy(&err));
+    }
+
+    /// `SQLITE_LOCKED` is the per-table flavour (e.g. shared cache); same
+    /// classification — transient, retry.
+    #[test]
+    fn is_sqlite_busy_matches_database_locked_code() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DatabaseLocked,
+                extended_code: 6, // SQLITE_LOCKED
+            },
+            Some("database table is locked".into()),
+        );
+        let err = anyhow::Error::from(raw);
+        assert!(is_sqlite_busy(&err));
+    }
+
+    /// When the rusqlite error is buried under `.context(...)` layers
+    /// (as happens when `with_connection` wraps the closure result),
+    /// the downcast still finds it. Regression guard: don't rely on
+    /// matching the top-level error type.
+    #[test]
+    fn is_sqlite_busy_matches_through_context_layers() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DatabaseBusy,
+                extended_code: 5,
+            },
+            Some("database is locked".into()),
+        );
+        let wrapped: anyhow::Error = anyhow::Error::from(raw)
+            .context("Failed to claim next mem_tree_jobs row")
+            .context("with_connection closure failed");
+        assert!(is_sqlite_busy(&wrapped));
+    }
+
+    /// Fallback text-match: if the rusqlite error has been re-rendered
+    /// into a plain `anyhow!` (no downcast available), the "database is
+    /// locked" phrase still triggers the busy classification.
+    #[test]
+    fn is_sqlite_busy_text_fallback() {
+        let err = anyhow::anyhow!("Failed to claim next mem_tree_jobs row: database is locked");
+        assert!(is_sqlite_busy(&err));
+    }
+
+    /// Non-busy SQLite failures (e.g. UNIQUE constraint) must NOT be
+    /// reclassified — those are real bugs worth reporting.
+    #[test]
+    fn is_sqlite_busy_does_not_match_constraint_violation() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::ConstraintViolation,
+                extended_code: 19,
+            },
+            Some("UNIQUE constraint failed: mem_tree_jobs.dedupe_key".into()),
+        );
+        let err = anyhow::Error::from(raw);
+        assert!(!is_sqlite_busy(&err));
+    }
+
+    /// Generic non-SQLite errors must not be reclassified as busy.
+    #[test]
+    fn is_sqlite_busy_does_not_match_unrelated_errors() {
+        let err = anyhow::anyhow!("upstream returned 500: internal server error");
+        assert!(!is_sqlite_busy(&err));
+    }
 }

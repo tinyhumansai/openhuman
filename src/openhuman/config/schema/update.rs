@@ -21,6 +21,7 @@ impl Default for UpdateRestartStrategy {
 
 /// Configuration for periodic self-update checks against GitHub Releases.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct UpdateConfig {
     /// Enable periodic update checks. Defaults to `true`.
     #[serde(default = "default_update_enabled")]

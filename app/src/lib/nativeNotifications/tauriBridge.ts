@@ -1,5 +1,7 @@
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
+
+import { isTauri } from '../../utils/tauriCommands/common';
 
 const log = debug('native-notifications:bridge');
 const errLog = debug('native-notifications:bridge:error');

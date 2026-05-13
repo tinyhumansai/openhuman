@@ -2,6 +2,41 @@
 
 use std::path::{Path, PathBuf};
 
+/// Name of the Inno Setup installer process. On Windows the installer is
+/// spawned via PowerShell's `Start-Process`, which creates a top-level
+/// process — it survives the parent OpenHuman process dying. If OpenHuman
+/// is killed mid-install (or the user closes the app and reopens it before
+/// install completes) we need to detect the in-flight installer instead
+/// of launching a second one that would race on the same install dir.
+#[cfg(windows)]
+const OLLAMA_INSTALLER_PROCESS_NAME: &str = "OllamaSetup.exe";
+
+/// Returns `true` when a Windows OllamaSetup.exe process is currently
+/// running anywhere on the machine. macOS / Linux installs are spawned
+/// as `sh` children of the Rust core and cannot orphan past it; the
+/// non-Windows branch is therefore a constant `false`.
+#[cfg(windows)]
+pub(crate) fn is_ollama_installer_running() -> bool {
+    use sysinfo::{ProcessesToUpdate, System};
+    let mut sys = System::new();
+    // refresh_processes is sufficient — we only need the process list, not
+    // CPU/memory/disk/network. refresh_all() adds dozens of milliseconds of
+    // blocking I/O on a loaded Windows machine and this function runs on the
+    // async executor inside download_and_install_ollama.
+    // sysinfo 0.33 added a second `remove_dead_processes` parameter.
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+    sys.processes().values().any(|p| {
+        p.name()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(OLLAMA_INSTALLER_PROCESS_NAME)
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn is_ollama_installer_running() -> bool {
+    false
+}
+
 /// Captured output from the Ollama install script.
 pub(crate) struct InstallResult {
     pub exit_status: std::process::ExitStatus,
@@ -33,10 +68,62 @@ pub(crate) async fn run_ollama_install_script(install_dir: &Path) -> Result<Inst
     })
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) fn resolve_powershell_executable() -> std::ffi::OsString {
+    // `Command::new("powershell")` relies on PATH. When OpenHuman.exe is
+    // spawned by `cargo tauri dev` (or similar dev harnesses) the inherited
+    // PATH can be sanitized down to a subset that excludes the
+    // `WindowsPowerShell\v1.0` dir, and the spawn fails with `program not
+    // found`. Probe known absolute locations first and fall back to the
+    // bare name if none are present.
+    //
+    // %SystemRoot% defaults to `C:\Windows` and is always set on Windows
+    // sessions.
+    let system_root =
+        std::env::var_os("SystemRoot").unwrap_or_else(|| std::ffi::OsString::from("C:\\Windows"));
+    for relative in [
+        "System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
+    ] {
+        let mut candidate = std::path::PathBuf::from(&system_root);
+        candidate.push(relative);
+        if candidate.is_file() {
+            return candidate.into_os_string();
+        }
+    }
+    // PowerShell 7 (`pwsh.exe`) is another viable substitute when present.
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        let p7 = std::path::PathBuf::from(pf)
+            .join("PowerShell")
+            .join("7")
+            .join("pwsh.exe");
+        if p7.is_file() {
+            return p7.into_os_string();
+        }
+    }
+    std::ffi::OsString::from("powershell")
+}
+
 fn build_install_command(install_dir: &Path) -> Result<tokio::process::Command, String> {
     #[cfg(target_os = "windows")]
     {
-        let mut cmd = tokio::process::Command::new("powershell");
+        let powershell_exe = resolve_powershell_executable();
+        log::debug!(
+            "[local_ai] resolved powershell for installer: {}",
+            powershell_exe.to_string_lossy()
+        );
+        let mut cmd = tokio::process::Command::new(&powershell_exe);
+        // Kill the PowerShell child if the spawning future is dropped — e.g.
+        // the in-process tokio runtime shuts down because the user closed
+        // OpenHuman mid-install. Without this, `cmd.output().await` keeps
+        // OpenHuman.exe alive (and port 7788 bound) for the full 60–120s of
+        // the install download, producing zombie processes and
+        // "port in use" errors on the next launch. Note: OllamaSetup.exe is
+        // spawned by PowerShell as a TOP-LEVEL process (via `Start-Process`),
+        // so it survives PowerShell's death. That's intentional — the
+        // crash-resume detection in `is_ollama_installer_running` picks it
+        // up on the next OpenHuman launch and waits.
+        cmd.kill_on_drop(true);
         crate::openhuman::local_ai::process_util::apply_no_window(&mut cmd);
         cmd.env("OPENHUMAN_OLLAMA_INSTALL_DIR", install_dir);
         cmd.args([
@@ -52,7 +139,11 @@ fn build_install_command(install_dir: &Path) -> Result<tokio::process::Command, 
             $installerUrl = "https://ollama.com/download/OllamaSetup.exe"
             $tempInstaller = Join-Path $env:TEMP "OllamaSetup.exe"
             Invoke-WebRequest -UseBasicParsing -Uri $installerUrl -OutFile $tempInstaller
-            $args = "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /CURRENTUSER /DIR=""$installDir"""
+            # /SILENT (not /VERYSILENT) so Inno Setup's small progress dialog
+            # appears. The dialog is owned by the OS, not OpenHuman, so it
+            # survives the parent process crashing — giving the user a visible
+            # signal that an install is in flight even if OpenHuman dies.
+            $args = "/SILENT /NORESTART /SUPPRESSMSGBOXES /CURRENTUSER /DIR=""$installDir"""
             $proc = Start-Process -FilePath $tempInstaller -ArgumentList $args -PassThru
             $proc.WaitForExit()
             if ($proc.ExitCode -ne 0) {
@@ -67,6 +158,11 @@ fn build_install_command(install_dir: &Path) -> Result<tokio::process::Command, 
     #[cfg(target_os = "macos")]
     {
         let mut cmd = tokio::process::Command::new("sh");
+        // Same rationale as the Windows branch: kill the child if the
+        // spawning task is dropped (e.g. app shutdown mid-install) so the
+        // tokio runtime can exit cleanly instead of waiting for curl to
+        // finish downloading the full Ollama.app bundle.
+        cmd.kill_on_drop(true);
         cmd.env("OPENHUMAN_OLLAMA_INSTALL_DIR", install_dir);
         cmd.arg("-lc")
             .arg(
@@ -95,6 +191,7 @@ fn build_install_command(install_dir: &Path) -> Result<tokio::process::Command, 
     #[cfg(target_os = "linux")]
     {
         let mut cmd = tokio::process::Command::new("sh");
+        cmd.kill_on_drop(true); // see Windows-branch comment above
         cmd.env("OPENHUMAN_OLLAMA_INSTALL_DIR", install_dir);
         cmd.arg("-lc")
             .arg(
@@ -371,6 +468,33 @@ mod tests {
     #[test]
     fn find_system_ollama_binary_detects_macos_app_bundle_in_applications() {
         let _lock = env_lock();
+        // `find_system_ollama_binary` probes a fixed priority list on macOS:
+        //   1. /usr/local/bin/ollama   (intel homebrew, hand-installed)
+        //   2. /opt/homebrew/bin/ollama (apple-silicon homebrew)
+        //   3. /Applications/Ollama.app/Contents/Resources/ollama
+        //   4. $HOME/Applications/Ollama.app/Contents/Resources/ollama
+        // The test exercises (4) by pointing $HOME at a tempdir and clearing
+        // PATH/OLLAMA_BIN. Paths (1)–(3) are absolute and cannot be redirected
+        // — if a dev machine already has Ollama installed at either homebrew
+        // location or in the system /Applications dir, the function returns
+        // that real binary first and the assertion below fails. Skip when any
+        // earlier candidate already resolves so this test stays a regression
+        // gate on the ~/Applications branch and not a "is Ollama installed on
+        // this CI runner" probe.
+        let unmaskable_real_install = [
+            "/usr/local/bin/ollama",
+            "/opt/homebrew/bin/ollama",
+            "/Applications/Ollama.app/Contents/Resources/ollama",
+        ]
+        .iter()
+        .any(|p| std::path::Path::new(p).is_file());
+        if unmaskable_real_install {
+            eprintln!(
+                "skipping: host has a real Ollama install at a higher-priority absolute path \
+                 the test cannot mock"
+            );
+            return;
+        }
         let tmp = tempfile::tempdir().unwrap();
         // Build a fake /Applications/Ollama.app/Contents/Resources/ollama tree.
         let bundle_bin = tmp

@@ -25,6 +25,7 @@ use crate::openhuman::threads::turn_state::{
     self, ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateRequest, GetTurnStateResponse,
     ListTurnStatesResponse,
 };
+use crate::openhuman::threads::ThreadsError;
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -230,10 +231,11 @@ pub async fn messages_list(
 /// Appends a message to a conversation thread.
 pub async fn message_append(
     request: AppendConversationMessageRequest,
-) -> Result<RpcOutcome<ApiEnvelope<ConversationMessageRecord>>, String> {
+) -> Result<RpcOutcome<ApiEnvelope<ConversationMessageRecord>>, ThreadsError> {
     let dir = workspace_dir().await?;
     let message =
-        conversations::append_message(dir, &request.thread_id, record_to_message(request.message))?;
+        conversations::append_message(dir, &request.thread_id, record_to_message(request.message))
+            .map_err(|err| ThreadsError::from_thread_scoped_store_error(&request.thread_id, err))?;
     Ok(envelope(
         message_to_record(message),
         Some(counts([("num_messages", 1)])),
@@ -244,7 +246,7 @@ pub async fn message_append(
 /// Generates a durable thread title from the first user message and assistant reply.
 pub async fn thread_generate_title(
     request: GenerateConversationThreadTitleRequest,
-) -> Result<RpcOutcome<ApiEnvelope<ConversationThreadSummary>>, String> {
+) -> Result<RpcOutcome<ApiEnvelope<ConversationThreadSummary>>, ThreadsError> {
     let config = Config::load_or_init()
         .await
         .map_err(|e| format!("load config: {e}"))?;
@@ -253,7 +255,7 @@ pub async fn thread_generate_title(
         .into_iter()
         .find(|thread| thread.id == request.thread_id)
     else {
-        return Err(format!("thread {} not found", request.thread_id));
+        return Err(ThreadsError::not_found(request.thread_id));
     };
 
     if !is_auto_generated_thread_title(&thread.title) {
@@ -403,7 +405,8 @@ pub async fn thread_generate_title(
         &request.thread_id,
         &title,
         &chrono::Utc::now().to_rfc3339(),
-    )?;
+    )
+    .map_err(|err| ThreadsError::from_thread_scoped_store_error(&request.thread_id, err))?;
 
     tracing::debug!(
         thread_id = %request.thread_id,

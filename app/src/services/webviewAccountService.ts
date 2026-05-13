@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/react';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import debug from 'debug';
 
@@ -13,6 +13,7 @@ import {
 import { addIntegrationNotification } from '../store/notificationSlice';
 import { fetchRespondQueue } from '../store/providerSurfaceSlice';
 import type { AccountProvider, IngestedMessage } from '../types/accounts';
+import { isTauri } from '../utils/tauriCommands/common';
 import { openhumanGetMeetSettings } from '../utils/tauriCommands/config';
 import { trackEvent } from './analytics';
 import { threadApi } from './api/threadApi';
@@ -25,6 +26,10 @@ const MEET_ORCHESTRATOR_MODEL = 'reasoning-v1';
 const log = debug('webview-accounts');
 const errLog = debug('webview-accounts:error');
 
+// Re-export the canonical Tauri guard so existing imports
+// `import { isTauri } from '.../webviewAccountService'` keep working.
+// The implementation lives in `utils/tauriCommands/common.ts` and accounts
+// for the CEF IPC injection race (see comment there).
 export { isTauri };
 
 /**

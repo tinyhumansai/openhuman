@@ -147,12 +147,43 @@ describe('MicCloudComposer', () => {
     expect(opts).toEqual({ language: 'es' });
   });
 
-  it('surfaces a permission-denied error via onError', async () => {
-    getUserMediaMock.mockRejectedValueOnce(new Error('NotAllowed'));
+  it('surfaces a permission-denied error via onError for NotAllowedError', async () => {
+    const err = Object.assign(new DOMException('', 'NotAllowedError'));
+    getUserMediaMock.mockRejectedValueOnce(err);
     const onError = vi.fn();
     render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
     fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
     await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.stringMatching(/permission/i)));
+  });
+
+  it('surfaces a device-unavailable error for OverconstrainedError', async () => {
+    const err = new DOMException('', 'OverconstrainedError');
+    getUserMediaMock.mockRejectedValueOnce(err);
+    const onError = vi.fn();
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(expect.stringMatching(/unavailable/i))
+    );
+  });
+
+  it('surfaces an in-use error for NotReadableError', async () => {
+    const err = new DOMException('', 'NotReadableError');
+    getUserMediaMock.mockRejectedValueOnce(err);
+    const onError = vi.fn();
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.stringMatching(/in use/i)));
+  });
+
+  it('surfaces a generic error for non-DOMException getUserMedia failures', async () => {
+    getUserMediaMock.mockRejectedValueOnce(new Error('some other error'));
+    const onError = vi.fn();
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(expect.stringMatching(/microphone error/i))
+    );
   });
 
   it('falls back to wav re-encode when the native attempt fails', async () => {
@@ -287,5 +318,165 @@ describe('MicCloudComposer', () => {
     unmount();
     expect(removeSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
     removeSpy.mockRestore();
+  });
+
+  // ── Device selector (showDeviceSelector) ─────────────────────────────────
+
+  it('enumerates devices on mount when showDeviceSelector is true', async () => {
+    const enumerateDevicesMock = vi.fn().mockResolvedValue([
+      { kind: 'audioinput', deviceId: 'dev1', label: 'Built-in Mic' },
+      { kind: 'audioinput', deviceId: 'dev2', label: 'USB Headset' },
+      { kind: 'videoinput', deviceId: 'cam1', label: 'Camera' },
+    ]);
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      value: { getUserMedia: getUserMediaMock, enumerateDevices: enumerateDevicesMock },
+      configurable: true,
+      writable: true,
+    });
+
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+
+    await waitFor(() => expect(enumerateDevicesMock).toHaveBeenCalled());
+    expect(await screen.findByRole('combobox', { name: /microphone device/i })).toBeInTheDocument();
+    expect(screen.getByText('Built-in Mic')).toBeInTheDocument();
+    expect(screen.getByText('USB Headset')).toBeInTheDocument();
+    // Video input must not appear
+    expect(screen.queryByText('Camera')).not.toBeInTheDocument();
+  });
+
+  it('does not show the selector when showDeviceSelector is false (default)', async () => {
+    const enumerateDevicesMock = vi.fn().mockResolvedValue([
+      { kind: 'audioinput', deviceId: 'dev1', label: 'Built-in Mic' },
+      { kind: 'audioinput', deviceId: 'dev2', label: 'USB Headset' },
+    ]);
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      value: { getUserMedia: getUserMediaMock, enumerateDevices: enumerateDevicesMock },
+      configurable: true,
+      writable: true,
+    });
+
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('combobox', { name: /microphone device/i })
+      ).not.toBeInTheDocument();
+      expect(enumerateDevicesMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it('shows the selector disabled when only one device is available', async () => {
+    const enumerateDevicesMock = vi
+      .fn()
+      .mockResolvedValue([{ kind: 'audioinput', deviceId: 'dev1', label: 'Built-in Mic' }]);
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      value: { getUserMedia: getUserMediaMock, enumerateDevices: enumerateDevicesMock },
+      configurable: true,
+      writable: true,
+    });
+
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+
+    const select = await screen.findByRole('combobox', { name: /microphone device/i });
+    expect(select).toBeInTheDocument();
+    expect(select).toBeDisabled();
+  });
+
+  it('falls back to "Microphone N" label when browser hides labels before permission', async () => {
+    const enumerateDevicesMock = vi.fn().mockResolvedValue([
+      { kind: 'audioinput', deviceId: 'dev1', label: '' },
+      { kind: 'audioinput', deviceId: 'dev2', label: '' },
+    ]);
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      value: { getUserMedia: getUserMediaMock, enumerateDevices: enumerateDevicesMock },
+      configurable: true,
+      writable: true,
+    });
+
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+
+    await waitFor(() => expect(screen.queryByRole('combobox')).toBeInTheDocument());
+    expect(screen.getByText('Microphone 1')).toBeInTheDocument();
+    expect(screen.getByText('Microphone 2')).toBeInTheDocument();
+  });
+
+  it('passes the selected deviceId as an exact constraint to getUserMedia', async () => {
+    const enumerateDevicesMock = vi.fn().mockResolvedValue([
+      { kind: 'audioinput', deviceId: 'dev1', label: 'Built-in Mic' },
+      { kind: 'audioinput', deviceId: 'dev2', label: 'USB Headset' },
+    ]);
+    transcribeCloudMock.mockResolvedValueOnce('hello');
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      value: { getUserMedia: getUserMediaMock, enumerateDevices: enumerateDevicesMock },
+      configurable: true,
+      writable: true,
+    });
+
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+
+    // Wait for the selector to appear and pick the second device
+    const select = await screen.findByRole('combobox', { name: /microphone device/i });
+    fireEvent.change(select, { target: { value: 'dev2' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+
+    expect(getUserMediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ audio: expect.objectContaining({ deviceId: { exact: 'dev2' } }) })
+    );
+  });
+
+  it('refreshes device labels after getUserMedia permission is granted', async () => {
+    const enumerateDevicesMock = vi
+      .fn()
+      // First call (on mount): labels hidden
+      .mockResolvedValueOnce([
+        { kind: 'audioinput', deviceId: 'dev1', label: '' },
+        { kind: 'audioinput', deviceId: 'dev2', label: '' },
+      ])
+      // Second call (post-permission): real labels
+      .mockResolvedValueOnce([
+        { kind: 'audioinput', deviceId: 'dev1', label: 'Built-in Mic' },
+        { kind: 'audioinput', deviceId: 'dev2', label: 'USB Headset' },
+      ]);
+    transcribeCloudMock.mockResolvedValueOnce('ok');
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      value: { getUserMedia: getUserMediaMock, enumerateDevices: enumerateDevicesMock },
+      configurable: true,
+      writable: true,
+    });
+
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+
+    // Mount enumerate ran — labels are blank placeholders
+    await waitFor(() => expect(screen.queryByRole('combobox')).toBeInTheDocument());
+    expect(screen.getByText('Microphone 1')).toBeInTheDocument();
+
+    // Start recording → triggers the post-permission refresh
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+
+    // After permission, real labels should now be visible
+    await waitFor(() => expect(screen.getByText('Built-in Mic')).toBeInTheDocument());
+    expect(screen.getByText('USB Headset')).toBeInTheDocument();
+  });
+
+  it('handles enumerateDevices throwing gracefully (no crash, selector hidden)', async () => {
+    const enumerateDevicesMock = vi.fn().mockRejectedValue(new Error('NotAllowed'));
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      value: { getUserMedia: getUserMediaMock, enumerateDevices: enumerateDevicesMock },
+      configurable: true,
+      writable: true,
+    });
+
+    render(<MicCloudComposer disabled={false} onSubmit={vi.fn()} showDeviceSelector />);
+
+    await waitFor(() => expect(enumerateDevicesMock).toHaveBeenCalled());
+    // Selector requires >1 device; error yields 0 → selector stays hidden
+    expect(screen.queryByRole('combobox', { name: /microphone device/i })).not.toBeInTheDocument();
+    // Composer still functional
+    expect(screen.getByText('Tap and speak')).toBeInTheDocument();
   });
 });

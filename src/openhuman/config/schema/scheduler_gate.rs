@@ -33,6 +33,7 @@ impl Default for SchedulerGateMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct SchedulerGateConfig {
     /// Top-level mode — `auto` (default), `always_on`, or `off`.
     #[serde(default)]
