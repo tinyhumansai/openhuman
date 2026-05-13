@@ -56,7 +56,7 @@ PRs must clear the **≥ 80% coverage on changed lines** gate. Add tests for new
 
 ## Going deeper
 
-* [**Coding Harness**](/broken/pages/RRYmjibvEbtqRSPntgPX). The agent's code-focused tool surface and how to extend it.
+* [**Agent Harness**](architecture/agent-harness.md). The agent's code-focused tool surface and how to extend it.
 * [**Chromium Embedded Framework**](cef.md). How embedded provider webviews work, why they don't run injected JS, and what the per-provider scanners do instead.
 
 For features still being built, the [Subconscious Loop](../features/subconscious.md) page covers the background task evaluation system end-to-end.
