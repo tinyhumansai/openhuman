@@ -10,9 +10,10 @@ import { getCoreStateSnapshot } from './lib/coreState/store';
 import MascotWindowApp from './mascot/MascotWindowApp';
 import OverlayApp from './overlay/OverlayApp';
 import './polyfills';
-import { initSentry } from './services/analytics';
+import { initGA, initSentry, trackEvent } from './services/analytics';
 import { setStoreForApiClient } from './services/apiClient';
 import { primeActiveUserId } from './store/userScopedStorage';
+import { APP_VERSION } from './utils/config';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 import { getActiveUserIdFromCore } from './utils/tauriCommands';
 
@@ -50,8 +51,12 @@ const ensureDefaultHashRoute = () => {
   }
 };
 
-// Initialize Sentry early (before React renders)
+// Initialize Sentry and GA early (before React renders)
 initSentry();
+initGA();
+if (!isStandaloneWindow) {
+  trackEvent('app_open', { version: APP_VERSION });
+}
 document.documentElement.dataset.window = currentWindowLabel;
 
 if (!isStandaloneWindow) {
