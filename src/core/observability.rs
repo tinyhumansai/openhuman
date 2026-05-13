@@ -311,6 +311,60 @@ pub fn is_transient_provider_http_failure(event: &sentry::protocol::Event<'_>) -
     TRANSIENT_PROVIDER_HTTP_STATUSES.contains(&status_u16)
 }
 
+pub fn is_transient_http_status(status: &str) -> bool {
+    TRANSIENT_HTTP_STATUSES.contains(&status)
+}
+
+pub fn is_transient_http_status_code(status: u16) -> bool {
+    let status = status.to_string();
+    is_transient_http_status(status.as_str())
+}
+
+pub fn contains_transient_transport_phrase(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    TRANSIENT_TRANSPORT_PHRASES
+        .iter()
+        .any(|phrase| lower.contains(phrase))
+}
+
+fn event_has_transient_transport_phrase(event: &sentry::protocol::Event<'_>) -> bool {
+    event
+        .message
+        .as_deref()
+        .is_some_and(contains_transient_transport_phrase)
+        || event
+            .logentry
+            .as_ref()
+            .is_some_and(|log| contains_transient_transport_phrase(&log.message))
+        || event.exception.values.iter().any(|exception| {
+            exception
+                .value
+                .as_deref()
+                .is_some_and(contains_transient_transport_phrase)
+        })
+}
+
+fn is_transient_domain_failure(event: &sentry::protocol::Event<'_>, domain: &str) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some(domain) {
+        return false;
+    }
+
+    match tags.get("failure").map(String::as_str) {
+        Some("non_2xx") => tags
+            .get("status")
+            .is_some_and(|status| is_transient_http_status(status)),
+        Some("transport") => event_has_transient_transport_phrase(event),
+        _ => false,
+    }
+}
+
+/// Transient backend API failures (gateway hiccups, scheduled downtime).
+/// Match by event tags written by report_error at the authed_json call site.
+pub fn is_transient_backend_api_failure(event: &sentry::protocol::Event<'_>) -> bool {
+    is_transient_domain_failure(event, "backend_api")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,6 +598,15 @@ mod tests {
         event
     }
 
+    fn event_with_tags_and_message(
+        pairs: &[(&str, &str)],
+        message: &str,
+    ) -> sentry::protocol::Event<'static> {
+        let mut event = event_with_tags(pairs);
+        event.message = Some(message.to_string());
+        event
+    }
+
     #[test]
     fn transient_filter_drops_429_408_502_503_504() {
         for status in ["429", "408", "502", "503", "504"] {
@@ -622,6 +685,69 @@ mod tests {
         assert!(
             !is_transient_provider_http_failure(&event),
             "non-provider domain must surface even if failure/status tags collide"
+        );
+    }
+
+    #[test]
+    fn backend_api_filter_drops_transient_statuses() {
+        for status in TRANSIENT_HTTP_STATUSES {
+            let event = event_with_tags(&[
+                ("domain", "backend_api"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                is_transient_backend_api_failure(&event),
+                "backend status {status} must be classified as transient"
+            );
+        }
+    }
+
+    #[test]
+    fn backend_api_filter_drops_transient_transport_phrases() {
+        for phrase in TRANSIENT_TRANSPORT_PHRASES {
+            let event = event_with_tags_and_message(
+                &[("domain", "backend_api"), ("failure", "transport")],
+                &format!("GET /teams failed: {phrase}"),
+            );
+            assert!(
+                is_transient_backend_api_failure(&event),
+                "backend transport phrase {phrase} must be classified as transient"
+            );
+        }
+    }
+
+    #[test]
+    fn backend_api_filter_keeps_non_transient_failures() {
+        for status in ["404", "500"] {
+            let event = event_with_tags(&[
+                ("domain", "backend_api"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                !is_transient_backend_api_failure(&event),
+                "backend status {status} must stay visible"
+            );
+        }
+
+        let wrong_domain = event_with_tags(&[
+            ("domain", "scheduler"),
+            ("failure", "non_2xx"),
+            ("status", "503"),
+        ]);
+        assert!(
+            !is_transient_backend_api_failure(&wrong_domain),
+            "domain scoping must keep unrelated transient-shaped events visible"
+        );
+
+        let non_matching_transport = event_with_tags_and_message(
+            &[("domain", "backend_api"), ("failure", "transport")],
+            "GET /teams failed: certificate verify failed",
+        );
+        assert!(
+            !is_transient_backend_api_failure(&non_matching_transport),
+            "transport failures without an allowlisted phrase must stay visible"
         );
     }
 
