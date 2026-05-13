@@ -232,6 +232,13 @@ git checkout -b docs/your-change
 
 If you are contributing through a coding agent or remote environment, include the metadata required by the PR template and the Codex PR checklist.
 
+### Contributor rewards
+
+Maintainers can reward eligible contributors through the automated workflow in
+[`docs/CONTRIBUTOR-REWARDS.md`](docs/CONTRIBUTOR-REWARDS.md). First merged pull
+requests are handled automatically, and maintainers can apply the `reward user`
+label to manually start the same Discord and merch invite flow.
+
 ## Project Conventions
 
 - Use Redux and existing app state patterns instead of adding new ad hoc browser storage.
