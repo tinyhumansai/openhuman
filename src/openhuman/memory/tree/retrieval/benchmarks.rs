@@ -27,7 +27,7 @@ use crate::openhuman::memory::tree::canonicalize::chat::{ChatBatch, ChatMessage}
 use crate::openhuman::memory::tree::ingest::ingest_chat;
 use crate::openhuman::memory::tree::jobs::testing::drain_until_idle;
 use crate::openhuman::memory::tree::retrieval::{
-    fetch_leaves, query_global, query_source, query_topic, search_entities,
+    fetch_leaves, query_source, query_topic, search_entities,
 };
 use crate::openhuman::memory::tree::types::SourceKind;
 
@@ -465,7 +465,7 @@ async fn bench_contradiction_surfaces_both_with_provenance() {
     // Tree-level metadata is only guaranteed once the source tree has been sealed
     // (summarization step), which requires a configured embedder.  Without sealing,
     // entity-index hits may lack tree_id — skip the strict check.
-    let with_tree_id: Vec<_> = benchmark_hits
+    let with_tree_id = benchmark_hits
         .iter()
         .filter(|h| !h.tree_id.is_empty())
         .count();
@@ -593,7 +593,7 @@ async fn bench_drill_down_isolates_children() {
         .unwrap();
 
     // Both eng and ops should have benchmark topic hits
-    let scopes: Vec<_> = topic_resp
+    let _scopes: Vec<_> = topic_resp
         .hits
         .iter()
         .map(|h| h.tree_scope.clone())
