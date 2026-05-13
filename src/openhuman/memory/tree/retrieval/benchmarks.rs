@@ -465,10 +465,7 @@ async fn bench_contradiction_surfaces_both_with_provenance() {
     );
 
     // Verify both scopes appear (slack:#eng and email:pm)
-    let scopes: Vec<_> = all_hits
-        .iter()
-        .map(|h| h.tree_scope.clone())
-        .collect();
+    let scopes: Vec<_> = all_hits.iter().map(|h| h.tree_scope.clone()).collect();
 
     assert!(
         scopes.iter().any(|s| s.contains("slack")),
@@ -483,10 +480,7 @@ async fn bench_contradiction_surfaces_both_with_provenance() {
     // Tree-level metadata is only guaranteed once the source tree has been sealed
     // (summarization step), which requires a configured embedder.  Without sealing,
     // entity-index hits may lack tree_id — skip the strict check.
-    let with_tree_id = all_hits
-        .iter()
-        .filter(|h| !h.tree_id.is_empty())
-        .count();
+    let with_tree_id = all_hits.iter().filter(|h| !h.tree_id.is_empty()).count();
     if with_tree_id > 0 {
         for hit in &all_hits {
             assert!(
@@ -625,7 +619,11 @@ async fn bench_drill_down_isolates_children() {
     }
 
     // Collect scopes to verify we actually got hits from the expected channels.
-    let scopes: Vec<_> = topic_resp.hits.iter().map(|h| h.tree_scope.clone()).collect();
+    let scopes: Vec<_> = topic_resp
+        .hits
+        .iter()
+        .map(|h| h.tree_scope.clone())
+        .collect();
 
     // Verify eng scope actually produced hits (isolation claim is only meaningful
     // if we actually got results to test).
