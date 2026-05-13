@@ -1314,6 +1314,13 @@ pub fn run() {
                 );
                 return None;
             }
+            if openhuman_core::core::observability::is_budget_event(&event) {
+                log::debug!(
+                    "[sentry-budget-filter] dropping budget-exhausted event: {:?}",
+                    event.message.as_deref().unwrap_or("<no message>")
+                );
+                return None;
+            }
             // Defense-in-depth: drop max-tool-iterations cap events that
             // slipped past the call-site filters in the core (see
             // `openhuman_core::core::observability::is_max_iterations_event`
