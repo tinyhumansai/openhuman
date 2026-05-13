@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { billingApi } from '../services/api/billingApi';
 import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
+import { CoreRpcError } from '../services/coreRpcClient';
 import type { CurrentPlanData, PlanTier } from '../types/api';
 import { subscribeUsageRefresh } from './usageRefresh';
 
@@ -28,16 +29,44 @@ let _cache: {
   fetchedAt: number;
 } | null = null;
 
-async function fetchUsageData(): Promise<{ teamUsage: TeamUsage; currentPlan: CurrentPlanData }> {
+const USAGE_UNAVAILABLE = Symbol('usage-unavailable');
+
+async function fetchUsageData(): Promise<{
+  teamUsage: TeamUsage | null;
+  currentPlan: CurrentPlanData | null;
+} | null> {
   if (_cache && Date.now() - _cache.fetchedAt < CACHE_TTL_MS) {
     return _cache.data;
   }
+  // Wrap each leg so a single failing call (e.g. /teams returning 401 after
+  // session expiry) cannot reject the Promise.all microtask before the
+  // sibling resolves — that race let the unhandled rejection leak to the
+  // window's unhandledrejection trap and onward to Sentry (#1472).
   const [teamUsage, currentPlan] = await Promise.all([
-    creditsApi.getTeamUsage(),
-    billingApi.getCurrentPlan(),
+    creditsApi.getTeamUsage().catch(err => {
+      if (err instanceof CoreRpcError && err.kind === 'auth_expired') {
+        throw err;
+      }
+      return USAGE_UNAVAILABLE;
+    }),
+    billingApi.getCurrentPlan().catch(err => {
+      if (err instanceof CoreRpcError && err.kind === 'auth_expired') {
+        throw err;
+      }
+      return USAGE_UNAVAILABLE;
+    }),
   ]);
-  _cache = { data: { teamUsage, currentPlan }, fetchedAt: Date.now() };
-  return _cache.data;
+  const data = {
+    teamUsage: teamUsage === USAGE_UNAVAILABLE ? null : (teamUsage as TeamUsage),
+    currentPlan: currentPlan === USAGE_UNAVAILABLE ? null : (currentPlan as CurrentPlanData),
+  };
+  if (data.teamUsage && data.currentPlan) {
+    _cache = {
+      data: { teamUsage: data.teamUsage, currentPlan: data.currentPlan },
+      fetchedAt: Date.now(),
+    };
+  }
+  return data;
 }
 
 export function useUsageState(): UsageState {
@@ -58,12 +87,17 @@ export function useUsageState(): UsageState {
     setIsLoading(true);
     fetchUsageData()
       .then(data => {
-        if (cancelled) return;
+        if (cancelled || !data) return;
         setTeamUsage(data.teamUsage);
         setCurrentPlan(data.currentPlan);
       })
-      .catch(() => {
-        // Usage unavailable — silently ignore
+      .catch((err: unknown) => {
+        // CoreRpcError(kind=auth_expired) is the documented signal that the
+        // session has been revoked — coreRpcClient already dispatched the
+        // global reauth event, so swallow here instead of letting it leak
+        // to window.unhandledrejection -> Sentry (#1472).
+        if (err instanceof CoreRpcError && err.kind === 'auth_expired') return;
+        // Other failures: usage unavailable — silently ignore.
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);

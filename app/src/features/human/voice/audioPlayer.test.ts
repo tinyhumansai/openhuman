@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { playBase64Audio } from './audioPlayer';
+import {
+  AudioStoppedError,
+  isAudioStopped,
+  playBase64Audio,
+  swallowAudioStop,
+} from './audioPlayer';
 
 /**
  * Minimal HTMLAudioElement stand-in so we can drive metadata loading and
@@ -125,7 +130,7 @@ describe('playBase64Audio', () => {
     expect(playedSynchronously).toBe(true);
   });
 
-  it('stop() pauses, cleans up the blob URL, and rejects ended', async () => {
+  it('stop() pauses, cleans up the blob URL, and rejects ended with AudioStoppedError', async () => {
     installAudio(url => {
       const a = new FakeAudio(url);
       a.duration = 1;
@@ -135,8 +140,60 @@ describe('playBase64Audio', () => {
     handle.stop();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock');
     expect(handle.currentMs()).toBe(-1);
-    await expect(handle.ended).rejects.toThrow('stopped');
+    // Sentry was firing on these orphan rejections because callers couldn't
+    // distinguish "we intentionally stopped" from a real decoder error. The
+    // typed sentinel + `.stopped` brand makes the cancellation case trivially
+    // detectable by `isAudioStopped` / `swallowAudioStop` consumers (#1472).
+    const err = await handle.ended.catch(e => e);
+    expect(err).toBeInstanceOf(AudioStoppedError);
+    expect(err).toMatchObject({ stopped: true, name: 'AudioStoppedError' });
     // Idempotent — second stop() is a no-op.
     handle.stop();
+  });
+});
+
+describe('isAudioStopped / swallowAudioStop', () => {
+  it('isAudioStopped recognizes AudioStoppedError instances', () => {
+    expect(isAudioStopped(new AudioStoppedError())).toBe(true);
+  });
+
+  it('isAudioStopped accepts the structural `.stopped === true` brand', () => {
+    // Defends against bundle-duplication: a second copy of audioPlayer.ts
+    // would produce a different class identity but the brand still matches.
+    expect(isAudioStopped({ stopped: true })).toBe(true);
+    expect(isAudioStopped(Object.assign(new Error('x'), { stopped: true }))).toBe(true);
+  });
+
+  it('isAudioStopped rejects plain errors', () => {
+    expect(isAudioStopped(new Error('audio playback error'))).toBe(false);
+    expect(isAudioStopped(null)).toBe(false);
+    expect(isAudioStopped(undefined)).toBe(false);
+    expect(isAudioStopped('stopped')).toBe(false);
+  });
+
+  it('swallowAudioStop returns void on AudioStoppedError', () => {
+    expect(() => swallowAudioStop(new AudioStoppedError())).not.toThrow();
+  });
+
+  it('swallowAudioStop rethrows non-stop errors so real failures stay visible', () => {
+    const real = new Error('audio playback error');
+    expect(() => swallowAudioStop(real)).toThrow(real);
+  });
+
+  it('attached as .catch(swallowAudioStop), it consumes orphan stop rejections without unhandledrejection', async () => {
+    const unhandled: PromiseRejectionEvent[] = [];
+    const handler = (e: PromiseRejectionEvent) => unhandled.push(e);
+    window.addEventListener('unhandledrejection', handler);
+    try {
+      installAudio(url => new FakeAudio(url));
+      const handle = await playBase64Audio('AAA=');
+      handle.stop();
+      handle.ended.catch(swallowAudioStop);
+      // Let microtasks + a macrotask flush so any unhandledrejection would fire.
+      await new Promise(r => setTimeout(r, 0));
+      expect(unhandled).toHaveLength(0);
+    } finally {
+      window.removeEventListener('unhandledrejection', handler);
+    }
   });
 });

@@ -665,8 +665,11 @@ pub(crate) fn with_connection<T>(
         .with_context(|| format!("Failed to open memory_tree DB: {}", db_path.display()))?;
     conn.busy_timeout(SQLITE_BUSY_TIMEOUT)
         .context("Failed to configure memory_tree busy timeout")?;
-    conn.execute_batch("PRAGMA journal_mode=WAL;")
-        .context("Failed to enable memory_tree WAL mode")?;
+    if let Err(wal_err) = conn.execute_batch("PRAGMA journal_mode=WAL;") {
+        log::warn!(
+            "[memory_tree] Failed to enable WAL mode (filesystem may not support it): {wal_err}"
+        );
+    }
     conn.execute_batch(SCHEMA)
         .context("Failed to initialize memory_tree schema")?;
     // Phase 2 migrations — additive, idempotent.

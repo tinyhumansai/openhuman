@@ -48,13 +48,20 @@ pub struct MemoryConfig {
 }
 
 fn default_embedding_provider() -> String {
-    "ollama".into()
+    // Default to the OpenHuman backend (Voyage-backed `embedding-v1`) so a
+    // fresh install works without requiring a local Ollama daemon. Users
+    // who want fully-local embeddings can flip this to "ollama" in
+    // `config.toml` or enable `local_ai.usage.embeddings = true`, which is
+    // wired into the memory factory via [`LocalAiConfig::use_local_for_embeddings`].
+    "cloud".into()
 }
 fn default_embedding_model() -> String {
-    "nomic-embed-text:latest".into()
+    // Keep this in sync with `embeddings::cloud::DEFAULT_CLOUD_EMBEDDING_MODEL`.
+    "embedding-v1".into()
 }
 fn default_embedding_dims() -> usize {
-    768
+    // Keep this in sync with `embeddings::cloud::DEFAULT_CLOUD_EMBEDDING_DIMENSIONS`.
+    1024
 }
 fn default_min_relevance_score() -> f64 {
     0.4

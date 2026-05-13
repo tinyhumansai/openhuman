@@ -100,17 +100,28 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
 pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Result<Value, String> {
     let result = invoke_method_inner(state, method, params).await;
 
-    // Session auto-cleanup: If the backend says we're unauthorized,
-    // we should reflect that locally by clearing the stored token.
+    // Session auto-cleanup: if the backend says we're unauthorized, publish
+    // a `SessionExpired` event. The credentials subscriber clears the stored
+    // token, flips the scheduler-gate signed-out override so background
+    // workers stand down, and (eventually) pushes a sign-out to the UI.
+    // Centralising via the event bus means 401 detection from any path
+    // (this one, `llm_provider.api_error`, …) gets the same teardown.
     if let Err(ref msg) = result {
         if is_session_expired_error(msg) {
             log::warn!(
-                "[jsonrpc] backend returned 401 for method '{}' — clearing stored session",
+                "[jsonrpc] backend returned 401 for method '{}' — publishing SessionExpired",
                 method
             );
-            if let Ok(config) = crate::openhuman::config::rpc::load_config_with_timeout().await {
-                let _ = crate::openhuman::credentials::rpc::clear_session(&config).await;
-            }
+            // Scrub before publishing — subscribers log `reason`, and the
+            // upstream error string could include API keys / tokens from
+            // pasted-through provider replies. `sanitize_api_error` runs
+            // `scrub_secret_patterns` and truncates.
+            crate::core::event_bus::publish_global(
+                crate::core::event_bus::DomainEvent::SessionExpired {
+                    source: format!("jsonrpc.invoke_method:{method}"),
+                    reason: crate::openhuman::providers::ops::sanitize_api_error(msg),
+                },
+            );
         }
     }
 
@@ -118,10 +129,20 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
 }
 
 /// Helper to determine if an error message indicates an expired or invalid session.
+///
+/// "No backend session token" is also treated as a session-expired signal: the
+/// auth profile is missing entirely (the user was never signed in, or their
+/// stored profile was wiped between login and the next RPC). The frontend may
+/// still believe it holds a session token from an optimistic post-login patch,
+/// so we want the same auto-cleanup + UI-level re-auth path to fire instead of
+/// repeatedly reporting this as a hard error to Sentry. See #1465-ish: users
+/// stuck on the onboarding `SkillsStep` would spam `composio_list_connections`
+/// failures every 5 s without ever being bounced back to the login screen.
 fn is_session_expired_error(msg: &str) -> bool {
     let lower = msg.to_lowercase();
     (lower.contains("401") && lower.contains("unauthorized"))
         || lower.contains("invalid token")
+        || lower.contains("no backend session token")
         || msg.contains("SESSION_EXPIRED")
 }
 
@@ -934,6 +955,42 @@ fn register_domain_subscribers(
         // (otherwise they fall back to `Policy::Normal` and miss the
         // initial throttle decision on battery-powered hosts).
         crate::openhuman::scheduler_gate::init_global(&config);
+
+        // Seed the scheduler-gate signed-out override from the on-disk
+        // session. Without this, a sidecar that boots with no stored JWT
+        // would happily spin up cron / channel loops and fire LLM requests
+        // that all 401 immediately.
+        match crate::api::jwt::get_session_token(&config) {
+            Ok(Some(_)) => {
+                crate::openhuman::scheduler_gate::set_signed_out(false);
+            }
+            Ok(None) => {
+                log::info!(
+                    "[auth] no session token at startup — scheduler gate set to signed_out"
+                );
+                crate::openhuman::scheduler_gate::set_signed_out(true);
+            }
+            Err(err) => {
+                log::warn!(
+                    "[auth] failed to read session token at startup ({err}) — assuming signed_out"
+                );
+                crate::openhuman::scheduler_gate::set_signed_out(true);
+            }
+        }
+
+        // Register the SessionExpired handler before any subscribers that
+        // might publish 401-derived events, so the very first 401 is
+        // routed through `clear_session` + the scheduler-gate override.
+        if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
+            crate::openhuman::credentials::bus::SessionExpiredSubscriber::new(),
+        )) {
+            std::mem::forget(handle);
+        } else {
+            log::warn!(
+                "[event_bus] failed to register SessionExpired subscriber — bus not initialized"
+            );
+        }
+
         crate::openhuman::memory::tree::jobs::start(config.clone());
 
         // Restart requests go through a subscriber so every trigger path shares
@@ -960,7 +1017,7 @@ fn register_domain_subscribers(
         crate::openhuman::agent::bus::register_agent_handlers();
 
         log::info!(
-            "[event_bus] domain subscribers registered (webhook, channel, health, conversation, composio, restart, proactive, agent)"
+            "[event_bus] domain subscribers registered (webhook, channel, health, conversation, composio, restart, proactive, agent, session_expired)"
         );
     });
 }

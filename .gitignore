@@ -2,6 +2,7 @@
 workflow
 create_issue
 review_pr
+sentry_bugs
 
 # Diagnostic harness output (scripts/diagnose-cef-runtime.mjs)
 diagnosis-*.json

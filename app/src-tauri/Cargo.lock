@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "OpenHuman"
-version = "0.53.27"
+version = "0.53.31"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -41,6 +41,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tauri-runtime-cef",
  "tempfile",
@@ -4552,7 +4553,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.53.27"
+version = "0.53.31"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -7258,6 +7259,20 @@ dependencies = [
  "thiserror 2.0.18",
  "url",
  "windows 0.61.3",
+ "zbus",
+]
+
+[[package]]
+name = "tauri-plugin-single-instance"
+version = "2.4.0"
+source = "git+https://github.com/tauri-apps/plugins-workspace?rev=c6561ab6b4f9e7f650d4fc8c53fd8acc9b65b9b2#c6561ab6b4f9e7f650d4fc8c53fd8acc9b65b9b2"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "thiserror 2.0.18",
+ "tracing",
+ "windows-sys 0.60.2",
  "zbus",
 ]
 

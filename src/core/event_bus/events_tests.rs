@@ -438,6 +438,14 @@ fn all_variants_have_correct_domain() {
             },
             "learning",
         ),
+        // Auth
+        (
+            DomainEvent::SessionExpired {
+                source: "test".into(),
+                reason: "401".into(),
+            },
+            "auth",
+        ),
     ];
 
     for (event, expected_domain) in cases {

@@ -579,6 +579,25 @@ fn is_session_expired_error_does_not_match_unrelated_errors() {
 }
 
 #[test]
+fn is_session_expired_error_matches_missing_backend_session_token() {
+    // Composio / web search / billing / team / webhooks / referral all surface
+    // a "no backend session token" variant when the auth profile is gone. Each
+    // of these should funnel into the auto-cleanup path instead of being
+    // reported to Sentry as a fresh error on every 5 s poll.
+    assert!(is_session_expired_error(
+        "composio unavailable: no backend session token. Sign in first (auth_store_session)."
+    ));
+    assert!(is_session_expired_error(
+        "no backend session token; run auth_store_session first"
+    ));
+    assert!(is_session_expired_error(
+        "Web search unavailable: no backend session token. Sign in first so the server can proxy search."
+    ));
+    // Case-insensitive match — the helper lowercases first.
+    assert!(is_session_expired_error("NO BACKEND SESSION TOKEN"));
+}
+
+#[test]
 fn escape_html_escapes_all_special_chars() {
     let raw = r#"<script>alert("x&y'z")</script>"#;
     let escaped = escape_html(raw);

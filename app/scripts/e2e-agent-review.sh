@@ -35,8 +35,8 @@ export E2E_ARTIFACT_LABEL="$LABEL"
 cd "$REPO_ROOT"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-  echo "[agent-review] building app + staging core sidecar"
-  yarn workspace openhuman-app test:e2e:build
+  echo "[agent-review] building E2E app with in-process core"
+  pnpm --filter openhuman-app test:e2e:build
 else
   echo "[agent-review] --skip-build set; reusing existing build"
 fi

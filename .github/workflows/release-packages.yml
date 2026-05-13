@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 1
@@ -94,12 +94,12 @@ jobs:
     needs: [build-cli-linux-arm64]
     steps:
       - name: Checkout main repo (for formula template)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
           path: src
       - name: Checkout Homebrew tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: tinyhumansai/homebrew-openhuman
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -125,7 +125,7 @@ jobs:
     needs: [build-cli-linux-arm64]
     steps:
       - name: Checkout tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 1
@@ -141,7 +141,7 @@ jobs:
           echo "$APT_SIGNING_KEY" | gpg --batch --import
           gpg --list-secret-keys
       - name: Checkout gh-pages branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: gh-pages
           path: gh-pages
@@ -164,15 +164,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24.x
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
       - name: Set version and publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -240,7 +243,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24.x
       - name: Wait for npm propagation, then install
@@ -262,7 +265,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create issue if it doesn't exist
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |-
             const { owner, repo } = context.repo;

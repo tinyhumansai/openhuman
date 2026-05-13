@@ -11,6 +11,7 @@ use crate::openhuman::local_ai::ollama_api::{
 };
 use crate::openhuman::local_ai::paths::{find_workspace_ollama_binary, workspace_ollama_binary};
 use crate::openhuman::local_ai::presets::{self, VisionMode};
+use crate::openhuman::local_ai::process_util::apply_no_window;
 
 use super::LocalAiService;
 
@@ -59,25 +60,26 @@ impl LocalAiService {
             return Ok(());
         }
 
-        if let Err(err) = tokio::process::Command::new(ollama_cmd)
+        let mut version_cmd = tokio::process::Command::new(ollama_cmd);
+        version_cmd
             .arg("--version")
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .await
-        {
+            .stderr(std::process::Stdio::null());
+        apply_no_window(&mut version_cmd);
+        if let Err(err) = version_cmd.status().await {
             return Err(format!(
                 "Ollama binary not available ({}; error: {err}).",
                 ollama_cmd.display()
             ));
         }
 
-        match tokio::process::Command::new(ollama_cmd)
+        let mut serve_cmd = tokio::process::Command::new(ollama_cmd);
+        serve_cmd
             .arg("serve")
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
+            .stderr(std::process::Stdio::null());
+        apply_no_window(&mut serve_cmd);
+        match serve_cmd.spawn() {
             Ok(_) => {
                 log::debug!(
                     "[local_ai] spawned `ollama serve` from {}",
@@ -170,14 +172,12 @@ impl LocalAiService {
     }
 
     async fn command_works(&self, command: &Path) -> bool {
-        tokio::process::Command::new(command)
-            .arg("--version")
+        let mut cmd = tokio::process::Command::new(command);
+        cmd.arg("--version")
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false)
+            .stderr(std::process::Stdio::null());
+        apply_no_window(&mut cmd);
+        cmd.status().await.map(|s| s.success()).unwrap_or(false)
     }
 
     async fn download_and_install_ollama(&self, config: &Config) -> Result<(), String> {
@@ -895,12 +895,12 @@ impl LocalAiService {
         }
         #[cfg(windows)]
         {
-            let _ = tokio::process::Command::new("taskkill")
-                .args(["/F", "/IM", "ollama.exe"])
+            let mut cmd = tokio::process::Command::new("taskkill");
+            cmd.args(["/F", "/IM", "ollama.exe"])
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .await;
+                .stderr(std::process::Stdio::null());
+            apply_no_window(&mut cmd);
+            let _ = cmd.status().await;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
     }

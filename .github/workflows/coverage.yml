@@ -26,11 +26,11 @@ jobs:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.local/share/pnpm/store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -53,7 +53,7 @@ jobs:
           sed -i -E 's#^SF:(src/)#SF:app/\1#' app/coverage/lcov.info
           sed -i -E 's#^SF:(\./src/)#SF:app/src/#' app/coverage/lcov.info
       - name: Upload frontend lcov
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: lcov-frontend
           path: app/coverage/lcov.info
@@ -63,6 +63,12 @@ jobs:
   rust-core-coverage:
     name: Rust Core Coverage (cargo-llvm-cov)
     runs-on: ubuntu-22.04
+    # See test.yml `rust-core-tests` — same shared-singleton flake risk in
+    # the lib suite. Coverage instrumentation roughly doubles wall time vs.
+    # the plain test runs, so cap at 30 min (vs. 20 in test.yml) so a
+    # deadlock still surfaces logs without prematurely killing a healthy
+    # coverage build.
+    timeout-minutes: 30
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
@@ -71,7 +77,7 @@ jobs:
       # skip it for coverage runs and rely on Swatinem/rust-cache for warmup.
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
           submodules: recursive
@@ -86,7 +92,7 @@ jobs:
       - name: Run cargo llvm-cov for openhuman core
         run: cargo llvm-cov -p openhuman --lcov --output-path lcov-core.info
       - name: Upload core lcov
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: lcov-rust-core
           path: lcov-core.info
@@ -102,7 +108,7 @@ jobs:
       CARGO_INCREMENTAL: '0'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
           submodules: recursive
@@ -115,7 +121,7 @@ jobs:
           cache-on-failure: true
           key: tauri-coverage
       - name: Cache CEF binary distribution
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/tauri-cef
           key: cef-ubuntu-22.04-${{ hashFiles('app/src-tauri/Cargo.toml') }}
@@ -126,7 +132,7 @@ jobs:
       - name: Run cargo llvm-cov for Tauri shell
         run: cargo llvm-cov --manifest-path app/src-tauri/Cargo.toml --lcov --output-path lcov-tauri.info
       - name: Upload tauri lcov
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: lcov-rust-tauri
           path: lcov-tauri.info
@@ -140,20 +146,20 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # diff-cover needs full history for the merge-base with the PR base.
           fetch-depth: 0
       - name: Fetch PR base branch
         run: git fetch origin "${{ github.base_ref }}" --depth=200
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Install diff-cover
         run: pip install 'diff-cover>=9.2.0'
       - name: Download all lcov artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: lcov-artifacts
           pattern: lcov-*
@@ -183,7 +189,7 @@ jobs:
             --markdown-report diff-coverage.md
       - name: Upload diff-cover report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: diff-coverage-report
           path: |

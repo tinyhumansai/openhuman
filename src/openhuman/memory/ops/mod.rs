@@ -26,6 +26,7 @@ pub mod helpers;
 pub mod kv_graph;
 pub mod learn;
 pub mod sync;
+pub mod tool_memory;
 
 // ---------------------------------------------------------------------------
 // Re-exports preserving the previous flat `memory::ops::*` surface.
@@ -47,6 +48,11 @@ pub use learn::{memory_learn_all, LearnAllParams, LearnAllResult, NamespaceLearn
 pub use sync::{
     memory_ingestion_status, memory_sync_all, memory_sync_channel, IngestionStatusResult,
     SyncAllResult, SyncChannelParams, SyncChannelResult,
+};
+pub use tool_memory::{
+    tool_rule_delete, tool_rule_get, tool_rule_list, tool_rule_put, tool_rules_for_prompt,
+    tool_rules_json, ToolRuleListParams, ToolRulePutParams, ToolRuleRefParams,
+    ToolRulesForPromptParams, ToolRulesForPromptResult,
 };
 
 // ---------------------------------------------------------------------------

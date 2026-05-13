@@ -209,7 +209,7 @@ const SettingsHome = () => {
             </svg>
           ),
           onClick: () => {
-            void openUrl(BILLING_DASHBOARD_URL);
+            openUrl(BILLING_DASHBOARD_URL).catch(() => {});
           },
         },
         {

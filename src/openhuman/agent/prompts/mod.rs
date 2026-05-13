@@ -170,6 +170,41 @@ impl SystemPromptBuilder {
         self
     }
 
+    /// Append a [`ToolMemoryRulesSection`] carrying a pre-fetched
+    /// snapshot of Critical / High priority tool-scoped rules (#1400).
+    ///
+    /// Snapshot semantics — the rules are baked into the section at
+    /// construction so the rendered system prompt stays byte-identical
+    /// for the lifetime of the session. The session builder is
+    /// responsible for pre-fetching via
+    /// [`crate::openhuman::memory::ToolMemoryStore::rules_for_prompt`]
+    /// (or the `memory_tool_rules_for_prompt` RPC) before invoking
+    /// this method.
+    ///
+    /// No-op when `rules` is empty.
+    pub fn with_tool_memory_rules(
+        mut self,
+        rules: Vec<crate::openhuman::memory::ToolMemoryRule>,
+    ) -> Self {
+        if rules.is_empty() {
+            return self;
+        }
+        // Insert before the tool-catalogue section so these rules appear
+        // adjacent to the tool listings and survive tail-biased trimming.
+        // Falls back to push when no tools section is present.
+        let section: Box<dyn PromptSection> =
+            Box::new(crate::openhuman::memory::ToolMemoryRulesSection::new(rules));
+        let tools_idx = self
+            .sections
+            .iter()
+            .position(|s| s.name() == "tools" || s.name() == "tool_catalogue");
+        match tools_idx {
+            Some(idx) => self.sections.insert(idx, section),
+            None => self.sections.push(section),
+        }
+        self
+    }
+
     /// Append a "Memory context" section carrying the resolved chunks the
     /// subconscious LLM cited when it produced the reflection that
     /// spawned this thread (#623).

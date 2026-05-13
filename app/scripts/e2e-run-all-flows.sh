@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Run all E2E WDIO specs sequentially (Appium restarted per spec).
-# Requires a prior E2E app build: yarn test:e2e:build
+# Requires a prior E2E app build: pnpm --filter openhuman-app test:e2e:build
 #
 set -euo pipefail
 

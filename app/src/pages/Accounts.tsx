@@ -9,6 +9,7 @@ import WebviewHost from '../components/accounts/WebviewHost';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { useCoreState } from '../providers/CoreStateProvider';
 import { usePrewarmMostRecentAccount } from '../hooks/usePrewarmMostRecentAccount';
+import { trackEvent } from '../services/analytics';
 import {
   hideWebviewAccount,
   purgeWebviewAccount,
@@ -181,6 +182,7 @@ const Accounts = () => {
 
   const handlePickProvider = (p: ProviderDescriptor) => {
     setAddOpen(false);
+    trackEvent('account_connect_start', { provider: p.id });
     const id = makeAccountId();
     const acct: Account = {
       id,

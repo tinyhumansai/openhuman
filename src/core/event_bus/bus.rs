@@ -102,6 +102,16 @@ impl EventBus {
         Self { tx }
     }
 
+    /// Get a raw broadcast receiver. Used by bridges that need to drive
+    /// their own filtering loop (e.g. the Socket.IO `auth:session_expired`
+    /// forwarder) instead of going through the [`EventHandler`] trait.
+    /// Prefer [`Self::subscribe`] for normal subscribers — it provides
+    /// domain filtering, panic isolation, and lifetime via
+    /// [`SubscriptionHandle`].
+    pub fn raw_receiver(&self) -> broadcast::Receiver<DomainEvent> {
+        self.tx.subscribe()
+    }
+
     /// Publish an event to all active subscribers.
     ///
     /// The event is cloned and sent to each subscriber's receiving end.
@@ -240,6 +250,24 @@ mod tests {
         bus.publish(DomainEvent::SystemStartup {
             component: "test".into(),
         });
+    }
+
+    #[tokio::test]
+    async fn raw_receiver_observes_published_events() {
+        // raw_receiver is the escape hatch used by the Socket.IO bridge
+        // (auth:session_expired forwarder). Confirm it sees published
+        // events the same way a trait-based subscriber would.
+        let bus = EventBus::create(16);
+        let mut rx = bus.raw_receiver();
+        bus.publish(DomainEvent::SessionExpired {
+            source: "test".into(),
+            reason: "401".into(),
+        });
+        let event = tokio::time::timeout(Duration::from_millis(200), rx.recv())
+            .await
+            .expect("recv should not hang")
+            .expect("recv should not error");
+        assert!(matches!(event, DomainEvent::SessionExpired { .. }));
     }
 
     #[tokio::test]

@@ -11,34 +11,34 @@ Desktop E2E tests use **WebDriverIO (WDIO)** to drive the Tauri app via two auto
 
 | Platform | Driver | Port | App format | Selectors |
 |----------|--------|------|------------|-----------|
-| **Linux (CI default)** | `tauri-driver` | 4444 | Debug binary | CSS / DOM |
-| **macOS (local dev)** | Appium Mac2 | 4723 | `.app` bundle | XPath / accessibility |
+| **Linux / CEF status** | `tauri-driver` | 4444 | Debug binary | CSS / DOM |
+| **macOS / Appium** | Appium Mac2 | 4723 | `.app` bundle | XPath / accessibility |
 
-**Linux is the default CI path** (`ubuntu-22.04`). macOS E2E is available for local development and as an optional CI workflow.
+OpenHuman's desktop app currently uses the CEF runtime (`tauri-runtime-cef`). Linux `tauri-driver` talks to WebKitWebDriver / webkit2gtk and cannot drive a CEF-backed WebView, so Linux CEF E2E is disabled in CI until a CEF-compatible driver or replacement harness exists. The supported path today is macOS/Appium for local runs, with manual macOS/Appium workflow runs when that workflow is enabled.
 
 ---
 
 ## Quick start
 
-### Linux (CI default)
+### Linux / CEF status
 
 ```bash
 # Install tauri-driver (one-time)
 cargo install tauri-driver
 
 # Build the E2E app
-pnpm workspace openhuman-app test:e2e:build
+pnpm --filter openhuman-app test:e2e:build
 
 # Run all flows
-pnpm workspace openhuman-app test:e2e:all:flows
+pnpm --filter openhuman-app test:e2e:all:flows
 
 # Run a single spec
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
 ```
 
-On headless Linux (CI), tests run under **Xvfb** for a virtual display.
+On headless Linux, the harness runs under **Xvfb** for a virtual display. This path is currently useful only for non-CEF / WebKit-compatible debugging; the default CEF app cannot be automated by WebKitWebDriver.
 
-### macOS (local dev)
+### macOS / Appium
 
 ```bash
 # Install Appium + Mac2 driver (one-time, needs Node 24+)
@@ -46,15 +46,15 @@ npm install -g appium
 appium driver install mac2
 
 # Build the .app bundle
-pnpm workspace openhuman-app test:e2e:build
+pnpm --filter openhuman-app test:e2e:build
 
 # Run all flows
-pnpm workspace openhuman-app test:e2e:all:flows
+pnpm --filter openhuman-app test:e2e:all:flows
 ```
 
-### Docker on macOS (Linux E2E locally)
+### Docker on macOS (Linux harness locally)
 
-Run the same Linux-based E2E stack from macOS using Docker:
+Run the same Linux-based harness from macOS using Docker. The same CEF limitation applies: this is not a supported path for the default CEF runtime until a CEF-compatible driver exists.
 
 ```bash
 # Build + run all E2E flows
@@ -62,7 +62,7 @@ docker compose -f e2e/docker-compose.yml run --rm e2e
 
 # Build the app first (if needed)
 docker compose -f e2e/docker-compose.yml run --rm e2e \
-  pnpm workspace openhuman-app test:e2e:build
+  pnpm --filter openhuman-app test:e2e:build
 
 # Run a single spec
 docker compose -f e2e/docker-compose.yml run --rm e2e \
@@ -133,17 +133,19 @@ Requires Docker Desktop or Colima. The repo is bind-mounted so builds persist be
 
 ## CI workflows
 
-### Default (every push/PR)
+### Push / PR checks
 
-The `e2e-linux` job runs on `ubuntu-22.04`:
+The default `test.yml` workflow runs frontend unit tests and Rust checks. Its Linux `tauri-driver` E2E job is commented out because WebKitWebDriver cannot drive the CEF-backed WebView.
+
+The disabled Linux E2E job used to:
 1. Installs system deps (webkit2gtk, Xvfb, dbus)
 2. Installs `tauri-driver` via cargo
 3. Builds the app with mock server URL baked in
 4. Runs all E2E flows under Xvfb
 
-### Optional macOS E2E
+### macOS / Appium
 
-The `e2e-macos` job runs only via **manual dispatch** (`workflow_dispatch` with `run_macos_e2e: true`):
+macOS/Appium is the supported automation backend for the current CEF desktop app. Run it locally, or through a manually dispatched macOS workflow when that workflow is enabled:
 1. Installs Appium + Mac2 driver
 2. Builds the `.app` bundle
 3. Runs all E2E flows
@@ -153,6 +155,8 @@ The `e2e-macos` job runs only via **manual dispatch** (`workflow_dispatch` with 
 ## Troubleshooting
 
 ### Linux: "WebView not ready" timeout
+
+For the default CEF runtime, this usually means the unsupported Linux `tauri-driver` path is trying to drive a CEF-backed WebView through WebKitWebDriver. Use macOS/Appium, or wait for a CEF-compatible Linux driver.
 
 Ensure `DISPLAY` is set and Xvfb is running:
 ```bash
@@ -198,7 +202,7 @@ Tests notification RPC methods via the live core sidecar and the Notifications U
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/notifications.spec.ts notifications
 ```
 
-**Platform note**: RPC tests (`notification_ingest`, `notification_list`, `notification_mark_read`, `notification_stats`) run on both Linux (tauri-driver) and macOS (Appium Mac2). UI assertions (Notifications page sections) require Linux / tauri-driver because `browser.execute()` is unavailable on Mac2, those tests auto-skip when `supportsExecuteScript()` returns `false`.
+**Platform note**: RPC tests (`notification_ingest`, `notification_list`, `notification_mark_read`, `notification_stats`) are written for both Linux/tauri-driver and macOS/Appium Mac2, but Linux execution is disabled for the default CEF runtime until a CEF-compatible driver exists. UI assertions (Notifications page sections) require `browser.execute()` support, so they auto-skip on Mac2 when `supportsExecuteScript()` returns `false`.
 
 ---
 
@@ -211,4 +215,3 @@ bash app/scripts/e2e-agent-review.sh
 ```
 
 Artifacts land in `app/test/e2e/artifacts/<timestamp>-agent-review/`. Full details + helper API: [`AGENT-OBSERVABILITY.md`](AGENT-OBSERVABILITY.md). Any failing test triggers `wdio.conf.ts`'s `afterTest` hook, which writes `failure-*.png` + `failure-*.source.xml` into the same run dir.
-

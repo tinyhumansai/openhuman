@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatEventListeners } from '../../services/chatService';
 import { VISEMES } from './Mascot/visemes';
 import { ACK_FACE_HOLD_MS, pickViseme, useHumanMascot } from './useHumanMascot';
-import { playBase64Audio } from './voice/audioPlayer';
+import { type PlaybackHandle, playBase64Audio } from './voice/audioPlayer';
 import { synthesizeSpeech } from './voice/ttsClient';
 
 vi.mock('../../services/chatService', () => ({
@@ -30,7 +30,25 @@ vi.mock('./voice/ttsClient', () => ({
   proceduralVisemes: (text: string, durationMs: number) => proceduralVisemesMock(text, durationMs),
 }));
 
-vi.mock('./voice/audioPlayer', () => ({ playBase64Audio: vi.fn() }));
+class FakeAudioStoppedError extends Error {
+  readonly stopped = true;
+  constructor() {
+    super('stopped');
+    this.name = 'AudioStoppedError';
+  }
+}
+
+vi.mock('./voice/audioPlayer', () => ({
+  playBase64Audio: vi.fn(),
+  // Mirror the real helper so the hook's orphan `.catch(swallowAudioStop)`
+  // wiring actually executes — otherwise stop sentinels would slip through
+  // as unhandledrejections under test and the regression coverage is moot.
+  swallowAudioStop: (err: unknown) => {
+    if (typeof err === 'object' && err !== null && (err as { stopped?: unknown }).stopped === true)
+      return;
+    throw err;
+  },
+}));
 
 function makeFakePlayback(durationMs = 100) {
   let stopped = false;
@@ -47,7 +65,7 @@ function makeFakePlayback(durationMs = 100) {
       metadataReady: Promise.resolve(),
       stop: () => {
         stopped = true;
-        rejectEnded(new Error('stopped'));
+        rejectEnded(new FakeAudioStoppedError());
       },
       ended,
     },
@@ -400,6 +418,69 @@ describe('useHumanMascot TTS playback', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+  });
+
+  it('does not surface an unhandledrejection when a newer turn cancels in-flight playback (#1472)', async () => {
+    // Two back-to-back turns: the first reaches the `await playBase64Audio`
+    // point and then a second onDone bumps the playback seq. When the first
+    // play() finally resolves, the hook takes the `!isStillCurrent()` branch
+    // and calls `handle.stop()` + early-returns. Before the fix, that left
+    // the resulting `handle.ended` rejection un-attached → unhandledrejection
+    // → Sentry. The fix attaches `.catch(swallowAudioStop)` at each such site.
+    vi.useRealTimers();
+    const fake1 = makeFakePlayback();
+    const fake2 = makeFakePlayback();
+    let resolveFirstPlay!: (h: PlaybackHandle) => void;
+    const firstPlay = new Promise<PlaybackHandle>(r => {
+      resolveFirstPlay = r;
+    });
+    (synthesizeSpeech as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        audio_base64: 'AAA=',
+        audio_mime: 'audio/mpeg',
+        visemes: [{ viseme: 'aa', start_ms: 0, end_ms: 100 }],
+      })
+      .mockResolvedValueOnce({
+        audio_base64: 'BBB=',
+        audio_mime: 'audio/mpeg',
+        visemes: [{ viseme: 'aa', start_ms: 0, end_ms: 100 }],
+      });
+    (playBase64Audio as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(() => firstPlay)
+      .mockResolvedValueOnce(fake2.handle);
+
+    const unhandled: PromiseRejectionEvent[] = [];
+    const handler = (e: PromiseRejectionEvent) => unhandled.push(e);
+    window.addEventListener('unhandledrejection', handler);
+    try {
+      renderHook(() => useHumanMascot({ speakReplies: true }));
+      // Turn 1 enters startTtsPlayback and blocks on playBase64Audio.
+      await act(async () => {
+        capturedListeners?.onDone?.(fakeDone('first'));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      // Turn 2 fires, bumps playbackSeqRef, awaits its own (resolved) play.
+      await act(async () => {
+        capturedListeners?.onDone?.(fakeDone('second'));
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      // Now resolve turn-1's play: its handle is stale → hook stops + bails.
+      await act(async () => {
+        resolveFirstPlay(fake1.handle as unknown as PlaybackHandle);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        // Macrotask hop so jsdom can dispatch any pending unhandledrejection.
+        await new Promise(r => setTimeout(r, 0));
+      });
+      expect(unhandled).toHaveLength(0);
+    } finally {
+      window.removeEventListener('unhandledrejection', handler);
+      vi.useFakeTimers();
+    }
   });
 
   it('shows concerned (not happy) when synthesizeSpeech rejects', async () => {

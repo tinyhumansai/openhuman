@@ -143,6 +143,30 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **PR #745 (command palette) merged without its deps** — `@radix-ui/react-dialog`, `cmdk`, and `@testing-library/user-event` are missing from `package.json`. Install them if tsc fails after syncing main.
 - **Pre-push hooks fail on upstream lint warnings** — ESLint warns on `setState` in effects and unused `eslint-disable` directives inherited from upstream. Use `--no-verify` only when the lint errors are pre-existing upstream issues, not new code.
 
+## Mascot Native Window (macOS)
+
+- **Not a Tauri window** — The floating mascot is a native `NSPanel` + `WKWebView` in `app/src-tauri/src/mascot_native_window.rs`. It uses `ignoresMouseEvents=true` (click-through); interaction is detected by polling `NSEvent` via a Foundation timer. macOS-only, uses objc2 bindings.
+- **`MainThreadOnly` import must stay** — Required by `WKWebView::alloc()` and other AppKit allocators even if not explicitly referenced in user code. Removing it causes compile errors.
+- **`NSEvent::pressedMouseButtons` not in typed objc2-appkit bindings** — Must be called via `msg_send!(objc2::class!(NSEvent), pressedMouseButtons)` instead of the typed API.
+- **WKWebView IPC via `evaluateJavaScript`** — The mascot webview is NOT a Tauri runtime; Tauri `invoke`/`emit` do NOT work. Rust-to-mascot communication uses `msg_send!(webview, evaluateJavaScript:completionHandler:)` to dispatch `new CustomEvent(...)` on `window`. React listens with `addEventListener`. This is NOT subject to the CEF JS injection ban (that only applies to `webview_accounts/` third-party origins).
+- **`MascotCharacter` `sleeping` prop** — Drives the sleep animation (eye close + Zzz). `sleepStartSec` and `sleepFullSec` are hardcoded at 2.5s and 4.0s — they are NOT configurable props. Only toggle `sleeping: boolean`.
+- **`FACE_PRESETS` is a strict `Record`** — Typed as `Record<Exclude<MascotFace, 'normal'>, FacePreset>` in `Ghosty.tsx`. Adding a new `MascotFace` union variant requires adding a matching entry to `FACE_PRESETS` or it won't compile.
+- **`_webview` in `spawn_drag_timer`** — The `WKWebView` captured in the drag timer closure was originally unused (prefixed `_`). It can be used for `evaluateJavaScript` calls during the hover polling loop (e.g. to trigger blink/wake events from Rust).
+- **FrameProvider loops — sleep animation resets** — `FrameProvider` uses `frame % durationInFrames` so animations loop. Default `DURATION_FRAMES = FPS * 6` (6s). Sleep animation completes at 4s, then eyes re-open at 6s when frame resets to 0. Fix: use a much longer `durationInFrames` for sleep face (e.g. `FPS * 600`) so the loop never triggers while sleeping.
+- **Hover detection needs circular hitbox** — The mascot panel is 79x79 but the character is visually circular. Using the full AABB (`cursor_in_panel`) for hover triggers false positives when cursor is in a panel corner. Use distance-from-center check instead. Also suppress hover events for ~1s after panel shows to let the webview load.
+
+## Google Analytics (Issue #1479)
+
+- **`react-ga4` injects a `<script>` tag at runtime** — It appends a `gtag.js` `<script>` to `<head>` dynamically. This works because `tauri.conf.json` CSP has `https:` in `default-src` and `connect-src`. If CEF ever tightens `script-src` separately, switch to GA4 Measurement Protocol (pure HTTP POST, no script injection).
+- **Analytics module pattern** — `app/src/services/analytics.ts` is the single owner of `initGA`, `trackPageView`, `trackEvent`, plus an `ALLOWED_EVENTS` allowlist. Never call `ReactGA` directly from components; go through this module.
+- **Triple gate before any GA call** — `isAnalyticsEnabled()` (user consent) AND `GA_MEASUREMENT_ID` env var present AND `!IS_DEV`. All three must pass or tracking is silently skipped.
+- **Route tracking location** — `useLocation()` effect wired in AppShell (not individual pages). All page views emit from one place.
+- **Capability catalog must stay in sync** — `src/openhuman/about_app/catalog.rs` needs an entry when a new user-visible feature ships. GA was added there as part of issue #1479.
+
+## PR Checklist CI
+
+- **N/A items need a checked checkbox** — `scripts/check-pr-checklist.mjs` requires `- [x] N/A: <reason>`. Using `- [ ] N/A:` (unchecked) fails the check even though the text starts with "N/A:".
+
 ## Environment
 
 - **Core sidecar port** — `7788` (default). Check with `lsof -i :7788`.

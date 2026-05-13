@@ -19,7 +19,7 @@ jobs:
     environment: Production
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # vendored tauri-cef fork is compiled into the image
           submodules: recursive

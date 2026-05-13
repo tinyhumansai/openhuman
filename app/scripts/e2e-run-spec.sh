@@ -3,7 +3,7 @@
 # Run a single WebDriverIO E2E spec.
 #
 # - macOS: Appium mac2 driver (started locally, port 4723)
-# - Linux: tauri-driver (started locally, port 4444)
+# - Linux: tauri-driver (started locally, port 4444; blocked for default CEF builds)
 #
 # Usage:
 #   ./app/scripts/e2e-run-spec.sh test/e2e/specs/login-flow.spec.ts [log-suffix]
@@ -84,7 +84,7 @@ fi
 # Write config.toml into the default ~/.openhuman/ so the core process
 # uses the mock server URL. Appium Mac2 launches the .app via XCUITest
 # which does NOT inherit shell environment variables, so BACKEND_URL
-# never reaches the core sidecar. Writing api_url to the config file
+# never reaches the embedded core process. Writing api_url to the config file
 # is the reliable cross-platform approach.
 E2E_CONFIG_DIR="$HOME/.openhuman"
 E2E_CONFIG_FILE="$E2E_CONFIG_DIR/config.toml"
@@ -118,7 +118,7 @@ if ! grep -q "127.0.0.1:${E2E_MOCK_PORT}" "$DIST_JS"; then
 fi
 if ! grep -q "127.0.0.1:${E2E_MOCK_PORT}" "$DIST_JS"; then
   echo "ERROR: frontend bundle does NOT contain mock server URL (127.0.0.1:${E2E_MOCK_PORT})." >&2
-  echo "       Run 'yarn test:e2e:build' to rebuild with the mock URL." >&2
+  echo "       Run 'pnpm test:e2e:build' to rebuild with the mock URL." >&2
   exit 1
 fi
 echo "Verified: frontend bundle contains mock server URL."

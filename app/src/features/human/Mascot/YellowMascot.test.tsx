@@ -14,6 +14,7 @@ describe('<YellowMascot />', () => {
 
   it.each([
     ['idle', 'idle'],
+    ['sleep', 'sleep'],
     ['speaking', 'speaking'],
     ['thinking', 'thinking'],
     ['confused', 'confused'],
@@ -21,6 +22,13 @@ describe('<YellowMascot />', () => {
     const { container } = render(<YellowMascot face={face} />);
     const host = container.querySelector('[data-face]') as HTMLElement;
     expect(host.getAttribute('data-face')).toBe(expected);
+  });
+
+  it('renders the sleep face with an svg', () => {
+    const { container } = render(<YellowMascot face="sleep" />);
+    const host = container.querySelector('[data-face="sleep"]') as HTMLElement;
+    expect(host).not.toBeNull();
+    expect(container.querySelector('svg')).not.toBeNull();
   });
 
   it('forwards a numeric size prop as a pixel width', () => {

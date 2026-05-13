@@ -509,17 +509,20 @@ fn available_disk_space_mb_windows(path: &Path) -> Option<u64> {
     // PowerShell is ubiquitous on supported Windows; `Get-PSDrive` needs no admin
     // and returns free bytes as a single integer line.
     let script = format!("(Get-PSDrive -Name {letter} -ErrorAction Stop).Free");
-    let output = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &script,
-        ])
-        .output()
-        .ok()?;
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        &script,
+    ]);
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -729,12 +732,17 @@ fn check_command_available(
     cat: &'static str,
     items: &mut Vec<DiagnosticItem>,
 ) {
-    match std::process::Command::new(cmd)
+    let mut child_cmd = std::process::Command::new(cmd);
+    child_cmd
         .args(args)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
+        .stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        child_cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    match child_cmd.output() {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout)
                 .lines()

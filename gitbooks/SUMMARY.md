@@ -25,6 +25,7 @@
   * [Cron & Scheduling](features/native-tools/cron.md)
   * [Voice](features/native-tools/voice.md)
   * [Memory Tools](features/native-tools/memory-tools.md)
+  * [Tool-Scoped Memory](features/native-tools/tool-memory.md)
   * [Third-party Integrations](features/native-tools/integrations.md)
   * [Agent Coordination](features/native-tools/agent-coordination.md)
   * [System & Utilities](features/native-tools/system-and-utilities.md)

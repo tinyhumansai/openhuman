@@ -1,4 +1,7 @@
-import { type MascotFace, YellowMascot } from '../features/human/Mascot';
+import { useEffect, useRef, useState } from 'react';
+
+import { YellowMascot } from '../features/human/Mascot';
+import type { MascotFace } from '../features/human/Mascot/Ghosty';
 
 /**
  * Hosted inside a native macOS NSPanel + WKWebView (see
@@ -7,18 +10,49 @@ import { type MascotFace, YellowMascot } from '../features/human/Mascot';
  * - No `@tauri-apps/api/*` calls work here.
  * - The panel is `ignoresMouseEvents=true` so the cursor passes straight
  *   through. When the Rust host sees the cursor enter the panel frame it
- *   animates the whole NSPanel to the other right-edge corner, so the
- *   mascot bounces out of the way without going off-screen.
+ *   dispatches a `mascot:hover-state` CustomEvent with `detail.hovering`.
+ * - Default state is `sleep` (closed eyes). On hover the face switches to
+ *   `idle`. After the cursor leaves, a 2-second timer returns to `sleep`.
  * - Show/hide is driven from the tray menu in the main app.
+ *
+ * [ui-flow] mascot-window: sleep → idle (hover-start) → sleep (hover-end +2s)
  */
-const DEFAULT_FACE: MascotFace = 'idle';
+
+const SLEEP_DELAY_MS = 2000;
 
 const MascotWindowApp = () => {
+  const [face, setFace] = useState<MascotFace>('sleep');
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { hovering } = (e as CustomEvent<{ hovering: boolean }>).detail;
+      if (hovering) {
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
+        setFace('idle');
+        // [ui-flow] mascot-window: hover-start → face=idle
+      } else {
+        timeoutRef.current = setTimeout(() => {
+          setFace('sleep');
+          timeoutRef.current = null;
+          // [ui-flow] mascot-window: sleep-delay elapsed → face=sleep
+        }, SLEEP_DELAY_MS);
+      }
+    };
+
+    window.addEventListener('mascot:hover-state', handler);
+    return () => {
+      window.removeEventListener('mascot:hover-state', handler);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, background: 'transparent' }}
-      data-face={DEFAULT_FACE}>
-      <YellowMascot face={DEFAULT_FACE} groundShadowOpacity={0.75} compactArmShading />
+    <div style={{ position: 'fixed', inset: 0, background: 'transparent' }} data-face={face}>
+      <YellowMascot face={face} groundShadowOpacity={0.75} compactArmShading />
     </div>
   );
 };

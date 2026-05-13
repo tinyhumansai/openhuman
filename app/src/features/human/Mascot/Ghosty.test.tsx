@@ -5,6 +5,7 @@ import { Ghosty, type MascotFace } from './Ghosty';
 import { VISEMES } from './visemes';
 
 const FACES: MascotFace[] = [
+  'sleep',
   'idle',
   'normal',
   'listening',
@@ -31,7 +32,7 @@ describe('Ghosty', () => {
   });
 
   it('omits eyebrows for neutral / acknowledgement states', () => {
-    for (const face of ['idle', 'normal', 'speaking', 'happy'] as MascotFace[]) {
+    for (const face of ['sleep', 'idle', 'normal', 'speaking', 'happy'] as MascotFace[]) {
       const { container } = render(<Ghosty face={face} />);
       expect(container.querySelector('g[data-face-brows]')).toBeNull();
     }

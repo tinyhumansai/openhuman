@@ -25,6 +25,7 @@ pub use pairing::PairingGuard;
 #[allow(unused_imports)]
 pub use policy::AutonomyLevel;
 pub use policy::SecurityPolicy;
+pub use policy::ToolOperation;
 #[allow(unused_imports)]
 pub use secrets::SecretStore;
 #[allow(unused_imports)]

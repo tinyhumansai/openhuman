@@ -22,6 +22,7 @@ import { visemePath, VISEMES, type VisemeShape } from './visemes';
  * compatibility with older callers.
  */
 export type MascotFace =
+  | 'sleep'
   | 'idle'
   | 'listening'
   | 'thinking'
@@ -59,6 +60,14 @@ interface FacePreset {
 }
 
 const FACE_PRESETS: Record<Exclude<MascotFace, 'normal'>, FacePreset> = {
+  sleep: {
+    eyeScaleY: 0.1,
+    eyeScaleX: 1,
+    browTilt: 0,
+    browDy: 2,
+    showBrows: false,
+    blushOpacity: 0.5,
+  },
   idle: {
     eyeScaleY: 1,
     eyeScaleX: 1,
@@ -301,6 +310,9 @@ export const Ghosty: React.FC<GhostyProps> = ({
  */
 function restMouthPath(face: MascotFace): string {
   switch (face) {
+    case 'sleep':
+      // Tiny flat line — sleeping, mouth barely visible.
+      return 'M496,588 Q520,593 544,588 Q520,592 496,588 Z';
     case 'happy':
       // Wider grin.
       return 'M460,565 Q520,635 580,565 Q520,605 460,565 Z';

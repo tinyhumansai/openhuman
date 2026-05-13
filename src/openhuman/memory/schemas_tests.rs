@@ -33,6 +33,13 @@ const ALL_FUNCTIONS: &[&str] = &[
     "sync_all",
     "learn_all",
     "ingestion_status",
+    // Tool-scoped memory (#1400)
+    "tool_rule_put",
+    "tool_rule_get",
+    "tool_rule_list",
+    "tool_rule_delete",
+    "tool_rules_for_prompt",
+    "tool_rules_json",
 ];
 
 #[test]

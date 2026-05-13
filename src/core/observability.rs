@@ -35,7 +35,14 @@ pub fn report_error<E: Display + ?Sized>(
     operation: &str,
     extra: &[Tag<'_>],
 ) {
-    let message = err.to_string();
+    // Use the alternate format specifier so `anyhow::Error` renders its full
+    // context chain (outer context + every wrapped cause, joined by ": ").
+    // Plain `Display` impls fall back to the standard representation. Without
+    // this, anyhow's default `to_string()` only emits the outermost context
+    // and the underlying cause (e.g. a `toml::de::Error` with line/column) is
+    // dropped — making the captured Sentry event undiagnosable. See
+    // OPENHUMAN-TAURI-B2 for an instance where this masked the real failure.
+    let message = format!("{err:#}");
     sentry::with_scope(
         |scope| {
             scope.set_tag("domain", domain);
@@ -70,6 +77,16 @@ mod tests {
         report_error(&io_err, "test", "io_shape", &[("kind", "io")]);
 
         report_error("plain message", "test", "str_shape", &[]);
+    }
+
+    #[test]
+    fn anyhow_chain_is_rendered_in_full() {
+        // Regression guard: `err.to_string()` on an anyhow chain only emits
+        // the outermost context. Using `{:#}` joins every cause, which is
+        // what Sentry needs to actually diagnose wrapped failures.
+        let inner = std::io::Error::other("inner cause");
+        let wrapped = anyhow::Error::from(inner).context("outer ctx");
+        assert_eq!(format!("{wrapped:#}"), "outer ctx: inner cause");
     }
 
     #[test]

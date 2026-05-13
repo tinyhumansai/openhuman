@@ -29,6 +29,11 @@ const TOOL_ID_TO_RUST_NAMES: &[(&str, &[&str])] = &[
         ],
     ),
     ("schedule", &["schedule"]),
+    // Self-update tools (issue #1435). Filterable so the onboarding
+    // tool-toggle surface can default them off and let users opt in.
+    // `update_check` is read-only; `update_apply` is gated by both the
+    // tool-level autonomy check and `config.update.rpc_mutations_enabled`.
+    ("update", &["update_check", "update_apply"]),
 ];
 
 /// All Rust tool names that are filterable (union of all mapping values).
