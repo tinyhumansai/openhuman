@@ -202,7 +202,11 @@ impl CoreProcessHandle {
                     )
                     .await
                     {
-                        log::error!("[core] embedded core server exited with error: {e}");
+                        if is_expected_port_clash(&e.to_string()) {
+                            log::warn!("[core] embedded core server exited with error: {e}");
+                        } else {
+                            log::error!("[core] embedded core server exited with error: {e}");
+                        }
                     } else {
                         log::info!("[core] embedded core server exited cleanly");
                     }
