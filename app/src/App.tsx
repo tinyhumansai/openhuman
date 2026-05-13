@@ -26,6 +26,7 @@ import { startWebviewNotificationsService } from './lib/webviewNotifications';
 import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
 import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
+import { trackPageView } from './services/analytics';
 import { startWebviewAccountService } from './services/webviewAccountService';
 import { persistor, store } from './store';
 // [#1123] useAppDispatch commented out — welcome-agent onboarding replaced by Joyride walkthrough
@@ -115,6 +116,11 @@ function AppShell() {
     location.pathname,
     navigate,
   ]);
+
+  // Track route changes as anonymous page views.
+  useEffect(() => {
+    trackPageView(location.pathname);
+  }, [location.pathname]);
 
   // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
   // After the welcome agent calls `complete_onboarding` and
