@@ -1,6 +1,5 @@
 use crate::openhuman::tools::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
-use serde_json::json;
 
 pub struct GmailUnsubscribeTool;
 
@@ -15,7 +14,7 @@ impl Tool for GmailUnsubscribeTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({
+        serde_json::json!({
             "type": "object",
             "properties": {
                 "sender": {
@@ -67,7 +66,7 @@ impl Tool for GmailUnsubscribeTool {
 
         // Return a structured JSON block indicating a Pending Action.
         // The React UI will intercept this exact payload.
-        Ok(ToolResult::json(json!({
+        Ok(ToolResult::json(serde_json::json!({
             "status": "pending_approval",
             "action": "unsubscribe",
             "metadata": {
@@ -88,7 +87,7 @@ mod tests {
     async fn test_gmail_unsubscribe_valid() {
         let tool = GmailUnsubscribeTool;
         let result = tool
-            .execute(json!({
+            .execute(serde_json::json!({
                 "sender": "marketing@example.com",
                 "unsubscribe_link": "https://example.com/unsub"
             }))
@@ -119,7 +118,7 @@ mod tests {
     async fn test_gmail_unsubscribe_empty_link() {
         let tool = GmailUnsubscribeTool;
         let result = tool
-            .execute(json!({
+            .execute(serde_json::json!({
                 "sender": "marketing@example.com",
                 "unsubscribe_link": ""
             }))
@@ -136,7 +135,7 @@ mod tests {
     async fn test_gmail_unsubscribe_missing_link() {
         let tool = GmailUnsubscribeTool;
         let result = tool
-            .execute(json!({
+            .execute(serde_json::json!({
                 "sender": "marketing@example.com"
             }))
             .await
