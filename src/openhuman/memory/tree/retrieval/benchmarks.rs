@@ -67,10 +67,7 @@ fn ingest_chat_batch(
                 // - Email pattern: test@entity.example (regex finds emails)
                 // - Hashtag pattern: #topic (regex finds hashtags + emits topic entities)
                 // - Minimum content for sealing: ~200+ chars total
-                let padded_text = format!(
-                    "{} #benchmark test@entity.example",
-                    text
-                );
+                let padded_text = format!("{} #benchmark test@entity.example", text);
                 ChatMessage {
                     author,
                     timestamp: Utc
@@ -447,7 +444,10 @@ async fn bench_contradiction_surfaces_both_with_provenance() {
     );
 
     // Verify both scopes appear (slack:#eng and email:pm)
-    let scopes: Vec<_> = benchmark_hits.iter().map(|h| h.tree_scope.clone()).collect();
+    let scopes: Vec<_> = benchmark_hits
+        .iter()
+        .map(|h| h.tree_scope.clone())
+        .collect();
 
     assert!(
         scopes.iter().any(|s| s.contains("slack")),
@@ -580,10 +580,16 @@ async fn bench_drill_down_isolates_children() {
     drain_until_idle(&cfg).await.unwrap();
 
     // query_topic for "benchmark" topic — should find both via entity index
-    let topic_resp = query_topic(&cfg, "topic:benchmark", None, None, 20).await.unwrap();
+    let topic_resp = query_topic(&cfg, "topic:benchmark", None, None, 20)
+        .await
+        .unwrap();
 
     // Both eng and ops should have benchmark topic hits
-    let scopes: Vec<_> = topic_resp.hits.iter().map(|h| h.tree_scope.clone()).collect();
+    let scopes: Vec<_> = topic_resp
+        .hits
+        .iter()
+        .map(|h| h.tree_scope.clone())
+        .collect();
 
     // The important assertion: eng content should NOT contain "ops"
     let eng_content = topic_resp
