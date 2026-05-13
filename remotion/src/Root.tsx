@@ -46,6 +46,7 @@ import { BlackMascotWink } from "./Mascot/mascot-black-wink";
 import { BlackMascotCelebrate } from "./Mascot/mascot-black-celebrate";
 import { BlackMascotHatWithBag } from "./Mascot/mascot-black-hat-with-bag";
 import { BlackMascotLaughing } from "./Mascot/mascot-black-laughing";
+import { YellowMascotBumDance } from "./Mascot/YellowMascotBumDance";
 
 export const RemotionRoot: React.FC = () => {
   return (
@@ -377,6 +378,16 @@ export const RemotionRoot: React.FC = () => {
       <Composition
         id="mascot-black-laughing"
         component={BlackMascotLaughing}
+        durationInFrames={270}
+        fps={30}
+        width={1080}
+        height={1080}
+        defaultProps={{}}
+      />
+
+      <Composition
+        id="mascot-yellow-bum-dance"
+        component={YellowMascotBumDance}
         durationInFrames={270}
         fps={30}
         width={1080}
