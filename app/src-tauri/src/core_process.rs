@@ -548,6 +548,20 @@ fn is_openhuman_root_body(body: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns true when a port conflict is deterministic environment state, not
+/// a high-signal unknown squatter worth sending to Sentry at error level.
+fn is_expected_port_clash(reason: &str) -> bool {
+    let reason = reason.to_ascii_lowercase();
+    reason.contains("error sending request for url")
+        || reason.contains("connection refused")
+        || reason.contains("returned status 404")
+        || reason.contains("returned status 200")
+        || reason.contains("body did not identify as openhuman")
+        || reason.contains("already in use by another process")
+        || reason.contains("os error 10013")
+        || reason.contains("wsaeacces")
+}
+
 #[cfg(unix)]
 fn find_pid_on_port(port: u16) -> Option<u32> {
     let output = std::process::Command::new("lsof")
