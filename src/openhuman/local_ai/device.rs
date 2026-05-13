@@ -25,8 +25,10 @@ impl DeviceProfile {
     }
 }
 
-/// Probe the current machine and return a [`DeviceProfile`].
+/// Return the detected [`DeviceProfile`] for the current machine.
 ///
+/// The profile is probed once on first call and cached for the process lifetime.
+/// Hardware changes during runtime are detected after the app restarts.
 /// GPU detection is best-effort: Apple Silicon is assumed to have a GPU (Metal);
 /// on other platforms we report "unknown" unless more specific probing is added later.
 pub fn detect_device_profile() -> DeviceProfile {
