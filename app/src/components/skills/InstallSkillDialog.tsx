@@ -37,6 +37,7 @@ import {
   type InstallSkillFromUrlResult,
   type SkillSummary,
 } from '../../services/api/skillsApi';
+import { trackEvent } from '../../services/analytics';
 
 const log = debug('skills:install-dialog');
 
@@ -202,6 +203,9 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
           installed.stdout.length,
           installed.stderr.length
         );
+        for (const skillId of installed.newSkills) {
+          trackEvent('skill_install', { skill_id: skillId });
+        }
         setResult(installed);
         onInstalled(installed);
       } catch (err) {
