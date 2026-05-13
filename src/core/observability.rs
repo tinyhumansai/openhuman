@@ -1,6 +1,6 @@
 //! Centralised error reporting for the core, plus a Sentry
-//! `before_send` filter that drops per-attempt transient-upstream
-//! provider failures.
+//! `before_send` filters that drop deterministic provider noise:
+//! per-attempt transient-upstream failures and budget-exhausted user-state.
 //!
 //! Wraps `tracing::error!` (which the global subscriber forwards to Sentry via
 //! `sentry-tracing`) inside a `sentry::with_scope` so each captured event
@@ -551,6 +551,47 @@ pub fn is_transient_message_failure(msg: &str) -> bool {
         .iter()
         .any(|token| lower.contains(token))
         || contains_transient_transport_phrase(&lower)
+}
+
+/// Returns true when a Sentry event is a budget-exhausted 400 that should be
+/// dropped from `before_send`.
+///
+/// Match criteria (all required):
+/// - tag `failure == "non_2xx"`
+/// - tag `status == "400"`
+/// - the event message or any exception value contains one of the tight
+///   budget-exhaustion phrases
+///
+/// Note: `domain` is intentionally not gated here as defense-in-depth over
+/// the emit-site classifier — any non_2xx/400 event that carries the
+/// budget-exhausted phrasing is dropped regardless of which domain produced
+/// it, so a future re-emitter under a different tag still gets filtered.
+pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("failure").map(String::as_str) != Some("non_2xx") {
+        return false;
+    }
+    if tags.get("status").map(String::as_str) != Some("400") {
+        return false;
+    }
+    event_contains_budget_exhausted_message(event)
+}
+
+fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) -> bool {
+    if event
+        .message
+        .as_deref()
+        .is_some_and(crate::openhuman::providers::is_budget_exhausted_message)
+    {
+        return true;
+    }
+
+    event.exception.values.iter().any(|exception| {
+        exception
+            .value
+            .as_deref()
+            .is_some_and(crate::openhuman::providers::is_budget_exhausted_message)
+    })
 }
 
 #[cfg(test)]
@@ -1170,6 +1211,50 @@ mod tests {
                 !is_transient_message_failure(msg),
                 "{msg:?} must not be classified as transient"
             );
+        }
+    }
+
+    #[test]
+    fn budget_filter_drops_budget_message_on_tagged_400() {
+        let event = event_with_tags_and_message(
+            &[("failure", "non_2xx"), ("status", "400")],
+            r#"OpenHuman API error (400 Bad Request): {"success":false,"error":"Insufficient budget"}"#,
+        );
+
+        assert!(is_budget_event(&event));
+    }
+
+    #[test]
+    fn budget_filter_drops_budget_exception_on_tagged_400() {
+        let mut event = event_with_tags(&[("failure", "non_2xx"), ("status", "400")]);
+        event.exception.values.push(sentry::protocol::Exception {
+            value: Some("Budget exceeded — add credits to continue".to_string()),
+            ..Default::default()
+        });
+
+        assert!(is_budget_event(&event));
+    }
+
+    #[test]
+    fn budget_filter_keeps_non_budget_400() {
+        let event = event_with_tags_and_message(
+            &[("failure", "non_2xx"), ("status", "400")],
+            "Bad request: missing field",
+        );
+
+        assert!(!is_budget_event(&event));
+    }
+
+    #[test]
+    fn budget_filter_requires_non_2xx_failure_and_400_status() {
+        let message = "Budget exceeded — add credits to continue";
+        for tags in [
+            vec![("failure", "transport"), ("status", "400")],
+            vec![("failure", "non_2xx"), ("status", "500")],
+            vec![("failure", "non_2xx")],
+        ] {
+            let event = event_with_tags_and_message(&tags, message);
+            assert!(!is_budget_event(&event));
         }
     }
 
