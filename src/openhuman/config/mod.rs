@@ -55,6 +55,15 @@ pub use schemas::{
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Acquire the test environment lock, recovering from poison if needed.
+/// When a test panics while holding the lock, the mutex becomes poisoned.
+/// This helper clears the poison and returns the guard, allowing subsequent
+/// tests to continue rather than cascading failures.
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

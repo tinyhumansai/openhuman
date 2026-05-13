@@ -229,7 +229,7 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::config::TEST_ENV_LOCK as ENV_LOCK;
+    use crate::openhuman::config::test_env_lock;
     use tempfile::tempdir;
 
     #[test]
@@ -285,7 +285,7 @@ mod tests {
     async fn run_one_tick_returns_ok_when_no_client() {
         // Isolate the workspace/env so config loading doesn't contend with
         // sibling tests mutating OPENHUMAN_WORKSPACE in parallel.
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = test_env_lock();
         let tmp = tempdir().expect("tempdir");
         unsafe {
             std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());

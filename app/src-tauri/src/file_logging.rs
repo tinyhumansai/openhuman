@@ -58,9 +58,14 @@ mod tests {
     /// can race; the lock keeps the env stable for each test's duration.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// Acquire the test environment lock, recovering from poison if needed.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn resolve_data_dir_honors_workspace_override() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prior = std::env::var("OPENHUMAN_WORKSPACE").ok();
         std::env::set_var("OPENHUMAN_WORKSPACE", "/tmp/openhuman-test-override");
         let dir = resolve_data_dir();
@@ -73,7 +78,7 @@ mod tests {
 
     #[test]
     fn resolve_data_dir_ignores_empty_workspace() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prior = std::env::var("OPENHUMAN_WORKSPACE").ok();
         std::env::set_var("OPENHUMAN_WORKSPACE", "");
         // Empty string must NOT short-circuit — fall through to the

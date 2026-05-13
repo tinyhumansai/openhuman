@@ -135,7 +135,7 @@ fn summarize_schema_requires_text_or_equivalent() {
 
 // ── Handler-level tests that don't need Ollama ────────────────
 
-use crate::openhuman::config::TEST_ENV_LOCK as ENV_LOCK;
+use crate::openhuman::config::test_env_lock;
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -149,7 +149,7 @@ async fn handle_device_profile_returns_device_shape() {
 
 #[tokio::test]
 async fn handle_presets_returns_presets_list_and_recommended_tier() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = test_env_lock();
     let tmp = TempDir::new().unwrap();
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
@@ -176,7 +176,7 @@ async fn handle_presets_returns_presets_list_and_recommended_tier() {
 
 #[tokio::test]
 async fn handle_apply_preset_rejects_invalid_tier() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = test_env_lock();
     let tmp = TempDir::new().unwrap();
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
@@ -191,7 +191,7 @@ async fn handle_apply_preset_rejects_invalid_tier() {
 
 #[tokio::test]
 async fn handle_apply_preset_rejects_custom_tier() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = test_env_lock();
     let tmp = TempDir::new().unwrap();
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
@@ -206,7 +206,7 @@ async fn handle_apply_preset_rejects_custom_tier() {
 
 #[tokio::test]
 async fn handle_apply_preset_rejects_unsupported_large_tier() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = test_env_lock();
     let tmp = TempDir::new().unwrap();
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
@@ -221,7 +221,7 @@ async fn handle_apply_preset_rejects_unsupported_large_tier() {
 
 #[tokio::test]
 async fn handle_apply_preset_accepts_valid_tier_and_persists() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = test_env_lock();
     let tmp = TempDir::new().unwrap();
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
@@ -239,7 +239,7 @@ async fn handle_apply_preset_accepts_valid_tier_and_persists() {
 
 #[tokio::test]
 async fn handle_set_ollama_path_rejects_nonexistent_path() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = test_env_lock();
     let tmp = TempDir::new().unwrap();
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
@@ -257,7 +257,7 @@ async fn handle_set_ollama_path_rejects_nonexistent_path() {
 
 #[tokio::test]
 async fn handle_set_ollama_path_accepts_empty_string_to_clear() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = test_env_lock();
     let tmp = TempDir::new().unwrap();
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());

@@ -2297,6 +2297,11 @@ mod tests {
     // spurious failures.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// Acquire the test environment lock, recovering from poison if needed.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Test that is_daemon_mode correctly detects daemon flag variations
     #[test]
     fn is_daemon_mode_detects_daemon_flag() {
@@ -2308,7 +2313,7 @@ mod tests {
     /// Test core_rpc_url returns expected format
     #[test]
     fn core_rpc_url_returns_expected_format() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = env_lock();
         let original = std::env::var("OPENHUMAN_CORE_RPC_URL").ok();
 
         std::env::set_var("OPENHUMAN_CORE_RPC_URL", "http://localhost:9999/rpc");
@@ -2328,7 +2333,7 @@ mod tests {
     /// Test overlay_parent_rpc_url handles empty env var
     #[test]
     fn overlay_parent_rpc_url_handles_empty() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = env_lock();
         let original = std::env::var("OPENHUMAN_CORE_RPC_URL").ok();
 
         std::env::set_var("OPENHUMAN_CORE_RPC_URL", "");
@@ -2531,7 +2536,7 @@ mod tests {
 
     #[test]
     fn sentry_environment_reads_openhuman_app_env() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = env_lock();
         let key = "OPENHUMAN_APP_ENV";
         let original = std::env::var(key).ok();
         std::env::set_var(key, "staging");
@@ -2545,7 +2550,7 @@ mod tests {
 
     #[test]
     fn sentry_environment_trims_whitespace_from_openhuman_app_env() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = env_lock();
         let key = "OPENHUMAN_APP_ENV";
         let original = std::env::var(key).ok();
         std::env::set_var(key, "  dev  ");
@@ -2559,7 +2564,7 @@ mod tests {
 
     #[test]
     fn sentry_environment_skips_empty_openhuman_app_env() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = env_lock();
         let key = "OPENHUMAN_APP_ENV";
         let original = std::env::var(key).ok();
         std::env::set_var(key, "");
@@ -2574,7 +2579,7 @@ mod tests {
 
     #[test]
     fn sentry_environment_skips_whitespace_only_openhuman_app_env() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = env_lock();
         let key = "OPENHUMAN_APP_ENV";
         let original = std::env::var(key).ok();
         std::env::set_var(key, "   ");
@@ -2591,7 +2596,7 @@ mod tests {
     /// asserts the hard default when no compile-time override is present.
     #[test]
     fn sentry_environment_defaults_to_production_when_unset() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = env_lock();
         if option_env!("VITE_OPENHUMAN_APP_ENV").is_some() {
             // A compile-time override is baked in; skip — the fallback path is
             // exercised by sentry_environment_skips_empty_openhuman_app_env.
