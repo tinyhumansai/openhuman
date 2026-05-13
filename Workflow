@@ -32,7 +32,7 @@ docs/
 
 # OS files
 .DS_Store
-Thumbs.db
+
 
 # Tests (not needed in build context)
 tests/
