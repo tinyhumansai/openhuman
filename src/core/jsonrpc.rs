@@ -111,6 +111,12 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                 );
             } else if is_session_expired_error(&display_message) {
                 tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, display_message);
+            } else if is_benign_si_error(&display_message) {
+                tracing::info!(
+                    method = %method,
+                    "[rpc] benign screen-intelligence error — skipping Sentry: {}",
+                    display_message
+                );
             } else {
                 crate::core::observability::report_error_or_expected(
                     display_message.as_str(),
@@ -200,6 +206,18 @@ fn is_session_expired_error(msg: &str) -> bool {
         || lower.contains("no backend session token")
         || lower.contains("session jwt required")
         || msg.contains("SESSION_EXPIRED")
+}
+
+/// Helper to determine if an error message is a benign screen-intelligence failure
+/// that should not be reported to Sentry (e.g. session already active).
+///
+/// Pairs with the idempotent `start_session` semantics in
+/// `src/openhuman/screen_intelligence/engine.rs` — double-start is treated as a
+/// no-op success at the engine level, but the boundary still surfaces the
+/// "session already active" string from some call paths. Suppress it here so
+/// OPENHUMAN-TAURI-5J / -5H stop flooding Sentry.
+fn is_benign_si_error(msg: &str) -> bool {
+    msg.contains("session already active")
 }
 
 /// Returns `true` when the error message comes from JSON-RPC params validation

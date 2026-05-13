@@ -365,6 +365,8 @@ pub async fn start_if_enabled(app_config: &Config) {
         if let Err(e) = server.run(&config_for_run).await {
             if is_expected_macos_only_failure(&e) {
                 info!("{LOG_PREFIX} embedded server autostart skipped: {e}");
+            } else if e.contains("session already active") {
+                info!("{LOG_PREFIX} embedded server session already active (benign)");
             } else {
                 error!("{LOG_PREFIX} embedded server exited with error: {e}");
             }

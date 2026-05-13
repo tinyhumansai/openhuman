@@ -844,3 +844,48 @@ async fn analyze_and_persist_frame_rejects_disabled_local_ai() {
         "unexpected error when local ai is disabled: {err}"
     );
 }
+
+#[tokio::test]
+async fn start_session_is_idempotent() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+
+    let engine = Arc::new(AccessibilityEngine {
+        inner: Mutex::new(EngineState::new(ScreenIntelligenceConfig {
+            baseline_fps: 6.0,
+            session_ttl_secs: 60,
+            ..Default::default()
+        })),
+    });
+
+    // First start
+    let started = engine
+        .start_session(StartSessionParams {
+            consent: true,
+            ttl_secs: Some(60),
+            screen_monitoring: Some(true),
+        })
+        .await;
+
+    if started.is_err() {
+        // If we can't start the first session (e.g. no permissions in test env),
+        // we can't test idempotency properly here, but it shouldn't fail the test.
+        return;
+    }
+
+    // Second start - should succeed and return the same session status (active: true)
+    let second_start = engine
+        .start_session(StartSessionParams {
+            consent: true,
+            ttl_secs: Some(60),
+            screen_monitoring: Some(true),
+        })
+        .await;
+
+    assert!(second_start.is_ok(), "Second start_session should be Ok");
+    assert!(
+        second_start.unwrap().active,
+        "Second start_session should return active session status"
+    );
+}
