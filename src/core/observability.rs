@@ -35,6 +35,23 @@ pub type Tag<'a> = (&'a str, &'a str);
 /// and both sites pick it up — keeps the two layers from drifting.
 pub const TRANSIENT_PROVIDER_HTTP_STATUSES: &[u16] = &[408, 429, 502, 503, 504];
 
+/// HTTP status codes that represent transient backend / integration transport
+/// failures rather than application bugs. Keep this as strings because Sentry
+/// tags are strings, and the before_send classifiers match tag values exactly.
+pub const TRANSIENT_HTTP_STATUSES: &[&str] = &["408", "429", "502", "503", "504", "520"];
+
+/// Transport-layer phrases observed from reqwest / hyper for temporary
+/// upstream interruptions. Keep these specific so rare configuration failures
+/// still reach Sentry.
+pub const TRANSIENT_TRANSPORT_PHRASES: &[&str] = &[
+    "timeout",
+    "operation timed out",
+    "connection forcibly closed",
+    "connection reset",
+    "tls handshake eof",
+    "error sending request",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedErrorKind {
     LocalAiDisabled,
