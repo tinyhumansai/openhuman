@@ -371,6 +371,42 @@ pub fn is_transient_integrations_failure(event: &sentry::protocol::Event<'_>) ->
     is_transient_domain_failure(event, "integrations")
 }
 
+/// String tokens that mark a formatted error message as a transient HTTP
+/// failure. Used at upstream emit sites (`rpc.invoke_method`,
+/// `web_channel.run_chat_task`) where the error has already been stringified
+/// and the original `status` / `failure` tag context is gone.
+///
+/// Each token combines a status code with a non-numeric anchor (parenthesis
+/// or canonical reason phrase) so bare numeric coincidences ("process 502
+/// exited") do not match.
+const TRANSIENT_STATUS_MESSAGE_TOKENS: &[&str] = &[
+    "(408 ",
+    "(429 ",
+    "(502 ",
+    "(503 ",
+    "(504 ",
+    "(520 ",
+    "408 request timeout",
+    "429 too many requests",
+    "502 bad gateway",
+    "503 service unavailable",
+    "504 gateway timeout",
+    "520 <unknown status code>",
+];
+
+/// Returns true when a formatted error message describes a transient HTTP
+/// or transport-layer failure that has already been demoted further down the
+/// stack. Use at upstream re-emit sites (`rpc.invoke_method`,
+/// `web_channel.run_chat_task`) where `report_error` is called with the
+/// stringified downstream error and no `failure` / `status` tag context.
+pub fn is_transient_message_failure(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    TRANSIENT_STATUS_MESSAGE_TOKENS
+        .iter()
+        .any(|token| lower.contains(token))
+        || contains_transient_transport_phrase(&lower)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -818,6 +854,55 @@ mod tests {
             !is_transient_integrations_failure(&non_matching_transport),
             "transport failures without an allowlisted phrase must stay visible"
         );
+    }
+
+    #[test]
+    fn message_failure_classifier_matches_canonical_status_phrases() {
+        for msg in [
+            "rpc.invoke_method failed: GET /teams failed (502 Bad Gateway)",
+            "GET /teams/me/usage failed (503 Service Unavailable)",
+            "downstream returned (504 Gateway Timeout): retry budget exhausted",
+            "OpenHuman API error (520 <unknown status code>): cf",
+            "POST /channels/telegram/typing failed (429 Too Many Requests)",
+            "auth connect failed: 503 Service Unavailable",
+        ] {
+            assert!(
+                is_transient_message_failure(msg),
+                "{msg:?} must be classified as transient"
+            );
+        }
+    }
+
+    #[test]
+    fn message_failure_classifier_matches_transport_phrases() {
+        for msg in [
+            "integrations.get failed: composio/tools → operation timed out",
+            "GET https://api.example.com → connection forcibly closed (os 10054)",
+            "POST /v1/foo → tls handshake eof",
+            "error sending request for url (https://api.example.com)",
+        ] {
+            assert!(
+                is_transient_message_failure(msg),
+                "{msg:?} must be classified as transient"
+            );
+        }
+    }
+
+    #[test]
+    fn message_failure_classifier_keeps_unrelated_messages() {
+        for msg in [
+            "rpc.invoke_method failed: schema validation error",
+            "process 502 exited unexpectedly",
+            "GET /teams failed (404 Not Found)",
+            "GET /teams failed (500 Internal Server Error)",
+            "unrelated error with port 5023",
+            "",
+        ] {
+            assert!(
+                !is_transient_message_failure(msg),
+                "{msg:?} must not be classified as transient"
+            );
+        }
     }
 
     #[test]
