@@ -225,9 +225,7 @@ mod tests {
 
     #[tokio::test]
     async fn disabled_cleanup_returns_raw_text() {
-        let _g = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = crate::openhuman::local_ai::local_ai_test_guard();
         let mut config = Config::default();
         config.local_ai.voice_llm_cleanup_enabled = false;
         let service = local_ai::global(&config);
@@ -243,9 +241,7 @@ mod tests {
         // Covers the branch where cleanup is enabled in config but the
         // local LLM hasn't reached the ready/degraded state yet —
         // cleanup must gracefully fall back to the raw Whisper output.
-        let _g = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = crate::openhuman::local_ai::local_ai_test_guard();
         let config = Config::default(); // voice_llm_cleanup_enabled = true by default
         let service = local_ai::global(&config);
         let previous = service.status.lock().state.clone();
@@ -286,9 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn ready_llm_returns_trimmed_cleanup_or_falls_back() {
-        let _g = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = crate::openhuman::local_ai::local_ai_test_guard();
         let app = Router::new().route(
             "/api/generate",
             post(|| async {
@@ -311,9 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn ready_llm_empty_response_falls_back_to_raw_text() {
-        let _g = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = crate::openhuman::local_ai::local_ai_test_guard();
         let app = Router::new().route(
             "/api/generate",
             post(|| async { Json(json!({"model":"test","response":"   ","done": true})) }),
@@ -331,9 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn ready_llm_error_response_falls_back_to_raw_text() {
-        let _g = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = crate::openhuman::local_ai::local_ai_test_guard();
         let app = Router::new().route(
             "/api/generate",
             post(|| async {
@@ -359,9 +349,7 @@ mod tests {
         // glued the conversation context in front of the raw text when
         // the LLM ran. If the global state raced away from "ready" the
         // call short-circuits to raw — still valid, just the other branch.
-        let _g = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = crate::openhuman::local_ai::local_ai_test_guard();
         #[derive(serde::Deserialize)]
         struct Body {
             prompt: String,
@@ -398,9 +386,7 @@ mod tests {
         // "Conversation context:" header regardless of which branch
         // runs — the LLM path uses the raw-text-only prompt, and the
         // short-circuit path never builds a prompt at all.
-        let _g = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = crate::openhuman::local_ai::local_ai_test_guard();
         #[derive(serde::Deserialize)]
         struct Body {
             prompt: String,

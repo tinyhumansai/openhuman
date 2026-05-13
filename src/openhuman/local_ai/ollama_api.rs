@@ -341,9 +341,7 @@ mod tests {
     }
 
     fn test_lock() -> std::sync::MutexGuard<'static, ()> {
-        crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        crate::openhuman::local_ai::local_ai_test_guard()
     }
 
     #[test]

@@ -28,9 +28,7 @@ fn ready_service(config: &Config) -> LocalAiService {
 
 #[tokio::test]
 async fn inference_hits_ollama_generate_and_returns_response() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai test mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route(
         "/api/generate",
@@ -67,9 +65,7 @@ async fn inference_hits_ollama_generate_and_returns_response() {
 
 #[tokio::test]
 async fn inference_errors_on_non_success_status() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai test mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route(
         "/api/generate",
@@ -92,9 +88,7 @@ async fn inference_errors_on_non_success_status() {
 
 #[tokio::test]
 async fn inference_errors_on_empty_response_when_allow_empty_false() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai test mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route(
         "/api/generate",
@@ -183,9 +177,7 @@ async fn inline_complete_interactive_disabled_returns_empty_string() {
 /// the permit it would deadlock or time out.
 #[tokio::test]
 async fn inline_complete_interactive_does_not_block_on_held_permit() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai test mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     // Hold the global LLM permit for the duration of the test.
     let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
@@ -242,9 +234,7 @@ async fn inline_complete_interactive_does_not_block_on_held_permit() {
 // safer trade-off. See PR #1524.
 #[ignore = "flaky timing under full-suite load — see PR #1524"]
 async fn gated_inline_complete_blocks_on_held_permit() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai test mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
         .expect("test must start with a free permit");

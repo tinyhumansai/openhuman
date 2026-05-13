@@ -24,9 +24,7 @@ async fn spawn_mock(app: Router) -> String {
 
 #[tokio::test]
 async fn has_model_detects_exact_and_prefixed_tag() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route(
         "/api/tags",
@@ -58,9 +56,7 @@ async fn has_model_detects_exact_and_prefixed_tag() {
 
 #[tokio::test]
 async fn has_model_errors_on_non_success_tags_response() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route(
         "/api/tags",
@@ -83,9 +79,7 @@ async fn has_model_errors_on_non_success_tags_response() {
 
 #[tokio::test]
 async fn ollama_healthy_returns_true_on_200_tags_response() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route("/api/tags", get(|| async { Json(json!({ "models": [] })) }));
     let base = spawn_mock(app).await;
@@ -104,9 +98,7 @@ async fn ollama_healthy_returns_true_on_200_tags_response() {
 
 #[tokio::test]
 async fn ollama_healthy_returns_false_on_unreachable_url() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     // Point at a port we never bind → connect fails → healthy = false.
     unsafe {
@@ -122,9 +114,7 @@ async fn ollama_healthy_returns_false_on_unreachable_url() {
 
 #[tokio::test]
 async fn diagnostics_reports_server_unreachable_when_url_unbound() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     unsafe {
         std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", "http://127.0.0.1:1");
@@ -160,9 +150,7 @@ async fn diagnostics_reports_server_unreachable_when_url_unbound() {
 
 #[tokio::test]
 async fn diagnostics_with_running_server_but_missing_models_flags_issues() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route("/api/tags", get(|| async { Json(json!({ "models": [] })) }));
     let base = spawn_mock(app).await;
@@ -200,9 +188,7 @@ async fn diagnostics_with_running_server_but_missing_models_flags_issues() {
 
 #[tokio::test]
 async fn diagnostics_ok_when_expected_models_are_present() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let config = Config::default();
     let chat = crate::openhuman::local_ai::model_ids::effective_chat_model_id(&config);
@@ -257,9 +243,7 @@ async fn diagnostics_ok_when_expected_models_are_present() {
 
 #[tokio::test]
 async fn resolve_binary_path_finds_binary_via_ollama_bin_env() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let tmp = tempfile::tempdir().unwrap();
     let fake_bin = tmp.path().join(if cfg!(windows) {
@@ -292,9 +276,7 @@ async fn resolve_binary_path_finds_binary_via_ollama_bin_env() {
 
 #[tokio::test]
 async fn diagnostics_repair_actions_include_start_server_when_binary_known() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let tmp = tempfile::tempdir().unwrap();
     let fake_bin = tmp.path().join(if cfg!(windows) {
@@ -335,9 +317,7 @@ async fn diagnostics_repair_actions_include_start_server_when_binary_known() {
 async fn diagnostics_repair_actions_field_always_present() {
     // Verifies that the "repair_actions" key is always present in the diagnostics
     // JSON, regardless of the server state, so the UI can always iterate over it.
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     unsafe {
         std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", "http://127.0.0.1:1");
@@ -358,9 +338,7 @@ async fn diagnostics_repair_actions_field_always_present() {
 
 #[tokio::test]
 async fn list_models_returns_parsed_payload() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route(
         "/api/tags",
@@ -391,9 +369,7 @@ async fn list_models_returns_parsed_payload() {
 
 #[tokio::test]
 async fn list_models_errors_on_non_success() {
-    let _guard = crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
-        .lock()
-        .expect("local ai mutex");
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
 
     let app = Router::new().route(
         "/api/tags",

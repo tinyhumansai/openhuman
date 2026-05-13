@@ -4,6 +4,13 @@
 pub(crate) static LOCAL_AI_TEST_MUTEX: once_cell::sync::Lazy<std::sync::Mutex<()>> =
     once_cell::sync::Lazy::new(|| std::sync::Mutex::new(()));
 
+#[cfg(test)]
+pub(crate) fn local_ai_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    LOCAL_AI_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
+
 mod core;
 pub mod device;
 pub mod gif_decision;

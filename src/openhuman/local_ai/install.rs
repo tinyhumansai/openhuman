@@ -334,16 +334,14 @@ pub(crate) fn find_system_ollama_binary() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use std::ffi::OsString;
-    use std::sync::Mutex;
 
     /// Serialises tests that mutate process-global environment variables
-    /// (OLLAMA_BIN, PATH). Without this, cargo's test runner can interleave
-    /// their set/remove calls and cause flakes.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    /// (OLLAMA_BIN, PATH) with other local-AI tests that also read these
+    /// variables. Without this, cargo's test runner can interleave set/remove
+    /// calls and cause flakes.
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        // Recover from a prior test's panic so one failure doesn't cascade.
-        ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+        crate::openhuman::local_ai::local_ai_test_guard()
     }
 
     /// RAII guard: records the prior value of `var` on construction and

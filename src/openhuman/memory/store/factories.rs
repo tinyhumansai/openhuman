@@ -416,15 +416,13 @@ pub fn create_memory_for_migration(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::config::TEST_ENV_LOCK as ENV_LOCK;
     use axum::{routing::get, Json, Router};
     use std::ffi::OsString;
     use std::net::SocketAddr;
 
     /// RAII helper that swaps `OPENHUMAN_OLLAMA_BASE_URL` to `value` for the
-    /// duration of the scope while holding `TEST_ENV_LOCK` so concurrent
-    /// tests can't race on the process-global env. The previous value (if
-    /// any) is restored on drop.
+    /// duration of the scope while holding the local-AI domain test mutex.
+    /// The previous value (if any) is restored on drop.
     struct EnvGuard {
         _lock: std::sync::MutexGuard<'static, ()>,
         prev: Option<OsString>,
@@ -432,11 +430,11 @@ mod tests {
 
     impl EnvGuard {
         fn set(value: &str) -> Self {
-            let lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            let lock = crate::openhuman::local_ai::local_ai_test_guard();
             let prev = std::env::var_os("OPENHUMAN_OLLAMA_BASE_URL");
             // SAFETY: env mutation is wrapped because Rust 2024 marks it
-            // unsafe; the call is gated by TEST_ENV_LOCK so no other test in
-            // this binary is observing the env concurrently.
+            // unsafe; the call is gated by the local-AI domain mutex so no
+            // other local-AI test is observing the env concurrently.
             unsafe {
                 std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", value);
             }
@@ -446,7 +444,7 @@ mod tests {
 
     impl Drop for EnvGuard {
         fn drop(&mut self) {
-            // SAFETY: same justification as `set` — still under TEST_ENV_LOCK.
+            // SAFETY: same justification as `set` — still under the same lock.
             unsafe {
                 match self.prev.take() {
                     Some(v) => std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", v),
@@ -535,8 +533,8 @@ mod tests {
     }
 
     /// Sets `OPENHUMAN_OLLAMA_BASE_URL` to a deliberately unreachable address
-    /// under `TEST_ENV_LOCK`, then verifies that the probed settings fall
-    /// back to cloud when the user has opted into local embeddings.
+    /// under the local-AI domain mutex, then verifies that the probed settings
+    /// fall back to cloud when the user has opted into local embeddings.
     #[tokio::test]
     async fn probed_settings_fall_back_to_cloud_when_ollama_unreachable() {
         let _env = EnvGuard::set("http://127.0.0.1:1");
@@ -602,14 +600,14 @@ mod tests {
     /// observe the Sentry side effect directly here, but the boolean return
     /// value is the gate's contract — covers the once-per-process guarantee.
     ///
-    /// Acquires `TEST_ENV_LOCK` to serialize with `probed_settings_*` tests
-    /// that also touch the latch; without that, parallel test execution can
-    /// reset the flag between this test's two `report_ollama_health_gate_once`
-    /// calls and turn the second one into a fresh "first" — flaking the
-    /// suppression assertion.
+    /// Acquires the local-AI domain mutex to serialize with `probed_settings_*`
+    /// tests that also touch the latch; without that, parallel test execution
+    /// can reset the flag between this test's two
+    /// `report_ollama_health_gate_once` calls and turn the second one into a
+    /// fresh "first", flaking the suppression assertion.
     #[test]
     fn ollama_health_gate_reports_at_most_once_per_process() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _lock = crate::openhuman::local_ai::local_ai_test_guard();
         reset_health_gate_for_test();
 
         assert!(
