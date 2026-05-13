@@ -1,7 +1,6 @@
 use super::{
     current_rpc_token, default_core_port, generate_rpc_token, is_expected_port_clash,
-    is_openhuman_root_body,
-    parse_lsof_pid, parse_netstat_pid, CoreProcessHandle,
+    is_openhuman_root_body, parse_lsof_pid, parse_netstat_pid, CoreProcessHandle,
 };
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -139,9 +138,7 @@ fn expected_port_clash_classifier_matches_benign_probe_shapes() {
     assert!(is_expected_port_clash(
         "probe GET / returned status 404 Not Found"
     ));
-    assert!(is_expected_port_clash(
-        "probe GET / returned status 200 OK"
-    ));
+    assert!(is_expected_port_clash("probe GET / returned status 200 OK"));
     assert!(is_expected_port_clash(
         "probe GET / body did not identify as openhuman (\"hello\")"
     ));
