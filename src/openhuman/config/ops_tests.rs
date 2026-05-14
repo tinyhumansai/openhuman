@@ -489,8 +489,8 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
 
     assert_eq!(cfg.local_ai.provider, "ollama");
     assert!(cfg.local_ai.base_url.is_none());
-    assert_eq!(cfg.local_ai.model_id, "local-default");
-    assert_eq!(cfg.local_ai.chat_model_id, "local-chat");
+    assert_eq!(cfg.local_ai.model_id, "");
+    assert_eq!(cfg.local_ai.chat_model_id, "");
 }
 
 #[tokio::test]

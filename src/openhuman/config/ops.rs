@@ -584,14 +584,10 @@ pub async fn apply_local_ai_settings(
         };
     }
     if let Some(model_id) = update.model_id {
-        if !model_id.trim().is_empty() {
-            config.local_ai.model_id = model_id.trim().to_string();
-        }
+        config.local_ai.model_id = model_id.trim().to_string();
     }
     if let Some(chat_model_id) = update.chat_model_id {
-        if !chat_model_id.trim().is_empty() {
-            config.local_ai.chat_model_id = chat_model_id.trim().to_string();
-        }
+        config.local_ai.chat_model_id = chat_model_id.trim().to_string();
     }
     if let Some(v) = update.usage_embeddings {
         config.local_ai.usage.embeddings = v;

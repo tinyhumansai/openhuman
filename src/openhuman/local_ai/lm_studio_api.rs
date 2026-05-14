@@ -14,25 +14,53 @@ pub(crate) fn lm_studio_base_url(config: &Config) -> String {
 }
 
 pub(crate) fn lm_studio_base_url_from_local_ai(local_ai: &LocalAiConfig) -> String {
-    for raw in [
-        std::env::var("OPENHUMAN_LM_STUDIO_BASE_URL").ok(),
-        std::env::var("LM_STUDIO_BASE_URL").ok(),
-        local_ai.base_url.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    for (source, candidate) in [
+        (
+            "OPENHUMAN_LM_STUDIO_BASE_URL",
+            std::env::var("OPENHUMAN_LM_STUDIO_BASE_URL").ok(),
+        ),
+        (
+            "LM_STUDIO_BASE_URL",
+            std::env::var("LM_STUDIO_BASE_URL").ok(),
+        ),
+        ("config.local_ai.base_url", local_ai.base_url.clone()),
+    ] {
+        let Some(raw) = candidate else {
+            tracing::trace!(source, "[lm-studio] base URL candidate missing");
+            continue;
+        };
+        tracing::trace!(
+            source,
+            raw = %redact_url_for_log(&raw),
+            "[lm-studio] inspecting base URL candidate"
+        );
         if let Some(normalized) = normalize_lm_studio_base_url(&raw) {
+            tracing::debug!(
+                source,
+                base_url = %redact_url_for_log(&normalized),
+                "[lm-studio] selected normalized base URL"
+            );
             return normalized;
         }
+        tracing::trace!(source, "[lm-studio] rejected blank base URL candidate");
     }
 
+    tracing::debug!(
+        base_url = %DEFAULT_LM_STUDIO_BASE_URL,
+        "[lm-studio] using default base URL"
+    );
     DEFAULT_LM_STUDIO_BASE_URL.to_string()
 }
 
 pub(crate) fn normalize_lm_studio_base_url(raw: &str) -> Option<String> {
     let trimmed = raw.trim().trim_end_matches('/');
+    tracing::trace!(
+        raw = %redact_url_for_log(raw),
+        trimmed = %redact_url_for_log(trimmed),
+        "[lm-studio] normalizing base URL"
+    );
     if trimmed.is_empty() {
+        tracing::trace!("[lm-studio] base URL normalization rejected blank input");
         return None;
     }
 
@@ -41,17 +69,36 @@ pub(crate) fn normalize_lm_studio_base_url(raw: &str) -> Option<String> {
     } else {
         format!("http://{trimmed}")
     };
+    tracing::trace!(
+        with_scheme = %redact_url_for_log(&with_scheme),
+        "[lm-studio] base URL scheme normalized"
+    );
 
     let without_known_endpoint = with_scheme
         .trim_end_matches("/chat/completions")
         .trim_end_matches("/models")
         .trim_end_matches('/')
         .to_string();
+    tracing::trace!(
+        without_known_endpoint = %redact_url_for_log(&without_known_endpoint),
+        "[lm-studio] base URL endpoint suffix normalized"
+    );
 
     if without_known_endpoint.ends_with("/v1") {
+        tracing::trace!(
+            appended_v1 = false,
+            base_url = %redact_url_for_log(&without_known_endpoint),
+            "[lm-studio] base URL normalization complete"
+        );
         Some(without_known_endpoint)
     } else {
-        Some(format!("{without_known_endpoint}/v1"))
+        let normalized = format!("{without_known_endpoint}/v1");
+        tracing::trace!(
+            appended_v1 = true,
+            base_url = %redact_url_for_log(&normalized),
+            "[lm-studio] base URL normalization complete"
+        );
+        Some(normalized)
     }
 }
 
@@ -60,9 +107,35 @@ pub(crate) fn apply_lm_studio_auth(
     config: &Config,
 ) -> reqwest::RequestBuilder {
     match config.local_ai.api_key.as_deref().map(str::trim) {
-        Some(key) if !key.is_empty() => request.bearer_auth(key),
-        _ => request,
+        Some(key) if !key.is_empty() => {
+            tracing::trace!(
+                api_key_present = true,
+                api_key_len = key.len(),
+                "[lm-studio] auth applied"
+            );
+            request.bearer_auth(key)
+        }
+        _ => {
+            tracing::trace!(api_key_present = false, "[lm-studio] auth skipped");
+            request
+        }
     }
+}
+
+fn redact_url_for_log(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let parsed =
+        url::Url::parse(trimmed).or_else(|_| url::Url::parse(&format!("http://{trimmed}")));
+    let Ok(mut parsed) = parsed else {
+        return trimmed.to_string();
+    };
+    if !parsed.username().is_empty() {
+        let _ = parsed.set_username("redacted");
+    }
+    if parsed.password().is_some() {
+        let _ = parsed.set_password(Some("redacted"));
+    }
+    parsed.to_string().trim_end_matches('/').to_string()
 }
 
 #[derive(Debug, Deserialize)]

@@ -303,10 +303,7 @@ impl LocalAiService {
         status.total_bytes = None;
         status.download_speed_bps = None;
         status.eta_seconds = None;
-        status.model_path = Some(format!(
-            "ollama://{}",
-            model_ids::effective_chat_model_id(&effective_config)
-        ));
+        status.model_path = Some(model_path_for_config(&effective_config));
     }
 
     pub fn should_run_memory_autosummary(&self, config: &Config) -> bool {

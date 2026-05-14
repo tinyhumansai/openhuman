@@ -146,16 +146,43 @@ pub fn looks_like_local_ai_endpoint(url: &str) -> bool {
 }
 
 fn looks_like_openhuman_backend_endpoint(url: &str) -> bool {
-    let Ok(parsed) = url::Url::parse(url.trim()) else {
-        return false;
+    let trimmed = url.trim();
+    let redacted_url = redact_url_for_log(trimmed);
+    let parsed = match url::Url::parse(trimmed) {
+        Ok(parsed) => {
+            tracing::trace!(
+                api_url = %redacted_url,
+                "[api/config] parsed api_url while checking OpenHuman backend classification"
+            );
+            parsed
+        }
+        Err(error) => {
+            tracing::trace!(
+                api_url = %redacted_url,
+                error = %error,
+                "[api/config] api_url parse failed while checking OpenHuman backend classification"
+            );
+            return false;
+        }
     };
     let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
+        tracing::trace!(
+            api_url = %redacted_url,
+            "[api/config] api_url has no host; not classified as OpenHuman backend"
+        );
         return false;
     };
-    matches!(
+    let is_openhuman_backend = matches!(
         host.as_str(),
         "api.tinyhumans.ai" | "staging-api.tinyhumans.ai"
-    )
+    );
+    tracing::debug!(
+        api_url = %redacted_url,
+        host = %host,
+        is_openhuman_backend,
+        "[api/config] OpenHuman backend classification complete"
+    );
+    is_openhuman_backend
 }
 
 /// Resolves the API base URL for **all hosted-backend calls** (billing,
@@ -174,11 +201,30 @@ fn looks_like_openhuman_backend_endpoint(url: &str) -> bool {
 /// can see the diagnostic in their core sidecar logs.
 pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
     if let Some(u) = api_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        if looks_like_local_ai_endpoint(u) && !looks_like_openhuman_backend_endpoint(u) {
+        let redacted_url = redact_url_for_log(u);
+        let is_local_ai = looks_like_local_ai_endpoint(u);
+        let is_openhuman_backend = looks_like_openhuman_backend_endpoint(u);
+        tracing::debug!(
+            api_url = %redacted_url,
+            is_local_ai,
+            is_openhuman_backend,
+            "[api/config] evaluating backend api_url override"
+        );
+        if is_local_ai && !is_openhuman_backend {
+            tracing::debug!(
+                api_url = %redacted_url,
+                "[api/config] backend api_url override classified as local AI; falling back to backend default chain"
+            );
             warn_backend_url_fallback_once(u);
             // Fall through to env / default — do NOT use the user override.
         } else {
-            return normalize_backend_api_base_url(u);
+            let normalized = normalize_backend_api_base_url(u);
+            tracing::trace!(
+                api_url = %redacted_url,
+                normalized_api_url = %redact_url_for_log(&normalized),
+                "[api/config] using configured backend api_url override"
+            );
+            return normalized;
         }
     }
     if let Some(env_url) = api_base_from_env() {
@@ -218,12 +264,26 @@ fn warn_backend_url_fallback_once(local_url: &str) {
     static WARNED: Once = Once::new();
     WARNED.call_once(|| {
         tracing::warn!(
-            local_url = %local_url,
+            local_url = %redact_url_for_log(local_url),
             "[api/config] config.api_url looks like a local-AI endpoint; \
              integrations base will fall back to env/default backend so \
              /agent-integrations/* requests don't 404 against your local LLM"
         );
     });
+}
+
+fn redact_url_for_log(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let Ok(mut parsed) = url::Url::parse(trimmed) else {
+        return trimmed.to_string();
+    };
+    if !parsed.username().is_empty() {
+        let _ = parsed.set_username("redacted");
+    }
+    if parsed.password().is_some() {
+        let _ = parsed.set_password(Some("redacted"));
+    }
+    parsed.to_string().trim_end_matches('/').to_string()
 }
 
 /// Trim and strip trailing slashes so paths join consistently.
