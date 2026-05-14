@@ -19,8 +19,23 @@ use crate::openhuman::embeddings::{
     self, EmbeddingProvider, DEFAULT_CLOUD_EMBEDDING_DIMENSIONS, DEFAULT_CLOUD_EMBEDDING_MODEL,
     DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL,
 };
+use crate::openhuman::memory::store::agentmemory::AgentMemoryBackend;
 use crate::openhuman::memory::store::unified::UnifiedMemory;
 use crate::openhuman::memory::traits::Memory;
+
+/// Stable wire string for the agentmemory backend selector.
+///
+/// When `MemoryConfig.backend` matches this (ASCII case-insensitive), the
+/// memory factory short-circuits the SQLite + embedder path and returns an
+/// [`AgentMemoryBackend`] that proxies trait calls through agentmemory's
+/// REST surface. OpenHuman's `embedding_provider` / `embedding_model` /
+/// `embedding_dimensions` are ignored on this path — agentmemory owns its
+/// embedding stack via `~/.agentmemory/.env`.
+pub const AGENTMEMORY_BACKEND: &str = "agentmemory";
+
+fn is_agentmemory_backend(name: &str) -> bool {
+    name.eq_ignore_ascii_case(AGENTMEMORY_BACKEND)
+}
 
 /// One-shot guard so the Ollama health-gate fallback only reports to Sentry
 /// once per process lifetime. Memory is constructed many times per session
@@ -349,6 +364,25 @@ fn create_memory_full(
     local_ai: Option<&LocalAiConfig>,
     workspace_dir: &Path,
 ) -> anyhow::Result<Box<dyn Memory>> {
+    // 0. Short-circuit the unified path when the user has explicitly
+    //    selected the agentmemory backend. agentmemory owns its own
+    //    embedding stack, persistence, and graph layer — wiring a local
+    //    embedder + SQLite store on top of it would duplicate the
+    //    embedding pipeline and create a divergence between OpenHuman's
+    //    cached vectors and agentmemory's. Fail loud at boot if the daemon
+    //    isn't reachable (per the issue #1664 fallback decision).
+    if is_agentmemory_backend(&config.backend) {
+        log::info!(
+            "[memory::factory] using agentmemory backend at {}",
+            config
+                .agentmemory_url
+                .as_deref()
+                .unwrap_or(crate::openhuman::memory::store::agentmemory_default_url()),
+        );
+        let backend = AgentMemoryBackend::from_config(config)?;
+        return Ok(Box::new(backend));
+    }
+
     // 1. Resolve the intended provider from config.
     let intended = effective_embedding_settings(config, local_ai);
     let local_ai_opt_in = local_ai

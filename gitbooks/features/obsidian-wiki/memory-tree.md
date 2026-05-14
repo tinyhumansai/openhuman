@@ -166,3 +166,46 @@ Open it from the bottom navigation bar.
 **Search & retrieval.** A search bar over the Memory Tree. Source-scoped, topic-scoped or global queries are all supported, and any result links back to the underlying chunk file in your Obsidian vault for full provenance.
 
 **Routing.** The Intelligence tab also surfaces which model the agent is using per task - see [Automatic Model Routing](../model-routing/).
+
+## Optional: agentmemory as an external backend
+
+The Memory Tree is the default. For users who already self-host
+[agentmemory](https://github.com/rohitg00/agentmemory) — typically because
+they want to share a single durable memory across Claude Code, Cursor,
+Codex, OpenCode, and OpenHuman — you can flip OpenHuman's `Memory` trait
+over to it without touching the rest of the stack.
+
+```toml
+[memory]
+backend = "agentmemory"
+# Defaults shown — set these only if you need to override them.
+# agentmemory_url        = "http://localhost:3111"
+# agentmemory_secret     = ""           # bearer token, optional
+# agentmemory_timeout_ms = 5000
+```
+
+When `backend = "agentmemory"`:
+
+- OpenHuman skips the SQLite + embedder path entirely. Every `Memory`
+  trait call (`store`, `recall`, `get`, `list`, `forget`,
+  `namespace_summaries`, `count`, `health_check`) is proxied through
+  agentmemory's REST surface.
+- `embedding_provider` / `embedding_model` / `embedding_dimensions` are
+  ignored. agentmemory owns its own embedding stack via
+  `~/.agentmemory/.env`.
+- The Memory Tree pipeline (chunker → score → seal → summarise) is
+  unaffected — it operates on the host's document store and is
+  orthogonal to the trait backend.
+- No automatic fallback to SQLite. If the agentmemory daemon is
+  unreachable at startup the backend surfaces the transport error
+  loudly; operators flip back to `backend = "sqlite"` in config to
+  recover.
+
+When `agentmemory_secret` is set, the backend honours the v0.9.12
+plaintext-bearer guard: the bearer is refused to non-loopback hosts
+over `http://`. Set `AGENTMEMORY_REQUIRE_HTTPS=1` to harden the
+warning into a refusal at construction time — useful in production
+deploys.
+
+See the in-tree [README](https://github.com/tinyhumansai/openhuman/tree/main/src/openhuman/memory/store/agentmemory)
+for field mapping, endpoint table, and failure modes.

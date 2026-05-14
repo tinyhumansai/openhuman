@@ -51,6 +51,26 @@ pub struct MemoryConfig {
     pub min_relevance_score: f64,
     #[serde(default)]
     pub sqlite_open_timeout_secs: Option<u64>,
+
+    /// Base URL for the `agentmemory` REST server. Honored only when
+    /// `backend = "agentmemory"`. Defaults to `http://localhost:3111`
+    /// (the agentmemory loopback default).
+    #[serde(default)]
+    pub agentmemory_url: Option<String>,
+
+    /// Optional bearer token sent as `Authorization: Bearer <secret>`
+    /// to the agentmemory REST server. When unset, the backend speaks
+    /// to a local agentmemory daemon without authentication. Setting a
+    /// secret + a non-loopback host enables the v0.9.12 plaintext-bearer
+    /// guard semantics on the client side: the backend refuses to send
+    /// the token over plaintext HTTP when the host is not loopback.
+    #[serde(default)]
+    pub agentmemory_secret: Option<String>,
+
+    /// Per-request timeout for the agentmemory REST client, in
+    /// milliseconds. Defaults to 5000 ms.
+    #[serde(default)]
+    pub agentmemory_timeout_ms: Option<u64>,
 }
 
 fn default_memory_backend() -> String {
@@ -91,6 +111,9 @@ impl Default for MemoryConfig {
             embedding_dimensions: default_embedding_dims(),
             min_relevance_score: default_min_relevance_score(),
             sqlite_open_timeout_secs: None,
+            agentmemory_url: None,
+            agentmemory_secret: None,
+            agentmemory_timeout_ms: None,
         }
     }
 }
