@@ -116,11 +116,20 @@ impl Tool for ComposioActionTool {
             }
         }
 
+        // Inject `timeZone` / `singleEvents` defaults for Google
+        // Calendar list slugs (issue #1714). The per-action surface is
+        // the spawn-time tool an integrations sub-agent picks when it
+        // wants a single Composio action, so the same defaults must
+        // fire here as on the dispatcher path.
+        let iana = super::googlecalendar_args::current_iana_timezone();
+        let args = super::googlecalendar_args::apply_calendar_query_defaults(
+            &self.action_name,
+            Some(args),
+            &iana,
+        );
+
         let started = std::time::Instant::now();
-        let res = self
-            .client
-            .execute_tool(&self.action_name, Some(args))
-            .await;
+        let res = self.client.execute_tool(&self.action_name, args).await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
 
         match res {

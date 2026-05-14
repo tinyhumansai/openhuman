@@ -110,15 +110,27 @@ pub(crate) async fn collect_calendar_meetings(
             continue;
         }
 
+        // Build base args, then let the shared transformer fill in
+        // `timeZone` + `singleEvents` so this poller behaves identically
+        // to the agent-driven dispatcher path (issue #1714). Routing
+        // both call sites through the same helper means a future change
+        // to the defaulting policy only has to land in one place.
         let arguments = json!({
             "connectionId": conn.id,
             "timeMin": now.to_rfc3339(),
             "timeMax": end_window.to_rfc3339(),
             "maxResults": 20
         });
+        let iana = crate::openhuman::composio::googlecalendar_args::current_iana_timezone();
+        let arguments =
+            crate::openhuman::composio::googlecalendar_args::apply_calendar_query_defaults(
+                "GOOGLECALENDAR_EVENTS_LIST",
+                Some(arguments),
+                &iana,
+            );
 
         let resp = match client
-            .execute_tool("GOOGLECALENDAR_EVENTS_LIST", Some(arguments))
+            .execute_tool("GOOGLECALENDAR_EVENTS_LIST", arguments)
             .await
         {
             Ok(resp) => resp,

@@ -696,6 +696,14 @@ impl Tool for ComposioExecuteTool {
             }
         }
 
+        // Inject `timeZone` / `singleEvents` defaults for Google
+        // Calendar list slugs so the host's IANA zone reaches the API
+        // regardless of how the model built the args (issue #1714).
+        // No-op for every other slug; respects caller-supplied values.
+        let iana = super::googlecalendar_args::current_iana_timezone();
+        let arguments =
+            super::googlecalendar_args::apply_calendar_query_defaults(&tool, arguments, &iana);
+
         let started = std::time::Instant::now();
         let res = self.client.execute_tool(&tool, arguments).await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
