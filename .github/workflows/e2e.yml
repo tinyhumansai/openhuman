@@ -95,8 +95,12 @@ jobs:
 
       - name: Install Appium and chromium driver
         run: |
-          npm install -g appium@3
-          appium driver install --source=npm appium-chromium-driver
+          APPIUM_BIN_DIR="${RUNNER_TEMP//\\//}/openhuman-e2e-bin"
+          mkdir -p "$APPIUM_BIN_DIR"
+          printf '%s\n' '#!/usr/bin/env bash' 'exec npx --yes appium@3 "$@"' > "$APPIUM_BIN_DIR/appium"
+          chmod +x "$APPIUM_BIN_DIR/appium"
+          echo "$APPIUM_BIN_DIR" >> "$GITHUB_PATH"
+          "$APPIUM_BIN_DIR/appium" driver install --source=npm appium-chromium-driver
 
       - name: Build E2E app
         run: pnpm --filter openhuman-app test:e2e:build
@@ -197,8 +201,12 @@ jobs:
 
       - name: Install Appium and chromium driver
         run: |
-          npm install -g appium@3
-          appium driver install --source=npm appium-chromium-driver
+          APPIUM_BIN_DIR="${RUNNER_TEMP//\\//}/openhuman-e2e-bin"
+          mkdir -p "$APPIUM_BIN_DIR"
+          printf '%s\n' '#!/usr/bin/env bash' 'exec npx --yes appium@3 "$@"' > "$APPIUM_BIN_DIR/appium"
+          chmod +x "$APPIUM_BIN_DIR/appium"
+          echo "$APPIUM_BIN_DIR" >> "$GITHUB_PATH"
+          "$APPIUM_BIN_DIR/appium" driver install --source=npm appium-chromium-driver
 
       - name: Build E2E app
         run: pnpm --filter openhuman-app test:e2e:build
@@ -286,8 +294,12 @@ jobs:
       - name: Install Appium and chromium driver
         shell: bash
         run: |
-          npm install -g appium@3
-          appium driver install --source=npm appium-chromium-driver
+          APPIUM_BIN_DIR="${RUNNER_TEMP//\\//}/openhuman-e2e-bin"
+          mkdir -p "$APPIUM_BIN_DIR"
+          printf '%s\n' '#!/usr/bin/env bash' 'exec npx --yes appium@3 "$@"' > "$APPIUM_BIN_DIR/appium"
+          chmod +x "$APPIUM_BIN_DIR/appium"
+          echo "$APPIUM_BIN_DIR" >> "$GITHUB_PATH"
+          "$APPIUM_BIN_DIR/appium" driver install --source=npm appium-chromium-driver
 
       - name: Build E2E app
         run: pnpm --filter openhuman-app test:e2e:build
