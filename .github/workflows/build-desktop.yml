@@ -13,6 +13,9 @@
 name: Build Desktop (reusable)
 on:
   workflow_call:
+permissions:
+  contents: read
+  actions: write
     inputs:
       build_ref:
         description: Git ref to check out for the build (tag or SHA).
