@@ -281,16 +281,26 @@ pub fn api_base_from_env() -> Option<String> {
     }
     // 2. Compile-time fallback — baked in by build-desktop.yml.
     //    Each key checked independently for the same reason as above.
-    for v in [option_env!("BACKEND_URL"), option_env!("VITE_BACKEND_URL")]
-        .into_iter()
-        .flatten()
-    {
+    for v in compile_time_api_base_env_values().into_iter().flatten() {
         let url = normalize_api_base_url(v);
         if !url.is_empty() {
             return Some(url);
         }
     }
     None
+}
+
+#[cfg(not(test))]
+fn compile_time_api_base_env_values() -> [Option<&'static str>; 2] {
+    [option_env!("BACKEND_URL"), option_env!("VITE_BACKEND_URL")]
+}
+
+#[cfg(test)]
+fn compile_time_api_base_env_values() -> [Option<&'static str>; 2] {
+    // Test wrappers may set BACKEND_URL to the mock server before rustc
+    // starts. Runtime env coverage remains in the tests above; ignoring
+    // baked values here keeps env-clearing assertions deterministic.
+    [None, None]
 }
 
 /// Resolve the app environment, checking runtime env first then compile-time.
@@ -309,19 +319,26 @@ pub fn app_env_from_env() -> Option<String> {
         }
     }
     // 2. Compile-time fallback — each key checked independently
-    for v in [
-        option_env!("OPENHUMAN_APP_ENV"),
-        option_env!("VITE_OPENHUMAN_APP_ENV"),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    for v in compile_time_app_env_values().into_iter().flatten() {
         let s = v.trim().to_ascii_lowercase();
         if !s.is_empty() {
             return Some(s);
         }
     }
     None
+}
+
+#[cfg(not(test))]
+fn compile_time_app_env_values() -> [Option<&'static str>; 2] {
+    [
+        option_env!("OPENHUMAN_APP_ENV"),
+        option_env!("VITE_OPENHUMAN_APP_ENV"),
+    ]
+}
+
+#[cfg(test)]
+fn compile_time_app_env_values() -> [Option<&'static str>; 2] {
+    [None, None]
 }
 
 pub fn is_staging_app_env(app_env: Option<&str>) -> bool {
@@ -338,13 +355,20 @@ pub fn default_api_base_url_for_env(app_env: Option<&str>) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
 
     use super::*;
 
     // Serialise all env-mutating tests to prevent flaky failures under
     // parallel test execution (std::env is process-global).
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        match ENV_LOCK.get_or_init(Mutex::default).lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
 
     struct EnvSnapshot {
         vars: [(&'static str, Option<String>); 4],
@@ -463,7 +487,7 @@ mod tests {
 
     #[test]
     fn app_env_from_env_reads_runtime_var() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let key = APP_ENV_VAR;
         let prev = std::env::var(key).ok();
         std::env::set_var(key, "staging");
@@ -477,7 +501,7 @@ mod tests {
 
     #[test]
     fn app_env_from_env_falls_through_empty_primary_to_secondary() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let prev_primary = std::env::var(APP_ENV_VAR).ok();
         let prev_secondary = std::env::var(VITE_APP_ENV_VAR).ok();
         std::env::set_var(APP_ENV_VAR, ""); // empty — must not block secondary
@@ -496,7 +520,7 @@ mod tests {
 
     #[test]
     fn api_base_from_env_reads_runtime_var() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let key = "BACKEND_URL";
         let prev = std::env::var(key).ok();
         std::env::set_var(key, "https://staging-api.tinyhumans.ai/");
@@ -510,7 +534,7 @@ mod tests {
 
     #[test]
     fn api_base_from_env_falls_through_empty_primary_to_secondary() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let prev_primary = std::env::var("BACKEND_URL").ok();
         let prev_secondary = std::env::var("VITE_BACKEND_URL").ok();
         std::env::set_var("BACKEND_URL", ""); // empty — must not block secondary
@@ -741,7 +765,7 @@ mod tests {
 
     #[test]
     fn integrations_url_handles_llm_endpoint_overrides() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let _env = EnvSnapshot::clear_backend_env();
 
         struct Case {
@@ -784,7 +808,7 @@ mod tests {
 
     #[test]
     fn integrations_url_falls_back_to_default_when_override_is_local_ai() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         // Clear env so we deterministically hit the default branch.
         let prev_backend = std::env::var("BACKEND_URL").ok();
         let prev_vite_backend = std::env::var("VITE_BACKEND_URL").ok();
@@ -820,7 +844,7 @@ mod tests {
 
     #[test]
     fn integrations_url_falls_back_to_env_when_override_is_local_ai() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         let prev_backend = std::env::var("BACKEND_URL").ok();
         std::env::set_var("BACKEND_URL", "https://staging-api.tinyhumans.ai/");
 
@@ -846,7 +870,7 @@ mod tests {
 
     #[test]
     fn integrations_url_matches_effective_api_url_without_override() {
-        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _guard = env_lock();
         // No override, no env → both helpers must agree.
         let prev_backend = std::env::var("BACKEND_URL").ok();
         let prev_vite_backend = std::env::var("VITE_BACKEND_URL").ok();

@@ -243,6 +243,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.mcp_server",
+        name: "MCP Server",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Expose a curated, read-only memory-tree tool surface over stdio MCP for local MCP-compatible clients.",
+        how_to: "Run `openhuman-core mcp` and configure the local MCP client to launch that command.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "intelligence.orchestrator_worker_thread",
         name: "Worker Thread Delegation",
         domain: "intelligence",
