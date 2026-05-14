@@ -8,6 +8,7 @@ pub mod apify;
 pub mod client;
 pub mod google_places;
 pub mod parallel;
+pub mod seltz;
 pub mod stock_prices;
 pub mod twilio;
 pub mod types;
@@ -23,6 +24,7 @@ pub use stock_prices::{
     StockCommodityTool, StockCryptoSeriesTool, StockExchangeRateTool, StockOptionsTool,
     StockQuoteTool,
 };
+pub use seltz::SeltzSearchTool;
 pub use twilio::TwilioCallTool;
 pub use types::{
     BackendResponse, IntegrationPricing, IntegrationPricingEntry, PricingIntegrations, ToolScope,

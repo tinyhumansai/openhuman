@@ -129,6 +129,9 @@ pub struct Config {
     pub multimodal: MultimodalConfig,
 
     #[serde(default)]
+    pub seltz: SeltzConfig,
+
+    #[serde(default)]
     pub web_search: WebSearchConfig,
 
     #[serde(default)]

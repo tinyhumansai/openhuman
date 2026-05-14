@@ -225,6 +225,47 @@ impl Default for GitbooksConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
+pub struct SeltzConfig {
+    /// When `true`, register `seltz_search` as an agent tool.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Seltz API key. Can also be set via `SELTZ_API_KEY` or
+    /// `OPENHUMAN_SELTZ_API_KEY` env var.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Override the Seltz API base URL (default: `https://api.seltz.ai/v1`).
+    #[serde(default)]
+    pub api_url: Option<String>,
+    /// Max results per query (1–20, default 10).
+    #[serde(default = "default_seltz_max_results")]
+    pub max_results: usize,
+    /// Per-request timeout in seconds (default 15).
+    #[serde(default = "default_seltz_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_seltz_max_results() -> usize {
+    10
+}
+
+fn default_seltz_timeout_secs() -> u64 {
+    15
+}
+
+impl Default for SeltzConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key: None,
+            api_url: None,
+            max_results: default_seltz_max_results(),
+            timeout_secs: default_seltz_timeout_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct WebSearchConfig {
     #[serde(default = "default_web_search_max_results")]
     pub max_results: usize,
