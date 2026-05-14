@@ -38,7 +38,7 @@ impl AgentMemoryBackend {
     }
 }
 
-fn namespace_or_default<'a>(ns: &'a str) -> &'a str {
+fn namespace_or_default(ns: &str) -> &str {
     if ns.is_empty() {
         DEFAULT_PROJECT
     } else {
@@ -46,7 +46,7 @@ fn namespace_or_default<'a>(ns: &'a str) -> &'a str {
     }
 }
 
-fn opt_namespace_or_default<'a>(ns: Option<&'a str>) -> &'a str {
+fn opt_namespace_or_default(ns: Option<&str>) -> &str {
     match ns {
         Some(s) if !s.is_empty() => s,
         _ => DEFAULT_PROJECT,
@@ -74,10 +74,7 @@ impl Memory for AgentMemoryBackend {
             &category,
             session_id,
         );
-        let _: RememberResponse = self
-            .client
-            .post_json("agentmemory/remember", &body)
-            .await?;
+        let _: RememberResponse = self.client.post_json("agentmemory/remember", &body).await?;
         Ok(())
     }
 
@@ -87,7 +84,9 @@ impl Memory for AgentMemoryBackend {
         limit: usize,
         opts: RecallOpts<'_>,
     ) -> Result<Vec<MemoryEntry>> {
-        let project = opts.namespace.map(|s| if s.is_empty() { DEFAULT_PROJECT } else { s });
+        let project = opts
+            .namespace
+            .map(|s| if s.is_empty() { DEFAULT_PROJECT } else { s });
         let body = SmartSearchRequest {
             query,
             limit,
@@ -98,7 +97,11 @@ impl Memory for AgentMemoryBackend {
             .post_json("agentmemory/smart-search", &body)
             .await?;
 
-        let mut entries: Vec<MemoryEntry> = resp.results.into_iter().map(WireMemory::into_entry).collect();
+        let mut entries: Vec<MemoryEntry> = resp
+            .results
+            .into_iter()
+            .map(WireMemory::into_entry)
+            .collect();
 
         if let Some(cat) = opts.category.as_ref() {
             entries.retain(|e| &e.category == cat);
@@ -147,8 +150,11 @@ impl Memory for AgentMemoryBackend {
             url_encode(project)
         );
         let resp: MemoriesResponse = self.client.get_json(&path).await?;
-        let mut entries: Vec<MemoryEntry> =
-            resp.memories.into_iter().map(WireMemory::into_entry).collect();
+        let mut entries: Vec<MemoryEntry> = resp
+            .memories
+            .into_iter()
+            .map(WireMemory::into_entry)
+            .collect();
         if let Some(cat) = category {
             entries.retain(|e| &e.category == cat);
         }
@@ -168,10 +174,7 @@ impl Memory for AgentMemoryBackend {
             return Ok(false);
         };
         let body = ForgetRequest { id: &target.id };
-        let resp: ForgetResponse = self
-            .client
-            .post_json("agentmemory/forget", &body)
-            .await?;
+        let resp: ForgetResponse = self.client.post_json("agentmemory/forget", &body).await?;
         Ok(resp.forgotten)
     }
 

@@ -32,11 +32,7 @@ impl AgentMemoryClient {
     /// timeout. The plaintext-bearer guard fires here, before any request
     /// goes on the wire — a misconfigured deploy fails loud at
     /// construction time rather than silently leaking the token.
-    pub fn new(
-        url: Option<&str>,
-        secret: Option<&str>,
-        timeout_ms: Option<u64>,
-    ) -> Result<Self> {
+    pub fn new(url: Option<&str>, secret: Option<&str>, timeout_ms: Option<u64>) -> Result<Self> {
         let raw = url.unwrap_or(DEFAULT_AGENTMEMORY_URL).trim();
         if raw.is_empty() {
             return Err(anyhow!(
@@ -59,7 +55,9 @@ impl AgentMemoryClient {
         Ok(Self {
             http,
             base: parsed,
-            secret: secret.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            secret: secret
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
         })
     }
 
@@ -82,9 +80,11 @@ impl AgentMemoryClient {
 
         match resp.status() {
             StatusCode::NOT_FOUND => Ok(None),
-            s if s.is_success() => Ok(Some(resp.json::<T>().await.with_context(|| {
-                format!("failed to decode JSON response from GET {url}")
-            })?)),
+            s if s.is_success() => {
+                Ok(Some(resp.json::<T>().await.with_context(|| {
+                    format!("failed to decode JSON response from GET {url}")
+                })?))
+            }
             s => Err(decode_error(&url, s, resp.text().await.ok())),
         }
     }
@@ -144,11 +144,21 @@ impl AgentMemoryClient {
     fn url_for(&self, path: &str) -> Result<Url> {
         let mut joined = self.base.clone();
         let trimmed = path.trim_start_matches('/');
+        // Split off `?query` so it doesn't get appended as a literal path
+        // segment — `path_segments_mut().extend(split('/'))` would
+        // percent-encode the `?` and the server would 404.
+        let (path_part, query_part) = match trimmed.split_once('?') {
+            Some((p, q)) => (p, Some(q)),
+            None => (trimmed, None),
+        };
         joined
             .path_segments_mut()
             .map_err(|_| anyhow!("agentmemory base URL cannot be a base: {}", self.base))?
             .pop_if_empty()
-            .extend(trimmed.split('/'));
+            .extend(path_part.split('/'));
+        if let Some(q) = query_part {
+            joined.set_query(Some(q));
+        }
         Ok(joined)
     }
 

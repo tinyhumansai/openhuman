@@ -81,7 +81,10 @@ struct MemoriesQuery {
 async fn start_mock_server() -> (SocketAddr, MockState) {
     let state = MockState::default();
     let app = Router::new()
-        .route("/agentmemory/livez", get(|| async { Json(serde_json::json!({"service":"agentmemory","status":"ok"})) }))
+        .route(
+            "/agentmemory/livez",
+            get(|| async { Json(serde_json::json!({"service":"agentmemory","status":"ok"})) }),
+        )
         .route(
             "/agentmemory/health",
             get(handle_health).with_state(state.clone()),
@@ -138,10 +141,7 @@ async fn handle_remember(
         updated_at: Some("2026-05-14T00:00:00Z".to_string()),
         score: None,
     });
-    (
-        StatusCode::CREATED,
-        Json(serde_json::json!({ "id": id })),
-    )
+    (StatusCode::CREATED, Json(serde_json::json!({ "id": id })))
 }
 
 async fn handle_smart_search(
@@ -153,7 +153,7 @@ async fn handle_smart_search(
     let project = req.project.as_deref();
     let hits: Vec<MockMemory> = memories
         .iter()
-        .filter(|m| project.map_or(true, |p| m.project.as_deref() == Some(p)))
+        .filter(|m| project.is_none_or(|p| m.project.as_deref() == Some(p)))
         .filter(|m| {
             m.title
                 .as_deref()
@@ -193,7 +193,11 @@ async fn handle_memories(
     let memories = state.memories.lock().unwrap();
     let filtered: Vec<MockMemory> = memories
         .iter()
-        .filter(|m| q.project.as_deref().map_or(true, |p| m.project.as_deref() == Some(p)))
+        .filter(|m| {
+            q.project
+                .as_deref()
+                .is_none_or(|p| m.project.as_deref() == Some(p))
+        })
         .cloned()
         .collect();
     Json(serde_json::json!({ "memories": filtered }))
@@ -225,11 +229,12 @@ async fn handle_projects(State(state): State<MockState>) -> Json<serde_json::Val
 }
 
 fn make_config(addr: SocketAddr) -> MemoryConfig {
-    let mut cfg = MemoryConfig::default();
-    cfg.backend = "agentmemory".to_string();
-    cfg.agentmemory_url = Some(format!("http://{addr}"));
-    cfg.agentmemory_timeout_ms = Some(2_000);
-    cfg
+    MemoryConfig {
+        backend: "agentmemory".to_string(),
+        agentmemory_url: Some(format!("http://{addr}")),
+        agentmemory_timeout_ms: Some(2_000),
+        ..MemoryConfig::default()
+    }
 }
 
 #[tokio::test]
@@ -241,10 +246,12 @@ async fn health_check_passes_against_running_daemon() {
 
 #[tokio::test]
 async fn health_check_fails_when_daemon_is_unreachable() {
-    let mut cfg = MemoryConfig::default();
-    cfg.backend = "agentmemory".to_string();
-    cfg.agentmemory_url = Some("http://127.0.0.1:1".to_string());
-    cfg.agentmemory_timeout_ms = Some(500);
+    let cfg = MemoryConfig {
+        backend: "agentmemory".to_string(),
+        agentmemory_url: Some("http://127.0.0.1:1".to_string()),
+        agentmemory_timeout_ms: Some(500),
+        ..MemoryConfig::default()
+    };
     let backend = AgentMemoryBackend::from_config(&cfg).unwrap();
     assert!(!backend.health_check().await);
 }
@@ -282,16 +289,30 @@ async fn store_then_recall_finds_matching_memory() {
     let backend = AgentMemoryBackend::from_config(&make_config(addr)).unwrap();
 
     backend
-        .store("demo", "k1", "hmac bearer auth refresh", MemoryCategory::Core, None)
+        .store(
+            "demo",
+            "k1",
+            "hmac bearer auth refresh",
+            MemoryCategory::Core,
+            None,
+        )
         .await
         .unwrap();
     backend
-        .store("demo", "k2", "stripe webhook handling", MemoryCategory::Core, None)
+        .store(
+            "demo",
+            "k2",
+            "stripe webhook handling",
+            MemoryCategory::Core,
+            None,
+        )
         .await
         .unwrap();
 
-    let mut opts = RecallOpts::default();
-    opts.namespace = Some("demo");
+    let opts = RecallOpts {
+        namespace: Some("demo"),
+        ..RecallOpts::default()
+    };
     let hits = backend.recall("hmac", 10, opts).await.unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].key, "k1");
@@ -304,17 +325,31 @@ async fn recall_filters_by_session_id_client_side() {
     let backend = AgentMemoryBackend::from_config(&make_config(addr)).unwrap();
 
     backend
-        .store("demo", "k1", "hmac one", MemoryCategory::Core, Some("ses-1"))
+        .store(
+            "demo",
+            "k1",
+            "hmac one",
+            MemoryCategory::Core,
+            Some("ses-1"),
+        )
         .await
         .unwrap();
     backend
-        .store("demo", "k2", "hmac two", MemoryCategory::Core, Some("ses-2"))
+        .store(
+            "demo",
+            "k2",
+            "hmac two",
+            MemoryCategory::Core,
+            Some("ses-2"),
+        )
         .await
         .unwrap();
 
-    let mut opts = RecallOpts::default();
-    opts.namespace = Some("demo");
-    opts.session_id = Some("ses-1");
+    let opts = RecallOpts {
+        namespace: Some("demo"),
+        session_id: Some("ses-1"),
+        ..RecallOpts::default()
+    };
     let hits = backend.recall("hmac", 10, opts).await.unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].session_id.as_deref(), Some("ses-1"));
@@ -419,21 +454,34 @@ async fn name_returns_agentmemory_string() {
 
 #[test]
 fn from_config_rejects_empty_url() {
-    let mut cfg = MemoryConfig::default();
-    cfg.backend = "agentmemory".to_string();
-    cfg.agentmemory_url = Some("   ".to_string());
-    let err = AgentMemoryBackend::from_config(&cfg).unwrap_err();
-    assert!(err.to_string().contains("cannot be empty"));
+    let cfg = MemoryConfig {
+        backend: "agentmemory".to_string(),
+        agentmemory_url: Some("   ".to_string()),
+        ..MemoryConfig::default()
+    };
+    // `AgentMemoryBackend` does not derive `Debug` (its inner `reqwest::Client`
+    // is opaque), so use a `match` instead of `.unwrap_err()`.
+    match AgentMemoryBackend::from_config(&cfg) {
+        Ok(_) => panic!("expected error for empty url"),
+        Err(err) => assert!(
+            err.to_string().contains("cannot be empty"),
+            "unexpected error: {err}"
+        ),
+    }
 }
 
 #[test]
 fn from_config_rejects_invalid_url() {
-    let mut cfg = MemoryConfig::default();
-    cfg.backend = "agentmemory".to_string();
-    cfg.agentmemory_url = Some("not a url".to_string());
-    let err = AgentMemoryBackend::from_config(&cfg).unwrap_err();
-    assert!(
-        err.to_string().contains("not a valid URL"),
-        "expected URL error, got: {err}"
-    );
+    let cfg = MemoryConfig {
+        backend: "agentmemory".to_string(),
+        agentmemory_url: Some("not a url".to_string()),
+        ..MemoryConfig::default()
+    };
+    match AgentMemoryBackend::from_config(&cfg) {
+        Ok(_) => panic!("expected error for invalid url"),
+        Err(err) => assert!(
+            err.to_string().contains("not a valid URL"),
+            "expected URL error, got: {err}"
+        ),
+    }
 }
