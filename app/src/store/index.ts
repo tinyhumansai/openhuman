@@ -15,6 +15,7 @@ import { IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
+import connectivityReducer from './connectivitySlice';
 import coreModeReducer from './coreModeSlice';
 import mascotReducer from './mascotSlice';
 import notificationReducer from './notificationSlice';
@@ -113,6 +114,7 @@ const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
+    connectivity: connectivityReducer,
     thread: persistedThreadReducer,
     chatRuntime: chatRuntimeReducer,
     channelConnections: persistedChannelConnectionsReducer,
