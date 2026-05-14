@@ -1,6 +1,6 @@
 //! Runtime smoke for the Sentry `before_send` filters that drop per-attempt
-//! transient-upstream provider, backend_api, and integrations failures plus
-//! budget-exhausted user-state 400s (OPENHUMAN-TAURI-3M / 12 / 13).
+//! transient-upstream provider, backend_api, integrations, and updater
+//! failures plus budget-exhausted user-state 400s (OPENHUMAN-TAURI-3M / 12 / 13).
 //!
 //! Unit tests in `src/core/observability.rs` exercise the pure filter
 //! function. This integration test wires the actual `sentry::init` →
@@ -10,7 +10,7 @@
 
 use openhuman_core::core::observability::{
     is_budget_event, is_transient_backend_api_failure, is_transient_integrations_failure,
-    is_transient_provider_http_failure,
+    is_transient_provider_http_failure, is_updater_transient_event,
 };
 use sentry::protocol::Event;
 use std::collections::BTreeMap;
@@ -60,6 +60,7 @@ fn count_captured(events: Vec<Event<'static>>) -> usize {
                 || is_transient_backend_api_failure(&event)
                 || is_transient_integrations_failure(&event)
                 || is_budget_event(&event)
+                || is_updater_transient_event(&event)
             {
                 None
             } else {
@@ -80,6 +81,20 @@ fn count_captured(events: Vec<Event<'static>>) -> usize {
         .client()
         .map(|c| c.flush(Some(std::time::Duration::from_secs(2))));
     transport.fetch_and_clear_envelopes().len()
+}
+
+#[test]
+fn drops_updater_transient_check_failure() {
+    let event = event_with_tags_and_message(
+        &[],
+        "failed to check for updates: error sending request for url \
+         (https://github.com/tinyhumansai/openhuman/releases/latest/download/latest.json)",
+    );
+    assert_eq!(
+        count_captured(vec![event]),
+        0,
+        "transient updater check failures must be filtered in before_send"
+    );
 }
 
 #[test]

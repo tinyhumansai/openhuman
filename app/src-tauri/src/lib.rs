@@ -1342,6 +1342,7 @@ pub fn run() {
             }
             if openhuman_core::core::observability::is_transient_backend_api_failure(&event)
                 || openhuman_core::core::observability::is_transient_integrations_failure(&event)
+                || openhuman_core::core::observability::is_updater_transient_event(&event)
             {
                 return None;
             }
