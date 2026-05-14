@@ -174,8 +174,23 @@ impl ComposioClient {
         body: &serde_json::Value,
         retry_delay: Duration,
     ) -> Result<ComposioExecuteResponse> {
+        tracing::debug!(
+            tool = %tool,
+            retry_delay_ms = retry_delay.as_millis() as u64,
+            attempt = 1u8,
+            "[composio] execute_tool_with_post_oauth_retry attempt"
+        );
         let first = self.post_execute_tool(body).await?;
-        if !is_post_oauth_auth_readiness_error(&first) {
+        let should_retry = is_post_oauth_auth_readiness_error(&first);
+        tracing::debug!(
+            tool = %tool,
+            attempt = 1u8,
+            successful = first.successful,
+            has_error = first.error.is_some(),
+            should_retry,
+            "[composio] execute_tool_with_post_oauth_retry branch decision"
+        );
+        if !should_retry {
             return Ok(first);
         }
 
@@ -187,7 +202,29 @@ impl ComposioClient {
         if !retry_delay.is_zero() {
             tokio::time::sleep(retry_delay).await;
         }
-        self.post_execute_tool(body).await
+        tracing::debug!(
+            tool = %tool,
+            retry_delay_ms = retry_delay.as_millis() as u64,
+            attempt = 2u8,
+            "[composio] execute_tool_with_post_oauth_retry retry dispatch"
+        );
+        let retry = self.post_execute_tool(body).await;
+        match &retry {
+            Ok(resp) => tracing::debug!(
+                tool = %tool,
+                attempt = 2u8,
+                successful = resp.successful,
+                has_error = resp.error.is_some(),
+                "[composio] execute_tool_with_post_oauth_retry retry completed"
+            ),
+            Err(err) => tracing::debug!(
+                tool = %tool,
+                attempt = 2u8,
+                error = %err,
+                "[composio] execute_tool_with_post_oauth_retry retry failed"
+            ),
+        }
+        retry
     }
 
     async fn post_execute_tool(&self, body: &serde_json::Value) -> Result<ComposioExecuteResponse> {
