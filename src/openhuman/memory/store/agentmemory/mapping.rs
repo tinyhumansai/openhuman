@@ -1,6 +1,9 @@
 //! Maps OpenHuman `MemoryEntry` / `MemoryCategory` to the agentmemory REST
 //! wire shapes and back.
 //!
+//! Wire contract: <https://github.com/rohitg00/agentmemory> — see the
+//! upstream README for the full endpoint list and field semantics.
+//!
 //! agentmemory has a richer wire shape (concepts, files, strength, version,
 //! supersedes) that the backend leaves at defaults — those fields are
 //! internal to agentmemory's lifecycle layer and don't need to round-trip
@@ -40,39 +43,43 @@ fn type_to_category(t: Option<&str>, concepts: &[String]) -> MemoryCategory {
 }
 
 /// Outgoing payload for `POST /agentmemory/remember`.
+///
+/// Owned fields rather than borrowed slices so the value remains
+/// `Send + 'static`-friendly when handed to an async runtime / event bus.
 #[derive(Debug, Clone, Serialize)]
-pub struct RememberRequest<'a> {
-    pub project: &'a str,
-    pub title: &'a str,
-    pub content: &'a str,
+pub struct RememberRequest {
+    pub project: String,
+    pub title: String,
+    pub content: String,
     #[serde(rename = "type")]
-    pub kind: &'a str,
+    pub kind: String,
     pub concepts: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "sessionIds")]
     pub session_ids: Option<Vec<String>>,
 }
 
-impl<'a> RememberRequest<'a> {
+impl RememberRequest {
     pub fn build(
-        namespace: &'a str,
-        key: &'a str,
-        content: &'a str,
+        namespace: &str,
+        key: &str,
+        content: &str,
         category: &MemoryCategory,
-        session_id: Option<&'a str>,
+        session_id: Option<&str>,
     ) -> Self {
         let concepts = match category {
             MemoryCategory::Custom(s) => vec![s.clone()],
             _ => Vec::new(),
         };
+        let project = if namespace.is_empty() {
+            DEFAULT_PROJECT.to_string()
+        } else {
+            namespace.to_string()
+        };
         Self {
-            project: if namespace.is_empty() {
-                DEFAULT_PROJECT
-            } else {
-                namespace
-            },
-            title: key,
-            content,
-            kind: category_to_type(category),
+            project,
+            title: key.to_string(),
+            content: content.to_string(),
+            kind: category_to_type(category).to_string(),
             concepts,
             session_ids: session_id.map(|s| vec![s.to_string()]),
         }
@@ -81,17 +88,17 @@ impl<'a> RememberRequest<'a> {
 
 /// Outgoing payload for `POST /agentmemory/smart-search`.
 #[derive(Debug, Clone, Serialize)]
-pub struct SmartSearchRequest<'a> {
-    pub query: &'a str,
+pub struct SmartSearchRequest {
+    pub query: String,
     pub limit: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub project: Option<&'a str>,
+    pub project: Option<String>,
 }
 
 /// Outgoing payload for `POST /agentmemory/forget`.
 #[derive(Debug, Clone, Serialize)]
-pub struct ForgetRequest<'a> {
-    pub id: &'a str,
+pub struct ForgetRequest {
+    pub id: String,
 }
 
 /// Generic agentmemory memory row. agentmemory carries more fields than this

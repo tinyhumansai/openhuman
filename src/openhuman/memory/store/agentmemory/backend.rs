@@ -1,9 +1,14 @@
 //! `impl Memory for AgentMemoryBackend` — the hot path for OpenHuman <→
 //! agentmemory traffic.
+//!
+//! The upstream agentmemory REST contract (endpoints, payloads, lifecycle
+//! semantics) lives at <https://github.com/rohitg00/agentmemory>. This
+//! module pins the OpenHuman-visible projection of that contract; the
+//! field-mapping table is in `mapping.rs` and the security guard is in
+//! `client.rs`.
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::json;
 
 use crate::openhuman::config::MemoryConfig;
 use crate::openhuman::memory::traits::{
@@ -34,6 +39,10 @@ impl AgentMemoryBackend {
             config.agentmemory_secret.as_deref(),
             config.agentmemory_timeout_ms,
         )?;
+        log::debug!(
+            "[memory::agentmemory] backend initialised against {}",
+            client.base()
+        );
         Ok(Self { client })
     }
 }
@@ -46,12 +55,15 @@ fn namespace_or_default(ns: &str) -> &str {
     }
 }
 
-fn opt_namespace_or_default(ns: Option<&str>) -> &str {
-    match ns {
-        Some(s) if !s.is_empty() => s,
-        _ => DEFAULT_PROJECT,
-    }
-}
+/// Lookup cap for `get()` / `forget()` exact-title resolution.
+///
+/// agentmemory does not expose a `(project, title)` lookup endpoint, so
+/// `get()` fans out via smart-search and filters client-side for an exact
+/// title match. A small cap (e.g. 5) drops valid exact matches that rank
+/// lower in BM25+vector score. 100 is high enough that an exact title
+/// never falls off the page in practice while keeping the response
+/// payload bounded.
+const EXACT_LOOKUP_LIMIT: usize = 100;
 
 #[async_trait]
 impl Memory for AgentMemoryBackend {
@@ -67,6 +79,9 @@ impl Memory for AgentMemoryBackend {
         category: MemoryCategory,
         session_id: Option<&str>,
     ) -> Result<()> {
+        log::debug!(
+            "[memory::agentmemory] store namespace={namespace:?} key={key:?} session_id={session_id:?} category={category:?}"
+        );
         let body = RememberRequest::build(
             namespace_or_default(namespace),
             key,
@@ -84,11 +99,19 @@ impl Memory for AgentMemoryBackend {
         limit: usize,
         opts: RecallOpts<'_>,
     ) -> Result<Vec<MemoryEntry>> {
-        let project = opts
-            .namespace
-            .map(|s| if s.is_empty() { DEFAULT_PROJECT } else { s });
+        log::debug!(
+            "[memory::agentmemory] recall query={query:?} limit={limit} namespace={:?} category={:?} session={:?} min_score={:?}",
+            opts.namespace, opts.category, opts.session_id, opts.min_score,
+        );
+        let project = opts.namespace.map(|s| {
+            if s.is_empty() {
+                DEFAULT_PROJECT.to_string()
+            } else {
+                s.to_string()
+            }
+        });
         let body = SmartSearchRequest {
-            query,
+            query: query.to_string(),
             limit,
             project,
         };
@@ -102,6 +125,7 @@ impl Memory for AgentMemoryBackend {
             .into_iter()
             .map(WireMemory::into_entry)
             .collect();
+        let before = entries.len();
 
         if let Some(cat) = opts.category.as_ref() {
             entries.retain(|e| &e.category == cat);
@@ -110,32 +134,43 @@ impl Memory for AgentMemoryBackend {
             entries.retain(|e| e.session_id.as_deref() == Some(session));
         }
         if let Some(min_score) = opts.min_score {
-            entries.retain(|e| e.score.is_none_or(|s| s >= min_score));
+            // Scoreless rows (e.g. direct fetches that never went through
+            // smart-search) cannot prove they meet the threshold — drop
+            // them rather than letting them through silently.
+            entries.retain(|e| e.score.is_some_and(|s| s >= min_score));
+        }
+        if entries.len() != before {
+            log::trace!(
+                "[memory::agentmemory] recall client-filter retained {}/{} hits",
+                entries.len(),
+                before,
+            );
         }
         Ok(entries)
     }
 
     async fn get(&self, namespace: &str, key: &str) -> Result<Option<MemoryEntry>> {
-        // agentmemory does not expose a "get by (project, title)" endpoint
-        // — smart-search with the title as the query is the canonical
-        // shape per the issue table. Return the first hit whose title
-        // matches exactly, so duplicate-fuzzy hits don't shadow an exact
-        // key. Caller still gets None when nothing matches.
+        log::debug!("[memory::agentmemory] get namespace={namespace:?} key={key:?}");
         let project = namespace_or_default(namespace);
         let body = SmartSearchRequest {
-            query: key,
-            limit: 5,
-            project: Some(project),
+            query: key.to_string(),
+            limit: EXACT_LOOKUP_LIMIT,
+            project: Some(project.to_string()),
         };
         let resp: SmartSearchResponse = self
             .client
             .post_json("agentmemory/smart-search", &body)
             .await?;
-        Ok(resp
+        let hit = resp
             .results
             .into_iter()
             .find(|r| r.title.as_deref() == Some(key))
-            .map(WireMemory::into_entry))
+            .map(WireMemory::into_entry);
+        log::trace!(
+            "[memory::agentmemory] get namespace={namespace:?} key={key:?} matched={}",
+            hit.is_some()
+        );
+        Ok(hit)
     }
 
     async fn list(
@@ -144,41 +179,70 @@ impl Memory for AgentMemoryBackend {
         category: Option<&MemoryCategory>,
         session_id: Option<&str>,
     ) -> Result<Vec<MemoryEntry>> {
-        let project = opt_namespace_or_default(namespace);
-        let path = format!(
-            "agentmemory/memories?latest=true&project={}",
-            url_encode(project)
+        log::debug!(
+            "[memory::agentmemory] list namespace={namespace:?} category={category:?} session_id={session_id:?}"
         );
+        // When the caller passes Some(""), normalise to the "default"
+        // project so the wire query stays consistent. When they pass
+        // None, list across every project — matching the trait's
+        // optional-namespace contract.
+        let path = match namespace {
+            Some(ns) => format!(
+                "agentmemory/memories?latest=true&project={}",
+                url_encode(namespace_or_default(ns))
+            ),
+            None => "agentmemory/memories?latest=true".to_string(),
+        };
         let resp: MemoriesResponse = self.client.get_json(&path).await?;
         let mut entries: Vec<MemoryEntry> = resp
             .memories
             .into_iter()
             .map(WireMemory::into_entry)
             .collect();
+        let before = entries.len();
         if let Some(cat) = category {
             entries.retain(|e| &e.category == cat);
         }
         if let Some(session) = session_id {
             entries.retain(|e| e.session_id.as_deref() == Some(session));
         }
+        if entries.len() != before {
+            log::trace!(
+                "[memory::agentmemory] list client-filter retained {}/{} rows",
+                entries.len(),
+                before,
+            );
+        }
         Ok(entries)
     }
 
     async fn forget(&self, namespace: &str, key: &str) -> Result<bool> {
+        log::debug!("[memory::agentmemory] forget namespace={namespace:?} key={key:?}");
         // agentmemory's /forget takes an id, not (project, title). Look
         // the key up first via smart-search (mirrors `get` above), then
         // POST /forget against that id. If no exact title match exists,
         // return Ok(false) — same contract as the SQLite backend's
         // delete-by-(namespace, key).
         let Some(target) = self.get(namespace, key).await? else {
+            log::trace!(
+                "[memory::agentmemory] forget namespace={namespace:?} key={key:?} unresolved -> noop"
+            );
             return Ok(false);
         };
-        let body = ForgetRequest { id: &target.id };
+        let body = ForgetRequest {
+            id: target.id.clone(),
+        };
         let resp: ForgetResponse = self.client.post_json("agentmemory/forget", &body).await?;
+        log::debug!(
+            "[memory::agentmemory] forget namespace={namespace:?} key={key:?} id={} forgotten={}",
+            target.id,
+            resp.forgotten,
+        );
         Ok(resp.forgotten)
     }
 
     async fn namespace_summaries(&self) -> Result<Vec<NamespaceSummary>> {
+        log::debug!("[memory::agentmemory] namespace_summaries");
         let resp: ProjectsResponse = self.client.get_json("agentmemory/projects").await?;
         Ok(resp
             .projects
@@ -192,12 +256,15 @@ impl Memory for AgentMemoryBackend {
     }
 
     async fn count(&self) -> Result<usize> {
+        log::debug!("[memory::agentmemory] count");
         let resp: HealthResponse = self.client.get_json("agentmemory/health").await?;
         Ok(resp.memories.unwrap_or(0))
     }
 
     async fn health_check(&self) -> bool {
-        self.client.livez().await
+        let ok = self.client.livez().await;
+        log::debug!("[memory::agentmemory] health_check ok={ok}");
+        ok
     }
 }
 
@@ -234,20 +301,12 @@ pub async fn probe_agentmemory_reachable(config: &MemoryConfig) -> Result<()> {
     if !client.livez().await {
         anyhow::bail!(
             "agentmemory daemon is not reachable at {} \
-             (set MemoryConfig.backend = \"sqlite\" to fall back to the local store)",
+             (set MemoryConfig.backend = \"sqlite\" to fall back to the local store; \
+             see https://github.com/rohitg00/agentmemory for daemon setup)",
             client.base()
         );
     }
     Ok(())
-}
-
-// Silence the unused-import warning on `json` in builds that don't enable
-// the smart-search filter path — keeping the import here so future expansion
-// (passing category / session as agentmemory-side filters once those land in
-// the REST API) compiles without re-importing serde_json.
-#[allow(dead_code)]
-fn _unused_keepalive() -> serde_json::Value {
-    json!({})
 }
 
 #[cfg(test)]

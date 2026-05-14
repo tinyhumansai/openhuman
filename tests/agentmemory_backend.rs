@@ -356,6 +356,63 @@ async fn recall_filters_by_session_id_client_side() {
 }
 
 #[tokio::test]
+async fn recall_min_score_drops_scoreless_and_below_threshold_hits() {
+    let (addr, _state) = start_mock_server().await;
+    let backend = AgentMemoryBackend::from_config(&make_config(addr)).unwrap();
+
+    backend
+        .store("demo", "k", "hmac auth refresh", MemoryCategory::Core, None)
+        .await
+        .unwrap();
+
+    // Mock always returns score=0.9; a threshold above that should
+    // drop the hit. Scoreless rows are not relevant on this path
+    // (smart-search hits always carry a score in the mock).
+    let opts = RecallOpts {
+        namespace: Some("demo"),
+        min_score: Some(0.95),
+        ..RecallOpts::default()
+    };
+    let hits = backend.recall("hmac", 10, opts).await.unwrap();
+    assert!(
+        hits.is_empty(),
+        "min_score = 0.95 should drop the 0.9 hit, got {hits:?}"
+    );
+
+    let opts_loose = RecallOpts {
+        namespace: Some("demo"),
+        min_score: Some(0.5),
+        ..RecallOpts::default()
+    };
+    let hits_loose = backend.recall("hmac", 10, opts_loose).await.unwrap();
+    assert_eq!(hits_loose.len(), 1);
+}
+
+#[tokio::test]
+async fn list_with_no_namespace_returns_every_project() {
+    let (addr, _state) = start_mock_server().await;
+    let backend = AgentMemoryBackend::from_config(&make_config(addr)).unwrap();
+
+    backend
+        .store("alpha", "a1", "x", MemoryCategory::Core, None)
+        .await
+        .unwrap();
+    backend
+        .store("beta", "b1", "y", MemoryCategory::Core, None)
+        .await
+        .unwrap();
+
+    let all = backend.list(None, None, None).await.unwrap();
+    assert_eq!(all.len(), 2);
+    let mut ns: Vec<_> = all
+        .iter()
+        .map(|e| e.namespace.clone().unwrap_or_default())
+        .collect();
+    ns.sort();
+    assert_eq!(ns, vec!["alpha", "beta"]);
+}
+
+#[tokio::test]
 async fn list_filters_by_namespace_and_category() {
     let (addr, _state) = start_mock_server().await;
     let backend = AgentMemoryBackend::from_config(&make_config(addr)).unwrap();

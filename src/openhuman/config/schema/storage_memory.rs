@@ -33,7 +33,7 @@ impl Default for StorageProviderConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::struct_excessive_bools)]
 #[serde(default)]
 pub struct MemoryConfig {
@@ -115,6 +115,31 @@ impl Default for MemoryConfig {
             agentmemory_secret: None,
             agentmemory_timeout_ms: None,
         }
+    }
+}
+
+// Manual `Debug` implementation that redacts `agentmemory_secret`. Without
+// this, any `format!("{cfg:?}")` / `tracing::debug!(?cfg, ...)` / panic
+// message capturing a `MemoryConfig` would dump the bearer token in
+// plaintext — directly against the repo rule "Never log secrets, raw
+// JWTs, API keys, credentials, or full PII in debug logs".
+impl std::fmt::Debug for MemoryConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryConfig")
+            .field("backend", &self.backend)
+            .field("auto_save", &self.auto_save)
+            .field("embedding_provider", &self.embedding_provider)
+            .field("embedding_model", &self.embedding_model)
+            .field("embedding_dimensions", &self.embedding_dimensions)
+            .field("min_relevance_score", &self.min_relevance_score)
+            .field("sqlite_open_timeout_secs", &self.sqlite_open_timeout_secs)
+            .field("agentmemory_url", &self.agentmemory_url)
+            .field(
+                "agentmemory_secret",
+                &self.agentmemory_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("agentmemory_timeout_ms", &self.agentmemory_timeout_ms)
+            .finish()
     }
 }
 

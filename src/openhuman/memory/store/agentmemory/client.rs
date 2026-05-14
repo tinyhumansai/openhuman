@@ -3,7 +3,8 @@
 //! Wraps `reqwest::Client` with the agentmemory base URL, optional bearer
 //! token, a configurable per-request timeout, and a plaintext-bearer guard
 //! that refuses to send the secret over `http://<non-loopback>` per the
-//! v0.9.12 contract.
+//! v0.9.12 contract from upstream agentmemory PR #315 (see
+//! <https://github.com/rohitg00/agentmemory>).
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
@@ -70,6 +71,7 @@ impl AgentMemoryClient {
     /// shape; everything else surfaces as an error.
     pub async fn get_optional<T: DeserializeOwned>(&self, path: &str) -> Result<Option<T>> {
         let url = self.url_for(path)?;
+        log::trace!("[memory::agentmemory] GET {url}");
         let resp = self
             .http
             .request(Method::GET, url.clone())
@@ -103,6 +105,7 @@ impl AgentMemoryClient {
         body: &B,
     ) -> Result<T> {
         let url = self.url_for(path)?;
+        log::trace!("[memory::agentmemory] POST {url}");
         let resp = self
             .http
             .request(Method::POST, url.clone())
@@ -214,7 +217,16 @@ fn enforce_plaintext_bearer_guard(url: &Url, _secret: &str) -> Result<()> {
 fn decode_error(url: &Url, status: StatusCode, body: Option<String>) -> anyhow::Error {
     let body = body.unwrap_or_default();
     let snippet = if body.len() > 512 {
-        format!("{}…", &body[..512])
+        // Snap to the previous char boundary so we never slice through
+        // the middle of a multi-byte UTF-8 scalar — an emoji or accented
+        // character at byte 512 would otherwise panic the error-decode
+        // path with `byte index 512 is not a char boundary`, defeating
+        // the whole point of this helper.
+        let mut end = 512;
+        while end > 0 && !body.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &body[..end])
     } else {
         body
     };
@@ -227,10 +239,57 @@ fn decode_error(url: &Url, status: StatusCode, body: Option<String>) -> anyhow::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Tests in this module mutate the process-global
+    /// `AGENTMEMORY_REQUIRE_HTTPS` env var, which is not thread-safe under
+    /// cargo's default parallel test runner. Serialise them through a
+    /// shared mutex so a stray `set_var` from one test can't race with a
+    /// `remove_var` in another (and so the cleanup path runs even when a
+    /// test panics mid-way through, via the mutex guard's `Drop`).
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    struct EnvGuard {
+        prev: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(value: &str) -> Self {
+            let prev = std::env::var_os("AGENTMEMORY_REQUIRE_HTTPS");
+            // SAFETY: env mutation is wrapped because Rust 2024 marks it
+            // unsafe; the call is gated by the env_lock() critical section
+            // so no other test in this module is observing the env
+            // concurrently.
+            unsafe { std::env::set_var("AGENTMEMORY_REQUIRE_HTTPS", value) };
+            Self { prev }
+        }
+
+        fn remove() -> Self {
+            let prev = std::env::var_os("AGENTMEMORY_REQUIRE_HTTPS");
+            unsafe { std::env::remove_var("AGENTMEMORY_REQUIRE_HTTPS") };
+            Self { prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: still under the same env_lock() critical section.
+            unsafe {
+                match self.prev.take() {
+                    Some(v) => std::env::set_var("AGENTMEMORY_REQUIRE_HTTPS", v),
+                    None => std::env::remove_var("AGENTMEMORY_REQUIRE_HTTPS"),
+                }
+            }
+        }
+    }
 
     #[test]
     fn loopback_plaintext_is_allowed_without_require_https() {
-        unsafe { std::env::remove_var("AGENTMEMORY_REQUIRE_HTTPS") };
+        let _lock = env_lock();
+        let _guard = EnvGuard::remove();
         let url = Url::parse("http://localhost:3111").unwrap();
         assert!(enforce_plaintext_bearer_guard(&url, "secret").is_ok());
 
@@ -240,21 +299,33 @@ mod tests {
 
     #[test]
     fn https_is_always_allowed_even_with_require_https() {
-        unsafe { std::env::set_var("AGENTMEMORY_REQUIRE_HTTPS", "1") };
+        let _lock = env_lock();
+        let _guard = EnvGuard::set("1");
         let url = Url::parse("https://memory.example.com").unwrap();
         assert!(enforce_plaintext_bearer_guard(&url, "secret").is_ok());
-        unsafe { std::env::remove_var("AGENTMEMORY_REQUIRE_HTTPS") };
     }
 
     #[test]
     fn plaintext_non_loopback_with_require_https_is_refused() {
-        unsafe { std::env::set_var("AGENTMEMORY_REQUIRE_HTTPS", "1") };
+        let _lock = env_lock();
+        let _guard = EnvGuard::set("1");
         let url = Url::parse("http://memory.example.com:3111").unwrap();
         let err = enforce_plaintext_bearer_guard(&url, "secret").unwrap_err();
         assert!(
             err.to_string().contains("refuses"),
             "expected refusal, got: {err}"
         );
-        unsafe { std::env::remove_var("AGENTMEMORY_REQUIRE_HTTPS") };
+    }
+
+    #[test]
+    fn decode_error_does_not_panic_on_long_unicode_body() {
+        // Build a body whose byte length crosses the 512 boundary mid
+        // multi-byte scalar — pre-fix this would panic with
+        // `byte index 512 is not a char boundary`.
+        let unicode = "ü".repeat(400); // each "ü" is 2 bytes → 800 bytes total
+        let url = Url::parse("http://127.0.0.1/x").unwrap();
+        let err = decode_error(&url, StatusCode::BAD_REQUEST, Some(unicode));
+        let msg = err.to_string();
+        assert!(msg.contains("400"), "expected status in message: {msg}");
     }
 }
