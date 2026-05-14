@@ -346,6 +346,38 @@ mod tests {
     // parallel test execution (std::env is process-global).
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+    struct EnvSnapshot {
+        vars: [(&'static str, Option<String>); 4],
+    }
+
+    impl EnvSnapshot {
+        fn clear_backend_env() -> Self {
+            let vars = [
+                ("BACKEND_URL", std::env::var("BACKEND_URL").ok()),
+                ("VITE_BACKEND_URL", std::env::var("VITE_BACKEND_URL").ok()),
+                (APP_ENV_VAR, std::env::var(APP_ENV_VAR).ok()),
+                (VITE_APP_ENV_VAR, std::env::var(VITE_APP_ENV_VAR).ok()),
+            ];
+
+            for (key, _) in vars.iter() {
+                std::env::remove_var(*key);
+            }
+
+            Self { vars }
+        }
+    }
+
+    impl Drop for EnvSnapshot {
+        fn drop(&mut self) {
+            for (key, value) in self.vars.iter() {
+                match value {
+                    Some(v) => std::env::set_var(*key, v),
+                    None => std::env::remove_var(*key),
+                }
+            }
+        }
+    }
+
     #[test]
     fn api_url_empty_path_returns_normalized_base() {
         assert_eq!(
@@ -598,6 +630,49 @@ mod tests {
     }
 
     // ── effective_integrations_api_url ─────────────────────────────────
+
+    #[test]
+    fn integrations_url_handles_llm_endpoint_overrides() {
+        let _guard = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+        let _env = EnvSnapshot::clear_backend_env();
+
+        struct Case {
+            api_url: &'static str,
+            expected: &'static str,
+        }
+
+        let cases = [
+            Case {
+                api_url: "https://api.tinyhumans.ai/openai/v1/chat/completions",
+                expected: "https://api.tinyhumans.ai",
+            },
+            Case {
+                api_url: "http://localhost:11434/v1/chat/completions",
+                expected: DEFAULT_API_BASE_URL,
+            },
+            Case {
+                api_url: "https://api.tinyhumans.ai",
+                expected: "https://api.tinyhumans.ai",
+            },
+            Case {
+                api_url: "https://api.tinyhumans.ai/openai/v1/",
+                expected: "https://api.tinyhumans.ai",
+            },
+            Case {
+                api_url: "https://openrouter.ai/api/v1/chat/completions",
+                expected: DEFAULT_API_BASE_URL,
+            },
+        ];
+
+        for case in cases {
+            assert_eq!(
+                effective_integrations_api_url(&Some(case.api_url.to_string())),
+                case.expected,
+                "api_url={}",
+                case.api_url
+            );
+        }
+    }
 
     #[test]
     fn integrations_url_falls_back_to_default_when_override_is_local_ai() {
