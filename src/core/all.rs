@@ -140,8 +140,7 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Persistent configuration management
     controllers.extend(crate::openhuman::config::all_config_registered_controllers());
     // Local sidecar reachability + backend Socket.IO state diagnostics (#1527)
-    controllers
-        .extend(crate::openhuman::connectivity::all_connectivity_registered_controllers());
+    controllers.extend(crate::openhuman::connectivity::all_connectivity_registered_controllers());
     // User credentials and session management
     controllers.extend(crate::openhuman::credentials::all_credentials_registered_controllers());
     // Desktop service management

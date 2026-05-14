@@ -27,8 +27,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "diag" => ControllerSchema {
             namespace: "connectivity",
             function: "diag",
-            description:
-                "Return a diagnostic snapshot of the local sidecar's reachability \
+            description: "Return a diagnostic snapshot of the local sidecar's reachability \
                  and the backend Socket.IO connection state. Cheap — safe to poll.",
             inputs: vec![],
             outputs: vec![FieldSchema {
