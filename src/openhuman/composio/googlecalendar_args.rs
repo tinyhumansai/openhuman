@@ -47,7 +47,17 @@ pub(crate) const TZ_DEFAULTING_SLUGS: &[&str] =
 /// fall-back keeps the call site behaviour-equivalent to today (zone
 /// implicitly UTC) rather than crashing.
 pub(crate) fn current_iana_timezone() -> String {
-    iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string())
+    match iana_time_zone::get_timezone() {
+        Ok(tz) => tz,
+        Err(error) => {
+            tracing::debug!(
+                target: "composio",
+                error = %error,
+                "[composio][googlecalendar] iana_time_zone lookup failed; falling back to UTC"
+            );
+            "UTC".to_string()
+        }
+    }
 }
 
 /// If `slug` is one of the [`TZ_DEFAULTING_SLUGS`] and `arguments` is a
@@ -64,22 +74,44 @@ pub(crate) fn apply_calendar_query_defaults(
     iana: &str,
 ) -> Option<Value> {
     if !TZ_DEFAULTING_SLUGS.contains(&slug) {
+        tracing::debug!(
+            target: "composio",
+            slug,
+            "[composio][googlecalendar] slug not in tz-defaulting allowlist; pass-through"
+        );
         return arguments;
     }
     // Convert `None` to an empty object — the Composio backend treats
     // missing args + `{}` identically, so this just gives us a place to
     // hang our defaults without changing observable behaviour for
     // existing no-arg callers.
+    let synthesised_object = arguments.is_none();
     let mut value = arguments.unwrap_or_else(|| Value::Object(Default::default()));
     let Some(map) = value.as_object_mut() else {
+        tracing::debug!(
+            target: "composio",
+            slug,
+            "[composio][googlecalendar] non-object payload; pass-through unchanged"
+        );
         return Some(value);
     };
-    if !map.contains_key("timeZone") {
+    let injected_time_zone = !map.contains_key("timeZone");
+    if injected_time_zone {
         map.insert("timeZone".to_string(), Value::String(iana.to_string()));
     }
-    if !map.contains_key("singleEvents") {
+    let injected_single_events = !map.contains_key("singleEvents");
+    if injected_single_events {
         map.insert("singleEvents".to_string(), Value::Bool(true));
     }
+    tracing::debug!(
+        target: "composio",
+        slug,
+        iana,
+        synthesised_object,
+        injected_time_zone,
+        injected_single_events,
+        "[composio][googlecalendar] applied calendar query defaults"
+    );
     Some(value)
 }
 
