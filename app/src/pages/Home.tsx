@@ -11,8 +11,9 @@ import {
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import { useUsageState } from '../hooks/useUsageState';
 import { useUser } from '../hooks/useUser';
+import { restartCoreProcess } from '../services/coreProcessControl';
+import { selectBlockingState } from '../store/connectivitySelectors';
 import { useAppSelector } from '../store/hooks';
-import { selectSocketStatus } from '../store/socketSelectors';
 import { APP_VERSION } from '../utils/config';
 
 export function resolveHomeUserName(user: unknown): string {
@@ -66,18 +67,33 @@ const Home = () => {
   const [welcomeVariantIndex, setWelcomeVariantIndex] = useState(0);
   const [typedWelcome, setTypedWelcome] = useState('');
   const [isDeletingWelcome, setIsDeletingWelcome] = useState(false);
-  // Mirror the same socket status the `ConnectionIndicator` pill consumes
-  // so the description copy below the pill never contradicts it (the old
-  // hard-coded "connected" message lied while the pill said "Connecting"
-  // / "Disconnected").
-  const socketStatus = useAppSelector(selectSocketStatus);
+  // 3-way blocking state (#1527) — internet > core > backend > ok. Each
+  // failure mode now has its own copy so the user knows *which* link is
+  // broken instead of seeing a single conflated "device offline" line.
+  const blocking = useAppSelector(selectBlockingState);
+  const [isRestartingCore, setIsRestartingCore] = useState(false);
+  const [restartError, setRestartError] = useState<string | null>(null);
+
+  const handleRestartCore = async () => {
+    setIsRestartingCore(true);
+    setRestartError(null);
+    try {
+      await restartCoreProcess();
+    } catch (err) {
+      setRestartError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsRestartingCore(false);
+    }
+  };
+
   const statusCopy = {
-    connected:
-      'Your device is connected. Keep the app running to keep the connection alive. Message your agent with the button below.',
-    connecting: 'Connecting. Hang tight, this usually takes a second.',
-    disconnected:
+    ok: 'Your device is connected. Keep the app running to keep the connection alive. Message your agent with the button below.',
+    'backend-only': 'Reconnecting to backend… your agent will be available again shortly.',
+    'core-unreachable':
+      "Local core sidecar isn't responding. The OpenHuman background process may have crashed or failed to start.",
+    'internet-offline':
       'Your device is offline right now. Check your network or restart the app to reconnect.',
-  }[socketStatus];
+  }[blocking];
 
   // Open in-app chat.
   const handleStartCooking = async () => {
@@ -167,16 +183,34 @@ const Home = () => {
             <ConnectionIndicator />
           </div>
 
-          {/* Description — mirrors the pill's socket status to avoid
-              telling the user they're connected while the pill shows
-              "Connecting" / "Disconnected". */}
+          {/* Description — copy mirrors the active blocking state so the
+              user never sees a "connected" message while the pill shows a
+              failure. (#1527) */}
           <p className="text-sm text-stone-500 text-center mb-6 leading-relaxed">{statusCopy}</p>
+
+          {/* Recovery action: only shown when the local core sidecar is
+              the broken link — internet/backend outages are not actionable
+              from here. */}
+          {blocking === 'core-unreachable' && (
+            <div className="mb-4">
+              <button
+                onClick={handleRestartCore}
+                disabled={isRestartingCore}
+                className="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium rounded-xl transition-colors duration-200">
+                {isRestartingCore ? 'Restarting core…' : 'Restart Core'}
+              </button>
+              {restartError && (
+                <p className="mt-2 text-xs text-coral-500 text-center">{restartError}</p>
+              )}
+            </div>
+          )}
 
           {/* CTA button — data-walkthrough target for step 2 */}
           <button
             data-walkthrough="home-cta"
             onClick={handleStartCooking}
-            className="w-full py-3 bg-primary-500 hover:bg-primary-600 text-white font-medium rounded-xl transition-colors duration-200">
+            disabled={blocking === 'core-unreachable' || blocking === 'internet-offline'}
+            className="w-full py-3 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors duration-200">
             Message OpenHuman
           </button>
         </div>
