@@ -27,6 +27,8 @@ import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
 import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
 import { trackPageView } from './services/analytics';
+import { startCoreHealthMonitor } from './services/coreHealthMonitor';
+import { startInternetStatusListener } from './services/internetStatusListener';
 import { startWebviewAccountService } from './services/webviewAccountService';
 import { persistor, store } from './store';
 // [#1123] useAppDispatch commented out — welcome-agent onboarding replaced by Joyride walkthrough
@@ -43,6 +45,10 @@ import { DEV_FORCE_ONBOARDING } from './utils/config';
 startWebviewAccountService();
 startWebviewNotificationsService();
 startNativeNotificationsService();
+// Connectivity status (#1527): wire navigator.onLine + start core sidecar
+// health poll. Both idempotent via internal `started` guards.
+startInternetStatusListener();
+startCoreHealthMonitor();
 
 function App() {
   return (
