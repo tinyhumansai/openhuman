@@ -1,6 +1,7 @@
 //! Centralised error reporting for the core, plus a Sentry
 //! `before_send` filters that drop deterministic provider noise:
-//! per-attempt transient-upstream failures and budget-exhausted user-state.
+//! per-attempt transient-upstream failures, budget-exhausted user-state,
+//! and transient updater failures.
 //!
 //! Wraps `tracing::error!` (which the global subscriber forwards to Sentry via
 //! `sentry-tracing`) inside a `sentry::with_scope` so each captured event
@@ -50,6 +51,21 @@ pub const TRANSIENT_TRANSPORT_PHRASES: &[&str] = &[
     "connection reset",
     "tls handshake eof",
     "error sending request",
+];
+
+/// HTTP statuses from updater probes that are expected GitHub/network noise:
+/// unauthenticated GitHub API rate-limit / policy 403s plus gateway/server
+/// hiccups. Scoped to updater domains/messages by [`is_updater_transient_event`].
+const UPDATER_TRANSIENT_HTTP_STATUSES: &[u16] = &[403, 500, 502, 503, 504];
+
+/// Message fragments observed from Tauri/core updater transient failures.
+/// Keep these updater-specific so unrelated GitHub or generic transport
+/// failures still reach Sentry.
+const UPDATER_TRANSIENT_MESSAGE_PHRASES: &[&str] = &[
+    "failed to check for updates: error sending request",
+    "github api error: 403",
+    "github api error: 5",
+    "error sending request for url (https://github.com/tinyhumansai/openhuman/releases/",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -473,6 +489,17 @@ pub fn contains_transient_transport_phrase(message: &str) -> bool {
         .any(|phrase| lower.contains(phrase))
 }
 
+pub fn is_updater_transient_http_status(status: u16) -> bool {
+    UPDATER_TRANSIENT_HTTP_STATUSES.contains(&status)
+}
+
+pub fn is_updater_transient_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    UPDATER_TRANSIENT_MESSAGE_PHRASES
+        .iter()
+        .any(|phrase| lower.contains(phrase))
+}
+
 fn event_has_transient_transport_phrase(event: &sentry::protocol::Event<'_>) -> bool {
     event
         .message
@@ -488,6 +515,30 @@ fn event_has_transient_transport_phrase(event: &sentry::protocol::Event<'_>) -> 
                 .as_deref()
                 .is_some_and(contains_transient_transport_phrase)
         })
+}
+
+fn event_has_updater_transient_message(event: &sentry::protocol::Event<'_>) -> bool {
+    event
+        .message
+        .as_deref()
+        .is_some_and(is_updater_transient_message)
+        || event
+            .logentry
+            .as_ref()
+            .is_some_and(|log| is_updater_transient_message(&log.message))
+        || event.exception.values.iter().any(|exception| {
+            exception
+                .value
+                .as_deref()
+                .is_some_and(is_updater_transient_message)
+        })
+}
+
+fn event_has_updater_domain(event: &sentry::protocol::Event<'_>) -> bool {
+    matches!(
+        event.tags.get("domain").map(String::as_str),
+        Some("update") | Some("update.check_releases") | Some("updater")
+    )
 }
 
 fn is_transient_domain_failure(event: &sentry::protocol::Event<'_>, domain: &str) -> bool {
@@ -515,6 +566,34 @@ pub fn is_transient_backend_api_failure(event: &sentry::protocol::Event<'_>) -> 
 /// gateway hiccups).
 pub fn is_transient_integrations_failure(event: &sentry::protocol::Event<'_>) -> bool {
     is_transient_domain_failure(event, "integrations")
+}
+
+/// Transient updater failures from GitHub release probes/downloads.
+///
+/// Core-side reports carry structured tags (`domain=update`, often
+/// `operation=check_releases`, plus `failure/status`). Tauri's updater plugin
+/// can also emit message-only events such as
+/// `"failed to check for updates: error sending request for url (...latest.json)"`.
+/// Match both shapes, but never drop an arbitrary update-domain event unless
+/// it also has a transient status/transport marker.
+pub fn is_updater_transient_event(event: &sentry::protocol::Event<'_>) -> bool {
+    if event_has_updater_transient_message(event) {
+        return true;
+    }
+
+    if !event_has_updater_domain(event) {
+        return false;
+    }
+
+    match event.tags.get("failure").map(String::as_str) {
+        Some("non_2xx") => event
+            .tags
+            .get("status")
+            .and_then(|status| status.parse::<u16>().ok())
+            .is_some_and(is_updater_transient_http_status),
+        Some("transport") => event_has_transient_transport_phrase(event),
+        _ => false,
+    }
 }
 
 /// String tokens that mark a formatted error message as a transient HTTP
@@ -1162,6 +1241,51 @@ mod tests {
         assert!(
             !is_transient_integrations_failure(&non_matching_transport),
             "transport failures without an allowlisted phrase must stay visible"
+        );
+    }
+
+    #[test]
+    fn updater_transient_403_is_dropped() {
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "update"),
+                ("operation", "check_releases"),
+                ("failure", "non_2xx"),
+                ("status", "403"),
+            ],
+            "[observability] update.check_releases failed: GitHub API error: 403 Forbidden",
+        );
+        assert!(
+            is_updater_transient_event(&event),
+            "GitHub 403 updater checks are unactionable transient/rate-limit noise"
+        );
+    }
+
+    #[test]
+    fn updater_transient_502_is_dropped() {
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "update.check_releases"),
+                ("failure", "non_2xx"),
+                ("status", "502"),
+            ],
+            "GitHub API error: 502 Bad Gateway",
+        );
+        assert!(
+            is_updater_transient_event(&event),
+            "GitHub 5xx updater checks must be filtered as transient"
+        );
+    }
+
+    #[test]
+    fn updater_real_panic_still_reported() {
+        let event = event_with_tags_and_message(
+            &[("domain", "update"), ("operation", "check_releases")],
+            "thread 'main' panicked at src/openhuman/update/core.rs: index out of bounds",
+        );
+        assert!(
+            !is_updater_transient_event(&event),
+            "update-domain events without a transient updater shape must still reach Sentry"
         );
     }
 
