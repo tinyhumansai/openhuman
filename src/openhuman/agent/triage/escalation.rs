@@ -205,12 +205,11 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::event_bus::{global, init_global, DomainEvent};
+    use crate::core::event_bus::{global, init_global, DomainEvent, SubscriptionHandle};
     use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
     use serde_json::json;
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-    use tokio::time::{sleep, Duration};
+    use tokio::sync::mpsc;
+    use tokio::time::{timeout, Duration};
 
     fn envelope(external_id: &str) -> TriggerEnvelope {
         TriggerEnvelope::from_composio(
@@ -250,28 +249,80 @@ mod tests {
         }
     }
 
+    fn subscribe_probe(name: &str) -> (mpsc::UnboundedReceiver<DomainEvent>, SubscriptionHandle) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let handle = global().unwrap().on(name, move |event| {
+            let tx = tx.clone();
+            let event = event.clone();
+            Box::pin(async move {
+                let _ = tx.send(event);
+            })
+        });
+        (rx, handle)
+    }
+
+    fn trigger_external_id(event: &DomainEvent) -> Option<&str> {
+        match event {
+            DomainEvent::TriggerEvaluated { external_id, .. }
+            | DomainEvent::TriggerEscalated { external_id, .. }
+            | DomainEvent::TriggerEscalationFailed { external_id, .. } => Some(external_id),
+            _ => None,
+        }
+    }
+
+    async fn collect_trigger_events_until(
+        mut rx: mpsc::UnboundedReceiver<DomainEvent>,
+        external_id: &str,
+        expected: impl Fn(&[DomainEvent]) -> bool,
+    ) -> Vec<DomainEvent> {
+        let external_id = external_id.to_string();
+        let mut captured = timeout(Duration::from_secs(1), async {
+            let mut captured = Vec::new();
+            loop {
+                if expected(&captured) {
+                    return captured;
+                }
+                let event = rx.recv().await.expect("probe channel should stay open");
+                if trigger_external_id(&event) == Some(external_id.as_str()) {
+                    captured.push(event);
+                }
+            }
+        })
+        .await
+        .expect("expected triage event should arrive");
+
+        while let Ok(Some(event)) = timeout(Duration::from_millis(50), rx.recv()).await {
+            if trigger_external_id(&event) == Some(external_id.as_str()) {
+                captured.push(event);
+            }
+        }
+
+        captured
+    }
+
     #[tokio::test]
     async fn apply_decision_drop_only_publishes_evaluated() {
         let envelope = envelope("esc-drop");
         let _ = init_global(32);
-        let seen = Arc::new(Mutex::new(Vec::<DomainEvent>::new()));
-        let seen_handler = Arc::clone(&seen);
-        let _handle = global()
-            .unwrap()
-            .on("triage-escalation-drop", move |event| {
-                let seen = Arc::clone(&seen_handler);
-                let cloned = event.clone();
-                Box::pin(async move {
-                    seen.lock().await.push(cloned);
-                })
-            });
+        let (rx, _handle) = subscribe_probe("triage-escalation-drop");
 
         apply_decision(run(TriageAction::Drop), &envelope)
             .await
             .expect("drop should not fail");
-        sleep(Duration::from_millis(20)).await;
 
-        let captured = seen.lock().await;
+        let captured = collect_trigger_events_until(rx, "esc-drop", |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    DomainEvent::TriggerEvaluated {
+                        decision,
+                        external_id,
+                        ..
+                    } if decision == "drop" && external_id == "esc-drop"
+                )
+            })
+        })
+        .await;
         assert!(captured.iter().any(|event| matches!(
             event,
             DomainEvent::TriggerEvaluated {
@@ -292,22 +343,25 @@ mod tests {
     async fn apply_decision_acknowledge_only_publishes_evaluated() {
         let envelope = envelope("esc-ack");
         let _ = init_global(32);
-        let seen = Arc::new(Mutex::new(Vec::<DomainEvent>::new()));
-        let seen_handler = Arc::clone(&seen);
-        let _handle = global().unwrap().on("triage-escalation-ack", move |event| {
-            let seen = Arc::clone(&seen_handler);
-            let cloned = event.clone();
-            Box::pin(async move {
-                seen.lock().await.push(cloned);
-            })
-        });
+        let (rx, _handle) = subscribe_probe("triage-escalation-ack");
 
         apply_decision(run(TriageAction::Acknowledge), &envelope)
             .await
             .expect("acknowledge should not fail");
-        sleep(Duration::from_millis(20)).await;
 
-        let captured = seen.lock().await;
+        let captured = collect_trigger_events_until(rx, "esc-ack", |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    DomainEvent::TriggerEvaluated {
+                        decision,
+                        external_id,
+                        ..
+                    } if decision == "acknowledge" && external_id == "esc-ack"
+                )
+            })
+        })
+        .await;
         assert!(captured.iter().any(|event| matches!(
             event,
             DomainEvent::TriggerEvaluated {
@@ -329,17 +383,7 @@ mod tests {
         let envelope = envelope("esc-react-fail");
         let _ = init_global(32);
         let _ = AgentDefinitionRegistry::init_global_builtins();
-        let seen = Arc::new(Mutex::new(Vec::<DomainEvent>::new()));
-        let seen_handler = Arc::clone(&seen);
-        let _handle = global()
-            .unwrap()
-            .on("triage-escalation-react-fail", move |event| {
-                let seen = Arc::clone(&seen_handler);
-                let cloned = event.clone();
-                Box::pin(async move {
-                    seen.lock().await.push(cloned);
-                })
-            });
+        let (rx, _handle) = subscribe_probe("triage-escalation-react-fail");
 
         let err = apply_decision(
             run_with_target(TriageAction::React, "missing-agent", "handle this"),
@@ -349,8 +393,25 @@ mod tests {
         .expect_err("missing target agent should fail");
         assert!(err.to_string().contains("missing-agent"));
 
-        sleep(Duration::from_millis(20)).await;
-        let captured = seen.lock().await;
+        let captured = collect_trigger_events_until(rx, "esc-react-fail", |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    DomainEvent::TriggerEvaluated {
+                        decision,
+                        external_id,
+                        ..
+                    } if decision == "react" && external_id == "esc-react-fail"
+                )
+            }) && events.iter().any(|event| {
+                matches!(
+                    event,
+                    DomainEvent::TriggerEscalationFailed { external_id, reason, .. }
+                        if external_id == "esc-react-fail" && reason.contains("missing-agent")
+                )
+            })
+        })
+        .await;
         assert!(captured.iter().any(|event| matches!(
             event,
             DomainEvent::TriggerEvaluated {
@@ -371,17 +432,7 @@ mod tests {
         let envelope = envelope("esc-escalate-fail");
         let _ = init_global(32);
         let _ = AgentDefinitionRegistry::init_global_builtins();
-        let seen = Arc::new(Mutex::new(Vec::<DomainEvent>::new()));
-        let seen_handler = Arc::clone(&seen);
-        let _handle = global()
-            .unwrap()
-            .on("triage-escalation-escalate-fail", move |event| {
-                let seen = Arc::clone(&seen_handler);
-                let cloned = event.clone();
-                Box::pin(async move {
-                    seen.lock().await.push(cloned);
-                })
-            });
+        let (rx, _handle) = subscribe_probe("triage-escalation-escalate-fail");
 
         let err = apply_decision(
             run_with_target(TriageAction::Escalate, "missing-agent", "escalate this"),
@@ -391,8 +442,22 @@ mod tests {
         .expect_err("missing orchestrator target should fail");
         assert!(err.to_string().contains("missing-agent"));
 
-        sleep(Duration::from_millis(20)).await;
-        let captured = seen.lock().await;
+        let captured =
+            collect_trigger_events_until(rx, "esc-escalate-fail", |events| {
+                events.iter().any(|event| matches!(
+                event,
+                DomainEvent::TriggerEvaluated {
+                    decision,
+                    external_id,
+                    ..
+                } if decision == "escalate" && external_id == "esc-escalate-fail"
+            )) && events.iter().any(|event| matches!(
+                event,
+                DomainEvent::TriggerEscalationFailed { external_id, reason, .. }
+                    if external_id == "esc-escalate-fail" && reason.contains("missing-agent")
+            ))
+            })
+            .await;
         assert!(captured.iter().any(|event| matches!(
             event,
             DomainEvent::TriggerEvaluated {
