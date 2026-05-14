@@ -458,6 +458,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: MODEL_DOWNLOAD,
     },
     Capability {
+        id: "local_ai.configure_provider",
+        name: "Configure Local Provider",
+        domain: "local_ai",
+        category: CapabilityCategory::LocalAI,
+        description: "Select Ollama or LM Studio as the local model provider and configure the local server endpoint.",
+        how_to: "Settings > Local AI Model",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "local_ai.manage_model_assets",
         name: "Manage Model Assets",
         domain: "local_ai",

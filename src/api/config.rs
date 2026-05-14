@@ -145,6 +145,19 @@ pub fn looks_like_local_ai_endpoint(url: &str) -> bool {
     port_signals_llm || path_signals_llm
 }
 
+fn looks_like_openhuman_backend_endpoint(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url.trim()) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    matches!(
+        host.as_str(),
+        "api.tinyhumans.ai" | "staging-api.tinyhumans.ai"
+    )
+}
+
 /// Resolves the API base URL for **all hosted-backend calls** (billing,
 /// team, referral, webhooks, credentials, channels, voice, socket,
 /// app_state, integrations, core/jsonrpc, etc.).
@@ -161,7 +174,7 @@ pub fn looks_like_local_ai_endpoint(url: &str) -> bool {
 /// can see the diagnostic in their core sidecar logs.
 pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
     if let Some(u) = api_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        if looks_like_local_ai_endpoint(u) {
+        if looks_like_local_ai_endpoint(u) && !looks_like_openhuman_backend_endpoint(u) {
             warn_backend_url_fallback_once(u);
             // Fall through to env / default — do NOT use the user override.
         } else {
@@ -383,6 +396,12 @@ mod tests {
 
             Self { vars }
         }
+    }
+
+    fn fallback_backend_base_for_current_build() -> String {
+        api_base_from_env().unwrap_or_else(|| {
+            default_api_base_url_for_env(app_env_from_env().as_deref()).to_string()
+        })
     }
 
     impl Drop for EnvSnapshot {
@@ -621,6 +640,22 @@ mod tests {
     }
 
     #[test]
+    fn openhuman_backend_endpoint_detection_accepts_hosted_api_paths() {
+        assert!(looks_like_openhuman_backend_endpoint(
+            "https://api.tinyhumans.ai/openai/v1/chat/completions"
+        ));
+        assert!(looks_like_openhuman_backend_endpoint(
+            "https://staging-api.tinyhumans.ai/openai/v1/chat/completions"
+        ));
+        assert!(!looks_like_openhuman_backend_endpoint(
+            "https://openrouter.ai/api/v1/chat/completions"
+        ));
+        assert!(!looks_like_openhuman_backend_endpoint(
+            "http://localhost:1234/v1/chat/completions"
+        ));
+    }
+
+    #[test]
     fn looks_like_local_ai_rejects_substring_path_false_positives() {
         // graycyrus review of #1630: an earlier version used
         // `path.contains("/v1/chat/completions")` which would misclassify
@@ -761,32 +796,33 @@ mod tests {
     fn integrations_url_handles_llm_endpoint_overrides() {
         let _guard = env_lock();
         let _env = EnvSnapshot::clear_backend_env();
+        let fallback_backend = fallback_backend_base_for_current_build();
 
         struct Case {
             api_url: &'static str,
-            expected: &'static str,
+            expected: String,
         }
 
         let cases = [
             Case {
                 api_url: "https://api.tinyhumans.ai/openai/v1/chat/completions",
-                expected: "https://api.tinyhumans.ai",
+                expected: "https://api.tinyhumans.ai".to_string(),
             },
             Case {
                 api_url: "http://localhost:11434/v1/chat/completions",
-                expected: DEFAULT_API_BASE_URL,
+                expected: fallback_backend.clone(),
             },
             Case {
                 api_url: "https://api.tinyhumans.ai",
-                expected: "https://api.tinyhumans.ai",
+                expected: "https://api.tinyhumans.ai".to_string(),
             },
             Case {
                 api_url: "https://api.tinyhumans.ai/openai/v1/",
-                expected: "https://api.tinyhumans.ai",
+                expected: "https://api.tinyhumans.ai".to_string(),
             },
             Case {
                 api_url: "https://openrouter.ai/api/v1/chat/completions",
-                expected: DEFAULT_API_BASE_URL,
+                expected: fallback_backend,
             },
         ];
 
@@ -803,37 +839,12 @@ mod tests {
     #[test]
     fn integrations_url_falls_back_to_default_when_override_is_local_ai() {
         let _guard = env_lock();
-        // Clear env so we deterministically hit the default branch.
-        let prev_backend = std::env::var("BACKEND_URL").ok();
-        let prev_vite_backend = std::env::var("VITE_BACKEND_URL").ok();
-        let prev_app_env = std::env::var(APP_ENV_VAR).ok();
-        let prev_vite_app_env = std::env::var(VITE_APP_ENV_VAR).ok();
-        std::env::remove_var("BACKEND_URL");
-        std::env::remove_var("VITE_BACKEND_URL");
-        std::env::remove_var(APP_ENV_VAR);
-        std::env::remove_var(VITE_APP_ENV_VAR);
+        let _env = EnvSnapshot::clear_backend_env();
+        let expected = fallback_backend_base_for_current_build();
 
         let result = effective_backend_api_url(&Some("http://127.0.0.1:11434/v1".to_string()));
 
-        // Restore env before asserting so a failing assert doesn't leak.
-        match prev_backend {
-            Some(v) => std::env::set_var("BACKEND_URL", v),
-            None => std::env::remove_var("BACKEND_URL"),
-        }
-        match prev_vite_backend {
-            Some(v) => std::env::set_var("VITE_BACKEND_URL", v),
-            None => std::env::remove_var("VITE_BACKEND_URL"),
-        }
-        match prev_app_env {
-            Some(v) => std::env::set_var(APP_ENV_VAR, v),
-            None => std::env::remove_var(APP_ENV_VAR),
-        }
-        match prev_vite_app_env {
-            Some(v) => std::env::set_var(VITE_APP_ENV_VAR, v),
-            None => std::env::remove_var(VITE_APP_ENV_VAR),
-        }
-
-        assert_eq!(result, DEFAULT_API_BASE_URL);
+        assert_eq!(result, expected);
     }
 
     #[test]
@@ -865,35 +876,10 @@ mod tests {
     #[test]
     fn integrations_url_matches_effective_api_url_without_override() {
         let _guard = env_lock();
-        // No override, no env → both helpers must agree.
-        let prev_backend = std::env::var("BACKEND_URL").ok();
-        let prev_vite_backend = std::env::var("VITE_BACKEND_URL").ok();
-        let prev_app_env = std::env::var(APP_ENV_VAR).ok();
-        let prev_vite_app_env = std::env::var(VITE_APP_ENV_VAR).ok();
-        std::env::remove_var("BACKEND_URL");
-        std::env::remove_var("VITE_BACKEND_URL");
-        std::env::remove_var(APP_ENV_VAR);
-        std::env::remove_var(VITE_APP_ENV_VAR);
+        let _env = EnvSnapshot::clear_backend_env();
 
         let integrations = effective_backend_api_url(&None);
         let api = effective_api_url(&None);
-
-        match prev_backend {
-            Some(v) => std::env::set_var("BACKEND_URL", v),
-            None => std::env::remove_var("BACKEND_URL"),
-        }
-        match prev_vite_backend {
-            Some(v) => std::env::set_var("VITE_BACKEND_URL", v),
-            None => std::env::remove_var("VITE_BACKEND_URL"),
-        }
-        match prev_app_env {
-            Some(v) => std::env::set_var(APP_ENV_VAR, v),
-            None => std::env::remove_var(APP_ENV_VAR),
-        }
-        match prev_vite_app_env {
-            Some(v) => std::env::set_var(VITE_APP_ENV_VAR, v),
-            None => std::env::remove_var(VITE_APP_ENV_VAR),
-        }
 
         assert_eq!(integrations, api);
     }

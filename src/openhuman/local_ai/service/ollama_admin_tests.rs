@@ -22,6 +22,17 @@ async fn spawn_mock(app: Router) -> String {
     format!("http://127.0.0.1:{}", addr.port())
 }
 
+fn lm_studio_config(base: &str) -> Config {
+    let mut config = Config::default();
+    config.local_ai.runtime_enabled = true;
+    config.local_ai.opt_in_confirmed = true;
+    config.local_ai.provider = "lm_studio".to_string();
+    config.local_ai.base_url = Some(format!("{base}/v1"));
+    config.local_ai.model_id = "local-model".to_string();
+    config.local_ai.chat_model_id = "local-model".to_string();
+    config
+}
+
 #[tokio::test]
 async fn has_model_detects_exact_and_prefixed_tag() {
     let _guard = crate::openhuman::local_ai::local_ai_test_guard();
@@ -387,6 +398,95 @@ async fn list_models_errors_on_non_success() {
     unsafe {
         std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
     }
+}
+
+#[tokio::test]
+async fn lm_studio_list_models_returns_loaded_models() {
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
+
+    let app = Router::new().route(
+        "/v1/models",
+        get(|| async {
+            Json(json!({
+                "object": "list",
+                "data": [
+                    { "id": "local-model", "object": "model", "owned_by": "lm-studio" },
+                    { "id": "second-model", "object": "model", "owned_by": "lm-studio" }
+                ]
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    let config = lm_studio_config(&base);
+    let service = LocalAiService::new(&config);
+
+    let models = service
+        .list_lm_studio_models(&config)
+        .await
+        .expect("lm studio models");
+
+    assert_eq!(models.len(), 2);
+    assert_eq!(models[0].name, "local-model");
+    assert!(service
+        .has_lm_studio_model(&config, "local-model")
+        .await
+        .expect("has model"));
+}
+
+#[tokio::test]
+async fn lm_studio_diagnostics_reports_loaded_chat_model() {
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
+
+    let app = Router::new().route(
+        "/v1/models",
+        get(|| async {
+            Json(json!({
+                "data": [
+                    { "id": "local-model", "object": "model", "owned_by": "lm-studio" }
+                ]
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    let config = lm_studio_config(&base);
+    let service = LocalAiService::new(&config);
+
+    let diag = service.diagnostics(&config).await.expect("diagnostics");
+
+    assert_eq!(diag["provider"].as_str(), Some("lm_studio"));
+    assert_eq!(diag["lm_studio_running"], true);
+    assert_eq!(diag["expected"]["chat_found"], true);
+    assert_eq!(diag["ok"], true);
+}
+
+#[tokio::test]
+async fn lm_studio_diagnostics_flags_missing_chat_model() {
+    let _guard = crate::openhuman::local_ai::local_ai_test_guard();
+
+    let app = Router::new().route(
+        "/v1/models",
+        get(|| async {
+            Json(json!({
+                "data": [
+                    { "id": "other-model", "object": "model", "owned_by": "lm-studio" }
+                ]
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    let config = lm_studio_config(&base);
+    let service = LocalAiService::new(&config);
+
+    let diag = service.diagnostics(&config).await.expect("diagnostics");
+
+    assert_eq!(diag["provider"].as_str(), Some("lm_studio"));
+    assert_eq!(diag["expected"]["chat_found"], false);
+    assert_eq!(diag["ok"], false);
+    assert!(diag["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue.as_str().unwrap_or("").contains("local-model")));
 }
 
 // ---- owned-PID lifecycle ------------------------------------------------

@@ -10,6 +10,7 @@ use crate::openhuman::local_ai::paths::{
     resolve_stt_model_path, resolve_tts_voice_path, stt_model_target_path, tts_model_target_path,
 };
 use crate::openhuman::local_ai::presets::{self, VisionMode};
+use crate::openhuman::local_ai::provider::{provider_from_config, LocalAiProvider};
 use crate::openhuman::local_ai::types::{
     LocalAiAssetStatus, LocalAiAssetsStatus, LocalAiDownloadProgressItem, LocalAiDownloadsProgress,
 };
@@ -24,13 +25,27 @@ impl LocalAiService {
         let stt_model = model_ids::effective_stt_model_id(config);
         let tts_voice = model_ids::effective_tts_voice_id(config);
 
+        let provider = provider_from_config(config);
+
         // Pre-flight precondition: if no Ollama binary exists anywhere
         // discoverable, every `has_model` call will fail (or time out). Skip
         // the HTTP probes entirely and report a clean "missing" state with
         // `ollama_available: false` so the UI can render an "Install Ollama"
         // CTA instead of perpetually-empty model state.
-        let ollama_available = self.ollama_binary_present(config);
-        let (chat_ready, vision_ready, embedding_ready) = if ollama_available {
+        let ollama_available = if provider == LocalAiProvider::Ollama {
+            self.ollama_binary_present(config)
+        } else {
+            true
+        };
+        let (chat_ready, vision_ready, embedding_ready) = if provider == LocalAiProvider::LmStudio {
+            (
+                self.has_lm_studio_model(config, &chat_model)
+                    .await
+                    .unwrap_or(false),
+                false,
+                false,
+            )
+        } else if ollama_available {
             (
                 self.has_model(&chat_model).await.unwrap_or(false),
                 self.has_model(&vision_model).await.unwrap_or(false),
@@ -98,38 +113,55 @@ impl LocalAiService {
             chat: LocalAiAssetStatus {
                 state: if chat_ready { "ready" } else { "missing" }.to_string(),
                 id: chat_model,
-                provider: "ollama".to_string(),
+                provider: provider.as_str().to_string(),
                 path: None,
-                warning: None,
+                warning: (provider == LocalAiProvider::LmStudio && !chat_ready).then(|| {
+                    "Load this model in LM Studio or update local_ai.chat_model_id.".to_string()
+                }),
             },
             vision: LocalAiAssetStatus {
-                state: match vision_mode {
-                    VisionMode::Disabled => "disabled",
-                    VisionMode::Ondemand if vision_ready => "ready",
-                    VisionMode::Ondemand => "ondemand",
-                    VisionMode::Bundled if vision_ready => "ready",
-                    VisionMode::Bundled => "missing",
-                }
-                .to_string(),
+                state: if provider == LocalAiProvider::LmStudio {
+                    "disabled".to_string()
+                } else {
+                    match vision_mode {
+                        VisionMode::Disabled => "disabled",
+                        VisionMode::Ondemand if vision_ready => "ready",
+                        VisionMode::Ondemand => "ondemand",
+                        VisionMode::Bundled if vision_ready => "ready",
+                        VisionMode::Bundled => "missing",
+                    }
+                    .to_string()
+                },
                 id: vision_model,
-                provider: "ollama".to_string(),
+                provider: provider.as_str().to_string(),
                 path: None,
-                warning: match vision_mode {
-                    VisionMode::Disabled => {
-                        Some("Vision is disabled for this RAM tier.".to_string())
+                warning: if provider == LocalAiProvider::LmStudio {
+                    Some("Vision is not part of the first LM Studio provider slice.".to_string())
+                } else {
+                    match vision_mode {
+                        VisionMode::Disabled => {
+                            Some("Vision is disabled for this RAM tier.".to_string())
+                        }
+                        VisionMode::Ondemand if !vision_ready => {
+                            Some("Vision model will download on first vision request.".to_string())
+                        }
+                        _ => None,
                     }
-                    VisionMode::Ondemand if !vision_ready => {
-                        Some("Vision model will download on first vision request.".to_string())
-                    }
-                    _ => None,
                 },
             },
             embedding: LocalAiAssetStatus {
                 state: if embedding_ready { "ready" } else { "missing" }.to_string(),
                 id: embedding_model,
-                provider: "ollama".to_string(),
+                provider: if provider == LocalAiProvider::LmStudio {
+                    "ollama".to_string()
+                } else {
+                    provider.as_str().to_string()
+                },
                 path: None,
-                warning: None,
+                warning: (provider == LocalAiProvider::LmStudio).then(|| {
+                    "Embeddings still use the existing Ollama path in this first LM Studio slice."
+                        .to_string()
+                }),
             },
             stt: LocalAiAssetStatus {
                 state: stt_state.to_string(),
@@ -273,6 +305,18 @@ impl LocalAiService {
         }
         let _guard = self.bootstrap_lock.lock().await;
 
+        if provider_from_config(config) == LocalAiProvider::LmStudio {
+            self.ensure_lm_studio_available(config).await?;
+            if config.local_ai.preload_stt_model {
+                self.ensure_stt_asset_available(config).await?;
+            }
+            if config.local_ai.preload_tts_voice {
+                self.ensure_tts_asset_available(config).await?;
+            }
+            self.status.lock().state = "ready".to_string();
+            return Ok(());
+        }
+
         self.ensure_ollama_server(config).await?;
 
         let mut steps = vec![
@@ -354,6 +398,17 @@ impl LocalAiService {
         let _guard = self.bootstrap_lock.lock().await;
 
         let capability = capability.trim().to_ascii_lowercase();
+        if provider_from_config(config) == LocalAiProvider::LmStudio
+            && matches!(
+                capability.as_str(),
+                "chat" | "vision" | "embedding" | "embeddings"
+            )
+        {
+            return Err(
+                "LM Studio manages model downloads and loading. Load the model in LM Studio, then retry."
+                    .to_string(),
+            );
+        }
         match capability.as_str() {
             "chat" => {
                 self.ensure_ollama_server(config).await?;

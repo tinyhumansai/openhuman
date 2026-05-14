@@ -6,6 +6,7 @@
 //! bypassing the MVP tier restriction.
 
 use crate::openhuman::config::Config;
+use crate::openhuman::local_ai::provider::{provider_from_config, LocalAiProvider};
 
 pub(crate) const DEFAULT_OLLAMA_MODEL: &str = "gemma3:1b-it-qat";
 pub(crate) const DEFAULT_OLLAMA_VISION_MODEL: &str = "";
@@ -73,6 +74,10 @@ fn enforce_mvp_embedding_allowlist(resolved: &str) -> String {
 }
 
 pub(crate) fn effective_chat_model_id(config: &Config) -> String {
+    if provider_from_config(config) == LocalAiProvider::LmStudio {
+        return raw_chat_model_id(config);
+    }
+
     let raw = if !config.local_ai.chat_model_id.trim().is_empty() {
         config.local_ai.chat_model_id.trim()
     } else {
@@ -90,6 +95,19 @@ pub(crate) fn effective_chat_model_id(config: &Config) -> String {
         return enforce_mvp_chat_allowlist(DEFAULT_OLLAMA_MODEL);
     }
     enforce_mvp_chat_allowlist(raw)
+}
+
+fn raw_chat_model_id(config: &Config) -> String {
+    let raw = if !config.local_ai.chat_model_id.trim().is_empty() {
+        config.local_ai.chat_model_id.trim()
+    } else {
+        config.local_ai.model_id.trim()
+    };
+    if raw.is_empty() {
+        DEFAULT_OLLAMA_MODEL.to_string()
+    } else {
+        raw.to_string()
+    }
 }
 
 pub(crate) fn effective_vision_model_id(config: &Config) -> String {
@@ -169,6 +187,17 @@ mod tests {
         let mut config = test_config();
         config.local_ai.chat_model_id = "gemma3:1b-it-qat".to_string();
         assert_eq!(effective_chat_model_id(&config), "gemma3:1b-it-qat");
+    }
+
+    #[test]
+    fn chat_model_allows_custom_ids_for_lm_studio() {
+        let mut config = test_config();
+        config.local_ai.provider = "lm_studio".to_string();
+        config.local_ai.chat_model_id = "publisher/custom-model-7b".to_string();
+        assert_eq!(
+            effective_chat_model_id(&config),
+            "publisher/custom-model-7b"
+        );
     }
 
     #[test]
