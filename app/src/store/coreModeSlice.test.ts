@@ -68,10 +68,14 @@ describe('coreModeSlice — sync-localStorage-derived initial state', () => {
     localStorage.clear();
     vi.resetModules();
     vi.doMock('../utils/config', () => ({ E2E_DEFAULT_CORE_MODE: 'local' }));
-    const mod = await import('./coreModeSlice');
-    const state = mod.default(undefined, { type: '@@INIT' });
-    expect(state.mode).toEqual({ kind: 'local' });
-    vi.doUnmock('../utils/config');
+    try {
+      const mod = await import('./coreModeSlice');
+      const state = mod.default(undefined, { type: '@@INIT' });
+      expect(state.mode).toEqual({ kind: 'local' });
+    } finally {
+      vi.doUnmock('../utils/config');
+      vi.resetModules();
+    }
   });
 
   it('hydrates to local when openhuman_core_mode=local', async () => {

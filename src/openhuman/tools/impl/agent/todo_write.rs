@@ -161,20 +161,45 @@ impl Tool for TodoWriteTool {
                 }
             }
         }
-        if let Err(err) = persisted_board {
-            tracing::debug!(
-                error = %err,
-                "[todowrite] task board persistence skipped/failed"
-            );
+        match persisted_board {
+            Ok(()) => {}
+            Err(TaskBoardPersistError::MissingContext(reason)) => {
+                tracing::debug!(reason, "[todowrite] task board persistence skipped");
+            }
+            Err(TaskBoardPersistError::Persist(err)) => {
+                tracing::debug!(
+                    error = %err,
+                    "[todowrite] task board persistence failed"
+                );
+                return Ok(ToolResult::error(format!(
+                    "Failed to persist task board: {err}"
+                )));
+            }
         }
         Ok(ToolResult::success(body))
     }
 }
 
-async fn persist_thread_board(items: &[TodoItem]) -> Result<(), String> {
-    let parent = current_parent().ok_or_else(|| "no parent context".to_string())?;
-    let thread_id =
-        thread_context::current_thread_id().ok_or_else(|| "no thread id".to_string())?;
+#[derive(Debug)]
+enum TaskBoardPersistError {
+    MissingContext(&'static str),
+    Persist(String),
+}
+
+impl std::fmt::Display for TaskBoardPersistError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingContext(reason) => write!(f, "{reason}"),
+            Self::Persist(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+async fn persist_thread_board(items: &[TodoItem]) -> Result<(), TaskBoardPersistError> {
+    let parent =
+        current_parent().ok_or(TaskBoardPersistError::MissingContext("no parent context"))?;
+    let thread_id = thread_context::current_thread_id()
+        .ok_or(TaskBoardPersistError::MissingContext("no thread id"))?;
     let now = chrono::Utc::now().to_rfc3339();
     let cards = items
         .iter()
@@ -213,7 +238,9 @@ async fn persist_thread_board(items: &[TodoItem]) -> Result<(), String> {
         cards,
         updated_at: now,
     };
-    let saved = TaskBoardStore::new(parent.workspace_dir.clone()).put(board)?;
+    let saved = TaskBoardStore::new(parent.workspace_dir.clone())
+        .put(board)
+        .map_err(TaskBoardPersistError::Persist)?;
     tracing::debug!(
         thread_id = %saved.thread_id,
         workspace_dir = %parent.workspace_dir.display(),
@@ -495,5 +522,33 @@ mod tests {
             }
             other => panic!("unexpected progress event: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn todowrite_reports_task_board_persistence_failures() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("agent_task_boards"), b"not a directory")
+            .expect("blocking task board path");
+        let store = Arc::new(TodoStore::new());
+        let tool = TodoWriteTool::new(store);
+        let parent = parent_context(temp.path().to_path_buf(), None);
+
+        let result = with_thread_id("thread-todo", async {
+            with_parent_context(parent, async {
+                tool.execute(json!({
+                    "todos": [
+                        { "content": "Draft plan", "status": "pending" }
+                    ]
+                }))
+                .await
+            })
+            .await
+        })
+        .await
+        .expect("todowrite execute");
+
+        assert!(result.is_error);
+        assert!(result.output().contains("Failed to persist task board"));
+        assert!(result.output().contains("create task board dir"));
     }
 }

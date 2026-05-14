@@ -817,21 +817,29 @@ mod tests {
         assert_eq!(value["ok"], json!(true));
     }
 
-    struct WorkspaceEnvGuard;
+    struct WorkspaceEnvGuard {
+        previous: Option<std::ffi::OsString>,
+    }
 
     impl WorkspaceEnvGuard {
         fn set(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
             unsafe {
                 std::env::set_var("OPENHUMAN_WORKSPACE", path);
             }
-            Self
+            Self { previous }
         }
     }
 
     impl Drop for WorkspaceEnvGuard {
         fn drop(&mut self) {
-            unsafe {
-                std::env::remove_var("OPENHUMAN_WORKSPACE");
+            match self.previous.take() {
+                Some(value) => unsafe {
+                    std::env::set_var("OPENHUMAN_WORKSPACE", value);
+                },
+                None => unsafe {
+                    std::env::remove_var("OPENHUMAN_WORKSPACE");
+                },
             }
         }
     }
