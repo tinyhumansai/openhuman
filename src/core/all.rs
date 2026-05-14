@@ -139,6 +139,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
         .extend(crate::openhuman::channels::controllers::all_channels_registered_controllers());
     // Persistent configuration management
     controllers.extend(crate::openhuman::config::all_config_registered_controllers());
+    // Local sidecar reachability + backend Socket.IO state diagnostics (#1527)
+    controllers
+        .extend(crate::openhuman::connectivity::all_connectivity_registered_controllers());
     // User credentials and session management
     controllers.extend(crate::openhuman::credentials::all_credentials_registered_controllers());
     // Desktop service management
@@ -256,6 +259,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
         .extend(crate::openhuman::channels::providers::web::all_web_channel_controller_schemas());
     schemas.extend(crate::openhuman::channels::controllers::all_channels_controller_schemas());
     schemas.extend(crate::openhuman::config::all_config_controller_schemas());
+    schemas.extend(crate::openhuman::connectivity::all_connectivity_controller_schemas());
     schemas.extend(crate::openhuman::credentials::all_credentials_controller_schemas());
     schemas.extend(crate::openhuman::service::all_service_controller_schemas());
     schemas.extend(crate::openhuman::migration::all_migration_controller_schemas());
@@ -335,6 +339,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "Composio OAuth integrations proxied via the backend — toolkits, connections, tools, and actions."
         ),
         "config" => Some("Read and update persisted runtime configuration."),
+        "connectivity" => Some(
+            "Connectivity diagnostics for the local sidecar, listening port, and backend Socket.IO state.",
+        ),
         "cron" => Some("Manage scheduled jobs and run history."),
         "decrypt" => Some("Decrypt secure values managed by secret storage."),
         "doctor" => Some("Run diagnostics for workspace and runtime health."),

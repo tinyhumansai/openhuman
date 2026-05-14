@@ -24,6 +24,7 @@ pub mod billing;
 pub mod channels;
 pub mod composio;
 pub mod config;
+pub mod connectivity;
 pub mod context;
 pub mod cost;
 pub mod credentials;
