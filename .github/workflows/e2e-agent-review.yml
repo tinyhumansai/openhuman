@@ -80,7 +80,7 @@ jobs:
       - name: Install Appium and chromium driver
         if: steps.gate.outputs.present == 'true'
         run: |
-          APPIUM_BIN_DIR="${RUNNER_TEMP//\\//}/openhuman-e2e-bin"
+          APPIUM_BIN_DIR="$(printf '%s' "$RUNNER_TEMP" | tr '\\' '/')/openhuman-e2e-bin"
           mkdir -p "$APPIUM_BIN_DIR"
           printf '%s\n' '#!/usr/bin/env bash' 'exec npx --yes appium@3 "$@"' > "$APPIUM_BIN_DIR/appium"
           chmod +x "$APPIUM_BIN_DIR/appium"
