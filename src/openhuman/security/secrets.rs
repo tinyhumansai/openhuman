@@ -189,7 +189,10 @@ impl SecretStore {
 
         if self.key_path.exists() {
             let hex_key = read_key_file_with_retry(&self.key_path).with_context(|| {
-                let mut msg = format!("Failed to read secret key file at {}", self.key_path.display());
+                let mut msg = format!(
+                    "Failed to read secret key file at {}",
+                    self.key_path.display()
+                );
                 #[cfg(windows)]
                 {
                     msg.push_str(
