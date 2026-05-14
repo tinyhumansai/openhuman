@@ -65,6 +65,15 @@ export function tauriErrorMessage(err: unknown): string {
 }
 
 export function parseServiceCliOutput<T>(raw: string): CommandResponse<T> {
-  const parsed = JSON.parse(raw) as CommandResponse<T>;
-  return parsed;
+  try {
+    const parsed = JSON.parse(raw) as CommandResponse<T>;
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Parsed value is not an object');
+    }
+    return parsed;
+  } catch (err) {
+    throw new Error(
+      `Failed to parse service CLI output as JSON: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }
