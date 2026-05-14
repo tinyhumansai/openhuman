@@ -171,13 +171,34 @@ pub fn effective_integrations_api_url(api_url: &Option<String>) -> String {
             warn_integrations_url_fallback_once(u);
             // Fall through to env / default — do NOT use the user override.
         } else {
-            return normalize_api_base_url(u);
+            return normalize_integrations_api_base_url(u);
         }
     }
     if let Some(env_url) = api_base_from_env() {
         return env_url;
     }
     default_api_base_url_for_env(app_env_from_env().as_deref()).to_string()
+}
+
+/// Normalize a configured integrations backend override to its host root.
+///
+/// Users may have `config.api_url` populated with an inference endpoint such
+/// as `https://api.tinyhumans.ai/openai/v1/chat/completions`. Integrations
+/// callers append `/agent-integrations/*`, so the LLM-specific path must not
+/// survive into the backend base.
+fn normalize_integrations_api_base_url(url: &str) -> String {
+    let normalized = normalize_api_base_url(url);
+    let Ok(mut parsed) = url::Url::parse(&normalized) else {
+        return normalized;
+    };
+
+    if parsed.path() != "/" {
+        parsed.set_path("");
+    }
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+
+    parsed.to_string().trim_end_matches('/').to_string()
 }
 
 /// Emit a single `warn!` **once per process lifetime** the first time
