@@ -20,9 +20,12 @@ This guide covers three deploy paths, easiest first:
 3. [Any VPS via Docker Compose](#3-any-vps-via-docker-compose)
 
 What gets deployed in every path: a single container running
-`openhuman-core serve` on port `7788`, behind the provider's TLS. The desktop
-app already knows how to talk to a remote core, set
-`OPENHUMAN_CORE_RPC_URL=https://your-host/rpc` and `OPENHUMAN_CORE_TOKEN=...`
+`openhuman-core serve` on port `7788`. Public hosts should sit behind the
+provider's TLS, for example `https://core.example.com/rpc`. Private-only hosts
+on localhost, RFC1918 networks, or tailnets such as Tailscale can use
+plain HTTP, for example `http://100.x.x.x:7788/rpc`, when the core is not
+reachable from the public internet. The desktop app already knows how to talk
+to a remote core; set `OPENHUMAN_CORE_RPC_URL` and `OPENHUMAN_CORE_TOKEN=...`
 in `app/.env.local` and launch.
 
 ---
@@ -337,8 +340,17 @@ OPENHUMAN_CORE_RPC_URL=https://core.example.com/rpc
 OPENHUMAN_CORE_TOKEN=<the same token you set on the server>
 ```
 
+For a private tailnet-only VM with no public IP, use the tailnet URL instead:
+
+```bash
+OPENHUMAN_CORE_RUN_MODE=external
+OPENHUMAN_CORE_RPC_URL=http://100.x.x.x:7788/rpc
+OPENHUMAN_CORE_TOKEN=<the same token you set on the server>
+```
+
 Restart the desktop app. The provider chain in `App.tsx` will route all RPC
-calls to the remote core; nothing else changes.
+calls to the remote core; nothing else changes. Public `http://` hosts are
+rejected by the app picker; use HTTPS for any publicly reachable core.
 
 ---
 

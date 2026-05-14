@@ -79,6 +79,18 @@ pub fn floor_char_boundary(s: &str, index: usize) -> usize {
     end
 }
 
+/// Round a byte index UP to the nearest UTF-8 character boundary.
+pub fn ceil_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut start = index;
+    while start < s.len() && !s.is_char_boundary(start) {
+        start += 1;
+    }
+    start
+}
+
 /// Utility enum for handling optional values.
 pub enum MaybeSet<T> {
     Set(T),
@@ -213,6 +225,19 @@ mod tests {
         assert_eq!(floor_char_boundary(s, 5), 5); // After '🦀'
         assert_eq!(floor_char_boundary(s, 6), 6); // After 'C'
         assert_eq!(floor_char_boundary(s, 100), 6);
+    }
+
+    #[test]
+    fn test_ceil_char_boundary() {
+        let s = "A🦀C";
+        assert_eq!(ceil_char_boundary(s, 0), 0);
+        assert_eq!(ceil_char_boundary(s, 1), 1); // After 'A'
+        assert_eq!(ceil_char_boundary(s, 2), 5); // Mid-🦀
+        assert_eq!(ceil_char_boundary(s, 3), 5); // Mid-🦀
+        assert_eq!(ceil_char_boundary(s, 4), 5); // Mid-🦀
+        assert_eq!(ceil_char_boundary(s, 5), 5); // After '🦀'
+        assert_eq!(ceil_char_boundary(s, 6), 6); // After 'C'
+        assert_eq!(ceil_char_boundary(s, 100), 6);
     }
 
     #[test]

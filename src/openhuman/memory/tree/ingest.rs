@@ -368,7 +368,7 @@ fn markdown_body_preview(md: &str) -> String {
     if len <= BODY_PREVIEW_MAX_BYTES {
         md.to_string()
     } else {
-        let start = md.ceil_char_boundary(len - BODY_PREVIEW_MAX_BYTES);
+        let start = crate::openhuman::util::ceil_char_boundary(md, len - BODY_PREVIEW_MAX_BYTES);
         md[start..].to_string()
     }
 }
