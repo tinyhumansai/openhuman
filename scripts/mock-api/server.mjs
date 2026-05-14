@@ -101,6 +101,11 @@ export function getMockServerPort() {
   return typeof address === "object" && address ? address.port : null;
 }
 
+// Reap sockets that the peer (or we) half-closed but never fully tore down.
+// Without this, abandoned keep-alive and WS connections accumulate in
+// CLOSE_WAIT / FIN_WAIT_2 and exhaust the macOS ephemeral port range.
+const SOCKET_IDLE_TIMEOUT_MS = 30_000;
+
 function createServerInstance() {
   const nextServer = http.createServer((req, res) => {
     handleRequest(req, res).catch((err) => {
@@ -108,9 +113,16 @@ function createServerInstance() {
       json(res, 500, { success: false, error: "Internal mock error" });
     });
   });
+  // Short keep-alive so abandoned HTTP connections are recycled quickly
+  // rather than parked in FIN_WAIT_2 for minutes after Node's FIN.
+  nextServer.keepAliveTimeout = 1_000;
+  nextServer.headersTimeout = 5_000;
+  nextServer.requestTimeout = 10_000;
   nextServer.on("connection", (socket) => {
     openSockets.add(socket);
     socket.on("close", () => openSockets.delete(socket));
+    socket.setTimeout(SOCKET_IDLE_TIMEOUT_MS);
+    socket.on("timeout", () => socket.destroy());
   });
   nextServer.on("upgrade", (req, socket) => handleWebSocketUpgrade(req, socket));
   return nextServer;

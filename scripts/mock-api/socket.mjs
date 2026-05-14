@@ -125,7 +125,10 @@ export function handleWebSocketUpgrade(req, socket) {
       }
       buffer = buffer.subarray(totalLen);
       if (opcode === 0x08) {
-        socket.end();
+        // Hard close: socket.end() leaves us in FIN_WAIT_2 if the peer never
+        // returns its FIN, which on macOS never reclaims and exhausts the
+        // ephemeral port range under sustained mock-server load.
+        socket.destroy();
         return;
       }
       if (opcode === 0x09) {
