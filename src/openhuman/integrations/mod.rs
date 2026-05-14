@@ -20,11 +20,11 @@ pub use parallel::{
     ParallelChatTool, ParallelDatasetTool, ParallelEnrichTool, ParallelExtractTool,
     ParallelResearchTool, ParallelSearchTool,
 };
+pub use seltz::SeltzSearchTool;
 pub use stock_prices::{
     StockCommodityTool, StockCryptoSeriesTool, StockExchangeRateTool, StockOptionsTool,
     StockQuoteTool,
 };
-pub use seltz::SeltzSearchTool;
 pub use twilio::TwilioCallTool;
 pub use types::{
     BackendResponse, IntegrationPricing, IntegrationPricingEntry, PricingIntegrations, ToolScope,

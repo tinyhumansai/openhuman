@@ -870,9 +870,7 @@ impl Config {
                 self.seltz.api_url = Some(url);
             }
         }
-        if let Some(max) =
-            env.get_any(&["OPENHUMAN_SELTZ_MAX_RESULTS", "SELTZ_MAX_RESULTS"])
-        {
+        if let Some(max) = env.get_any(&["OPENHUMAN_SELTZ_MAX_RESULTS", "SELTZ_MAX_RESULTS"]) {
             if let Ok(n) = max.parse::<usize>() {
                 if (1..=20).contains(&n) {
                     self.seltz.max_results = n;

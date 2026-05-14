@@ -11,6 +11,7 @@ use serde_json::{json, Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::tools::traits::Tool;
 use crate::rpc::RpcOutcome;
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -343,8 +344,22 @@ fn handle_seltz_search(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
 
         if !config.seltz.enabled {
+            tracing::debug!("[rpc][tools.seltz_search] seltz disabled — rejecting");
             return Err("Seltz search is not enabled. Set SELTZ_API_KEY to enable.".to_string());
         }
+
+        let has_include_domains = params.get("include_domains").is_some();
+        let has_exclude_domains = params.get("exclude_domains").is_some();
+        let has_scope = params.get("scope").is_some();
+
+        tracing::debug!(
+            query_len = query.chars().count(),
+            max_results,
+            has_include_domains,
+            has_exclude_domains,
+            has_scope,
+            "[rpc][tools.seltz_search] start"
+        );
 
         let tool = crate::openhuman::integrations::SeltzSearchTool::new(
             config.seltz.api_key.clone(),
@@ -377,8 +392,12 @@ fn handle_seltz_search(params: Map<String, Value>) -> ControllerFuture {
             .await
             .map_err(|e| format!("seltz search failed: {e:#}"))?;
 
-        let payload = json!({ "result": result.output() });
-        let log = vec![format!("tools.seltz_search: query=\"{query}\"")];
+        let payload = json!({ "documents": result.output() });
+        let log = vec![format!(
+            "[rpc][tools.seltz_search] success query_len={} max_results={}",
+            query.chars().count(),
+            max_results
+        )];
         RpcOutcome::new(payload, log).into_cli_compatible_json()
     })
 }
