@@ -701,6 +701,12 @@ impl Tool for ComposioExecuteTool {
         // regardless of how the model built the args (issue #1714).
         // No-op for every other slug; respects caller-supplied values.
         let iana = super::googlecalendar_args::current_iana_timezone();
+        tracing::debug!(
+            target: "composio",
+            slug = %tool,
+            iana = %iana,
+            "[composio][dispatcher] applying calendar query defaults pre-dispatch"
+        );
         let arguments =
             super::googlecalendar_args::apply_calendar_query_defaults(&tool, arguments, &iana);
 

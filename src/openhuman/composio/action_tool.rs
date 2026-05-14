@@ -122,6 +122,12 @@ impl Tool for ComposioActionTool {
         // wants a single Composio action, so the same defaults must
         // fire here as on the dispatcher path.
         let iana = super::googlecalendar_args::current_iana_timezone();
+        tracing::debug!(
+            target: "composio",
+            slug = %self.action_name,
+            iana = %iana,
+            "[composio][per-action] applying calendar query defaults pre-dispatch"
+        );
         let args = super::googlecalendar_args::apply_calendar_query_defaults(
             &self.action_name,
             Some(args),

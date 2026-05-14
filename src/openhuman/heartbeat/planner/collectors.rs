@@ -122,6 +122,15 @@ pub(crate) async fn collect_calendar_meetings(
             "maxResults": 20
         });
         let iana = crate::openhuman::composio::googlecalendar_args::current_iana_timezone();
+        tracing::debug!(
+            target: "composio",
+            slug = "GOOGLECALENDAR_EVENTS_LIST",
+            toolkit = %toolkit,
+            connection_id = %conn.id,
+            iana = %iana,
+            lookahead_minutes = config.heartbeat.meeting_lookahead_minutes.max(1),
+            "[composio][heartbeat-planner] applying calendar query defaults pre-poll"
+        );
         let arguments =
             crate::openhuman::composio::googlecalendar_args::apply_calendar_query_defaults(
                 "GOOGLECALENDAR_EVENTS_LIST",
