@@ -83,7 +83,7 @@ gpg "${GPG_ARGS[@]}" -abs \
 echo "[apt-repo]   Release signed"
 
 # ── Export public key ─────────────────────────────────────────────────────────
-gpg --batch --yes --armor --export ${APT_SIGNING_KEY_ID:-} > "$OUTPUT_DIR/KEY.gpg"
+gpg --batch --yes --armor --export "${APT_SIGNING_KEY_ID:-}" > "$OUTPUT_DIR/KEY.gpg"
 echo "[apt-repo]   Public key → KEY.gpg"
 
 echo "[apt-repo] Done. Files:"
