@@ -214,6 +214,12 @@ async fn persist_thread_board(items: &[TodoItem]) -> Result<(), String> {
         updated_at: now,
     };
     let saved = TaskBoardStore::new(parent.workspace_dir.clone()).put(board)?;
+    tracing::debug!(
+        thread_id = %saved.thread_id,
+        workspace_dir = %parent.workspace_dir.display(),
+        card_count = saved.cards.len(),
+        "[todowrite][task_board] persisted"
+    );
     if let Some(tx) = parent.on_progress {
         let _ = tx
             .send(AgentProgress::TaskBoardUpdated { board: saved })
@@ -225,6 +231,15 @@ async fn persist_thread_board(items: &[TodoItem]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::agent::harness::fork_context::{
+        with_parent_context, ParentExecutionContext,
+    };
+    use crate::openhuman::context::prompt::ToolCallFormat;
+    use crate::openhuman::memory::{
+        Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
+    };
+    use crate::openhuman::providers::thread_context::with_thread_id;
+    use crate::openhuman::providers::{ChatRequest, ChatResponse, Provider};
 
     #[tokio::test]
     async fn todowrite_basic() {
@@ -315,5 +330,170 @@ mod tests {
         assert!(!result.is_error, "{}", result.output());
         assert!(result.output().contains("[!] wait for credentials"));
         assert!(result.output().contains("missing token"));
+    }
+
+    struct NoopProvider;
+
+    #[async_trait]
+    impl Provider for NoopProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok("ok".into())
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<ChatResponse> {
+            Ok(ChatResponse {
+                text: Some("ok".into()),
+                tool_calls: Vec::new(),
+                usage: None,
+            })
+        }
+    }
+
+    struct NoopMemory;
+
+    #[async_trait]
+    impl Memory for NoopMemory {
+        async fn store(
+            &self,
+            _namespace: &str,
+            _key: &str,
+            _content: &str,
+            _category: MemoryCategory,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn recall(
+            &self,
+            _query: &str,
+            _limit: usize,
+            _opts: RecallOpts<'_>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
+
+        async fn get(&self, _namespace: &str, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+            Ok(None)
+        }
+
+        async fn list(
+            &self,
+            _namespace: Option<&str>,
+            _category: Option<&MemoryCategory>,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
+
+        async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn namespace_summaries(&self) -> anyhow::Result<Vec<NamespaceSummary>> {
+            Ok(Vec::new())
+        }
+
+        async fn count(&self) -> anyhow::Result<usize> {
+            Ok(0)
+        }
+
+        async fn health_check(&self) -> bool {
+            true
+        }
+
+        fn name(&self) -> &str {
+            "noop"
+        }
+    }
+
+    fn parent_context(
+        workspace_dir: std::path::PathBuf,
+        on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
+    ) -> ParentExecutionContext {
+        ParentExecutionContext {
+            provider: Arc::new(NoopProvider),
+            all_tools: Arc::new(Vec::new()),
+            all_tool_specs: Arc::new(Vec::new()),
+            model_name: "test-model".into(),
+            temperature: 0.2,
+            workspace_dir,
+            memory: Arc::new(NoopMemory),
+            agent_config: crate::openhuman::config::AgentConfig::default(),
+            skills: Arc::new(Vec::new()),
+            memory_context: Arc::new(None),
+            session_id: "session-test".into(),
+            channel: "test".into(),
+            connected_integrations: Vec::new(),
+            composio_client: None,
+            tool_call_format: ToolCallFormat::PFormat,
+            session_key: "0_test".into(),
+            session_parent_prefix: None,
+            on_progress,
+        }
+    }
+
+    #[tokio::test]
+    async fn todowrite_persists_active_thread_board_and_emits_progress() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(TodoStore::new());
+        let tool = TodoWriteTool::new(store);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let parent = parent_context(temp.path().to_path_buf(), Some(tx));
+
+        let result = with_thread_id("thread-todo", async {
+            with_parent_context(parent, async {
+                tool.execute(json!({
+                    "todos": [
+                        {
+                            "id": " task-1 ",
+                            "content": " Draft plan ",
+                            "status": "pending",
+                            "notes": " note "
+                        },
+                        {
+                            "content": "Wait for approval",
+                            "status": "blocked",
+                            "notes": "needs sign-off"
+                        }
+                    ]
+                }))
+                .await
+            })
+            .await
+        })
+        .await
+        .expect("todowrite execute");
+        assert!(!result.is_error, "{}", result.output());
+
+        let saved = TaskBoardStore::new(temp.path().to_path_buf())
+            .get("thread-todo")
+            .expect("load persisted board")
+            .expect("board exists");
+        assert_eq!(saved.cards.len(), 2);
+        assert_eq!(saved.cards[0].id, "task-1");
+        assert_eq!(saved.cards[0].status, TaskCardStatus::Todo);
+        assert_eq!(saved.cards[1].status, TaskCardStatus::Blocked);
+        assert_eq!(saved.cards[1].blocker.as_deref(), Some("needs sign-off"));
+
+        let progress = rx.try_recv().expect("task board progress event");
+        match progress {
+            AgentProgress::TaskBoardUpdated { board } => {
+                assert_eq!(board.thread_id, "thread-todo");
+                assert_eq!(board.cards.len(), 2);
+            }
+            other => panic!("unexpected progress event: {other:?}"),
+        }
     }
 }

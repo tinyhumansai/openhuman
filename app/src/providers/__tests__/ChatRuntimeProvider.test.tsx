@@ -26,6 +26,8 @@ vi.mock('../../services/api/threadApi', () => ({
     updateMessage: vi.fn(),
     deleteThread: vi.fn(),
     purge: vi.fn(),
+    getTaskBoard: vi.fn(),
+    putTaskBoard: vi.fn(),
   },
 }));
 
@@ -78,6 +80,27 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
   });
 
   describe('dedupe', () => {
+    it('stores task board updates from socket events', () => {
+      const listeners = renderProvider();
+      const board = {
+        threadId: 'thread-board',
+        updatedAt: '2026-05-04T10:00:05Z',
+        cards: [
+          { id: 'task-1', title: 'Plan', status: 'todo' as const, order: 0, updatedAt: 'now' },
+        ],
+      };
+
+      act(() => {
+        listeners.onTaskBoardUpdated?.({
+          thread_id: 'thread-board',
+          request_id: 'req-board',
+          task_board: board,
+        });
+      });
+
+      expect(store.getState().chatRuntime.taskBoardByThread['thread-board']).toEqual(board);
+    });
+
     it('drops duplicate tool_call events with the same thread/request/round/tool', () => {
       const listeners = renderProvider();
 

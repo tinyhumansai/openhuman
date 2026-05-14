@@ -389,7 +389,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
             outputs: vec![FieldSchema {
-                name: "result",
+                name: "taskBoard",
                 ty: TypeSchema::Json,
                 comment: "Task board payload.",
                 required: true,
@@ -414,7 +414,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
             outputs: vec![FieldSchema {
-                name: "result",
+                name: "taskBoard",
                 ty: TypeSchema::Json,
                 comment: "Task board payload.",
                 required: true,
@@ -533,13 +533,36 @@ struct TaskBoardPutParams {
 fn handle_task_board_get(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<TaskBoardGetParams>(params)?;
+        let thread_id = p.thread_id.trim().to_string();
+        tracing::debug!(thread_id = %thread_id, "[rpc][task_board] get entry");
         let config = crate::openhuman::config::Config::load_or_init()
             .await
-            .map_err(|e| format!("load config: {e}"))?;
+            .map_err(|e| {
+                tracing::debug!(
+                    thread_id = %thread_id,
+                    error = %e,
+                    "[rpc][task_board] get load_config_error"
+                );
+                format!("load config: {e}")
+            })?;
+        tracing::trace!(thread_id = %thread_id, "[rpc][task_board] get loading_board");
         let board = crate::openhuman::agent::task_board::board_for_thread(
             &config.workspace_dir,
-            p.thread_id.trim(),
-        )?;
+            &thread_id,
+        )
+        .map_err(|e| {
+            tracing::debug!(
+                thread_id = %thread_id,
+                error = %e,
+                "[rpc][task_board] get board_error"
+            );
+            e
+        })?;
+        tracing::debug!(
+            thread_id = %thread_id,
+            card_count = board.cards.len(),
+            "[rpc][task_board] get exit"
+        );
         Ok(serde_json::json!({ "taskBoard": board }))
     })
 }
@@ -547,15 +570,42 @@ fn handle_task_board_get(params: Map<String, Value>) -> ControllerFuture {
 fn handle_task_board_put(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<TaskBoardPutParams>(params)?;
+        let thread_id = p.thread_id.trim().to_string();
+        tracing::debug!(
+            thread_id = %thread_id,
+            card_count = p.cards.len(),
+            "[rpc][task_board] put entry"
+        );
         let config = crate::openhuman::config::Config::load_or_init()
             .await
-            .map_err(|e| format!("load config: {e}"))?;
+            .map_err(|e| {
+                tracing::debug!(
+                    thread_id = %thread_id,
+                    error = %e,
+                    "[rpc][task_board] put load_config_error"
+                );
+                format!("load config: {e}")
+            })?;
         let board = TaskBoard {
-            thread_id: p.thread_id.trim().to_string(),
+            thread_id: thread_id.clone(),
             cards: p.cards,
             updated_at: chrono::Utc::now().to_rfc3339(),
         };
-        let saved = TaskBoardStore::new(config.workspace_dir).put(board)?;
+        let saved = TaskBoardStore::new(config.workspace_dir)
+            .put(board)
+            .map_err(|e| {
+                tracing::debug!(
+                    thread_id = %thread_id,
+                    error = %e,
+                    "[rpc][task_board] put store_error"
+                );
+                e
+            })?;
+        tracing::debug!(
+            thread_id = %thread_id,
+            card_count = saved.cards.len(),
+            "[rpc][task_board] put exit"
+        );
         Ok(serde_json::json!({ "taskBoard": saved }))
     })
 }

@@ -847,6 +847,10 @@ impl Agent {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
         {
+            log::debug!(
+                "[agent:builder] profile prompt section injected suffix_chars={}",
+                suffix.chars().count()
+            );
             prompt_builder = prompt_builder.add_section(Box::new(
                 crate::openhuman::agent::profiles::AgentProfilePromptSection::new(suffix),
             ));

@@ -13,6 +13,7 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { agentProfilesApi } from '../../services/api/agentProfilesApi';
 import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
@@ -112,6 +113,7 @@ vi.mock('../../services/api/agentProfilesApi', () => ({
         ],
       }),
     upsert: vi.fn().mockResolvedValue({ activeProfileId: 'default', profiles: [] }),
+    delete: vi.fn().mockResolvedValue({ activeProfileId: 'default', profiles: [] }),
   },
 }));
 
@@ -711,6 +713,115 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       model: 'reasoning-v1',
       profileId: 'default',
     });
+  });
+
+  it('creates a custom agent profile from the header draft form', async () => {
+    const thread = makeThread({ id: 'profile-thread', title: 'Profile Thread' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+    vi.mocked(agentProfilesApi.upsert).mockResolvedValueOnce({
+      activeProfileId: 'custom',
+      profiles: [
+        {
+          id: 'custom',
+          name: 'Custom',
+          description: 'Custom agent profile',
+          agentId: 'orchestrator',
+          builtIn: false,
+        },
+      ],
+    });
+    vi.mocked(agentProfilesApi.select).mockResolvedValueOnce({
+      activeProfileId: 'custom',
+      profiles: [
+        {
+          id: 'custom',
+          name: 'Custom',
+          description: 'Custom agent profile',
+          agentId: 'orchestrator',
+          builtIn: false,
+        },
+      ],
+    });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    fireEvent.click(await screen.findByLabelText('Create agent profile'));
+    fireEvent.change(screen.getByPlaceholderText('Profile name'), { target: { value: 'Custom' } });
+    fireEvent.change(screen.getByPlaceholderText('Prompt style'), {
+      target: { value: 'Be concise' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Allowed tools'), {
+      target: { value: 'todowrite, spawn_parallel_agents' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(agentProfilesApi.upsert).toHaveBeenCalledTimes(1));
+    expect(agentProfilesApi.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Custom',
+        systemPromptSuffix: 'Be concise',
+        allowedTools: ['todowrite', 'spawn_parallel_agents'],
+      })
+    );
+    expect(agentProfilesApi.select).toHaveBeenCalled();
+  });
+
+  it('shows validation when creating a duplicate profile name', async () => {
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState, socket: socketState('connected') });
+    });
+
+    fireEvent.click(await screen.findByLabelText('Create agent profile'));
+    fireEvent.change(screen.getByPlaceholderText('Profile name'), { target: { value: 'Default' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Agent profile "Default" already exists.')).toBeInTheDocument();
+    expect(agentProfilesApi.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rolls back and shows feedback when task board move persistence fails', async () => {
+    const thread = makeThread({ id: 'board-thread', title: 'Board Thread' });
+    const board = {
+      threadId: 'board-thread',
+      updatedAt: '2026-05-04T10:00:00Z',
+      cards: [
+        {
+          id: 'task-1',
+          title: 'Plan rollout',
+          status: 'todo' as const,
+          order: 0,
+          updatedAt: '2026-05-04T10:00:00Z',
+        },
+      ],
+    };
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+    vi.mocked(threadApi.getTaskBoard).mockResolvedValueOnce(board);
+    vi.mocked(threadApi.putTaskBoard).mockRejectedValueOnce(new Error('write failed'));
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(await screen.findByText('Plan rollout')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Move right'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not move task; changes were not saved.')).toBeInTheDocument();
+    });
+    expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
+      'board-thread',
+      expect.arrayContaining([expect.objectContaining({ id: 'task-1', status: 'in_progress' })])
+    );
   });
 
   // Batch-5: Conversation category tabs keep stable labels and mapping (pr#1646).

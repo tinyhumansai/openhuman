@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { subscribeChatEvents } from '../chatService';
+import { chatSend, subscribeChatEvents } from '../chatService';
 import { socketService } from '../socketService';
 
+const mockCallCoreRpc = vi.fn();
+
 vi.mock('../socketService', () => ({ socketService: { getSocket: vi.fn() } }));
+vi.mock('../coreRpcClient', () => ({
+  callCoreRpc: (...args: unknown[]) => mockCallCoreRpc(...args),
+}));
 
 type Handler = (...args: unknown[]) => void;
 
@@ -33,6 +38,7 @@ function createMockSocket() {
 describe('chatService.subscribeChatEvents', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCallCoreRpc.mockResolvedValue(undefined);
   });
 
   it('subscribes to canonical snake_case chat events only', () => {
@@ -198,5 +204,23 @@ describe('chatService.subscribeChatEvents', () => {
     };
     socket.emit('task_board_updated', payload);
     expect(onTaskBoardUpdated).toHaveBeenCalledWith(payload);
+  });
+
+  it('sends chat payload with consistent optional RPC params', async () => {
+    const socket = createMockSocket();
+    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+
+    await chatSend({ threadId: 'thread-1', message: 'hello' });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.channel_web_chat',
+      params: {
+        client_id: 'socket-1',
+        thread_id: 'thread-1',
+        message: 'hello',
+        model_override: undefined,
+        profile_id: undefined,
+      },
+    });
   });
 });

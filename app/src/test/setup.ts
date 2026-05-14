@@ -155,6 +155,8 @@ vi.mock('../utils/config', () => ({
   CORE_RPC_TIMEOUT_MS: 30_000,
   IS_DEV: true,
   IS_PROD: false,
+  E2E_DEFAULT_CORE_MODE: '',
+  E2E_RESTART_APP_AS_RELOAD: false,
   DEV_FORCE_ONBOARDING: false,
   SKILLS_GITHUB_REPO: 'test/skills',
   SENTRY_DSN: undefined,

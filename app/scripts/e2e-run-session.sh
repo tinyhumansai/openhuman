@@ -320,26 +320,40 @@ APP_LOG="$LOG_DIR/openhuman-e2e-app-${LOG_SUFFIX}.log"
 APP_ARGS=()
 # CEF/Chromium needs extra coaxing in headless / containerized Linux runs:
 #
-#   --no-sandbox            crbug.com/638180 — refuses to start as root
-#                           without this. The openhuman_ci docker image
-#                           runs as uid 0.
+#   --no-sandbox            crbug.com/638180 — needed only when the runner is
+#                           uid 0 or the cached CEF chrome-sandbox helper is
+#                           missing/misconfigured. Non-root Linux runs with a
+#                           valid helper keep Chromium sandboxing.
 #   --disable-dev-shm-usage docker /dev/shm is often 64 MB; Chromium
 #                           assumes ≥2 GB and crashes mid-startup
 #                           ("Failed global descriptor lookup: 7" in the
 #                           zygote helper).
 #   --disable-gpu           no GPU in the CI container.
-#   --no-zygote             skips the zygote launcher that wants dbus.
+#   --no-zygote             skips the zygote launcher that wants dbus; Chromium
+#                           only permits this when sandboxing is also disabled.
 #
 # Apply only on Linux. macOS/Windows runners are unprivileged users with a
 # real display / GPU; leaving the sandbox on there is correct.
 case "$OS" in
   Linux)
     APP_ARGS+=(
-      "--no-sandbox"
       "--disable-dev-shm-usage"
       "--disable-gpu"
-      "--no-zygote"
     )
+    NO_SANDBOX_REASON=""
+    if [ "$(id -u)" -eq 0 ]; then
+      NO_SANDBOX_REASON="runner is uid 0"
+    elif [ -n "${CEF_DIST_DIR:-}" ]; then
+      SANDBOX_HELPER="$CEF_DIST_DIR/chrome-sandbox"
+      SANDBOX_HELPER_MODE="$(stat -c '%u:%a' "$SANDBOX_HELPER" 2>/dev/null || true)"
+      if [ "$SANDBOX_HELPER_MODE" != "0:4755" ]; then
+        NO_SANDBOX_REASON="chrome-sandbox helper is not root-owned mode 4755"
+      fi
+    fi
+    if [ -n "$NO_SANDBOX_REASON" ]; then
+      APP_ARGS+=("--no-sandbox" "--no-zygote")
+      echo "[runner] Linux CEF sandbox disabled: $NO_SANDBOX_REASON"
+    fi
     echo "[runner] Linux CEF args: ${APP_ARGS[*]}"
     ;;
 esac

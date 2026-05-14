@@ -649,7 +649,7 @@ export async function chatSend(params: ChatSendParams): Promise<void> {
       client_id: clientId,
       thread_id: params.threadId,
       message: params.message,
-      model_override: params.model,
+      model_override: params.model ?? undefined,
       profile_id: params.profileId ?? undefined,
     },
   });

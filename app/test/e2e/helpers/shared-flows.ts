@@ -249,9 +249,14 @@ export async function navigateToBilling() {
 
   // Verify billing actually loaded after fallback
   let finalCheck = false;
-  for (const marker of billingMarkers) {
-    finalCheck = await textExists(marker);
+  const finalDeadline = Date.now() + 15_000;
+  while (Date.now() < finalDeadline) {
+    for (const marker of billingMarkers) {
+      finalCheck = await textExists(marker);
+      if (finalCheck) break;
+    }
     if (finalCheck) break;
+    await browser.pause(500);
   }
   if (!finalCheck) {
     let finalHash = '';

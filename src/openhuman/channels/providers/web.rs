@@ -1191,6 +1191,13 @@ fn spawn_progress_bridge(
                     });
                 }
                 AgentProgress::TaskBoardUpdated { board } => {
+                    log::debug!(
+                        "[web_channel][bridge] task_board_updated client_id={} thread_id={} request_id={} cards={}",
+                        client_id,
+                        thread_id,
+                        request_id,
+                        board.cards.len()
+                    );
                     publish_web_channel_event(WebChannelEvent {
                         event: "task_board_updated".to_string(),
                         client_id: client_id.clone(),

@@ -106,14 +106,21 @@ impl Tool for SpawnParallelAgentsTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let tasks_value = args
-            .get("tasks")
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'tasks' parameter"))?;
-        let tasks: Vec<ParallelAgentTask> = serde_json::from_value(tasks_value)
-            .map_err(|e| anyhow::anyhow!("Invalid tasks array: {e}"))?;
+        tracing::debug!("[spawn_parallel_agents] execute entry");
+        let tasks_value = args.get("tasks").cloned().ok_or_else(|| {
+            tracing::debug!("[spawn_parallel_agents] missing_tasks_parameter");
+            anyhow::anyhow!("Missing 'tasks' parameter")
+        })?;
+        let tasks: Vec<ParallelAgentTask> = serde_json::from_value(tasks_value).map_err(|e| {
+            tracing::debug!(error = %e, "[spawn_parallel_agents] invalid_tasks_array");
+            anyhow::anyhow!("Invalid tasks array: {e}")
+        })?;
 
         if tasks.len() < 2 {
+            tracing::debug!(
+                task_count = tasks.len(),
+                "[spawn_parallel_agents] rejected_too_few_tasks"
+            );
             return Ok(ToolResult::error(
                 "spawn_parallel_agents requires at least two tasks",
             ));
@@ -122,13 +129,26 @@ impl Tool for SpawnParallelAgentsTool {
         let parent = match current_parent() {
             Some(parent) => parent,
             None => {
+                tracing::debug!("[spawn_parallel_agents] rejected_outside_agent_turn");
                 return Ok(ToolResult::error(
                     "spawn_parallel_agents called outside of an agent turn",
                 ));
             }
         };
         let max_parallel = parent.agent_config.max_parallel_tools.max(2);
+        tracing::debug!(
+            parent_session = %parent.session_id,
+            task_count = tasks.len(),
+            max_parallel,
+            "[spawn_parallel_agents] validated_parent_context"
+        );
         if tasks.len() > max_parallel {
+            tracing::debug!(
+                parent_session = %parent.session_id,
+                task_count = tasks.len(),
+                max_parallel,
+                "[spawn_parallel_agents] rejected_too_many_tasks"
+            );
             return Ok(ToolResult::error(format!(
                 "spawn_parallel_agents received {} tasks but max_parallel_tools is {}",
                 tasks.len(),
@@ -139,6 +159,7 @@ impl Tool for SpawnParallelAgentsTool {
         let registry = match AgentDefinitionRegistry::global() {
             Some(registry) => registry,
             None => {
+                tracing::debug!("[spawn_parallel_agents] registry_unavailable");
                 return Ok(ToolResult::error(
                     "spawn_parallel_agents: AgentDefinitionRegistry has not been initialised",
                 ));
@@ -155,6 +176,12 @@ impl Tool for SpawnParallelAgentsTool {
             let prompt = task.prompt.trim().to_string();
             let task_id = format!("sub-{}", uuid::Uuid::new_v4());
             if agent_id.is_empty() || prompt.is_empty() {
+                tracing::debug!(
+                    parent_session = %parent_session,
+                    task_id = %task_id,
+                    agent_id = %agent_id,
+                    "[spawn_parallel_agents] invalid_task_missing_agent_or_prompt"
+                );
                 immediate_results.push(ParallelAgentResult {
                     task_id,
                     agent_id,
@@ -169,6 +196,12 @@ impl Tool for SpawnParallelAgentsTool {
             }
 
             let Some(definition) = registry.get(&agent_id).cloned() else {
+                tracing::debug!(
+                    parent_session = %parent_session,
+                    task_id = %task_id,
+                    agent_id = %agent_id,
+                    "[spawn_parallel_agents] invalid_task_unknown_agent"
+                );
                 immediate_results.push(ParallelAgentResult {
                     task_id,
                     agent_id: agent_id.clone(),
@@ -189,6 +222,12 @@ impl Tool for SpawnParallelAgentsTool {
                     .map(|s| s.trim().is_empty())
                     .unwrap_or(true)
             {
+                tracing::debug!(
+                    parent_session = %parent_session,
+                    task_id = %task_id,
+                    agent_id = %agent_id,
+                    "[spawn_parallel_agents] invalid_task_missing_toolkit"
+                );
                 immediate_results.push(ParallelAgentResult {
                     task_id,
                     agent_id,
@@ -203,6 +242,14 @@ impl Tool for SpawnParallelAgentsTool {
             }
 
             let prompt = with_ownership_boundary(&prompt, task.ownership.as_deref());
+            tracing::debug!(
+                parent_session = %parent_session,
+                task_id = %task_id,
+                agent_id = %definition.id,
+                prompt_chars = prompt.chars().count(),
+                has_ownership = task.ownership.as_deref().map(str::trim).filter(|s| !s.is_empty()).is_some(),
+                "[spawn_parallel_agents] publishing_subagent_spawned"
+            );
             publish_global(DomainEvent::SubagentSpawned {
                 parent_session: parent_session.clone(),
                 agent_id: definition.id.clone(),
@@ -211,7 +258,7 @@ impl Tool for SpawnParallelAgentsTool {
                 prompt_chars: prompt.chars().count(),
             });
             if let Some(ref tx) = progress_sink {
-                let _ = tx
+                if let Err(err) = tx
                     .send(AgentProgress::SubagentSpawned {
                         agent_id: definition.id.clone(),
                         task_id: task_id.clone(),
@@ -219,10 +266,25 @@ impl Tool for SpawnParallelAgentsTool {
                         dedicated_thread: false,
                         prompt_chars: prompt.chars().count(),
                     })
-                    .await;
+                    .await
+                {
+                    tracing::debug!(
+                        parent_session = %parent_session,
+                        task_id = %task_id,
+                        agent_id = %definition.id,
+                        error = %err,
+                        "[spawn_parallel_agents] progress_send_failed spawned"
+                    );
+                }
             }
             prepared.push((definition, prompt, task, task_id));
         }
+        tracing::debug!(
+            parent_session = %parent_session,
+            prepared_count = prepared.len(),
+            immediate_count = immediate_results.len(),
+            "[spawn_parallel_agents] prepared_tasks"
+        );
 
         let futures = prepared
             .into_iter()
@@ -241,6 +303,14 @@ impl Tool for SpawnParallelAgentsTool {
                     output,
                     ..
                 } => {
+                    tracing::debug!(
+                        parent_session = %parent_session,
+                        task_id = %task_id,
+                        agent_id = %agent_id,
+                        elapsed_ms = *elapsed_ms,
+                        iterations = *iterations,
+                        "[spawn_parallel_agents] publishing_subagent_completed"
+                    );
                     publish_global(DomainEvent::SubagentCompleted {
                         parent_session: parent_session.clone(),
                         task_id: task_id.clone(),
@@ -250,7 +320,7 @@ impl Tool for SpawnParallelAgentsTool {
                         iterations: *iterations as usize,
                     });
                     if let Some(ref tx) = progress_sink {
-                        let _ = tx
+                        if let Err(err) = tx
                             .send(AgentProgress::SubagentCompleted {
                                 agent_id: agent_id.clone(),
                                 task_id: task_id.clone(),
@@ -261,7 +331,16 @@ impl Tool for SpawnParallelAgentsTool {
                                     .map(|s| s.chars().count())
                                     .unwrap_or(0),
                             })
-                            .await;
+                            .await
+                        {
+                            tracing::debug!(
+                                parent_session = %parent_session,
+                                task_id = %task_id,
+                                agent_id = %agent_id,
+                                error = %err,
+                                "[spawn_parallel_agents] progress_send_failed completed"
+                            );
+                        }
                     }
                 }
                 ParallelAgentResult {
@@ -274,6 +353,13 @@ impl Tool for SpawnParallelAgentsTool {
                     let message = error
                         .clone()
                         .unwrap_or_else(|| "unknown failure".to_string());
+                    tracing::debug!(
+                        parent_session = %parent_session,
+                        task_id = %task_id,
+                        agent_id = %agent_id,
+                        error = %message,
+                        "[spawn_parallel_agents] publishing_subagent_failed"
+                    );
                     publish_global(DomainEvent::SubagentFailed {
                         parent_session: parent_session.clone(),
                         task_id: task_id.clone(),
@@ -281,13 +367,22 @@ impl Tool for SpawnParallelAgentsTool {
                         error: message.clone(),
                     });
                     if let Some(ref tx) = progress_sink {
-                        let _ = tx
+                        if let Err(err) = tx
                             .send(AgentProgress::SubagentFailed {
                                 agent_id: agent_id.clone(),
                                 task_id: task_id.clone(),
                                 error: message,
                             })
-                            .await;
+                            .await
+                        {
+                            tracing::debug!(
+                                parent_session = %parent_session,
+                                task_id = %task_id,
+                                agent_id = %agent_id,
+                                error = %err,
+                                "[spawn_parallel_agents] progress_send_failed failed"
+                            );
+                        }
                     }
                 }
             }
@@ -295,6 +390,13 @@ impl Tool for SpawnParallelAgentsTool {
         }
 
         let failures = results.iter().filter(|r| !r.success).count();
+        tracing::debug!(
+            parent_session = %parent_session,
+            total = results.len(),
+            succeeded = results.len().saturating_sub(failures),
+            failed = failures,
+            "[spawn_parallel_agents] execute exit"
+        );
         Ok(ToolResult::success(
             serde_json::to_string_pretty(&json!({
                 "parallel_agents": {
@@ -316,6 +418,14 @@ async fn run_one_parallel_task(
     task_id: String,
 ) -> ParallelAgentResult {
     let started = std::time::Instant::now();
+    tracing::debug!(
+        task_id = %task_id,
+        agent_id = %definition.id,
+        toolkit = task.toolkit.as_deref().unwrap_or(""),
+        context_chars = task.context.as_ref().map(|s| s.chars().count()).unwrap_or(0),
+        prompt_chars = prompt.chars().count(),
+        "[spawn_parallel_agents] task_start"
+    );
     let options = SubagentRunOptions {
         skill_filter_override: None,
         toolkit_override: task.toolkit.clone(),
@@ -324,26 +434,45 @@ async fn run_one_parallel_task(
         worker_thread_id: None,
     };
     match run_subagent(&definition, &prompt, options).await {
-        Ok(outcome) => ParallelAgentResult {
-            task_id: outcome.task_id,
-            agent_id: outcome.agent_id,
-            success: true,
-            output: Some(outcome.output),
-            error: None,
-            ownership: task.ownership,
-            elapsed_ms: outcome.elapsed.as_millis() as u64,
-            iterations: outcome.iterations as u32,
-        },
-        Err(err) => ParallelAgentResult {
-            task_id,
-            agent_id: definition.id,
-            success: false,
-            output: None,
-            error: Some(err.to_string()),
-            ownership: task.ownership,
-            elapsed_ms: started.elapsed().as_millis() as u64,
-            iterations: 0,
-        },
+        Ok(outcome) => {
+            tracing::debug!(
+                task_id = %outcome.task_id,
+                agent_id = %outcome.agent_id,
+                elapsed_ms = outcome.elapsed.as_millis() as u64,
+                iterations = outcome.iterations,
+                output_chars = outcome.output.chars().count(),
+                "[spawn_parallel_agents] task_success"
+            );
+            ParallelAgentResult {
+                task_id: outcome.task_id,
+                agent_id: outcome.agent_id,
+                success: true,
+                output: Some(outcome.output),
+                error: None,
+                ownership: task.ownership,
+                elapsed_ms: outcome.elapsed.as_millis() as u64,
+                iterations: outcome.iterations as u32,
+            }
+        }
+        Err(err) => {
+            tracing::debug!(
+                task_id = %task_id,
+                agent_id = %definition.id,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                error = %err,
+                "[spawn_parallel_agents] task_error"
+            );
+            ParallelAgentResult {
+                task_id,
+                agent_id: definition.id,
+                success: false,
+                output: None,
+                error: Some(err.to_string()),
+                ownership: task.ownership,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                iterations: 0,
+            }
+        }
     }
 }
 
@@ -359,6 +488,26 @@ fn with_ownership_boundary(prompt: &str, ownership: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::agent::harness::fork_context::{
+        with_parent_context, ParentExecutionContext,
+    };
+    use crate::openhuman::context::prompt::ToolCallFormat;
+    use crate::openhuman::memory::{
+        Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
+    };
+    use crate::openhuman::providers::{ChatRequest, ChatResponse, Provider};
+    use std::sync::Arc;
+
+    #[test]
+    fn metadata_methods_expose_execute_permission_and_schema() {
+        let tool = SpawnParallelAgentsTool::default();
+        assert_eq!(tool.name(), "spawn_parallel_agents");
+        assert!(tool.description().contains("independent sub-agent tasks"));
+        assert_eq!(tool.permission_level(), PermissionLevel::Execute);
+        let schema = tool.parameters_schema();
+        assert_eq!(schema["required"][0], "tasks");
+        assert_eq!(schema["properties"]["tasks"]["minItems"], 2);
+    }
 
     #[test]
     fn ownership_boundary_is_prepended_when_present() {
@@ -379,5 +528,208 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("at least two"));
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_or_invalid_tasks_before_parent_lookup() {
+        let tool = SpawnParallelAgentsTool::new();
+
+        let missing = tool.execute(json!({})).await.expect_err("missing tasks");
+        assert!(missing.to_string().contains("Missing 'tasks'"));
+
+        let invalid = tool
+            .execute(json!({ "tasks": "not an array" }))
+            .await
+            .expect_err("invalid tasks");
+        assert!(invalid.to_string().contains("Invalid tasks array"));
+    }
+
+    #[tokio::test]
+    async fn rejects_two_tasks_outside_agent_turn() {
+        let tool = SpawnParallelAgentsTool::new();
+        let result = tool
+            .execute(json!({
+                "tasks": [
+                    { "agent_id": "researcher", "prompt": "one" },
+                    { "agent_id": "planner", "prompt": "two" }
+                ]
+            }))
+            .await
+            .expect("tool result");
+        assert!(result.is_error);
+        assert!(result.output().contains("outside of an agent turn"));
+    }
+
+    struct NoopProvider;
+
+    #[async_trait]
+    impl Provider for NoopProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok("ok".into())
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<ChatResponse> {
+            Ok(ChatResponse {
+                text: Some("ok".into()),
+                tool_calls: Vec::new(),
+                usage: None,
+            })
+        }
+    }
+
+    struct NoopMemory;
+
+    #[async_trait]
+    impl Memory for NoopMemory {
+        async fn store(
+            &self,
+            _namespace: &str,
+            _key: &str,
+            _content: &str,
+            _category: MemoryCategory,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn recall(
+            &self,
+            _query: &str,
+            _limit: usize,
+            _opts: RecallOpts<'_>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
+
+        async fn get(&self, _namespace: &str, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+            Ok(None)
+        }
+
+        async fn list(
+            &self,
+            _namespace: Option<&str>,
+            _category: Option<&MemoryCategory>,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
+
+        async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn namespace_summaries(&self) -> anyhow::Result<Vec<NamespaceSummary>> {
+            Ok(Vec::new())
+        }
+
+        async fn count(&self) -> anyhow::Result<usize> {
+            Ok(0)
+        }
+
+        async fn health_check(&self) -> bool {
+            true
+        }
+
+        fn name(&self) -> &str {
+            "noop"
+        }
+    }
+
+    fn parent_context(max_parallel_tools: usize) -> ParentExecutionContext {
+        let agent_config = crate::openhuman::config::AgentConfig {
+            max_parallel_tools,
+            ..Default::default()
+        };
+        ParentExecutionContext {
+            provider: Arc::new(NoopProvider),
+            all_tools: Arc::new(Vec::new()),
+            all_tool_specs: Arc::new(Vec::new()),
+            model_name: "test-model".into(),
+            temperature: 0.2,
+            workspace_dir: std::env::temp_dir(),
+            memory: Arc::new(NoopMemory),
+            agent_config,
+            skills: Arc::new(Vec::new()),
+            memory_context: Arc::new(None),
+            session_id: "session-test".into(),
+            channel: "test".into(),
+            connected_integrations: Vec::new(),
+            composio_client: None,
+            tool_call_format: ToolCallFormat::PFormat,
+            session_key: "0_test".into(),
+            session_parent_prefix: None,
+            on_progress: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_more_tasks_than_parent_parallel_limit() {
+        let tool = SpawnParallelAgentsTool::new();
+        let parent = parent_context(2);
+        let result = with_parent_context(parent, async {
+            tool.execute(json!({
+                "tasks": [
+                    { "agent_id": "researcher", "prompt": "one" },
+                    { "agent_id": "planner", "prompt": "two" },
+                    { "agent_id": "critic", "prompt": "three" }
+                ]
+            }))
+            .await
+        })
+        .await
+        .expect("tool result");
+        assert!(result.is_error);
+        assert!(result.output().contains("max_parallel_tools"));
+    }
+
+    #[tokio::test]
+    async fn collects_immediate_task_validation_failures() {
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let tool = SpawnParallelAgentsTool::new();
+        let parent = parent_context(4);
+
+        let result = with_parent_context(parent, async {
+            tool.execute(json!({
+                "tasks": [
+                    { "agent_id": " ", "prompt": "missing agent", "ownership": "files: none" },
+                    { "agent_id": "__missing_agent__", "prompt": "unknown agent" },
+                    { "agent_id": "integrations_agent", "prompt": "needs toolkit" }
+                ]
+            }))
+            .await
+        })
+        .await
+        .expect("tool result");
+
+        assert!(!result.is_error, "{}", result.output());
+        let body: serde_json::Value = serde_json::from_str(&result.output()).expect("json output");
+        assert_eq!(body["parallel_agents"]["total"], 3);
+        assert_eq!(body["parallel_agents"]["failed"], 3);
+        let errors = body["parallel_agents"]["results"]
+            .as_array()
+            .expect("results")
+            .iter()
+            .map(|result| result["error"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("agent_id and prompt")));
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("unknown agent_id")));
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("requires toolkit")));
     }
 }

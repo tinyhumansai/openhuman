@@ -12,6 +12,8 @@
  */
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
+import { E2E_DEFAULT_CORE_MODE } from '../utils/config';
+
 export type CoreMode =
   | { kind: 'unset' }
   | { kind: 'local' }
@@ -51,7 +53,7 @@ const CORE_MODE_STORAGE_KEY = 'openhuman_core_mode';
  * can recover the exact mode on reload regardless of the persist flush race.
  */
 function deriveInitialMode(): CoreMode {
-  if (import.meta.env.VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE === 'local') {
+  if (E2E_DEFAULT_CORE_MODE === 'local') {
     return { kind: 'local' };
   }
 

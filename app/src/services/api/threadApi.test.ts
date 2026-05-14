@@ -108,4 +108,14 @@ describe('threadApi', () => {
       params: { thread_id: 'thread-1', cards: taskBoard.cards },
     });
   });
+
+  it('returns null when task board RPC envelopes omit the board', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ data: {} });
+
+    const { threadApi } = await import('./threadApi');
+    await expect(threadApi.getTaskBoard('thread-1')).resolves.toBeNull();
+
+    mockCallCoreRpc.mockResolvedValueOnce({ data: {} });
+    await expect(threadApi.putTaskBoard('thread-1', [])).resolves.toBeNull();
+  });
 });

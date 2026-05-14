@@ -75,6 +75,23 @@ async function waitForRequest(method, urlFragment, timeout = 15_000) {
   return undefined;
 }
 
+async function expectBillingMarkers(markers) {
+  const results = [];
+  for (const marker of markers) {
+    results.push([marker, await textExists(marker)]);
+  }
+  const missing = results.filter(([, found]) => !found).map(([marker]) => marker);
+  if (missing.length > 0) {
+    console.log('[AuthAccess] Billing request log:', JSON.stringify(getRequestLog(), null, 2));
+    const tree = await dumpAccessibilityTree();
+    console.log('[AuthAccess] Billing page tree:\n', tree.slice(0, 6000));
+  }
+  for (const [marker, found] of results) {
+    expect(found).toBe(true);
+    console.log(`[AuthAccess] Billing marker verified: ${marker}`);
+  }
+}
+
 // walkOnboarding, waitForHomePage imported from shared-flows
 
 /**
@@ -190,13 +207,13 @@ describe('Auth & Access Control', () => {
       (await textExists('Billing moved to the web')) ||
       (await textExists('Open billing dashboard'));
     if (!hasHandoff) {
+      console.log('[AuthAccess] Billing request log:', JSON.stringify(getRequestLog(), null, 2));
       const tree = await dumpAccessibilityTree();
       console.log('[AuthAccess] Billing page tree:\n', tree.slice(0, 6000));
     }
     expect(hasHandoff).toBe(true);
 
-    const hasOpenDashboard = await textExists('Open dashboard');
-    expect(hasOpenDashboard).toBe(true);
+    await expectBillingMarkers(['Open dashboard']);
 
     console.log('[AuthAccess] 3.1.1 — Billing web handoff verified');
     await navigateToHome();
@@ -210,8 +227,7 @@ describe('Auth & Access Control', () => {
     await navigateToBilling();
     clearRequestLog();
 
-    expect(await textExists('Open dashboard')).toBe(true);
-    expect(await textExists('TinyHumans on the web')).toBe(true);
+    await expectBillingMarkers(['Open dashboard', 'TinyHumans on the web']);
 
     console.log('[AuthAccess] 3.2.1 — Billing dashboard entry point verified');
     await navigateToHome();
@@ -230,9 +246,11 @@ describe('Auth & Access Control', () => {
 
     await navigateToBilling();
 
-    expect(await textExists('Billing moved to the web')).toBe(true);
-    expect(await textExists('Subscription changes')).toBe(true);
-    expect(await textExists('Open dashboard')).toBe(true);
+    await expectBillingMarkers([
+      'Billing moved to the web',
+      'Subscription changes',
+      'Open dashboard',
+    ]);
 
     console.log('[AuthAccess] 3.3.1 — Subscription management handoff verified');
   });
@@ -247,8 +265,7 @@ describe('Auth & Access Control', () => {
     await navigateToBilling();
     await browser.pause(3_000);
 
-    const hasDashboard = await textExists('Open dashboard');
-    expect(hasDashboard).toBe(true);
+    await expectBillingMarkers(['Open dashboard']);
 
     console.log('[AuthAccess] 3.3.3 — Dashboard handoff verified');
     resetMockBehavior();

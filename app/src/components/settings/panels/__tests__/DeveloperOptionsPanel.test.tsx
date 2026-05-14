@@ -20,11 +20,15 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: hoisted.invoke, isTauri: hoiste
 
 vi.mock('../../../../services/analytics', () => ({ triggerSentryTestEvent: hoisted.trigger }));
 
-vi.mock('../../../../utils/config', () => ({
-  get APP_ENVIRONMENT() {
-    return hoisted.appEnvironment;
-  },
-}));
+vi.mock('../../../../utils/config', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../../utils/config')>();
+  return {
+    ...actual,
+    get APP_ENVIRONMENT() {
+      return hoisted.appEnvironment;
+    },
+  };
+});
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({

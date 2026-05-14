@@ -97,6 +97,12 @@ const AGENT_PROFILE_AGENT_OPTIONS = [
   { id: 'planner', label: 'Planner' },
   { id: 'critic', label: 'Critic' },
 ] as const;
+const DEFAULT_PROFILE_DRAFT = {
+  name: '',
+  agentId: 'orchestrator',
+  systemPromptSuffix: '',
+  allowedTools: '',
+};
 
 interface ConversationsProps {
   /**
@@ -217,12 +223,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
   const [selectedAgentProfileId, setSelectedAgentProfileId] = useState('default');
   const [profileDraftOpen, setProfileDraftOpen] = useState(false);
-  const [profileDraft, setProfileDraft] = useState({
-    name: '',
-    agentId: 'orchestrator',
-    systemPromptSuffix: '',
-    allowedTools: '',
-  });
+  const [profileDraft, setProfileDraft] = useState(DEFAULT_PROFILE_DRAFT);
   const socketStatus = useAppSelector(selectSocketStatus);
   const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
   const taskBoardByThread = useAppSelector(state => state.chatRuntime.taskBoardByThread);
@@ -307,6 +308,13 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   const handleCreateAgentProfile = async () => {
     const name = profileDraft.name.trim();
     if (!name) return;
+    const duplicate = agentProfiles.some(
+      profile => profile.name.trim().toLowerCase() === name.toLowerCase()
+    );
+    if (duplicate) {
+      setSendAdvisory(`Agent profile "${name}" already exists.`);
+      return;
+    }
     const id = `profile-${globalThis.crypto.randomUUID().slice(0, 8)}`;
     const allowedTools = profileDraft.allowedTools
       .split(',')
@@ -327,14 +335,11 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       setAgentProfiles(state.profiles);
       setSelectedAgentProfileId(state.activeProfileId);
       setProfileDraftOpen(false);
-      setProfileDraft({
-        name: '',
-        agentId: 'orchestrator',
-        systemPromptSuffix: '',
-        allowedTools: '',
-      });
+      setProfileDraft(DEFAULT_PROFILE_DRAFT);
+      setSendAdvisory(null);
     } catch (error) {
       console.warn('[conversations] agent profile create failed:', error);
+      setSendAdvisory('Could not create agent profile.');
     }
   };
 
@@ -400,7 +405,9 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       void threadApi
         .getTaskBoard(selectedThreadId)
         .then(board => {
-          dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board }));
+          if (board) {
+            dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board }));
+          }
         })
         .catch(error => {
           console.warn('[conversations] getTaskBoard failed:', error);
@@ -1061,9 +1068,13 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: nextBoard }));
     try {
       const saved = await threadApi.putTaskBoard(selectedThreadId, nextBoard.cards);
+      if (!saved) {
+        throw new Error('Task board update returned no board');
+      }
       dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: saved }));
     } catch (error) {
       console.warn('[conversations] putTaskBoard failed:', error);
+      setSendAdvisory('Could not move task; changes were not saved.');
       dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: selectedTaskBoard }));
     }
   };
@@ -1366,6 +1377,15 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 disabled={!profileDraft.name.trim()}
                 className="h-8 rounded-lg bg-primary-500 px-3 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-40">
                 Save
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setProfileDraft(DEFAULT_PROFILE_DRAFT);
+                  setProfileDraftOpen(false);
+                }}
+                className="h-8 rounded-lg border border-stone-200 px-3 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-50">
+                Cancel
               </button>
             </div>
           </div>
