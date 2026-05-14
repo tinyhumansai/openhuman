@@ -4,7 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { IS_DEV } from '../config';
+import { E2E_RESTART_APP_AS_RELOAD, IS_DEV } from '../config';
 import { CommandResponse, isTauri } from './common';
 
 export interface CoreUpdateStatus {
@@ -79,8 +79,8 @@ export async function restartApp(): Promise<void> {
     console.debug('[app] restartApp: skipped — not running in Tauri');
     return;
   }
-  if (IS_DEV) {
-    console.debug('[app] restartApp: dev mode → window.location.reload()');
+  if (IS_DEV || E2E_RESTART_APP_AS_RELOAD) {
+    console.debug('[app] restartApp: window.location.reload()');
     window.location.reload();
     return;
   }

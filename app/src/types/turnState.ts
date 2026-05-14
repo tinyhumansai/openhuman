@@ -11,6 +11,24 @@ export type PersistedTurnPhase = 'thinking' | 'tool_use' | 'subagent';
 
 export type PersistedToolStatus = 'running' | 'success' | 'error';
 
+export type TaskBoardCardStatus = 'todo' | 'in_progress' | 'blocked' | 'done';
+
+export interface TaskBoardCard {
+  id: string;
+  title: string;
+  status: TaskBoardCardStatus;
+  notes?: string | null;
+  blocker?: string | null;
+  order: number;
+  updatedAt: string;
+}
+
+export interface TaskBoard {
+  threadId: string;
+  cards: TaskBoardCard[];
+  updatedAt: string;
+}
+
 export interface PersistedSubagentToolCall {
   callId: string;
   toolName: string;
@@ -57,6 +75,7 @@ export interface PersistedTurnState {
   streamingText: string;
   thinking: string;
   toolTimeline: PersistedToolTimelineEntry[];
+  taskBoard?: TaskBoard | null;
   startedAt: string;
   updatedAt: string;
 }
@@ -72,4 +91,12 @@ export interface ListTurnStatesResponse {
 
 export interface ClearTurnStateResponse {
   cleared: boolean;
+}
+
+export interface GetTaskBoardResponse {
+  taskBoard: TaskBoard;
+}
+
+export interface PutTaskBoardResponse {
+  taskBoard: TaskBoard;
 }

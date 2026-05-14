@@ -64,6 +64,13 @@ vi.mock('../../services/api/threadApi', () => ({
     createNewThread: vi.fn().mockResolvedValue({ id: 'new-thread', labels: [] }),
     getThreads: mockGetThreads,
     getThreadMessages: mockGetThreadMessages,
+    getTurnState: vi.fn().mockResolvedValue(null),
+    getTaskBoard: vi
+      .fn()
+      .mockResolvedValue({ threadId: 't-1', cards: [], updatedAt: '2026-05-04T10:00:00Z' }),
+    putTaskBoard: vi
+      .fn()
+      .mockResolvedValue({ threadId: 't-1', cards: [], updatedAt: '2026-05-04T10:00:00Z' }),
     appendMessage: vi.fn().mockResolvedValue({}),
     deleteThread: vi.fn().mockResolvedValue({ deleted: true }),
     generateTitleIfNeeded: vi.fn().mockResolvedValue({}),
@@ -71,6 +78,40 @@ vi.mock('../../services/api/threadApi', () => ({
     purge: vi.fn().mockResolvedValue({}),
     updateLabels: vi.fn().mockResolvedValue({}),
     persistReaction: vi.fn().mockResolvedValue({}),
+  },
+}));
+
+vi.mock('../../services/api/agentProfilesApi', () => ({
+  agentProfilesApi: {
+    list: vi
+      .fn()
+      .mockResolvedValue({
+        activeProfileId: 'default',
+        profiles: [
+          {
+            id: 'default',
+            name: 'Default',
+            description: 'Default',
+            agentId: 'orchestrator',
+            builtIn: true,
+          },
+        ],
+      }),
+    select: vi
+      .fn()
+      .mockResolvedValue({
+        activeProfileId: 'default',
+        profiles: [
+          {
+            id: 'default',
+            name: 'Default',
+            description: 'Default',
+            agentId: 'orchestrator',
+            builtIn: true,
+          },
+        ],
+      }),
+    upsert: vi.fn().mockResolvedValue({ activeProfileId: 'default', profiles: [] }),
   },
 }));
 
@@ -668,6 +709,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       threadId: thread.id,
       message: 'hello cloud',
       model: 'reasoning-v1',
+      profileId: 'default',
     });
   });
 

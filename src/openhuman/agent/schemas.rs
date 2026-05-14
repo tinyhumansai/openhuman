@@ -4,6 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::openhuman::agent::profiles::{AgentProfile, AgentProfileStore};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
 
@@ -23,6 +24,10 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_definition"),
         schemas("reload_definitions"),
         schemas("triage_evaluate"),
+        schemas("profiles_list"),
+        schemas("profile_select"),
+        schemas("profile_upsert"),
+        schemas("profile_delete"),
     ]
 }
 
@@ -55,6 +60,22 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("triage_evaluate"),
             handler: handle_triage_evaluate,
+        },
+        RegisteredController {
+            schema: schemas("profiles_list"),
+            handler: handle_profiles_list,
+        },
+        RegisteredController {
+            schema: schemas("profile_select"),
+            handler: handle_profile_select,
+        },
+        RegisteredController {
+            schema: schemas("profile_upsert"),
+            handler: handle_profile_upsert,
+        },
+        RegisteredController {
+            schema: schemas("profile_delete"),
+            handler: handle_profile_delete,
         },
     ]
 }
@@ -142,6 +163,48 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("result", "Triage evaluation result.")],
         },
+        "profiles_list" => ControllerSchema {
+            namespace: "agent",
+            function: "profiles_list",
+            description: "List persistent agent profiles and the active profile id.",
+            inputs: vec![],
+            outputs: vec![json_output("profiles", "Agent profile state payload.")],
+        },
+        "profile_select" => ControllerSchema {
+            namespace: "agent",
+            function: "profile_select",
+            description: "Select the active persistent agent profile.",
+            inputs: vec![required_string("profile_id", "Agent profile id.")],
+            outputs: vec![json_output(
+                "profiles",
+                "Updated agent profile state payload.",
+            )],
+        },
+        "profile_upsert" => ControllerSchema {
+            namespace: "agent",
+            function: "profile_upsert",
+            description: "Create or update an agent profile.",
+            inputs: vec![FieldSchema {
+                name: "profile",
+                ty: TypeSchema::Json,
+                comment: "Agent profile payload.",
+                required: true,
+            }],
+            outputs: vec![json_output(
+                "profiles",
+                "Updated agent profile state payload.",
+            )],
+        },
+        "profile_delete" => ControllerSchema {
+            namespace: "agent",
+            function: "profile_delete",
+            description: "Delete a custom agent profile.",
+            inputs: vec![required_string("profile_id", "Agent profile id.")],
+            outputs: vec![json_output(
+                "profiles",
+                "Updated agent profile state payload.",
+            )],
+        },
         _ => ControllerSchema {
             namespace: "agent",
             function: "unknown",
@@ -155,6 +218,21 @@ pub fn schemas(function: &str) -> ControllerSchema {
             }],
         },
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfileSelectParams {
+    profile_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfileUpsertParams {
+    profile: AgentProfile,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfileDeleteParams {
+    profile_id: String,
 }
 
 fn handle_chat(params: Map<String, Value>) -> ControllerFuture {
@@ -360,6 +438,60 @@ fn handle_triage_evaluate(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_profiles_list(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let state = AgentProfileStore::new(config.workspace_dir).load()?;
+        Ok(serde_json::json!({
+            "profiles": state.profiles,
+            "activeProfileId": state.active_profile_id,
+        }))
+    })
+}
+
+fn handle_profile_select(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<ProfileSelectParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        let state = AgentProfileStore::new(config.workspace_dir).select(&p.profile_id)?;
+        Ok(serde_json::json!({
+            "profiles": state.profiles,
+            "activeProfileId": state.active_profile_id,
+        }))
+    })
+}
+
+fn handle_profile_upsert(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<ProfileUpsertParams>(params)?;
+        if let Some(registry) = crate::openhuman::agent::harness::AgentDefinitionRegistry::global()
+        {
+            let agent_id = p.profile.agent_id.trim();
+            if !agent_id.is_empty() && registry.get(agent_id).is_none() {
+                return Err(format!("agent definition '{agent_id}' not found"));
+            }
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let state = AgentProfileStore::new(config.workspace_dir).upsert(p.profile)?;
+        Ok(serde_json::json!({
+            "profiles": state.profiles,
+            "activeProfileId": state.active_profile_id,
+        }))
+    })
+}
+
+fn handle_profile_delete(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<ProfileDeleteParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        let state = AgentProfileStore::new(config.workspace_dir).delete(&p.profile_id)?;
+        Ok(serde_json::json!({
+            "profiles": state.profiles,
+            "activeProfileId": state.active_profile_id,
+        }))
+    })
+}
+
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
 }
@@ -425,6 +557,10 @@ mod tests {
                 "get_definition",
                 "reload_definitions",
                 "triage_evaluate",
+                "profiles_list",
+                "profile_select",
+                "profile_upsert",
+                "profile_delete",
             ]
         );
         assert_eq!(schemas.len(), all_registered_controllers().len());
@@ -447,6 +583,14 @@ mod tests {
             .inputs
             .iter()
             .any(|input| input.name == "dry_run" && !input.required));
+
+        let profiles = schemas("profiles_list");
+        assert_eq!(profiles.inputs.len(), 0);
+        let profile_select = schemas("profile_select");
+        assert!(profile_select
+            .inputs
+            .iter()
+            .any(|input| input.name == "profile_id" && input.required));
 
         let unknown = schemas("nope");
         assert_eq!(unknown.function, "unknown");

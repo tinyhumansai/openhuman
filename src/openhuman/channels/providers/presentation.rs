@@ -65,6 +65,7 @@ pub async fn deliver_response(
             delta_kind: None,
             tool_call_id: None,
             subagent: None,
+            task_board: None,
             citations: if citations.is_empty() {
                 None
             } else {
@@ -105,6 +106,7 @@ pub async fn deliver_response(
             delta_kind: None,
             tool_call_id: None,
             subagent: None,
+            task_board: None,
             citations: if i == 0 && !citations.is_empty() {
                 Some(serde_json::json!(citations))
             } else {
@@ -135,6 +137,7 @@ pub async fn deliver_response(
         delta_kind: None,
         tool_call_id: None,
         subagent: None,
+        task_board: None,
         citations: if citations.is_empty() {
             None
         } else {

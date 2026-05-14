@@ -178,4 +178,25 @@ describe('chatService.subscribeChatEvents', () => {
     const unsubscribedEvents = socket.off.mock.calls.map(call => call[0]);
     expect(unsubscribedEvents).toEqual(['tool_call', 'chat_done']);
   });
+
+  it('subscribes and forwards task board updates', () => {
+    const socket = createMockSocket();
+    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    const onTaskBoardUpdated = vi.fn();
+
+    subscribeChatEvents({ onTaskBoardUpdated });
+
+    expect(socket.on.mock.calls.map(call => call[0])).toEqual(['task_board_updated']);
+    const payload = {
+      thread_id: 'thread-1',
+      request_id: 'req-1',
+      task_board: {
+        threadId: 'thread-1',
+        updatedAt: '2026-05-04T10:00:05Z',
+        cards: [{ id: 'task-1', title: 'Plan', status: 'todo', order: 0, updatedAt: 'now' }],
+      },
+    };
+    socket.emit('task_board_updated', payload);
+    expect(onTaskBoardUpdated).toHaveBeenCalledWith(payload);
+  });
 });

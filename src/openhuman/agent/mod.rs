@@ -30,6 +30,7 @@ pub mod host_runtime;
 pub mod memory_loader;
 pub mod multimodal;
 pub mod pformat;
+pub mod profiles;
 pub mod progress;
 /// Prompt plumbing — types, section builders, and
 /// [`SystemPromptBuilder`](prompts::SystemPromptBuilder). Moved from
@@ -39,6 +40,7 @@ pub mod progress;
 pub mod prompts;
 mod schemas;
 pub mod stop_hooks;
+pub mod task_board;
 pub mod tree_loader;
 pub mod triage;
 pub use schemas::{

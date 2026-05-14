@@ -67,7 +67,7 @@ describe('tauriCommands/core', () => {
       expect(reloadSpy).toHaveBeenCalledTimes(1);
       expect(mockInvoke).not.toHaveBeenCalled();
       expect(debug).toHaveBeenCalledWith(
-        expect.stringContaining('restartApp: dev mode → window.location.reload()')
+        expect.stringContaining('restartApp: window.location.reload()')
       );
       debug.mockRestore();
     });
@@ -78,7 +78,8 @@ describe('tauriCommands/core', () => {
       // and runs the production branch (#1068 dev workaround should be inert).
       vi.doMock('../config', () => ({
         IS_DEV: false,
-        // Re-export anything else core.ts might end up using; today just IS_DEV.
+        E2E_RESTART_APP_AS_RELOAD: false,
+        // Re-export anything else core.ts might end up using.
       }));
       vi.resetModules();
       const prodCore = await import('./core');

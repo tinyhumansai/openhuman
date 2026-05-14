@@ -199,13 +199,14 @@ export async function navigateToSettings() {
 export async function navigateToBilling() {
   await navigateViaHash('/settings/billing');
 
+  const billingMarkers = ['Billing moved to the web', 'Open billing dashboard', 'Open dashboard'];
   const deadline = Date.now() + 15_000;
   let hasBilling = false;
   while (Date.now() < deadline) {
-    hasBilling =
-      (await textExists('Current Plan')) ||
-      (await textExists('FREE')) ||
-      (await textExists('Upgrade'));
+    for (const marker of billingMarkers) {
+      hasBilling = await textExists(marker);
+      if (hasBilling) break;
+    }
     if (hasBilling) break;
     await browser.pause(500);
   }
@@ -247,10 +248,11 @@ export async function navigateToBilling() {
   await browser.pause(3_000);
 
   // Verify billing actually loaded after fallback
-  const finalCheck =
-    (await textExists('Current Plan')) ||
-    (await textExists('FREE')) ||
-    (await textExists('Upgrade'));
+  let finalCheck = false;
+  for (const marker of billingMarkers) {
+    finalCheck = await textExists(marker);
+    if (finalCheck) break;
+  }
   if (!finalCheck) {
     let finalHash = '';
     if (supportsExecuteScript()) {
@@ -284,13 +286,20 @@ export async function navigateToNotifications() {
 
 // ---------------------------------------------------------------------------
 // Onboarding walkthrough
-// Current flow: Welcome → Local AI → Screen & Accessibility → Tools → Skills (5 steps, indices 0–4).
+// Current flow: Welcome → Skills → optional Context gathering.
 // ---------------------------------------------------------------------------
 
 /** Labels used to detect the onboarding overlay (same strings as Onboarding copy). */
 export const ONBOARDING_OVERLAY_TEXTS = [
   'Skip',
   'Welcome',
+  "Hi. I'm OpenHuman.",
+  "Let's Start",
+  'Connect your Gmail',
+  'Skip for Now',
+  'Building your profile',
+  'Almost there',
+  'Continue to chat',
   'Run AI Models Locally',
   'Screen & Accessibility',
   'Enable Tools',
@@ -328,9 +337,8 @@ export async function waitForOnboardingOverlayHidden(timeout = 10_000): Promise<
 }
 
 /**
- * Walk through onboarding: Welcome → Local AI → Screen & Accessibility → Tools → Skills.
- * Each step uses the shared primary button label "Continue" (see OnboardingNextButton).
- * Completing the last step dismisses the overlay.
+ * Walk through onboarding. The product has shipped a few variants of this
+ * flow, so prefer current CTAs first and keep older labels as fallbacks.
  */
 export async function walkOnboarding(logPrefix = '[E2E]') {
   let visible = false;
@@ -348,25 +356,44 @@ export async function walkOnboarding(logPrefix = '[E2E]') {
     return;
   }
 
-  // Up to 6 "Continue" clicks — covers 5 steps plus one retry if the list is still loading.
-  for (let step = 0; step < 6; step++) {
+  for (let step = 0; step < 8; step++) {
+    const homeText = await waitForHomePage(1_000);
+    if (homeText) {
+      console.log(`${logPrefix} Onboarding completed before step ${step}: "${homeText}"`);
+      return;
+    }
+
     if (!(await onboardingOverlayLikelyVisible())) {
       console.log(`${logPrefix} Onboarding dismissed after step ${step}`);
       return;
     }
 
-    const clicked = await clickFirstMatch(['Continue'], 12_000);
+    const clicked = await clickFirstMatch(
+      [
+        "Let's Start",
+        'Skip for Now',
+        'Continue to chat',
+        'Skip for now',
+        'Continue',
+        'Start when ready',
+        'Skip',
+      ],
+      12_000
+    );
     if (clicked) {
-      console.log(`${logPrefix} Onboarding step ${step}: clicked Continue`);
-      await browser.pause(step >= 4 ? 4_000 : 2_000);
+      console.log(`${logPrefix} Onboarding step ${step}: clicked ${clicked}`);
+      await browser.pause(clicked === 'Continue to chat' || step >= 4 ? 4_000 : 2_000);
     } else {
       const installSkillsLabel = ONBOARDING_OVERLAY_TEXTS[ONBOARDING_OVERLAY_TEXTS.length - 1]!;
       if (await textExists(installSkillsLabel)) {
         await browser.pause(2_500);
-        const retry = await clickFirstMatch(['Continue'], 10_000);
+        const retry = await clickFirstMatch(
+          ['Skip for Now', 'Continue to chat', 'Continue'],
+          10_000
+        );
         if (retry) {
           console.log(
-            `${logPrefix} Onboarding step ${step}: retry Continue on ${installSkillsLabel}`
+            `${logPrefix} Onboarding step ${step}: retry ${retry} on ${installSkillsLabel}`
           );
           await browser.pause(4_000);
         }

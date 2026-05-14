@@ -7,6 +7,7 @@ import type {
   PersistedSubagentToolCall,
   PersistedToolTimelineEntry,
   PersistedTurnState,
+  TaskBoard,
 } from '../types/turnState';
 import { resetUserScopedState } from './resetActions';
 
@@ -126,6 +127,7 @@ interface ChatRuntimeState {
   inferenceStatusByThread: Record<string, InferenceStatus>;
   streamingAssistantByThread: Record<string, StreamingAssistantState>;
   toolTimelineByThread: Record<string, ToolTimelineEntry[]>;
+  taskBoardByThread: Record<string, TaskBoard>;
   inferenceTurnLifecycleByThread: Record<string, InferenceTurnLifecycle>;
   sessionTokenUsage: SessionTokenUsage;
 }
@@ -134,6 +136,7 @@ const initialState: ChatRuntimeState = {
   inferenceStatusByThread: {},
   streamingAssistantByThread: {},
   toolTimelineByThread: {},
+  taskBoardByThread: {},
   inferenceTurnLifecycleByThread: {},
   sessionTokenUsage: { inputTokens: 0, outputTokens: 0, turns: 0, lastUpdated: 0 },
 };
@@ -209,6 +212,15 @@ const chatRuntimeSlice = createSlice({
     clearToolTimelineForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.toolTimelineByThread[action.payload.threadId];
     },
+    setTaskBoardForThread: (
+      state,
+      action: PayloadAction<{ threadId: string; board: TaskBoard }>
+    ) => {
+      state.taskBoardByThread[action.payload.threadId] = action.payload.board;
+    },
+    clearTaskBoardForThread: (state, action: PayloadAction<{ threadId: string }>) => {
+      delete state.taskBoardByThread[action.payload.threadId];
+    },
     beginInferenceTurn: (state, action: PayloadAction<{ threadId: string }>) => {
       state.inferenceTurnLifecycleByThread[action.payload.threadId] = 'started';
     },
@@ -224,12 +236,14 @@ const chatRuntimeSlice = createSlice({
       delete state.inferenceStatusByThread[action.payload.threadId];
       delete state.streamingAssistantByThread[action.payload.threadId];
       delete state.toolTimelineByThread[action.payload.threadId];
+      delete state.taskBoardByThread[action.payload.threadId];
       delete state.inferenceTurnLifecycleByThread[action.payload.threadId];
     },
     clearAllChatRuntime: state => {
       state.inferenceStatusByThread = {};
       state.streamingAssistantByThread = {};
       state.toolTimelineByThread = {};
+      state.taskBoardByThread = {};
       state.inferenceTurnLifecycleByThread = {};
     },
     recordChatTurnUsage: (
@@ -258,6 +272,9 @@ const chatRuntimeSlice = createSlice({
       const threadId = snapshot.threadId;
 
       state.inferenceTurnLifecycleByThread[threadId] = snapshot.lifecycle;
+      if (snapshot.taskBoard) {
+        state.taskBoardByThread[threadId] = snapshot.taskBoard;
+      }
 
       // Interrupted turns have no live driver — surface only the
       // lifecycle so the UI renders a retry affordance instead of
@@ -307,6 +324,8 @@ export const {
   clearStreamingAssistantForThread,
   setToolTimelineForThread,
   clearToolTimelineForThread,
+  setTaskBoardForThread,
+  clearTaskBoardForThread,
   beginInferenceTurn,
   markInferenceTurnStreaming,
   endInferenceTurn,

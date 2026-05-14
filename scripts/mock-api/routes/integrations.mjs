@@ -146,6 +146,15 @@ export function handleIntegrations(ctx) {
   // ── Composio ───────────────────────────────────────────────
   if (
     method === "GET" &&
+    /^\/agent-integrations\/composio\/toolkits\/?(\?.*)?$/.test(url)
+  ) {
+    const toolkits = parseBehaviorJson("composioToolkits", ["gmail"]);
+    json(res, 200, { success: true, data: { toolkits } });
+    return true;
+  }
+
+  if (
+    method === "GET" &&
     /^\/agent-integrations\/composio\/connections\/?(\?.*)?$/.test(url)
   ) {
     const connections = parseBehaviorJson("composioConnections", [
@@ -259,6 +268,31 @@ export function handleIntegrations(ctx) {
     /^\/agent-integrations\/composio\/tools\/?(\?.*)?$/.test(url)
   ) {
     json(res, 200, { success: true, data: { tools: [] } });
+    return true;
+  }
+
+  if (
+    method === "POST" &&
+    /^\/agent-integrations\/composio\/execute\/?$/.test(url)
+  ) {
+    const action =
+      typeof parsedBody?.action === "string"
+        ? parsedBody.action
+        : typeof parsedBody?.tool === "string"
+          ? parsedBody.tool
+          : "";
+    const data =
+      action === "GMAIL_FETCH_EMAILS"
+        ? {
+            messages: [
+              {
+                id: "e2e-gmail-message-1",
+                snippet: "Welcome to OpenHuman. No profile link is required for this run.",
+              },
+            ],
+          }
+        : { ok: true };
+    json(res, 200, { success: true, data: { successful: true, data, error: null } });
     return true;
   }
 

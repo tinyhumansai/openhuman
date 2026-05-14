@@ -162,8 +162,9 @@ esac
 
 # Mock URL must reach the core sidecar — XCUITest doesn't inherit env,
 # and CEF child processes won't either. Pinning via config.toml works
-# on every platform.
-E2E_CONFIG_DIR="$HOME/.openhuman"
+# on every platform. The runner always sets OPENHUMAN_WORKSPACE above;
+# Config::load_or_init gives that path precedence over $HOME/.openhuman.
+E2E_CONFIG_DIR="${OPENHUMAN_WORKSPACE:-$HOME/.openhuman}"
 E2E_CONFIG_FILE="$E2E_CONFIG_DIR/config.toml"
 mkdir -p "$E2E_CONFIG_DIR"
 if [ -f "$E2E_CONFIG_FILE" ]; then
@@ -333,10 +334,8 @@ APP_ARGS=()
 # real display / GPU; leaving the sandbox on there is correct.
 case "$OS" in
   Linux)
-    if [ "$(id -u 2>/dev/null || echo 0)" = "0" ]; then
-      APP_ARGS+=("--no-sandbox")
-    fi
     APP_ARGS+=(
+      "--no-sandbox"
       "--disable-dev-shm-usage"
       "--disable-gpu"
       "--no-zygote"

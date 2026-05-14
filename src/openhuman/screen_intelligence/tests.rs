@@ -14,7 +14,9 @@ use super::helpers::{
 use super::state::{AccessibilityEngine, EngineState};
 use super::types::{CaptureFrame, InputActionParams, StartSessionParams};
 use crate::openhuman::accessibility::{parse_foreground_output, AppContext};
-use crate::openhuman::config::{Config, ScreenIntelligenceConfig};
+use crate::openhuman::config::{
+    Config, ScreenIntelligenceConfig, TEST_ENV_LOCK as CONFIG_ENV_LOCK,
+};
 use crate::openhuman::embeddings::NoopEmbedding;
 use crate::openhuman::memory::store::UnifiedMemory;
 
@@ -48,13 +50,23 @@ impl Drop for EnvVarGuard {
 
 static SCREEN_INTELLIGENCE_ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
 
-fn screen_intelligence_env_lock() -> std::sync::MutexGuard<'static, ()> {
-    match SCREEN_INTELLIGENCE_ENV_LOCK
+struct ScreenIntelligenceEnvGuard {
+    _config: std::sync::MutexGuard<'static, ()>,
+    _screen: std::sync::MutexGuard<'static, ()>,
+}
+
+fn screen_intelligence_env_lock() -> ScreenIntelligenceEnvGuard {
+    let config = CONFIG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let screen = match SCREEN_INTELLIGENCE_ENV_LOCK
         .get_or_init(|| std::sync::Mutex::new(()))
         .lock()
     {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
+    };
+    ScreenIntelligenceEnvGuard {
+        _config: config,
+        _screen: screen,
     }
 }
 

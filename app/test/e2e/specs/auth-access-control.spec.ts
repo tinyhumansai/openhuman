@@ -7,16 +7,16 @@
  *   1.1    User registration via deep link
  *   1.1.1  Duplicate account handling (re-auth same user)
  *   1.2    Multi-device sessions (second JWT accepted)
- *   3.1.1  Default plan allocation (FREE plan on registration)
- *   3.2.1  Upgrade flow (purchase API call)
- *   3.3.1  Active subscription display
- *   3.3.3  Manage subscription (Stripe portal API call)
+ *   3.1.1  Billing dashboard handoff is available
+ *   3.2.1  Billing dashboard entry point is stable
+ *   3.3.1  Subscription management handoff is displayed
+ *   3.3.3  Manage subscription uses the web dashboard handoff
  *   1.3    Logout via Settings menu
  *   1.3.1  Revoked session auto-logout
  *
- * Onboarding steps (Onboarding.tsx — 5 steps, indices 0–4):
- *   Welcome → Local AI → Screen & Accessibility → Enable Tools → Install Skills
- *   (each step: primary "Continue"; final step completes onboarding)
+ * Onboarding steps:
+ *   Welcome → Skills → optional Context. The shared helper accepts older
+ *   onboarding copy as fallback so this spec keeps covering auth/billing.
  *
  * The mock server runs on http://127.0.0.1:18473 and the .app bundle must
  * have been built with VITE_BACKEND_URL pointing there.
@@ -127,6 +127,8 @@ async function performFullLogin(token = 'e2e-test-token') {
 describe('Auth & Access Control', () => {
   before(async () => {
     await startMockServer();
+    resetMockBehavior();
+    setMockBehavior('composioConnections', '[]');
     await waitForApp();
     clearRequestLog();
   });
@@ -181,21 +183,22 @@ describe('Auth & Access Control', () => {
   // 2. Default Plan
   // -------------------------------------------------------------------------
 
-  it('3.1.1 — new user is assigned FREE plan by default', async () => {
+  it('3.1.1 — billing dashboard handoff is available', async () => {
     await navigateToBilling();
 
-    // BillingPanel heading: "Current Plan — FREE"
-    const hasPlan = (await textExists('Current Plan')) || (await textExists('FREE'));
-    if (!hasPlan) {
+    const hasHandoff =
+      (await textExists('Billing moved to the web')) ||
+      (await textExists('Open billing dashboard'));
+    if (!hasHandoff) {
       const tree = await dumpAccessibilityTree();
       console.log('[AuthAccess] Billing page tree:\n', tree.slice(0, 6000));
     }
-    expect(hasPlan).toBe(true);
+    expect(hasHandoff).toBe(true);
 
-    const hasUpgrade = await textExists('Upgrade');
-    expect(hasUpgrade).toBe(true);
+    const hasOpenDashboard = await textExists('Open dashboard');
+    expect(hasOpenDashboard).toBe(true);
 
-    console.log('[AuthAccess] 3.1.1 — FREE plan verified in billing');
+    console.log('[AuthAccess] 3.1.1 — Billing web handoff verified');
     await navigateToHome();
   });
 
@@ -203,41 +206,14 @@ describe('Auth & Access Control', () => {
   // 3. Upgrade Flow
   // -------------------------------------------------------------------------
 
-  it('3.2.1 — upgrade initiates purchase flow via Stripe', async () => {
+  it('3.2.1 — billing dashboard entry point is stable', async () => {
     await navigateToBilling();
     clearRequestLog();
 
-    await clickText('Upgrade', 10_000);
-    console.log('[AuthAccess] Clicked Upgrade button');
-    await browser.pause(3_000);
+    expect(await textExists('Open dashboard')).toBe(true);
+    expect(await textExists('TinyHumans on the web')).toBe(true);
 
-    const purchaseCall = await waitForRequest('POST', '/payments/stripe/purchasePlan', 10_000);
-    expect(purchaseCall).toBeDefined();
-
-    if (purchaseCall?.body) {
-      const bodyStr = typeof purchaseCall.body === 'string' ? purchaseCall.body : '';
-      console.log('[AuthAccess] Purchase request body:', bodyStr);
-    }
-
-    // Verify purchasing state appears
-    const hasWaiting = (await textExists('Waiting')) || (await textExists('Waiting for payment'));
-    console.log(`[AuthAccess] Purchasing state visible: ${hasWaiting}`);
-
-    // Switch mock to BASIC plan so polling clears the waiting state
-    setMockBehavior('plan', 'BASIC');
-    setMockBehavior('planActive', 'true');
-    setMockBehavior('planExpiry', new Date(Date.now() + 30 * 86400000).toISOString());
-
-    if (hasWaiting) {
-      const disappeared = await waitForTextToDisappear('Waiting', 20_000);
-      if (!disappeared) {
-        throw new Error(
-          '3.2.1 — "Waiting" spinner did not clear within 20s after mock plan was set to BASIC'
-        );
-      }
-    }
-
-    console.log('[AuthAccess] 3.2.1 — Upgrade purchase flow verified');
+    console.log('[AuthAccess] 3.2.1 — Billing dashboard entry point verified');
     await navigateToHome();
   });
 
@@ -245,7 +221,7 @@ describe('Auth & Access Control', () => {
   // 4. Active Subscription Display
   // -------------------------------------------------------------------------
 
-  it('3.3.1 — active subscription is displayed correctly', async () => {
+  it('3.3.1 — subscription management handoff is displayed correctly', async () => {
     // Seed mock state explicitly so this test is self-contained
     setMockBehavior('plan', 'BASIC');
     setMockBehavior('planActive', 'true');
@@ -254,30 +230,14 @@ describe('Auth & Access Control', () => {
 
     await navigateToBilling();
 
-    // Wait for billing data to load
-    await browser.pause(3_000);
+    expect(await textExists('Billing moved to the web')).toBe(true);
+    expect(await textExists('Subscription changes')).toBe(true);
+    expect(await textExists('Open dashboard')).toBe(true);
 
-    // Verify currentPlan was fetched
-    const planCall = getRequestLog().find(
-      r => r.method === 'GET' && r.url.includes('/payments/stripe/currentPlan')
-    );
-    expect(planCall).toBeDefined();
-
-    // Check that plan info is displayed (Current Plan heading or tier name)
-    const hasPlanInfo =
-      (await textExists('Current Plan')) ||
-      (await textExists('BASIC')) ||
-      (await textExists('Basic'));
-    expect(hasPlanInfo).toBe(true);
-
-    // "Manage" button appears when hasActiveSubscription is true in currentPlan response.
-    const hasManage = await textExists('Manage');
-    expect(hasManage).toBe(true);
-
-    console.log('[AuthAccess] 3.3.1 — Active subscription display verified (Manage visible)');
+    console.log('[AuthAccess] 3.3.1 — Subscription management handoff verified');
   });
 
-  it('3.3.3 — manage subscription opens Stripe portal', async () => {
+  it('3.3.3 — manage subscription uses the web dashboard handoff', async () => {
     // Seed mock state explicitly so this test is self-contained
     setMockBehavior('plan', 'BASIC');
     setMockBehavior('planActive', 'true');
@@ -287,20 +247,10 @@ describe('Auth & Access Control', () => {
     await navigateToBilling();
     await browser.pause(3_000);
 
-    const hasManage = await textExists('Manage');
-    expect(hasManage).toBe(true);
+    const hasDashboard = await textExists('Open dashboard');
+    expect(hasDashboard).toBe(true);
 
-    await clickText('Manage', 10_000);
-    console.log('[AuthAccess] Clicked Manage button');
-    await browser.pause(3_000);
-
-    const portalCall = await waitForRequest('POST', '/payments/stripe/portal', 10_000);
-    if (!portalCall) {
-      console.log('[AuthAccess] Portal request log:', JSON.stringify(getRequestLog(), null, 2));
-    }
-    expect(portalCall).toBeDefined();
-
-    console.log('[AuthAccess] 3.3.3 — Stripe portal API call verified');
+    console.log('[AuthAccess] 3.3.3 — Dashboard handoff verified');
     resetMockBehavior();
     await navigateToHome();
   });
@@ -420,6 +370,7 @@ describe('Auth & Access Control', () => {
     // Login fresh
     clearRequestLog();
     resetMockBehavior();
+    setMockBehavior('composioConnections', '[]');
     await performFullLogin('e2e-revoked-session-token');
 
     // Set mock to return 401 for user profile requests (revoked session)

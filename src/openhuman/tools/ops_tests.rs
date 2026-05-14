@@ -59,6 +59,42 @@ fn all_tools_includes_spawn_subagent() {
 }
 
 #[test]
+fn all_tools_includes_spawn_parallel_agents() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem_cfg = MemoryConfig {
+        backend: "markdown".into(),
+        ..MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> =
+        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+    let browser = BrowserConfig {
+        enabled: false,
+        allowed_domains: vec![],
+        session_name: None,
+        ..BrowserConfig::default()
+    };
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let cfg = test_config(&tmp);
+
+    let tools = all_tools(
+        Arc::new(Config::default()),
+        &security,
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    assert!(
+        names.contains(&"spawn_parallel_agents"),
+        "spawn_parallel_agents must be registered for orchestrated fan-out; got: {names:?}"
+    );
+}
+
+#[test]
 fn all_tools_always_registers_curl() {
     // Regression guard: `curl` is always registered (gated only by
     // the shared `http_request.allowed_domains` allowlist at call

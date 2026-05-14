@@ -17,8 +17,12 @@ cd "$APP_DIR"
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
 export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT:-18473}"
+export VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE="local"
+export VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD="true"
 
 echo "Building E2E app with VITE_BACKEND_URL=$VITE_BACKEND_URL"
+echo "Building E2E app with VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE=$VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE"
+echo "Building E2E app with VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD=$VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD"
 
 if [ -n "${E2E_FORCE_CARGO_CLEAN:-}" ]; then
   echo "Forcing cargo clean (E2E_FORCE_CARGO_CLEAN is set)."
@@ -35,6 +39,8 @@ else
 fi
 
 export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT:-18473}"
+export VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE="local"
+export VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD="true"
 
 # Core is compiled in-process into the Tauri shell as of PR #1061; the old
 # scripts/stage-core-sidecar.mjs staging step is no longer needed.

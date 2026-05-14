@@ -16,6 +16,8 @@ import MicComposer from '../features/human/MicComposer';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
 import { trackEvent } from '../services/analytics';
+import { agentProfilesApi } from '../services/api/agentProfilesApi';
+import { threadApi } from '../services/api/threadApi';
 // [#1123] getCoreStateSnapshot and isWelcomeLocked commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { getCoreStateSnapshot, isWelcomeLocked } from '../lib/coreState/store';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
@@ -26,6 +28,7 @@ import {
   beginInferenceTurn,
   clearRuntimeForThread,
   fetchAndHydrateTurnState,
+  setTaskBoardForThread,
   setToolTimelineForThread,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -41,8 +44,10 @@ import {
   setSelectedThread,
   THREAD_NOT_FOUND_MESSAGE,
 } from '../store/threadSlice';
+import type { AgentProfile } from '../types/agentProfile';
 import type { ConfirmationModal as ConfirmationModalType } from '../types/intelligence';
 import type { ThreadMessage } from '../types/thread';
+import type { TaskBoardCard, TaskBoardCardStatus } from '../types/turnState';
 import { splitAgentMessageIntoBubbles } from '../utils/agentMessageBubbles';
 import { BILLING_DASHBOARD_URL } from '../utils/links';
 import { openUrl } from '../utils/openUrl';
@@ -59,6 +64,7 @@ import { formatTimelineEntry } from '../utils/toolTimelineFormatting';
 import { AgentMessageBubble, BubbleMarkdown } from './conversations/components/AgentMessageBubble';
 import { CitationChips, type MessageCitation } from './conversations/components/CitationChips';
 import { LimitPill } from './conversations/components/LimitPill';
+import { TaskKanbanBoard } from './conversations/components/TaskKanbanBoard';
 import { ToolTimelineBlock } from './conversations/components/ToolTimelineBlock';
 import {
   evaluateComposerSend,
@@ -85,6 +91,12 @@ type InputMode = 'text' | 'voice';
 type ReplyMode = 'text' | 'voice';
 const AUTOCOMPLETE_POLL_DEBOUNCE_MS = 320;
 const AUTOCOMPLETE_MIN_CONTEXT_CHARS = 3;
+const AGENT_PROFILE_AGENT_OPTIONS = [
+  { id: 'orchestrator', label: 'Orchestrator' },
+  { id: 'researcher', label: 'Researcher' },
+  { id: 'planner', label: 'Planner' },
+  { id: 'critic', label: 'Critic' },
+] as const;
 
 interface ConversationsProps {
   /**
@@ -202,8 +214,18 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
   const [sendAdvisory, setSendAdvisory] = useState<string | null>(null);
+  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
+  const [selectedAgentProfileId, setSelectedAgentProfileId] = useState('default');
+  const [profileDraftOpen, setProfileDraftOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState({
+    name: '',
+    agentId: 'orchestrator',
+    systemPromptSuffix: '',
+    allowedTools: '',
+  });
   const socketStatus = useAppSelector(selectSocketStatus);
   const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
+  const taskBoardByThread = useAppSelector(state => state.chatRuntime.taskBoardByThread);
   const inferenceStatusByThread = useAppSelector(
     state => state.chatRuntime.inferenceStatusByThread
   );
@@ -271,6 +293,51 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     void dispatch(loadThreadMessages(thread.id));
   };
 
+  const handleSelectAgentProfile = async (profileId: string) => {
+    setSelectedAgentProfileId(profileId);
+    try {
+      const state = await agentProfilesApi.select(profileId);
+      setAgentProfiles(state.profiles);
+      setSelectedAgentProfileId(state.activeProfileId || profileId);
+    } catch (error) {
+      console.warn('[conversations] agent profile select failed:', error);
+    }
+  };
+
+  const handleCreateAgentProfile = async () => {
+    const name = profileDraft.name.trim();
+    if (!name) return;
+    const id = `profile-${globalThis.crypto.randomUUID().slice(0, 8)}`;
+    const allowedTools = profileDraft.allowedTools
+      .split(',')
+      .map(tool => tool.trim())
+      .filter(Boolean);
+    const profile: AgentProfile = {
+      id,
+      name,
+      description: 'Custom agent profile',
+      agentId: profileDraft.agentId,
+      systemPromptSuffix: profileDraft.systemPromptSuffix.trim() || null,
+      allowedTools: allowedTools.length > 0 ? allowedTools : null,
+      builtIn: false,
+    };
+    try {
+      await agentProfilesApi.upsert(profile);
+      const state = await agentProfilesApi.select(id);
+      setAgentProfiles(state.profiles);
+      setSelectedAgentProfileId(state.activeProfileId);
+      setProfileDraftOpen(false);
+      setProfileDraft({
+        name: '',
+        agentId: 'orchestrator',
+        systemPromptSuffix: '',
+        allowedTools: '',
+      });
+    } catch (error) {
+      console.warn('[conversations] agent profile create failed:', error);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -330,8 +397,35 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     if (selectedThreadId) {
       void dispatch(loadThreadMessages(selectedThreadId));
       void dispatch(fetchAndHydrateTurnState(selectedThreadId));
+      void threadApi
+        .getTaskBoard(selectedThreadId)
+        .then(board => {
+          dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board }));
+        })
+        .catch(error => {
+          console.warn('[conversations] getTaskBoard failed:', error);
+        });
     }
   }, [selectedThreadId, dispatch]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void agentProfilesApi
+      .list()
+      .then(state => {
+        if (cancelled) return;
+        setAgentProfiles(state.profiles);
+        setSelectedAgentProfileId(state.activeProfileId || 'default');
+      })
+      .catch(error => {
+        if (!cancelled) {
+          console.warn('[conversations] agent profiles load failed:', error);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
   // Welcome lockdown unlock (#883) — when `chatOnboardingCompleted`
@@ -618,7 +712,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     // Local model (Ollama) is used only for supplementary features
     // (auto-react, autocomplete, etc.) — never as a primary chat path.
     try {
-      await chatSend({ threadId: sendingThreadId, message: trimmed, model: CHAT_MODEL_ID });
+      await chatSend({
+        threadId: sendingThreadId,
+        message: trimmed,
+        model: CHAT_MODEL_ID,
+        profileId: selectedAgentProfileId,
+      });
       trackEvent('chat_message_sent');
 
       // Active-thread reset happens in the global ChatRuntimeProvider events.
@@ -873,6 +972,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   const selectedThreadToolTimeline = selectedThreadId
     ? (toolTimelineByThread[selectedThreadId] ?? [])
     : [];
+  const selectedTaskBoard = selectedThreadId ? (taskBoardByThread[selectedThreadId] ?? null) : null;
+  const hasTaskBoard = Boolean(selectedTaskBoard?.cards.length);
   const visibleMessages = messages.filter(msg => !msg.extraMetadata?.hidden);
   const hasVisibleMessages = visibleMessages.length > 0;
   const latestVisibleMessage = visibleMessages[visibleMessages.length - 1] ?? null;
@@ -943,6 +1044,29 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   );
   const shouldRenderTimelineBeforeLatestAgentMessage =
     selectedThreadToolTimeline.length > 0 && !isSending && Boolean(latestVisibleAgentMessage);
+
+  const handleMoveTaskCard = async (
+    card: TaskBoardCard,
+    nextStatus: TaskBoardCardStatus
+  ): Promise<void> => {
+    if (!selectedThreadId || !selectedTaskBoard) return;
+    const now = new Date().toISOString();
+    const nextBoard = {
+      ...selectedTaskBoard,
+      cards: selectedTaskBoard.cards.map(existing =>
+        existing.id === card.id ? { ...existing, status: nextStatus, updatedAt: now } : existing
+      ),
+      updatedAt: now,
+    };
+    dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: nextBoard }));
+    try {
+      const saved = await threadApi.putTaskBoard(selectedThreadId, nextBoard.cards);
+      dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: saved }));
+    } catch (error) {
+      console.warn('[conversations] putTaskBoard failed:', error);
+      dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: selectedTaskBoard }));
+    }
+  };
 
   const filteredThreads = useMemo(() => {
     const base = threads.filter(t => {
@@ -1165,6 +1289,27 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
             </h3>
             {/* [#1123] welcomeLocked guard removed — always show token usage + new thread button */}
             <>
+              <div className="flex items-center gap-1">
+                <select
+                  aria-label="Agent profile"
+                  value={selectedAgentProfileId}
+                  onChange={event => void handleSelectAgentProfile(event.target.value)}
+                  className="h-7 max-w-[120px] rounded-lg border border-stone-200 bg-white px-2 text-xs text-stone-700 outline-none transition-colors focus:border-primary-400">
+                  {agentProfiles.map(profile => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setProfileDraftOpen(prev => !prev)}
+                  className="h-7 w-7 rounded-lg text-xs font-medium text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-700"
+                  title="Create agent profile"
+                  aria-label="Create agent profile">
+                  +
+                </button>
+              </div>
               <TokenUsagePill />
               <button
                 onClick={() => void handleCreateNewThread()}
@@ -1173,6 +1318,56 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 + New
               </button>
             </>
+          </div>
+        )}
+        {!isSidebar && profileDraftOpen && (
+          <div className="border-b border-stone-100 bg-white px-4 py-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_140px]">
+              <input
+                value={profileDraft.name}
+                onChange={event => setProfileDraft(prev => ({ ...prev, name: event.target.value }))}
+                placeholder="Profile name"
+                className="h-8 rounded-lg border border-stone-200 px-3 text-xs outline-none focus:border-primary-400"
+              />
+              <select
+                value={profileDraft.agentId}
+                onChange={event =>
+                  setProfileDraft(prev => ({ ...prev, agentId: event.target.value }))
+                }
+                className="h-8 rounded-lg border border-stone-200 px-2 text-xs outline-none focus:border-primary-400">
+                {AGENT_PROFILE_AGENT_OPTIONS.map(agent => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <textarea
+              value={profileDraft.systemPromptSuffix}
+              onChange={event =>
+                setProfileDraft(prev => ({ ...prev, systemPromptSuffix: event.target.value }))
+              }
+              placeholder="Prompt style"
+              rows={2}
+              className="mt-2 w-full resize-none rounded-lg border border-stone-200 px-3 py-2 text-xs outline-none focus:border-primary-400"
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                value={profileDraft.allowedTools}
+                onChange={event =>
+                  setProfileDraft(prev => ({ ...prev, allowedTools: event.target.value }))
+                }
+                placeholder="Allowed tools"
+                className="h-8 min-w-0 flex-1 rounded-lg border border-stone-200 px-3 text-xs outline-none focus:border-primary-400"
+              />
+              <button
+                type="button"
+                onClick={() => void handleCreateAgentProfile()}
+                disabled={!profileDraft.name.trim()}
+                className="h-8 rounded-lg bg-primary-500 px-3 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-40">
+                Save
+              </button>
+            </div>
           </div>
         )}
         <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-5 py-4 bg-[#f6f6f6]">
@@ -1210,8 +1405,17 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                 Reload
               </button>
             </div>
-          ) : hasVisibleMessages ? (
+          ) : hasVisibleMessages || hasTaskBoard ? (
             <div className="space-y-3">
+              {selectedTaskBoard && hasTaskBoard && (
+                <TaskKanbanBoard
+                  board={selectedTaskBoard}
+                  disabled={!selectedThreadId}
+                  onMove={(card, status) => {
+                    void handleMoveTaskCard(card, status);
+                  }}
+                />
+              )}
               {visibleMessages.map(msg => (
                 <div key={msg.id}>
                   {shouldRenderTimelineBeforeLatestAgentMessage &&

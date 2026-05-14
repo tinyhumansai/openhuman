@@ -1,11 +1,14 @@
-//! `todowrite` — lightweight todo-list state for multi-step runs.
+//! `todowrite` — lightweight task-board state for multi-step runs.
 //!
-//! Coding-harness baseline tool (issue #1205). Each call replaces the
-//! current todo list. Items have a `status` of `pending`, `in_progress`,
-//! or `completed`. The list is process-global (one shared registry per
-//! core) — sufficient as a baseline; per-session scoping can come later
-//! once `task` carries a stable session id.
+//! Each call replaces the current list and, when running inside a web
+//! thread, persists the same cards as that thread's kanban board.
 
+use crate::openhuman::agent::harness::fork_context::current_parent;
+use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent::task_board::{
+    TaskBoard, TaskBoardCard, TaskBoardStore, TaskCardStatus,
+};
+use crate::openhuman::providers::thread_context;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -16,15 +19,24 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
+    #[serde(alias = "todo")]
     Pending,
     InProgress,
+    Blocked,
+    #[serde(alias = "done")]
     Completed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub content: String,
     pub status: TodoStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
 }
 
 /// Process-global todo state. Replaced wholesale on every call.
@@ -72,9 +84,10 @@ impl Tool for TodoWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Replace the current todo list. Each item: `{content, status}` where \
-         `status` is `pending`, `in_progress`, or `completed`. Returns a rendered \
-         summary of the new list."
+        "Replace the current task board. Each item: `{content, status, notes?, blocker?}` \
+         where `status` is `todo`/`pending`, `in_progress`, `blocked`, or \
+         `done`/`completed`. Use `blocked` with a short blocker when work cannot proceed. \
+         Returns a rendered summary and persists the board for the active thread."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -89,8 +102,11 @@ impl Tool for TodoWriteTool {
                             "content": { "type": "string" },
                             "status": {
                                 "type": "string",
-                                "enum": ["pending", "in_progress", "completed"]
-                            }
+                                "enum": ["todo", "pending", "in_progress", "blocked", "done", "completed"]
+                            },
+                            "id": { "type": "string" },
+                            "notes": { "type": "string" },
+                            "blocker": { "type": "string" }
                         },
                         "required": ["content", "status"]
                     }
@@ -127,18 +143,83 @@ impl Tool for TodoWriteTool {
 
         self.store.replace(items.clone());
 
+        let persisted_board = persist_thread_board(&items).await;
+
         let mut body = format!("Todo list updated ({} item(s)):", items.len());
         for item in &items {
             let mark = match item.status {
-                TodoStatus::Completed => "[x]",
-                TodoStatus::InProgress => "[~]",
                 TodoStatus::Pending => "[ ]",
+                TodoStatus::InProgress => "[~]",
+                TodoStatus::Blocked => "[!]",
+                TodoStatus::Completed => "[x]",
             };
             body.push('\n');
             body.push_str(&format!("{mark} {}", item.content));
+            if item.status == TodoStatus::Blocked {
+                if let Some(reason) = item.blocker.as_deref().or(item.notes.as_deref()) {
+                    body.push_str(&format!(" — blocked: {reason}"));
+                }
+            }
+        }
+        if let Err(err) = persisted_board {
+            tracing::debug!(
+                error = %err,
+                "[todowrite] task board persistence skipped/failed"
+            );
         }
         Ok(ToolResult::success(body))
     }
+}
+
+async fn persist_thread_board(items: &[TodoItem]) -> Result<(), String> {
+    let parent = current_parent().ok_or_else(|| "no parent context".to_string())?;
+    let thread_id =
+        thread_context::current_thread_id().ok_or_else(|| "no thread id".to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let cards = items
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| TaskBoardCard {
+            id: item
+                .id
+                .as_ref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| format!("task-{}", uuid::Uuid::new_v4())),
+            title: item.content.trim().to_string(),
+            status: match item.status {
+                TodoStatus::Pending => TaskCardStatus::Todo,
+                TodoStatus::InProgress => TaskCardStatus::InProgress,
+                TodoStatus::Blocked => TaskCardStatus::Blocked,
+                TodoStatus::Completed => TaskCardStatus::Done,
+            },
+            notes: item
+                .notes
+                .as_ref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            blocker: item
+                .blocker
+                .as_ref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            order: idx as u32,
+            updated_at: now.clone(),
+        })
+        .collect();
+
+    let board = TaskBoard {
+        thread_id,
+        cards,
+        updated_at: now,
+    };
+    let saved = TaskBoardStore::new(parent.workspace_dir.clone()).put(board)?;
+    if let Some(tx) = parent.on_progress {
+        let _ = tx
+            .send(AgentProgress::TaskBoardUpdated { board: saved })
+            .await;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -217,5 +298,22 @@ mod tests {
         let tool = TodoWriteTool::new(store);
         let result = tool.execute(json!({"todos": []})).await.unwrap();
         assert!(!result.is_error);
+    }
+
+    #[tokio::test]
+    async fn todowrite_renders_blockers() {
+        let store = Arc::new(TodoStore::new());
+        let tool = TodoWriteTool::new(store);
+        let result = tool
+            .execute(json!({
+                "todos": [
+                    { "content": "wait for credentials", "status": "blocked", "blocker": "missing token" }
+                ]
+            }))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{}", result.output());
+        assert!(result.output().contains("[!] wait for credentials"));
+        assert!(result.output().contains("missing token"));
     }
 }

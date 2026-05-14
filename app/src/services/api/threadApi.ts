@@ -10,9 +10,13 @@ import type {
 } from '../../types/thread';
 import type {
   ClearTurnStateResponse,
+  GetTaskBoardResponse,
   GetTurnStateResponse,
   ListTurnStatesResponse,
   PersistedTurnState,
+  PutTaskBoardResponse,
+  TaskBoard,
+  TaskBoardCard,
 } from '../../types/turnState';
 import { callCoreRpc } from '../coreRpcClient';
 
@@ -133,6 +137,24 @@ export const threadApi = {
     });
     const data = unwrapEnvelope(response);
     return Boolean(data?.cleared);
+  },
+
+  getTaskBoard: async (threadId: string): Promise<TaskBoard> => {
+    const response = await callCoreRpc<{ data?: GetTaskBoardResponse }>({
+      method: 'openhuman.threads_task_board_get',
+      params: { thread_id: threadId },
+    });
+    const data = unwrapEnvelope(response);
+    return data.taskBoard;
+  },
+
+  putTaskBoard: async (threadId: string, cards: TaskBoardCard[]): Promise<TaskBoard> => {
+    const response = await callCoreRpc<{ data?: PutTaskBoardResponse }>({
+      method: 'openhuman.threads_task_board_put',
+      params: { thread_id: threadId, cards },
+    });
+    const data = unwrapEnvelope(response);
+    return data.taskBoard;
   },
 
   updateLabels: async (threadId: string, labels: string[]): Promise<Thread> => {
