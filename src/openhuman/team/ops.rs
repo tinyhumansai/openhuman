@@ -13,7 +13,7 @@ use reqwest::{Method, Url};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::api::config::effective_api_url;
+use crate::api::config::effective_backend_api_url;
 use crate::api::jwt::get_session_token;
 use crate::api::BackendOAuthClient;
 use crate::openhuman::config::Config;
@@ -62,7 +62,7 @@ async fn get_authed_value(
     body: Option<Value>,
 ) -> Result<Value, String> {
     let token = require_token(config)?;
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let client = BackendOAuthClient::new(&api_url).map_err(|e| format!("{e:#}"))?;
     // `{e:#}` renders the full anyhow chain. `authed_json` wraps the
     // underlying reqwest error with `.context(format!("backend request {} {}", …))`

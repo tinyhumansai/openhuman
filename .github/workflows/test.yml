@@ -86,6 +86,30 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Guard hosted backend URL resolver usage
+        run: |
+          set -eu
+          if git grep -n -E '(^|[^[:alnum:]_])effective_api_url[[:space:]]*\(' -- \
+            src/core/jsonrpc.rs \
+            src/openhuman/app_state \
+            src/openhuman/billing \
+            src/openhuman/channels \
+            src/openhuman/config/ops.rs \
+            src/openhuman/credentials \
+            src/openhuman/embeddings \
+            src/openhuman/integrations \
+            src/openhuman/local_ai/gif_decision.rs \
+            src/openhuman/meet_agent/brain.rs \
+            src/openhuman/memory \
+            src/openhuman/referral \
+            src/openhuman/socket \
+            src/openhuman/team \
+            src/openhuman/voice \
+            src/openhuman/webhooks; then
+            echo "Hosted backend callers must use effective_backend_api_url to avoid local-AI URL leaks."
+            exit 1
+          fi
+
       - name: Test core crate (openhuman)
         run: cargo test -p openhuman
 

@@ -37,9 +37,9 @@ pub struct CloudEmbedder {
 
 impl CloudEmbedder {
     /// Build a cloud embedder using the same backend resolution as the
-    /// main embeddings path: `api_url` falls back to
-    /// [`effective_api_url`](crate::api::config::effective_api_url) and
-    /// the workspace dir comes from `config.workspace_dir` so the auth
+    /// main embeddings path: local-AI-looking `api_url` values fall back via
+    /// [`effective_backend_api_url`](crate::api::config::effective_backend_api_url),
+    /// and the workspace dir comes from `config.workspace_dir` so the auth
     /// service finds the user's session JWT.
     pub fn new(config: &Config) -> Self {
         let openhuman_dir = config.config_path.parent().map(std::path::PathBuf::from);

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::api::config::{app_env_from_env, effective_api_url, is_staging_app_env};
+use crate::api::config::{app_env_from_env, effective_backend_api_url, is_staging_app_env};
 use crate::api::jwt::get_session_token;
 use crate::api::rest::BackendOAuthClient;
 use crate::openhuman::config::{Config, DiscordConfig, IMessageConfig, TelegramConfig};
@@ -626,7 +626,7 @@ pub struct TelegramLoginCheckResult {
 pub async fn telegram_login_start(
     config: &Config,
 ) -> Result<RpcOutcome<TelegramLoginStartResult>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let jwt = get_session_token(config)?
         .ok_or_else(|| "session JWT required; complete login first".to_string())?;
 
@@ -687,7 +687,7 @@ pub async fn telegram_login_check(
     config: &Config,
     _link_token: &str,
 ) -> Result<RpcOutcome<TelegramLoginCheckResult>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let jwt = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
 
     log::debug!("[telegram-login] checking if user profile has telegramId via GET /auth/me");
@@ -792,7 +792,7 @@ pub struct DiscordLinkCheckResult {
 pub async fn discord_link_start(
     config: &Config,
 ) -> Result<RpcOutcome<DiscordLinkStartResult>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let jwt = get_session_token(config)?
         .ok_or_else(|| "session JWT required; complete login first".to_string())?;
 
@@ -846,7 +846,7 @@ pub async fn discord_link_check(
     config: &Config,
     _link_token: &str,
 ) -> Result<RpcOutcome<DiscordLinkCheckResult>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let jwt = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
 
     log::debug!("[discord-link] checking if user profile has discordId via GET /auth/me");
@@ -925,7 +925,7 @@ pub async fn channel_send_message(
     channel: &str,
     message: Value,
 ) -> Result<RpcOutcome<Value>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let jwt = get_session_token(config)?
         .ok_or_else(|| "session JWT required; complete login first".to_string())?;
 
@@ -952,7 +952,7 @@ pub async fn channel_send_reaction(
     channel: &str,
     reaction: Value,
 ) -> Result<RpcOutcome<Value>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let jwt = get_session_token(config)?
         .ok_or_else(|| "session JWT required; complete login first".to_string())?;
 
@@ -979,7 +979,7 @@ pub async fn channel_create_thread(
     channel: &str,
     title: &str,
 ) -> Result<RpcOutcome<Value>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let jwt = get_session_token(config)?
         .ok_or_else(|| "session JWT required; complete login first".to_string())?;
 
@@ -1008,7 +1008,7 @@ pub async fn channel_update_thread(
     thread_id: &str,
     action: &str,
 ) -> Result<RpcOutcome<Value>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let jwt = get_session_token(config)?
         .ok_or_else(|| "session JWT required; complete login first".to_string())?;
 
@@ -1037,7 +1037,7 @@ pub async fn channel_list_threads(
     channel: &str,
     active: Option<bool>,
 ) -> Result<RpcOutcome<Value>, String> {
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let jwt = get_session_token(config)?
         .ok_or_else(|| "session JWT required; complete login first".to_string())?;
 

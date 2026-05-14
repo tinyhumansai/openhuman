@@ -17,7 +17,7 @@ use async_trait::async_trait;
 
 use super::openai::OpenAiEmbedding;
 use super::EmbeddingProvider;
-use crate::api::config::effective_api_url;
+use crate::api::config::effective_backend_api_url;
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
 
 /// Default cloud embedding model — backed by `voyage-3.5` (1024 dims) on the
@@ -39,7 +39,7 @@ pub struct OpenHumanCloudEmbedding {
 impl OpenHumanCloudEmbedding {
     /// Construct a cloud embedder. `api_url` and `openhuman_dir` are looked up
     /// per request; pass `None` to fall back to the runtime defaults
-    /// ([`effective_api_url`] / `~/.openhuman`).
+    /// ([`effective_backend_api_url`] / `~/.openhuman`).
     pub fn new(
         api_url: Option<String>,
         openhuman_dir: Option<PathBuf>,
@@ -81,7 +81,7 @@ impl OpenHumanCloudEmbedding {
     }
 
     fn base_url(&self) -> String {
-        let u = effective_api_url(&self.api_url);
+        let u = effective_backend_api_url(&self.api_url);
         format!("{}/openai/v1", u.trim_end_matches('/'))
     }
 }

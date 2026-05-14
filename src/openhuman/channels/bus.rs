@@ -805,7 +805,7 @@ async fn build_channel_client() -> Option<(crate::api::rest::BackendOAuthClient,
             return None;
         }
     };
-    let api_url = crate::api::config::effective_api_url(&config.api_url);
+    let api_url = crate::api::config::effective_backend_api_url(&config.api_url);
     let jwt = match crate::api::jwt::get_session_token(&config) {
         Ok(Some(t)) => t,
         Ok(None) => {
@@ -836,7 +836,7 @@ async fn send_channel_reply(channel: &str, text: &str) {
         }
     };
 
-    let api_url = crate::api::config::effective_api_url(&config.api_url);
+    let api_url = crate::api::config::effective_backend_api_url(&config.api_url);
     let jwt = match crate::api::jwt::get_session_token(&config) {
         Ok(Some(t)) => t,
         Ok(None) => {
