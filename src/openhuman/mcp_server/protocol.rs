@@ -141,13 +141,38 @@ async fn handle_request(id: Value, method: &str, params: Value) -> Value {
         "ping" => success_response(id, json!({})),
         "tools/list" => success_response(id, tools::list_tools_result()),
         "tools/call" => match parse_tool_call_params(params) {
-            Ok((name, arguments)) => match tools::call_tool(&name, arguments).await {
-                Ok(result) => success_response(id, result),
-                Err(err) => {
-                    error_response(id, -32602, "Invalid params", Some(json!(err.message())))
+            Ok((name, arguments)) => {
+                log::debug!(
+                    "[mcp_server] tools/call request tool={} arg_keys={:?}",
+                    name,
+                    object_keys(&arguments)
+                );
+                match tools::call_tool(&name, arguments).await {
+                    Ok(result) => {
+                        log::debug!(
+                            "[mcp_server] tools/call response tool={} is_error={}",
+                            name,
+                            result
+                                .get("isError")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                        );
+                        success_response(id, result)
+                    }
+                    Err(err) => {
+                        log::debug!(
+                            "[mcp_server] tools/call rejected tool={} error={}",
+                            name,
+                            err.message()
+                        );
+                        error_response(id, -32602, "Invalid params", Some(json!(err.message())))
+                    }
                 }
-            },
-            Err(message) => error_response(id, -32602, "Invalid params", Some(json!(message))),
+            }
+            Err(message) => {
+                log::debug!("[mcp_server] tools/call params rejected error={message}");
+                error_response(id, -32602, "Invalid params", Some(json!(message)))
+            }
         },
         other => error_response(
             id,
@@ -156,6 +181,15 @@ async fn handle_request(id: Value, method: &str, params: Value) -> Value {
             Some(json!(format!("unsupported MCP method `{other}`"))),
         ),
     }
+}
+
+fn object_keys(value: &Value) -> Vec<String> {
+    let Some(object) = value.as_object() else {
+        return Vec::new();
+    };
+    let mut keys = object.keys().cloned().collect::<Vec<_>>();
+    keys.sort();
+    keys
 }
 
 fn initialize_result(params: Value) -> Value {

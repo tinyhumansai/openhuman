@@ -6,6 +6,8 @@ use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 
 const DEFAULT_LIMIT: u64 = 10;
 const MAX_LIMIT: u64 = 50;
+const QUERY_ARGUMENTS: &[&str] = &["query", "k"];
+const TREE_READ_CHUNK_ARGUMENTS: &[&str] = &["chunk_id"];
 
 #[derive(Debug, Clone)]
 pub struct McpToolSpec {
@@ -152,6 +154,7 @@ fn build_rpc_params(
     let args = object_arguments(arguments)?;
     match tool_name {
         "memory.search" | "memory.recall" => {
+            reject_unexpected_arguments(&args, QUERY_ARGUMENTS)?;
             let query = required_non_empty_string(&args, "query")?;
             let limit = optional_limit(&args)?;
             Ok(Map::from_iter([
@@ -160,6 +163,7 @@ fn build_rpc_params(
             ]))
         }
         "tree.read_chunk" => {
+            reject_unexpected_arguments(&args, TREE_READ_CHUNK_ARGUMENTS)?;
             let chunk_id = required_non_empty_string(&args, "chunk_id")?;
             Ok(Map::from_iter([(
                 "id".to_string(),
@@ -170,6 +174,25 @@ fn build_rpc_params(
             "unknown MCP tool `{tool_name}`"
         ))),
     }
+}
+
+fn reject_unexpected_arguments(
+    args: &Map<String, Value>,
+    allowed: &[&str],
+) -> Result<(), ToolCallError> {
+    let mut unexpected = args
+        .keys()
+        .filter(|key| !allowed.contains(&key.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if unexpected.is_empty() {
+        return Ok(());
+    }
+    unexpected.sort();
+    Err(ToolCallError::InvalidParams(format!(
+        "unexpected argument `{}`",
+        unexpected.join("`, `")
+    )))
 }
 
 fn object_arguments(arguments: Value) -> Result<Map<String, Value>, ToolCallError> {
@@ -200,7 +223,7 @@ fn required_non_empty_string(
 }
 
 fn optional_limit(args: &Map<String, Value>) -> Result<u64, ToolCallError> {
-    let Some(value) = args.get("k").or_else(|| args.get("limit")) else {
+    let Some(value) = args.get("k") else {
         return Ok(DEFAULT_LIMIT);
     };
     let Some(limit) = value.as_u64() else {
@@ -323,11 +346,39 @@ mod tests {
     }
 
     #[test]
+    fn memory_search_rejects_undocumented_limit_alias() {
+        let err = build_rpc_params(
+            "memory.search",
+            json!({
+                "query": "phoenix",
+                "limit": 5
+            }),
+        )
+        .expect_err("must reject");
+
+        assert!(err.message().contains("unexpected argument `limit`"));
+    }
+
+    #[test]
     fn tree_read_chunk_maps_chunk_id_to_controller_id() {
         let params =
             build_rpc_params("tree.read_chunk", json!({"chunk_id": "abc"})).expect("params");
         assert_eq!(params["id"], "abc");
         assert!(!params.contains_key("chunk_id"));
+    }
+
+    #[test]
+    fn tree_read_chunk_rejects_unknown_arguments() {
+        let err = build_rpc_params(
+            "tree.read_chunk",
+            json!({
+                "chunk_id": "abc",
+                "unused": true
+            }),
+        )
+        .expect_err("must reject");
+
+        assert!(err.message().contains("unexpected argument `unused`"));
     }
 
     #[test]

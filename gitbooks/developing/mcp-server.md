@@ -41,5 +41,11 @@ printf '%s\n' \
 ```
 
 The response should include `capabilities.tools` from `initialize` and the three
-tool names from `tools/list`.
+tool names from `tools/list`. A successful run writes exactly two compact JSON
+response lines to stdout; the `notifications/initialized` message is a
+notification and has no response.
 
+```text
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"openhuman-core","version":"<crate version>"},"instructions":"..."}}
+{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"memory.search",...},{"name":"memory.recall",...},{"name":"tree.read_chunk",...}]}}
+```

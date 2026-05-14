@@ -1,6 +1,6 @@
 {
-  "$schema": "Auto-generated from docs/TEST-COVERAGE-MATRIX.md",
-  "generatedAt": "2026-04-28",
+  "$schema": "Manually maintained; validated against docs/TEST-COVERAGE-MATRIX.md by scripts/check-coverage-matrix.mjs",
+  "generatedAt": "N/A - manually maintained",
   "ids": [
     "0.1.1",
     "0.1.2",
