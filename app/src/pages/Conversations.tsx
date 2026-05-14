@@ -64,6 +64,7 @@ import {
   evaluateComposerSend,
   getComposerBlockedSendFeedback,
   handleComposerSlashCommand,
+  shouldSendOnEnterKey,
 } from './conversations/composerSendDecision';
 import {
   type AgentBubblePosition,
@@ -239,6 +240,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   });
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
+  // Tracks active IME composition (CJK input). `KeyboardEvent.isComposing` is
+  // unreliable across browsers/IMEs — most notably on Safari, where the final
+  // Enter keydown that confirms a candidate fires *after* compositionend with
+  // `isComposing === false`. The compositionstart/end pair is the authoritative
+  // signal; the boolean here is the fallback when the native flag misses.
+  const composerIsComposingRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -854,7 +861,15 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       return;
     }
 
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (
+      shouldSendOnEnterKey({
+        key: e.key,
+        shiftKey: e.shiftKey,
+        keyCode: e.keyCode,
+        nativeEvent: { isComposing: e.nativeEvent.isComposing },
+        isComposing: composerIsComposingRef.current,
+      })
+    ) {
       e.preventDefault();
       void handleSendMessage();
     }
@@ -1691,6 +1706,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value)}
                   onKeyDown={handleInputKeyDown}
+                  onCompositionStart={() => {
+                    composerIsComposingRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    composerIsComposingRef.current = false;
+                  }}
                   placeholder="Type a message..."
                   rows={1}
                   disabled={composerInteractionBlocked}

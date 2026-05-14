@@ -4,6 +4,7 @@ import {
   evaluateComposerSend,
   getComposerBlockedSendFeedback,
   handleComposerSlashCommand,
+  shouldSendOnEnterKey,
 } from './composerSendDecision';
 
 describe('evaluateComposerSend', () => {
@@ -81,6 +82,54 @@ describe('evaluateComposerSend', () => {
     });
 
     expect(decision).toEqual({ shouldSend: true, trimmedText: 'hello' });
+  });
+});
+
+describe('shouldSendOnEnterKey', () => {
+  it('sends on plain Enter', () => {
+    expect(
+      shouldSendOnEnterKey({ key: 'Enter', shiftKey: false, nativeEvent: { isComposing: false } })
+    ).toBe(true);
+  });
+
+  it('does not send on Shift+Enter (newline)', () => {
+    expect(
+      shouldSendOnEnterKey({ key: 'Enter', shiftKey: true, nativeEvent: { isComposing: false } })
+    ).toBe(false);
+  });
+
+  it('does not send while IME composition is active (nativeEvent.isComposing)', () => {
+    expect(
+      shouldSendOnEnterKey({ key: 'Enter', shiftKey: false, nativeEvent: { isComposing: true } })
+    ).toBe(false);
+  });
+
+  it('does not send when legacy keyCode 229 IME sentinel is set', () => {
+    expect(
+      shouldSendOnEnterKey({
+        key: 'Enter',
+        shiftKey: false,
+        keyCode: 229,
+        nativeEvent: { isComposing: false },
+      })
+    ).toBe(false);
+  });
+
+  it('does not send while compositionstart/compositionend fallback flag is set', () => {
+    expect(
+      shouldSendOnEnterKey({
+        key: 'Enter',
+        shiftKey: false,
+        isComposing: true,
+        nativeEvent: { isComposing: false },
+      })
+    ).toBe(false);
+  });
+
+  it('does not send for non-Enter keys', () => {
+    expect(
+      shouldSendOnEnterKey({ key: 'a', shiftKey: false, nativeEvent: { isComposing: false } })
+    ).toBe(false);
   });
 });
 

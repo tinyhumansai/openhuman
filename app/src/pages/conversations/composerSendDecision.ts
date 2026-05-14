@@ -28,6 +28,31 @@ export interface ComposerBlockedSendFeedback {
   error: { code: 'usage_limit_reached' | 'socket_disconnected'; message: string };
 }
 
+export interface ComposerEnterKeyEvent {
+  key: string;
+  shiftKey: boolean;
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  // `keyCode === 229` is the legacy IME-composition sentinel some browsers
+  // still emit (older Safari/Edge, certain Android WebViews) even when
+  // `isComposing` is unset. Keep both for compatibility.
+  keyCode?: number;
+  nativeEvent?: { isComposing?: boolean };
+  // Local fallback when `nativeEvent.isComposing` is unreliable — Conversations
+  // tracks it via `compositionstart`/`compositionend` and threads it in.
+  isComposing?: boolean;
+}
+
+export const shouldSendOnEnterKey = (event: ComposerEnterKeyEvent): boolean => {
+  if (event.key !== 'Enter') return false;
+  if (event.shiftKey) return false;
+  if (event.isComposing) return false;
+  if (event.nativeEvent?.isComposing) return false;
+  if (event.keyCode === 229) return false;
+  return true;
+};
+
 export const handleComposerSlashCommand = (
   command: string,
   welcomeLocked: boolean
