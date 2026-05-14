@@ -438,6 +438,18 @@ async fn flush_streaming_edit(channel: &str, state: &mut StreamingState) {
             }
             Err(err) => {
                 state.edit_failures += 1;
+                if let Some(crate::api::rest::BackendApiError::MessageNotFound { .. }) =
+                    err.downcast_ref::<crate::api::rest::BackendApiError>()
+                {
+                    tracing::info!(
+                        "[channel-inbound][stream] edit channel='{}' msg_id={} — message gone provider-side (404), clearing stale id and disabling further edits",
+                        channel,
+                        message_id,
+                    );
+                    state.message_id = None;
+                    state.edit_disabled = true;
+                    return;
+                }
                 tracing::warn!(
                     "[channel-inbound][stream] edit failed channel='{}' msg_id={} err={} (failures={}/{})",
                     channel,
@@ -545,16 +557,28 @@ async fn flush_thinking_message(channel: &str, state: &mut StreamingState) {
         return;
     };
 
-    if let Some(ref msg_id) = state.thinking_message_id {
+    if let Some(msg_id) = state.thinking_message_id.clone() {
         // Edit existing thinking message with updated content.
         let body = json!({ "text": text });
-        if let Err(err) = client.send_channel_edit(channel, msg_id, &jwt, body).await {
-            tracing::debug!(
-                "[channel-inbound][thinking] edit failed channel='{}' msg_id={} err={}",
-                channel,
-                msg_id,
-                err,
-            );
+        if let Err(err) = client.send_channel_edit(channel, &msg_id, &jwt, body).await {
+            if let Some(crate::api::rest::BackendApiError::MessageNotFound { .. }) =
+                err.downcast_ref::<crate::api::rest::BackendApiError>()
+            {
+                tracing::info!(
+                    "[channel-inbound][thinking] edit channel='{}' msg_id={} — thinking msg gone provider-side (404), clearing id and disabling further thinking edits",
+                    channel,
+                    msg_id,
+                );
+                state.thinking_message_id = None;
+                state.thinking_edit_disabled = true;
+            } else {
+                tracing::debug!(
+                    "[channel-inbound][thinking] edit failed channel='{}' msg_id={} err={}",
+                    channel,
+                    msg_id,
+                    err,
+                );
+            }
         }
     } else {
         // Send initial thinking message.
@@ -694,12 +718,22 @@ async fn delete_channel_message(channel: &str, message_id: &str) {
             );
         }
         Err(err) => {
-            tracing::warn!(
-                "[channel-inbound] failed to delete ephemeral msg channel='{}' msg_id={} err={}",
-                channel,
-                message_id,
-                err,
-            );
+            if let Some(crate::api::rest::BackendApiError::MessageNotFound { .. }) =
+                err.downcast_ref::<crate::api::rest::BackendApiError>()
+            {
+                tracing::info!(
+                    "[channel-inbound] delete channel='{}' msg_id={} — message already gone provider-side (404), nothing to clean up",
+                    channel,
+                    message_id,
+                );
+            } else {
+                tracing::warn!(
+                    "[channel-inbound] failed to delete ephemeral msg channel='{}' msg_id={} err={}",
+                    channel,
+                    message_id,
+                    err,
+                );
+            }
         }
     }
 }
@@ -742,15 +776,26 @@ async fn finalize_channel_reply(channel: &str, state: &mut StreamingState, final
                         );
                     }
                     Err(err) => {
-                        tracing::warn!(
-                            "[channel-inbound] final edit failed channel='{}' msg_id={} err={} — deleting orphan draft and sending fresh atomic reply so user still sees the canonical response",
-                            channel,
-                            message_id,
-                            err,
-                        );
-                        let orphan = message_id.clone();
-                        delete_channel_message(channel, &orphan).await;
-                        send_channel_reply(channel, final_text).await;
+                        if let Some(crate::api::rest::BackendApiError::MessageNotFound { .. }) =
+                            err.downcast_ref::<crate::api::rest::BackendApiError>()
+                        {
+                            tracing::info!(
+                                "[channel-inbound] final edit channel='{}' msg_id={} — draft already gone provider-side (404), sending fresh atomic reply",
+                                channel,
+                                message_id,
+                            );
+                            send_channel_reply(channel, final_text).await;
+                        } else {
+                            tracing::warn!(
+                                "[channel-inbound] final edit failed channel='{}' msg_id={} err={} — deleting orphan draft and sending fresh atomic reply so user still sees the canonical response",
+                                channel,
+                                message_id,
+                                err,
+                            );
+                            let orphan = message_id.clone();
+                            delete_channel_message(channel, &orphan).await;
+                            send_channel_reply(channel, final_text).await;
+                        }
                     }
                 }
             } else {
