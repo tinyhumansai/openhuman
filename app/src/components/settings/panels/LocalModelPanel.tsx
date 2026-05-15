@@ -369,21 +369,21 @@ const LocalModelPanel = () => {
               </div>
             )}
 
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => void triggerDownload(false)}
-              disabled={isTriggeringDownload}
-              className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
-              {isTriggeringDownload ? t('misc.downloading') : t('localModel.downloadModels')}
-            </button>
-            <button
-              type="button"
-              onClick={() => void loadStatus()}
-              className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-2 text-sm text-stone-700">
-              {t('common.refresh')}
-            </button>
-          </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => void triggerDownload(false)}
+                disabled={isTriggeringDownload}
+                className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
+                {isTriggeringDownload ? t('misc.downloading') : t('localModel.downloadModels')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void loadStatus()}
+                className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-2 text-sm text-stone-700">
+                {t('common.refresh')}
+              </button>
+            </div>
             {bootstrapMessage && <div className="text-xs text-green-700">{bootstrapMessage}</div>}
 
             <div className="flex gap-2">

@@ -422,12 +422,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     sendingThreadIdRef.current = threadId;
     sendingTimeoutRef.current = setTimeout(() => {
       console.warn('[chat] silence timeout: no inference signal for 120s');
-      setSendError(
-        chatSendError(
-          'safety_timeout',
-          t('chat.safetyTimeout')
-        )
-      );
+      setSendError(chatSendError('safety_timeout', t('chat.safetyTimeout')));
       dispatch(clearRuntimeForThread({ threadId }));
       dispatch(setActiveThread(null));
       sendingTimeoutRef.current = null;

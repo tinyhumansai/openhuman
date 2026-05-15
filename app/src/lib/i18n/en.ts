@@ -621,7 +621,8 @@ const en: TranslationMap = {
   'common.enable': 'Enable',
 
   // Chat (additional)
-  'chat.safetyTimeout': 'No response from the agent after 2 minutes. Try again or check your connection.',
+  'chat.safetyTimeout':
+    'No response from the agent after 2 minutes. Try again or check your connection.',
   'chat.filter.all': 'All',
   'chat.filter.work': 'Work',
   'chat.filter.briefing': 'Briefing',

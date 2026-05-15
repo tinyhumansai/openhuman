@@ -74,8 +74,10 @@ function formatRelativeTime(epochSeconds: number, t: (key: string) => string): s
   const tsMs = epochSeconds * 1000;
   const diffSec = Math.max(0, Math.floor((nowMs - tsMs) / 1000));
   if (diffSec < 45) return t('notifications.justNow');
-  if (diffSec < 3600) return t('notifications.minAgo').replace('{n}', String(Math.floor(diffSec / 60)));
-  if (diffSec < 86_400) return t('notifications.hrAgo').replace('{n}', String(Math.floor(diffSec / 3600)));
+  if (diffSec < 3600)
+    return t('notifications.minAgo').replace('{n}', String(Math.floor(diffSec / 60)));
+  if (diffSec < 86_400)
+    return t('notifications.hrAgo').replace('{n}', String(Math.floor(diffSec / 3600)));
   if (diffSec < 604_800)
     return t('notifications.dayAgo').replace('{n}', String(Math.floor(diffSec / 86_400)));
   return new Date(tsMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });

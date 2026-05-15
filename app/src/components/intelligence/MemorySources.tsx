@@ -287,6 +287,7 @@ interface SourceRowCardProps {
 
 function SourceRowCard({ row, isSyncing, onSync }: SourceRowCardProps) {
   const { t } = useT();
+  const freshnessLabels = useFreshnessLabel();
   // `buildRows` already filtered down to (connected toolkit + syncable),
   // so `connection` is non-null and `isSyncable` is always true here.
   const { connection, status, title, toolkit } = row;
@@ -313,7 +314,7 @@ function SourceRowCard({ row, isSyncing, onSync }: SourceRowCardProps) {
             <span
               className={`rounded-md px-2 py-0.5 text-xs font-medium ${freshnessBadge(status.freshness)}`}
               data-testid={`memory-source-freshness-${toolkit}`}>
-              {useFreshnessLabel()[status.freshness]}
+              {freshnessLabels[status.freshness]}
             </span>
           )}
           {!isActive && (
