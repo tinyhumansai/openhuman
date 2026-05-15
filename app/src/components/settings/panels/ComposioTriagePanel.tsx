@@ -83,7 +83,7 @@ const ComposioTriagePanel = () => {
           breadcrumbs={breadcrumbs}
         />
         <div className="p-4">
-          <p className="text-sm text-stone-500">{t('common.loading')}</p>
+          <p className="text-sm text-stone-500">Loading…</p>
         </div>
       </div>
     );

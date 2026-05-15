@@ -14,7 +14,6 @@
  */
 import { useEffect, useRef, useState } from 'react';
 
-import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 
@@ -150,7 +149,6 @@ const ContextGatheringStep = ({
   onNext,
   onBack: _onBack,
 }: ContextGatheringStepProps) => {
-  const { t } = useT();
   // Stage statuses are tracked in a ref — they drive pipeline branching only,
   // not rendering, so there is no need to trigger re-renders on each update.
   const stageStatusesRef = useRef<Record<string, StageStatus>>(
@@ -288,11 +286,12 @@ const ContextGatheringStep = ({
     return (
       <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
         <div className="flex flex-col items-center justify-center gap-5">
-          <h1 className="text-xl font-bold text-stone-900">{t('onboarding.finish')}</h1>
+          <h1 className="text-xl font-bold text-stone-900">Context Gathering</h1>
           <p className="text-sm text-stone-600 text-center max-w-xs leading-relaxed">
-            {t('onboarding.finishDesc')}
+            We couldn&apos;t build your full profile right now, but that&apos;s okay — you can
+            continue and your profile will build over time.
           </p>
-          <OnboardingNextButton label={t('common.continue')} onClick={continueToChat} />
+          <OnboardingNextButton label="Continue to chat" onClick={continueToChat} />
         </div>
       </div>
     );
@@ -306,9 +305,11 @@ const ContextGatheringStep = ({
 
         {/* Title */}
         <h1 className="text-xl font-bold text-stone-900 animate-pulse">
-          {t('onboarding.context')}
+          Building your profile...
         </h1>
-        <p className="text-sm text-stone-500 leading-relaxed">{t('onboarding.contextDesc')}</p>
+        <p className="text-sm text-stone-500 leading-relaxed">
+          Connecting your integrations and building your personal context.
+        </p>
 
         {/* Skeleton bars */}
         <div className="w-64 flex flex-col gap-3 mt-2">
@@ -318,7 +319,7 @@ const ContextGatheringStep = ({
         </div>
 
         {hasGmail && !finished && (
-          <OnboardingNextButton label={t('common.continue')} onClick={continueToChat} />
+          <OnboardingNextButton label="Continue to chat" onClick={continueToChat} />
         )}
       </div>
     </div>

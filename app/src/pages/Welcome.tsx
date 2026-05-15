@@ -171,7 +171,7 @@ const Welcome = () => {
               {rpcUrlError ? (
                 <p className="mt-2 text-xs text-red-600">{rpcUrlError}</p>
               ) : saveSuccess ? (
-                <p className="mt-2 text-xs text-green-600">{t('common.success')}</p>
+                <p className="mt-2 text-xs text-green-600">URL saved successfully.</p>
               ) : null}
               <div className="mt-3 flex gap-2">
                 <button
@@ -184,7 +184,7 @@ const Welcome = () => {
                   type="button"
                   onClick={handleResetRpcUrl}
                   className="px-3 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-700 text-xs font-medium rounded-lg transition-colors">
-                  {t('common.reset')}
+                  Reset to Default
                 </button>
               </div>
             </div>
@@ -237,7 +237,7 @@ const Welcome = () => {
               aria-atomic="true"
               className="mb-5 flex flex-col items-center justify-center gap-3 py-2">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-stone-300 border-t-primary-500" />
-              <p className="text-sm font-medium text-stone-700">{t('welcome.connecting')}</p>
+              <p className="text-sm font-medium text-stone-700">Signing you in...</p>
             </div>
           ) : (
             <>

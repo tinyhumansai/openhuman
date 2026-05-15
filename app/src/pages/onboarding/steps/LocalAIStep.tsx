@@ -105,13 +105,13 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
           </div>
         </div>
 
-        <OnboardingNextButton label={t('common.continue')} onClick={handleSkip} />
+        <OnboardingNextButton label="Continue with Cloud" onClick={handleSkip} />
 
         <button
           type="button"
           onClick={handleConsent}
           className="mt-3 w-full text-center text-xs text-stone-400 hover:text-stone-600 transition-colors">
-          {t('onboarding.enableLocalAI')}
+          Use local AI anyway (not recommended for your device)
         </button>
       </div>
     );
@@ -161,13 +161,13 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
         </div>
       </div>
 
-      <OnboardingNextButton label={t('common.continue')} onClick={handleSkip} />
+      <OnboardingNextButton label="Continue with Cloud" onClick={handleSkip} />
 
       <button
         type="button"
         onClick={handleConsent}
         className="mt-3 w-full text-center text-xs text-stone-400 hover:text-stone-600 transition-colors">
-        {t('onboarding.enableLocalAI')}
+        Use local AI instead (install Ollama now)
       </button>
     </div>
   );

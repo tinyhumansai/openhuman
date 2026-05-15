@@ -774,7 +774,7 @@ export default function Skills() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h2 className="text-sm font-semibold text-amber-900">
-                      {t('misc.somethingWentWrong')}
+                      Connections are showing stale status
                     </h2>
                     <p className="mt-1 text-xs leading-relaxed text-amber-800">{composioError}</p>
                   </div>
@@ -782,7 +782,7 @@ export default function Skills() {
                     type="button"
                     onClick={() => void refreshComposio()}
                     className="flex-shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-medium text-amber-800 transition-colors hover:bg-amber-100">
-                    {t('common.retry')}
+                    Retry
                   </button>
                 </div>
               </div>

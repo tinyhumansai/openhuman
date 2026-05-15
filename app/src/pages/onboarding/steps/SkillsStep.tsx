@@ -165,7 +165,7 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
         onClick={handleContinue}
         loading={submitting}
         loadingLabel={t('common.loading')}
-        label={gmailConnected ? t('common.continue') : t('onboarding.skip')}
+        label={gmailConnected ? t('common.continue') : 'Skip for Now'}
       />
 
       {activeToolkit && (

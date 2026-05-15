@@ -43,23 +43,17 @@ interface SubconsciousReflectionCardsProps {
   initialReflections?: Reflection[];
 }
 
-function kindLabel(kind: ReflectionKind, t: (key: string) => string): string {
-  switch (kind) {
-    case 'hotness_spike':
-      return t('reflections.kind.hotnessSpike');
-    case 'cross_source_pattern':
-      return t('reflections.kind.crossSourcePattern');
-    case 'daily_digest':
-      return t('reflections.kind.dailyDigest');
-    case 'due_item':
-      return t('reflections.kind.dueItem');
-    case 'risk':
-      return t('reflections.kind.risk');
-    case 'opportunity':
-      return t('reflections.kind.opportunity');
-    default:
-      return kind;
-  }
+const KIND_LABEL: Partial<Record<ReflectionKind, string>> = {
+  hotness_spike: 'Hotness spike',
+  cross_source_pattern: 'Cross-source pattern',
+  daily_digest: 'Daily digest',
+  due_item: 'Due item',
+  risk: 'Risk',
+  opportunity: 'Opportunity',
+};
+
+function kindLabel(kind: ReflectionKind, _t: (key: string) => string): string {
+  return KIND_LABEL[kind] ?? kind;
 }
 
 /**

@@ -373,7 +373,7 @@ const LocalModelPanel = () => {
               <button
                 type="button"
                 onClick={() => void triggerDownload(false)}
-                disabled={isTriggeringDownload}
+                disabled={!runtimeEnabled || isTriggeringDownload}
                 className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
                 {isTriggeringDownload ? t('misc.downloading') : t('localModel.downloadModels')}
               </button>
@@ -385,22 +385,6 @@ const LocalModelPanel = () => {
               </button>
             </div>
             {bootstrapMessage && <div className="text-xs text-green-700">{bootstrapMessage}</div>}
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => void triggerDownload(false)}
-                disabled={!runtimeEnabled || isTriggeringDownload}
-                className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
-                {isTriggeringDownload ? 'Downloading…' : 'Download Models'}
-              </button>
-              <button
-                type="button"
-                onClick={() => void loadStatus()}
-                className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-2 text-sm text-stone-700">
-                Refresh
-              </button>
-            </div>
 
             {statusError && (
               <div className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-600">
@@ -459,23 +443,23 @@ const LocalModelPanel = () => {
               [
                 {
                   key: 'usage_embeddings' as const,
-                  label: t('localModel.usage.embeddings'),
-                  hint: t('localModel.usage.embeddingsDesc'),
+                  label: 'Embeddings',
+                  hint: 'Vector embedding for memory search and retrieval.',
                 },
                 {
                   key: 'usage_heartbeat' as const,
-                  label: t('localModel.usage.heartbeat'),
-                  hint: t('localModel.usage.heartbeatDesc'),
+                  label: 'Heartbeat',
+                  hint: 'Periodic background summarisation of recent memory.',
                 },
                 {
                   key: 'usage_learning_reflection' as const,
-                  label: t('localModel.usage.learningReflection'),
-                  hint: t('localModel.usage.learningReflectionDesc'),
+                  label: 'Learning / reflection',
+                  hint: 'Post-conversation reflection and profile updates.',
                 },
                 {
                   key: 'usage_subconscious' as const,
-                  label: t('localModel.usage.subconscious'),
-                  hint: t('localModel.usage.subconsciousDesc'),
+                  label: 'Subconscious',
+                  hint: 'Background autonomous task evaluation.',
                 },
               ] as const
             ).map(({ key, label, hint }) => (

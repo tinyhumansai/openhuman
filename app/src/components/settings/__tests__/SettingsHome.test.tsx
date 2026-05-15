@@ -1,9 +1,16 @@
+import { configureStore } from '@reduxjs/toolkit';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import localeReducer from '../../../store/localeSlice';
 import SettingsHome from '../SettingsHome';
+
+function makeTestStore() {
+  return configureStore({ reducer: { locale: localeReducer } });
+}
 
 // --- hoisted mocks ---
 
@@ -53,9 +60,11 @@ vi.mock('../../walkthrough/AppWalkthrough', () => ({ resetWalkthrough: vi.fn() }
 
 function renderSettingsHome() {
   return render(
-    <MemoryRouter>
-      <SettingsHome />
-    </MemoryRouter>
+    <Provider store={makeTestStore()}>
+      <MemoryRouter>
+        <SettingsHome />
+      </MemoryRouter>
+    </Provider>
   );
 }
 
