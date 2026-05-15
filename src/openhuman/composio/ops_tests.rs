@@ -1015,6 +1015,45 @@ fn composio_failure_tag_does_not_misclassify_unrelated_messages() {
     }
 }
 
+// ── extract_backend_returned_status ───────────────────────────
+//
+// Pin status extraction so the `report_composio_op_error` Sentry tag
+// stays in lockstep with the `Backend returned <status> ...` rendering
+// the integrations layer produces. Without the digit anchor the
+// `before_send` filter's transient-status branch can't distinguish a 502
+// from a 401, and the dominant leak shape (OPENHUMAN-TAURI-35 / -2H)
+// re-opens.
+
+#[test]
+fn extract_backend_returned_status_parses_three_digit_status() {
+    let rendered = "Backend returned 502 Bad Gateway for POST \
+                    https://api.tinyhumans.ai/agent-integrations/composio/connections: \
+                    upstream temporarily unavailable";
+    assert_eq!(
+        extract_backend_returned_status(rendered),
+        Some("502".to_string())
+    );
+}
+
+#[test]
+fn extract_backend_returned_status_returns_none_when_no_status() {
+    // Envelope-style error with no HTTP status digits after the anchor.
+    let rendered = "Backend returned bad gateway (envelope-only error)";
+    assert_eq!(extract_backend_returned_status(rendered), None);
+}
+
+#[test]
+fn extract_backend_returned_status_handles_mixed_case() {
+    // Some renders upper-case the prefix; the helper lowercases before
+    // matching so both shapes resolve to the same status string.
+    let rendered = "BACKEND RETURNED 429 Too Many Requests for GET \
+                    https://api.tinyhumans.ai/agent-integrations/composio/triggers";
+    assert_eq!(
+        extract_backend_returned_status(rendered),
+        Some("429".to_string())
+    );
+}
+
 // ── before_send filter integration ─────────────────────────────
 //
 // Belt-and-suspenders: re-assert the cross-module contract from the

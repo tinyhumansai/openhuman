@@ -83,6 +83,17 @@ fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err:
     // `String` / `&str` errors it falls back to the Display impl.
     let rendered = format!("{err:#}");
     let failure_tag = classify_composio_failure_tag(rendered.as_str());
+    if failure_tag == "non_2xx" {
+        if let Some(status) = extract_backend_returned_status(&rendered) {
+            crate::core::observability::report_error_or_expected(
+                rendered.as_str(),
+                "composio",
+                operation,
+                &[("failure", failure_tag), ("status", status.as_str())],
+            );
+            return;
+        }
+    }
     crate::core::observability::report_error_or_expected(
         rendered.as_str(),
         "composio",
@@ -108,6 +119,22 @@ fn classify_composio_failure_tag(rendered: &str) -> &'static str {
     } else {
         "non_2xx"
     }
+}
+
+/// Extract the HTTP status code from a `Backend returned <status> ...`
+/// rendering produced by the integrations layer. Returns `None` when no
+/// numeric status follows the anchor phrase (e.g. envelope-only errors).
+///
+/// Surfacing the status as a Sentry tag gives the `before_send` filter's
+/// transient-status branch (`is_transient_integrations_failure`) a precise
+/// signal to drop the dominant 5xx leak shape (OPENHUMAN-TAURI-35 / -2H)
+/// without also dropping genuine 4xx bug-shape failures that share the
+/// `failure="non_2xx"` tag.
+fn extract_backend_returned_status(rendered: &str) -> Option<String> {
+    let lower = rendered.to_ascii_lowercase();
+    let rest = lower.split_once("backend returned ")?.1;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    (!digits.is_empty()).then_some(digits)
 }
 
 // ── Toolkits ────────────────────────────────────────────────────────
