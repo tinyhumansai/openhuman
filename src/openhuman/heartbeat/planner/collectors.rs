@@ -157,17 +157,38 @@ pub(crate) async fn collect_calendar_meetings(
             continue;
         }
 
+        // Build base args, then let the shared transformer fill in
+        // `timeZone` + `singleEvents` so this poller behaves identically
+        // to the agent-driven dispatcher path (issue #1714). Routing
+        // both call sites through the same helper means a future change
+        // to the defaulting policy only has to land in one place.
         let arguments = json!({
             "connectionId": conn.id,
             "timeMin": now.to_rfc3339(),
             "timeMax": end_window.to_rfc3339(),
             "maxResults": 20
         });
+        let iana = crate::openhuman::composio::googlecalendar_args::current_iana_timezone();
+        tracing::debug!(
+            target: "composio",
+            slug = "GOOGLECALENDAR_EVENTS_LIST",
+            toolkit = %toolkit,
+            connection_id = %conn.id,
+            iana = %iana,
+            lookahead_minutes = config.heartbeat.meeting_lookahead_minutes.max(1),
+            "[composio][heartbeat-planner] applying calendar query defaults pre-poll"
+        );
+        let arguments =
+            crate::openhuman::composio::googlecalendar_args::apply_calendar_query_defaults(
+                "GOOGLECALENDAR_EVENTS_LIST",
+                Some(arguments),
+                &iana,
+            );
 
         let resp: ComposioExecuteResponse = match &kind {
             ComposioClientKind::Backend(client) => {
                 match client
-                    .execute_tool("GOOGLECALENDAR_EVENTS_LIST", Some(arguments))
+                    .execute_tool("GOOGLECALENDAR_EVENTS_LIST", arguments)
                     .await
                 {
                     Ok(resp) => resp,
@@ -186,7 +207,7 @@ pub(crate) async fn collect_calendar_meetings(
                 match direct_execute(
                     direct,
                     "GOOGLECALENDAR_EVENTS_LIST",
-                    Some(arguments),
+                    arguments,
                     &config.composio.entity_id,
                 )
                 .await

@@ -68,6 +68,8 @@ const en: TranslationMap = {
   'settings.featuresDesc': 'Screen awareness, messaging, and tools',
   'settings.aiModels': 'AI & Models',
   'settings.aiModelsDesc': 'Local AI model setup, downloads, and LLM provider',
+  'settings.ai': 'AI',
+  'settings.aiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
   'settings.billingUsage': 'Billing & Usage',
   'settings.billingUsageDesc': 'Subscription plan, credits, and payment methods',
   'settings.rewards': 'Rewards',
@@ -143,6 +145,15 @@ const en: TranslationMap = {
   'home.greetingAfternoon': 'Good afternoon',
   'home.greetingEvening': 'Good evening',
   'home.askAssistant': 'Ask your assistant anything...',
+  'home.statusOk':
+    'Your device is connected. Keep the app running to keep the connection alive. Message your agent with the button below.',
+  'home.statusBackendOnly': 'Reconnecting to backend… your agent will be available again shortly.',
+  'home.statusCoreUnreachable':
+    "Local core sidecar isn't responding. The OpenHuman background process may have crashed or failed to start.",
+  'home.statusInternetOffline':
+    'Your device is offline right now. Check your network or restart the app to reconnect.',
+  'home.restartCore': 'Restart Core',
+  'home.restartingCore': 'Restarting core…',
 
   // Chat / Conversations
   'chat.newThread': 'New thread',

@@ -154,6 +154,68 @@ fn corrupt_store_is_quarantined_and_reset() {
     assert_eq!(reloaded.profiles.len(), 1);
 }
 
+/// When the encrypted-secrets key file has rotated between writes and reads
+/// (e.g. `.secret_key` got regenerated underneath an existing
+/// auth-profiles.json — observed when a workspace gets partially restored
+/// or when OPENHUMAN_WORKSPACE points at a half-populated test dir), the
+/// store must silently drop the unrecoverable profile and rewrite the
+/// file. Without this, `app_state_snapshot` polls infinite-loop on
+/// "Decryption failed — wrong key or tampered data" and the user can
+/// never log in cleanly because every read pre-empts before reaching
+/// the "no profile" code path.
+#[test]
+fn load_drops_profiles_whose_decryption_fails_under_rotated_key() {
+    // The SecretStore caches keys by canonicalised path in a process-wide
+    // OnceCell. Use a fresh temp dir per test so we don't pick up a
+    // sibling test's cached key.
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), true);
+
+    // Seed two profiles. One ("doomed") will be made unrecoverable by
+    // rewriting the encrypted token under a new key; the other
+    // ("plain-fine") uses kind=Token with a plaintext token that the
+    // legacy `enc:` / plaintext branch decrypts trivially, so even
+    // after key rotation it survives.
+    let doomed = AuthProfile::new_token("app-session", "default", "real-jwt-payload".into());
+    store.upsert_profile(doomed.clone(), true).unwrap();
+
+    // Manually corrupt the persisted token: rewrite it as a syntactically
+    // valid enc2: hex blob that the *current* key cannot decrypt.
+    // (Easier than rotating the key file because the SecretStore caches
+    // by canonical path.)
+    let path = store.path().to_path_buf();
+    let mut data: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let profile_id = doomed.id.clone();
+    data["profiles"][&profile_id]["token"] = serde_json::Value::String(
+        // 12-byte nonce + 32 bytes of "ciphertext" that won't authenticate
+        // under any random key — hex-encoded, prefixed with enc2:.
+        "enc2:000102030405060708090a0b\
+              deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            .to_string(),
+    );
+    std::fs::write(&path, serde_json::to_string_pretty(&data).unwrap()).unwrap();
+
+    // First load: should silently drop the doomed profile rather than
+    // bubbling the decrypt error and breaking every poll.
+    let loaded = store.load().expect(
+        "load must succeed by dropping unrecoverable profiles, not by propagating decrypt errors",
+    );
+    assert!(
+        !loaded.profiles.contains_key(&profile_id),
+        "doomed profile must be purged from the in-memory view"
+    );
+    assert!(
+        !loaded.active_profiles.values().any(|v| v == &profile_id),
+        "active_profiles pointer to the doomed profile must also be cleared"
+    );
+
+    // Subsequent load: file was rewritten without the bad profile, so
+    // there's nothing to drop on the second pass — same clean state.
+    let loaded2 = store.load().unwrap();
+    assert!(!loaded2.profiles.contains_key(&profile_id));
+}
+
 #[test]
 fn remove_nonexistent_profile_returns_false() {
     let tmp = TempDir::new().unwrap();

@@ -24,6 +24,7 @@ pub mod billing;
 pub mod channels;
 pub mod composio;
 pub mod config;
+pub mod connectivity;
 pub mod context;
 pub mod cost;
 pub mod credentials;
@@ -61,6 +62,8 @@ pub mod skills;
 pub mod socket;
 pub mod subconscious;
 pub mod team;
+#[cfg(feature = "e2e-test-support")]
+pub mod test_support;
 pub mod text_input;
 pub mod threads;
 pub mod tokenjuice;

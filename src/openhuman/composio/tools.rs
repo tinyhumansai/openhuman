@@ -910,6 +910,20 @@ impl Tool for ComposioExecuteTool {
             }
         }
 
+        // Inject `timeZone` / `singleEvents` defaults for Google
+        // Calendar list slugs so the host's IANA zone reaches the API
+        // regardless of how the model built the args (issue #1714).
+        // No-op for every other slug; respects caller-supplied values.
+        let iana = super::googlecalendar_args::current_iana_timezone();
+        tracing::debug!(
+            target: "composio",
+            slug = %tool,
+            iana = %iana,
+            "[composio][dispatcher] applying calendar query defaults pre-dispatch"
+        );
+        let arguments =
+            super::googlecalendar_args::apply_calendar_query_defaults(&tool, arguments, &iana);
+
         // Resolve the client through the mode-aware factory on every
         // call so a direct-mode toggle takes effect immediately
         // (#1710). The pre-baked-client variant of this code routed all

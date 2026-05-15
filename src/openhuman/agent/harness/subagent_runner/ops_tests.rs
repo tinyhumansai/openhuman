@@ -687,6 +687,134 @@ async fn typed_mode_progress_emission_is_a_noop_without_sink() {
 // Truncation tests live in ops_truncation_tests.rs to keep this file
 // under the ~500-line guideline.
 
+// ── resolve_subagent_provider ─────────────────────────────────────────
+
+/// `Arc<dyn Provider>` identity helper — every test below uses a fresh
+/// `ScriptedProvider` and we want to assert "is this the *same* Arc as
+/// the parent's" without leaning on `PartialEq` on dyn trait objects.
+fn arc_ptr_eq<P: ?Sized>(a: &std::sync::Arc<P>, b: &std::sync::Arc<P>) -> bool {
+    std::sync::Arc::ptr_eq(a, b)
+}
+
+#[test]
+fn resolve_subagent_provider_inherit_uses_parent_provider_and_model() {
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Inherit,
+        "test_agent",
+        None,
+        parent.clone(),
+        "parent-model-x".to_string(),
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "Inherit must return the parent's Arc unchanged"
+    );
+    assert_eq!(resolved_model, "parent-model-x");
+}
+
+#[test]
+fn resolve_subagent_provider_exact_overrides_only_model() {
+    // Exact keeps the parent's provider but replaces the model name.
+    // This is the explicit "I want a cheaper tier on the same backend"
+    // escape hatch.
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Exact("haiku-mini".to_string()),
+        "test_agent",
+        None,
+        parent.clone(),
+        "parent-model-x".to_string(),
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "Exact must keep the parent's provider — only the model name changes"
+    );
+    assert_eq!(resolved_model, "haiku-mini");
+}
+
+#[test]
+fn resolve_subagent_provider_hint_with_no_config_falls_back() {
+    // The async config load failed (transient I/O, missing file, etc.).
+    // The Hint arm must NOT silently swallow the failure and synthesise
+    // `{workload}-v1` — that's the OpenHuman-only naming that breaks
+    // Anthropic/OpenAI. Fall back to the parent's known-good
+    // (provider, model) instead.
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Hint("agentic".to_string()),
+        "test_agent",
+        None, // no config loaded
+        parent.clone(),
+        "real-claude-id".to_string(),
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "config-load failure must fall back to parent provider, not synthesize a new one"
+    );
+    assert_eq!(
+        resolved_model, "real-claude-id",
+        "model must be parent's current model — NOT '{{workload}}-v1'"
+    );
+}
+
+#[test]
+fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
+    // The Hint arm with a real config takes the workload-factory path.
+    // We don't assert the *resulting* provider identity here (the
+    // factory may return a fresh OpenHuman backend or whatever
+    // primary_cloud resolves to), but we DO assert the resolved model
+    // matches the workload's configured exact id — not the legacy
+    // `{workload}-v1` synthesis.
+    use crate::openhuman::config::Config;
+    let mut config = Config::default();
+    // Route `agentic` to OpenHuman backend explicitly. The backend
+    // returns the configured default_model, which we set to a known
+    // string so the assertion is meaningful.
+    config.agentic_provider = Some("openhuman".to_string());
+    config.default_model = Some("agentic-specific-model".to_string());
+
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (_resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Hint("agentic".to_string()),
+        "test_agent",
+        Some(&config),
+        parent.clone(),
+        "parent-model-ignored-on-hint".to_string(),
+    );
+    assert_eq!(
+        resolved_model, "agentic-specific-model",
+        "Hint must use the factory-resolved exact model, not synthesise `agentic-v1` \
+         and not fall back to parent's model"
+    );
+}
+
+#[test]
+fn resolve_subagent_provider_hint_falls_back_on_factory_error() {
+    // An invalid provider string in the workload config (e.g. a typo
+    // like "groq:something") makes the factory return Err. The Hint
+    // arm must fall back to the parent provider rather than
+    // propagating — sub-agent execution should degrade to "use what
+    // the parent uses" not crash entirely.
+    use crate::openhuman::config::Config;
+    let mut config = Config::default();
+    config.agentic_provider = Some("groq:not-a-real-prefix".to_string());
+
+    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
+    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+        &ModelSpec::Hint("agentic".to_string()),
+        "test_agent",
+        Some(&config),
+        parent.clone(),
+        "fallback-model".to_string(),
+    );
+    assert!(
+        arc_ptr_eq(&parent, &resolved_provider),
+        "factory error must fall back to parent provider"
+    );
+    assert_eq!(resolved_model, "fallback-model");
+}
+
 // ── Probe regression tests (#1710 Wave 2) ──────────────────────────
 //
 // `user_is_signed_in_to_composio` replaces the legacy

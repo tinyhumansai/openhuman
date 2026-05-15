@@ -39,8 +39,19 @@ export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT:-18473}"
 # Core is compiled in-process into the Tauri shell as of PR #1061; the old
 # scripts/stage-core-sidecar.mjs staging step is no longer needed.
 
-# Disable updater artifacts for E2E bundles to avoid signing-key requirements.
-TAURI_CONFIG_OVERRIDE='{"bundle":{"createUpdaterArtifacts":false}}'
+# Build the frontend in DEV mode up-front so `import.meta.env.DEV` is true
+# in the bundled E2E binary. That flips `restartApp` in
+# app/src/utils/tauriCommands/core.ts from the real `app.restart()`
+# (which destroys the WebDriver CDP target) to a benign
+# `window.location.reload()`. Without this, the identity-flip path that
+# fires on every E2E login kills the chromium-driver session.
+#
+# We then override `beforeBuildCommand` to a no-op so Tauri does not
+# clobber our dev-mode dist with a fresh prod-mode build.
+echo "Building frontend (dev mode) for E2E..."
+pnpm run build:app:e2e
+
+TAURI_CONFIG_OVERRIDE='{"bundle":{"createUpdaterArtifacts":false},"build":{"beforeBuildCommand":""}}'
 # Tauri CLI maps env CI to --ci and only accepts true|false; some runners set CI=1.
 case "${CI:-}" in 1) export CI=true ;; 0) export CI=false ;; esac
 
@@ -56,18 +67,18 @@ case "$OS" in
   Linux)
     # Linux: build debug binary only.
     echo "Building for Linux (debug binary, no bundle)..."
-    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle -- --bin OpenHuman
+    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle --features e2e-test-support -- --bin OpenHuman
     ;;
   Darwin)
     # macOS: build .app bundle (wdio.conf points at
     # src-tauri/target/debug/bundle/macos/OpenHuman.app).
     echo "Building for macOS (.app bundle)..."
-    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug -- --bin OpenHuman
+    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug --features e2e-test-support -- --bin OpenHuman
     ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
     # Windows: bare .exe at src-tauri/target/debug/OpenHuman.exe.
     echo "Building for Windows (.exe, no bundle)..."
-    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle -- --bin OpenHuman
+    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle --features e2e-test-support -- --bin OpenHuman
     ;;
   *)
     echo "ERROR: unsupported OS for e2e build: $OS" >&2

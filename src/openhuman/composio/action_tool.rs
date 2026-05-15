@@ -140,6 +140,24 @@ impl Tool for ComposioActionTool {
             }
         }
 
+        // Inject `timeZone` / `singleEvents` defaults for Google
+        // Calendar list slugs (issue #1714). The per-action surface is
+        // the spawn-time tool an integrations sub-agent picks when it
+        // wants a single Composio action, so the same defaults must
+        // fire here as on the dispatcher path.
+        let iana = super::googlecalendar_args::current_iana_timezone();
+        tracing::debug!(
+            target: "composio",
+            slug = %self.action_name,
+            iana = %iana,
+            "[composio][per-action] applying calendar query defaults pre-dispatch"
+        );
+        let args = super::googlecalendar_args::apply_calendar_query_defaults(
+            &self.action_name,
+            Some(args),
+            &iana,
+        );
+
         // Resolve the client through the mode-aware factory on every
         // call so a direct-mode toggle takes effect immediately
         // (#1710). The pre-baked-client variant of this code routed all
@@ -186,8 +204,7 @@ impl Tool for ComposioActionTool {
                 // Wrap with auth_retry so a stale tinyhumans-tenant
                 // JWT gets refreshed-and-replayed once before surfacing
                 // (upstream behaviour).
-                super::auth_retry::execute_with_auth_retry(&client, &self.action_name, Some(args))
-                    .await
+                super::auth_retry::execute_with_auth_retry(&client, &self.action_name, args).await
             }
             ComposioClientKind::Direct(direct) => {
                 tracing::debug!(
@@ -199,7 +216,7 @@ impl Tool for ComposioActionTool {
                 direct_execute(
                     &direct,
                     &self.action_name,
-                    Some(args),
+                    args,
                     &live_config.composio.entity_id,
                 )
                 .await

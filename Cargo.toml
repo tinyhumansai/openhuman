@@ -178,6 +178,10 @@ fantoccini = ["browser-native"]
 landlock = ["sandbox-landlock"]
 rag-pdf = ["dep:pdf-extract"]
 whatsapp-web = ["dep:whatsapp-rust", "dep:whatsapp-rust-tokio-transport", "dep:whatsapp-rust-ureq-http-client", "dep:wacore", "serde-big-array"]
+# Exposes the destructive `openhuman.test_reset` RPC. Off by default; the E2E
+# build (app/scripts/e2e-build.sh) flips it on. Shipped binaries never have
+# this feature so the wipe RPC isn't even registered, let alone reachable.
+e2e-test-support = []
 
 # Fix whisper-rs-sys CRT mismatch on Windows MSVC (LNK2038).
 # Upstream cmake build defaults to /MD but Rust uses /MT.

@@ -349,7 +349,54 @@ export function buildBypassJwt(userId: string = 'e2e-user'): string {
   return `${header}.${payload}.e2e`;
 }
 
-export function triggerAuthDeepLinkBypass(userId: string = 'e2e-user'): Promise<void> {
+export async function triggerAuthDeepLinkBypass(userId: string = 'e2e-user'): Promise<void> {
+  // BootCheckGate sits in front of the route on fresh storage. The deep-link
+  // auth handler calls `waitForAuthReadiness`, which can't make progress
+  // while the gate is up — the call eventually fails with "Sign-in failed.
+  // Please try again." and the spec is wedged on the login screen. Dismiss
+  // the gate before triggering the deep link so the auth path can complete.
+  await dismissBootCheckGateIfVisibleInline().catch(err => {
+    deepLinkDebug('pre-deep-link BootCheckGate dismiss failed (continuing):', err);
+  });
   const token = buildBypassJwt(userId);
   return triggerDeepLink(`openhuman://auth?token=${encodeURIComponent(token)}&key=auth`);
+}
+
+/**
+ * Inlined BootCheckGate dismisser — shared-flows has a richer exported
+ * version, but importing it here would create a circular dependency
+ * (shared-flows imports `triggerAuthDeepLink` from this file).
+ */
+async function dismissBootCheckGateIfVisibleInline(timeoutMs = 8_000): Promise<boolean> {
+  if (typeof browser === 'undefined' || typeof browser.execute !== 'function') return false;
+  const deadline = Date.now() + timeoutMs;
+  let everSeen = false;
+  while (Date.now() < deadline) {
+    const status: string = await browser
+      .execute(() => {
+        const heading = Array.from(document.querySelectorAll('h2')).find(
+          h => (h.textContent ?? '').trim() === 'Choose core mode'
+        );
+        if (!heading) return 'gone';
+        const modal = (heading.closest('.fixed') ?? heading.parentElement) as Element | null;
+        if (!modal) return 'gone';
+        const buttons = Array.from(modal.querySelectorAll<HTMLButtonElement>('button'));
+        const primary =
+          buttons.find(b => (b.textContent ?? '').trim() === 'Continue') ??
+          buttons.find(b => /bg-ocean-500/.test(b.className)) ??
+          buttons[buttons.length - 1];
+        if (!primary) return 'no-button';
+        ['mousedown', 'mouseup', 'click'].forEach(type => {
+          primary.dispatchEvent(
+            new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0 })
+          );
+        });
+        return 'clicked';
+      })
+      .catch(() => 'error');
+    if (status === 'gone') return everSeen;
+    everSeen = true;
+    await browser.pause(800);
+  }
+  return everSeen;
 }

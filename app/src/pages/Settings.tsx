@@ -6,7 +6,6 @@ import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
 import AutocompletePanel from '../components/settings/panels/AutocompletePanel';
-import BackendProviderPanel from '../components/settings/panels/BackendProviderPanel';
 import BillingPanel from '../components/settings/panels/BillingPanel';
 import ComposioPanel from '../components/settings/panels/ComposioPanel';
 import ComposioTriagePanel from '../components/settings/panels/ComposioTriagePanel';
@@ -14,7 +13,6 @@ import ConnectionsPanel from '../components/settings/panels/ConnectionsPanel';
 import CronJobsPanel from '../components/settings/panels/CronJobsPanel';
 import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOptionsPanel';
 import LocalModelDebugPanel from '../components/settings/panels/LocalModelDebugPanel';
-import LocalModelPanel from '../components/settings/panels/LocalModelPanel';
 import MascotPanel from '../components/settings/panels/MascotPanel';
 import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
@@ -180,12 +178,13 @@ const featuresSettingsItems = [
   },
 ];
 
-const aiModelsSettingsItems = [
+const aiSettingsItems = [
   {
-    id: 'local-model',
-    title: 'Local AI Model',
-    description: 'Choose model tier by device capability and manage downloads',
-    route: 'local-model',
+    id: 'llm',
+    title: 'LLM',
+    description:
+      'Cloud providers, local Ollama models, and per-workload routing (reasoning, agentic, memory, …)',
+    route: 'llm',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
@@ -198,26 +197,10 @@ const aiModelsSettingsItems = [
     ),
   },
   {
-    id: 'backend-provider',
-    title: 'LLM Provider',
-    description: 'Point inference at the OpenHuman backend or any OpenAI-compatible provider',
-    route: 'backend-provider',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 7a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2V7zm0 10a2 2 0 012-2h12a2 2 0 012 2v0a2 2 0 01-2 2H6a2 2 0 01-2-2v0zM7 9h.01M7 17h.01"
-        />
-      </svg>
-    ),
-  },
-  {
     id: 'voice',
-    title: 'Voice (STT & TTS)',
+    title: 'Voice',
     description:
-      'Choose between cloud and local providers for speech-to-text (Whisper) and text-to-speech (Piper)',
+      'Speech-to-text (Whisper) and text-to-speech (Piper) — cloud vs local provider selection',
     route: 'voice',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -279,12 +262,12 @@ const Settings = () => {
           )}
         />
         <Route
-          path="ai-models"
+          path="ai"
           element={wrapSettingsPage(
             <SettingsSectionPage
-              title="AI & Models"
-              description="Local AI model setup and backend provider configuration."
-              items={aiModelsSettingsItems}
+              title="AI"
+              description="Language model providers, local Ollama, and voice (STT / TTS)."
+              items={aiSettingsItems}
             />
           )}
         />
@@ -314,16 +297,13 @@ const Settings = () => {
         <Route path="notifications" element={wrapSettingsPage(<NotificationsPanel />)} />
         <Route path="mascot" element={wrapSettingsPage(<MascotPanel />)} />
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
-        {/* AI & Models leaf panels */}
-        <Route path="local-model" element={wrapSettingsPage(<LocalModelPanel />)} />
-        <Route path="backend-provider" element={wrapSettingsPage(<BackendProviderPanel />)} />
         {/* Developer Options */}
         <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
         <Route
           path="notification-routing"
           element={wrapSettingsPage(<NotificationRoutingPanel />)}
         />
-        <Route path="ai" element={wrapSettingsPage(<AIPanel />)} />
+        <Route path="llm" element={wrapSettingsPage(<AIPanel />)} />
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
         <Route

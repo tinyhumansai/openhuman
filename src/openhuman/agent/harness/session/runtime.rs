@@ -223,7 +223,7 @@ impl Agent {
                 .cloned()
                 .collect()
         };
-        self.visible_tool_specs = Arc::new(visible_specs);
+        self.visible_tool_specs = Arc::new(super::builder::dedup_visible_tool_specs(visible_specs));
     }
 
     /// Clears the agent's conversation history.

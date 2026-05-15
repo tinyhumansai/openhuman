@@ -1478,7 +1478,11 @@ impl Agent {
         }
 
         // Rebuild the visible-spec cache from the new tool_specs so the
-        // next provider call carries the reconciled schema.
+        // next provider call carries the reconciled schema. Dedup
+        // afterward so a delegate synthesised here (e.g.
+        // `delegate_name = "research"`) doesn't collide with a
+        // same-named skill tool on the wire — Anthropic 400s on dup
+        // tool names where OpenHuman's backend silently accepts.
         let visible_specs: Vec<crate::openhuman::tools::ToolSpec> =
             if self.visible_tool_names.is_empty() {
                 (*self.tool_specs).clone()
@@ -1489,7 +1493,7 @@ impl Agent {
                     .cloned()
                     .collect()
             };
-        self.visible_tool_specs = Arc::new(visible_specs);
+        self.visible_tool_specs = Arc::new(super::builder::dedup_visible_tool_specs(visible_specs));
 
         // Compute add/remove deltas for the log line — useful when
         // diagnosing a Composio connect/revoke that should have rebuilt

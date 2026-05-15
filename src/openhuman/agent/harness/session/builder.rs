@@ -25,6 +25,40 @@ use crate::openhuman::tools::{self, Tool, ToolSpec};
 use anyhow::Result;
 use std::sync::Arc;
 
+/// Drop entries with duplicate `name` fields, first occurrence wins.
+///
+/// Anthropic (and other strict providers) rejects a chat/completions
+/// request that lists two tools with the same name — OpenHuman's own
+/// backend and OpenAI silently accept duplicates, which hid the
+/// underlying collision (researcher sub-agent's `delegate_name =
+/// "research"` shadowing a same-named skill tool) until #1710's
+/// per-role routing started sending the same tool list to Anthropic.
+///
+/// Called from every place that materialises the visible tool spec
+/// list — initial build, post-composio refresh, scope-filter change —
+/// so the request the provider sees is always name-unique regardless
+/// of which path produced it.
+pub(super) fn dedup_visible_tool_specs(specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut deduped: Vec<ToolSpec> = Vec::with_capacity(specs.len());
+    let mut dropped: Vec<String> = Vec::new();
+    for spec in specs {
+        if seen.insert(spec.name.clone()) {
+            deduped.push(spec);
+        } else {
+            dropped.push(spec.name);
+        }
+    }
+    if !dropped.is_empty() {
+        log::warn!(
+            "[agent] dropped {} duplicate tool spec(s) before sending to provider: {:?}",
+            dropped.len(),
+            dropped
+        );
+    }
+    deduped
+}
+
 impl AgentBuilder {
     /// Creates a new `AgentBuilder` with default values.
     pub fn new() -> Self {
@@ -297,7 +331,7 @@ impl AgentBuilder {
         // (backward compat). When populated, only allowlisted tools
         // appear in the function-calling schema so the LLM literally
         // cannot call skill tools directly — it must use spawn_subagent.
-        let visible_tool_specs: Vec<ToolSpec> = if visible_names.is_empty() {
+        let visible_tool_specs_unfiltered: Vec<ToolSpec> = if visible_names.is_empty() {
             tool_specs.clone()
         } else {
             tool_specs
@@ -306,6 +340,14 @@ impl AgentBuilder {
                 .cloned()
                 .collect()
         };
+
+        // Dedupe by tool name. Anthropic (and other strict providers)
+        // rejects a chat/completions request that lists two tools with
+        // the same name — OpenHuman's own backend and OpenAI silently
+        // accept duplicates, which hid this bug until #1710's per-role
+        // routing started sending the same tool list to Anthropic.
+        let visible_tool_specs: Vec<ToolSpec> =
+            dedup_visible_tool_specs(visible_tool_specs_unfiltered);
 
         log::info!(
             "[agent] tool spec filter: total={} visible={} (filter_active={})",
@@ -602,9 +644,10 @@ impl Agent {
             &config.workspace_dir,
         ));
 
+        let local_embedding = config.workload_local_model("embeddings");
         let memory: Arc<dyn Memory> = Arc::from(memory::create_memory_with_local_ai(
             &config.memory,
-            &config.local_ai,
+            local_embedding.as_deref(),
             &config.embedding_routes,
             Some(&config.storage.provider.config),
             &config.workspace_dir,
@@ -655,26 +698,34 @@ impl Agent {
             }
         }
 
-        let model_name = config
-            .default_model
-            .as_deref()
-            .unwrap_or(crate::openhuman::config::DEFAULT_MODEL)
-            .to_string();
-
-        let provider_runtime_options = providers::ProviderRuntimeOptions {
+        // Route the main agent's chat through the unified per-workload
+        // factory so the user's "Reasoning" routing in the AI settings
+        // panel (e.g. `reasoning_provider = "anthropic:claude-..."`)
+        // actually takes effect. The factory returns a (Provider, model)
+        // tuple — the resolved model wins over the legacy `default_model`
+        // fallback so explicit picks like `anthropic:claude-sonnet-4-5`
+        // actually use claude-sonnet-4-5 end to end (sending the abstract
+        // "reasoning-v1" tier name to Anthropic would 404).
+        //
+        // When `reasoning_provider` is unset or `"cloud"`, the factory
+        // resolves to the primary cloud (OpenHuman by default), so the
+        // baseline behaviour is identical to the legacy
+        // `create_intelligent_routing_provider` path.
+        //
+        // What we deliberately lose for now: the ReliableProvider retry
+        // wrapper, model_routes translation, and intelligent local/cloud
+        // task hinting that the legacy router added on top of the raw
+        // backend. Those are valuable but orthogonal — they can be layered
+        // back on top of the factory's output in a follow-up without
+        // re-introducing the routing bypass.
+        let _ = providers::ProviderRuntimeOptions {
             auth_profile_override: None,
             openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
             secrets_encrypt: config.secrets.encrypt,
             reasoning_enabled: config.runtime.reasoning_enabled,
         };
-
-        let provider: Box<dyn Provider> = providers::create_intelligent_routing_provider(
-            config.inference_url.as_deref(),
-            config.api_url.as_deref(),
-            config.api_key.as_deref(),
-            config,
-            &provider_runtime_options,
-        )?;
+        let (provider, model_name): (Box<dyn Provider>, String) =
+            crate::openhuman::providers::create_chat_provider("reasoning", config)?;
 
         // Dispatcher selection is deferred until after the tool list is
         // finalised (orchestrator tools are appended below). We capture
@@ -1244,4 +1295,79 @@ fn prefetch_tool_memory_rules_blocking(
             }
         })
     })
+}
+
+#[cfg(test)]
+mod dedup_tests {
+    use super::dedup_visible_tool_specs;
+    use crate::openhuman::tools::ToolSpec;
+    use serde_json::json;
+
+    fn spec(name: &str) -> ToolSpec {
+        ToolSpec {
+            name: name.to_string(),
+            description: format!("description for {name}"),
+            parameters: json!({}),
+        }
+    }
+
+    #[test]
+    fn drops_duplicates_first_wins() {
+        // Real-world collision: researcher's `delegate_name = "research"`
+        // synthesises a delegate tool that shadows a same-named skill.
+        // Anthropic 400s on duplicate tool names; the dedup helper must
+        // keep the *first* occurrence so registration order semantics
+        // are preserved (the underlying tool dispatch lookup-by-name
+        // still resolves the right tool).
+        let specs = vec![
+            spec("research"), // skill
+            spec("plan"),
+            spec("research"), // delegate, dropped
+            spec("run_code"),
+            spec("plan"), // dropped
+        ];
+
+        let deduped = dedup_visible_tool_specs(specs);
+
+        let names: Vec<&str> = deduped.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["research", "plan", "run_code"]);
+    }
+
+    #[test]
+    fn passes_through_when_no_duplicates() {
+        let specs = vec![spec("a"), spec("b"), spec("c")];
+        let deduped = dedup_visible_tool_specs(specs);
+        assert_eq!(deduped.len(), 3);
+        assert_eq!(deduped[0].name, "a");
+        assert_eq!(deduped[1].name, "b");
+        assert_eq!(deduped[2].name, "c");
+    }
+
+    #[test]
+    fn handles_empty_input() {
+        let deduped = dedup_visible_tool_specs(Vec::<ToolSpec>::new());
+        assert!(deduped.is_empty());
+    }
+
+    #[test]
+    fn preserves_full_spec_content_for_kept_entries() {
+        // Description + parameters must survive the dedup pass intact —
+        // the LLM uses both for tool-call decisions, and corrupting them
+        // would silently degrade function-calling quality.
+        let mut spec_a = spec("alpha");
+        spec_a.description = "first alpha — should win".to_string();
+        spec_a.parameters = json!({"type": "object", "required": ["x"]});
+
+        let mut spec_a_dup = spec("alpha");
+        spec_a_dup.description = "second alpha — should be dropped".to_string();
+
+        let deduped = dedup_visible_tool_specs(vec![spec_a.clone(), spec_a_dup]);
+
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].description, "first alpha — should win");
+        assert_eq!(
+            deduped[0].parameters,
+            json!({"type": "object", "required": ["x"]})
+        );
+    }
 }

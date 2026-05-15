@@ -170,9 +170,9 @@ const SettingsHome = () => {
           onClick: () => navigateToSettings('features'),
         },
         {
-          id: 'ai-models',
-          title: t('settings.aiModels'),
-          description: t('settings.aiModelsDesc'),
+          id: 'ai',
+          title: t('settings.ai'),
+          description: t('settings.aiDesc'),
           icon: (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -183,7 +183,7 @@ const SettingsHome = () => {
               />
             </svg>
           ),
-          onClick: () => navigateToSettings('ai-models'),
+          onClick: () => navigateToSettings('ai'),
         },
       ],
     },

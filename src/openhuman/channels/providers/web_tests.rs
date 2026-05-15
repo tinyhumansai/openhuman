@@ -301,3 +301,94 @@ fn json_output_is_required_json_field() {
     assert!(f.required);
     assert!(matches!(f.ty, TypeSchema::Json));
 }
+
+// ── SessionCacheFingerprint (thread-session cache invalidation) ───────
+
+use super::SessionCacheFingerprint;
+
+fn fp(
+    model_override: Option<&str>,
+    temperature: Option<f64>,
+    target: &str,
+    reasoning_provider: Option<&str>,
+) -> SessionCacheFingerprint {
+    SessionCacheFingerprint {
+        model_override: model_override.map(String::from),
+        temperature,
+        target_agent_id: target.to_string(),
+        reasoning_provider: reasoning_provider.map(String::from),
+    }
+}
+
+#[test]
+fn fingerprint_identical_inputs_are_cache_hit() {
+    let a = fp(
+        None,
+        None,
+        "orchestrator",
+        Some("anthropic:claude-sonnet-4-6"),
+    );
+    let b = fp(
+        None,
+        None,
+        "orchestrator",
+        Some("anthropic:claude-sonnet-4-6"),
+    );
+    assert_eq!(
+        a, b,
+        "identical fingerprints must compare equal (cache hit)"
+    );
+}
+
+#[test]
+fn fingerprint_reasoning_provider_change_forces_rebuild() {
+    // The whole point of adding reasoning_provider to the fingerprint:
+    // changing the workload routing in Settings → AI → LLM mid-thread
+    // must invalidate the cached agent so the next turn rebuilds with
+    // the new provider.
+    let warm = fp(None, None, "orchestrator", Some("cloud"));
+    let after_settings_change = fp(
+        None,
+        None,
+        "orchestrator",
+        Some("anthropic:claude-sonnet-4-6"),
+    );
+    assert_ne!(
+        warm, after_settings_change,
+        "reasoning_provider change must produce a different fingerprint (cache miss → rebuild)"
+    );
+}
+
+#[test]
+fn fingerprint_reasoning_provider_none_vs_some_differs() {
+    // Unset → explicitly-set is also a routing change (None resolves to
+    // 'cloud' via the factory, an explicit value does not).
+    let unset = fp(None, None, "orchestrator", None);
+    let set = fp(None, None, "orchestrator", Some("cloud"));
+    assert_ne!(unset, set);
+}
+
+#[test]
+fn fingerprint_target_agent_flip_forces_rebuild() {
+    // welcome → orchestrator routing flip (onboarding completion) must
+    // still invalidate — regression guard for the original cache bug
+    // this struct also protects.
+    let welcome = fp(None, None, "welcome", Some("cloud"));
+    let orchestrator = fp(None, None, "orchestrator", Some("cloud"));
+    assert_ne!(welcome, orchestrator);
+}
+
+#[test]
+fn fingerprint_model_override_and_temperature_participate() {
+    let base = fp(None, None, "orchestrator", Some("cloud"));
+    assert_ne!(
+        base,
+        fp(Some("gpt-4o"), None, "orchestrator", Some("cloud")),
+        "per-message model_override must invalidate"
+    );
+    assert_ne!(
+        base,
+        fp(None, Some(0.9), "orchestrator", Some("cloud")),
+        "per-message temperature must invalidate"
+    );
+}

@@ -39,6 +39,7 @@ pub mod action_tool;
 pub mod auth_retry;
 pub mod bus;
 pub mod client;
+pub mod googlecalendar_args;
 pub mod ops;
 pub mod periodic;
 pub mod providers;

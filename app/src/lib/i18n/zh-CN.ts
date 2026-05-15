@@ -68,6 +68,8 @@ const zhCN: TranslationMap = {
   'settings.featuresDesc': '屏幕感知、消息与工具',
   'settings.aiModels': 'AI 与模型',
   'settings.aiModelsDesc': '本地 AI 模型设置、下载与 LLM 提供商',
+  'settings.ai': 'AI',
+  'settings.aiDesc': '云端提供商、本地 Ollama 模型以及按工作负载路由',
   'settings.billingUsage': '账单与用量',
   'settings.billingUsageDesc': '订阅方案、配额与支付方式',
   'settings.rewards': '奖励',
@@ -142,6 +144,12 @@ const zhCN: TranslationMap = {
   'home.greetingAfternoon': '下午好',
   'home.greetingEvening': '晚上好',
   'home.askAssistant': '向你的助手提问...',
+  'home.statusOk': '你的设备已连接。保持应用运行以维持连接，通过下方按钮向你的智能体发送消息。',
+  'home.statusBackendOnly': '正在重新连接后端…你的智能体很快将再次可用。',
+  'home.statusCoreUnreachable': '本地核心 sidecar 无响应。OpenHuman 后台进程可能已崩溃或未能启动。',
+  'home.statusInternetOffline': '你的设备当前处于离线状态。请检查网络或重启应用以重新连接。',
+  'home.restartCore': '重启核心',
+  'home.restartingCore': '正在重启核心…',
 
   // Chat / Conversations
   'chat.newThread': '新对话',

@@ -117,6 +117,16 @@ impl LocalAiService {
         status.warning = Some(warning);
     }
 
+    /// Force the status field to `"disabled"`. Used by the
+    /// `local_ai_shutdown_owned` RPC so the UI flips to the disabled
+    /// state immediately after the user toggles local AI off — without
+    /// waiting for the natural `local_ai_status` poll to re-bootstrap
+    /// (which it never does from the `"ready"` state).
+    pub fn mark_disabled(&self, config: &Config) {
+        log::info!("[local_ai] mark_disabled: status forced to disabled by gate toggle");
+        *self.status.lock() = LocalAiStatus::disabled(config);
+    }
+
     pub async fn bootstrap(&self, config: &Config) {
         let _guard = self.bootstrap_lock.lock().await;
         let device = crate::openhuman::local_ai::device::detect_device_profile();

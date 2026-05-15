@@ -123,13 +123,16 @@ describe('SettingsHome', () => {
       );
     });
 
-    it('places Features, AI & Models under Features & AI', () => {
+    it('places Features and AI under Features & AI', () => {
+      // After #1710: the catch-all "AI & Models" row collapsed into a
+      // nested "AI" section page (with LLM + Voice as children), so
+      // the home tile label changed from "AI & Models" to just "AI".
       renderSettingsHome();
       const header = screen.getByText('Features & AI');
       expect(header.compareDocumentPosition(screen.getByText('Features'))).toBe(
         Node.DOCUMENT_POSITION_FOLLOWING
       );
-      expect(header.compareDocumentPosition(screen.getByText('AI & Models'))).toBe(
+      expect(header.compareDocumentPosition(screen.getByText('AI'))).toBe(
         Node.DOCUMENT_POSITION_FOLLOWING
       );
     });
@@ -228,12 +231,12 @@ describe('SettingsHome', () => {
       expect(mockNavigateToSettings).toHaveBeenCalledWith('features');
     });
 
-    it('navigates to ai-models settings when AI & Models is clicked', async () => {
+    it('navigates to ai settings when AI is clicked', async () => {
       const user = userEvent.setup();
       renderSettingsHome();
 
-      await user.click(screen.getByText('AI & Models').closest('button')!);
-      expect(mockNavigateToSettings).toHaveBeenCalledWith('ai-models');
+      await user.click(screen.getByText('AI').closest('button')!);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('ai');
     });
 
     it('opens billing URL when Billing & Usage is clicked', async () => {

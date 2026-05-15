@@ -158,12 +158,23 @@ async fn test_integrations_agent_has_current_date_context() -> Result<()> {
         on_progress: None,
     };
 
-    let def =
+    let mut def =
         openhuman_core::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
             .unwrap()
             .get("integrations_agent")
             .unwrap()
             .clone();
+    // `integrations_agent` ships with `[model] hint = "agentic"`. After
+    // #1710, a Hint sub-agent builds a fresh provider via the workload
+    // factory instead of inheriting `parent.provider` — which here would
+    // resolve to the OpenHuman backend and fail with "No backend session"
+    // before the MockCalendarProvider ever sees a request. This test only
+    // asserts prompt construction (the "Current Date & Time" context), so
+    // override the model spec to Inherit to keep the real integrations_agent
+    // definition (prompt, tools, scope) while routing through the captured
+    // mock provider. Provider *routing* for Hint sub-agents is covered by
+    // `subagent_runner::ops::tests::resolve_subagent_provider_*`.
+    def.model = openhuman_core::openhuman::agent::harness::definition::ModelSpec::Inherit;
 
     let _ = openhuman_core::openhuman::agent::harness::with_parent_context(parent, async {
         openhuman_core::openhuman::agent::harness::run_subagent(

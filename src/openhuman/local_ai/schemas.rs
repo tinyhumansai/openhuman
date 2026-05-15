@@ -138,6 +138,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("agent_chat"),
         schemas("agent_chat_simple"),
         schemas("local_ai_status"),
+        schemas("local_ai_shutdown_owned"),
         schemas("local_ai_download"),
         schemas("local_ai_download_all_assets"),
         schemas("local_ai_summarize"),
@@ -180,6 +181,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("local_ai_status"),
             handler: handle_local_ai_status,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_shutdown_owned"),
+            handler: handle_local_ai_shutdown_owned,
         },
         RegisteredController {
             schema: schemas("local_ai_download"),
@@ -318,6 +323,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Read local AI service status.",
             inputs: vec![],
             outputs: vec![json_output("status", "Local AI status payload.")],
+        },
+        "local_ai_shutdown_owned" => ControllerSchema {
+            namespace: "local_ai",
+            function: "shutdown_owned",
+            description:
+                "Gate off the local AI runtime. Kills the Ollama daemon only \
+                 if OpenHuman spawned it (external daemons are left running). \
+                 Forces status to \"disabled\" so the UI flips immediately.",
+            inputs: vec![],
+            outputs: vec![json_output("status", "Local AI status after shutdown.")],
         },
         "local_ai_download" => ControllerSchema {
             namespace: "local_ai",
@@ -631,6 +646,13 @@ fn handle_local_ai_status(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(crate::openhuman::local_ai::rpc::local_ai_status(&config).await?)
+    })
+}
+
+fn handle_local_ai_shutdown_owned(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let mut config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::local_ai::rpc::local_ai_shutdown_owned(&mut config).await?)
     })
 }
 

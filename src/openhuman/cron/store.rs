@@ -183,6 +183,20 @@ pub fn remove_job(config: &Config, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Deletes every cron job in the workspace. Returns the number of rows removed.
+///
+/// Intended for the `openhuman.test_reset` RPC used by E2E specs to wipe state
+/// between tests without restarting the sidecar. The cron scheduler picks up
+/// the empty table on its next tick — no in-memory cache to invalidate.
+pub fn clear_all_jobs(config: &Config) -> Result<usize> {
+    let removed = with_connection(config, |conn| {
+        conn.execute("DELETE FROM cron_jobs", params![])
+            .context("Failed to clear cron jobs")
+    })?;
+    log::info!("[cron] cleared all cron jobs (removed {removed} rows)");
+    Ok(removed)
+}
+
 pub fn due_jobs(config: &Config, now: DateTime<Utc>) -> Result<Vec<CronJob>> {
     let lim = i64::try_from(config.scheduler.max_tasks.max(1))
         .context("Scheduler max_tasks overflows i64")?;

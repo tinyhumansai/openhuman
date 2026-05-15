@@ -90,3 +90,68 @@ export async function openhumanDecryptSecret(ciphertext: string): Promise<Comman
     params: { ciphertext },
   });
 }
+
+/**
+ * Summary of one stored provider credential profile. Mirrors the Rust
+ * `credentials::responses::AuthProfileSummary` — no secret material is
+ * carried over the wire; only existence + metadata.
+ */
+export interface AuthProfileSummary {
+  id: string;
+  provider: string;
+  profile_name: string;
+  kind: 'token' | 'oauth';
+  account_id?: string | null;
+  workspace_id?: string | null;
+  has_token?: boolean;
+  metadata?: Record<string, string>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * Store an API key for a cloud LLM provider (or any other named provider).
+ * The token is encrypted at rest in `auth-profiles.json` under the workspace
+ * `.secret_key` — same scheme used by the Composio integration.
+ */
+export async function authStoreProviderCredentials(args: {
+  provider: string;
+  profile?: string;
+  token?: string;
+  fields?: Record<string, string>;
+  setActive?: boolean;
+}): Promise<CommandResponse<AuthProfileSummary>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AuthProfileSummary>>({
+    method: 'openhuman.auth_store_provider_credentials',
+    params: args,
+  });
+}
+
+/** Remove a stored provider credential profile. */
+export async function authRemoveProviderCredentials(args: {
+  provider: string;
+  profile?: string;
+}): Promise<CommandResponse<{ removed: boolean; provider: string; profile: string }>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<
+    CommandResponse<{ removed: boolean; provider: string; profile: string }>
+  >({ method: 'openhuman.auth_remove_provider_credentials', params: args });
+}
+
+/** List stored provider credential profiles, optionally filtered by provider. */
+export async function authListProviderCredentials(
+  provider?: string
+): Promise<CommandResponse<AuthProfileSummary[]>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AuthProfileSummary[]>>({
+    method: 'openhuman.auth_list_provider_credentials',
+    params: provider ? { provider } : {},
+  });
+}

@@ -331,6 +331,33 @@ mod tests {
     }
 
     #[test]
+    fn handle_sio_event_debug_truncation_respects_utf8_boundary() {
+        // Serialized JSON must be >= 500 bytes with a multi-byte codepoint
+        // straddling byte 500 — mirrors OPENHUMAN-TAURI-KC (Cyrillic at 499..501).
+        let inner = format!("{}н", "a".repeat(498));
+        let payload_json = serde_json::Value::String(inner.clone()).to_string();
+        assert!(
+            payload_json.len() >= 500,
+            "fixture too short: {} bytes",
+            payload_json.len()
+        );
+        assert!(
+            !payload_json.is_char_boundary(500),
+            "fixture must place byte 500 inside a multi-byte character"
+        );
+
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        handle_sio_event(
+            "weird.unrelated.event",
+            serde_json::Value::String(inner),
+            &tx,
+            &shared,
+        );
+        assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
+    }
+
+    #[test]
     fn handle_sio_event_unknown_event_is_noop_on_status() {
         let shared = make_shared();
         let (tx, _rx) = mpsc::unbounded_channel::<String>();

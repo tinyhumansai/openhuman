@@ -9,6 +9,7 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 
 import channelConnectionsReducer from '../store/channelConnectionsSlice';
+import connectivityReducer from '../store/connectivitySlice';
 import coreModeReducer from '../store/coreModeSlice';
 import mascotReducer from '../store/mascotSlice';
 import socketReducer from '../store/socketSlice';
@@ -23,6 +24,7 @@ import socketReducer from '../store/socketSlice';
  */
 const testRootReducer = combineReducers({
   channelConnections: channelConnectionsReducer,
+  connectivity: connectivityReducer,
   coreMode: coreModeReducer,
   mascot: mascotReducer,
   socket: socketReducer,

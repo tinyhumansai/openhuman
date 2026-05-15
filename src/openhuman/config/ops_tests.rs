@@ -225,6 +225,7 @@ async fn apply_model_settings_updates_fields_and_persists_snapshot() {
         default_model: Some("gpt-4o".into()),
         default_temperature: Some(0.25),
         model_routes: None,
+        ..Default::default()
     };
     let outcome = apply_model_settings(&mut cfg, patch).await.expect("apply");
     assert_eq!(cfg.api_url.as_deref(), Some("https://api.example.test"));
@@ -249,6 +250,7 @@ async fn apply_model_settings_stores_api_key_and_clears_when_empty() {
         default_model: Some("gpt-4o-mini".into()),
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, set).await.expect("set");
     assert_eq!(cfg.api_key.as_deref(), Some("sk-test-1234"));
@@ -260,6 +262,7 @@ async fn apply_model_settings_stores_api_key_and_clears_when_empty() {
         default_model: None,
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, clear).await.expect("clear");
     assert!(cfg.api_key.is_none());
@@ -292,6 +295,7 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
                 model: "gpt-4o".into(),
             },
         ]),
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, set_routes)
         .await
@@ -307,6 +311,7 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
         default_model: None,
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, touch_other)
         .await
@@ -322,6 +327,7 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
         default_model: None,
         default_temperature: None,
         model_routes: Some(vec![]),
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, clear_routes)
         .await
@@ -341,6 +347,7 @@ async fn apply_model_settings_empty_strings_clear_optional_fields() {
         default_model: Some("".into()),
         default_temperature: None,
         model_routes: None,
+        ..Default::default()
     };
     let _ = apply_model_settings(&mut cfg, patch).await.expect("apply");
     assert!(cfg.api_url.is_none());
