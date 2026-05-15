@@ -130,17 +130,34 @@ pub fn chunk_markdown(text: &str, max_tokens: usize) -> Vec<Chunk> {
     chunks
 }
 
-/// Identifies top-level markdown headings and groups their following text.
-///
-/// Recognizes `#`, `##`, and `###` as section boundaries.
+/// Returns `true` if `line` starts with a valid ATX markdown heading
+/// (1 to 6 `#` characters followed by a space).
+fn is_atx_heading(line: &str) -> bool {
+    const PREFIXES: &[&str] = &["# ", "## ", "### ", "#### ", "##### ", "###### "];
+    PREFIXES.iter().any(|p| line.starts_with(p))
+}
+
+/// Identifies markdown ATX headings and groups their following text into
+/// sections.
 fn split_on_headings(text: &str) -> Vec<(Option<String>, String)> {
+    log::debug!(
+        "[memory::chunker] split_on_headings: entry text_len={}",
+        text.len()
+    );
     let mut sections = Vec::new();
     let mut current_heading: Option<String> = None;
     let mut current_body = String::new();
 
+    // Log lengths only, not heading or body text: a heading could contain
+    // PII the user pasted into their docs (emails, usernames, etc.).
     for line in text.lines() {
-        if line.starts_with("# ") || line.starts_with("## ") || line.starts_with("### ") {
+        if is_atx_heading(line) {
             if !current_body.trim().is_empty() || current_heading.is_some() {
+                log::debug!(
+                    "[memory::chunker] split_on_headings: flushing section heading_len={} body_len={}",
+                    current_heading.as_deref().map(str::len).unwrap_or(0),
+                    current_body.len()
+                );
                 sections.push((current_heading.take(), std::mem::take(&mut current_body)));
             }
             current_heading = Some(line.to_string());
@@ -151,9 +168,18 @@ fn split_on_headings(text: &str) -> Vec<(Option<String>, String)> {
     }
 
     if !current_body.trim().is_empty() || current_heading.is_some() {
+        log::debug!(
+            "[memory::chunker] split_on_headings: flushing final section heading_len={} body_len={}",
+            current_heading.as_deref().map(str::len).unwrap_or(0),
+            current_body.len()
+        );
         sections.push((current_heading, current_body));
     }
 
+    log::debug!(
+        "[memory::chunker] split_on_headings: exit sections={}",
+        sections.len()
+    );
     sections
 }
 
@@ -299,15 +325,66 @@ mod tests {
     }
 
     #[test]
-    fn deeply_nested_headings_ignored() {
-        // #### and deeper are NOT treated as heading splits
+    fn deep_atx_headings_split_through_h6() {
         let text = "# Top\nIntro\n#### Deep heading\nDeep content";
         let chunks = chunk_markdown(text, 512);
-        // "#### Deep heading" should stay with its parent section
-        assert!(!chunks.is_empty());
-        let all_content: String = chunks.iter().map(|c| c.content.clone()).collect();
-        assert!(all_content.contains("Deep heading"));
-        assert!(all_content.contains("Deep content"));
+        assert!(
+            chunks.len() >= 2,
+            "expected the #### heading to start a new section, got {} chunk(s)",
+            chunks.len(),
+        );
+        let deep = chunks
+            .iter()
+            .find(|c| c.heading.as_deref() == Some("#### Deep heading"));
+        assert!(
+            deep.is_some(),
+            "expected a chunk with heading '#### Deep heading'; chunks: {chunks:?}",
+        );
+    }
+
+    #[test]
+    fn all_atx_heading_levels_h1_through_h6_split() {
+        let text = "# H1\na\n\n## H2\nb\n\n### H3\nc\n\n#### H4\nd\n\n##### H5\ne\n\n###### H6\nf";
+        let chunks = chunk_markdown(text, 512);
+        let headings: Vec<_> = chunks.iter().filter_map(|c| c.heading.as_deref()).collect();
+        assert_eq!(
+            headings,
+            vec![
+                "# H1",
+                "## H2",
+                "### H3",
+                "#### H4",
+                "##### H5",
+                "###### H6"
+            ],
+            "each ATX heading depth h1-h6 must split into its own section",
+        );
+    }
+
+    #[test]
+    fn seven_or_more_hashes_are_not_a_heading() {
+        let text = "# Top\nIntro\n####### Not a heading\nMore content";
+        let chunks = chunk_markdown(text, 512);
+        assert_eq!(
+            chunks.len(),
+            1,
+            "7-hash line should not split; expected 1 chunk, got {}",
+            chunks.len(),
+        );
+        assert_eq!(chunks[0].heading.as_deref(), Some("# Top"));
+        assert!(chunks[0].content.contains("####### Not a heading"));
+    }
+
+    #[test]
+    fn atx_heading_requires_trailing_space() {
+        let text = "# Real heading\nIntro\n###NoSpace\nbody";
+        let chunks = chunk_markdown(text, 512);
+        assert_eq!(
+            chunks.len(),
+            1,
+            "missing trailing space disqualifies the heading"
+        );
+        assert_eq!(chunks[0].heading.as_deref(), Some("# Real heading"));
     }
 
     #[test]
