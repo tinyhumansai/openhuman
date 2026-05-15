@@ -28,6 +28,18 @@ vi.mock('../../services/chatService', () => ({
   },
 }));
 
+// Stub useSelector so `useHumanMascot`'s `useSelector(selectMascotVoiceId)`
+// (issue #1762) returns `null` without needing a Redux Provider — the
+// lipsync tests cover frame plumbing, not voice-override behaviour.
+vi.mock('react-redux', async () => {
+  const actual = await vi.importActual<typeof import('react-redux')>('react-redux');
+  return {
+    ...actual,
+    useSelector: <T>(selector: (state: { mascot: { voiceId: string | null } }) => T): T =>
+      selector({ mascot: { voiceId: null } } as { mascot: { voiceId: string | null } }),
+  };
+});
+
 vi.mock('./voice/ttsClient', async () => {
   const actual = await vi.importActual<typeof import('./voice/ttsClient')>('./voice/ttsClient');
   return { ...actual, synthesizeSpeech: vi.fn() };

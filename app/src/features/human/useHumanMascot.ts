@@ -1,7 +1,9 @@
 import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
 
 import { subscribeChatEvents } from '../../services/chatService';
+import { selectMascotVoiceId } from '../../store/mascotSlice';
 import type { MascotFace } from './Mascot';
 import { lerpViseme, VISEMES, type VisemeShape } from './Mascot/visemes';
 import { type PlaybackHandle, playBase64Audio, swallowAudioStop } from './voice/audioPlayer';
@@ -110,6 +112,14 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
   const { speakReplies = false, listening = false } = options;
   const speakRef = useRef(speakReplies);
   speakRef.current = speakReplies;
+
+  // Issue #1762 — user-selected mascot voice id (or `null` for the
+  // build-time default). Mirrored into a ref so the inner
+  // `startTtsPlayback` closure always reads the latest value without
+  // having to re-create the callback on every re-render.
+  const storedMascotVoiceId = useSelector(selectMascotVoiceId);
+  const mascotVoiceIdRef = useRef<string | null>(storedMascotVoiceId);
+  mascotVoiceIdRef.current = storedMascotVoiceId;
 
   const [face, setFace] = useState<MascotFace>('idle');
   const targetRef = useRef<VisemeShape>(VISEMES.REST);
@@ -234,7 +244,12 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       setFace('thinking');
       let tts;
       try {
-        tts = await synthesizeSpeech(text);
+        // Pass the user-selected mascot voice id when one is stored
+        // (issue #1762); `undefined` falls through to the existing
+        // `MASCOT_VOICE_ID` default inside `synthesizeSpeech`, so this
+        // change is a no-op for users who have never opened the picker.
+        const voiceOverride = mascotVoiceIdRef.current;
+        tts = await synthesizeSpeech(text, voiceOverride ? { voiceId: voiceOverride } : undefined);
       } catch (err) {
         // Voice path unavailable — degrade cleanly to text-only behavior.
         if (isStillCurrent()) degraded = true;

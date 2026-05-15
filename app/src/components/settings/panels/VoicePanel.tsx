@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 
+import { synthesizeSpeech } from '../../../features/human/voice/ttsClient';
 import {
   installPiper,
   installWhisper,
@@ -7,6 +9,8 @@ import {
   type VoiceInstallStatus,
   whisperInstallStatus,
 } from '../../../services/api/voiceInstallApi';
+import { selectMascotVoiceId, setMascotVoiceId } from '../../../store/mascotSlice';
+import { MASCOT_VOICE_ID } from '../../../utils/config';
 import {
   openhumanGetVoiceServerSettings,
   openhumanLocalAiAssetsStatus,
@@ -23,6 +27,7 @@ import {
 } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import { ELEVENLABS_VOICE_PRESETS, isCuratedVoicePreset } from './elevenlabsVoicePresets';
 
 // Curated Piper voice presets — a handful of well-known English voices
 // covering male/female and US/GB accents at the recommended `medium`
@@ -43,6 +48,26 @@ const PIPER_VOICE_PRESETS: ReadonlyArray<{ id: string; label: string }> = [
 
 const VoicePanel = () => {
   const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
+  const dispatch = useDispatch();
+  // Issue #1762 — user-selected ElevenLabs voice id for the mascot's
+  // reply speech. `null` means "use the build-time default", which is
+  // exactly what `synthesizeSpeech` falls back to when called without a
+  // voiceId override. Stored in mascotSlice + persisted via redux-
+  // persist so the choice survives restart.
+  const storedMascotVoiceId = useSelector(selectMascotVoiceId);
+  // Local edit buffer for the custom-paste field. Mirrors the Piper
+  // voice editor pattern below — typing does not commit, only the
+  // explicit Save / Apply paths dispatch into the slice so a half-typed
+  // id can never reach the TTS payload.
+  const [mascotVoiceDraft, setMascotVoiceDraft] = useState<string>(storedMascotVoiceId ?? '');
+  // Sticky paste-mode flag: when the user picks "Other (paste voice id)"
+  // we need the input to appear even though `storedMascotVoiceId` is
+  // still null (or a curated id). Deriving paste-mode purely from the
+  // stored value can't model that intent.
+  const [mascotVoicePasteMode, setMascotVoicePasteMode] = useState<boolean>(false);
+  const [isPreviewingMascotVoice, setIsPreviewingMascotVoice] = useState(false);
+  const [mascotVoicePreviewError, setMascotVoicePreviewError] = useState<string | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const [settings, setSettings] = useState<VoiceServerSettings | null>(null);
   const [savedSettings, setSavedSettings] = useState<VoiceServerSettings | null>(null);
   const [serverStatus, setServerStatus] = useState<VoiceServerStatus | null>(null);
@@ -305,6 +330,90 @@ const VoicePanel = () => {
   const onTtsProviderChange = (next: 'cloud' | 'piper') => {
     setTtsProvider(next);
     void persistProviders({ tts_provider: next });
+  };
+
+  // ── Mascot voice picker (issue #1762) ──────────────────────────────
+  // Keep the local edit buffer aligned with the slice when the slice
+  // changes from outside this component (e.g. another tab updates it,
+  // or a Reset action clears it). Without this the paste editor would
+  // strand the previous value after a Reset.
+  useEffect(() => {
+    setMascotVoiceDraft(storedMascotVoiceId ?? '');
+    setMascotVoicePreviewError(null);
+  }, [storedMascotVoiceId]);
+
+  // Stop any in-flight preview audio when the panel unmounts so a user
+  // who navigates away mid-clip doesn't keep hearing the sample.
+  useEffect(() => {
+    return () => {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current.src = '';
+        previewAudioRef.current = null;
+      }
+    };
+  }, []);
+
+  /**
+   * Effective mascot voice id sent to the TTS RPC: the user override
+   * if set, otherwise the build-time default. Used by the dropdown's
+   * `value=` so the UI always reflects the actual id the next reply
+   * will be synthesised with.
+   */
+  const effectiveMascotVoiceId: string = storedMascotVoiceId ?? MASCOT_VOICE_ID;
+  const isCustomMascotVoice = mascotVoicePasteMode || !isCuratedVoicePreset(effectiveMascotVoiceId);
+
+  const onMascotVoicePresetChange = (next: string) => {
+    if (next === '__custom__') {
+      // Switch into paste mode without committing. The text input below
+      // becomes the editor; an explicit Save click writes through.
+      setMascotVoicePasteMode(true);
+      setMascotVoiceDraft(storedMascotVoiceId ?? '');
+      return;
+    }
+    setMascotVoicePasteMode(false);
+    setMascotVoicePreviewError(null);
+    dispatch(setMascotVoiceId(next));
+  };
+
+  const onMascotVoiceSavePaste = () => {
+    setMascotVoicePreviewError(null);
+    const trimmed = mascotVoiceDraft.trim();
+    dispatch(setMascotVoiceId(trimmed.length > 0 ? trimmed : null));
+  };
+
+  const onMascotVoiceReset = () => {
+    setMascotVoicePreviewError(null);
+    setMascotVoicePasteMode(false);
+    dispatch(setMascotVoiceId(null));
+  };
+
+  const onMascotVoicePreview = async () => {
+    setIsPreviewingMascotVoice(true);
+    setMascotVoicePreviewError(null);
+    // Stop any prior playback so rapid clicks don't stack samples.
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current.src = '';
+      previewAudioRef.current = null;
+    }
+    try {
+      // Short sample — ElevenLabs charges per character, and the panel
+      // is interactive so users may click Preview repeatedly. Keep this
+      // string in lockstep with the test fixture in VoicePanel.test.tsx.
+      const tts = await synthesizeSpeech("Hi, I'm your assistant. This is a voice preview.", {
+        voiceId: effectiveMascotVoiceId,
+      });
+      const src = `data:${tts.audio_mime || 'audio/mpeg'};base64,${tts.audio_base64}`;
+      const audio = new window.Audio(src);
+      previewAudioRef.current = audio;
+      await audio.play();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Voice preview failed';
+      setMascotVoicePreviewError(message);
+    } finally {
+      setIsPreviewingMascotVoice(false);
+    }
   };
 
   /**
@@ -611,6 +720,115 @@ const VoicePanel = () => {
             </div>
           </div>
         </section>
+
+        {/* Mascot Voice picker (issue #1762) — only meaningful when the
+            cloud (ElevenLabs proxy) TTS provider is selected. Local
+            Piper has its own voice picker above; bundling them would
+            confuse "which provider does this id belong to?". The check
+            is inclusive of the unseeded initial state (empty string)
+            so the picker shows on first paint instead of popping in
+            after the first voice-status poll resolves — `cloud` is the
+            shipped default. */}
+        {ttsProvider !== 'piper' && (
+          <section className="space-y-3" data-testid="mascot-voice-section">
+            <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-stone-900">Mascot Voice</h3>
+                <p className="text-xs text-stone-500 mt-1">
+                  Pick the ElevenLabs voice the mascot uses for spoken replies. Switch among the
+                  curated presets, paste any voice id you have access to under{' '}
+                  <strong>Other…</strong>, or hit <strong>Reset</strong> to fall back to the shipped
+                  default.
+                </p>
+              </div>
+
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-stone-600">Voice preset</span>
+                <select
+                  aria-label="Mascot voice preset"
+                  data-testid="mascot-voice-select"
+                  value={isCustomMascotVoice ? '__custom__' : effectiveMascotVoiceId}
+                  onChange={e => onMascotVoicePresetChange(e.target.value)}
+                  className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-400">
+                  {ELEVENLABS_VOICE_PRESETS.map(v => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                  <option value="__custom__">Other (paste voice id)…</option>
+                </select>
+              </label>
+
+              {isCustomMascotVoice && (
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-stone-600">Custom voice id</span>
+                  <div className="flex gap-2">
+                    <input
+                      aria-label="Custom ElevenLabs voice id"
+                      data-testid="mascot-voice-input"
+                      value={mascotVoiceDraft}
+                      placeholder="e.g. 21m00Tcm4TlvDq8ikWAM"
+                      onChange={e => setMascotVoiceDraft(e.target.value)}
+                      className="flex-1 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+                    />
+                    <button
+                      type="button"
+                      data-testid="mascot-voice-save-paste"
+                      onClick={onMascotVoiceSavePaste}
+                      disabled={mascotVoiceDraft.trim() === (storedMascotVoiceId ?? '').trim()}
+                      className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
+                      Save
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-stone-500">
+                    Find voice ids at <code className="font-mono">api.elevenlabs.io/v1/voices</code>{' '}
+                    or your ElevenLabs dashboard. Only the id is stored — your API key stays on the
+                    backend.
+                  </p>
+                </label>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="mascot-voice-preview"
+                  onClick={() => void onMascotVoicePreview()}
+                  disabled={isPreviewingMascotVoice}
+                  className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white">
+                  {isPreviewingMascotVoice ? 'Previewing…' : 'Preview voice'}
+                </button>
+                <button
+                  type="button"
+                  data-testid="mascot-voice-reset"
+                  onClick={onMascotVoiceReset}
+                  disabled={storedMascotVoiceId == null}
+                  title={
+                    storedMascotVoiceId == null
+                      ? 'Already using the shipped default voice'
+                      : 'Restore the shipped default mascot voice'
+                  }
+                  className="px-3 py-1.5 text-xs rounded-md border border-stone-300 hover:border-stone-400 disabled:opacity-60 text-stone-700">
+                  Reset to default
+                </button>
+                <span
+                  data-testid="mascot-voice-current"
+                  className="ml-1 text-[11px] text-stone-500 truncate max-w-[18rem]"
+                  title={effectiveMascotVoiceId}>
+                  current: <code className="font-mono">{effectiveMascotVoiceId}</code>
+                </span>
+              </div>
+
+              {mascotVoicePreviewError && (
+                <div
+                  data-testid="mascot-voice-preview-error"
+                  className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  Voice preview failed: {mascotVoicePreviewError}. Reply speech will fall back to
+                  the default voice on the next reply.
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         <section className={`space-y-3 ${disabled ? 'opacity-60' : ''}`}>
           <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-4">
