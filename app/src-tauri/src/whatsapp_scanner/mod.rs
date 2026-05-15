@@ -625,15 +625,29 @@ fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSn
             (0, 1, _, _) => Some(ci[0].to_string()),
             (0, 0, 1, _) => Some(normalized[0].to_string()),
             (0, 0, 0, 1) => Some(substring[0].to_string()),
-            (e, c, n, s) => {
-                let count = e + c + n + s;
-                if count > 1 {
-                    log::warn!(
-                        "[whatsapp_scanner] ambiguous active-chat resolution: {} candidates for '{}' — skipping backfill",
-                        count,
-                        name
-                    );
+            (0, 0, 0, 0) => {
+                // No IDB chat matches the active-chat header — happens for
+                // 1:1 chats where IDB stores the peer JID but the
+                // human-readable contact name lives in the device address
+                // book (never reaches IDB). Synthesize a stable
+                // `dom:<normalized-name>` backfill key so DOM rows still
+                // persist instead of being filtered at the structured-store
+                // empty-`chat_id` guard. Distinct from real WhatsApp JIDs
+                // (which always contain `@`), so downstream consumers can
+                // tell DOM-only chat ids apart.
+                let synth = normalize_chat_name(name);
+                if synth.is_empty() {
+                    None
+                } else {
+                    Some(format!("dom:{synth}"))
                 }
+            }
+            (e, c, n, s) => {
+                log::warn!(
+                    "[whatsapp_scanner] ambiguous active-chat resolution: {} candidates for '{}' — skipping backfill",
+                    e + c + n + s,
+                    name
+                );
                 None
             }
         }
