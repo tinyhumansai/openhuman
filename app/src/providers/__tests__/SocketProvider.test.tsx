@@ -23,6 +23,21 @@ vi.mock('../../hooks/useDaemonLifecycle', () => ({
   }),
 }));
 
+// Mock the store so we can spy on dispatch — used by the RPC-failure path tests.
+// Must use vi.hoisted so variables are available inside vi.mock factory (which is hoisted).
+const { dispatchMock, setCoreMock, setBackendMock } = vi.hoisted(() => ({
+  dispatchMock: vi.fn(),
+  setCoreMock: vi.fn((p: unknown) => ({ type: 'connectivity/setCore', payload: p })),
+  setBackendMock: vi.fn((p: unknown) => ({ type: 'connectivity/setBackend', payload: p })),
+}));
+
+vi.mock('../../store/index', () => ({ store: { dispatch: dispatchMock }, IS_DEV: false }));
+
+vi.mock('../../store/connectivitySlice', () => ({
+  setCore: (p: unknown) => setCoreMock(p),
+  setBackend: (p: unknown) => setBackendMock(p),
+}));
+
 type SnapshotShape = { sessionToken: string | null };
 
 function setToken(token: string | null) {
@@ -34,6 +49,9 @@ function setToken(token: string | null) {
 describe('SocketProvider — token transitions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    dispatchMock.mockClear();
+    setCoreMock.mockClear();
+    setBackendMock.mockClear();
   });
 
   it('does not connect when mounted with a null token', () => {
@@ -122,5 +140,78 @@ describe('SocketProvider — token transitions', () => {
 
     expect(vi.mocked(socketService.connect)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(socketService.connect)).toHaveBeenLastCalledWith('jwt-second');
+  });
+});
+
+describe('SocketProvider — RPC failure dispatches (lines 62, 69-71, 73)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dispatchMock.mockClear();
+    setCoreMock.mockClear();
+    setBackendMock.mockClear();
+  });
+
+  it('dispatches setCore(unreachable) on ECONNREFUSED transport failure (lines 69-71)', async () => {
+    vi.mocked(callCoreRpc).mockRejectedValueOnce(new Error('Failed to fetch: ECONNREFUSED'));
+
+    setToken('jwt-transport-fail');
+    render(
+      <SocketProvider>
+        <div />
+      </SocketProvider>
+    );
+
+    // Let the async callCoreRpc rejection propagate.
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(setCoreMock).toHaveBeenCalledWith(expect.objectContaining({ value: 'unreachable' }));
+  });
+
+  it('dispatches setBackend(disconnected) on non-transport RPC failure (line 73)', async () => {
+    vi.mocked(callCoreRpc).mockRejectedValueOnce(new Error('401 Unauthorized backend rejection'));
+
+    setToken('jwt-backend-fail');
+    render(
+      <SocketProvider>
+        <div />
+      </SocketProvider>
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(setBackendMock).toHaveBeenCalledWith(expect.objectContaining({ value: 'disconnected' }));
+  });
+
+  it('extracts message from non-Error rejection (line 62)', async () => {
+    vi.mocked(callCoreRpc).mockRejectedValueOnce('plain string rejection');
+
+    setToken('jwt-string-fail');
+    render(
+      <SocketProvider>
+        <div />
+      </SocketProvider>
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    // 'plain string rejection' does not match ECONNREFUSED pattern → backend channel.
+    expect(setBackendMock).toHaveBeenCalledWith(
+      expect.objectContaining({ value: 'disconnected', error: 'plain string rejection' })
+    );
+  });
+
+  it('NetworkError in message routes to core channel (line 69-71)', async () => {
+    vi.mocked(callCoreRpc).mockRejectedValueOnce(new Error('NetworkError when attempting fetch'));
+
+    setToken('jwt-network-error');
+    render(
+      <SocketProvider>
+        <div />
+      </SocketProvider>
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(setCoreMock).toHaveBeenCalledWith(expect.objectContaining({ value: 'unreachable' }));
   });
 });
