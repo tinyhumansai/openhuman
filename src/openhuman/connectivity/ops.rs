@@ -4,6 +4,7 @@
 //! without spinning up the global `SocketManager`. The RPC handler in
 //! `rpc.rs` composes them.
 
+use std::io::ErrorKind;
 use std::net::{SocketAddr, TcpListener};
 
 /// Probe whether a TCP listener can bind to `127.0.0.1:<port>`.
@@ -30,9 +31,19 @@ pub fn is_port_in_use(port: u16) -> bool {
             drop(listener);
             false
         }
-        Err(err) => {
-            log::trace!("[connectivity][ops] is_port_in_use bind failed: {err}");
+        Err(err) if err.kind() == ErrorKind::AddrInUse => {
+            // Another listener owns this port — exactly what we're probing for.
+            log::trace!("[connectivity][ops] is_port_in_use: port {port} in use");
             true
+        }
+        Err(err) => {
+            // Permission denied, address not available, etc. — not "in use".
+            // Return false so callers don't misreport the port as occupied.
+            // (addresses @coderabbitai on ops.rs:36)
+            log::warn!(
+                "[connectivity][ops] is_port_in_use: unexpected bind error port={port}: {err}"
+            );
+            false
         }
     }
 }
