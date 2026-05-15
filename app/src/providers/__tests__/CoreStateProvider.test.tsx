@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as coreStateApi from '../../services/coreStateApi';
 import * as tauriCommands from '../../utils/tauriCommands';
 import { setCoreStateSnapshot } from '../../lib/coreState/store';
-import CoreStateProvider, { useCoreState } from '../CoreStateProvider';
+import CoreStateProvider, {
+  coreStatePollFailureWarningMessage,
+  useCoreState,
+} from '../CoreStateProvider';
 
 vi.mock('../../services/coreStateApi');
 vi.mock('../../services/analytics', () => ({ syncAnalyticsConsent: vi.fn() }));
@@ -348,5 +351,17 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     expect(vi.mocked(tauriCommands.openhumanUpdateMeetSettings)).toHaveBeenCalledWith({
       auto_orchestrator_handoff: false,
     });
+  });
+});
+
+describe('coreStatePollFailureWarningMessage', () => {
+  it('logs bounded bootstrap failures and one suppression notice', () => {
+    expect(coreStatePollFailureWarningMessage(0)).toBeNull();
+    expect(coreStatePollFailureWarningMessage(1)).toBe('[core-state] poll failed (attempt 1/5):');
+    expect(coreStatePollFailureWarningMessage(5)).toBe('[core-state] poll failed (attempt 5/5):');
+    expect(coreStatePollFailureWarningMessage(6)).toBe(
+      '[core-state] poll failed repeatedly; suppressing further warnings until core state recovers:'
+    );
+    expect(coreStatePollFailureWarningMessage(7)).toBeNull();
   });
 });
