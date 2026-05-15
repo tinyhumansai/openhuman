@@ -146,7 +146,14 @@ impl IntegrationClient {
             let msg = envelope
                 .error
                 .unwrap_or_else(|| "unknown backend error".into());
-            crate::core::observability::report_error(
+            // Route through `report_error_or_expected` so user-state envelope
+            // failures the backend wraps as 2xx + `success: false` (composio
+            // "Toolkit X is not enabled", "Trigger type … not found",
+            // "Missing required fields: …" — OPENHUMAN-TAURI-3R / -3S / -34 /
+            // -97) demote to an info breadcrumb instead of firing a Sentry
+            // event. Genuine backend bugs (unknown envelope shapes, internal
+            // panics) still surface.
+            crate::core::observability::report_error_or_expected(
                 msg.as_str(),
                 "integrations",
                 "post",
@@ -218,7 +225,10 @@ impl IntegrationClient {
             let msg = envelope
                 .error
                 .unwrap_or_else(|| "unknown backend error".into());
-            crate::core::observability::report_error(
+            // Mirrors the post() envelope-error site — see the comment there
+            // for OPENHUMAN-TAURI-3R/-3S/-34/-97 rationale. User-state
+            // envelope failures demote; genuine backend bugs still surface.
+            crate::core::observability::report_error_or_expected(
                 msg.as_str(),
                 "integrations",
                 "get",

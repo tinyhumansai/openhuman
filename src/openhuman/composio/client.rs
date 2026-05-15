@@ -489,7 +489,13 @@ impl ComposioClient {
             let msg = envelope
                 .error
                 .unwrap_or_else(|| "unknown backend error".into());
-            crate::core::observability::report_error(
+            // Mirrors the integrations envelope-error sites — route through
+            // the observability classifier so user-state envelope failures
+            // (composio "Toolkit X is not enabled" / "Trigger type …
+            // not found" / "Missing required fields: …" — OPENHUMAN-TAURI-3R
+            // / -3S / -34 / -97) demote to a breadcrumb instead of firing
+            // a Sentry event. Genuine backend bugs still surface.
+            crate::core::observability::report_error_or_expected(
                 msg.as_str(),
                 "composio",
                 "delete",
