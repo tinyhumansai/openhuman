@@ -275,10 +275,15 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
             )
         })?;
 
-    let composio_client = agent
-        .composio_client()
-        .cloned()
-        .ok_or_else(|| anyhow!("composio client unavailable — is the user signed in?"))?;
+    // Resolve the live client kind via the mode-aware factory so a
+    // direct-mode user can still render the prompt even without a
+    // backend session (#1710 Wave 2). Backend mode keeps the existing
+    // `fetch_toolkit_actions` round-trip; direct mode skips the
+    // refresh (no backend allowlist to consult) and keeps the cached
+    // catalogue, mirroring `ComposioListToolsTool`'s short-circuit.
+    use crate::openhuman::composio::client::{create_composio_client, ComposioClientKind};
+    let client_kind = create_composio_client(config)
+        .map_err(|e| anyhow!("composio client unavailable — is the user signed in? ({e})"))?;
 
     // Refresh the action catalogue for this toolkit at prompt-generation
     // time so the dump reflects the **current** backend state rather
@@ -287,22 +292,36 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
     // returns actions). Mirrors subagent_runner's typed-mode fallback:
     // an empty fresh list or a network error keeps the cached catalogue
     // rather than blanking it.
-    match crate::openhuman::composio::fetch_toolkit_actions(&composio_client, &integration.toolkit)
-        .await
-    {
-        Ok(actions) if !actions.is_empty() => {
-            integration.tools = actions;
+    match &client_kind {
+        ComposioClientKind::Backend(composio_client) => {
+            match crate::openhuman::composio::fetch_toolkit_actions(
+                composio_client,
+                &integration.toolkit,
+            )
+            .await
+            {
+                Ok(actions) if !actions.is_empty() => {
+                    integration.tools = actions;
+                }
+                Ok(_) => {
+                    log::debug!(
+                    "[agent::debug] fresh list_tools for `{}` returned empty; keeping cached catalogue ({} actions)",
+                    integration.toolkit,
+                    integration.tools.len()
+                );
+                }
+                Err(e) => {
+                    log::warn!(
+                    "[agent::debug] fresh list_tools for `{}` failed ({e}); keeping cached catalogue ({} actions)",
+                    integration.toolkit,
+                    integration.tools.len()
+                );
+                }
+            }
         }
-        Ok(_) => {
-            log::debug!(
-                "[agent::debug] fresh list_tools for `{}` returned empty; keeping cached catalogue ({} actions)",
-                integration.toolkit,
-                integration.tools.len()
-            );
-        }
-        Err(e) => {
-            log::warn!(
-                "[agent::debug] fresh list_tools for `{}` failed ({e}); keeping cached catalogue ({} actions)",
+        ComposioClientKind::Direct(_) => {
+            log::info!(
+                "[agent::debug][composio-direct] direct mode active — skipping backend list_tools refresh for `{}`; using cached catalogue ({} actions)",
                 integration.toolkit,
                 integration.tools.len()
             );
@@ -333,12 +352,21 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
             .map(|t| clone_tool_as_prompt_proxy(t.as_ref()))
             .collect(),
     };
+    // `ComposioActionTool` takes `Arc<Config>` rather than a pre-baked
+    // `ComposioClient` so the live `composio.mode` toggle is honoured
+    // per execute (#1710). For the debug prompt-dump path we don't
+    // actually execute the tool — we only render its schema /
+    // description into the system prompt — but we still need an
+    // `Arc<Config>` to construct it. The factory-resolved `client_kind`
+    // above is used only for the upstream `fetch_toolkit_actions`
+    // metadata probe (backend mode only).
+    let arc_config = std::sync::Arc::new(config.clone());
     let action_tools: Vec<Box<dyn Tool>> = integration
         .tools
         .iter()
         .map(|action| -> Box<dyn Tool> {
             Box::new(ComposioActionTool::new(
-                composio_client.clone(),
+                arc_config.clone(),
                 action.name.clone(),
                 action.description.clone(),
                 action.parameters.clone(),

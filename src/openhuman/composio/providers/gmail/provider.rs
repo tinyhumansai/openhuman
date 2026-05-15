@@ -125,8 +125,7 @@ impl ComposioProvider for GmailProvider {
         );
 
         let resp = ctx
-            .client
-            .execute_tool(ACTION_GET_PROFILE, Some(json!({})))
+            .execute(ACTION_GET_PROFILE, Some(json!({})))
             .await
             .map_err(|e| format!("[composio:gmail] {ACTION_GET_PROFILE} failed: {e:#}"))?;
 
@@ -312,8 +311,7 @@ impl ComposioProvider for GmailProvider {
             }
 
             let mut resp = ctx
-                .client
-                .execute_tool(ACTION_FETCH_EMAILS, Some(args.clone()))
+                .execute(ACTION_FETCH_EMAILS, Some(args.clone()))
                 .await
                 .map_err(|e| {
                     format!("[composio:gmail] {ACTION_FETCH_EMAILS} page {page_num}: {e:#}")

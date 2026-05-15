@@ -8,6 +8,25 @@ fn lookup_returns_expected_capability() {
 }
 
 #[test]
+fn composio_direct_mode_capabilities_are_registered() {
+    // PR #1710 PR3: ensure the direct-mode capability and the trigger-gap
+    // capability are advertised in the catalog so downstream UI surfaces
+    // (settings search, /about catalog dump) can find them.
+    let direct = lookup("composio.direct_mode").expect("direct_mode entry exists");
+    assert_eq!(direct.category, CapabilityCategory::Skills);
+    // Direct mode itself is Beta (works for tool execution today).
+    assert_eq!(direct.status, CapabilityStatus::Beta);
+
+    let gap = lookup("composio.direct_mode_triggers_gap").expect("trigger-gap entry exists");
+    // The trigger-webhook gap is explicitly ComingSoon to flag the
+    // limitation to users browsing the capability catalog.
+    assert_eq!(gap.status, CapabilityStatus::ComingSoon);
+    // Both capabilities live in the same category so the settings search
+    // surface groups them together consistently.
+    assert_eq!(gap.category, direct.category);
+}
+
+#[test]
 fn search_matches_keyword_across_multiple_fields() {
     let matches = search("invite");
     let ids: Vec<&str> = matches.iter().map(|capability| capability.id).collect();

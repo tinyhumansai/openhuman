@@ -264,6 +264,40 @@ impl IntegrationClient {
     }
 }
 
+/// Fetch pricing for the integrations module, honouring the
+/// Composio routing mode.
+///
+/// When `config.composio.mode == "direct"`, the user is running with
+/// their own Composio API key and there is **no backend session** that
+/// could serve `/agent-integrations/pricing` — the backend route is
+/// what mediates the margin between Composio's raw price and what the
+/// hosted product charges. In direct mode, margins do not apply
+/// (the user pays Composio directly) and the backend may not even be
+/// reachable (sovereign / offline-friendly deployments). We
+/// short-circuit to the default empty pricing struct and emit a
+/// `[composio-direct]` log line so this branch is easy to grep.
+///
+/// In backend mode we fall through to the live cache on
+/// [`IntegrationClient::pricing`], preserving the existing behavior
+/// for every caller. The empty default struct is identical to what
+/// [`IntegrationClient::pricing`] returns on a network error, so
+/// downstream consumers don't need a separate code path.
+pub async fn pricing_for_config(
+    client: &IntegrationClient,
+    config: &crate::openhuman::config::Config,
+) -> IntegrationPricing {
+    use crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT;
+
+    if config.composio.mode.trim() == COMPOSIO_MODE_DIRECT {
+        tracing::debug!(
+            "[composio-direct] pricing short-circuit: backend `/agent-integrations/pricing` \
+             is unreachable in direct mode — returning default (empty) pricing"
+        );
+        return IntegrationPricing::default();
+    }
+    client.pricing().await.clone()
+}
+
 /// Helper: build an `Arc<IntegrationClient>` from the root config, or
 /// `None` if the user isn't signed in yet.
 ///

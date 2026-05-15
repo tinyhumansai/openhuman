@@ -120,6 +120,55 @@ impl ComposioTool {
         Ok(body.items)
     }
 
+    /// List v3 tool definitions for one or more toolkits, preserving the
+    /// raw `input_parameters` JSON schema each action carries.
+    ///
+    /// Sibling of [`Self::list_actions`] but kept distinct because
+    /// `list_actions` flattens to `Vec<ComposioAction>` (no parameters)
+    /// for the legacy agent-discovery shape, whereas
+    /// `composio_list_tools`'s direct-mode branch needs the full schema
+    /// so the LLM agent can supply valid arguments without a separate
+    /// round trip.
+    ///
+    /// `toolkits` may contain one or many slugs; when non-empty they are
+    /// sent as a comma-separated `toolkits=` filter to constrain the v3
+    /// catalogue scan. Empty filter returns every action across every
+    /// toolkit on the user's tenant (potentially large; callers should
+    /// pass a non-empty filter in practice).
+    pub(crate) async fn list_tool_schemas_v3(
+        &self,
+        toolkits: &[&str],
+    ) -> anyhow::Result<Vec<ComposioToolSchemaV3>> {
+        let url = format!("{COMPOSIO_API_BASE_V3}/tools");
+        let mut req = self.client().get(&url).header("x-api-key", &self.api_key);
+        req = req.query(&[("limit", "200")]);
+        let trimmed: Vec<&str> = toolkits
+            .iter()
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
+        if !trimmed.is_empty() {
+            let csv = trimmed.join(",");
+            req = req.query(&[("toolkits", csv.as_str())]);
+        }
+
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            let err = response_error(resp).await;
+            anyhow::bail!("Composio v3 list_tool_schemas: {err}");
+        }
+
+        let body: ComposioToolsResponse = resp
+            .json()
+            .await
+            .context("Failed to decode Composio v3 tools response")?;
+        Ok(body
+            .items
+            .into_iter()
+            .map(ComposioToolSchemaV3::from_v3_tool)
+            .collect())
+    }
+
     /// Execute a Composio action/tool with given parameters.
     ///
     /// Uses v3 endpoint first and falls back to v2 for compatibility.
@@ -348,6 +397,55 @@ impl ComposioTool {
             .context("Failed to decode Composio v2 connect response")?;
         extract_redirect_url(&result)
             .ok_or_else(|| anyhow::anyhow!("No redirect URL in Composio v2 response"))
+    }
+
+    /// List the user's connected accounts on Composio v3.
+    ///
+    /// GET `https://backend.composio.dev/api/v3/connected_accounts` with
+    /// `x-api-key: <user_key>`. Returns the raw item list; reshaping
+    /// into [`super::super::super::composio::types::ComposioConnection`]
+    /// happens at the call site in `composio/client.rs::direct_list_connections`.
+    ///
+    /// The v3 envelope is `{ items: [{ id, status, toolkit, created_at, ... }] }`.
+    /// Toolkit may arrive as either a plain string slug or as a nested
+    /// object — we tolerate both via [`ComposioConnectedAccount::toolkit_slug`].
+    /// This matches the same upstream shape drift handled by
+    /// `de_string_or_object` in `composio/types.rs`.
+    pub async fn list_connected_accounts(&self) -> anyhow::Result<Vec<ComposioConnectedAccount>> {
+        let url = format!("{COMPOSIO_API_BASE_V3}/connected_accounts");
+        ensure_https(&url)?;
+
+        let resp = self
+            .client()
+            .get(&url)
+            .header("x-api-key", &self.api_key)
+            // Composio paginates; pull a generous page size so most
+            // users see their full list in one round trip. If a user has
+            // > 200 connected accounts (extremely rare for an individual
+            // tenant) the rest will be missing until we add explicit
+            // pagination — note for the follow-up.
+            .query(&[("limit", "200")])
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let err = response_error(resp).await;
+            anyhow::bail!("Composio v3 connected_accounts failed: {err}");
+        }
+
+        let mut body: ComposioConnectedAccountsResponse = resp
+            .json()
+            .await
+            .context("Failed to decode Composio v3 connected_accounts response")?;
+        // Drop rows with a blank id — serde_default means id can be ""
+        // if the upstream response is malformed. An empty connectionId
+        // propagated downstream causes invalid v3 API calls.
+        body.items.retain(|item| !item.id.trim().is_empty());
+        tracing::debug!(
+            count = body.items.len(),
+            "[composio-direct] list_connected_accounts: fetched connected accounts"
+        );
+        Ok(body.items)
     }
 
     async fn resolve_auth_config_id(&self, app_name: &str) -> anyhow::Result<String> {
@@ -691,6 +789,13 @@ struct ComposioV3Tool {
     app_name: Option<String>,
     #[serde(default)]
     toolkit: Option<ComposioToolkitRef>,
+    /// JSON schema for the tool parameters. Composio v3 names this
+    /// `input_parameters`; older payloads use `parameters`. Either
+    /// shape deserialises into this field, and we re-emit it as
+    /// `ComposioToolFunction::parameters` so direct-mode users get
+    /// the same model-callable schema backend mode surfaces.
+    #[serde(default, alias = "parameters")]
+    input_parameters: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -734,6 +839,123 @@ pub struct ComposioAction {
     pub description: Option<String>,
     #[serde(default)]
     pub enabled: bool,
+}
+
+/// Direct-mode tool definition lifted from Composio v3 `/tools`.
+///
+/// Carries the `input_parameters` JSON schema so the upstream
+/// `composio_list_tools` direct branch can hand the LLM agent a
+/// model-callable function shape — same fields backend mode surfaces
+/// through `ComposioToolSchema`.
+///
+/// Kept distinct from `ComposioAction` (legacy flattened shape) so
+/// new callers explicitly opt into the schema-preserving variant.
+#[derive(Debug, Clone)]
+pub struct ComposioToolSchemaV3 {
+    pub slug: String,
+    pub description: Option<String>,
+    pub toolkit_slug: Option<String>,
+    pub input_parameters: Option<serde_json::Value>,
+}
+
+impl ComposioToolSchemaV3 {
+    fn from_v3_tool(item: ComposioV3Tool) -> Self {
+        let slug = item
+            .slug
+            .clone()
+            .or_else(|| item.name.clone())
+            .unwrap_or_default();
+        let toolkit_slug = item
+            .toolkit
+            .as_ref()
+            .and_then(|t| t.slug.clone().or(t.name.clone()))
+            .or(item.app_name);
+        Self {
+            slug,
+            description: item.description.or(item.name),
+            toolkit_slug,
+            input_parameters: item.input_parameters,
+        }
+    }
+}
+
+// ── v3 /connected_accounts envelope ─────────────────────────────────
+//
+// Public so the `composio/client.rs::direct_list_connections` helper
+// in the domain layer can reshape it into the canonical
+// `ComposioConnection` type. Kept distinct from `ComposioConnection`
+// itself (which is the backend-proxied envelope) so the two paths
+// don't get coupled — Composio v3 may add or rename fields and we'd
+// rather adjust the mapping than reshuffle the public type.
+
+#[derive(Debug, Deserialize)]
+struct ComposioConnectedAccountsResponse {
+    #[serde(default)]
+    items: Vec<ComposioConnectedAccount>,
+}
+
+/// One v3 connected-account row.
+///
+/// Field shapes follow Composio's v3 docs as of May 2026. `toolkit` may
+/// be either a string slug (older payloads) or a nested object with a
+/// `slug` field (newer payloads); [`Self::toolkit_slug`] extracts the
+/// canonical slug from either shape.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComposioConnectedAccount {
+    #[serde(default)]
+    pub id: String,
+    /// `"ACTIVE"`, `"INITIATED"`, `"FAILED"`, … — passed through as-is
+    /// so the caller's status filter (`ComposioConnection::is_active`)
+    /// applies uniformly across both backend-proxied and direct paths.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Composio uses `created_at` (snake_case) at v3. We keep both
+    /// spellings to tolerate any upstream drift back to `createdAt`.
+    #[serde(default, alias = "createdAt")]
+    pub created_at: Option<String>,
+    /// Toolkit may be a plain string slug or a nested
+    /// `ComposioToolkitRef`. Extracted via [`Self::toolkit_slug`].
+    #[serde(default)]
+    toolkit: Option<serde_json::Value>,
+    /// Older payload shape — a top-level `app_name` string. Used as
+    /// a fallback when `toolkit` is absent or unparseable.
+    #[serde(default, rename = "appName", alias = "app_name")]
+    app_name: Option<String>,
+}
+
+impl ComposioConnectedAccount {
+    /// Best-effort extract of the toolkit slug from the
+    /// possibly-polymorphic `toolkit` field, falling back to
+    /// `app_name`. Returns `None` only when no recognizable slug
+    /// representation is present.
+    pub fn toolkit_slug(&self) -> Option<String> {
+        if let Some(value) = &self.toolkit {
+            match value {
+                serde_json::Value::String(s) => {
+                    let t = s.trim();
+                    if !t.is_empty() {
+                        return Some(t.to_string());
+                    }
+                }
+                serde_json::Value::Object(map) => {
+                    for key in ["slug", "id", "name", "key"] {
+                        if let Some(serde_json::Value::String(s)) = map.get(key) {
+                            let t = s.trim();
+                            if !t.is_empty() {
+                                return Some(t.to_string());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.app_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    }
 }
 
 #[cfg(test)]

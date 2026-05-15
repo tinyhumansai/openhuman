@@ -1162,7 +1162,6 @@ impl Agent {
             session_id: self.event_session_id().to_string(),
             channel: self.event_channel().to_string(),
             connected_integrations: self.connected_integrations.clone(),
-            composio_client: self.composio_client.clone(),
             tool_call_format: self.tool_dispatcher.tool_call_format(),
             session_key: self.session_key.clone(),
             session_parent_prefix: self.session_parent_prefix.clone(),
@@ -1324,12 +1323,19 @@ impl Agent {
 
     /// Fetches the user's active Composio connections and populates
     /// `self.connected_integrations` so the system prompt can surface them.
-    /// Also caches a [`ComposioClient`] on the session so the sub-agent
-    /// runner can construct per-action tools for `integrations_agent` spawns
-    /// without rebuilding the client on every call.
     ///
     /// Delegates to the shared [`crate::openhuman::composio::fetch_connected_integrations`]
     /// which is the single source of truth for integration discovery.
+    ///
+    /// **No session-scoped Composio client is cached on the agent any
+    /// more (#1710 Wave 2)**. Every downstream caller that needs to
+    /// dispatch a Composio action now resolves a fresh client via
+    /// [`crate::openhuman::composio::client::create_composio_client`]
+    /// at call time so the live `composio.mode` toggle is honoured
+    /// without rebuilding the session — see `ComposioActionTool`,
+    /// `ProviderContext::execute`, the 5 migrated agent tools in
+    /// `composio/tools.rs`, and the spawn-time per-action tool build
+    /// path in `subagent_runner/ops.rs`.
     pub async fn fetch_connected_integrations(&mut self) {
         let config = match crate::openhuman::config::Config::load_or_init().await {
             Ok(c) => c,
@@ -1342,7 +1348,6 @@ impl Agent {
         };
         self.connected_integrations =
             crate::openhuman::composio::fetch_connected_integrations(&config).await;
-        self.composio_client = crate::openhuman::composio::build_composio_client(&config);
     }
 
     /// Re-synthesise `delegate_*` tools for the orchestrator's `subagents`

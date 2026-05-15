@@ -41,7 +41,9 @@ use super::ingest::ingest_page_into_memory_tree;
 use super::sync;
 use super::types::{SlackChannel, SlackMessage};
 use super::users::SlackUsers;
-use crate::openhuman::composio::client::ComposioClient;
+// `ComposioClient` is no longer referenced directly — actions dispatch
+// through `ProviderContext::execute` which resolves the client via the
+// mode-aware factory per call (#1710).
 use crate::openhuman::composio::providers::sync_state::SyncState;
 use crate::openhuman::composio::providers::{
     pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
@@ -153,21 +155,26 @@ pub(super) fn dump_response(scope: &str, kind: &str, idx: u32, data: &Value) {
     }
 }
 
-/// Wrap [`ComposioClient::execute_tool`] with rate-limit-aware retry +
-/// inter-call pacing.
+/// Dispatch a Composio action with rate-limit-aware retry + inter-call
+/// pacing.
+///
+/// Routes through [`ProviderContext::execute`] so the live
+/// `composio.mode` toggle is honoured per call (#1710). Pre-fix this
+/// took a pre-baked `&ComposioClient` resolved at sync entry, which
+/// silently bypassed the mode toggle.
 ///
 /// Returns `(response, attempts_made)` on first success so callers can
 /// charge the daily quota meter for every attempt that hit Composio.
 pub(super) async fn execute_with_retry(
-    client: &ComposioClient,
+    ctx: &ProviderContext,
     slug: &str,
     args: serde_json::Value,
     description: &str,
 ) -> Result<(ComposioExecuteResponse, u32), String> {
     let mut delay = RATELIMIT_INITIAL_BACKOFF;
     for attempt in 1..=RATELIMIT_MAX_ATTEMPTS {
-        let resp = client
-            .execute_tool(slug, Some(args.clone()))
+        let resp = ctx
+            .execute(slug, Some(args.clone()))
             .await
             .map_err(|e| format!("{description}: {e:#}"))?;
         if resp.successful {
@@ -246,8 +253,7 @@ impl ComposioProvider for SlackProvider {
         // Step 1 — auth.test: required. Returns user_id (canonical sender
         // id on Slack messages), the user's handle, and the team.
         let auth_resp = ctx
-            .client
-            .execute_tool(ACTION_AUTH_TEST, Some(json!({})))
+            .execute(ACTION_AUTH_TEST, Some(json!({})))
             .await
             .map_err(|e| format!("[composio:slack] {ACTION_AUTH_TEST} failed: {e:#}"))?;
 
@@ -277,8 +283,7 @@ impl ComposioProvider for SlackProvider {
 
         if let Some(uid) = user_id.as_deref() {
             match ctx
-                .client
-                .execute_tool(ACTION_USERS_INFO, Some(json!({ "user": uid })))
+                .execute(ACTION_USERS_INFO, Some(json!({ "user": uid })))
                 .await
             {
                 Ok(info) if info.successful => {
@@ -315,19 +320,16 @@ impl ComposioProvider for SlackProvider {
 
         // Step 3 — team_info: optional. Adds workspace context to `extras`
         // (email_domain, icon) so the prompt section / UI can show it.
-        let (team_email_domain, team_icon) = match ctx
-            .client
-            .execute_tool(ACTION_FETCH_TEAM_INFO, Some(json!({})))
-            .await
-        {
-            Ok(resp) if resp.successful => {
-                let d = &resp.data;
-                let domain = pick_str(d, &["team.email_domain", "email_domain"]);
-                let icon = pick_str(d, &["team.icon.image_132", "team.icon.image_68"]);
-                (domain, icon)
-            }
-            _ => (None, None),
-        };
+        let (team_email_domain, team_icon) =
+            match ctx.execute(ACTION_FETCH_TEAM_INFO, Some(json!({}))).await {
+                Ok(resp) if resp.successful => {
+                    let d = &resp.data;
+                    let domain = pick_str(d, &["team.email_domain", "email_domain"]);
+                    let icon = pick_str(d, &["team.icon.image_132", "team.icon.image_68"]);
+                    (domain, icon)
+                }
+                _ => (None, None),
+            };
 
         // Display name preference: users.info real_name > auth.test handle
         // > team_name (last-resort so the prompt isn't empty).
@@ -419,7 +421,7 @@ impl ComposioProvider for SlackProvider {
         let now = chrono::Utc::now();
 
         // Pull the workspace user directory once per sync.
-        let (users, user_call_count) = SlackUsers::fetch(&ctx.client).await;
+        let (users, user_call_count) = SlackUsers::fetch(ctx).await;
         state.record_requests(user_call_count);
         tracing::info!(
             connection_id = %connection_id,
@@ -562,7 +564,7 @@ async fn list_all_channels(
         }
 
         let (mut resp, attempts) = execute_with_retry(
-            &ctx.client,
+            ctx,
             ACTION_LIST_CONVERSATIONS,
             args,
             &format!("{ACTION_LIST_CONVERSATIONS} page {page_num}"),
@@ -626,7 +628,7 @@ async fn process_channel(
         }
 
         let (mut resp, attempts) = execute_with_retry(
-            &ctx.client,
+            ctx,
             ACTION_FETCH_HISTORY,
             args,
             &format!(
@@ -774,7 +776,7 @@ pub async fn run_backfill_via_search(
         channels.into_iter().map(|c| (c.id.clone(), c)).collect();
 
     // 2. User directory.
-    let (users, user_call_count) = SlackUsers::fetch(&ctx.client).await;
+    let (users, user_call_count) = SlackUsers::fetch(ctx).await;
     state.record_requests(user_call_count);
     tracing::info!(
         connection_id = %connection_id,
@@ -810,7 +812,7 @@ pub async fn run_backfill_via_search(
             "page": page,
         });
         let (mut resp, attempts) = execute_with_retry(
-            &ctx.client,
+            ctx,
             ACTION_SEARCH_MESSAGES,
             args,
             &format!("{ACTION_SEARCH_MESSAGES} page {page}"),

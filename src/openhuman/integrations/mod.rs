@@ -14,7 +14,7 @@ pub mod twilio;
 pub mod types;
 
 pub use apify::{ApifyGetRunResultsTool, ApifyGetRunStatusTool, ApifyRunActorTool};
-pub use client::{build_client, IntegrationClient};
+pub use client::{build_client, pricing_for_config, IntegrationClient};
 pub use google_places::{GooglePlacesDetailsTool, GooglePlacesSearchTool};
 pub use parallel::{
     ParallelChatTool, ParallelDatasetTool, ParallelEnrichTool, ParallelExtractTool,
