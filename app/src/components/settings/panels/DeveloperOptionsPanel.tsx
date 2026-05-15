@@ -190,6 +190,22 @@ const developerItems = [
     ),
   },
   {
+    id: 'composio-routing',
+    title: 'Composio Routing (Direct Mode)',
+    description: 'Bring your own Composio API key and route calls directly to backend.composio.dev',
+    route: 'composio-routing',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M13 10V3L4 14h7v7l9-11h-7z"
+        />
+      </svg>
+    ),
+  },
+  {
     id: 'composio-triggers',
     title: 'Integration Triggers',
     description: 'Configure AI triage settings for Composio integration triggers',

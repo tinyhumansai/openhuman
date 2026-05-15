@@ -251,6 +251,62 @@ fn validate_command_rejects_background_chain_bypass() {
     assert!(result.unwrap_err().contains("not allowed"));
 }
 
+// Regression: OPENHUMAN-TAURI-GW (#1813). A multi-byte UTF-8 char straddling
+// byte 80 of the command string used to panic the log truncator with
+// `byte index 80 is not a char boundary`, killing the core thread. All five
+// `&command[..80]` log sites must now round down to a UTF-8 boundary.
+#[test]
+fn validate_command_does_not_panic_on_multibyte_char_at_log_truncation_boundary() {
+    // Real-world Sentry repro: `cmd /c "dir /b "%USERPROFILE%\Desktop\*.lnk"
+    // 2>nul | findstr /i "Warcraft WoW 魔兽 Battle"` — the 3-byte `'魔'`
+    // occupies bytes 78..81, so a naked `&command[..80]` panics.
+    let cmd = "cmd /c \"dir /b \"%USERPROFILE%\\Desktop\\*.lnk\" 2>nul | findstr /i \"Warcraft WoW 魔兽 Battle\"";
+    assert!(
+        cmd.len() > 80,
+        "test fixture must be long enough to trigger truncation"
+    );
+    assert!(
+        !cmd.is_char_boundary(80),
+        "test fixture must place a multi-byte char across byte 80"
+    );
+
+    // Exercise the allowlist-deny path (cmd starts with "cmd" which is not on
+    // the default allowlist), which fires the truncating warn! at policy.rs.
+    let p = default_policy();
+    let result = p.validate_command_execution(cmd, false);
+    assert!(
+        result.is_err(),
+        "command should be blocked, but did not panic"
+    );
+
+    // And the high-risk-blocked path: allowlist passes (curl is allowed), then
+    // risk gate fires (curl is a high-risk command), exercising the truncating
+    // warn! site at the block_high_risk_commands branch.
+    let prefix = "curl https://example.com/";
+    let filler = "a".repeat(80 - prefix.len() - 1);
+    let high_risk_cmd = format!("{prefix}{filler}魔");
+    assert!(
+        !high_risk_cmd.is_char_boundary(80),
+        "fixture must straddle byte 80 with a multi-byte char"
+    );
+    let high_risk_policy = SecurityPolicy {
+        allowed_commands: vec!["curl".into()],
+        ..SecurityPolicy::default()
+    };
+    let blocked = high_risk_policy.validate_command_execution(&high_risk_cmd, true);
+    assert!(blocked.is_err());
+    assert!(blocked.unwrap_err().contains("high-risk"));
+}
+
+// Pathological short multi-byte command — exercises the boundary logic at the
+// edge case where `cmd.len() < 80`.
+#[test]
+fn validate_command_handles_short_multibyte_command() {
+    let p = default_policy();
+    // 6 bytes (two 3-byte CJK chars) — well under the 80-byte log cap.
+    let _ = p.validate_command_execution("魔兽", false);
+}
+
 // -- is_path_allowed ----------------------------------------------
 
 #[test]

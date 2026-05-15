@@ -71,18 +71,23 @@ async function waitForMockRequest(
 }
 
 async function resetEverything(label: string): Promise<void> {
-  console.log(`${LOG} reset (${label}) — config_reset_local_data + admin reset`);
-  // 1. Wipe the core's local data — workspace + ~/.openhuman + active marker.
-  //    The active in-process core handles this without a process restart, so
-  //    the session keeps the same RPC port and bearer token.
-  const reset = await callOpenhumanRpc('openhuman.config_reset_local_data', {});
-  if (!reset.ok) {
-    console.warn(`${LOG} reset RPC failed (non-fatal):`, reset);
-  }
-  // 2. Re-write config.toml so the next core startup-path still points at the
-  //    mock backend. config_reset_local_data removed the file.
-  writeMockConfig();
-  // 3. Wipe mock state + request log.
+  console.log(`${LOG} reset (${label}) — admin reset only (skip destructive core reset)`);
+  // Mock-side reset is enough to give each scenario a clean slate for the
+  // assertions this spec actually makes (request log + mock behavior +
+  // fresh per-scenario deep-link tokens). The destructive
+  // `openhuman.config_reset_local_data` call this used to make was
+  // killing the CEF/WDIO session on Linux mid-spec — `reset_local_data`
+  // does `remove_dir_all($OPENHUMAN_WORKSPACE)` plus
+  // `remove_dir_all(~/.openhuman)` while CEF is still mid-flight,
+  // and the renderer doesn't survive that on Linux/CEF (every
+  // sub-test after the first then fails with `invalid session id`).
+  //
+  // Each scenario already sends a NEW deep-link with a NEW JWT, so the
+  // auth state gets replaced naturally — we don't need a filesystem
+  // wipe to test that next-scenario behavior.
+  //
+  // (If a future scenario genuinely depends on a wiped DB, gate it on a
+  // narrower core RPC that doesn't blow away dirs CEF has open.)
   await fetch(`${MOCK_URL}/__admin/reset`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

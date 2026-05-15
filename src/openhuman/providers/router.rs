@@ -10,7 +10,7 @@ use std::collections::HashMap;
 fn openhuman_tier_to_hint(model: &str) -> Option<&'static str> {
     match model {
         "reasoning-v1" => Some("reasoning"),
-        "reasoning-quick-v1" => Some("reasoning-quick"),
+        "reasoning-quick-v1" => Some("chat"),
         "agentic-v1" => Some("agentic"),
         "coding-v1" => Some("coding"),
         "summarization-v1" => Some("summarization"),

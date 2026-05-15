@@ -3,8 +3,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Per-feature flags controlling which subsystems route through the local
-/// Ollama runtime. All default to `false` (use cloud instead). Guarded by
+/// Per-feature flags controlling which subsystems route through the selected
+/// local runtime. All default to `false` (use cloud instead). Guarded by
 /// `LocalAiConfig::runtime_enabled` — when that is `false` every helper
 /// method below returns `false` regardless of these values.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -42,13 +42,17 @@ impl Default for LocalAiUsage {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct LocalAiConfig {
-    /// Master runtime switch. Defaults to `false` — Ollama is OFF by default.
+    /// Master runtime switch. Defaults to `false` — local AI is OFF by default.
     /// Note: the old on-disk field was `enabled`; that key is now unknown to
     /// serde and will be silently ignored on load (intentional forced reset).
     #[serde(default = "default_runtime_enabled")]
     pub runtime_enabled: bool,
+    /// Local provider identifier. Supported values are `ollama` and
+    /// `lm_studio`; unknown values normalize to `ollama` at runtime.
     #[serde(default = "default_provider")]
     pub provider: String,
+    /// Optional provider base URL. For LM Studio this defaults to
+    /// `http://localhost:1234/v1`.
     #[serde(default)]
     pub base_url: Option<String>,
     #[serde(default)]

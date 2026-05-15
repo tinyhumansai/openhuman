@@ -40,7 +40,16 @@ describe('tauriCommands/config', () => {
         result: { config: {}, workspace_dir: '/tmp', config_path: '/tmp/cfg.toml' },
         logs: [],
       });
-      const patch = { runtime_enabled: true, usage_embeddings: true, usage_subconscious: false };
+      const patch = {
+        runtime_enabled: true,
+        opt_in_confirmed: true,
+        provider: 'lm_studio',
+        base_url: 'http://localhost:1234/v1',
+        model_id: 'local-model',
+        chat_model_id: 'local-model',
+        usage_embeddings: true,
+        usage_subconscious: false,
+      };
       await openhumanUpdateLocalAiSettings(patch);
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
         method: 'openhuman.config_update_local_ai_settings',

@@ -79,8 +79,13 @@ fn append_subagent_role_contract(base_prompt: String, agent_id: &str) -> String 
 /// match we build the [`ComposioActionTool`] on demand so the call
 /// dispatches normally instead of dead-ending in
 /// `Error: tool '...' is not available`.
+///
+/// Holds an [`Arc<Config>`] rather than a pre-baked
+/// [`crate::openhuman::composio::ComposioClient`] so the live
+/// `composio.mode` toggle is honoured per execute — see
+/// [`crate::openhuman::composio::ComposioActionTool`] and issue #1710.
 struct LazyToolkitResolver {
-    client: crate::openhuman::composio::ComposioClient,
+    config: std::sync::Arc<crate::openhuman::config::Config>,
     actions: Vec<crate::openhuman::context::prompt::ConnectedIntegrationTool>,
 }
 
@@ -89,7 +94,7 @@ impl LazyToolkitResolver {
         let action = self.actions.iter().find(|a| a.name == name)?;
         Some(Box::new(
             crate::openhuman::composio::ComposioActionTool::new(
-                self.client.clone(),
+                self.config.clone(),
                 action.name.clone(),
                 action.description.clone(),
                 action.parameters.clone(),
@@ -229,7 +234,26 @@ async fn run_typed_mode(
     // signed-in user, backend unreachable, …) so offline / not-signed-
     // in behaviour is unchanged.
     let live_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration> = {
-        if parent.composio_client.is_none() {
+        // Mode-aware "is the user able to call composio at all?" probe.
+        // `create_composio_client` returns `Ok(_)` whenever the user has
+        // EITHER a backend session token (backend mode) OR a stored
+        // direct-mode API key — so a direct-mode user with only a key
+        // in the keychain is now correctly recognised as "signed in"
+        // for the spawn-time refresh path (#1710 Wave 2). Pre-fix this
+        // gate read `parent.composio_client.is_none()`, which was only
+        // ever populated in backend mode and silently skipped the live
+        // refresh for direct-mode users.
+        //
+        // We resolve here purely as a probe — the client itself is
+        // dropped immediately. Per-action dispatch below (and inside
+        // `ComposioActionTool::execute`) re-resolves through the
+        // factory so the live `composio.mode` toggle keeps winning.
+        let probe_config = crate::openhuman::config::Config::load_or_init().await.ok();
+        let signed_in = probe_config
+            .as_ref()
+            .map(user_is_signed_in_to_composio)
+            .unwrap_or(false);
+        if !signed_in {
             parent.connected_integrations.clone()
         } else {
             match crate::openhuman::config::Config::load_or_init().await {
@@ -392,7 +416,53 @@ async fn run_typed_mode(
         // `composio_execute` whenever they were declared in the TOML,
         // making the TOML changes look like no-ops.
 
-        if let (Some(tk), Some(client)) = (toolkit_filter, parent.composio_client.as_ref()) {
+        if let Some(tk) = toolkit_filter {
+            // Load a fresh `Arc<Config>` for the dynamic
+            // `ComposioActionTool`s registered below. Pre-Wave-2 this
+            // path was gated on `parent.composio_client.as_ref()` —
+            // backend-only by construction, so direct-mode users were
+            // silently dropped here even after they'd connected the
+            // toolkit on `app.composio.dev`. Resolving the client
+            // through the mode-aware factory closes that gap and keeps
+            // the registration in lockstep with `ComposioActionTool`'s
+            // per-call dispatch (#1710).
+            let arc_config = match crate::openhuman::config::Config::load_or_init().await {
+                Ok(c) => std::sync::Arc::new(c),
+                Err(e) => {
+                    tracing::warn!(
+                        agent_id = %definition.id,
+                        toolkit = %tk,
+                        error = %e,
+                        "[subagent_runner:typed] config load failed; dynamic composio tools won't be registered"
+                    );
+                    return Err(SubagentRunError::Provider(anyhow::anyhow!(
+                        "subagent_runner: config load failed building integrations_agent for toolkit `{tk}`: {e}"
+                    )));
+                }
+            };
+
+            // Resolve the live client kind for the catalogue refresh
+            // path. Backend mode keeps the existing
+            // `fetch_toolkit_actions` round-trip. Direct mode mirrors
+            // the `ComposioListToolsTool` short-circuit — the backend
+            // toolkit allowlist isn't authoritative for a personal
+            // Composio tenant, so we fall back to the parent's cached
+            // catalogue rather than emit a misleading "couldn't fetch"
+            // surface (#1710 Wave 2).
+            use crate::openhuman::composio::client::{create_composio_client, ComposioClientKind};
+            let client_kind = match create_composio_client(arc_config.as_ref()) {
+                Ok(k) => Some(k),
+                Err(e) => {
+                    tracing::warn!(
+                        agent_id = %definition.id,
+                        toolkit = %tk,
+                        error = %e,
+                        "[subagent_runner:typed] composio factory failed; dynamic per-action tools fall back to cached catalogue"
+                    );
+                    None
+                }
+            };
+
             // The spawn_subagent pre-flight already verified the
             // toolkit is in the allowlist AND has an active
             // connection, so the matching entry must be present and
@@ -413,26 +483,50 @@ async fn run_typed_mode(
                 // per-toolkit endpoint returns a full catalogue. Falling
                 // back to the cached list preserves the previous
                 // behaviour on network failure.
-                let fresh_actions = match crate::openhuman::composio::fetch_toolkit_actions(
-                    client, tk,
-                )
-                .await
-                {
-                    Ok(actions) if !actions.is_empty() => actions,
-                    Ok(_) => {
-                        tracing::debug!(
+                let fresh_actions = match &client_kind {
+                    Some(ComposioClientKind::Backend(client)) => {
+                        match crate::openhuman::composio::fetch_toolkit_actions(client, tk).await {
+                            Ok(actions) if !actions.is_empty() => actions,
+                            Ok(_) => {
+                                tracing::debug!(
+                                    agent_id = %definition.id,
+                                    toolkit = %tk,
+                                    "[subagent_runner:typed] fresh list_tools returned empty; falling back to cached catalogue"
+                                );
+                                cached_integration.tools.clone()
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    agent_id = %definition.id,
+                                    toolkit = %tk,
+                                    error = %e,
+                                    "[subagent_runner:typed] fresh list_tools failed; falling back to cached catalogue"
+                                );
+                                cached_integration.tools.clone()
+                            }
+                        }
+                    }
+                    Some(ComposioClientKind::Direct(_)) => {
+                        // Direct mode has no backend-allowlist catalogue
+                        // refresh path — the personal Composio tenant
+                        // governs availability. Mirror the
+                        // `ComposioListToolsTool` direct-mode short-
+                        // circuit and fall back to the cached catalogue
+                        // bulk-fetched at session start (#1710 Wave 2).
+                        tracing::info!(
                             agent_id = %definition.id,
                             toolkit = %tk,
-                            "[subagent_runner:typed] fresh list_tools returned empty; falling back to cached catalogue"
+                            cached_actions = cached_integration.tools.len(),
+                            "[composio-direct] subagent_runner:typed: direct mode active — using cached catalogue, skipping backend list_tools refresh"
                         );
                         cached_integration.tools.clone()
                     }
-                    Err(e) => {
-                        tracing::warn!(
+                    None => {
+                        tracing::debug!(
                             agent_id = %definition.id,
                             toolkit = %tk,
-                            error = %e,
-                            "[subagent_runner:typed] fresh list_tools failed; falling back to cached catalogue"
+                            cached_actions = cached_integration.tools.len(),
+                            "[subagent_runner:typed] composio client unavailable; using cached catalogue"
                         );
                         cached_integration.tools.clone()
                     }
@@ -496,7 +590,7 @@ async fn run_typed_mode(
                 for action in selected {
                     dynamic_tools.push(Box::new(
                         crate::openhuman::composio::ComposioActionTool::new(
-                            client.clone(),
+                            arc_config.clone(),
                             action.name.clone(),
                             action.description.clone(),
                             action.parameters.clone(),
@@ -515,7 +609,7 @@ async fn run_typed_mode(
                 // existing fuzzy filter exists only to keep schemas out
                 // of the system prompt, not to gate execution.
                 lazy_resolver = Some(LazyToolkitResolver {
-                    client: client.clone(),
+                    config: arc_config.clone(),
                     actions: integration.tools.clone(),
                 });
             } else {
@@ -525,11 +619,6 @@ async fn run_typed_mode(
                     "[subagent_runner:typed] toolkit not found among parent's connected integrations; sub-agent will have no callable actions (spawn_subagent pre-flight should have caught this)"
                 );
             }
-        } else if toolkit_filter.is_some() {
-            tracing::warn!(
-                agent_id = %definition.id,
-                "[subagent_runner:typed] toolkit requested but composio client is unavailable on parent context"
-            );
         }
     }
 
@@ -1381,6 +1470,22 @@ async fn run_inner_loop(
 fn parse_tool_arguments(arguments: &str) -> serde_json::Value {
     serde_json::from_str(arguments)
         .unwrap_or_else(|_| serde_json::Value::Object(Default::default()))
+}
+
+/// Probe whether the user can call Composio at all under the current
+/// config. Returns `true` when the mode-aware factory can build EITHER
+/// a backend-mode client (legacy JWT-driven path) OR a direct-mode
+/// client (BYO Composio API key). The resolved client is dropped
+/// immediately — this is purely a "signed-in vs not" check used by the
+/// spawn-time refresh path. Per-action dispatch resolves a fresh client
+/// elsewhere via [`create_composio_client`] so the live `composio.mode`
+/// toggle keeps winning.
+///
+/// Extracted as a free function so the regression suite can exercise
+/// the same probe the runner uses without spinning up the full
+/// `run_typed_mode` plumbing.
+pub(crate) fn user_is_signed_in_to_composio(config: &crate::openhuman::config::Config) -> bool {
+    crate::openhuman::composio::client::create_composio_client(config).is_ok()
 }
 
 #[cfg(test)]

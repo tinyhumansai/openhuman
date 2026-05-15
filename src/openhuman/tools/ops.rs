@@ -241,6 +241,24 @@ pub fn all_tools_with_runtime(
         root_config.web_search.timeout_secs,
     )));
 
+    // Seltz — direct-API web search, gated on `seltz.enabled` (auto-set
+    // when `SELTZ_API_KEY` env var is present). Unlike the backend-proxied
+    // web_search above, this calls the Seltz API directly with a user-
+    // provided API key.
+    if root_config.seltz.enabled {
+        tools.push(Box::new(
+            crate::openhuman::integrations::SeltzSearchTool::new(
+                root_config.seltz.api_key.clone(),
+                root_config.seltz.api_url.clone(),
+                root_config.seltz.max_results,
+                root_config.seltz.timeout_secs,
+            ),
+        ));
+        tracing::debug!("[seltz] registered seltz_search tool");
+    } else {
+        tracing::debug!("[seltz] disabled — set SELTZ_API_KEY to enable");
+    }
+
     // Managed Node.js exec tools — gated on `root_config.node.enabled`.
     // Both share the same `NodeBootstrap` as ShellTool so the download +
     // extract + install pipeline runs at most once per session.

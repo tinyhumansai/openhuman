@@ -83,6 +83,29 @@ fn main() {
             {
                 return None;
             }
+            // Drop 401 "Session expired. Please log in again." bodies surfaced
+            // by llm_provider / backend_api, plus pre-flight "no session token
+            // stored" guards from the rpc dispatcher. Primary suppression
+            // lives at the call sites (`openhuman::providers::ops::api_error`
+            // publishes a SessionExpired event_bus signal and short-circuits;
+            // the rpc dispatcher's `is_session_expired_error` skip-path in
+            // `src/core/jsonrpc.rs` redirects to a tracing::info). This
+            // filter catches any future call site that re-emits the same
+            // shape — keeping OPENHUMAN-TAURI-25 / -1Q / -27 / -1G off
+            // Sentry permanently (~185 events/day combined).
+            if openhuman_core::core::observability::is_session_expired_event(&event) {
+                // Metadata-only log shape — `event.message` carries the raw
+                // backend response body (often a JSON envelope with the
+                // session JWT context attached) which CLAUDE.md forbids from
+                // local logs. `event.event_id` is a correlation-safe Sentry
+                // uuid that lets triage match the dropped event against the
+                // breadcrumb chain without leaking the payload.
+                log::debug!(
+                    "[sentry-session-expired-filter] dropping session-expired event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Strip server_name (hostname) to avoid leaking machine identity
             event.server_name = None;
             // Attach the cached account uid so Sentry can count unique users

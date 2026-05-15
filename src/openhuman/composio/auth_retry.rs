@@ -1,5 +1,14 @@
-//! Single-shot retry wrapper around [`ComposioClient::execute_tool`] for
-//! the post-OAuth token-propagation gap (issue #1688).
+//! Single-shot retry wrapper around [`ComposioClient::execute_tool_once`]
+//! for the post-OAuth token-propagation gap (issue #1688).
+//!
+//! NOTE: PR #1707 later added an in-client retry inside
+//! [`ComposioClient::execute_tool`] keyed on the same auth-readiness
+//! error string. To avoid stacking two retry layers (which would issue
+//! up to four backend calls per logical retry — see the
+//! `retries_once_only_even_when_second_call_still_errors` regression),
+//! this wrapper calls the non-retrying [`ComposioClient::execute_tool_once`]
+//! primitive instead. Direct callers of `execute_tool` (LinkedIn enrichment,
+//! heartbeat collectors, tool schemas) still get #1707's inner retry.
 //!
 //! Composio reports `connection.status == ACTIVE` ~1-2s after the user
 //! finishes OAuth, but its action-execution gateway can take another
@@ -56,15 +65,21 @@ pub(crate) async fn execute_with_auth_retry_inner(
 ) -> anyhow::Result<ComposioExecuteResponse> {
     let tool = slug.trim();
     if tool.is_empty() {
+        tracing::debug!(
+            target: "composio",
+            raw_slug_len = slug.len(),
+            "[composio][auth_retry] rejecting empty tool slug"
+        );
         anyhow::bail!("composio.execute_tool: tool slug must not be empty");
     }
     let arguments = args.unwrap_or(serde_json::Value::Object(Default::default()));
+    let has_args = arguments.as_object().is_some_and(|a| !a.is_empty());
     let body = serde_json::json!({ "tool": tool, "arguments": arguments });
 
     tracing::debug!(
         target: "composio",
         slug = %tool,
-        has_args = !body["arguments"].as_object().is_some_and(|args| args.is_empty()),
+        has_args,
         "[composio][auth_retry] execute start"
     );
     client

@@ -386,7 +386,6 @@ mod tests {
             skills: Arc::new(vec![]),
             memory_context: std::sync::Arc::new(None),
             connected_integrations: vec![],
-            composio_client: None,
             on_progress: None,
             agent_config: crate::openhuman::config::AgentConfig::default(),
             tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::Native,

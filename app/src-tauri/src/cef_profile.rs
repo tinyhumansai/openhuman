@@ -283,6 +283,25 @@ pub fn prepare_process_cache_path() -> Result<PathBuf, String> {
     let default_openhuman_dir = default_root_openhuman_dir()?;
     drain_pending_purges(&default_openhuman_dir)?;
 
+    // Honor a pre-set `OPENHUMAN_CEF_CACHE_PATH` so harnesses (E2E in
+    // particular) can locate the CEF cache outside the OpenHuman workspace
+    // tree. The mega-flow spec calls `openhuman.config_reset_local_data`
+    // between scenarios, which `remove_dir_all`'s the whole workspace —
+    // if CEF's cache lives inside it the running renderer crashes mid-spec
+    // and every subsequent WDIO command fails with "invalid session id".
+    // The override is opt-in (env-var only) so production users keep the
+    // per-user `users/<id>/cef` layout that owns multi-account isolation.
+    if let Some(preset) = configured_cache_path_from_env() {
+        std::fs::create_dir_all(&preset).map_err(|error| {
+            format!("create pre-set CEF cache dir {}: {error}", preset.display())
+        })?;
+        log::info!(
+            "[cef-profile] honoring pre-set OPENHUMAN_CEF_CACHE_PATH={}",
+            preset.display()
+        );
+        return Ok(preset);
+    }
+
     let user_id_raw = read_active_user_id(&default_openhuman_dir)
         .unwrap_or_else(|| PRE_LOGIN_USER_ID.to_string());
     let user_id = match validate_user_id_for_path(&user_id_raw) {
@@ -578,6 +597,54 @@ mod tests {
         assert_eq!(rest.paths, vec![outside_s]);
         let marker = pending_purge_marker_path(&data_root).unwrap();
         assert!(marker.exists());
+    }
+
+    /// Serializes tests that mutate `OPENHUMAN_WORKSPACE` / `OPENHUMAN_CEF_CACHE_PATH`.
+    /// Rust test harness runs tests in parallel; concurrent env writes race.
+    static CACHE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Regression for #1779: when `OPENHUMAN_CEF_CACHE_PATH` is set in the
+    /// environment, `prepare_process_cache_path` must honor it and not
+    /// overwrite with the workspace-rooted `users/<id>/cef` path. The E2E
+    /// harness depends on this to keep the CEF cache outside the
+    /// workspace tree that `config_reset_local_data` wipes.
+    #[test]
+    fn prepare_process_cache_path_honors_preset_env() {
+        let _guard = CACHE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prior_workspace = std::env::var("OPENHUMAN_WORKSPACE").ok();
+        let prior_cef_cache = std::env::var(CEF_CACHE_PATH_ENV).ok();
+
+        let workspace = tempfile::tempdir().unwrap();
+        let cef_cache = tempfile::tempdir().unwrap();
+        std::env::set_var("OPENHUMAN_WORKSPACE", workspace.path());
+        std::env::set_var(CEF_CACHE_PATH_ENV, cef_cache.path());
+
+        let result = std::panic::catch_unwind(|| {
+            let resolved = prepare_process_cache_path().unwrap();
+            assert_eq!(
+                resolved,
+                cef_cache.path(),
+                "preset OPENHUMAN_CEF_CACHE_PATH must win over workspace-derived default"
+            );
+            // The workspace `users/<id>/cef` subtree should NOT have been
+            // created when the override is honored.
+            assert!(
+                !workspace.path().join("users").exists(),
+                "workspace `users/` subtree must not be created when CEF cache is preset"
+            );
+        });
+
+        match prior_workspace {
+            Some(v) => std::env::set_var("OPENHUMAN_WORKSPACE", v),
+            None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+        }
+        match prior_cef_cache {
+            Some(v) => std::env::set_var(CEF_CACHE_PATH_ENV, v),
+            None => std::env::remove_var(CEF_CACHE_PATH_ENV),
+        }
+        if let Err(payload) = result {
+            std::panic::resume_unwind(payload);
+        }
     }
 
     /// Path is under `users/…` but last component is not `cef` (reject, retain in queue).

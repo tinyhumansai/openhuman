@@ -89,6 +89,11 @@ struct MeetSettingsUpdate {
 #[derive(Debug, Deserialize)]
 struct LocalAiSettingsUpdate {
     runtime_enabled: Option<bool>,
+    opt_in_confirmed: Option<bool>,
+    provider: Option<String>,
+    base_url: Option<String>,
+    model_id: Option<String>,
+    chat_model_id: Option<String>,
     usage_embeddings: Option<bool>,
     usage_heartbeat: Option<bool>,
     usage_learning_reflection: Option<bool>,
@@ -462,8 +467,22 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![
                 optional_bool(
                     "runtime_enabled",
-                    "Master switch — when false, no subsystem uses the local Ollama runtime.",
+                    "Master switch — when false, no subsystem uses the selected local AI runtime.",
                 ),
+                optional_bool(
+                    "opt_in_confirmed",
+                    "Explicit local AI opt-in marker required by bootstrap.",
+                ),
+                optional_string(
+                    "provider",
+                    "Local provider identifier. Supported values: ollama, lm_studio.",
+                ),
+                optional_string(
+                    "base_url",
+                    "Provider base URL. For LM Studio this defaults to http://localhost:1234/v1.",
+                ),
+                optional_string("model_id", "Default local chat model identifier."),
+                optional_string("chat_model_id", "Local chat model identifier."),
                 optional_bool(
                     "usage_embeddings",
                     "Use the local model for embedding generation (when runtime_enabled).",
@@ -904,6 +923,11 @@ fn handle_update_local_ai_settings(params: Map<String, Value>) -> ControllerFutu
         let update = deserialize_params::<LocalAiSettingsUpdate>(params)?;
         let patch = config_rpc::LocalAiSettingsPatch {
             runtime_enabled: update.runtime_enabled,
+            opt_in_confirmed: update.opt_in_confirmed,
+            provider: update.provider,
+            base_url: update.base_url,
+            model_id: update.model_id,
+            chat_model_id: update.chat_model_id,
             usage_embeddings: update.usage_embeddings,
             usage_heartbeat: update.usage_heartbeat,
             usage_learning_reflection: update.usage_learning_reflection,

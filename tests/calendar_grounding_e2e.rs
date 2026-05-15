@@ -152,7 +152,6 @@ async fn test_integrations_agent_has_current_date_context() -> Result<()> {
         session_id: "test-session".into(),
         channel: "test".into(),
         connected_integrations: vec![],
-        composio_client: None,
         tool_call_format: openhuman_core::openhuman::context::prompt::ToolCallFormat::PFormat,
         session_key: "0_test".into(),
         session_parent_prefix: None,
