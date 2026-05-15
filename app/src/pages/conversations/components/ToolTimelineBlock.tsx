@@ -1,7 +1,26 @@
 import type { SubagentActivity, ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
 import { formatTimelineEntry } from '../../../utils/toolTimelineFormatting';
 import { parseWorkerThreadRef } from '../utils/workerThreadRef';
-import { WorkerThreadRefCard } from './WorkerThreadRefCard';
+import { WorkerThreadRefCard, type WorkerThreadStatus } from './WorkerThreadRefCard';
+
+/**
+ * Map a parent timeline entry's status to the worker-thread lifecycle
+ * phase rendered on `WorkerThreadRefCard`. The parent entry is what the
+ * subagent_spawned / subagent_completed / subagent_failed socket events
+ * mutate, so reading from it keeps the badge and the surrounding
+ * `<details>` status pill in lockstep without a second source of truth.
+ *
+ * Returns `undefined` for the rare ambiguous case so the card stays
+ * label-only rather than render a misleading state.
+ */
+function workerStatusFromEntry(
+  status: ToolTimelineEntry['status']
+): WorkerThreadStatus | undefined {
+  if (status === 'running') return 'running';
+  if (status === 'success') return 'completed';
+  if (status === 'error') return 'failed';
+  return undefined;
+}
 
 /**
  * Render the live activity of one running (or completed) sub-agent
@@ -145,7 +164,10 @@ export function ToolTimelineBlock({ entries }: { entries: ToolTimelineEntry[] })
                   <div
                     className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[11px] whitespace-pre-wrap break-words ${statusTone.bubble}`}>
                     {workerRef.before}
-                    <WorkerThreadRefCard ref={workerRef.ref} />
+                    <WorkerThreadRefCard
+                      ref={workerRef.ref}
+                      status={workerStatusFromEntry(entry.status)}
+                    />
                     {workerRef.after ? <div className="mt-1">{workerRef.after}</div> : null}
                   </div>
                 ) : formatted.detail ? (
