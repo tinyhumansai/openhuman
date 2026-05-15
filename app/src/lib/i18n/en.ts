@@ -451,6 +451,7 @@ const en: TranslationMap = {
   'devOptions.triggerSentryTestDesc':
     'Fires a tagged error to verify the Sentry pipeline. Issue #1072 — remove after verification.',
   'devOptions.sendTestEvent': 'Send test event',
+  'devOptions.sending': 'Sending…',
   'devOptions.eventSent': 'Event sent',
   'devOptions.failed': 'Failed',
   'devOptions.appLogs': 'App logs',
@@ -552,6 +553,7 @@ const en: TranslationMap = {
   'autocomplete.style.custom': 'Custom',
   'autocomplete.disabledApps': 'Disabled Apps (one bundle/app token per line)',
   'autocomplete.saveSettings': 'Save Settings',
+  'autocomplete.saving': 'Saving…',
   'autocomplete.runtime': 'Runtime',
   'autocomplete.running': 'Running',
   'autocomplete.start': 'Start',

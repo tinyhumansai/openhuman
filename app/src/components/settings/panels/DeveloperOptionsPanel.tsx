@@ -269,7 +269,7 @@ const SentryTestRow = () => {
           onClick={onClick}
           disabled={status.kind === 'sending'}
           className="shrink-0 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium transition-colors disabled:opacity-60">
-          {status.kind === 'sending' ? 'Sending…' : t('devOptions.sendTestEvent')}
+          {status.kind === 'sending' ? t('devOptions.sending') : t('devOptions.sendTestEvent')}
         </button>
       </div>
       <div role="status" aria-live="polite" aria-atomic="true" className="mt-2 text-xs">

@@ -439,6 +439,7 @@ const zhCN: TranslationMap = {
   'devOptions.triggerSentryTestDesc':
     '发送一个带有标签的错误以验证 Sentry 管道。Issue #1072 — 验证后移除。',
   'devOptions.sendTestEvent': '发送测试事件',
+  'devOptions.sending': '发送中…',
   'devOptions.eventSent': '事件已发送',
   'devOptions.failed': '失败',
   'devOptions.appLogs': '应用日志',
@@ -535,6 +536,7 @@ const zhCN: TranslationMap = {
   'autocomplete.style.custom': '自定义',
   'autocomplete.disabledApps': '禁用的应用（每行一个包名/应用令牌）',
   'autocomplete.saveSettings': '保存设置',
+  'autocomplete.saving': '保存中…',
   'autocomplete.runtime': '运行时',
   'autocomplete.running': '运行中',
   'autocomplete.start': '启动',

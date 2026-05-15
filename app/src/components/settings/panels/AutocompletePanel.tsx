@@ -248,7 +248,7 @@ const AutocompletePanel = () => {
             onClick={() => void saveConfig()}
             disabled={isSaving || !configLoaded}
             className="rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600 disabled:opacity-50">
-            {isSaving ? 'Saving…' : t('autocomplete.saveSettings')}
+            {isSaving ? t('autocomplete.saving') : t('autocomplete.saveSettings')}
           </button>
         </section>
 
@@ -256,10 +256,10 @@ const AutocompletePanel = () => {
           <h3 className="text-sm font-semibold text-stone-900">{t('autocomplete.runtime')}</h3>
           <div className="text-sm text-stone-600 space-y-1">
             <div>
-              {t('autocomplete.running')}: {status?.running ? 'yes' : 'no'}
+              {t('autocomplete.running')}: {status?.running ? t('common.yes') : t('common.no')}
             </div>
             <div>
-              {t('common.enabled')}: {status?.enabled ? 'yes' : 'no'}
+              {t('common.enabled')}: {status?.enabled ? t('common.yes') : t('common.no')}
             </div>
           </div>
           <div className="flex gap-2">
