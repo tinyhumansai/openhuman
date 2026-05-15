@@ -278,6 +278,50 @@ fn fail_escalate_threshold_is_five() {
     );
 }
 
+/// Regression guard for OPENHUMAN-TAURI-BH: the exact wire shape the
+/// sustained-outage escalation builds for an offline user
+/// (`Network is unreachable (os error 51)`) must classify as a
+/// network-unreachable expected error so the observability layer routes
+/// it to a warn breadcrumb rather than a Sentry event. If the format
+/// string in `log_connection_failure` drifts away from the substrings
+/// `is_network_unreachable_message` matches on, an offline Mac will
+/// start spamming Sentry again — exactly the regression this guards.
+#[test]
+fn sustained_outage_for_network_unreachable_classifies_as_expected() {
+    use crate::core::observability::{expected_error_kind, ExpectedErrorKind};
+
+    let reason = "WebSocket connect: IO error: Network is unreachable (os error 51)";
+    let detailed = format!(
+        "[socket] Connection failed (sustained outage after {FAIL_ESCALATE_THRESHOLD} attempts): {reason}"
+    );
+    assert_eq!(
+        expected_error_kind(&detailed),
+        Some(ExpectedErrorKind::NetworkUnreachable),
+        "offline-user shape must classify as expected; got message: {detailed}"
+    );
+}
+
+/// Counterpart: a genuine outage that lacks any of the transport-level
+/// markers (e.g. a server-side HTTP 500 wrapped by tungstenite) must
+/// still surface as an actionable Sentry event — i.e. not classify as
+/// any expected kind. Pins the OPENHUMAN-TAURI-8M invariant ("one event
+/// per sustained outage") so the BH fix doesn't accidentally silence
+/// real outages.
+#[test]
+fn sustained_outage_for_actionable_server_error_does_not_classify() {
+    use crate::core::observability::expected_error_kind;
+
+    let reason = "SIO CONNECT: Socket.IO connect error: internal server error";
+    let detailed = format!(
+        "[socket] Connection failed (sustained outage after {FAIL_ESCALATE_THRESHOLD} attempts): {reason}"
+    );
+    assert_eq!(
+        expected_error_kind(&detailed),
+        None,
+        "actionable outage must not be silenced; got message: {detailed}"
+    );
+}
+
 // ── End-to-end handshake tests against a local WS server ───────
 //
 // These tests drive the real `ws_loop` / `run_connection` code path

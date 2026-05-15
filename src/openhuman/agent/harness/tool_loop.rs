@@ -87,10 +87,11 @@ pub(crate) async fn agent_turn(
 ///
 /// * `extra_tools` — per-turn synthesised tools to splice alongside the
 ///   persistent `tools_registry`. The agent-dispatch path uses this to
-///   surface delegation tools (`research`, `delegate_gmail`, …) that
-///   are synthesised fresh per turn from the active agent's
-///   `subagents` field and the current Composio integration list, and
-///   therefore are not registered in the global startup-time registry.
+///   surface delegation tools (`research`, `plan`,
+///   `delegate_to_integrations_agent`, …) that are synthesised fresh
+///   per turn from the active agent's `subagents` field and the
+///   current Composio integration list, and therefore are not
+///   registered in the global startup-time registry.
 ///
 /// The combined tool list seen by the LLM this turn is
 /// `tools_registry.iter().chain(extra_tools.iter())`, further narrowed
@@ -851,7 +852,18 @@ pub(crate) async fn run_tool_call_loop(
         }
     }
 
-    anyhow::bail!("Agent exceeded maximum tool iterations ({max_iterations})")
+    // Return the typed `AgentError::MaxIterationsExceeded` variant (boxed
+    // through `anyhow::Error`) so downstream wrappers — notably
+    // `Agent::run_single` in `harness/session/runtime.rs` — can downcast and
+    // suppress Sentry emission for this deterministic agent-state outcome
+    // (OPENHUMAN-TAURI-99 / -98). The `Display` text is preserved verbatim so
+    // any caller that already inspects the string (UI chat surface, tests)
+    // continues to work.
+    Err(anyhow::Error::new(
+        crate::openhuman::agent::error::AgentError::MaxIterationsExceeded {
+            max: max_iterations,
+        },
+    ))
 }
 
 #[cfg(test)]

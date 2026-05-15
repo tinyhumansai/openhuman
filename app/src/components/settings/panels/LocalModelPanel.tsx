@@ -10,8 +10,11 @@ import {
 } from '../../../utils/localAiHelpers';
 import {
   type ApplyPresetResult,
+  type LlmBackend,
   type LocalAiDownloadsProgress,
   type LocalAiStatus,
+  memoryTreeGetLlm,
+  memoryTreeSetLlm,
   openhumanGetConfig,
   openhumanLocalAiApplyPreset,
   openhumanLocalAiDownload,
@@ -60,6 +63,16 @@ const LocalModelPanel = () => {
   });
   const [usageError, setUsageError] = useState('');
   const [usageSaving, setUsageSaving] = useState(false);
+
+  // Memory summarizer backend lives in `memory_tree.llm_backend`, which is
+  // outside the `local_ai.usage.*` surface — so it has its own RPC pair
+  // (`memoryTreeGetLlm` / `memoryTreeSetLlm`). This is now the only UI
+  // surface for the cloud/local toggle (the Intelligence Memory tab's
+  // BackendChooser was removed in this PR to eliminate the duplicate
+  // control surface). The tab's local-only Ollama model picker reads
+  // the same field at mount to decide visibility.
+  const [summarizerBackend, setSummarizerBackend] = useState<LlmBackend>('cloud');
+  const [summarizerSaving, setSummarizerSaving] = useState(false);
 
   const progress = useMemo(() => {
     const downloadProgress = progressFromDownloads(downloads);
@@ -145,11 +158,48 @@ const LocalModelPanel = () => {
     }
   };
 
+  const loadSummarizerBackend = async () => {
+    try {
+      const resp = await memoryTreeGetLlm();
+      if (resp?.current === 'local' || resp?.current === 'cloud') {
+        setSummarizerBackend(resp.current);
+      }
+    } catch (err) {
+      // Non-fatal — the row stays at its default (cloud) and the user
+      // can still flip it; the next save attempt will surface the error.
+      console.warn('[local-model-panel] memoryTreeGetLlm failed', err);
+    }
+  };
+
+  const updateSummarizerBackend = async (next: LlmBackend) => {
+    // Belt-and-braces: the checkbox is already `disabled` when the
+    // master runtime is off or a save is in flight, but the rendered
+    // disabled attribute only stops real-browser click events — JSDOM
+    // / fireEvent ignore it. Mirror the gate here so programmatic
+    // dispatch can't sneak past the master switch either.
+    if (!usageFlags.runtime_enabled || summarizerSaving) return;
+    const prev = summarizerBackend;
+    setSummarizerBackend(next);
+    setSummarizerSaving(true);
+    setUsageError('');
+    try {
+      await memoryTreeSetLlm({ backend: next });
+    } catch (err) {
+      // Roll back the optimistic toggle and surface the error.
+      setSummarizerBackend(prev);
+      const msg = err instanceof Error ? err.message : 'Failed to save memory summarizer backend';
+      setUsageError(msg);
+    } finally {
+      setSummarizerSaving(false);
+    }
+  };
+
   useEffect(() => {
     const initialLoad = window.setTimeout(() => {
       void loadStatus();
       void loadPresets();
       void loadUsage();
+      void loadSummarizerBackend();
     }, 0);
     const timer = window.setInterval(() => {
       void loadStatus();
@@ -261,24 +311,6 @@ const LocalModelPanel = () => {
         />
 
         {/* Simplified download status */}
-        <section className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900">{t('localModel.modelStatus')}</h3>
-
-          <div className="text-sm text-stone-600">
-            State:{' '}
-            <span
-              className={`font-medium ${
-                currentState === 'ready'
-                  ? 'text-green-600'
-                  : currentState === 'downloading' || currentState === 'installing'
-                    ? 'text-primary-600'
-                    : currentState === 'degraded'
-                      ? 'text-amber-700'
-                      : 'text-stone-700'
-              }`}>
-              {currentState ?? 'unknown'}
-            </span>
-          </div>
         {/*
           Simplified Model Status — only meaningful AFTER Ollama is on disk.
           Before that, every readout here ("idle"/"missing", Re-bootstrap
@@ -291,7 +323,7 @@ const LocalModelPanel = () => {
         */}
         {(downloads?.ollama_available ?? true) && (
           <section className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-stone-900">Model Status</h3>
+            <h3 className="text-sm font-semibold text-stone-900">{t('localModel.modelStatus')}</h3>
 
             <div className="text-sm text-stone-600">
               State:{' '}
@@ -399,6 +431,30 @@ const LocalModelPanel = () => {
           </label>
 
           <div className={`space-y-2 pl-6 ${usageFlags.runtime_enabled ? '' : 'opacity-50'}`}>
+            {/* Memory summarizer is special: it writes `memory_tree.llm_backend`,
+                not `local_ai.usage.*`. This is now the sole UI surface for
+                that field (the Intelligence Memory tab's BackendChooser was
+                removed); the tab's Ollama model picker still reads it at
+                mount to gate visibility. */}
+            <label
+              className="flex items-start gap-3 cursor-pointer"
+              data-testid="local-ai-usage-memory-summarizer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={summarizerBackend === 'local'}
+                disabled={!usageFlags.runtime_enabled || summarizerSaving}
+                onChange={e => void updateSummarizerBackend(e.target.checked ? 'local' : 'cloud')}
+              />
+              <div>
+                <div className="text-sm text-stone-900">Memory summarizer</div>
+                <div className="text-xs text-stone-500">
+                  Run memory-tree extract + summarise locally instead of in the cloud. The local
+                  model used comes from the Model Tier preset above.
+                </div>
+              </div>
+            </label>
+
             {(
               [
                 {
@@ -448,15 +504,12 @@ const LocalModelPanel = () => {
 
         <button
           type="button"
-          onClick={() => navigateToSettings('local-model-debug')}
-          className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-600 transition-colors">
-          {t('localModel.advancedSettings')}
           onClick={() => {
             if (runtimeEnabled) navigateToSettings('local-model-debug');
           }}
           disabled={!runtimeEnabled}
           className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-600 transition-colors disabled:opacity-50 disabled:hover:text-stone-400">
-          Advanced settings
+          {t('localModel.advancedSettings')}
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>

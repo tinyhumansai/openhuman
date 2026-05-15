@@ -1147,3 +1147,58 @@ fn parse_sse_line_done_sentinel() {
     let result = parse_sse_line(line).unwrap();
     assert_eq!(result, None);
 }
+
+#[test]
+fn normalize_function_arguments_valid_json_string_preserved() {
+    let v = Some(serde_json::Value::String(r#"{"path":"/tmp"}"#.to_string()));
+    assert_eq!(normalize_function_arguments(v), r#"{"path":"/tmp"}"#);
+}
+
+#[test]
+fn normalize_function_arguments_invalid_json_string_falls_back_to_empty_object() {
+    // OPENHUMAN-TAURI-6F: model emitted malformed JSON in `function.arguments`.
+    // Forwarding the raw string back upstream causes a 400 from the backend's
+    // `json.loads`. Substitute `{}` instead.
+    for raw in ["{a:1}", "{'k':'v'}", "{\n", "{,}"] {
+        let v = Some(serde_json::Value::String(raw.to_string()));
+        assert_eq!(normalize_function_arguments(v), "{}", "raw = {raw:?}");
+    }
+}
+
+#[test]
+fn normalize_function_arguments_empty_or_null_becomes_empty_object() {
+    assert_eq!(
+        normalize_function_arguments(Some(serde_json::Value::String("   ".to_string()))),
+        "{}"
+    );
+    assert_eq!(
+        normalize_function_arguments(Some(serde_json::Value::Null)),
+        "{}"
+    );
+    assert_eq!(normalize_function_arguments(None), "{}");
+}
+
+#[test]
+fn normalize_function_arguments_object_value_serializes() {
+    let v = Some(serde_json::json!({"path": "/tmp"}));
+    assert_eq!(normalize_function_arguments(v), r#"{"path":"/tmp"}"#);
+}
+
+#[test]
+fn parse_provider_tool_call_from_value_guards_malformed_arguments() {
+    // OPENHUMAN-TAURI-6F: the early-return path in
+    // `parse_provider_tool_call_from_value` previously bypassed
+    // `normalize_function_arguments`, forwarding malformed JSON strings
+    // directly. Verify the guard now applies on both code paths.
+    let value = serde_json::json!({
+        "id": "call_bad",
+        "name": "shell",
+        "arguments": "{a:1}"
+    });
+    let result = parse_provider_tool_call_from_value(&value);
+    let call = result.expect("should produce a ToolCall");
+    assert_eq!(
+        call.arguments, "{}",
+        "malformed arguments string must be normalised to {{}} via the first-path guard"
+    );
+}

@@ -1,5 +1,6 @@
-//! Runtime smoke for the Sentry `before_send` filter that drops per-attempt
-//! transient-upstream provider failures (OPENHUMAN-TAURI-2E / 84 / T).
+//! Runtime smoke for the Sentry `before_send` filters that drop per-attempt
+//! transient-upstream provider, backend_api, integrations, and updater
+//! failures plus budget-exhausted user-state 400s (OPENHUMAN-TAURI-3M / 12 / 13).
 //!
 //! Unit tests in `src/core/observability.rs` exercise the pure filter
 //! function. This integration test wires the actual `sentry::init` →
@@ -7,7 +8,11 @@
 //! behaves as designed: transient events are dropped, permanent events
 //! and aggregate `all_exhausted` events still surface.
 
-use openhuman_core::core::observability::is_transient_provider_http_failure;
+use openhuman_core::core::observability::{
+    is_budget_event, is_session_expired_event, is_transient_backend_api_failure,
+    is_transient_integrations_failure, is_transient_provider_http_failure,
+    is_updater_transient_event,
+};
 use sentry::protocol::Event;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -19,6 +24,12 @@ fn event_with_tags(tags: &[(&str, &str)]) -> Event<'static> {
         t.insert((*k).to_string(), (*v).to_string());
     }
     event.tags = t;
+    event
+}
+
+fn event_with_tags_and_message(tags: &[(&str, &str)], message: &str) -> Event<'static> {
+    let mut event = event_with_tags(tags);
+    event.message = Some(message.to_string());
     event
 }
 
@@ -46,7 +57,13 @@ fn count_captured(events: Vec<Event<'static>>) -> usize {
         ),
         // Same filter shape the real binary installs in main.rs.
         before_send: Some(Arc::new(|event| {
-            if is_transient_provider_http_failure(&event) {
+            if is_transient_provider_http_failure(&event)
+                || is_transient_backend_api_failure(&event)
+                || is_transient_integrations_failure(&event)
+                || is_budget_event(&event)
+                || is_updater_transient_event(&event)
+                || is_session_expired_event(&event)
+            {
                 None
             } else {
                 Some(event)
@@ -66,6 +83,88 @@ fn count_captured(events: Vec<Event<'static>>) -> usize {
         .client()
         .map(|c| c.flush(Some(std::time::Duration::from_secs(2))));
     transport.fetch_and_clear_envelopes().len()
+}
+
+#[test]
+fn drops_updater_transient_check_failure() {
+    let event = event_with_tags_and_message(
+        &[],
+        "failed to check for updates: error sending request for url \
+         (https://github.com/tinyhumansai/openhuman/releases/latest/download/latest.json)",
+    );
+    assert_eq!(
+        count_captured(vec![event]),
+        0,
+        "transient updater check failures must be filtered in before_send"
+    );
+}
+
+#[test]
+fn drops_backend_api_transient_statuses() {
+    let events = ["408", "429", "502", "503", "504", "520"]
+        .into_iter()
+        .map(|status| {
+            event_with_tags(&[
+                ("domain", "backend_api"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ])
+        })
+        .collect();
+    assert_eq!(
+        count_captured(events),
+        0,
+        "transient backend_api statuses must be filtered in before_send"
+    );
+}
+
+#[test]
+fn drops_integrations_transient_transport_timeout() {
+    let event = event_with_tags_and_message(
+        &[("domain", "integrations"), ("failure", "transport")],
+        "GET /agent-integrations/tools failed: operation timed out",
+    );
+    assert_eq!(
+        count_captured(vec![event]),
+        0,
+        "transient integrations timeouts must be filtered in before_send"
+    );
+}
+
+#[test]
+fn drops_budget_exhausted_400() {
+    let event = event_with_tags_and_message(
+        &[
+            ("domain", "llm_provider"),
+            ("failure", "non_2xx"),
+            ("status", "400"),
+        ],
+        r#"OpenHuman API error (400 Bad Request): {"success":false,"error":"Insufficient budget"}"#,
+    );
+
+    assert_eq!(
+        count_captured(vec![event]),
+        0,
+        "budget-exhausted 400s must be filtered in before_send"
+    );
+}
+
+#[test]
+fn keeps_non_budget_400() {
+    let event = event_with_tags_and_message(
+        &[
+            ("domain", "llm_provider"),
+            ("failure", "non_2xx"),
+            ("status", "400"),
+        ],
+        "Bad request: missing field",
+    );
+
+    assert_eq!(
+        count_captured(vec![event]),
+        1,
+        "non-budget 400s must still reach Sentry"
+    );
 }
 
 #[test]
@@ -108,6 +207,20 @@ fn keeps_permanent_failures() {
         count_captured(events),
         5,
         "permanent provider failures must reach Sentry"
+    );
+}
+
+#[test]
+fn keeps_backend_api_404_failure() {
+    let event = event_with_tags(&[
+        ("domain", "backend_api"),
+        ("failure", "non_2xx"),
+        ("status", "404"),
+    ]);
+    assert_eq!(
+        count_captured(vec![event]),
+        1,
+        "non-transient backend_api 404 failures must reach Sentry"
     );
 }
 

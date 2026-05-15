@@ -171,14 +171,15 @@ pub(crate) async fn get_or_create_provider(
         return Ok(existing);
     }
 
-    let api_url = if provider_name == ctx.default_provider.as_str() {
-        ctx.api_url.as_deref()
+    let (inference_url, backend_url) = if provider_name == ctx.default_provider.as_str() {
+        (ctx.inference_url.as_deref(), ctx.api_url.as_deref())
     } else {
-        None
+        (None, None)
     };
 
     let provider = providers::create_resilient_provider_with_options(
-        api_url,
+        inference_url,
+        backend_url,
         None,
         &ctx.reliability,
         &ctx.provider_runtime_options,

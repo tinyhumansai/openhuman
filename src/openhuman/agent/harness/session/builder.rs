@@ -380,6 +380,15 @@ impl AgentBuilder {
                 .agent_definition_name
                 .clone()
                 .unwrap_or_else(|| "main".to_string()),
+            // Canonical registry id — captured here at build time
+            // before any caller can call `set_agent_definition_name`
+            // and clobber the transcript-facing name. Used by
+            // `refresh_delegation_tools` to re-resolve the agent's
+            // `subagents` declaration against the global registry.
+            agent_definition_id: self
+                .agent_definition_name
+                .clone()
+                .unwrap_or_else(|| "main".to_string()),
             session_transcript_path: None,
             session_key: {
                 let unix_ts = std::time::SystemTime::now()
@@ -411,6 +420,8 @@ impl AgentBuilder {
             omit_profile: self.omit_profile.unwrap_or(true),
             omit_memory_md: self.omit_memory_md.unwrap_or(true),
             payload_summarizer: self.payload_summarizer,
+            last_seen_integrations_hash: 0,
+            synthesized_tool_names: std::collections::HashSet::new(),
         })
     }
 }
@@ -659,6 +670,7 @@ impl Agent {
         };
 
         let provider: Box<dyn Provider> = providers::create_intelligent_routing_provider(
+            config.inference_url.as_deref(),
             config.api_url.as_deref(),
             config.api_key.as_deref(),
             config,
@@ -805,6 +817,7 @@ impl Agent {
                         == crate::openhuman::config::ReflectionSource::Cloud
                     {
                         Some(Arc::from(providers::create_routed_provider(
+                            config.inference_url.as_deref(),
                             config.api_url.as_deref(),
                             config.api_key.as_deref(),
                             &config.reliability,
@@ -856,8 +869,10 @@ impl Agent {
         //
         // For an agent with `subagents = [...]` in its TOML (today:
         // orchestrator), `collect_orchestrator_tools` synthesises one
-        // `ArchetypeDelegationTool` per named sub-agent plus one
-        // `SkillDelegationTool` per connected Composio toolkit.
+        // `ArchetypeDelegationTool` per named sub-agent plus a single
+        // collapsed `SkillDelegationTool`
+        // (`delegate_to_integrations_agent`) whose `toolkit` argument
+        // selects among the connected Composio toolkits (#1335).
         //
         // For an agent without `subagents` (today: welcome, critic,
         // archivist, etc.), no delegation tools are synthesised — the

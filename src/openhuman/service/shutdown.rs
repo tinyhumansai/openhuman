@@ -69,6 +69,13 @@ mod tests {
 
     struct ShutdownProbe {
         tx: mpsc::UnboundedSender<(String, String)>,
+        /// Only forward events whose `source` matches. The event bus is a
+        /// process-global singleton (`event_bus::init_global` is idempotent),
+        /// so parallel tests in this module publish onto the *same* bus and
+        /// every probe sees every shutdown event. Filtering by source keeps
+        /// each test isolated to the event it actually published instead of
+        /// racing on whichever fires first.
+        expected_source: &'static str,
     }
 
     #[async_trait]
@@ -83,7 +90,9 @@ mod tests {
 
         async fn handle(&self, event: &DomainEvent) {
             if let DomainEvent::SystemShutdownRequested { source, reason } = event {
-                let _ = self.tx.send((source.clone(), reason.clone()));
+                if source == self.expected_source {
+                    let _ = self.tx.send((source.clone(), reason.clone()));
+                }
             }
         }
     }
@@ -92,7 +101,10 @@ mod tests {
     async fn service_shutdown_publishes_event() {
         let bus = event_bus::init_global(event_bus::DEFAULT_CAPACITY);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = bus.subscribe(Arc::new(ShutdownProbe { tx }));
+        let handle = bus.subscribe(Arc::new(ShutdownProbe {
+            tx,
+            expected_source: "test",
+        }));
 
         let outcome = service_shutdown(Some("test".into()), Some("integration".into()))
             .await

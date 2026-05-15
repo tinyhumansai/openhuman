@@ -32,7 +32,6 @@ import {
 } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-import CustomModelSection from './local-model/CustomModelSection';
 import ModelDownloadSection from './local-model/ModelDownloadSection';
 import ModelStatusSection from './local-model/ModelStatusSection';
 
@@ -429,8 +428,6 @@ const LocalModelDebugPanel = () => {
           onSetTtsOutputPath={setTtsOutputPath}
           onRunTtsTest={() => void runTtsTest()}
         />
-
-        <CustomModelSection />
       </div>
     </div>
   );

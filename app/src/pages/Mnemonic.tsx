@@ -43,13 +43,13 @@ const Mnemonic = () => {
     }
   }, [copied]);
 
-  // Reset state when switching modes
-  useEffect(() => {
+  const switchMode = useCallback((nextMode: 'generate' | 'import') => {
+    setMode(nextMode);
     setConfirmed(false);
     setError(null);
     setImportValid(null);
     setImportWords(Array(IMPORT_SLOTS_INITIAL).fill(''));
-  }, [mode]);
+  }, []);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -252,7 +252,7 @@ const Mnemonic = () => {
 
               {/* Import existing link */}
               <button
-                onClick={() => setMode('import')}
+                onClick={() => switchMode('import')}
                 className="w-full text-center text-sm text-primary-500 hover:text-primary-600 transition-colors mb-3">
                 {t('mnemonic.alreadyHavePhrase')}
               </button>
@@ -323,7 +323,7 @@ const Mnemonic = () => {
 
               {/* Back to generate link */}
               <button
-                onClick={() => setMode('generate')}
+                onClick={() => switchMode('generate')}
                 className="w-full text-center text-sm text-primary-500 hover:text-primary-600 transition-colors mb-3">
                 {t('mnemonic.generateNewPhrase')}
               </button>

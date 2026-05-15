@@ -147,11 +147,9 @@ const AIPanel = () => {
                     await loadLocalAiStatus();
                   }
                 }}
-                className="text-sm text-primary-500 hover:text-primary-600 transition-colors">
-                {t('settings.ai.retryDownload')}
                 disabled={!localAiRuntimeEnabled}
                 className="text-sm text-primary-500 hover:text-primary-600 transition-colors disabled:opacity-50 disabled:hover:text-primary-500">
-                Retry Download
+                {t('settings.ai.retryDownload')}
               </button>
             </div>
           </div>

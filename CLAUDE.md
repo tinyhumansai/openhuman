@@ -2,7 +2,7 @@
 
 **AI assistant for communities — React + Tauri v2 desktop app with a Rust core (JSON-RPC / CLI).**
 
-Narrative architecture: [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md). Frontend: [`gitbooks/developing/frontend.md`](gitbooks/developing/frontend.md). Tauri shell: [`gitbooks/developing/tauri-shell.md`](gitbooks/developing/tauri-shell.md). Coding-harness tool surface: [`gitbooks/developing/coding-harness.md`](gitbooks/developing/coding-harness.md).
+Narrative architecture: [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md). Frontend: [`gitbooks/developing/architecture/frontend.md`](gitbooks/developing/architecture/frontend.md). Tauri shell: [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md). Agent-harness tool surface: [`gitbooks/developing/architecture/agent-harness.md`](gitbooks/developing/architecture/agent-harness.md).
 
 ---
 
@@ -165,7 +165,7 @@ bash scripts/test-rust-with-mock.sh --test json_rpc_e2e
 
 Thin desktop host: window management, daemon health, **core process lifecycle** (`core_process`, `CoreProcessHandle`), **JSON-RPC relay** (`core_rpc_relay`, `core_rpc`).
 
-Registered IPC (see [`gitbooks/developing/tauri-shell.md`](gitbooks/developing/tauri-shell.md)): `greet`, `write_ai_config_file`, `ai_get_config`, `ai_refresh_config`, `core_rpc_relay`, window commands, `openhuman_*` daemon helpers.
+Registered IPC (see [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md)): `greet`, `write_ai_config_file`, `ai_get_config`, `ai_refresh_config`, `core_rpc_relay`, window commands, `openhuman_*` daemon helpers.
 
 ### CEF child webviews — no new JS injection
 
@@ -233,7 +233,7 @@ Each domain owns a `bus.rs` with its `EventHandler` impls — e.g. `cron/bus.rs`
 
 ## Design
 
-Premium, calm visual language — ocean primary `#4A83DD`, sage / amber / coral semantics, Inter + Cabinet Grotesk + JetBrains Mono, Tailwind with custom radii/spacing/shadows. See [`gitbooks/resources/design-language.md`](gitbooks/resources/design-language.md).
+Premium, calm visual language — ocean primary `#4A83DD`, sage / amber / coral semantics, Inter + Cabinet Grotesk + JetBrains Mono, Tailwind with custom radii/spacing/shadows. Implementation tokens live in [`app/tailwind.config.js`](app/tailwind.config.js).
 
 ## Shell vs app code
 

@@ -32,6 +32,7 @@ export type SettingsRoute =
   | 'local-model-debug'
   | 'notifications'
   | 'notification-routing'
+  | 'mascot'
   | 'intelligence'
   | 'webhooks-triggers'
   | 'composio-triggers';
@@ -109,6 +110,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     // shorter `notifications` prefix.
     if (path.includes('/settings/notification-routing')) return 'notification-routing';
     if (path.includes('/settings/notifications')) return 'notifications';
+    if (path.includes('/settings/mascot')) return 'mascot';
     return 'home';
   };
 
@@ -189,13 +191,13 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       // Leaf panels under features
       case 'screen-intelligence':
       case 'autocomplete':
-      case 'voice':
       case 'messaging':
       case 'tools':
         return [settingsCrumb, featuresCrumb];
 
       // Leaf panels under AI & Models
       case 'local-model':
+      case 'voice':
         return [settingsCrumb, aiModelsCrumb];
 
       // Team sub-pages
@@ -226,6 +228,10 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
 
       // Notifications panel sits at the top level of Settings.
       case 'notifications':
+        return [settingsCrumb];
+
+      // Mascot appearance panel sits at the top level of Settings.
+      case 'mascot':
         return [settingsCrumb];
 
       case 'home':

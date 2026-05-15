@@ -17,8 +17,20 @@ This guide covers two paths:
 ## Prerequisites
 
 - `git`
-- `node` + `pnpm` (see `pnpm-workspace.yaml`)
-- Rust toolchain (see `rust-toolchain.toml`)
+- Node.js 24 or newer (see `app/package.json`)
+- `pnpm@10.10.0` (see the root `package.json` `packageManager` field)
+- Rust 1.93.0 through `rustup` with `rustfmt` and `clippy` (see `rust-toolchain.toml`)
+- CMake, required by native Rust dependencies
+- Git submodules under `app/src-tauri/vendor/`, required for the vendored CEF-aware Tauri CLI
+- Platform desktop build tools: Xcode Command Line Tools on macOS, or the Tauri GTK/WebKit/AppIndicator package set on Linux
+
+macOS Homebrew quick start:
+
+```bash
+brew install node@24 pnpm rustup-init cmake
+rustup toolchain install 1.93.0 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.93.0
+```
 
 ## Build from source (local compile)
 
@@ -29,24 +41,32 @@ Run from the repository root:
 git clone https://github.com/tinyhumansai/openhuman.git
 cd openhuman
 
-# 2) Install JS deps (workspace)
+# 2) Fetch vendored Tauri/CEF sources
+git submodule update --init --recursive
+
+# 3) Install JS deps (workspace)
 pnpm install
 
-# 3) Build Rust core binary
+# 4) Build Rust core binary
 cargo build --manifest-path Cargo.toml --bin openhuman-core
 
-# 4) Stage core sidecar for the desktop app
+# 5) Run the desktop staging hook (currently a no-op; kept for script compatibility)
 cd app
 pnpm core:stage
 
-# 5) Build desktop app artifacts
+# 6) Build desktop app artifacts
 pnpm build
 ```
 
 For local development instead of production build:
 
 ```bash
+# Web-only UI development: run inside app/ after the `cd app` step above
 pnpm dev
+
+# Desktop app development with the vendored Tauri/CEF CLI: run from the workspace root
+cd ..
+pnpm --filter openhuman-app dev:app
 ```
 
 ## Install latest stable release (macOS/Linux x64)

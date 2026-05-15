@@ -55,10 +55,29 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
       inferIntegrationName(parsedArgs?.toolkit) ??
       inferIntegrationNameFromPrompt(parsedArgs?.prompt) ??
       inferIntegrationName(entry.name);
-    return {
-      title: provider ? integrationActivityTitle(provider) : humanizeIdentifier(entry.name),
-      detail: entry.detail ?? parsedArgs?.prompt,
-    };
+
+    // The collapsed `delegate_to_integrations_agent` tool has no toolkit
+    // baked into its name; if we couldn't infer a provider from args or
+    // prompt, surface a generic connected-app label (matches the
+    // `spawn_subagent → integrations_agent` fallback above) instead of
+    // humanising the tool name into "To Integrations Agent". Unknown
+    // toolkit slugs from args fall back to a humanised toolkit label so
+    // composio integrations outside KNOWN_TOOLKIT_RE still render
+    // meaningfully (e.g. `slack_bot` → "Slack Bot") rather than the
+    // generic copy.
+    let title: string;
+    if (provider) {
+      title = integrationActivityTitle(provider);
+    } else if (entry.name === 'delegate_to_integrations_agent') {
+      const rawToolkit = parsedArgs?.toolkit?.trim();
+      title = rawToolkit
+        ? integrationActivityTitle(humanizeIdentifier(rawToolkit))
+        : 'Checking your connected app';
+    } else {
+      title = humanizeIdentifier(entry.name);
+    }
+
+    return { title, detail: entry.detail ?? parsedArgs?.prompt };
   }
 
   return {

@@ -78,8 +78,10 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "auth.configure_tool_access",
         "settings.manage_service",
         "settings.clear_app_data",
+        "local_ai.configure_provider",
         "meet.join_call",
         "meet_agent.live_loop",
+        "intelligence.mcp_server",
     ] {
         assert!(
             ids.contains(expected),

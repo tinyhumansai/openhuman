@@ -25,6 +25,7 @@ import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
   clearStoredCoreMode,
   clearStoredCoreToken,
+  isLocalOrPrivateNetworkHost,
   storeCoreMode,
   storeCoreToken,
   storeRpcUrl,
@@ -116,6 +117,12 @@ function ModePicker({ onConfirm }: PickerProps) {
       const parsed = new URL(trimmedUrl);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         setUrlError(t('bootCheck.urlMustStartWith'));
+        return null;
+      }
+      if (parsed.protocol === 'http:' && !isLocalOrPrivateNetworkHost(parsed.hostname)) {
+        setUrlError(
+          'HTTP core URLs are only allowed for localhost or private network hosts. Use HTTPS for public hosts.'
+        );
         return null;
       }
     } catch {

@@ -80,14 +80,18 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     id: 'openai',
     label: 'OpenAI',
     apiUrl: 'https://api.openai.com/v1/chat/completions',
-    suggestedModel: 'gpt-5.5-2026-04-23',
+    suggestedModel: 'gpt-5.5',
+    // Unversioned aliases so the preset survives OpenAI's dated revisions
+    // (the dated `gpt-5.5-YYYY-MM-DD` form is rejected once a new snapshot
+    // ships). The smaller variant in the 5.5 family is `gpt-5.4-mini` per
+    // OpenAI's model catalog — not a fictional `gpt-5.5-mini`.
     roleModels: {
-      reasoning: 'gpt-5.5-2026-04-23',
-      agentic: 'gpt-5.5-2026-04-23',
-      coding: 'gpt-4o',
-      summarization: 'gpt-4o-mini',
+      reasoning: 'gpt-5.5',
+      agentic: 'gpt-5.5',
+      coding: 'gpt-5.5',
+      summarization: 'gpt-5.4-mini',
     },
-    note: 'Use a key from platform.openai.com. Defaults pick gpt-5.5 for reasoning and agentic, gpt-4o for coding, gpt-4o-mini for summarization.',
+    note: 'Use a key from platform.openai.com. Defaults pick gpt-5.5 for reasoning/agentic/coding and gpt-5.4-mini for summarization.',
     tint: {
       idle: 'border-stone-200 hover:border-sage-400 hover:bg-sage-50/40',
       selected: 'border-sage-600 bg-sage-100 ring-2 ring-sage-300 text-sage-900',
@@ -165,12 +169,26 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   },
 ];
 
-function detectPreset(apiUrl: string): ProviderPreset {
+function detectPreset(apiUrl: string, routes: ModelRoute[]): ProviderPreset {
   const trimmed = apiUrl.trim();
-  if (!trimmed) return PROVIDER_PRESETS[0];
+  // Saved routes mean "non-OpenHuman provider"; an empty URL with routes is
+  // a hand-edited Custom setup, not the OpenHuman default.
+  const hasRoutes = routes.length > 0;
+  if (!trimmed)
+    return hasRoutes ? PROVIDER_PRESETS[PROVIDER_PRESETS.length - 1] : PROVIDER_PRESETS[0];
   const match = PROVIDER_PRESETS.find(p => p.apiUrl && p.apiUrl === trimmed);
   if (match) return match;
   return PROVIDER_PRESETS[PROVIDER_PRESETS.length - 1]; // custom
+}
+
+function roleModelsFromRoutes(routes: ModelRoute[]): RoleModels {
+  const out: RoleModels = { ...EMPTY_ROLE_MODELS };
+  for (const r of routes) {
+    if ((ROLE_HINTS as readonly string[]).includes(r.hint)) {
+      out[r.hint as RoleHint] = r.model;
+    }
+  }
+  return out;
 }
 
 /**
@@ -215,9 +233,14 @@ const BackendProviderPanel = () => {
       const response = await openhumanGetClientConfig();
       const config = response.result;
       setClient(config);
-      const persistedUrl = config.api_url ?? '';
+      // The LLM Provider panel works exclusively against `inference_url` —
+      // `config.api_url` is the OpenHuman product backend URL and must never
+      // be redirected by this UI (auth/billing/voice all depend on it).
+      const persistedUrl = config.inference_url ?? '';
+      const persistedRoutes = config.model_routes ?? [];
       setApiUrl(persistedUrl);
-      setActivePresetId(detectPreset(persistedUrl).id);
+      setRoleModels(roleModelsFromRoutes(persistedRoutes));
+      setActivePresetId(detectPreset(persistedUrl, persistedRoutes).id);
       setApiKey('');
       setApiKeyDirty(false);
       setApiUrlDirty(false);
@@ -246,16 +269,22 @@ const BackendProviderPanel = () => {
   );
   const isOpenHuman = activePreset.id === 'openhuman';
 
-  const applyPreset = useCallback((preset: ProviderPreset) => {
-    setActivePresetId(preset.id);
-    setApiUrl(preset.apiUrl);
-    setApiUrlDirty(true);
-    // Reset role models to the preset's defaults so each switch gives a
-    // clean, opinionated starting point.
-    setRoleModels(preset.roleModels ? { ...preset.roleModels } : { ...EMPTY_ROLE_MODELS });
-    setRoleModelsDirty(true);
-    setStatus({ kind: 'idle', message: '' });
-  }, []);
+  const applyPreset = useCallback(
+    (preset: ProviderPreset) => {
+      // Re-clicking the currently active preset is a no-op — otherwise the
+      // user's saved/customized role models would be wiped just by tapping
+      // the highlighted card.
+      if (preset.id === activePresetId) return;
+      setActivePresetId(preset.id);
+      setApiUrl(preset.apiUrl);
+      setApiUrlDirty(true);
+      // Switching presets gives a clean, opinionated starting point.
+      setRoleModels(preset.roleModels ? { ...preset.roleModels } : { ...EMPTY_ROLE_MODELS });
+      setRoleModelsDirty(true);
+      setStatus({ kind: 'idle', message: '' });
+    },
+    [activePresetId]
+  );
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -277,8 +306,13 @@ const BackendProviderPanel = () => {
               const model = roleModels[hint].trim();
               return model ? [{ hint, model }] : [];
             });
+      // Persist the LLM endpoint into `inference_url`, NEVER `api_url`.
+      // OpenHuman preset → empty string clears `inference_url` so the core
+      // routes inference through the OpenHuman backend. Custom providers
+      // write their full chat-completions URL.
+      const inferenceUrlPayload = apiUrlDirty ? (isOpenHuman ? '' : apiUrl) : undefined;
       await openhumanUpdateModelSettings({
-        api_url: apiUrlDirty ? apiUrl : undefined,
+        inference_url: inferenceUrlPayload,
         api_key: apiKeyDirty ? apiKey : undefined,
         model_routes: routes,
       });

@@ -36,6 +36,7 @@
 //! crate::core::event_bus::DomainEvent::ComposioTriggerReceived
 
 pub mod action_tool;
+pub mod auth_retry;
 pub mod bus;
 pub mod client;
 pub mod ops;
@@ -50,7 +51,8 @@ pub use action_tool::ComposioActionTool;
 pub use bus::{register_composio_trigger_subscriber, ComposioTriggerSubscriber};
 pub use client::{build_composio_client, ComposioClient};
 pub use ops::{
-    fetch_connected_integrations, fetch_connected_integrations_status, fetch_toolkit_actions,
+    cached_active_integrations, connected_set_hash, fetch_connected_integrations,
+    fetch_connected_integrations_status, fetch_toolkit_actions,
     invalidate_connected_integrations_cache, FetchConnectedIntegrationsStatus,
 };
 pub use periodic::{record_sync_success, start_periodic_sync};

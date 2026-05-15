@@ -283,3 +283,7 @@ fn mock_label() -> &'static str {
 fn mock_label() -> &'static str {
     SERVICE_LABEL
 }
+
+#[cfg(test)]
+#[path = "mock_tests.rs"]
+mod mock_tests;

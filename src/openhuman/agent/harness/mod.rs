@@ -52,4 +52,13 @@ pub(crate) use parse::parse_tool_calls;
 pub(crate) use tool_loop::run_tool_call_loop;
 
 #[cfg(test)]
+mod bughunt_tests;
+#[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
+mod test_support_tests;
+
+#[cfg(test)]
+mod harness_gap_tests;
+#[cfg(test)]
 mod tests;

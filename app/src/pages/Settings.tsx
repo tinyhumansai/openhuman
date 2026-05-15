@@ -14,6 +14,7 @@ import CronJobsPanel from '../components/settings/panels/CronJobsPanel';
 import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOptionsPanel';
 import LocalModelDebugPanel from '../components/settings/panels/LocalModelDebugPanel';
 import LocalModelPanel from '../components/settings/panels/LocalModelPanel';
+import MascotPanel from '../components/settings/panels/MascotPanel';
 import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MessagingPanel from '../components/settings/panels/MessagingPanel';
@@ -211,6 +212,23 @@ const aiModelsSettingsItems = [
       </svg>
     ),
   },
+  {
+    id: 'voice',
+    title: 'Voice (STT & TTS)',
+    description:
+      'Choose between cloud and local providers for speech-to-text (Whisper) and text-to-speech (Piper)',
+    route: 'voice',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+        />
+      </svg>
+    ),
+  },
 ];
 
 const WrappedSettingsPage = ({ children }: { children: ReactNode }) => {
@@ -293,6 +311,7 @@ const Settings = () => {
         <Route path="voice" element={wrapSettingsPage(<VoicePanel />)} />
         <Route path="messaging" element={wrapSettingsPage(<MessagingPanel />)} />
         <Route path="notifications" element={wrapSettingsPage(<NotificationsPanel />)} />
+        <Route path="mascot" element={wrapSettingsPage(<MascotPanel />)} />
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
         {/* AI & Models leaf panels */}
         <Route path="local-model" element={wrapSettingsPage(<LocalModelPanel />)} />

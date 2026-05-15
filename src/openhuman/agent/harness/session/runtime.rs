@@ -502,16 +502,47 @@ impl Agent {
             }
             Err(err) => {
                 let sanitized_message = Self::sanitize_event_error_message(&err);
-                crate::core::observability::report_error(
-                    &err,
-                    "agent",
-                    "run_single",
-                    &[
-                        ("session_id", self.event_session_id()),
-                        ("channel", self.event_channel()),
-                        ("error_kind", sanitized_message.as_str()),
-                    ],
+                // The max-tool-iterations cap is a deterministic agent-state
+                // outcome, not a bug — the UI already surfaces the failure
+                // to the user via the chat-rendered "Error: Agent exceeded
+                // maximum tool iterations" message. Skip the Sentry funnel
+                // for this variant entirely and emit a structured
+                // `log::info!` (OPENHUMAN-TAURI-99 / -98).
+                //
+                // Other agent errors go through `report_error_or_expected`
+                // so OPENHUMAN-TAURI-5Z and the budget-noise cluster —
+                // upstream transient HTTP and backend budget-exhausted 400s
+                // that bubble up under `domain=agent` and escape the
+                // `domain=llm_provider` filter — get demoted to a
+                // warn/info-level breadcrumb without losing genuine bugs.
+                // `Err` propagation, the `AgentError` domain event, and
+                // downstream `recoverable=false` semantics are preserved.
+                let is_max_iter = matches!(
+                    err.downcast_ref::<AgentError>(),
+                    Some(AgentError::MaxIterationsExceeded { .. })
                 );
+                if is_max_iter {
+                    log::info!(
+                        target: "agent",
+                        "[agent.run_single] suppressed Sentry emission for max-iteration cap \
+                         session_id={} channel={} error_kind={} message={}",
+                        self.event_session_id(),
+                        self.event_channel(),
+                        sanitized_message.as_str(),
+                        err
+                    );
+                } else {
+                    crate::core::observability::report_error_or_expected(
+                        &err,
+                        "agent",
+                        "run_single",
+                        &[
+                            ("session_id", self.event_session_id()),
+                            ("channel", self.event_channel()),
+                            ("error_kind", sanitized_message.as_str()),
+                        ],
+                    );
+                }
                 publish_global(DomainEvent::AgentError {
                     session_id: self.event_session_id().to_string(),
                     message: sanitized_message,

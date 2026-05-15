@@ -4,7 +4,10 @@
 //! This is the preferred local provider: Ollama handles model management,
 //! quantization, and GPU acceleration (Metal on macOS, CUDA on Linux/Windows).
 //!
-//! Default model: `nomic-embed-text:latest` (768 dimensions).
+//! Default model: `bge-m3` (1024 dimensions). Aligned with the memory
+//! tree's fixed on-disk format (`EMBEDDING_DIM=1024`) and the cloud
+//! Voyage default (`embedding-v1`, 1024 dims) so embeddings produced by
+//! either path are interchangeable.
 
 use async_trait::async_trait;
 
@@ -13,11 +16,12 @@ use super::EmbeddingProvider;
 /// Default Ollama base URL.
 pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
 
-/// Default embedding model for Ollama.
-pub const DEFAULT_OLLAMA_MODEL: &str = "nomic-embed-text:latest";
+/// Default embedding model for Ollama. 1024-dim to match the memory
+/// tree's fixed on-disk format and the cloud Voyage default.
+pub const DEFAULT_OLLAMA_MODEL: &str = "bge-m3";
 
-/// Default dimensions for nomic-embed-text.
-pub const DEFAULT_OLLAMA_DIMENSIONS: usize = 768;
+/// Default dimensions for `bge-m3`.
+pub const DEFAULT_OLLAMA_DIMENSIONS: usize = 1024;
 
 /// Embedding provider backed by a local Ollama instance.
 ///
@@ -35,8 +39,8 @@ impl OllamaEmbedding {
     /// Creates a new Ollama embedding provider.
     ///
     /// - `base_url`: Ollama server URL (default: `http://localhost:11434`)
-    /// - `model`: Model name (default: `nomic-embed-text:latest`)
-    /// - `dims`: Expected embedding dimensions (default: 768)
+    /// - `model`: Model name (default: `bge-m3`)
+    /// - `dims`: Expected embedding dimensions (default: 1024)
     pub fn try_new(base_url: &str, model: &str, dims: usize) -> anyhow::Result<Self> {
         let base_url = Self::normalize_base_url(base_url)?;
         let model = Self::normalize_model(model)?;

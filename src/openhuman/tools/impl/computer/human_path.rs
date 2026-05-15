@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::RngExt;
 use std::f64::consts::TAU;
 
 #[derive(Debug, Clone, Copy)]
@@ -25,7 +25,7 @@ impl Default for HumanPathOptions {
 }
 
 /// Returns `(x, y, dwell_ms)` steps for a humanized cursor path.
-pub fn human_path<R: Rng>(
+pub fn human_path<R: RngExt>(
     start: (i32, i32),
     end: (i32, i32),
     opts: &HumanPathOptions,
@@ -95,7 +95,7 @@ fn cubic_bezier(
     )
 }
 
-fn dwell_ms<R: Rng>(opts: &HumanPathOptions, rng: &mut R) -> u64 {
+fn dwell_ms<R: RngExt>(opts: &HumanPathOptions, rng: &mut R) -> u64 {
     let mean = finite_or_default(opts.mean_step_ms, HumanPathOptions::default().mean_step_ms);
     let stddev = finite_or_default(
         opts.stddev_step_ms,
@@ -119,7 +119,7 @@ fn finite_or_default(value: f64, default: f64) -> f64 {
     }
 }
 
-fn sample_normal<R: Rng>(mean: f64, stddev: f64, rng: &mut R) -> f64 {
+fn sample_normal<R: RngExt + RngExt>(mean: f64, stddev: f64, rng: &mut R) -> f64 {
     if stddev <= 0.0 {
         return mean;
     }
@@ -127,7 +127,7 @@ fn sample_normal<R: Rng>(mean: f64, stddev: f64, rng: &mut R) -> f64 {
         .random::<f64>()
         .clamp(f64::MIN_POSITIVE, 1.0 - f64::EPSILON);
     let u2 = rng.random::<f64>();
-    let z0 = (-2.0 * u1.ln()).sqrt() * (TAU * u2).cos();
+    let z0 = (-2.0_f64 * u1.ln()).sqrt() * (TAU * u2).cos();
     mean + z0 * stddev
 }
 

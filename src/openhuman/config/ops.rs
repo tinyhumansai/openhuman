@@ -169,6 +169,9 @@ pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String
 #[derive(Debug, Clone, Default)]
 pub struct ModelSettingsPatch {
     pub api_url: Option<String>,
+    /// Custom OpenAI-compatible LLM endpoint. Empty string clears the
+    /// override (inference falls back through the OpenHuman backend).
+    pub inference_url: Option<String>,
     pub api_key: Option<String>,
     pub default_model: Option<String>,
     pub default_temperature: Option<f64>,
@@ -233,6 +236,11 @@ pub struct MeetSettingsPatch {
 #[derive(Debug, Clone, Default)]
 pub struct LocalAiSettingsPatch {
     pub runtime_enabled: Option<bool>,
+    pub opt_in_confirmed: Option<bool>,
+    pub provider: Option<String>,
+    pub base_url: Option<String>,
+    pub model_id: Option<String>,
+    pub chat_model_id: Option<String>,
     pub usage_embeddings: Option<bool>,
     pub usage_heartbeat: Option<bool>,
     pub usage_learning_reflection: Option<bool>,
@@ -275,6 +283,13 @@ pub async fn apply_model_settings(
             None
         } else {
             Some(api_url)
+        };
+    }
+    if let Some(inference_url) = update.inference_url {
+        config.inference_url = if inference_url.trim().is_empty() {
+            None
+        } else {
+            Some(inference_url.trim().to_string())
         };
     }
     if let Some(api_key) = update.api_key {
@@ -553,6 +568,26 @@ pub async fn apply_local_ai_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     if let Some(v) = update.runtime_enabled {
         config.local_ai.runtime_enabled = v;
+    }
+    if let Some(v) = update.opt_in_confirmed {
+        config.local_ai.opt_in_confirmed = v;
+    }
+    if let Some(provider) = update.provider {
+        config.local_ai.provider =
+            crate::openhuman::local_ai::provider::normalize_provider(&provider);
+    }
+    if let Some(base_url) = update.base_url {
+        config.local_ai.base_url = if base_url.trim().is_empty() {
+            None
+        } else {
+            Some(base_url.trim().to_string())
+        };
+    }
+    if let Some(model_id) = update.model_id {
+        config.local_ai.model_id = model_id.trim().to_string();
+    }
+    if let Some(chat_model_id) = update.chat_model_id {
+        config.local_ai.chat_model_id = chat_model_id.trim().to_string();
     }
     if let Some(v) = update.usage_embeddings {
         config.local_ai.usage.embeddings = v;

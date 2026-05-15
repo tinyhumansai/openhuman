@@ -575,3 +575,166 @@ fn thread_id_absent_omits_md_line_and_jsonl_field() {
         "no `- Thread:` line should appear when thread_id is None, got:\n{md}"
     );
 }
+
+// ── find_root_transcript_for_thread: scope isolation ────────────────────────
+
+/// An empty or blank `thread_id` must not match any transcript — the
+/// function should return `None` immediately rather than scan every JSONL
+/// file looking for an empty `thread_id`.
+#[test]
+fn find_root_transcript_for_thread_returns_none_for_empty_thread_id() {
+    let dir = TempDir::new().unwrap();
+    let raw_dir = dir.path().join("session_raw");
+    fs::create_dir_all(&raw_dir).unwrap();
+
+    // Write a transcript that has a non-empty thread_id.
+    let mut meta = sample_meta();
+    meta.thread_id = Some("thread-abc".into());
+    write_transcript(
+        &raw_dir.join("1714000000_main.jsonl"),
+        &sample_messages(),
+        &meta,
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        find_root_transcript_for_thread(dir.path(), "").is_none(),
+        "empty thread_id should return None"
+    );
+    assert!(
+        find_root_transcript_for_thread(dir.path(), "   ").is_none(),
+        "blank thread_id should return None"
+    );
+}
+
+/// When two threads have transcripts in the same workspace, each call
+/// must return **only** the file belonging to that thread — cross-thread
+/// bleed must not occur.
+#[test]
+fn find_root_transcript_for_thread_isolates_by_thread_id() {
+    let dir = TempDir::new().unwrap();
+    let raw_dir = dir.path().join("session_raw");
+    fs::create_dir_all(&raw_dir).unwrap();
+
+    let mut meta_a = sample_meta();
+    meta_a.thread_id = Some("thread-aaa".into());
+    write_transcript(
+        &raw_dir.join("1714000000_agent_thread-aaa.jsonl"),
+        &sample_messages(),
+        &meta_a,
+        None,
+    )
+    .unwrap();
+
+    let mut meta_b = sample_meta();
+    meta_b.thread_id = Some("thread-bbb".into());
+    write_transcript(
+        &raw_dir.join("1714001000_agent_thread-bbb.jsonl"),
+        &sample_messages(),
+        &meta_b,
+        None,
+    )
+    .unwrap();
+
+    let found_a = find_root_transcript_for_thread(dir.path(), "thread-aaa")
+        .expect("should find transcript for thread-aaa");
+    let found_b = find_root_transcript_for_thread(dir.path(), "thread-bbb")
+        .expect("should find transcript for thread-bbb");
+
+    assert!(
+        found_a
+            .to_string_lossy()
+            .contains("1714000000_agent_thread-aaa"),
+        "wrong transcript returned for thread-aaa: {}",
+        found_a.display()
+    );
+    assert!(
+        found_b
+            .to_string_lossy()
+            .contains("1714001000_agent_thread-bbb"),
+        "wrong transcript returned for thread-bbb: {}",
+        found_b.display()
+    );
+}
+
+/// `find_root_transcript_for_thread` returns the **newest** transcript
+/// (highest stem, alphabetically) when multiple root files share the
+/// same `thread_id`. This covers the agent restart scenario where a
+/// session accumulates more than one transcript for the same thread.
+#[test]
+fn find_root_transcript_for_thread_returns_newest_when_multiple_match() {
+    let dir = TempDir::new().unwrap();
+    let raw_dir = dir.path().join("session_raw");
+    fs::create_dir_all(&raw_dir).unwrap();
+
+    let mut meta = sample_meta();
+    meta.thread_id = Some("thread-multi".into());
+
+    // Older file — lower timestamp.
+    write_transcript(
+        &raw_dir.join("1714000000_orchestrator_thread-multi.jsonl"),
+        &sample_messages(),
+        &meta,
+        None,
+    )
+    .unwrap();
+
+    // Newer file — higher timestamp; should be the one returned.
+    write_transcript(
+        &raw_dir.join("1715000000_orchestrator_thread-multi.jsonl"),
+        &sample_messages(),
+        &meta,
+        None,
+    )
+    .unwrap();
+
+    let found = find_root_transcript_for_thread(dir.path(), "thread-multi")
+        .expect("should find newest transcript");
+    assert!(
+        found
+            .to_string_lossy()
+            .contains("1715000000_orchestrator_thread-multi"),
+        "should return the newest transcript, got: {}",
+        found.display()
+    );
+}
+
+/// A subagent transcript (stem contains `__`) must be skipped even if
+/// its `thread_id` matches — only root transcripts are eligible.
+#[test]
+fn find_root_transcript_for_thread_excludes_subagent_files() {
+    let dir = TempDir::new().unwrap();
+    let raw_dir = dir.path().join("session_raw");
+    fs::create_dir_all(&raw_dir).unwrap();
+
+    let mut meta = sample_meta();
+    meta.thread_id = Some("thread-xyz".into());
+
+    // Root transcript — should be found.
+    write_transcript(
+        &raw_dir.join("1714000000_orch_thread-xyz.jsonl"),
+        &sample_messages(),
+        &meta,
+        None,
+    )
+    .unwrap();
+
+    // Sub-agent transcript for the same thread — must be skipped.
+    write_transcript(
+        &raw_dir.join("1714000000_orch_thread-xyz__1714500000_worker.jsonl"),
+        &sample_messages(),
+        &meta,
+        None,
+    )
+    .unwrap();
+
+    let found = find_root_transcript_for_thread(dir.path(), "thread-xyz")
+        .expect("should find the root transcript");
+    let stem = found.file_stem().unwrap().to_string_lossy();
+    assert!(
+        !stem.contains("__"),
+        "returned path must not be a subagent file (contains __): {}",
+        found.display()
+    );
+}

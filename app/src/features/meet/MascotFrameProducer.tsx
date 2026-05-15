@@ -1,6 +1,8 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { type FC, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useAppSelector } from '../../store/hooks';
+import { selectMascotColor } from '../../store/mascotSlice';
 import {
   type FrameConfig,
   FrameConfigContext,
@@ -114,6 +116,7 @@ export const MascotFrameProducer: FC = () => {
 
 const ProducerSession: FC<{ session: BusSession }> = ({ session }) => {
   const hostRef = useRef<HTMLDivElement>(null);
+  const mascotColor = useAppSelector(selectMascotColor);
   const wsRef = useRef<WebSocket | null>(null);
   const wsReadyRef = useRef(false);
   const stoppedRef = useRef(false);
@@ -378,7 +381,7 @@ const ProducerSession: FC<{ session: BusSession }> = ({ session }) => {
               loadingColor="#ffffff"
               greeting={false}
               sleeping={false}
-              mascotColor="yellow"
+              mascotColor={mascotColor}
               arm="wave"
               talking={false}
               thinking={false}

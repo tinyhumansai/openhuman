@@ -1,0 +1,319 @@
+---
+# End-to-end desktop test workflow.
+#
+# Single unified driver across all three platforms: Appium Chromium driver
+# attached to CEF's already-enabled remote-debugging port (:19222). The
+# per-OS driver fork (tauri-driver on Linux/Windows, Appium Mac2 on macOS)
+# is gone — every platform now runs the same recipe and sees the same DOM.
+#
+# Recipe per OS:
+#   1. Build the CEF app via `pnpm --filter openhuman-app test:e2e:build`.
+#   2. Install Appium 3.x + the `chromium` driver.
+#   3. Run `app/scripts/e2e-run-session.sh` which:
+#        - launches the built binary,
+#        - waits for CDP on :19222,
+#        - prunes the prewarm `about:blank` target,
+#        - downloads a chromedriver matching CEF's Chromium version,
+#        - starts Appium and runs WDIO against `wdio.conf.ts`.
+#
+# Linux runs CEF inside Xvfb because there is no native display on the
+# Actions ubuntu runner.
+#
+# The three jobs are intentionally near-identical — they only differ in
+# (a) runner type, (b) container image (linux only), (c) Xvfb wrapping
+# (linux only). They are kept as separate jobs (not a matrix with a
+# conditional `container:` block) because GitHub Actions does not have
+# a clean way to conditionally enable/disable `container:` from matrix
+# expansion.
+#
+# Triggers:
+#   - pull_request (smoke on every PR — cheap signal that the bundle
+#     still builds and launches on every OS via the unified driver).
+#   - workflow_dispatch with `full=true` to run the entire spec suite.
+name: E2E
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run the full e2e spec suite (slow; ~30+ min)
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-linux:
+    name: E2E (Linux / Appium Chromium)
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest
+    timeout-minutes: 60
+    # Linux runs CEF inside Xvfb on a container image — keep it
+    # non-blocking until we have signal that it's reliable.
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
+          key: e2e-linux-unified
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure .env exists for E2E build
+        run: |
+          touch .env
+          touch app/.env
+
+      - name: Install Appium and chromium driver
+        run: |
+          npm install -g appium@3
+          appium driver install --source=npm appium-chromium-driver
+
+      - name: Build E2E app
+        run: pnpm --filter openhuman-app test:e2e:build
+
+      - name: Run smoke spec (Xvfb)
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x960x24" \
+            bash app/scripts/e2e-run-session.sh test/e2e/specs/smoke.spec.ts smoke
+
+      - name: Run mega-flow spec (Xvfb, non-blocking)
+        continue-on-error: true
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x960x24" \
+            bash app/scripts/e2e-run-session.sh test/e2e/specs/mega-flow.spec.ts mega-flow
+
+      - name: Run full e2e suite (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.full == 'true'
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x960x24" \
+            bash app/scripts/e2e-run-session.sh
+
+      - name: Upload e2e artifacts
+        # `always()` so artifacts upload even when an earlier step is
+        # `continue-on-error: true` (mega-flow) and the job is marked
+        # success. Without this we have no logs to diagnose the Linux
+        # CEF session-death issue.
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-artifacts-linux
+          path: |
+            app/test/e2e/artifacts/
+            ${{ runner.temp }}/openhuman-e2e-app-*.log
+            ${{ runner.temp }}/appium-e2e-*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e-macos:
+    name: E2E (macOS / Appium Chromium)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - name: Install Rust (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          # macos-latest is arm64, but the vendored tauri-cli's build.rs
+          # (tauri-bundler/build.rs:134) compiles a CEF helper for
+          # x86_64-apple-darwin to produce a universal binary, so the
+          # x86_64 target's libstd must be installed even though the
+          # final E2E binary is arm64 only.
+          targets: x86_64-apple-darwin
+
+      - name: Verify cargo resolves to real toolchain
+        # Defensive against rustup-init being shadowed onto cargo's name in
+        # PATH (observed once where `cargo install --path X` printed
+        # "rustup-init[EXE]: unexpected argument 'install' found"). Force
+        # the rustup default to the requested version and print what
+        # `cargo` actually is.
+        run: |
+          rustup default 1.93.0 || true
+          which cargo
+          cargo --version
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
+          # v2 suffix invalidates a cache that had a broken cargo binary
+          # ("error: unexpected argument 'install' found" from rustup-init
+          # when ensure-tauri-cli ran `cargo install --locked --path`).
+          key: e2e-macos-unified-v2
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure .env exists for E2E build
+        run: |
+          touch .env
+          touch app/.env
+
+      - name: Install Appium and chromium driver
+        run: |
+          npm install -g appium@3
+          appium driver install --source=npm appium-chromium-driver
+
+      - name: Build E2E app
+        run: pnpm --filter openhuman-app test:e2e:build
+
+      # Adhoc-sign the unsigned debug bundle. macOS now kills processes that
+      # load dynamic frameworks (the CEF helper apps) from an unsigned bundle
+      # — the parent OpenHuman process exits within ~2s with an empty log.
+      # Adhoc signing (-) satisfies the loader without needing a real
+      # developer-ID cert. `--force --deep` re-signs the embedded helper
+      # apps and the framework too.
+      - name: Adhoc-sign the .app bundle
+        run: |
+          codesign --force --deep --sign - \
+            app/src-tauri/target/debug/bundle/macos/OpenHuman.app
+          codesign --verify --deep --verbose=2 \
+            app/src-tauri/target/debug/bundle/macos/OpenHuman.app
+
+      - name: Run smoke spec
+        run: bash app/scripts/e2e-run-session.sh test/e2e/specs/smoke.spec.ts smoke
+
+      - name: Run mega-flow spec (non-blocking)
+        continue-on-error: true
+        run: bash app/scripts/e2e-run-session.sh test/e2e/specs/mega-flow.spec.ts mega-flow
+
+      - name: Run full e2e suite (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.full == 'true'
+        run: bash app/scripts/e2e-run-session.sh
+
+      - name: Upload e2e artifacts on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-artifacts-macos
+          path: |
+            app/test/e2e/artifacts/
+            ${{ runner.temp }}/openhuman-e2e-app-*.log
+            ${{ runner.temp }}/appium-e2e-*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e-windows:
+    name: E2E (Windows / Appium Chromium)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    # Windows CEF + chromedriver attach is unverified end-to-end; keep
+    # non-blocking until we have a green run on a real Windows runner.
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - name: Install Rust (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@1.93.0
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
+          key: e2e-windows-unified
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure .env exists for E2E build
+        shell: bash
+        run: |
+          touch .env
+          touch app/.env
+
+      - name: Install Appium and chromium driver
+        shell: bash
+        run: |
+          npm install -g appium@3
+          appium driver install --source=npm appium-chromium-driver
+
+      - name: Build E2E app
+        run: pnpm --filter openhuman-app test:e2e:build
+
+      - name: Run smoke spec
+        shell: bash
+        run: bash app/scripts/e2e-run-session.sh test/e2e/specs/smoke.spec.ts smoke
+
+      - name: Run mega-flow spec (non-blocking)
+        continue-on-error: true
+        shell: bash
+        run: bash app/scripts/e2e-run-session.sh test/e2e/specs/mega-flow.spec.ts mega-flow
+
+      - name: Run full e2e suite (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.full == 'true'
+        shell: bash
+        run: bash app/scripts/e2e-run-session.sh
+
+      - name: Upload e2e artifacts on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-artifacts-windows
+          path: |
+            app/test/e2e/artifacts/
+            ${{ runner.temp }}/openhuman-e2e-app-*.log
+            ${{ runner.temp }}/appium-e2e-*.log
+          if-no-files-found: ignore
+          retention-days: 7

@@ -150,6 +150,7 @@ fn build_remote_provider(config: &Config) -> anyhow::Result<ResolvedProvider> {
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
     let provider_box = providers::create_routed_provider_with_options(
+        config.inference_url.as_deref(),
         config.api_url.as_deref(),
         config.api_key.as_deref(),
         &config.reliability,

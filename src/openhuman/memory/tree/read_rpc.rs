@@ -1254,7 +1254,7 @@ pub struct WipeAllResponse {
 /// can re-sync from scratch without leaving the app.
 pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>, String> {
     let cfg = config.clone();
-    let resp = tokio::task::spawn_blocking(move || -> Result<WipeAllResponse> {
+    let (rows_deleted, sync_state_cleared) = tokio::task::spawn_blocking(move || -> Result<(u64, u64)> {
         // Tables to truncate. Order matters: `mem_tree_summaries` and
         // `mem_tree_buffers` both have `FOREIGN KEY (tree_id) REFERENCES
         // mem_tree_trees(id)` with `PRAGMA foreign_keys = ON`, so trees
@@ -1283,45 +1283,11 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
             Ok(total)
         })?;
 
-        // Filesystem cleanup. Each directory is best-effort: if one
-        // fails (permission denied, path doesn't exist) we keep going
-        // and report what we managed to remove. `email/` and the
-        // legacy bare `summaries/` are listed for back-compat —
-        // workspaces ingested before the raw-archive + wiki/ moves
-        // still have files there. Fresh installs only ever populate
-        // `raw/`, `wiki/`, `chat/`, and `document/`.
-        const DIRS: &[&str] = &["raw", "wiki", "chat", "document", "email", "summaries"];
-        let content_root = cfg.memory_tree_content_root();
-        let mut dirs_removed: Vec<String> = Vec::new();
-        for dir in DIRS {
-            let path = content_root.join(dir);
-            match std::fs::remove_dir_all(&path) {
-                Ok(()) => dirs_removed.push((*dir).to_string()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => {
-                    // Logical name (raw / wiki / chat / ...) is enough
-                    // signal — the absolute path embeds the user's
-                    // home directory.
-                    log::warn!(
-                        "[memory_tree::read::wipe] failed to remove dir={} err={e}",
-                        dir
-                    );
-                }
-            }
-        }
-
         // Composio sync-state lives in the unified memory store
         // (`<workspace>/memory/memory.db`). Open it directly and
         // delete every key in the `composio-sync-state` namespace —
         // this clears each provider's `cursor` + `synced_ids` set so
         // the next sync re-fetches from the beginning.
-        //
-        // We do **not** swallow clear failures into `0`: callers (and
-        // the frontend `sync_state_cleared` contract) need to
-        // distinguish "nothing to clear" from "failed to clear, so
-        // the next sync may still be incremental." A missing DB is
-        // legitimately "nothing to clear"; a SQLite error is a
-        // failed wipe and propagates.
         let sync_state_cleared: u64 = {
             let unified_db = cfg.workspace_dir.join("memory").join("memory.db");
             if !unified_db.exists() {
@@ -1335,15 +1301,64 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
             }
         };
 
-        Ok(WipeAllResponse {
-            rows_deleted,
-            dirs_removed,
-            sync_state_cleared,
-        })
+        Ok((rows_deleted, sync_state_cleared))
     })
     .await
     .map_err(|e| format!("wipe_all join error: {e}"))?
     .map_err(|e| format!("wipe_all: {e:#}"))?;
+
+    // Filesystem cleanup. Each directory is best-effort: if one
+    // fails (permission denied, path doesn't exist) we keep going
+    // and report what we managed to remove. `email/` and the
+    // legacy bare `summaries/` are listed for back-compat —
+    // workspaces ingested before the raw-archive + wiki/ moves
+    // still have files there. Fresh installs only ever populate
+    // `raw/`, `wiki/`, `chat/`, and `document/`.
+    //
+    // Use async retry to avoid blocking the executor during Windows sharing violations.
+    const DIRS: &[&str] = &["raw", "wiki", "chat", "document", "email", "summaries"];
+    let content_root = config.memory_tree_content_root();
+    let mut dirs_removed: Vec<String> = Vec::new();
+    for dir in DIRS {
+        let path = content_root.join(dir);
+        let remove_result = crate::openhuman::util::retry_with_backoff_async(
+            &format!("remove dir {}", dir),
+            6,
+            200,
+            || async {
+                tokio::fs::remove_dir_all(&path)
+                    .await
+                    .context("remove_dir_all")
+            },
+        )
+        .await;
+
+        match remove_result {
+            Ok(()) => dirs_removed.push((*dir).to_string()),
+            Err(e) => {
+                let is_not_found = e
+                    .chain()
+                    .find_map(|e| e.downcast_ref::<std::io::Error>())
+                    .map_or(false, |ioe| ioe.kind() == std::io::ErrorKind::NotFound);
+                if !is_not_found {
+                    // Logical name (raw / wiki / chat / ...) is enough
+                    // signal — the absolute path embeds the user's
+                    // home directory.
+                    log::warn!(
+                        "[memory_tree::read::wipe] failed to remove dir={} err={:#}",
+                        dir,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    let resp = WipeAllResponse {
+        rows_deleted,
+        dirs_removed,
+        sync_state_cleared,
+    };
 
     let log = format!(
         "memory_tree::read: wipe_all rows={} dirs={:?} sync_state={}",
@@ -1401,125 +1416,132 @@ pub struct ResetTreeResponse {
 /// inert fallback to a real Ollama model) and want to re-summarise
 /// existing data without paying the upstream sync cost again.
 ///
-/// Three steps, each in its own SQL pass:
+/// Three steps, executed in this order:
 ///   1. Truncate `mem_tree_summaries`, `mem_tree_trees`,
 ///      `mem_tree_buffers`, `mem_tree_jobs`. The tree schema is
 ///      derived state — chunks are the source of truth.
-///   2. Remove `<content_root>/wiki/summaries/` on disk so stale
-///      `.md` files don't drift from the SQL truth.
-///   3. Reset every chunk's `lifecycle_status` to
+///   2. Reset every chunk's `lifecycle_status` to
 ///      `'pending_extraction'` and enqueue an `extract_chunk` job
 ///      keyed on the chunk id. The async worker picks each up and
 ///      re-runs entity extract → score → embed → append-to-buffer.
 ///      Seals happen automatically as L0 buffers cross the gate.
+///   3. Remove `<content_root>/wiki/summaries/` on disk so stale
+///      `.md` files don't drift from the SQL truth. Done last (and
+///      outside `spawn_blocking`) so the on-disk removal can use
+///      async retry without blocking the worker thread.
 pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeResponse>, String> {
     use crate::openhuman::memory::tree::jobs::store as jobs_store;
     use crate::openhuman::memory::tree::jobs::types::{ExtractChunkPayload, NewJob};
 
     let cfg = config.clone();
-    let resp = tokio::task::spawn_blocking(move || -> Result<ResetTreeResponse> {
-        // Step 1 — truncate tree state in one transaction. Chunks
-        // (`mem_tree_chunks`), the entity index, score rows, and the
-        // sync-state KV all stay intact.
-        //
-        // Order matters: `mem_tree_summaries` and `mem_tree_buffers`
-        // both have `FOREIGN KEY (tree_id) REFERENCES mem_tree_trees(id)`,
-        // and `PRAGMA foreign_keys = ON` is set. Trees must come last
-        // or SQLite throws "FOREIGN KEY constraint failed". `mem_tree_jobs`
-        // has no FK so its position is free.
-        // `mem_tree_entity_index` holds both leaf (chunk) and summary
-        // entity rows. Clearing it on reset prevents `top_entities`
-        // from counting orphan rows pointing at deleted summaries;
-        // the leaf rows get rebuilt naturally when the requeued
-        // `extract_chunk` jobs run for every chunk.
-        const TREE_TABLES: &[&str] = &[
-            "mem_tree_summaries",
-            "mem_tree_buffers",
-            "mem_tree_jobs",
-            "mem_tree_entity_index",
-            "mem_tree_trees",
-        ];
-        let tree_rows_deleted: u64 = with_connection(&cfg, |conn| {
-            let tx = conn.unchecked_transaction()?;
-            let mut total: u64 = 0;
-            for table in TREE_TABLES {
-                let n = tx
-                    .execute(&format!("DELETE FROM {table}"), [])
-                    .with_context(|| format!("delete from {table}"))?;
-                total += n as u64;
-            }
-            tx.commit()?;
-            Ok(total)
-        })?;
-
-        // Step 2 — wipe the on-disk wiki/summaries tree. Best-effort:
-        // a missing folder is fine (fresh workspace). Other errors
-        // log + carry on — the SQL truth is what the rebuild relies on.
-        let summaries_dir = cfg
-            .memory_tree_content_root()
-            .join("wiki")
-            .join("summaries");
-        match std::fs::remove_dir_all(&summaries_dir) {
-            Ok(()) => log::debug!("[memory_tree::read::reset_tree] removed wiki/summaries"),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                log::warn!("[memory_tree::read::reset_tree] failed to remove wiki/summaries: {e}")
-            }
-        }
-
-        // Step 3 — flip every chunk back to `pending_extraction` and
-        // enqueue an `extract_chunk` job per id. Done in a single
-        // transaction so partial state is impossible: either the
-        // whole queue is in flight or nothing is. We use a chunked
-        // SELECT so very large workspaces don't materialise the
-        // entire id list in memory.
-        let (chunks_requeued, jobs_enqueued) =
-            with_connection(&cfg, |conn| -> anyhow::Result<(u64, u64)> {
+    let (tree_rows_deleted, chunks_requeued, jobs_enqueued) =
+        tokio::task::spawn_blocking(move || -> Result<(u64, u64, u64)> {
+            // Step 1 — truncate tree state in one transaction.
+            const TREE_TABLES: &[&str] = &[
+                "mem_tree_summaries",
+                "mem_tree_buffers",
+                "mem_tree_jobs",
+                "mem_tree_entity_index",
+                "mem_tree_trees",
+            ];
+            let tree_rows_deleted: u64 = with_connection(&cfg, |conn| {
                 let tx = conn.unchecked_transaction()?;
-                let chunks_requeued = tx.execute(
-                    "UPDATE mem_tree_chunks SET lifecycle_status = 'pending_extraction'",
-                    [],
-                )? as u64;
-                let chunk_ids: Vec<String> = {
-                    let mut stmt = tx.prepare("SELECT id FROM mem_tree_chunks")?;
-                    let rows = stmt
-                        .query_map([], |r| r.get::<_, String>(0))?
-                        .collect::<rusqlite::Result<Vec<_>>>()
-                        .context("collect chunk ids")?;
-                    rows
-                };
-                let mut jobs_enqueued: u64 = 0;
-                for id in &chunk_ids {
-                    let payload = ExtractChunkPayload {
-                        chunk_id: id.clone(),
-                    };
-                    let job =
-                        NewJob::extract_chunk(&payload).context("build extract_chunk NewJob")?;
-                    if jobs_store::enqueue_tx(&tx, &job)
-                        .context("enqueue extract_chunk")?
-                        .is_some()
-                    {
-                        jobs_enqueued += 1;
-                    }
+                let mut total: u64 = 0;
+                for table in TREE_TABLES {
+                    let n = tx
+                        .execute(&format!("DELETE FROM {table}"), [])
+                        .with_context(|| format!("delete from {table}"))?;
+                    total += n as u64;
                 }
                 tx.commit()?;
-                Ok((chunks_requeued, jobs_enqueued))
+                Ok(total)
             })?;
 
-        // Wake the worker pool so the freshly-enqueued jobs start
-        // running immediately rather than waiting for the next
-        // periodic poll.
-        crate::openhuman::memory::tree::jobs::wake_workers();
+            // Step 2 — flip every chunk back to `pending_extraction` and
+            // enqueue an `extract_chunk` job per id.
+            let (chunks_requeued, jobs_enqueued) =
+                with_connection(&cfg, |conn| -> anyhow::Result<(u64, u64)> {
+                    let tx = conn.unchecked_transaction()?;
+                    let chunks_requeued = tx.execute(
+                        "UPDATE mem_tree_chunks SET lifecycle_status = 'pending_extraction'",
+                        [],
+                    )? as u64;
+                    let chunk_ids: Vec<String> = {
+                        let mut stmt = tx.prepare("SELECT id FROM mem_tree_chunks")?;
+                        let rows = stmt
+                            .query_map([], |r| r.get::<_, String>(0))?
+                            .collect::<rusqlite::Result<Vec<_>>>()
+                            .context("collect chunk ids")?;
+                        rows
+                    };
+                    let mut jobs_enqueued: u64 = 0;
+                    for id in &chunk_ids {
+                        let payload = ExtractChunkPayload {
+                            chunk_id: id.clone(),
+                        };
+                        let job = NewJob::extract_chunk(&payload)
+                            .context("build extract_chunk NewJob")?;
+                        if jobs_store::enqueue_tx(&tx, &job)
+                            .context("enqueue extract_chunk")?
+                            .is_some()
+                        {
+                            jobs_enqueued += 1;
+                        }
+                    }
+                    tx.commit()?;
+                    Ok((chunks_requeued, jobs_enqueued))
+                })?;
 
-        Ok(ResetTreeResponse {
-            tree_rows_deleted,
-            chunks_requeued,
-            jobs_enqueued,
+            Ok((tree_rows_deleted, chunks_requeued, jobs_enqueued))
         })
-    })
-    .await
-    .map_err(|e| format!("reset_tree join error: {e}"))?
-    .map_err(|e| format!("reset_tree: {e:#}"))?;
+        .await
+        .map_err(|e| format!("reset_tree join error: {e}"))?
+        .map_err(|e| format!("reset_tree: {e:#}"))?;
+
+    // Step 3 — wipe the on-disk wiki/summaries tree.
+    // Use async retry to avoid blocking the executor during Windows sharing violations.
+    let summaries_dir = config
+        .memory_tree_content_root()
+        .join("wiki")
+        .join("summaries");
+    let remove_result = crate::openhuman::util::retry_with_backoff_async(
+        "remove wiki/summaries",
+        6,
+        200,
+        || async {
+            tokio::fs::remove_dir_all(&summaries_dir)
+                .await
+                .context("remove_dir_all")
+        },
+    )
+    .await;
+
+    match remove_result {
+        Ok(()) => log::debug!("[memory_tree::read::reset_tree] removed wiki/summaries"),
+        Err(e) => {
+            let is_not_found = e
+                .chain()
+                .find_map(|e| e.downcast_ref::<std::io::Error>())
+                .map_or(false, |ioe| ioe.kind() == std::io::ErrorKind::NotFound);
+            if !is_not_found {
+                log::warn!(
+                    "[memory_tree::read::reset_tree] failed to remove wiki/summaries: {:#}",
+                    e
+                )
+            }
+        }
+    }
+
+    // Wake the worker pool. Done after the on-disk cleanup so jobs don't
+    // start racing against an in-progress directory removal; the small
+    // delay (at most the retry window on Windows) is acceptable.
+    crate::openhuman::memory::tree::jobs::wake_workers();
+
+    let resp = ResetTreeResponse {
+        tree_rows_deleted,
+        chunks_requeued,
+        jobs_enqueued,
+    };
 
     let log = format!(
         "memory_tree::read: reset_tree tree_rows={} chunks={} jobs={}",

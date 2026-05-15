@@ -59,6 +59,7 @@ pub(crate) struct ChannelRuntimeContext {
     pub(crate) provider_cache: ProviderCacheMap,
     pub(crate) route_overrides: RouteSelectionMap,
     pub(crate) api_url: Option<String>,
+    pub(crate) inference_url: Option<String>,
     pub(crate) reliability: Arc<crate::openhuman::config::ReliabilityConfig>,
     pub(crate) provider_runtime_options: crate::openhuman::providers::ProviderRuntimeOptions,
     pub(crate) workspace_dir: Arc<PathBuf>,
@@ -341,6 +342,7 @@ mod tests {
             provider_cache: Arc::new(Mutex::new(HashMap::new())),
             route_overrides: Arc::new(Mutex::new(HashMap::new())),
             api_url: None,
+            inference_url: None,
             reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
             provider_runtime_options: crate::openhuman::providers::ProviderRuntimeOptions::default(
             ),

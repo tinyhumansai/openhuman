@@ -329,6 +329,7 @@ pub async fn summarise_profile_with_llm(config: &Config, raw_md: &str) -> anyhow
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
     let provider = create_backend_inference_provider(
+        config.inference_url.as_deref(),
         config.api_url.as_deref(),
         config.api_key.as_deref(),
         &options,

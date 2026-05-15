@@ -21,9 +21,11 @@ function mockClientConfig(overrides: Record<string, unknown> = {}) {
   vi.mocked(openhumanGetClientConfig).mockResolvedValue({
     result: {
       api_url: '',
+      inference_url: '',
       default_model: '',
       app_version: '0.0.0-test',
       api_key_set: false,
+      model_routes: [],
       ...overrides,
     },
     messages: [],
@@ -110,15 +112,20 @@ describe('BackendProviderPanel', () => {
       expect(openhumanUpdateModelSettings).toHaveBeenCalled();
     });
     const args = vi.mocked(openhumanUpdateModelSettings).mock.calls[0][0];
-    expect(args.api_url).toBe('https://api.anthropic.com/v1/chat/completions');
+    expect(args.inference_url).toBe('https://api.anthropic.com/v1/chat/completions');
+    // Panel must never overwrite the OpenHuman backend URL when switching presets.
+    expect(args.api_url).toBeUndefined();
     expect(args.api_key).toBe('sk-ant-test-123');
     expect(args.model_routes).toBeInstanceOf(Array);
     const hints = (args.model_routes ?? []).map(r => r.hint).sort();
     expect(hints).toEqual(['agentic', 'coding', 'reasoning', 'summarization']);
   });
 
-  it('Save sends model_routes:[] and no api_key when switching back to OpenHuman', async () => {
-    mockClientConfig({ api_url: 'https://api.openai.com/v1/chat/completions', api_key_set: true });
+  it('Save sends model_routes:[] and clears inference_url when switching back to OpenHuman', async () => {
+    mockClientConfig({
+      inference_url: 'https://api.openai.com/v1/chat/completions',
+      api_key_set: true,
+    });
     renderWithProviders(<BackendProviderPanel />);
 
     // Hydration finished — switch to OpenHuman explicitly
@@ -128,11 +135,18 @@ describe('BackendProviderPanel', () => {
     await waitFor(() => expect(openhumanUpdateModelSettings).toHaveBeenCalled());
     const args = vi.mocked(openhumanUpdateModelSettings).mock.calls[0][0];
     expect(args.model_routes).toEqual([]);
+    // OpenHuman preset clears the custom override so inference falls through
+    // the backend; api_url (product backend) must remain untouched.
+    expect(args.inference_url).toBe('');
+    expect(args.api_url).toBeUndefined();
     expect(args.api_key).toBeUndefined();
   });
 
   it('omits all touched fields on Save when nothing was edited (post failed-load safety)', async () => {
-    mockClientConfig({ api_url: 'https://api.openai.com/v1/chat/completions', api_key_set: true });
+    mockClientConfig({
+      inference_url: 'https://api.openai.com/v1/chat/completions',
+      api_key_set: true,
+    });
     renderWithProviders(<BackendProviderPanel />);
 
     // Just hit Save without touching anything
@@ -141,15 +155,19 @@ describe('BackendProviderPanel', () => {
     await waitFor(() => expect(openhumanUpdateModelSettings).toHaveBeenCalled());
     const args = vi.mocked(openhumanUpdateModelSettings).mock.calls[0][0];
     expect(args.api_url).toBeUndefined();
+    expect(args.inference_url).toBeUndefined();
     expect(args.api_key).toBeUndefined();
     expect(args.model_routes).toBeUndefined();
   });
 
   it('surfaces a "Clear stored key" button only when api_key_set is true (non-OpenHuman)', async () => {
-    mockClientConfig({ api_url: 'https://api.openai.com/v1/chat/completions', api_key_set: true });
+    mockClientConfig({
+      inference_url: 'https://api.openai.com/v1/chat/completions',
+      api_key_set: true,
+    });
     renderWithProviders(<BackendProviderPanel />);
 
-    // Wait for the OpenAI preset to be active (api_url matches)
+    // Wait for the OpenAI preset to be active (inference_url matches)
     await waitFor(() => {
       expect(screen.getByLabelText(/API Key/i)).toBeTruthy();
     });

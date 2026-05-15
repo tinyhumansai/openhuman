@@ -144,6 +144,56 @@ fn sanitizers_and_tool_call_helpers_cover_fallback_paths() {
 }
 
 #[tokio::test]
+async fn run_single_preserves_typed_max_iterations_error_for_sentry_skip() {
+    // OPENHUMAN-TAURI-99 regression guard: when the agent hits its tool
+    // iteration cap, `run_single` MUST surface the typed
+    // `AgentError::MaxIterationsExceeded` variant so the call site can
+    // downcast and skip `report_error`. If the error reaches the funnel as
+    // a plain `anyhow::Error::msg(..)` (e.g. someone reverts to
+    // `anyhow::bail!`), the downcast fails and Sentry re-floods with the
+    // exact noise this fix removes.
+    let _ = init_global(64);
+
+    let err_provider: Arc<dyn Provider> = Arc::new(StaticProvider {
+        response: Mutex::new(Some(Err(anyhow!(AgentError::MaxIterationsExceeded {
+            max: 8
+        })))),
+    });
+    let mut agent = make_agent(err_provider);
+    let err = agent
+        .run_single("hello")
+        .await
+        .expect_err("run_single should surface max-iter cap");
+
+    // The user-visible chat string MUST stay byte-identical — the UI
+    // (and `runtime_tool_calls.rs` channel test) reads this verbatim.
+    assert!(
+        err.to_string()
+            .contains("Agent exceeded maximum tool iterations"),
+        "canonical phrase missing: {err}"
+    );
+
+    // The downcast is the load-bearing condition for the Sentry skip in
+    // `Agent::run_single` (matches!(err.downcast_ref::<AgentError>(),
+    // Some(AgentError::MaxIterationsExceeded { .. }))). If this assertion
+    // ever fails the suppression silently regresses to error-level
+    // emission.
+    let downcast = err.downcast_ref::<AgentError>();
+    assert!(
+        matches!(downcast, Some(AgentError::MaxIterationsExceeded { max: 8 })),
+        "expected MaxIterationsExceeded {{ max: 8 }}, got {downcast:?}"
+    );
+
+    // Sanitized event message round-trips to the stable kind tag so the
+    // structured `log::info!` we emit instead of `report_error` carries
+    // the right `error_kind` for log-side filtering.
+    assert_eq!(
+        Agent::sanitize_event_error_message(&err),
+        "max_iterations_exceeded"
+    );
+}
+
+#[tokio::test]
 async fn run_single_publishes_completed_and_error_events() {
     let _ = init_global(64);
     let events = Arc::new(AsyncMutex::new(Vec::<DomainEvent>::new()));

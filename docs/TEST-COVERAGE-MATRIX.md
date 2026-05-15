@@ -114,7 +114,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 ---
 
-## 3. Local AI Runtime (Ollama)
+## 3. Local AI Runtime (Ollama + LM Studio)
 
 ### 3.1 Model Management
 
@@ -123,6 +123,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 3.1.1 | Model Detection               | RU+WD | `src/openhuman/local_ai/`, `local-model-runtime.spec.ts` | ✅     |       |
 | 3.1.2 | Model Download & Installation | WD    | `local-model-runtime.spec.ts`                            | ✅     |       |
 | 3.1.3 | Model Version Handling        | RU    | `src/openhuman/local_ai/model_ids.rs`                    | ✅     |       |
+| 3.1.4 | LM Studio Model Discovery     | RU+RI | `src/openhuman/local_ai/service/ollama_admin_tests.rs`, `tests/json_rpc_e2e.rs` | ✅ | Uses LM Studio's OpenAI-compatible `/v1/models` surface |
 
 ### 3.2 Runtime Execution
 
@@ -131,6 +132,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 3.2.1 | Local Inference Execution          | WD    | `local-model-runtime.spec.ts`      | ✅     |                                           |
 | 3.2.2 | Resource Handling (CPU/GPU/Memory) | RU    | `src/openhuman/local_ai/device.rs` | 🟡     | Detection unit; runtime constraint manual |
 | 3.2.3 | Runtime Failure Handling           | RU+WD | `local-model-runtime.spec.ts`      | ✅     |                                           |
+| 3.2.4 | LM Studio Chat Completions         | RU+RI | `src/openhuman/local_ai/service/public_infer_tests.rs`, `tests/json_rpc_e2e.rs` | ✅ | Covers prompt/chat success and non-success status errors |
 
 ### 3.3 Runtime Configuration
 
@@ -157,6 +159,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 3.3.3.1 | Save RAM Settings | VU    | _missing_                     | ❌     | Settings slice        |
 | 3.3.3.2 | Apply on Restart  | WD    | `local-model-runtime.spec.ts` | 🟡     | Restart not exercised |
 | 3.3.3.3 | Reset to Default  | VU    | _missing_                     | ❌     |                       |
+| 3.3.3.4 | Provider Selection Persistence | RU+RI+VU | `src/openhuman/config/ops_tests.rs`, `tests/json_rpc_e2e.rs`, `app/src/utils/tauriCommands/config.test.ts` | ✅ | Covers `lm_studio` normalization and config round-trip |
 
 ---
 
@@ -273,6 +276,20 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 8.2.2 | Memory Consistency | RI    | `tests/memory_graph_sync_e2e.rs`          | ✅     |                                   |
 | 8.2.3 | Memory Scaling     | RU    | `src/openhuman/memory/ingestion_tests.rs` | 🟡     | Soak/scale benchmark not asserted |
 
+### 8.3 Memory Retrieval Benchmarks
+
+| ID    | Feature                                  | Layer | Test path(s)                                                                       | Status | Notes |
+| ----- | ---------------------------------------- | ----- | ---------------------------------------------------------------------------------- | ------ | ----- |
+| 8.3.1 | Cross-Chat Recall                        | RU    | `src/openhuman/memory/tree/retrieval/benchmarks.rs::bench_cross_chat_recall`        | ✅     | Synthetic fixture; verifies relevant source retrieval across chat scopes |
+| 8.3.2 | Cross-Chat Entity Discoverability        | RU    | `src/openhuman/memory/tree/retrieval/benchmarks.rs::bench_cross_chat_entity_discoverable` | ✅     | Verifies entity canonicalisation across multiple chats |
+| 8.3.3 | Citation Bundle Provenance               | RU    | `src/openhuman/memory/tree/retrieval/benchmarks.rs::bench_citation_bundle_provenance` | ✅     | Verifies source_ref and tree_scope are populated in retrieval hits |
+| 8.3.4 | Citation Fetch Leaves Hydration         | RU    | `src/openhuman/memory/tree/retrieval/benchmarks.rs::bench_citation_fetch_leaves_hydrates` | ✅     | Verifies fetch_leaves returns content for exact chunk IDs |
+| 8.3.5 | Stale Preference Newer Supersedes       | RU    | `src/openhuman/memory/tree/retrieval/benchmarks.rs::bench_stale_preference_newer_supersedes` | ✅     | Verifies newer explicit correction appears alongside older preference |
+| 8.3.6 | Contradiction Surfaces Both with Provenance | RU | `src/openhuman/memory/tree/retrieval/benchmarks.rs::bench_contradiction_surfaces_both_with_provenance` | ✅     | Verifies disagreeing sources surface with provenance labels |
+| 8.3.7 | Long-Source Exact Leaf Retrieval         | RU    | `src/openhuman/memory/tree/retrieval/benchmarks.rs::bench_long_source_retrieves_exact_leaf` | 🟡     | Embedder required for seal + chunking; test runs in inert mode but assertions are conditional |
+| 8.3.8 | Drill-Down Isolates Children             | RU    | `src/openhuman/memory/tree/retrieval/benchmarks.rs::bench_drill_down_isolates_children` | ✅     | Verifies query_topic does not cross scope boundaries |
+| 8.3.9 | Scale Ingest 20 Sources No Real Data    | RU    | `src/openhuman/memory/tree/retrieval/benchmarks.rs::bench_scale_ingest_20_sources_no_real_data` | ✅     | Verifies retrieval correctness at scale with synthetic data |
+
 ---
 
 ## 9. Automation Engine
@@ -375,6 +392,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 11.1.1 | Multi-Source Analysis      | RI    | `tests/memory_graph_sync_e2e.rs`                                                                                    | 🟡     | Frontend trigger untested                                                                 |
 | 11.1.2 | Actionable Item Extraction | VU    | `app/src/components/intelligence/__tests__/utils.test.ts` (this PR)                                                 | ✅     | Was ❌                                                                                    |
 | 11.1.3 | Analyze Trigger            | WD    | `app/test/e2e/specs/insights-dashboard.spec.ts` mounts the route (this PR); explicit analyze-handler invocation TBD | 🟡     | Route mounts and search/filter UI assert — full analyze trigger flow tracked as follow-up |
+| 11.1.4 | MCP stdio server           | RU    | `src/openhuman/mcp_server/`                                                                                         | ✅     | Read-only initialize/tools/list/tools/call plus stdio framing; binary smoke in PR validation |
 
 ### 11.2 Insights Dashboard
 

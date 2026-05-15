@@ -400,6 +400,10 @@ pub async fn update_apply(
 }
 
 #[cfg(test)]
+#[path = "ops_tests.rs"]
+mod ops_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::openhuman::config::TEST_ENV_LOCK;
@@ -501,7 +505,7 @@ mod tests {
     // `update_apply` so the three cases serialise on the same mutex.
     #[tokio::test]
     async fn update_apply_rejects_non_github_url_before_network_call() {
-        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let outcome = update_apply(
             "https://evil.example.com/asset".to_string(),
             "openhuman-core-x86_64.tar.gz".to_string(),
@@ -517,7 +521,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_apply_rejects_unsafe_asset_name() {
-        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let outcome = update_apply(
             "https://github.com/owner/repo/releases/download/v1/x".to_string(),
             "../etc/passwd".to_string(),
@@ -546,7 +550,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_apply_rejects_when_rpc_mutations_disabled() {
-        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = TempDir::new().unwrap();
         let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
         write_update_policy(

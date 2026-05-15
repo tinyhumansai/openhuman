@@ -187,6 +187,7 @@ impl Tool for DelegateTool {
         let provider: Box<dyn Provider> = match providers::create_backend_inference_provider(
             None,
             None,
+            None,
             &self.provider_runtime_options,
         ) {
             Ok(p) => p,

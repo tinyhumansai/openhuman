@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::NamedTempFile;
 
-use crate::api::config::effective_api_url;
+use crate::api::config::effective_backend_api_url;
 use crate::api::jwt::{bearer_authorization_value, get_session_token};
 use crate::openhuman::autocomplete::AutocompleteStatus;
 use crate::openhuman::config::rpc as config_rpc;
@@ -258,7 +258,7 @@ fn build_client() -> Result<Client, String> {
 }
 
 fn resolve_base(config: &Config) -> Result<Url, String> {
-    let base = effective_api_url(&config.api_url);
+    let base = effective_backend_api_url(&config.api_url);
     let mut parsed =
         Url::parse(base.trim()).map_err(|e| format!("invalid api_url '{}': {e}", base))?;
     if !parsed.path().ends_with('/') && parsed.path() != "/" {
@@ -315,7 +315,7 @@ fn sanitize_snapshot_user(user: Option<Value>) -> Option<Value> {
 }
 
 async fn fetch_current_user_cached(config: &Config, token: &str) -> Result<Option<Value>, String> {
-    let api_base = effective_api_url(&config.api_url)
+    let api_base = effective_backend_api_url(&config.api_url)
         .trim()
         .trim_end_matches('/')
         .to_string();

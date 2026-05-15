@@ -54,9 +54,10 @@ pub(crate) async fn dispatch_subagent(
     );
 
     // Propagate the per-call toolkit scope into the subagent runner so
-    // that `SkillDelegationTool`s can narrow `integrations_agent` to a single
-    // Composio toolkit (e.g. `delegate_gmail` → integrations_agent +
-    // toolkit="gmail"). Earlier code plumbed this through
+    // that the collapsed `SkillDelegationTool` can narrow
+    // `integrations_agent` to a single Composio toolkit (e.g.
+    // `delegate_to_integrations_agent { toolkit: "gmail" }` →
+    // integrations_agent + toolkit="gmail"). Earlier code plumbed this through
     // `skill_filter_override` (which matches `{skill}__` QuickJS-style
     // names), but Composio actions are named `GMAIL_*` / `NOTION_*` —
     // so the filter excluded every Composio tool instead of narrowing

@@ -10,7 +10,6 @@ import { usePrewarmMostRecentAccount } from '../hooks/usePrewarmMostRecentAccoun
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { useCoreState } from '../providers/CoreStateProvider';
 import { useT } from '../lib/i18n/I18nContext';
-import { usePrewarmMostRecentAccount } from '../hooks/usePrewarmMostRecentAccount';
 import { trackEvent } from '../services/analytics';
 import {
   hideWebviewAccount,

@@ -17,6 +17,7 @@ import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
 import coreModeReducer from './coreModeSlice';
 import localeReducer from './localeSlice';
+import mascotReducer from './mascotSlice';
 import notificationReducer from './notificationSlice';
 import providerSurfacesReducer from './providerSurfaceSlice';
 import socketReducer from './socketSlice';
@@ -108,6 +109,11 @@ const persistedNotificationReducer = persistReducer(notificationPersistConfig, n
 const threadPersistConfig = { key: 'thread', storage, whitelist: ['selectedThreadId'] };
 const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer);
 
+// Mascot appearance — color preference is per-user so it travels with the
+// account on logout/login rather than leaking across users.
+const mascotPersistConfig = { key: 'mascot', storage, whitelist: ['color'] };
+const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer);
+
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
@@ -119,6 +125,7 @@ export const store = configureStore({
     providerSurfaces: providerSurfacesReducer,
     coreMode: persistedCoreModeReducer,
     locale: persistedLocaleReducer,
+    mascot: persistedMascotReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({

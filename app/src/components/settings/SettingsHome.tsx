@@ -4,16 +4,11 @@ import { useNavigate } from 'react-router-dom';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { Locale } from '../../lib/i18n/types';
 import { useCoreState } from '../../providers/CoreStateProvider';
-import { persistor } from '../../store';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { setLocale } from '../../store/localeSlice';
+import { clearAllAppData } from '../../utils/clearAllAppData';
 import { BILLING_DASHBOARD_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
-import {
-  resetOpenHumanDataAndRestartCore,
-  restartApp,
-  scheduleCefProfilePurge,
-} from '../../utils/tauriCommands';
 import { resetWalkthrough } from '../walkthrough/AppWalkthrough';
 import SettingsHeader from './components/SettingsHeader';
 import SettingsMenuItem from './components/SettingsMenuItem';
@@ -63,60 +58,12 @@ const SettingsHome = () => {
     }
   };
 
-  const clearAllAppData = async () => {
-    const currentUserId = snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
-
-    // Queue the current user-scoped CEF profile for deletion on next launch.
-    // The active CEF browser process may still hold SQLite/cache file handles,
-    // so we delete after the shell restarts rather than relying on in-process
-    // removal to succeed everywhere.
-    try {
-      await scheduleCefProfilePurge(currentUserId);
-    } catch (err) {
-      console.warn('[Settings] Failed to queue CEF profile purge:', err);
-    }
-
-    // 1. Logout — clear session in core (auth_clear_session). Best-effort:
-    //    if the core process is wedged we still want to wipe local data.
-    try {
-      await clearSession();
-    } catch (err) {
-      console.warn('[Settings] Rust logout failed during clearAllAppData:', err);
-    }
-
-    // 2. Delete workspace folder + restart core. The core RPC removes both
-    //    the active openhuman_dir and the default ~/.openhuman, then we
-    //    restart the sidecar so it boots from a clean slate.
-    try {
-      await resetOpenHumanDataAndRestartCore();
-    } catch (err) {
-      console.warn('[Settings] Failed to reset OpenHuman data dir and restart core:', err);
-      throw err;
-    }
-
-    // 3. Purge redux-persist storage + browser storage. `persistor.purge()`
-    //    wipes the persisted backend; localStorage/sessionStorage clears
-    //    everything else (auth flags, theme, etc.).
-    try {
-      await persistor.purge();
-    } catch (err) {
-      console.warn('[Settings] persistor.purge failed:', err);
-      setError(t('clearData.failedPersist'));
-      return;
-    }
-    window.localStorage.clear();
-    window.sessionStorage.clear();
-
-    // 4. Full app restart so the CEF runtime reboots into the fresh
-    //    pre-login profile instead of keeping the old browser process alive.
-    await restartApp();
-  };
-
   const handleLogoutAndClearData = async () => {
     try {
       setIsLoading(true);
       setError(null);
-      await clearAllAppData(); // This will redirect to login
+      const currentUserId = snapshot.auth.userId ?? snapshot.currentUser?._id ?? null;
+      await clearAllAppData({ clearSession, userId: currentUserId }); // restarts the app
     } catch (_error) {
       setError(t('clearData.failed'));
     } finally {
@@ -184,6 +131,22 @@ const SettingsHome = () => {
               <option value="zh-CN">简体中文</option>
             </select>
           ),
+        },
+        {
+          id: 'mascot',
+          title: 'Mascot',
+          description: 'Pick the mascot color used across the app',
+          icon: (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 21a9 9 0 100-18 9 9 0 000 18zM9 10h.01M15 10h.01M9.5 15c.83.67 1.67 1 2.5 1s1.67-.33 2.5-1"
+              />
+            </svg>
+          ),
+          onClick: () => navigateToSettings('mascot'),
         },
       ],
     },

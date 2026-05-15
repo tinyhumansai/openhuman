@@ -388,6 +388,29 @@ async fn regression_reasoning_hint_routes_remote_with_backend_model_name() {
 }
 
 #[tokio::test]
+async fn regression_chat_hint_routes_remote_as_reasoning_quick_v1() {
+    let local = MockProvider::new("local", "l");
+    let remote = MockProvider::new("remote", "r");
+    let health = LocalHealthChecker::seeded(true);
+
+    let r = router(
+        Arc::clone(&local),
+        Arc::clone(&remote),
+        health,
+        RoutingHints::default(),
+    );
+    r.chat_with_system(None, "hi", "hint:chat", 0.7)
+        .await
+        .unwrap();
+
+    // hint:chat must be translated to the backend's reasoning-quick-v1 tier
+    // (Kimi K2.6 Turbo). Sending the literal "hint:chat" would 400 on the
+    // backend since modelRegistry has no `hint:*` aliases.
+    assert_eq!(remote.last_model(), "reasoning-quick-v1");
+    assert_eq!(local.calls(), 0);
+}
+
+#[tokio::test]
 async fn remote_failure_propagates_without_local_fallback() {
     let local = MockProvider::new("local", "l");
     let remote = MockProvider::new("remote", "r");
@@ -434,4 +457,181 @@ async fn capabilities_delegate_to_remote() {
     let health = LocalHealthChecker::seeded(true);
     let r = router(local, remote, health, RoutingHints::default());
     assert!(r.capabilities().native_tool_calling);
+}
+
+// ── J. chat_with_history routing paths ────────────────────────────────
+
+#[tokio::test]
+async fn history_lightweight_uses_local_when_healthy() {
+    use crate::openhuman::providers::traits::ChatMessage;
+    let local = MockProvider::new("local", "local history answer");
+    let remote = MockProvider::new("remote", "remote answer");
+    let health = LocalHealthChecker::seeded(true);
+
+    let r = router(
+        Arc::clone(&local),
+        Arc::clone(&remote),
+        health,
+        RoutingHints::default(),
+    );
+    let messages = vec![ChatMessage::user("react to this")];
+    let result = r
+        .chat_with_history(&messages, "hint:reaction", 0.7)
+        .await
+        .unwrap();
+
+    assert_eq!(result, "local history answer");
+    assert_eq!(local.calls(), 1, "local must be called for lightweight");
+    assert_eq!(remote.calls(), 0, "remote must not be called");
+}
+
+#[tokio::test]
+async fn history_local_error_falls_back_to_remote() {
+    use crate::openhuman::providers::traits::ChatMessage;
+    let local = MockProvider::new("local", "never");
+    local.set_fail(true);
+    let remote = MockProvider::new("remote", "remote recovery");
+    let health = LocalHealthChecker::seeded(true);
+
+    let r = router(
+        Arc::clone(&local),
+        Arc::clone(&remote),
+        health,
+        RoutingHints::default(),
+    );
+    let messages = vec![ChatMessage::user("react")];
+    let result = r
+        .chat_with_history(&messages, "hint:reaction", 0.7)
+        .await
+        .unwrap();
+
+    assert_eq!(result, "remote recovery");
+    assert_eq!(local.calls(), 1, "local tried first");
+    assert_eq!(remote.calls(), 1, "remote called on fallback");
+}
+
+#[tokio::test]
+async fn history_low_quality_local_falls_back_to_remote() {
+    use crate::openhuman::providers::traits::ChatMessage;
+    // "I cannot help with that." is a known low-quality refusal phrase.
+    let local = MockProvider::new("local", "I cannot help with that.");
+    let remote = MockProvider::new("remote", "proper answer from remote");
+    let health = LocalHealthChecker::seeded(true);
+
+    let r = router(
+        Arc::clone(&local),
+        Arc::clone(&remote),
+        health,
+        RoutingHints::default(),
+    );
+    let messages = vec![ChatMessage::user("classify this")];
+    let result = r
+        .chat_with_history(&messages, "hint:classify", 0.7)
+        .await
+        .unwrap();
+
+    assert_eq!(result, "proper answer from remote");
+    assert_eq!(local.calls(), 1);
+    assert_eq!(remote.calls(), 1);
+}
+
+#[tokio::test]
+async fn history_privacy_required_suppresses_fallback_even_on_error() {
+    use crate::openhuman::providers::traits::ChatMessage;
+    let local = MockProvider::new("local", "blocked");
+    local.set_fail(true);
+    let remote = MockProvider::new("remote", "should not be called");
+    let health = LocalHealthChecker::seeded(true);
+    let hints = RoutingHints {
+        privacy_required: true,
+        ..Default::default()
+    };
+
+    let r = router(Arc::clone(&local), Arc::clone(&remote), health, hints);
+    let messages = vec![ChatMessage::user("private query")];
+    let err = r.chat_with_history(&messages, "hint:reaction", 0.7).await;
+
+    // Error propagates (no fallback permitted) and remote is never called.
+    assert!(
+        err.is_err(),
+        "local failure must propagate when privacy_required"
+    );
+    assert_eq!(
+        remote.calls(),
+        0,
+        "remote must never be called when privacy_required"
+    );
+}
+
+// ── K. Tools-present forces remote path ───────────────────────────────
+
+#[tokio::test]
+async fn tools_present_forces_remote_even_when_local_healthy_and_lightweight() {
+    use crate::openhuman::providers::traits::{ChatMessage, ChatRequest};
+    use crate::openhuman::tools::ToolSpec;
+
+    let local = MockProvider::new("local", "local answer");
+    let remote = MockProvider::new("remote", "remote tool answer");
+    let health = LocalHealthChecker::seeded(true);
+
+    let r = router(
+        Arc::clone(&local),
+        Arc::clone(&remote),
+        health,
+        RoutingHints::default(),
+    );
+
+    let messages = vec![ChatMessage::user("react")];
+    // A non-empty tools slice triggers the "tools → remote" override.
+    let tools = vec![ToolSpec {
+        name: "dummy_tool".to_string(),
+        description: "A dummy tool".to_string(),
+        parameters: serde_json::json!({"type": "object", "properties": {}}),
+    }];
+    let request = ChatRequest {
+        messages: &messages,
+        tools: Some(&tools),
+        stream: None,
+    };
+
+    r.chat(request, "hint:reaction", 0.7).await.unwrap();
+
+    assert_eq!(
+        local.calls(),
+        0,
+        "local must not be called when tools are present"
+    );
+    assert_eq!(remote.calls(), 1, "remote must handle the tools request");
+}
+
+// ── L. Privacy suppresses fallback on low-quality response ────────────
+
+#[tokio::test]
+async fn privacy_required_keeps_low_quality_local_response() {
+    // Local returns a low-quality refusal but privacy blocks remote fallback.
+    let local = MockProvider::new("local", "I cannot help with that.");
+    let remote = MockProvider::new("remote", "proper remote answer");
+    let health = LocalHealthChecker::seeded(true);
+    let hints = RoutingHints {
+        privacy_required: true,
+        ..Default::default()
+    };
+
+    let r = router(Arc::clone(&local), Arc::clone(&remote), health, hints);
+    // Use chat_with_system which goes through the chat_with_system path.
+    let result = r
+        .chat_with_system(None, "classify", "hint:classify", 0.7)
+        .await
+        .unwrap();
+
+    // Must return the low-quality local answer — privacy blocks remote.
+    assert!(
+        result.contains("cannot"),
+        "privacy_required must keep local response: {result}"
+    );
+    assert_eq!(
+        remote.calls(),
+        0,
+        "remote must never be called with privacy_required"
+    );
 }

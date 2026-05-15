@@ -119,8 +119,18 @@ pub(crate) fn normalize_function_arguments(arguments: Option<serde_json::Value>)
         Some(serde_json::Value::String(raw)) => {
             if raw.trim().is_empty() {
                 "{}".to_string()
-            } else {
+            } else if serde_json::from_str::<serde_json::Value>(&raw).is_ok() {
                 raw
+            } else {
+                // OPENHUMAN-TAURI-6F: model emitted malformed JSON in
+                // `function.arguments`. Log the discard so it's traceable
+                // without leaking argument contents (which may contain PII).
+                log::warn!(
+                    "[providers] normalize_function_arguments: \
+                     discarding malformed JSON string (len={}) — substituting {{}}",
+                    raw.len()
+                );
+                "{}".to_string()
             }
         }
         Some(serde_json::Value::Null) | None => "{}".to_string(),
@@ -140,11 +150,12 @@ pub(crate) fn parse_provider_tool_call_from_value(
                     call.id
                 },
                 name: call.name,
-                arguments: if call.arguments.trim().is_empty() {
-                    "{}".to_string()
-                } else {
-                    call.arguments
-                },
+                // Route through normalize_function_arguments so malformed
+                // JSON strings in pre-deserialized ProviderToolCall values
+                // receive the same guard as the function.arguments path below.
+                arguments: normalize_function_arguments(Some(serde_json::Value::String(
+                    call.arguments,
+                ))),
             });
         }
     }

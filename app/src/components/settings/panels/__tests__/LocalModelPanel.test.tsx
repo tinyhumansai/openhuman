@@ -8,6 +8,8 @@ import {
   isTauri,
   type LocalAiDownloadsProgress,
   type LocalAiStatus,
+  memoryTreeGetLlm,
+  memoryTreeSetLlm,
   openhumanGetConfig,
   openhumanLocalAiDownload,
   openhumanLocalAiDownloadAllAssets,
@@ -21,6 +23,8 @@ import LocalModelPanel from '../LocalModelPanel';
 
 vi.mock('../../../../utils/tauriCommands', () => ({
   isTauri: vi.fn(() => true),
+  memoryTreeGetLlm: vi.fn(),
+  memoryTreeSetLlm: vi.fn(),
   openhumanGetConfig: vi.fn(),
   openhumanLocalAiDownload: vi.fn(),
   openhumanLocalAiDownloadAllAssets: vi.fn(),
@@ -124,6 +128,11 @@ describe('LocalModelPanel — usage flags', () => {
       };
       return makeSnapshot(runtime);
     });
+
+    // Memory summarizer backend defaults to cloud; tests that need a
+    // specific seed value override this in the test body.
+    vi.mocked(memoryTreeGetLlm).mockResolvedValue({ current: 'cloud' });
+    vi.mocked(memoryTreeSetLlm).mockResolvedValue({ current: 'local' });
   });
 
   it('renders all five usage toggles with sub-flags disabled when runtime is off', async () => {
@@ -208,11 +217,95 @@ describe('LocalModelPanel — usage flags', () => {
     const embeddingsLabel = await screen.findByText('Embeddings');
     const checkbox = embeddingsLabel.closest('label')?.querySelector('input[type="checkbox"]');
     expect(checkbox).toBeTruthy();
-    expect(checkbox as HTMLInputElement).not.toBeDisabled();
+    await waitFor(() => {
+      expect(checkbox as HTMLInputElement).not.toBeDisabled();
+    });
     fireEvent.click(checkbox as HTMLInputElement);
 
     await waitFor(() => {
       expect(openhumanUpdateLocalAiSettings).toHaveBeenCalledWith({ usage_embeddings: true });
     });
+  });
+
+  // The Memory summarizer checkbox is special — it writes
+  // `memory_tree.llm_backend` via memoryTreeSetLlm (the same field the
+  // removed Intelligence → Memory BackendChooser used to edit), not
+  // `local_ai.usage.*`. State seeds from memoryTreeGetLlm on mount.
+  it('seeds the Memory summarizer checkbox state from memoryTreeGetLlm', async () => {
+    vi.mocked(memoryTreeGetLlm).mockResolvedValueOnce({ current: 'local' });
+    runtime.runtime_enabled = true;
+    renderWithProviders(<LocalModelPanel />, { initialEntries: ['/settings/local-model'] });
+
+    const summarizerLabel = await screen.findByText('Memory summarizer');
+    const checkbox = summarizerLabel
+      .closest('label')
+      ?.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(checkbox).toBeTruthy();
+    await waitFor(() => {
+      expect(memoryTreeGetLlm).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(checkbox.checked).toBe(true);
+    });
+  });
+
+  it('flips the Memory summarizer checkbox and persists via memoryTreeSetLlm', async () => {
+    runtime.runtime_enabled = true;
+    renderWithProviders(<LocalModelPanel />, { initialEntries: ['/settings/local-model'] });
+
+    const summarizerLabel = await screen.findByText('Memory summarizer');
+    const checkbox = summarizerLabel
+      .closest('label')
+      ?.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    // The checkbox starts disabled until the async loadUsage() flips
+    // `usageFlags.runtime_enabled` to true; wait for that before clicking.
+    await waitFor(() => {
+      expect(checkbox).not.toBeDisabled();
+    });
+    fireEvent.click(checkbox);
+
+    await waitFor(() => {
+      expect(memoryTreeSetLlm).toHaveBeenCalledWith({ backend: 'local' });
+    });
+  });
+
+  it('rolls back the Memory summarizer optimistic toggle when memoryTreeSetLlm fails', async () => {
+    runtime.runtime_enabled = true;
+    vi.mocked(memoryTreeSetLlm).mockRejectedValueOnce(new Error('save: backend down'));
+    renderWithProviders(<LocalModelPanel />, { initialEntries: ['/settings/local-model'] });
+
+    const summarizerLabel = await screen.findByText('Memory summarizer');
+    const checkbox = summarizerLabel
+      .closest('label')
+      ?.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    await waitFor(() => {
+      expect(checkbox).not.toBeDisabled();
+    });
+    fireEvent.click(checkbox);
+
+    // The error message surfaces in the shared usageError block.
+    await screen.findByText('save: backend down');
+    // And the checkbox rolls back to its prior state (cloud → unchecked).
+    await waitFor(() => {
+      expect(checkbox.checked).toBe(false);
+    });
+  });
+
+  it('does not call memoryTreeSetLlm when the Memory summarizer is disabled (runtime off)', async () => {
+    // runtime is OFF by default — summarizer checkbox should be disabled
+    // and clicks should not fire a setLlm call.
+    renderWithProviders(<LocalModelPanel />, { initialEntries: ['/settings/local-model'] });
+
+    const summarizerLabel = await screen.findByText('Memory summarizer');
+    const checkbox = summarizerLabel
+      .closest('label')
+      ?.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(checkbox).toBeDisabled();
+    // Exercise the disabled-click path — fireEvent dispatches even on
+    // disabled inputs (it bypasses React's synthetic event guard), so
+    // this confirms the handler doesn't fire `setLlm` because of the
+    // gating, not just because no click happened.
+    fireEvent.click(checkbox);
+    expect(memoryTreeSetLlm).not.toHaveBeenCalled();
   });
 });

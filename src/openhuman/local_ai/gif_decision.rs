@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use crate::api::config::effective_api_url;
+use crate::api::config::effective_backend_api_url;
 use crate::api::jwt::get_session_token;
 use crate::api::rest::BackendOAuthClient;
 use crate::openhuman::config::Config;
@@ -177,7 +177,7 @@ pub async fn tenor_search(
         return Err("query is required".to_string());
     }
 
-    let api_url = effective_api_url(&config.api_url);
+    let api_url = effective_backend_api_url(&config.api_url);
     let jwt = get_session_token(config)?
         .ok_or_else(|| "session JWT required; complete login first".to_string())?;
 

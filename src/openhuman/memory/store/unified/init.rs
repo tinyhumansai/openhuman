@@ -137,8 +137,8 @@ impl UnifiedMemory {
         // We run the ALTER TABLE statements directly on `conn` before wrapping it in Arc<Mutex>.
         // SQL arrays are defined as constants in profile.rs to avoid duplication.
         {
-            use super::profile::{PHASE3_COLUMNS_SQL, PHASE3_INDEXES_SQL};
-            for sql in PHASE3_COLUMNS_SQL.iter().chain(PHASE3_INDEXES_SQL.iter()) {
+            use super::profile::PHASE3_COLUMNS_SQL;
+            for sql in PHASE3_COLUMNS_SQL.iter() {
                 match conn.execute(sql, []) {
                     Ok(_) => tracing::debug!("[profile:init] applied: {sql}"),
                     Err(e) => {

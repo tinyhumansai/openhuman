@@ -1,9 +1,10 @@
 use super::{
     all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
-    event_session_id_for, generic_inference_error_user_message,
-    inference_budget_exceeded_user_message, is_inference_budget_exceeded_error, json_output,
-    key_for, normalize_model_override, optional_f64, optional_string, required_string, schemas,
-    set_test_forced_run_chat_task_error, start_chat, subscribe_web_channel_events,
+    classify_inference_error, event_session_id_for, extract_provider_error_detail,
+    generic_inference_error_user_message, inference_budget_exceeded_user_message,
+    is_inference_budget_exceeded_error, json_output, key_for, normalize_model_override,
+    optional_f64, optional_string, required_string, schemas, set_test_forced_run_chat_task_error,
+    start_chat, subscribe_web_channel_events,
 };
 use crate::core::TypeSchema;
 use tokio::time::{timeout, Duration};
@@ -132,6 +133,37 @@ fn budget_exceeded_copy_mentions_top_up() {
     let message = inference_budget_exceeded_user_message();
     assert!(message.contains("top up"));
     assert!(message.contains("credits"));
+}
+
+#[test]
+fn extract_provider_error_detail_pulls_openai_message() {
+    let raw = r#"custom_openai API error (404 Not Found): {"error":{"message":"Project `proj_X` does not have access to model `gpt-5.5`","type":"invalid_request_error","param":null,"code":"model_not_found"}}"#;
+    let detail = extract_provider_error_detail(raw).expect("expected JSON message");
+    assert!(
+        detail.contains("does not have access to model"),
+        "got: {detail}"
+    );
+    assert!(detail.contains("gpt-5.5"));
+}
+
+#[test]
+fn extract_provider_error_detail_returns_none_for_transport_errors() {
+    // Plain transport failure — no provider JSON body to quote. Surfacing
+    // raw transport text would leak internal infra URLs.
+    let raw = "error sending request for url (https://internal-api.example.invalid/openai/v1/chat/completions)";
+    assert!(extract_provider_error_detail(raw).is_none());
+}
+
+#[test]
+fn classify_inference_error_quotes_model_unavailable_detail() {
+    let raw = r#"custom_openai API error (404 Not Found): {"error":{"message":"The model `gpt-5.5` does not exist or you do not have access to it.","code":"model_not_found"}}"#;
+    let (category, message) = classify_inference_error(raw);
+    assert_eq!(category, "model_unavailable");
+    assert!(message.contains("Check your model settings"));
+    assert!(
+        message.contains("gpt-5.5"),
+        "should quote model name: {message}"
+    );
 }
 
 #[test]

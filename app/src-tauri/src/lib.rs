@@ -330,6 +330,15 @@ struct AppUpdateInfo {
     body: Option<String>,
 }
 
+fn no_app_update_available(current_version: String) -> AppUpdateInfo {
+    AppUpdateInfo {
+        current_version,
+        available: false,
+        available_version: None,
+        body: None,
+    }
+}
+
 /// Probe the updater endpoint and report whether a newer shell build is available.
 /// Does NOT download or install. Pair with `apply_app_update` to actually upgrade.
 #[tauri::command]
@@ -359,16 +368,13 @@ async fn check_app_update(app: tauri::AppHandle<AppRuntime>) -> Result<AppUpdate
         }
         Ok(None) => {
             log::info!("[app-update] no update available");
-            Ok(AppUpdateInfo {
-                current_version,
-                available: false,
-                available_version: None,
-                body: None,
-            })
+            Ok(no_app_update_available(current_version))
         }
         Err(e) => {
-            log::warn!("[app-update] check failed: {e}");
-            Err(format!("update check failed: {e}"))
+            log::warn!(
+                "[app-update] check failed; treating as no update available for this probe: {e}"
+            );
+            Ok(no_app_update_available(current_version))
         }
     }
 }
@@ -769,6 +775,26 @@ fn is_daemon_mode() -> bool {
     std::env::args().any(|arg| arg == "daemon" || arg == "--daemon")
 }
 
+/// Returns true when an executable named `name` is discoverable on `$PATH`.
+///
+/// Inline `which`-style lookup so the deep-link pre-flight on Linux can
+/// skip `tauri-plugin-deep-link::register_all` cleanly when `xdg-mime` is
+/// missing (OPENHUMAN-TAURI-AS). Walks `$PATH` entries, joins `name`, and
+/// returns true on the first hit that is a regular file. The metadata check
+/// is `is_file()` rather than an executable-bit check: on Linux any file in
+/// `$PATH` that is named like the binary is enough to gate the plugin call
+/// (the plugin itself will surface the real exec error to its own warn),
+/// and an executable-bit check would require unix-specific
+/// `MetadataExt::mode` plumbing that isn't worth the platform branch for a
+/// single discoverability gate.
+#[cfg(target_os = "linux")]
+fn path_has_executable(name: &str) -> bool {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path_var).any(|dir| dir.join(name).is_file())
+}
+
 /// Tauri command: bring the main window to front from any webview (e.g. overlay orb click).
 #[tauri::command]
 fn activate_main_window(app: AppHandle<AppRuntime>) -> Result<(), String> {
@@ -822,7 +848,96 @@ fn mascot_native_window_is_open() -> bool {
     false
 }
 
+/// Hide or show the OS top-level main-window frame on Windows by enumerating
+/// this process's top-level windows and matching the visible
+/// `Chrome_WidgetWin_1` host. `WebviewWindow::hwnd()` from the vendored CEF
+/// runtime returns a `cef::Window` internal handle that `ShowWindow` rejects,
+/// so we walk the OS window list instead (#1607). Empirically there is one
+/// matching top-level frame; the single-instance lock window uses class
+/// `com.openhuman.app-sic` and is excluded.
+///
+/// `SW_HIDE` removes the frame from screen AND taskbar — full hide-to-tray as
+/// PR #1548 intended. On restore, the IsWindowVisible filter excludes hidden
+/// windows, so we also accept currently-hidden Chrome_WidgetWin_1 frames when
+/// `hide=false`.
+#[cfg(target_os = "windows")]
+fn set_main_window_hidden(hide: bool) {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE,
+        SW_SHOW,
+    };
+
+    struct EnumCtx {
+        target_pid: u32,
+        action: i32,
+        require_visible: bool,
+        matched: u32,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = unsafe { &mut *(lparam as *mut EnumCtx) };
+        let mut pid: u32 = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+        if pid != ctx.target_pid {
+            return 1;
+        }
+        if ctx.require_visible && unsafe { IsWindowVisible(hwnd) } == 0 {
+            return 1;
+        }
+        let mut class_buf = [0u16; 64];
+        let n = unsafe { GetClassNameW(hwnd, class_buf.as_mut_ptr(), class_buf.len() as i32) };
+        if n <= 0 {
+            return 1;
+        }
+        let class = OsString::from_wide(&class_buf[..n as usize])
+            .to_string_lossy()
+            .into_owned();
+        if class != "Chrome_WidgetWin_1" {
+            return 1;
+        }
+        unsafe { ShowWindow(hwnd, ctx.action) };
+        ctx.matched += 1;
+        1
+    }
+
+    let action = if hide { SW_HIDE } else { SW_SHOW };
+    let mut ctx = EnumCtx {
+        target_pid: std::process::id(),
+        action,
+        // Hide path: only touch currently-visible frames. Show path: also
+        // pick up frames already in the SW_HIDE state.
+        require_visible: hide,
+        matched: 0,
+    };
+    unsafe { EnumWindows(Some(enum_proc), &mut ctx as *mut _ as LPARAM) };
+    log::info!(
+        "[window-hide] EnumWindows: action={} matched={} pid={}",
+        if hide { "SW_HIDE" } else { "SW_SHOW" },
+        ctx.matched,
+        ctx.target_pid,
+    );
+}
+
 fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
+    // On Windows: surface the OS top-level Chrome_WidgetWin_1 frame BEFORE
+    // any Tauri lookups. After our close handler's SW_HIDE the runtime
+    // briefly drops the `WebviewWindow` record for "main" (CEF treats the
+    // hidden host as gone), so `get_webview_window("main")` returns None
+    // and the early `?` below would abort before SW_SHOW fires (#1607).
+    // EnumWindows + SW_SHOW operates directly on the OS HWND that
+    // survived independently, and the runtime re-tracks the window once
+    // it's visible again.
+    #[cfg(target_os = "windows")]
+    {
+        set_main_window_hidden(false);
+        if let Some(webview) = app.get_webview("main") {
+            let _ = webview.show();
+            let _ = webview.set_focus();
+        }
+    }
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
@@ -1119,6 +1234,64 @@ fn shutdown_app_sync(app_handle: &AppHandle<AppRuntime>, exit_code: i32) {
     app_handle.exit(exit_code);
 }
 
+#[cfg(target_os = "linux")]
+const WSL_X11_DESKTOP_WARNING: &str = "[startup] likely unsupported desktop environment: WSL with classic X11 forwarding detected (DISPLAY is set, but WAYLAND_DISPLAY/WSLg markers are absent). OpenHuman's Tauri/CEF desktop flow is fragile in this setup; use native Windows development or Windows 11 WSLg for desktop GUI work.";
+
+#[cfg(any(target_os = "linux", test))]
+fn should_warn_for_wsl_x11_desktop(
+    is_wsl: bool,
+    display_set: bool,
+    wayland_display_set: bool,
+    wslg_marker_set: bool,
+) -> bool {
+    is_wsl && display_set && !wayland_display_set && !wslg_marker_set
+}
+
+#[cfg(target_os = "linux")]
+fn is_wsl_environment() -> bool {
+    if std::env::var("WSL_DISTRO_NAME")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .is_some()
+    {
+        return true;
+    }
+
+    std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .ok()
+        .map(|release| release.to_ascii_lowercase().contains("microsoft"))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn has_non_empty_env(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .is_some()
+}
+
+#[cfg(target_os = "linux")]
+fn has_wslg_marker() -> bool {
+    has_non_empty_env("WSLG_RUNTIME_DIR") || std::path::Path::new("/mnt/wslg").exists()
+}
+
+#[cfg(target_os = "linux")]
+fn warn_if_wsl_x11_desktop_launch() {
+    if should_warn_for_wsl_x11_desktop(
+        is_wsl_environment(),
+        has_non_empty_env("DISPLAY"),
+        has_non_empty_env("WAYLAND_DISPLAY"),
+        has_wslg_marker(),
+    ) {
+        log::warn!("{WSL_X11_DESKTOP_WARNING}");
+        eprintln!("{WSL_X11_DESKTOP_WARNING}");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn warn_if_wsl_x11_desktop_launch() {}
+
 pub fn run() {
     // Initialize Sentry for the Tauri shell (desktop host) process before any
     // other startup work. Reads `OPENHUMAN_TAURI_SENTRY_DSN` at runtime first,
@@ -1158,6 +1331,55 @@ pub fn run() {
                 log::debug!(
                     "[sentry-localhost-filter] dropping dev-server fetch noise event: {:?}",
                     event.message.as_deref().unwrap_or("<no message>")
+                );
+                return None;
+            }
+            if openhuman_core::core::observability::is_budget_event(&event) {
+                // Log only structured tag metadata — `event.message` can carry
+                // upstream provider error text including tokens / pasted-through
+                // secrets, and per `CLAUDE.md` "never log secrets or full PII".
+                // The (domain, status) pair is sufficient diagnostic since
+                // those are the tags `is_budget_event` gates on.
+                log::debug!(
+                    "[sentry-budget-filter] dropping budget-exhausted event (domain={:?}, status={:?})",
+                    event.tags.get("domain"),
+                    event.tags.get("status")
+                );
+                return None;
+            }
+            // Defense-in-depth: drop max-tool-iterations cap events that
+            // slipped past the call-site filters in the core (see
+            // `openhuman_core::core::observability::is_max_iterations_event`
+            // for the rationale). The shell links the core in-process so
+            // any captured event for this deterministic agent-state
+            // outcome is filtered here too (OPENHUMAN-TAURI-99 / -98).
+            if openhuman_core::core::observability::is_max_iterations_event(&event) {
+                log::debug!(
+                    "[sentry-max-iter-filter] dropping max-iteration cap noise event: {:?}",
+                    event.message.as_deref().unwrap_or("<no message>")
+                );
+                return None;
+            }
+            if openhuman_core::core::observability::is_transient_backend_api_failure(&event)
+                || openhuman_core::core::observability::is_transient_integrations_failure(&event)
+                || openhuman_core::core::observability::is_updater_transient_event(&event)
+            {
+                return None;
+            }
+            // Drop 401 "Session expired. Please log in again." bodies and
+            // pre-flight "no session token stored" guards — mirrors the
+            // core binary's before_send chain. Since #1061 the Tauri shell
+            // links the core in-process, so any session-expired event
+            // captured by either surface lands in the same Sentry client
+            // here and must be filtered identically. Keeps
+            // OPENHUMAN-TAURI-25 / -1Q / -27 / -1G off Sentry.
+            if openhuman_core::core::observability::is_session_expired_event(&event) {
+                // Metadata-only log shape — `event.message` carries the raw
+                // backend response body which CLAUDE.md forbids from local
+                // logs. Mirror the core binary's main.rs filter.
+                log::debug!(
+                    "[sentry-session-expired-filter] dropping session-expired event_id={:?}",
+                    event.event_id
                 );
                 return None;
             }
@@ -1223,6 +1445,8 @@ pub fn run() {
         log::info!("[startup] platform: arch={arch} os={os} os_version={os_ver}");
     }
 
+    warn_if_wsl_x11_desktop_launch();
+
     // The vendored tauri-cef dev-server proxy builds a reqwest 0.13 client
     // (see vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) which calls
     // rustls 0.23's `CryptoProvider::get_default()`. rustls 0.23 no longer
@@ -1230,6 +1454,64 @@ pub fn run() {
     // with "No provider set" the first time `tauri dev` forwards a request.
     // Install the ring provider once before any HTTPS client is built.
     let _ = rustls::crypto::ring::default_provider().install_default();
+
+    // ── Windows pre-CEF single-instance guard (Sentry OPENHUMAN-TAURI-A) ──
+    //
+    // `tauri_plugin_single_instance` detects a second launch inside its
+    // `.setup()` hook — but `.setup()` runs AFTER `Builder::build()` which
+    // calls `CefRuntime::init` → `cef::initialize()`. On a second launch,
+    // `cef::initialize()` returns 0 because the primary holds the CEF
+    // cache lock; the vendored runtime asserts `result == 1` and panics
+    // (left: 0, right: 1, fatal, Windows-only, 598 events).
+    //
+    // Fix: acquire a named Win32 mutex at the very top of `run()` — before
+    // any CEF or builder work — so any secondary instance sees
+    // `ERROR_ALREADY_EXISTS` and exits immediately. The mutex name uses
+    // a `-cef-init` suffix distinct from the plugin's own `-sim` mutex so
+    // the two guards don't interfere; the plugin still handles WM_COPYDATA
+    // forwarding for graceful "focus primary" behaviour once the app is
+    // fully initialised.
+    //
+    // The RAII guard holds the mutex handle for the lifetime of `run()`.
+    // Windows releases all process handles automatically on exit, so
+    // explicit cleanup is only needed if `run()` returns normally.
+    #[cfg(windows)]
+    let _cef_init_mutex_guard = {
+        use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+        use windows_sys::Win32::System::Threading::CreateMutexW;
+
+        // Must match the bundle identifier in tauri.conf.json.
+        // Changing the app identifier requires updating this string too.
+        let mutex_name: Vec<u16> = "com.openhuman.app-cef-init\0".encode_utf16().collect();
+
+        // SAFETY: mutex_name is null-terminated UTF-16; handle is checked below.
+        let handle = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
+
+        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            // Another instance is already past this point — exit before we
+            // touch CEF at all. The plugin's WM_COPYDATA path won't run
+            // here (it needs an AppHandle from setup()), but the primary
+            // is already showing its window so the user experience is fine.
+            if !handle.is_null() {
+                unsafe { CloseHandle(handle) };
+            }
+            log::info!(
+                "[single-instance] pre-CEF mutex held by primary; secondary exiting (OPENHUMAN-TAURI-A fix)"
+            );
+            std::process::exit(0);
+        }
+
+        // Primary: hold the handle until run() returns.
+        struct OwnedMutex(isize);
+        impl Drop for OwnedMutex {
+            fn drop(&mut self) {
+                if self.0 != 0 {
+                    unsafe { CloseHandle(self.0 as _) };
+                }
+            }
+        }
+        OwnedMutex(handle as isize)
+    };
 
     // CEF cache-lock preflight (macOS only): if another OpenHuman instance
     // is already holding the CEF user-data-dir, the vendored
@@ -1372,7 +1654,16 @@ pub fn run() {
                 }
             };
         if let Some(path) = fake_camera_arg {
-            args.push(("--use-fake-device-for-media-stream", None));
+            // `--use-file-for-fake-video-capture` alone (CEF 146 / Chromium 128+)
+            // injects the Y4M as the video capture source without replacing the
+            // audio capture device. The old belt-and-suspenders flag
+            // `--use-fake-device-for-media-stream` is deliberately omitted here:
+            // it replaced ALL media capture devices — including audio — with fake
+            // ones, causing a sine-wave test tone (beeping) to be recorded instead
+            // of the real microphone whenever `getUserMedia({audio:true})` was
+            // called from the main app WebView (e.g. the mascot voice composer).
+            // `--use-fake-ui-for-media-stream` is kept so Meet's permission prompt
+            // is auto-granted without interrupting the join flow.
             args.push(("--use-fake-ui-for-media-stream", None));
             args.push(("--use-file-for-fake-video-capture", Some(path)));
         }
@@ -1396,6 +1687,20 @@ pub fn run() {
         {
             args.push(("--disable-gpu-compositing", None));
             log::info!("[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)");
+        }
+        // Issue #1697 — Linux AppImage fails to launch on Mesa 26+ (Arch,
+        // Manjaro, EndeavourOS, CachyOS) with EGL_BAD_ATTRIBUTE during GPU
+        // context creation. Chromium's EGL initialization returns
+        // EGL_BAD_ATTRIBUTE for both ES 3.0 and 2.0 contexts on Mesa 26+,
+        // producing ContextResult::kFatalFailure. Disabling the entire GPU
+        // process forces SwiftShader software rendering so the app launches
+        // on these distros. The same CEF version works on Ubuntu/deb-based
+        // distros with older Mesa; this flag degrades gracefully there
+        // (software-only rendering, no WebGL).
+        #[cfg(target_os = "linux")]
+        {
+            args.push(("--disable-gpu", None));
+            log::info!("[cef-startup] Linux detected: adding --disable-gpu (issue #1697)");
         }
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
@@ -1470,10 +1775,38 @@ pub fn run() {
     let builder = builder.manage(meet_video::frame_bus::MeetVideoFrameBusState::new());
     builder
         .setup(move |app| {
-            #[cfg(any(windows, target_os = "linux"))]
+            #[cfg(windows)]
             {
                 if let Err(err) = app.deep_link().register_all() {
                     log::warn!("[deep-link] register_all failed (non-fatal): {err}");
+                }
+            }
+            #[cfg(target_os = "linux")]
+            {
+                // `tauri-plugin-deep-link::register_all` on Linux shells out
+                // to `xdg-mime` (and `update-desktop-database` / `xdg-icon-resource`)
+                // to install MIME-type associations for our custom URL
+                // schemes. On Linux installs that ship without xdg-utils —
+                // WSL2 without a desktop env, headless servers, minimal
+                // containers (OPENHUMAN-TAURI-AS: WSL2 user in BR) — the
+                // tool isn't on PATH and the plugin fires
+                // `log::error!("Failed to run OS command \`xdg-mime\`…")`
+                // *internally* before returning the Err. That internal
+                // error log is scooped up by `sentry-tracing` into a Sentry
+                // event even though our `if let Err` arm below already
+                // demotes the user-visible failure to a warn. Skip the
+                // plugin call entirely when xdg-mime isn't available so
+                // the internal log never fires — registration only matters
+                // on systems with a desktop environment, where xdg-utils
+                // is part of the desktop install anyway.
+                if path_has_executable("xdg-mime") {
+                    if let Err(err) = app.deep_link().register_all() {
+                        log::warn!("[deep-link] register_all failed (non-fatal): {err}");
+                    }
+                } else {
+                    log::warn!(
+                        "[deep-link] skipping register_all — xdg-mime not on PATH (xdg-utils not installed; deep-link MIME registration unavailable on this host)"
+                    );
                 }
             }
 
@@ -2097,16 +2430,23 @@ pub fn run() {
                 );
                 }
             }
-            // Intercept the main window's close request on macOS AND Windows
-            // so the user can re-open the app from the tray icon. Letting the
-            // OS destroy the webview makes `get_webview_window("main")` return
-            // None on the next tray-click and surfaces as
-            // `[tray] failed to show main window from tray click: main window
-            // not found` (OPENHUMAN-TAURI-2X — 21 events, Windows only).
+            // Intercept the main window's close request on macOS so the user
+            // can re-open the app from the tray icon. Letting the OS destroy
+            // the webview makes `get_webview_window("main")` return None on
+            // the next tray-click and surfaces as `[tray] failed to show main
+            // window from tray click: main window not found`
+            // (OPENHUMAN-TAURI-2X — 21 events, Windows only).
+            //
+            // macOS uses `window.hide()` because the vendored CEF runtime
+            // routes that through `set_application_visibility(false)` at the
+            // NSApplication level (`tauri-runtime-cef/src/lib.rs:588`), which
+            // hides the CEF browser surface together with the host window.
+            // Windows is handled in the separate arm below — see issue #1607.
+            //
             // Linux is left out: `setup_tray` early-returns on Linux because
             // tray creation panics inside GTK during packaged runs, so the
             // hide-on-close behavior would strand the user with no way back.
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            #[cfg(target_os = "macos")]
             RunEvent::WindowEvent {
                 label,
                 event: WindowEvent::CloseRequested { api, .. },
@@ -2120,6 +2460,17 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+            // Windows: full hide-to-tray.
+            //
+            // PR #1548 routed Windows X click into the same prevent_close +
+            // `window.hide()` branch as macOS, but on Windows the vendored
+            // CEF runtime's WindowMessage::Hide / Minimize / Restore
+            // (`tauri-runtime-cef/src/cef_impl.rs`) only operate on a
+            // `cef::Window` internal handle that does not correspond to the
+            // visible `Chrome_WidgetWin_1` top-level frame — `ShowWindow`
+            // calls against it are silent no-ops. We bypass the runtime
+            // entirely and walk the OS window list to issue SW_HIDE / SW_SHOW
+            // directly on the matching top-level frame (issue #1607).
             #[cfg(target_os = "windows")]
             RunEvent::WindowEvent {
                 label,
@@ -2127,12 +2478,20 @@ pub fn run() {
                 ..
             } if label == "main" => {
                 log::info!(
-                    "[window] close requested on main window — hiding to tray instead of destroying"
+                    "[window] close requested on main window — hiding to tray"
                 );
                 api.prevent_close();
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.hide();
-                }
+                // Hide the OS top-level Chrome_WidgetWin_1 frame via
+                // EnumWindows + SW_HIDE — full hide-to-tray as PR #1548
+                // intended. `window.hide()` and `window.minimize()` through
+                // the vendored CEF runtime are no-ops on Windows because
+                // `WebviewWindow::hwnd()` returns a cef::Window proxy handle
+                // rather than the visible top-level frame; we walk the OS
+                // window list directly instead (#1607). SW_HIDE on the host
+                // frame cascades to all child HWNDs (including the CEF
+                // browser surface), so no separate `webview.hide()` is
+                // needed and `show_main_window` only has to issue SW_SHOW.
+                set_main_window_hidden(true);
             }
             #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => {
@@ -2390,6 +2749,16 @@ mod tests {
         // _check_runtime::<AppRuntime>(); // Would require importing
     }
 
+    #[test]
+    fn no_app_update_available_result_is_quiet_unavailable() {
+        let info = no_app_update_available("0.53.43".to_string());
+
+        assert_eq!(info.current_version, "0.53.43");
+        assert!(!info.available);
+        assert!(info.available_version.is_none());
+        assert!(info.body.is_none());
+    }
+
     /// Verify tray logging patterns exist (grep-friendly)
     #[test]
     fn tray_setup_logging_patterns_exist() {
@@ -2452,6 +2821,27 @@ mod tests {
             !ver.split('.').next().unwrap_or("").is_empty(),
             "version must have at least one numeric component"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // WSL + X11 desktop startup warning (issue #1653)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn wsl_x11_warning_detects_classic_x11_forwarding() {
+        assert!(should_warn_for_wsl_x11_desktop(true, true, false, false));
+    }
+
+    #[test]
+    fn wsl_x11_warning_skips_non_wsl_or_headless_runs() {
+        assert!(!should_warn_for_wsl_x11_desktop(false, true, false, false));
+        assert!(!should_warn_for_wsl_x11_desktop(true, false, false, false));
+    }
+
+    #[test]
+    fn wsl_x11_warning_skips_wslg_or_wayland_runs() {
+        assert!(!should_warn_for_wsl_x11_desktop(true, true, true, false));
+        assert!(!should_warn_for_wsl_x11_desktop(true, true, false, true));
     }
 
     // -------------------------------------------------------------------------
@@ -2737,5 +3127,77 @@ mod tests {
             !message_is_localhost_dev_fetch_noise(msg),
             "messages that merely contain the dev-proxy prefix must NOT be filtered"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // path_has_executable / deep-link xdg-mime pre-flight (OPENHUMAN-TAURI-AS)
+    // -------------------------------------------------------------------------
+
+    /// With a controlled `$PATH` containing one dir that holds a file named
+    /// `xdg-mime`, the lookup must succeed (mirrors a Linux desktop install
+    /// where xdg-utils ships the binary).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_finds_file_on_path() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("xdg-mime"), b"#!/bin/sh\n").expect("write stub");
+        std::env::set_var("PATH", dir.path());
+
+        assert!(
+            path_has_executable("xdg-mime"),
+            "must discover xdg-mime when present in a $PATH entry"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+
+    /// With a controlled `$PATH` that does NOT contain `xdg-mime`, the lookup
+    /// must fail (mirrors WSL2 / minimal containers without xdg-utils — the
+    /// case OPENHUMAN-TAURI-AS protects against).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_returns_false_when_missing() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Intentionally do not create xdg-mime in `dir`.
+        std::env::set_var("PATH", dir.path());
+
+        assert!(
+            !path_has_executable("xdg-mime"),
+            "must return false when xdg-mime is not in any $PATH entry"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+
+    /// When `$PATH` is unset entirely, the lookup must short-circuit to false
+    /// rather than panic or fall back to the cwd.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_returns_false_when_path_unset() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        std::env::remove_var("PATH");
+        assert!(
+            !path_has_executable("xdg-mime"),
+            "unset $PATH must yield false (skip register_all on the missing-xdg-utils branch)"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
     }
 }

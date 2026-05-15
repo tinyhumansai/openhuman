@@ -10,7 +10,7 @@ import PillTabBar from '../components/PillTabBar';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
-import MicCloudComposer from '../features/human/MicCloudComposer';
+import MicComposer from '../features/human/MicComposer';
 // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
 // import { ONBOARDING_WELCOME_THREAD_LABEL } from '../constants/onboardingChat';
 import { useStickToBottom } from '../hooks/useStickToBottom';
@@ -111,6 +111,24 @@ export function isComposerInteractionBlocked(args: {
   rustChat: boolean;
 }): boolean {
   return !args.rustChat || Boolean(args.activeThreadId) || args.welcomePending;
+}
+
+interface ImeKeyboardEventLike {
+  isComposing?: boolean;
+  keyCode?: number;
+  which?: number;
+  nativeEvent?: { isComposing?: boolean; keyCode?: number; which?: number };
+}
+
+export function isImeCompositionKeyEvent(event: ImeKeyboardEventLike): boolean {
+  return (
+    event.isComposing === true ||
+    event.nativeEvent?.isComposing === true ||
+    event.nativeEvent?.keyCode === 229 ||
+    event.nativeEvent?.which === 229 ||
+    event.keyCode === 229 ||
+    event.which === 229
+  );
 }
 
 /**
@@ -241,6 +259,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   });
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingTextRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -295,16 +314,22 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
         //   return;
         // }
         const threadStateForSelect = store.getState().thread;
-        if (data.threads.length > 0) {
+        // Worker/subagent threads are hidden from the conversation list
+        // (see tinyhumansai/openhuman#1624). Match the sidebar filter here so
+        // initial/resume selection can't auto-pick a hidden thread and leave
+        // the UI showing a thread that isn't in the list.
+        const visibleThreads = data.threads.filter(t => !t.parentThreadId);
+        if (visibleThreads.length > 0) {
           // Prefer the thread the user was last viewing (persisted across
           // reloads via redux-persist on the `thread` slice). Only fall
           // through to "most recent" if that thread no longer exists
-          // server-side (deleted, purged, or different user).
+          // server-side (deleted, purged, or different user) — or is now
+          // hidden because it's a worker thread.
           const persistedId = threadStateForSelect.selectedThreadId;
           const resumeId =
-            persistedId && data.threads.some(t => t.id === persistedId)
+            persistedId && visibleThreads.some(t => t.id === persistedId)
               ? persistedId
-              : data.threads[0].id;
+              : visibleThreads[0].id;
           dispatch(setSelectedThread(resumeId));
           void dispatch(loadThreadMessages(resumeId));
         } else {
@@ -813,6 +838,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   }, [messages, replyMode, rustChat]);
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isComposingTextRef.current || isImeCompositionKeyEvent(e)) return;
+
     const inlineSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
     const textarea = e.currentTarget;
     const caretAtEnd =
@@ -942,6 +969,10 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
 
   const filteredThreads = useMemo(() => {
     const base = threads.filter(t => {
+      // Hide worker/subagent threads from the conversation list. They are
+      // currently surfaced inline inside the parent thread via WorkerThreadRefCard.
+      // A dedicated showcase is tracked in tinyhumansai/openhuman#1624.
+      if (t.parentThreadId) return false;
       if (selectedLabel === 'all') return true;
       return t.labels?.includes(selectedLabel);
     });
@@ -965,10 +996,6 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     );
   }, [filteredThreads]);
 
-  const allLabels = useMemo(() => {
-    return Array.from(new Set(threads.flatMap(t => t.labels ?? []))).sort();
-  }, [threads]);
-
   // Fixed tab set so categories don't disappear when empty and the active
   // filter state remains unambiguous regardless of what threads exist.
   const labelTabs = [
@@ -977,13 +1004,6 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     { label: t('chat.filter.briefing'), value: 'briefing' },
     { label: t('chat.filter.notification'), value: 'notification' },
   ];
-
-  // Reset stale selectedLabel when the last thread carrying that label is deleted.
-  useEffect(() => {
-    if (selectedLabel !== 'all' && !allLabels.includes(selectedLabel)) {
-      setSelectedLabel('all');
-    }
-  }, [allLabels, selectedLabel]);
 
   const isSidebar = variant === 'sidebar';
   // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
@@ -1664,11 +1684,16 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
               </p>
               <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                 {(sendError.code === 'stt_not_ready' ||
-                  sendError.code === 'voice_transcription') && (
+                  sendError.code === 'voice_transcription' ||
+                  sendError.code === 'tts_not_ready' ||
+                  sendError.code === 'voice_synthesis') && (
                   <button
                     onClick={() => {
                       setSendError(null);
-                      navigate('/settings/local-model');
+                      // STT/TTS provider settings live on the Voice panel
+                      // since PR 2; the legacy local-model route was for
+                      // back when speech assets were lumped with Ollama.
+                      navigate('/settings/voice');
                     }}
                     className="text-xs text-primary-500 hover:text-primary-600 font-medium transition-colors">
                     {t('chat.setup')}
@@ -1684,13 +1709,14 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           )}
 
           {composer === 'mic-cloud' ? (
-            <MicCloudComposer
+            <MicComposer
               // Without `!selectedThreadId`, a mic submit before a thread is
               // ready hits `handleSendMessage`'s early return and the
               // transcript is silently dropped — the user spoke into the void.
               disabled={composerInteractionBlocked || !selectedThreadId}
               onSubmit={text => handleSendMessage(text)}
               onError={message => setSendError(chatSendError('voice_transcription', message))}
+              showDeviceSelector
             />
           ) : inputMode === 'text' ? (
             <div className="flex items-end gap-3">
@@ -1705,6 +1731,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   ref={textInputRef}
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value)}
+                  onCompositionStart={() => {
+                    isComposingTextRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingTextRef.current = false;
+                  }}
                   onKeyDown={handleInputKeyDown}
                   placeholder={t('chat.typeMessage')}
                   rows={1}

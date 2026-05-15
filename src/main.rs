@@ -59,6 +59,53 @@ fn main() {
             if openhuman_core::core::observability::is_transient_provider_http_failure(&event) {
                 return None;
             }
+            // Defense-in-depth for budget-exhausted 400s. Emit sites demote the
+            // known backend responses before they hit Sentry; this catches any
+            // future non_2xx/status=400 event that carries the same tight body
+            // phrases.
+            if openhuman_core::core::observability::is_budget_event(&event) {
+                return None;
+            }
+            // Defense-in-depth: drop max-tool-iterations cap events that
+            // slipped past the call-site filters in
+            // `agent::harness::session::runtime::run_single`,
+            // `channels::runtime::dispatch`, and
+            // `channels::providers::web::run_chat_task`. The cap is a
+            // deterministic agent-state outcome surfaced to the user via
+            // the chat-rendered "Error: …" message — Sentry is the wrong
+            // surface for it (OPENHUMAN-TAURI-99 / -98).
+            if openhuman_core::core::observability::is_max_iterations_event(&event) {
+                return None;
+            }
+            if openhuman_core::core::observability::is_transient_backend_api_failure(&event)
+                || openhuman_core::core::observability::is_transient_integrations_failure(&event)
+                || openhuman_core::core::observability::is_updater_transient_event(&event)
+            {
+                return None;
+            }
+            // Drop 401 "Session expired. Please log in again." bodies surfaced
+            // by llm_provider / backend_api, plus pre-flight "no session token
+            // stored" guards from the rpc dispatcher. Primary suppression
+            // lives at the call sites (`openhuman::providers::ops::api_error`
+            // publishes a SessionExpired event_bus signal and short-circuits;
+            // the rpc dispatcher's `is_session_expired_error` skip-path in
+            // `src/core/jsonrpc.rs` redirects to a tracing::info). This
+            // filter catches any future call site that re-emits the same
+            // shape — keeping OPENHUMAN-TAURI-25 / -1Q / -27 / -1G off
+            // Sentry permanently (~185 events/day combined).
+            if openhuman_core::core::observability::is_session_expired_event(&event) {
+                // Metadata-only log shape — `event.message` carries the raw
+                // backend response body (often a JSON envelope with the
+                // session JWT context attached) which CLAUDE.md forbids from
+                // local logs. `event.event_id` is a correlation-safe Sentry
+                // uuid that lets triage match the dropped event against the
+                // breadcrumb chain without leaking the payload.
+                log::debug!(
+                    "[sentry-session-expired-filter] dropping session-expired event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Strip server_name (hostname) to avoid leaking machine identity
             event.server_name = None;
             // Attach the cached account uid so Sentry can count unique users

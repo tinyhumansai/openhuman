@@ -368,14 +368,19 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
             "[composio:bus] connection_created"
         );
 
-        let Some(provider) = get_provider(toolkit) else {
-            tracing::debug!(
-                toolkit = %toolkit,
-                "[composio:bus] no provider registered, skipping connection_created hook"
-            );
-            return;
-        };
-
+        // Run the post-active cache refresh for EVERY toolkit, not just
+        // ones with a registered provider. Earlier shape gated the
+        // entire spawn block on `get_provider(toolkit)` — that meant
+        // toolkits without a provider (most of the 119 Composio
+        // toolkits, e.g. `googlecalendar`) bypassed the eager cache
+        // warm and had to wait for the desktop UI's 5 s
+        // `composio_list_connections` diff-poll to invalidate the
+        // stale cache. The chat-runtime then missed the new connection
+        // on any turn that fell inside that window. Decoupling the
+        // cache refresh from provider routing fixes it: every
+        // connect → invalidate + eager warm, provider hook becomes a
+        // downstream optional step gated on its own `get_provider`
+        // lookup.
         let toolkit = toolkit.clone();
         let connection_id = connection_id.clone();
 
@@ -385,8 +390,8 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
             // has actually clicked through. Resolve the config + client
             // first, then poll the backend for the connection record
             // until we observe ACTIVE/CONNECTED (or hit the timeout).
-            // Only then do we run the provider hook, so the very first
-            // provider call doesn't race the OAuth handshake.
+            // Only then do we invalidate + warm the cache so we never
+            // surface a half-finished connection to the chat runtime.
             //
             // NOTE: Future improvement — listen for an explicit
             // "connection_active" backend event instead of polling.
@@ -419,12 +424,48 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                         toolkit = %toolkit,
                         connection_id = %connection_id,
                         status = %status,
-                        "[composio:bus] connection observed active, dispatching on_connection_created"
+                        "[composio:bus] connection observed active; invalidating + eagerly warming integrations cache"
                     );
                     // Bust the prompt-level integrations cache now that
                     // the connection is confirmed ACTIVE, so the next
                     // agent session picks up the newly connected toolkit.
                     super::ops::invalidate_connected_integrations_cache();
+                    // Eagerly warm the cache from the backend so the
+                    // very next `cached_active_integrations` read
+                    // (typically the orchestrator's next-turn refresh,
+                    // or the desktop UI's 5 s `composio_list_connections`
+                    // poll — whichever fires first) returns the new
+                    // toolkit immediately instead of waiting for a
+                    // cache-miss round trip on the hot path. Cost: one
+                    // background `list_connections` call per OAuth
+                    // completion. Best-effort — on backend failure the
+                    // UI poll will repopulate within ~5 s as a safety
+                    // net.
+                    //
+                    // Use the status-distinguishing fetcher so we log
+                    // `Authoritative(empty)` and backend unavailability
+                    // differently — `fetch_connected_integrations`
+                    // collapses both to `Vec::new()` and would
+                    // otherwise hide auth/backend failures from
+                    // incident triage.
+                    match super::ops::fetch_connected_integrations_status(ctx.config.as_ref()).await
+                    {
+                        super::ops::FetchConnectedIntegrationsStatus::Authoritative(entries) => {
+                            tracing::debug!(
+                                toolkit = %toolkit,
+                                connection_id = %connection_id,
+                                cached_entries = entries.len(),
+                                "[composio:bus] eagerly warmed integrations cache after connection became active"
+                            );
+                        }
+                        super::ops::FetchConnectedIntegrationsStatus::Unavailable => {
+                            tracing::warn!(
+                                toolkit = %toolkit,
+                                connection_id = %connection_id,
+                                "[composio:bus] eager cache warm after connection became active skipped: backend unavailable"
+                            );
+                        }
+                    }
                 }
                 Err(WaitError::Timeout { last_status }) => {
                     tracing::warn!(
@@ -432,7 +473,7 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                         connection_id = %connection_id,
                         last_status = ?last_status,
                         timeout_secs = CONNECTION_READY_TIMEOUT.as_secs(),
-                        "[composio:bus] timed out waiting for connection to become active; aborting on_connection_created"
+                        "[composio:bus] timed out waiting for connection to become active; skipping cache refresh + provider hook"
                     );
                     return;
                 }
@@ -441,11 +482,23 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                         toolkit = %toolkit,
                         connection_id = %connection_id,
                         error = %error,
-                        "[composio:bus] backend lookup failed while waiting for connection; aborting on_connection_created"
+                        "[composio:bus] backend lookup failed while waiting for connection; skipping cache refresh + provider hook"
                     );
                     return;
                 }
             }
+
+            // Optional provider-specific post-OAuth hook (e.g. gmail's
+            // inbox ingest). Only fires for toolkits that registered a
+            // provider; the rest just got the cache refresh above and
+            // we're done.
+            let Some(provider) = get_provider(&toolkit) else {
+                tracing::debug!(
+                    toolkit = %toolkit,
+                    "[composio:bus] no provider registered for toolkit; cache refreshed, no provider hook to dispatch"
+                );
+                return;
+            };
 
             if let Err(e) = provider.on_connection_created(&ctx).await {
                 tracing::warn!(

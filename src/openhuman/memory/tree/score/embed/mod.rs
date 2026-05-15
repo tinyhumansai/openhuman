@@ -29,10 +29,12 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
+pub mod cloud;
 pub mod factory;
 pub mod inert;
 pub mod ollama;
 
+pub use cloud::CloudEmbedder;
 pub use factory::build_embedder_from_config;
 pub use inert::InertEmbedder;
 pub use ollama::OllamaEmbedder;

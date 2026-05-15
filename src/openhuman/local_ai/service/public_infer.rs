@@ -4,6 +4,7 @@ use crate::openhuman::local_ai::ollama_api::{
     ns_to_tps, ollama_base_url, OllamaGenerateOptions, OllamaGenerateRequest,
 };
 use crate::openhuman::local_ai::parse::sanitize_inline_completion;
+use crate::openhuman::local_ai::provider::{provider_from_config, LocalAiProvider};
 
 use super::LocalAiService;
 
@@ -190,6 +191,45 @@ impl LocalAiService {
 
         // Multi-turn local chat is background LLM-bound work — gate it.
         let _gate_permit = crate::openhuman::scheduler_gate::wait_for_capacity().await;
+
+        if provider_from_config(config) == LocalAiProvider::LmStudio {
+            let started = std::time::Instant::now();
+            let lm_messages = messages
+                .into_iter()
+                .map(
+                    |message| crate::openhuman::local_ai::lm_studio_api::LmStudioChatMessage {
+                        role: message.role,
+                        content: message.content,
+                    },
+                )
+                .collect();
+            let outcome = self
+                .lm_studio_chat_completion(
+                    config,
+                    lm_messages,
+                    max_tokens,
+                    config.default_temperature as f32,
+                    false,
+                )
+                .await?;
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            {
+                let mut status = self.status.lock();
+                status.state = "ready".to_string();
+                status.last_latency_ms = Some(elapsed_ms);
+                status.prompt_toks_per_sec = None;
+                status.gen_toks_per_sec = None;
+                status.warning = None;
+            }
+            tracing::debug!(
+                elapsed_ms,
+                prompt_tokens = ?outcome.prompt_tokens,
+                completion_tokens = ?outcome.completion_tokens,
+                reply_len = outcome.reply.len(),
+                "[local_ai:chat] lm studio /v1/chat/completions done"
+            );
+            return Ok(outcome.reply);
+        }
 
         tracing::debug!(
             message_count = messages.len(),
@@ -415,6 +455,39 @@ impl LocalAiService {
             );
             system.to_string()
         };
+
+        if provider_from_config(config) == LocalAiProvider::LmStudio {
+            let messages = vec![
+                crate::openhuman::local_ai::lm_studio_api::LmStudioChatMessage {
+                    role: "system".to_string(),
+                    content: effective_system,
+                },
+                crate::openhuman::local_ai::lm_studio_api::LmStudioChatMessage {
+                    role: "user".to_string(),
+                    content: prompt.to_string(),
+                },
+            ];
+            let outcome = self
+                .lm_studio_chat_completion(config, messages, max_tokens, temperature, allow_empty)
+                .await?;
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            {
+                let mut status = self.status.lock();
+                status.state = "ready".to_string();
+                status.last_latency_ms = Some(elapsed_ms);
+                status.prompt_toks_per_sec = None;
+                status.gen_toks_per_sec = None;
+                status.warning = None;
+            }
+            tracing::debug!(
+                elapsed_ms,
+                prompt_tokens = ?outcome.prompt_tokens,
+                completion_tokens = ?outcome.completion_tokens,
+                reply_len = outcome.reply.len(),
+                "[local_ai:infer] lm studio /v1/chat/completions done"
+            );
+            return Ok(outcome.reply);
+        }
 
         let body = OllamaGenerateRequest {
             model: model_id,

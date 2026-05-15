@@ -17,7 +17,17 @@ export interface ModelRoute {
 }
 
 export interface ModelSettingsUpdate {
+  /**
+   * OpenHuman product backend URL. Almost always left untouched; the
+   * inference endpoint is the separate `inference_url` field.
+   */
   api_url?: string | null;
+  /**
+   * Custom OpenAI-compatible LLM endpoint. When set together with
+   * `api_key`, inference talks directly to this URL instead of routing
+   * through the OpenHuman backend. Send an empty string to clear.
+   */
+  inference_url?: string | null;
   api_key?: string | null;
   default_model?: string | null;
   default_temperature?: number | null;
@@ -78,6 +88,11 @@ export interface ScreenIntelligenceSettingsUpdate {
 
 export interface LocalAiSettingsUpdate {
   runtime_enabled?: boolean | null;
+  opt_in_confirmed?: boolean | null;
+  provider?: string | null;
+  base_url?: string | null;
+  model_id?: string | null;
+  chat_model_id?: string | null;
   usage_embeddings?: boolean | null;
   usage_heartbeat?: boolean | null;
   usage_learning_reflection?: boolean | null;
@@ -127,10 +142,22 @@ export async function openhumanGetConfig(): Promise<CommandResponse<ConfigSnapsh
  * `config.get_client_config` in `src/openhuman/config/schemas.rs`.
  */
 export interface ClientConfig {
+  /** OpenHuman product backend URL (auth/billing/voice). */
   api_url: string | null;
+  /**
+   * Custom OpenAI-compatible LLM endpoint. When set with an api_key, the
+   * core routes inference directly to this URL instead of the OpenHuman
+   * backend. This is what the LLM Provider settings panel reads/writes.
+   */
+  inference_url: string | null;
   default_model: string | null;
   app_version: string;
   api_key_set: boolean;
+  /**
+   * Persisted task-hint -> model id pairs the core router will obey. Empty
+   * when the OpenHuman built-in router is active.
+   */
+  model_routes: ModelRoute[];
 }
 
 export async function openhumanGetClientConfig(): Promise<CommandResponse<ClientConfig>> {

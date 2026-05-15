@@ -210,6 +210,12 @@ where
     // eventual Deferred reason explains *why* we're sitting idle rather
     // than the generic "both arms failed" copy.
     let mut cloud_budget_exhausted: Option<anyhow::Error> = None;
+    // Track whether the cloud arm bailed because the prompt-guard
+    // flagged the content (OPENHUMAN-TAURI-X). The guard runs before
+    // dispatch and is shared across arms, so a flag on cloud will
+    // repeat on local — surface the verdict in the Deferred reason
+    // for operator-facing telemetry.
+    let mut cloud_safety_flagged: Option<anyhow::Error> = None;
 
     // ── Cloud arm ──────────────────────────────────────────────────
     match try_arm(&cloud, envelope, TriageResolutionPath::Cloud).await {
@@ -226,6 +232,18 @@ where
                  skipping retry and falling back to local arm"
             );
             cloud_budget_exhausted = Some(err);
+        }
+        Err(ArmError::SafetyFlagged(err)) => {
+            tracing::warn!(
+                source = %envelope.source.slug(),
+                label = %envelope.display_label,
+                external_id = %envelope.external_id,
+                path = TriageResolutionPath::Cloud.as_str(),
+                error = %err,
+                "[triage::evaluator] cloud rejected by prompt-guard; \
+                 skipping retry and falling back to local arm"
+            );
+            cloud_safety_flagged = Some(err);
         }
         Err(ArmError::Retryable { retry_after_ms, .. }) => {
             // Sleep before the cloud retry. Honour Retry-After when
@@ -257,6 +275,18 @@ where
                     );
                     cloud_budget_exhausted = Some(err);
                 }
+                Err(ArmError::SafetyFlagged(err)) => {
+                    tracing::warn!(
+                        source = %envelope.source.slug(),
+                        label = %envelope.display_label,
+                        external_id = %envelope.external_id,
+                        path = TriageResolutionPath::CloudAfterRetry.as_str(),
+                        error = %err,
+                        "[triage::evaluator] cloud rejected by prompt-guard on retry; \
+                         falling back to local arm"
+                    );
+                    cloud_safety_flagged = Some(err);
+                }
                 Err(ArmError::Retryable { .. }) => {
                     // Exhausted cloud budget — fall through to local.
                     tracing::warn!(
@@ -278,19 +308,28 @@ where
         // forwarded into telemetry / UI, so it must stay a stable,
         // scrubbed string. Raw upstream error text goes to the debug
         // log instead, where it is operator-visible but not surfaced.
-        let reason = match &cloud_budget_exhausted {
-            Some(err) => {
-                tracing::debug!(
-                    target: "[triage::evaluator]",
-                    source = %envelope.source.slug(),
-                    label = %envelope.display_label,
-                    external_id = %envelope.external_id,
-                    error = %err,
-                    "cloud budget exhausted; no local arm — full upstream error"
-                );
-                "cloud budget exhausted; local arm unavailable".to_string()
-            }
-            None => "cloud retry exhausted; local arm unavailable".to_string(),
+        let reason = if let Some(err) = cloud_safety_flagged.as_ref() {
+            tracing::debug!(
+                target: "[triage::evaluator]",
+                source = %envelope.source.slug(),
+                label = %envelope.display_label,
+                external_id = %envelope.external_id,
+                error = %err,
+                "prompt-guard rejected on cloud; no local arm — full guard verdict"
+            );
+            "prompt-guard rejection; local arm unavailable".to_string()
+        } else if let Some(err) = cloud_budget_exhausted.as_ref() {
+            tracing::debug!(
+                target: "[triage::evaluator]",
+                source = %envelope.source.slug(),
+                label = %envelope.display_label,
+                external_id = %envelope.external_id,
+                error = %err,
+                "cloud budget exhausted; no local arm — full upstream error"
+            );
+            "cloud budget exhausted; local arm unavailable".to_string()
+        } else {
+            "cloud retry exhausted; local arm unavailable".to_string()
         };
         return Ok(TriageOutcome::Deferred {
             defer_until_ms: now_ms().saturating_add(DEFER_WAKEUP_MS),
@@ -306,6 +345,7 @@ where
         Ok(run) => Ok(TriageOutcome::Decision(run)),
         Err(ArmError::Fatal(err))
         | Err(ArmError::BudgetExhausted(err))
+        | Err(ArmError::SafetyFlagged(err))
         | Err(ArmError::Retryable { source: err, .. }) => {
             // Local also failed — defer rather than surface a hard
             // error. Today's "hard fail" is the wrong default for a
@@ -315,9 +355,12 @@ where
             // flow into telemetry / UI, so keep it scrubbed. Raw error
             // text from cloud + local lives in the structured warn
             // fields below — visible to operators, not callers.
-            let reason = match cloud_budget_exhausted.as_ref() {
-                Some(_) => "cloud budget exhausted; local arm also failed".to_string(),
-                None => "cloud retry exhausted; local arm also failed".to_string(),
+            let reason = if cloud_safety_flagged.is_some() {
+                "prompt-guard rejection; local arm also failed".to_string()
+            } else if cloud_budget_exhausted.is_some() {
+                "cloud budget exhausted; local arm also failed".to_string()
+            } else {
+                "cloud retry exhausted; local arm also failed".to_string()
             };
             tracing::warn!(
                 target: "[triage::evaluator]",
@@ -327,6 +370,7 @@ where
                 local_error = %err,
                 cloud_error = cloud_budget_exhausted
                     .as_ref()
+                    .or(cloud_safety_flagged.as_ref())
                     .map(|e| e.to_string())
                     .unwrap_or_default(),
                 defer_ms = DEFER_WAKEUP_MS,
@@ -361,6 +405,17 @@ enum ArmError {
     /// This is **not** a fatal error: the user takes an explicit
     /// action (top up) to fix it, so it must not page Sentry.
     BudgetExhausted(anyhow::Error),
+    /// Our prompt-injection guard (`agent::bus`'s `enforce_prompt_input`,
+    /// also used by `agent::harness::session::runtime`) flagged the
+    /// incoming content as adversarial / unsafe and refused to dispatch
+    /// the turn. The guard runs *before* either model is contacted, so
+    /// trying the same prompt again — on cloud or local — produces the
+    /// same verdict. This is **not** a fatal error: the guard is doing
+    /// its job (OPENHUMAN-TAURI-X regression: an adversarial Gmail
+    /// message reliably trips the guard, and every fire paged Sentry).
+    /// Route the same way as `BudgetExhausted` so the local-arm fallthrough
+    /// lands in `TriageOutcome::Deferred` rather than `Err(_)`.
+    SafetyFlagged(anyhow::Error),
 }
 
 /// Run a single arm: dispatch the agent turn through the native bus
@@ -519,7 +574,39 @@ fn classify_error(message: String) -> ArmError {
     if is_inference_budget_exceeded(&message) {
         return ArmError::BudgetExhausted(err);
     }
+    // Prompt-guard rejection (`agent::bus::enforce_prompt_input` →
+    // `ReviewBlocked` / `Blocked`). The guard fires *before* either
+    // arm contacts a model, so the verdict is identical on cloud and
+    // local — no point retrying. Treat as Deferred-eligible so the
+    // chain ends in `TriageOutcome::Deferred` rather than Fatal,
+    // which was paging Sentry for adversarial-email triage attempts
+    // (OPENHUMAN-TAURI-X regression).
+    if is_prompt_guard_rejection(&message) {
+        return ArmError::SafetyFlagged(err);
+    }
     ArmError::Fatal(err)
+}
+
+/// Returns `true` when `message` is the verbatim string our prompt-injection
+/// guard returns when it rejects a turn before dispatch.
+///
+/// Canonical sources:
+/// - `src/openhuman/agent/bus.rs` — `Blocked` / `ReviewBlocked` arms of the
+///   `enforce_prompt_input` decision (the path the triage evaluator hits via
+///   `agent.run_turn`).
+/// - `src/openhuman/agent/harness/session/runtime.rs` — same strings in the
+///   tool-call loop, kept identical so this classifier covers both.
+/// - `src/openhuman/local_ai/ops.rs` — user-facing variants with the
+///   `"Please rephrase clearly."` suffix; we match the leading phrase so
+///   either form classifies.
+///
+/// Kept narrow on purpose: the guard's full output strings are private to
+/// our code, so a substring match against the leading phrase will not collide
+/// with anything coming back from upstream providers.
+fn is_prompt_guard_rejection(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("prompt flagged for security review")
+        || lower.contains("prompt blocked by security policy")
 }
 
 /// Returns `true` when `message` signals that the upstream rejected the

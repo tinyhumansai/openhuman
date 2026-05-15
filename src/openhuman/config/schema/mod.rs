@@ -64,7 +64,7 @@ pub use storage_memory::{
 pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
     GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, MultimodalConfig,
-    SecretsConfig, WebSearchConfig,
+    SecretsConfig, SeltzConfig, WebSearchConfig,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};
 mod voice_server;

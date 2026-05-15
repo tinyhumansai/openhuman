@@ -422,7 +422,9 @@ fn title_log_prefix_is_grep_friendly_and_stable() {
 
 #[tokio::test]
 async fn message_append_returns_typed_not_found_for_stale_thread() {
-    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK.lock().unwrap();
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let workspace = tempfile::tempdir().expect("workspace");
     let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
     let thread_id = "thread-missing";
@@ -452,7 +454,9 @@ async fn message_append_returns_typed_not_found_for_stale_thread() {
 
 #[tokio::test]
 async fn generate_title_returns_typed_not_found_for_stale_thread() {
-    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK.lock().unwrap();
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let workspace = tempfile::tempdir().expect("workspace");
     let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
     let thread_id = "thread-missing";

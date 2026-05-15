@@ -578,9 +578,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare-build.outputs.tag }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" > /tmp/openhuman-release.json
+          # Fetch the release by id, not by tag: at this point the release is
+          # still a draft, and `GET /releases/tags/{tag}` returns 404 for
+          # drafts. The id-keyed endpoint works for drafts and published
+          # releases alike.
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > /tmp/openhuman-release.json
           gh release download "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern latest.json \
