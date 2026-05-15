@@ -1204,7 +1204,9 @@ mod tests {
         // socket shape so a future regression in `is_transient_upstream_http_message`
         // surfaces here, not behind another classifier.
         assert_eq!(
-            expected_error_kind("WebSocket connect: HTTP error: 502: upstream returned bad gateway"),
+            expected_error_kind(
+                "WebSocket connect: HTTP error: 502: upstream returned bad gateway"
+            ),
             Some(ExpectedErrorKind::TransientUpstreamHttp)
         );
 

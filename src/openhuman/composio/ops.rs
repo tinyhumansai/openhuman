@@ -193,13 +193,10 @@ pub async fn composio_delete_connection(
     let toolkit = resolve_toolkit_for_connection(&client, connection_id)
         .await
         .ok();
-    let resp = client
-        .delete_connection(connection_id)
-        .await
-        .map_err(|e| {
-            report_composio_op_error("delete_connection", &e);
-            format!("[composio] delete_connection failed: {e:#}")
-        })?;
+    let resp = client.delete_connection(connection_id).await.map_err(|e| {
+        report_composio_op_error("delete_connection", &e);
+        format!("[composio] delete_connection failed: {e:#}")
+    })?;
     if let Some(toolkit) = toolkit.as_deref() {
         let deleted =
             super::providers::profile::delete_connected_identity_facets(toolkit, connection_id);
@@ -274,13 +271,10 @@ pub async fn composio_list_tools(
 ) -> OpResult<RpcOutcome<ComposioToolsResponse>> {
     tracing::debug!(?toolkits, "[composio] rpc list_tools");
     let client = resolve_client(config)?;
-    let resp = client
-        .list_tools(toolkits.as_deref())
-        .await
-        .map_err(|e| {
-            report_composio_op_error("list_tools", &e);
-            format!("[composio] list_tools failed: {e:#}")
-        })?;
+    let resp = client.list_tools(toolkits.as_deref()).await.map_err(|e| {
+        report_composio_op_error("list_tools", &e);
+        format!("[composio] list_tools failed: {e:#}")
+    })?;
     let count = resp.tools.len();
     Ok(RpcOutcome::new(
         resp,
