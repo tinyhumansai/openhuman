@@ -1292,6 +1292,35 @@ fn warn_if_wsl_x11_desktop_launch() {
 #[cfg(not(target_os = "linux"))]
 fn warn_if_wsl_x11_desktop_launch() {}
 
+type CefCommandLineArg = (&'static str, Option<&'static str>);
+
+fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &str, arch: &str) {
+    // Issue #1697: on Arch/Manjaro-family Linux systems, the AppImage can
+    // abort during CEF GPU process startup when EGL context creation fails
+    // before Chromium's own fallback path gets a usable renderer. Disable the
+    // hardware GPU path on Linux so packaged builds can still launch via
+    // software compositing.
+    if os == "linux" {
+        args.push(("--disable-gpu", None));
+        args.push(("--disable-gpu-compositing", None));
+        log::info!(
+            "[cef-startup] Linux detected: adding --disable-gpu and --disable-gpu-compositing (issue #1697)"
+        );
+    }
+
+    // Issue #1012: Intel macOS (x86_64) crashes with EXC_CRASH (SIGABRT)
+    // inside CrBrowserMain when CEF 146 tries to use GPU compositing via
+    // Metal on Intel GPU hardware/drivers. Disable GPU compositing on
+    // x86_64 macOS so the browser process falls back to software compositing
+    // instead of aborting.
+    if os == "macos" && arch == "x86_64" {
+        args.push(("--disable-gpu-compositing", None));
+        log::info!(
+            "[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)"
+        );
+    }
+}
+
 pub fn run() {
     // Initialize Sentry for the Tauri shell (desktop host) process before any
     // other startup work. Reads `OPENHUMAN_TAURI_SENTRY_DSN` at runtime first,
@@ -1552,7 +1581,7 @@ pub fn run() {
         // `tauri-runtime-cef/src/cef_impl.rs`) routes value-less args that
         // don't start with `-` to `append_argument` (positional) instead of
         // `append_switch`, which means Chromium silently ignores them.
-        let mut args: Vec<(&str, Option<&str>)> = vec![
+        let mut args: Vec<CefCommandLineArg> = vec![
             ("--use-mock-keychain", None),
             ("--password-store", Some("basic")),
             // Enable SharedArrayBuffer so embedded apps that need WebRTC
@@ -1659,18 +1688,11 @@ pub fn run() {
         // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
         // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
         args.push(("--remote-debugging-port", Some("19222")));
-        // Issue #1012 — Intel macOS (x86_64) crashes with EXC_CRASH (SIGABRT)
-        // inside CrBrowserMain when CEF 146 tries to use GPU compositing via
-        // Metal on Intel GPU hardware/drivers. Disable GPU compositing on
-        // x86_64 macOS so the browser process falls back to software
-        // compositing instead of aborting. This flag is a no-op on Apple
-        // Silicon (arm64) and on non-macOS targets; all other GPU paths
-        // (WebGL, video decode) remain unaffected.
-        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-        {
-            args.push(("--disable-gpu-compositing", None));
-            log::info!("[cef-startup] Intel macOS detected: adding --disable-gpu-compositing (issue #1012)");
-        }
+        append_platform_cef_gpu_workarounds(
+            &mut args,
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+        );
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
 
@@ -2840,6 +2862,36 @@ mod tests {
     #[test]
     fn platform_os_is_macos_on_macos_build() {
         assert_eq!(std::env::consts::OS, "macos");
+    }
+
+    #[test]
+    fn platform_cef_gpu_workarounds_disable_linux_gpu_path() {
+        let mut args = Vec::new();
+        append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64");
+
+        assert!(args.contains(&("--disable-gpu", None)));
+        assert!(args.contains(&("--disable-gpu-compositing", None)));
+    }
+
+    #[test]
+    fn platform_cef_gpu_workarounds_disable_intel_macos_compositing_only() {
+        let mut args = Vec::new();
+        append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64");
+
+        assert_eq!(args, vec![("--disable-gpu-compositing", None)]);
+    }
+
+    #[test]
+    fn platform_cef_gpu_workarounds_leave_other_platforms_alone() {
+        for (os, arch) in [("macos", "aarch64"), ("windows", "x86_64")] {
+            let mut args = Vec::new();
+            append_platform_cef_gpu_workarounds(&mut args, os, arch);
+
+            assert!(
+                args.is_empty(),
+                "unexpected CEF GPU flags for {os}/{arch}: {args:?}"
+            );
+        }
     }
 
     /// On an Intel macOS build the ARCH constant must equal "x86_64".
