@@ -219,6 +219,28 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
   });
 
+  it('warns when the initial core state poll fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      fetchSnapshot.mockRejectedValue(new Error('core offline'));
+
+      render(
+        <CoreStateProvider>
+          <Consumer />
+        </CoreStateProvider>
+      );
+
+      await waitFor(() =>
+        expect(warnSpy).toHaveBeenCalledWith('[core-state] poll failed (attempt 1/5):', {
+          message: 'core offline',
+        })
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('backfills snapshot.currentUser from auth.user when currentUser is missing', async () => {
     fetchSnapshot.mockResolvedValue(
       makeSnapshot({
