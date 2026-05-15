@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::openhuman::memory::Memory;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -6,6 +8,7 @@ use super::harness::memory_context::{
     CROSS_CHAT_LIMIT, WORKING_MEMORY_KEY_PREFIX, WORKING_MEMORY_LIMIT,
 };
 use crate::openhuman::learning::transcript_ingest::CONVERSATION_MEMORY_NAMESPACE;
+use crate::openhuman::memory::conversations::ConversationStore;
 
 /// Maximum number of `[Prior conversations]` lines surfaced into the prompt
 /// at the start of a fresh chat. Tight cap on purpose: this block is meant
@@ -47,6 +50,9 @@ pub struct DefaultMemoryLoader {
     min_relevance_score: f64,
     /// Maximum characters of memory context to inject (0 = unlimited).
     max_context_chars: usize,
+    /// Workspace dir for direct cross-thread JSONL search (issue #1505).
+    /// `None` falls back to the Memory-trait recall path.
+    workspace_dir: Option<PathBuf>,
 }
 
 /// Lightweight citation object derived from recalled memory entries.
@@ -71,6 +77,7 @@ impl Default for DefaultMemoryLoader {
             limit: 5,
             min_relevance_score: 0.4,
             max_context_chars: 2000,
+            workspace_dir: None,
         }
     }
 }
@@ -81,11 +88,21 @@ impl DefaultMemoryLoader {
             limit: limit.max(1),
             min_relevance_score,
             max_context_chars: 2000,
+            workspace_dir: None,
         }
     }
 
     pub fn with_max_chars(mut self, max_chars: usize) -> Self {
         self.max_context_chars = max_chars;
+        self
+    }
+
+    /// Wire the workspace dir so the `[Cross-chat context]` block can do
+    /// direct JSONL scans across threads (issue #1505). Without this the
+    /// loader still falls back to the Memory-trait recall path, which only
+    /// surfaces hits from archived chats (episodic_log).
+    pub fn with_workspace_dir(mut self, workspace_dir: PathBuf) -> Self {
+        self.workspace_dir = Some(workspace_dir);
         self
     }
 }
@@ -269,48 +286,89 @@ impl MemoryLoader for DefaultMemoryLoader {
 
         // ── Cross-chat context (#1505) ───────────────────────────────────
         //
-        // Same user, multiple chats. Pull conversational hits from OTHER
-        // sessions (workspace-isolated by SQLite path) so context the
-        // user shared in chat A is recoverable when they ask a dependent
-        // question in chat B. Bounded by the same character budget as
-        // the rest of the loader output. The current chat's `thread_id`
-        // (from the channel-side `with_thread_id` task-local) is
-        // excluded so the block doesn't echo same-chat history.
+        // Same user, multiple chats. Primary source: direct JSONL scan
+        // across `<workspace>/memory/conversations/threads/*.jsonl` via
+        // `ConversationStore::search_cross_thread_messages`. JSONL is
+        // append-per-turn, so cross-chat hits surface immediately —
+        // unlike the durable-fact pipeline (`learning::transcript_ingest`)
+        // which is async/batched and the episodic_log archivist path
+        // which only fires on explicit `archive_session`.
+        //
+        // The current chat's `thread_id` (from the channel-side
+        // `with_thread_id` task-local) is excluded so the block doesn't
+        // echo same-chat history.
+        //
+        // Fallback: when `workspace_dir` is not wired (e.g. tests, or a
+        // headless run that didn't go through the session builder), call
+        // through `memory.recall` with `cross_session=true` instead.
+        // That path reads `episodic_log` (populated only by the
+        // archivist tool) so it's a best-effort secondary signal.
         let current_thread_id = crate::openhuman::providers::thread_context::current_thread_id();
-        let cross_session_opts = crate::openhuman::memory::RecallOpts {
-            session_id: current_thread_id.as_deref(),
-            cross_session: true,
-            min_score: Some(self.min_relevance_score),
-            ..Default::default()
+        let cross_hits: Vec<(String, String)> = if let Some(workspace_dir) = &self.workspace_dir {
+            let store = ConversationStore::new(workspace_dir.clone());
+            match store.search_cross_thread_messages(
+                user_message,
+                CROSS_CHAT_LIMIT * 4,
+                current_thread_id.as_deref(),
+            ) {
+                Ok(hits) => {
+                    tracing::debug!(
+                        "[memory_loader] cross-chat JSONL scan returned {} hits (exclude={:?})",
+                        hits.len(),
+                        current_thread_id
+                    );
+                    hits.into_iter()
+                        .filter(|h| h.score >= self.min_relevance_score)
+                        .take(CROSS_CHAT_LIMIT)
+                        .map(|h| (h.thread_id, h.content))
+                        .collect()
+                }
+                Err(e) => {
+                    tracing::warn!("[memory_loader] cross-chat JSONL scan failed (non-fatal): {e}");
+                    Vec::new()
+                }
+            }
+        } else {
+            // Fallback path (no workspace_dir wired)
+            let cross_session_opts = crate::openhuman::memory::RecallOpts {
+                session_id: current_thread_id.as_deref(),
+                cross_session: true,
+                min_score: Some(self.min_relevance_score),
+                ..Default::default()
+            };
+            let entries = memory
+                .recall(user_message, CROSS_CHAT_LIMIT * 3, cross_session_opts)
+                .await
+                .unwrap_or_default();
+            entries
+                .into_iter()
+                .filter(|e| e.id.starts_with("episodic-cross:"))
+                .filter(|e| match e.score {
+                    Some(score) => score >= self.min_relevance_score,
+                    None => true,
+                })
+                .take(CROSS_CHAT_LIMIT)
+                .map(|e| {
+                    let sid = e
+                        .session_id
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string());
+                    (sid, e.content)
+                })
+                .collect()
         };
-        let cross_entries = memory
-            .recall(user_message, CROSS_CHAT_LIMIT * 3, cross_session_opts)
-            .await
-            .unwrap_or_default();
 
         let mut appended_cross_header = false;
-        for entry in cross_entries
-            .into_iter()
-            .filter(|e| e.id.starts_with("episodic-cross:"))
-            .filter(|e| match e.score {
-                Some(score) => score >= self.min_relevance_score,
-                None => true,
-            })
-            .take(CROSS_CHAT_LIMIT)
-        {
-            let snippet = if entry.content.chars().count() > CROSS_CHAT_LOADER_SNIPPET_CHARS {
+        for (sid, content) in cross_hits {
+            let snippet = if content.chars().count() > CROSS_CHAT_LOADER_SNIPPET_CHARS {
                 crate::openhuman::util::truncate_with_ellipsis(
-                    &entry.content,
+                    &content,
                     CROSS_CHAT_LOADER_SNIPPET_CHARS,
                 )
             } else {
-                entry.content.clone()
+                content
             };
-            let prov = entry
-                .session_id
-                .as_deref()
-                .map(provenance_tag)
-                .unwrap_or_else(|| "chat:unknown".to_string());
+            let prov = provenance_tag(&sid);
             if !appended_cross_header {
                 let section = "[Cross-chat context]\n";
                 if context.len() + section.len() > budget {
