@@ -1085,8 +1085,15 @@ impl LocalAiService {
                 "model": expected_chat,
             }));
         }
-        if let Some(ref err) = models_error {
-            issues.push(format!("Failed to list LM Studio models: {err}"));
+        // Only surface the raw error when the server appeared healthy but the
+        // model-list call still returned an error (e.g. a malformed response).
+        // When the server is not reachable the "not running" issue above is
+        // already the canonical message; duplicating the low-level error there
+        // would create two issues for one failure.
+        if healthy {
+            if let Some(ref err) = models_error {
+                issues.push(format!("Failed to list LM Studio models: {err}"));
+            }
         }
 
         tracing::debug!(

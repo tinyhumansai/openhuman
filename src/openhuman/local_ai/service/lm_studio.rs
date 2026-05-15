@@ -19,26 +19,13 @@ impl LocalAiService {
         &self,
         config: &Config,
     ) -> Result<(), String> {
-        let models = self.list_lm_studio_models(config).await?;
-        if models.is_empty() {
-            return Err(format!(
-                "LM Studio is reachable at {} but no models are loaded",
-                lm_studio_base_url(config)
-            ));
-        }
+        // Probe connectivity only — the server must be reachable. Whether any
+        // models are loaded is a separate concern surfaced via diagnostics and
+        // the asset-status warning, so bootstrap can succeed and the UI can
+        // show an actionable "load a model in LM Studio" CTA instead of a
+        // hard error.
+        self.list_lm_studio_models(config).await?;
         Ok(())
-    }
-
-    /// Returns `true` when the LM Studio server responds successfully to a
-    /// `/v1/models` probe (regardless of whether any models are loaded).
-    /// Reserved for future health-gating in the routing layer; currently only
-    /// `ensure_lm_studio_available` is used at bootstrap.
-    #[allow(dead_code)]
-    pub(in crate::openhuman::local_ai::service) async fn lm_studio_healthy(
-        &self,
-        config: &Config,
-    ) -> bool {
-        self.list_lm_studio_models(config).await.is_ok()
     }
 
     pub(in crate::openhuman::local_ai::service) async fn list_lm_studio_models(
@@ -138,7 +125,11 @@ impl LocalAiService {
             max_tokens,
         };
 
-        let request = self.http.post(&url).json(&body);
+        let request = self
+            .http
+            .post(&url)
+            .timeout(std::time::Duration::from_secs(120))
+            .json(&body);
         let response = apply_lm_studio_auth(request, config)
             .send()
             .await
