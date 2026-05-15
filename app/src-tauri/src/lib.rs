@@ -1366,6 +1366,23 @@ pub fn run() {
             {
                 return None;
             }
+            // Drop 401 "Session expired. Please log in again." bodies and
+            // pre-flight "no session token stored" guards — mirrors the
+            // core binary's before_send chain. Since #1061 the Tauri shell
+            // links the core in-process, so any session-expired event
+            // captured by either surface lands in the same Sentry client
+            // here and must be filtered identically. Keeps
+            // OPENHUMAN-TAURI-25 / -1Q / -27 / -1G off Sentry.
+            if openhuman_core::core::observability::is_session_expired_event(&event) {
+                // Metadata-only log shape — `event.message` carries the raw
+                // backend response body which CLAUDE.md forbids from local
+                // logs. Mirror the core binary's main.rs filter.
+                log::debug!(
+                    "[sentry-session-expired-filter] dropping session-expired event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Strip server_name (hostname) to avoid leaking machine identity.
             event.server_name = None;
             event.user = None;
