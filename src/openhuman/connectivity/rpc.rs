@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 use serde_json::json;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::openhuman::socket::manager::global_socket_manager;
 use crate::rpc::RpcOutcome;
@@ -49,10 +49,26 @@ pub struct ConnectivityDiagResponse {
 /// but lighter — we only need a number for a TCP probe, not a bound listener.
 fn resolve_listen_port() -> u16 {
     if let Ok(raw) = std::env::var("OPENHUMAN_CORE_PORT") {
-        if let Ok(parsed) = raw.trim().parse::<u16>() {
-            return parsed;
+        match raw.trim().parse::<u16>() {
+            Ok(parsed) => {
+                debug!(
+                    "[connectivity][rpc] resolve_listen_port: using env override port={}",
+                    parsed
+                );
+                return parsed;
+            }
+            Err(err) => {
+                // Log so misconfiguration is visible in diagnostics rather
+                // than silently using the default. (addresses @coderabbitai
+                // on rpc.rs:56)
+                warn!(
+                    "[connectivity][rpc] resolve_listen_port: invalid OPENHUMAN_CORE_PORT='{}': {}",
+                    raw, err
+                );
+            }
         }
     }
+    debug!("[connectivity][rpc] resolve_listen_port: using default port=7788");
     7788
 }
 
@@ -197,7 +213,11 @@ mod tests {
             .into_cli_compatible_json()
             .expect("into_cli_compatible_json");
         assert!(json.is_object(), "payload should be a JSON object");
-        let diag = json.get("diag").expect("diag key present");
+        // `single_log` adds a log entry, so `into_cli_compatible_json` wraps
+        // the value inside `{ "result": ..., "logs": [...] }`. Look for the
+        // diag payload under `result`.
+        let result = json.get("result").expect("result envelope key present");
+        let diag = result.get("diag").expect("diag key present under result");
         assert!(diag.get("socket_state").is_some());
         assert!(diag.get("listen_port").is_some());
         assert!(diag.get("listen_port_in_use").is_some());
