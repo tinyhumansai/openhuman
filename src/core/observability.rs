@@ -812,8 +812,20 @@ pub fn is_transient_backend_api_failure(event: &sentry::protocol::Event<'_>) -> 
 
 /// Transient integrations / Composio failures (timeout, connection reset,
 /// gateway hiccups).
+///
+/// Accepts both `domain="integrations"` (the shared
+/// [`crate::openhuman::integrations::IntegrationClient`] HTTP wrapper that
+/// fronts every backend-proxied integration) and `domain="composio"` (errors
+/// reported from the Composio op layer in
+/// [`crate::openhuman::composio::ops`]). Composio routes through the same
+/// `IntegrationClient`, so the failure shape is identical — but op-level
+/// reporters that wrap and re-emit those errors with their own domain tag
+/// would otherwise escape the integrations-scoped filter (OPENHUMAN-TAURI-35
+/// ~139ev, -2H ~26ev: `[composio] list_connections failed: Backend returned
+/// 502 …` events that landed in Sentry under `domain=composio`).
 pub fn is_transient_integrations_failure(event: &sentry::protocol::Event<'_>) -> bool {
     is_transient_domain_failure(event, "integrations")
+        || is_transient_domain_failure(event, "composio")
 }
 
 /// Transient updater failures from GitHub release probes/downloads.
@@ -1826,14 +1838,19 @@ mod tests {
             );
         }
 
-        let wrong_domain = event_with_tags(&[
-            ("domain", "composio"),
+        // Sibling-domain check: composio op-layer events MUST be silenced
+        // by the integrations filter — composio routes through the same
+        // `IntegrationClient` so the failure shape is identical, but
+        // op-level reporters that wrap and re-emit with their own domain
+        // tag would otherwise escape (OPENHUMAN-TAURI-35 / -2H).
+        let scheduler_domain = event_with_tags(&[
+            ("domain", "scheduler"),
             ("failure", "non_2xx"),
             ("status", "503"),
         ]);
         assert!(
-            !is_transient_integrations_failure(&wrong_domain),
-            "domain scoping must keep composio-tagged events visible"
+            !is_transient_integrations_failure(&scheduler_domain),
+            "domain scoping must keep unrelated transient-shaped events visible"
         );
 
         let non_matching_transport = event_with_tags_and_message(
@@ -1844,6 +1861,57 @@ mod tests {
             !is_transient_integrations_failure(&non_matching_transport),
             "transport failures without an allowlisted phrase must stay visible"
         );
+    }
+
+    #[test]
+    fn composio_domain_routes_through_integrations_filter() {
+        // OPENHUMAN-TAURI-35 (~139 events) / -2H (~26 events):
+        // `[composio] list_connections failed: Backend returned 502 …` —
+        // composio op-layer wrappers (e.g. `composio_list_connections`) emit
+        // errors under `domain="composio"` so the original
+        // `domain="integrations"` filter let them through. Routing the
+        // composio domain through the same transient classifier closes
+        // that gap; the underlying transport / non_2xx semantics are
+        // identical because both layers share the same `IntegrationClient`.
+        for status in TRANSIENT_HTTP_STATUSES {
+            let event = event_with_tags(&[
+                ("domain", "composio"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                is_transient_integrations_failure(&event),
+                "composio status {status} must be classified as transient"
+            );
+        }
+
+        // Transport-phrase variant — composio also surfaces reqwest
+        // transport failures (timeouts, connection resets) once the op
+        // wrapper has tagged the event with `failure=transport`.
+        for phrase in TRANSIENT_TRANSPORT_PHRASES {
+            let event = event_with_tags_and_message(
+                &[("domain", "composio"), ("failure", "transport")],
+                &format!("[composio] execute failed: {phrase}"),
+            );
+            assert!(
+                is_transient_integrations_failure(&event),
+                "composio transport phrase {phrase} must be classified as transient"
+            );
+        }
+
+        // Non-transient composio statuses (404 / 500) must still surface —
+        // actionable bugs even when reported under the composio domain.
+        for status in ["404", "500"] {
+            let event = event_with_tags(&[
+                ("domain", "composio"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                !is_transient_integrations_failure(&event),
+                "composio status {status} must stay visible"
+            );
+        }
     }
 
     #[test]
