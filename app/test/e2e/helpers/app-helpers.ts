@@ -18,6 +18,12 @@ import { isTauriDriver } from './platform';
  * is responding on :19222 before WDIO connects, so by the time a spec runs
  * we usually just need to give the React root a beat to mount. Specs that
  * need a stricter guarantee should call `waitForAppReady` directly.
+ *
+ * Also dismisses the first-run `BootCheckGate` "Choose core mode" modal
+ * if it's up — every spec needs the real app behind it, and the picker
+ * intercepts every click / deep-link otherwise. (The picker only renders
+ * when persisted `coreMode.kind === 'unset'`; on a fresh CEF profile —
+ * which every CI run on Linux is — that's the default.)
  */
 export async function waitForApp(): Promise<void> {
   try {
@@ -35,6 +41,75 @@ export async function waitForApp(): Promise<void> {
     // Fall back to the legacy fixed pause so specs that historically tolerated
     // a slow startup don't regress.
     await browser.pause(5_000);
+  }
+  await dismissBootCheckGate();
+}
+
+/**
+ * Dismiss the `BootCheckGate` first-run "Choose core mode" picker if it is
+ * currently rendered. No-op if the picker is absent (subsequent invocations
+ * within a session, or builds where coreMode is already persisted).
+ *
+ * Why this is necessary: the picker is a fixed-position modal that
+ * intercepts every click in the WebView. Without dismissing it, every
+ * mega-flow sub-test would deep-link an app the user can't actually
+ * interact with, no `/consume` request would ever fire, and the first
+ * `waitForMockRequest` would time out.
+ *
+ * "Local" is pre-selected on desktop builds, so a single Continue click is
+ * enough — no need to fill cloud URL/token.
+ */
+export async function dismissBootCheckGate(timeout: number = 5_000): Promise<void> {
+  if (!isTauriDriver()) return;
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    let onPicker = false;
+    try {
+      onPicker = await browser.execute(() => {
+        const headings = Array.from(document.querySelectorAll('h2'));
+        return headings.some(h =>
+          /Choose core mode|Connect to your core/.test(h.textContent ?? '')
+        );
+      });
+    } catch {
+      // session not yet ready — keep polling
+      await browser.pause(200);
+      continue;
+    }
+
+    if (!onPicker) return;
+
+    let clicked = false;
+    try {
+      clicked = await browser.execute(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const cont = buttons.find(b => (b.textContent ?? '').trim() === 'Continue');
+        if (!cont) return false;
+        (cont as HTMLButtonElement).click();
+        return true;
+      });
+    } catch {
+      // surface on the next iteration via the onPicker check
+    }
+
+    if (clicked) {
+      // Wait for the modal to unmount.
+      const dismissDeadline = Date.now() + 5_000;
+      while (Date.now() < dismissDeadline) {
+        try {
+          const stillThere = await browser.execute(() =>
+            Array.from(document.querySelectorAll('h2')).some(h =>
+              /Choose core mode|Connect to your core/.test(h.textContent ?? '')
+            )
+          );
+          if (!stillThere) return;
+        } catch {
+          // ignore
+        }
+        await browser.pause(200);
+      }
+    }
+    await browser.pause(250);
   }
 }
 

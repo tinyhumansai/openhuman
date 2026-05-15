@@ -872,6 +872,27 @@ impl Config {
             }
         }
 
+        // Seltz direct-API search.
+        if let Some(key) = env.get_any(&["OPENHUMAN_SELTZ_API_KEY", "SELTZ_API_KEY"]) {
+            if !key.is_empty() {
+                self.seltz.api_key = Some(key);
+                // Auto-enable when the key is set via env.
+                self.seltz.enabled = true;
+            }
+        }
+        if let Some(url) = env.get_any(&["OPENHUMAN_SELTZ_API_URL", "SELTZ_API_URL"]) {
+            if !url.is_empty() {
+                self.seltz.api_url = Some(url);
+            }
+        }
+        if let Some(max) = env.get_any(&["OPENHUMAN_SELTZ_MAX_RESULTS", "SELTZ_MAX_RESULTS"]) {
+            if let Ok(n) = max.parse::<usize>() {
+                if (1..=20).contains(&n) {
+                    self.seltz.max_results = n;
+                }
+            }
+        }
+
         // `OPENHUMAN_WEB_SEARCH_ENABLED` is intentionally ignored —
         // web search is unconditionally registered in the tool set.
         // Only the result/timeout budget knobs remain environment-configurable.
