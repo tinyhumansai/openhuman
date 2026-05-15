@@ -289,9 +289,17 @@ async fn enforce_read_policy(tool_name: &str) -> Result<(), ToolCallError> {
     // Config-load failure is an internal/server issue (disk error, corrupt
     // config), not bad client input — report it as `-32603 Internal error`
     // rather than `-32602 Invalid params`.
-    let config = config_rpc::load_config_with_timeout()
-        .await
-        .map_err(|err| ToolCallError::Internal(format!("failed to load config: {err}")))?;
+    let config = match config_rpc::load_config_with_timeout().await {
+        Ok(config) => config,
+        Err(err) => {
+            log::warn!(
+                "[mcp_server] enforce_read_policy config load failed tool={tool_name} error={err}"
+            );
+            return Err(ToolCallError::Internal(format!(
+                "failed to load config: {err}"
+            )));
+        }
+    };
     let policy = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
     // A policy denial *is* something the caller can act on (toggle autonomy,
     // approve the tool) — keep that as `InvalidParams` so clients surface the
