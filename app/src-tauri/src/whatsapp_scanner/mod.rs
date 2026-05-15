@@ -74,6 +74,11 @@ pub struct ScanSnapshot {
     /// to reverse-look-up `chatId` for DOM rows that lack one (modern
     /// WhatsApp Web doesn't expose chat JID anywhere on the message rows).
     pub active_chat_name: Option<String>,
+    /// Per-stage telemetry from the DOM-capture pass (issue #1376). `None`
+    /// when the DOM call failed entirely (e.g. CDP disconnect mid-scan);
+    /// otherwise carries the same `rows` as `dom_messages` plus counters
+    /// disambiguating "0 rows" from "rows with no body".
+    pub capture_report: Option<dom_snapshot::CaptureReport>,
 }
 
 /// Spawn a per-account CDP poller. Idempotent at call site (caller tracks
@@ -141,12 +146,29 @@ pub fn spawn_scanner<R: Runtime>(
             last_full = Instant::now();
             match scan_once(&app, &account_id, &url_prefix, &fragment).await {
                 Ok(snap) => {
+                    // Per-stage telemetry from the DOM capture (#1376) —
+                    // disambiguates "no rows seen" from "rows seen but body
+                    // extraction returned empty" from "active chat header
+                    // unresolved (downstream filter will drop the rows)".
+                    let (seen, with_body, no_body, chat_resolved) = match &snap.capture_report {
+                        Some(r) => (
+                            r.rows_seen,
+                            r.rows_with_body,
+                            r.rows_dropped_no_body,
+                            r.active_chat_resolved,
+                        ),
+                        None => (0, 0, 0, false),
+                    };
                     log::info!(
-                        "[wa][{}] full scan ok messages={} chats={} dom={}",
+                        "[wa][{}] full scan ok messages={} chats={} dom={} (seen={} with_body={} no_body={} chat_resolved={})",
                         account_id,
                         snap.messages.len(),
                         snap.chats.len(),
                         snap.dom_messages.len(),
+                        seen,
+                        with_body,
+                        no_body,
+                        chat_resolved,
                     );
                     // Preview a few DOM-scraped rows so it's obvious from the
                     // log whether the active chat produced fresh bodies.
@@ -172,6 +194,26 @@ pub fn spawn_scanner<R: Runtime>(
                             author,
                             preview
                         );
+                    }
+                    // TRACE-level structured row dump (first 3 rows, ≤120 char
+                    // snippets) so a developer chasing #1376-style "dom=0 but
+                    // bodies exist" can see exactly what the parser produced
+                    // without re-instrumenting. Truncation lives in
+                    // `dom_snapshot::text_snippet_preview` to honor the
+                    // CLAUDE.md "no PII in trace dumps" rule.
+                    if let Some(report) = snap.capture_report.as_ref() {
+                        for (i, row) in report.rows.iter().take(3).enumerate() {
+                            let pairs = dom_snapshot::text_snippet_preview(row, 120);
+                            for (k, v) in &pairs {
+                                log::trace!(
+                                    "[wa][{}] dom-trace#{} {}={:?}",
+                                    account_id,
+                                    i + 1,
+                                    k,
+                                    v
+                                );
+                            }
+                        }
                     }
                     emit_snapshot(&app, &account_id, &snap);
                 }
@@ -286,10 +328,16 @@ async fn scan_once<R: Runtime>(
             log::warn!("[wa][{}] idb walk failed: {}", account_id, e);
         }
     }
+    let mut capture_report: Option<dom_snapshot::CaptureReport> = None;
     match dom_snapshot::capture_messages(&mut cdp, &page_session).await {
-        Ok((rows, _hash, active_chat_name)) => {
-            snap.dom_messages = rows.iter().map(dom_snapshot::DomMessage::to_json).collect();
-            snap.active_chat_name = active_chat_name;
+        Ok(report) => {
+            snap.dom_messages = report
+                .rows
+                .iter()
+                .map(dom_snapshot::DomMessage::to_json)
+                .collect();
+            snap.active_chat_name = report.active_chat_name.clone();
+            capture_report = Some(report);
         }
         Err(e) => {
             // Fast-tick DOM scans will retry every 2s, so degrade gracefully.
@@ -305,6 +353,7 @@ async fn scan_once<R: Runtime>(
         )
         .await;
     let _ = app;
+    snap.capture_report = capture_report;
     Ok(snap)
 }
 
@@ -357,15 +406,26 @@ async fn scan_dom_once(
             None,
         )
         .await;
-    let (rows, hash, _active_chat_name) = captured?;
-    let dom_messages: Vec<Value> = rows.iter().map(dom_snapshot::DomMessage::to_json).collect();
+    let report = captured?;
+    let dom_messages: Vec<Value> = report
+        .rows
+        .iter()
+        .map(dom_snapshot::DomMessage::to_json)
+        .collect();
     log::debug!(
-        "[wa][{}] fast dom-scan rows={} hash={}",
+        "[wa][{}] fast dom-scan rows={} hash={} (seen={} with_body={} no_body={} chat_resolved={})",
         account_id,
         dom_messages.len(),
-        hash
+        report.hash,
+        report.rows_seen,
+        report.rows_with_body,
+        report.rows_dropped_no_body,
+        report.active_chat_resolved,
     );
-    Ok(DomScanResult { dom_messages, hash })
+    Ok(DomScanResult {
+        dom_messages,
+        hash: report.hash,
+    })
 }
 
 fn parse_targets(v: &Value) -> Vec<CdpTarget> {

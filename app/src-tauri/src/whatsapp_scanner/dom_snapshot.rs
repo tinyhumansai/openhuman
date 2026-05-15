@@ -56,6 +56,34 @@ impl DomMessage {
     }
 }
 
+/// Per-stage telemetry produced by [`capture_messages`]. The counters
+/// disambiguate the three failure modes that `dom=0` used to collapse into
+/// a single number (issue #1376): rows never matched, rows matched but
+/// body extraction returned empty, or active chat name failed to resolve
+/// (forcing rows to be filtered out downstream by the merge step).
+///
+/// Field invariants:
+/// * `rows_seen` — `[data-id]` elements that parsed as message rows BEFORE
+///   any body filter. Counts every accepted `data-id` shape (legacy
+///   compound + bare-msgId).
+/// * `rows_with_body` — subset where [`find_body`] returned a non-empty
+///   string. `rows_seen - rows_with_body` is bodies that vanished.
+/// * `rows_dropped_no_body` — convenience, equals
+///   `rows_seen - rows_with_body`.
+/// * `active_chat_resolved` — true when
+///   `header[data-testid="conversation-header"]` produced a display name
+///   (precondition for the chat-id reverse lookup in `mod.rs`).
+#[derive(Debug, Clone, Default)]
+pub struct CaptureReport {
+    pub rows: Vec<DomMessage>,
+    pub hash: u64,
+    pub active_chat_name: Option<String>,
+    pub rows_seen: usize,
+    pub rows_with_body: usize,
+    pub rows_dropped_no_body: usize,
+    pub active_chat_resolved: bool,
+}
+
 /// Run `DOMSnapshot.captureSnapshot` against an attached page session and
 /// return parsed message rows, a FNV-1a hash over (dataId, body), and the
 /// active conversation's display name (from
@@ -64,10 +92,10 @@ impl DomMessage {
 /// modern WhatsApp Web omits the chat JID from the URL, from `data-id`, and
 /// from any DOM attribute, so the merge step in `mod.rs` reverse-looks-up
 /// `chats[*].name → chats[*].jid` to stamp `chatId` onto DOM rows.
-pub async fn capture_messages(
-    cdp: &mut CdpConn,
-    session: &str,
-) -> Result<(Vec<DomMessage>, u64, Option<String>), String> {
+///
+/// Returns a [`CaptureReport`] with per-stage counters. See the type doc
+/// for invariants.
+pub async fn capture_messages(cdp: &mut CdpConn, session: &str) -> Result<CaptureReport, String> {
     // `computedStyles` is a required array — empty is fine, we don't need
     // any CSS. The other flags default sensibly; explicitly disable the
     // heavy paint/rect output to keep payloads small.
@@ -84,16 +112,32 @@ pub async fn capture_messages(
         .await?;
     let snap: CaptureSnapshot =
         serde_json::from_value(raw).map_err(|e| format!("decode DOMSnapshot: {e}"))?;
-    let rows = parse_rows(&snap);
-    let hash = fnv_hash(&rows);
-    let active_chat_name = parse_active_chat_name(&snap);
-    Ok((rows, hash, active_chat_name))
+    Ok(report_from_snapshot(&snap))
+}
+
+/// Synthesize a [`CaptureReport`] from a parsed `CaptureSnapshot`. Split
+/// out from [`capture_messages`] so unit tests can drive the body-finder
+/// + counters off a JSON fixture without mocking CDP.
+pub(crate) fn report_from_snapshot(snap: &CaptureSnapshot) -> CaptureReport {
+    let stats = parse_rows(snap);
+    let hash = fnv_hash(&stats.rows);
+    let active_chat_name = parse_active_chat_name(snap);
+    let active_chat_resolved = active_chat_name.is_some();
+    CaptureReport {
+        rows: stats.rows,
+        hash,
+        active_chat_name,
+        rows_seen: stats.rows_seen,
+        rows_with_body: stats.rows_with_body,
+        rows_dropped_no_body: stats.rows_seen.saturating_sub(stats.rows_with_body),
+        active_chat_resolved,
+    }
 }
 
 // ─── CDP response shape ─────────────────────────────────────────────
 
 #[derive(Deserialize, Debug, Default)]
-struct CaptureSnapshot {
+pub(crate) struct CaptureSnapshot {
     #[serde(default)]
     documents: Vec<DocumentSnap>,
     #[serde(default)]
@@ -123,6 +167,18 @@ struct NodeTreeSnap {
     attributes: Vec<Vec<i32>>,
 }
 
+/// Output of [`parse_rows`] including per-stage counters used to populate
+/// [`CaptureReport`]. `rows` is the filtered keep-set (rows with body OR
+/// `data-pre-plain-text`); `rows_seen` is the count of accepted `data-id`
+/// shapes BEFORE any body/chrome filter; `rows_with_body` is the count
+/// where [`find_body`] returned non-empty for a row in `rows_seen`.
+#[derive(Debug, Default)]
+pub(crate) struct ParseStats {
+    pub rows: Vec<DomMessage>,
+    pub rows_seen: usize,
+    pub rows_with_body: usize,
+}
+
 const NODE_TYPE_ELEMENT: i32 = 1;
 const NODE_TYPE_TEXT: i32 = 3;
 /// Hard cap on body length to mirror `dom_scan.js` (which sliced at 4000).
@@ -130,17 +186,17 @@ const MAX_BODY_CHARS: usize = 4000;
 
 // ─── parsing ────────────────────────────────────────────────────────
 
-fn parse_rows(snap: &CaptureSnapshot) -> Vec<DomMessage> {
+fn parse_rows(snap: &CaptureSnapshot) -> ParseStats {
     // Main frame only — iframes aren't used by WhatsApp's message list.
     let doc = match snap.documents.first() {
         Some(d) => d,
-        None => return Vec::new(),
+        None => return ParseStats::default(),
     };
     let nodes = &doc.nodes;
     let strings = &snap.strings;
     let count = nodes.node_type.len();
     if count == 0 {
-        return Vec::new();
+        return ParseStats::default();
     }
 
     // Precompute children map so descendant walks are O(subtree) instead of
@@ -154,6 +210,8 @@ fn parse_rows(snap: &CaptureSnapshot) -> Vec<DomMessage> {
 
     let mut out = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    let mut rows_seen = 0usize;
+    let mut rows_with_body = 0usize;
 
     for i in 0..count {
         if nodes.node_type.get(i).copied().unwrap_or(0) != NODE_TYPE_ELEMENT {
@@ -174,10 +232,20 @@ fn parse_rows(snap: &CaptureSnapshot) -> Vec<DomMessage> {
             continue;
         }
 
+        // Telemetry: count every accepted data-id BEFORE the body filter so
+        // the per-stage counts in `CaptureReport` distinguish "no rows
+        // matched at all" from "rows matched but body extraction failed".
+        rows_seen += 1;
+
         let (pre_ts, author) = find_pre_plain(nodes, strings, &children, i);
         let body = find_body(nodes, strings, &children, i);
+        if !body.is_empty() {
+            rows_with_body += 1;
+        }
         // A row with neither a body nor a pre-plain-text tag is just chrome
-        // (avatar wrapper, reaction chip, etc) — skip it.
+        // (avatar wrapper, reaction chip, etc) — skip it. Note: this still
+        // contributes to `rows_seen` because the goal of that counter is
+        // "did we find rows at all", not "did we keep them".
         if body.is_empty() && pre_ts.is_none() {
             continue;
         }
@@ -193,7 +261,11 @@ fn parse_rows(snap: &CaptureSnapshot) -> Vec<DomMessage> {
         });
     }
 
-    out
+    ParseStats {
+        rows: out,
+        rows_seen,
+        rows_with_body,
+    }
 }
 
 /// Find the `header[data-testid="conversation-header"]` element and return
@@ -511,6 +583,34 @@ fn truncate_chars(s: &str, max: usize) -> String {
         return s.to_string();
     }
     s.chars().take(max).collect()
+}
+
+/// Render a TRACE-friendly preview of a `DomMessage` row for the
+/// per-row debug dump in `mod.rs::scan_once`. Each entry is a
+/// `(attribute key, snippet)` pair drawn from the row's identifying
+/// attributes and the first few non-icon child text nodes (≤ `cap` chars
+/// each, no PII beyond what already lives in the row).
+///
+/// Designed for `log::trace!` only — keep payloads small so the lines fit
+/// in stdout without scrolling. The icon filter reuses
+/// [`looks_like_icon_ligature`] so `wds-ic-*` ligatures don't dominate
+/// previews of rows that render mostly chrome.
+pub(crate) fn text_snippet_preview(row: &DomMessage, cap: usize) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    out.push(("dataId".to_string(), truncate_chars(&row.data_id, cap)));
+    out.push(("msgId".to_string(), truncate_chars(&row.msg_id, cap)));
+    if !row.chat_id.is_empty() {
+        out.push(("chatId".to_string(), truncate_chars(&row.chat_id, cap)));
+    }
+    if let Some(author) = &row.author {
+        out.push(("author".to_string(), truncate_chars(author, cap)));
+    }
+    if let Some(pre) = &row.pre_timestamp {
+        out.push(("preTs".to_string(), truncate_chars(pre, cap)));
+    }
+    // Body preview always last so the visually heavy line wraps at the end.
+    out.push(("body".to_string(), truncate_chars(&row.body, cap)));
+    out
 }
 
 /// FNV-1a 32-bit rolling hash over `(dataId + 0x01 + body)` per row. Used
