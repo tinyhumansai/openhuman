@@ -215,10 +215,33 @@ fn is_network_unreachable_message(lower: &str) -> bool {
 /// `"OpenHuman API error (504 Gateway Timeout): error code: 504"`. Pin the
 /// match to that exact `"api error (<status>"` prefix so an unrelated message
 /// that merely mentions "504" (a log line, a doc URL) is not silenced.
+///
+/// Also matches the second canonical wire shape: tungstenite's
+/// `WsError::Http(response)` Display, which renders as `"HTTP error: <status>"`
+/// (and which `socket::ws_loop::run_connection` wraps as
+/// `"WebSocket connect: HTTP error: 502 Bad Gateway"`). Per
+/// OPENHUMAN-TAURI-5P (~110 events) and -EZ (~51 events), backend
+/// staging/production load balancers emit HTTP 502/504 during the WebSocket
+/// upgrade handshake; tungstenite surfaces those as `WsError::Http` and the
+/// socket reconnect loop already handles them via exponential backoff. Each
+/// `FAIL_ESCALATE_THRESHOLD` escalation fires `report_error_or_expected` with
+/// the formatted reason, which would land in Sentry as `domain=socket`
+/// noise without this matcher (the existing `domain=integrations`
+/// before_send filter scopes too narrowly).
+///
+/// Three separator variants cover every observed shape: trailing space
+/// (`"HTTP error: 502 Bad Gateway"`), trailing newline (`"HTTP error: 502\n…"`
+/// from chained errors), and trailing colon (`"HTTP error: 502: …"`). Bare
+/// `"HTTP error: 502"` at end-of-string is not matched on purpose — the
+/// status integer alone could collide with unrelated log lines containing
+/// `"HTTP error: 5023"` (port number, runbook ID).
 fn is_transient_upstream_http_message(lower: &str) -> bool {
-    TRANSIENT_PROVIDER_HTTP_STATUSES
-        .iter()
-        .any(|code| lower.contains(&format!("api error ({code}")))
+    TRANSIENT_PROVIDER_HTTP_STATUSES.iter().any(|code| {
+        lower.contains(&format!("api error ({code}"))
+            || lower.contains(&format!("http error: {code} "))
+            || lower.contains(&format!("http error: {code}\n"))
+            || lower.contains(&format!("http error: {code}:"))
+    })
 }
 
 /// Detect non-2xx HTTP failures returned from the backend integrations / composio
@@ -1063,6 +1086,72 @@ mod tests {
             ),
             Some(ExpectedErrorKind::TransientUpstreamHttp)
         );
+    }
+
+    #[test]
+    fn classifies_socket_transient_http_errors() {
+        // OPENHUMAN-TAURI-5P / -EZ: tungstenite's `WsError::Http(response)`
+        // surfaces during the WebSocket upgrade handshake when the backend
+        // load balancer returns 502 / 504. The socket reconnect loop wraps
+        // it as `format!("WebSocket connect: {e}")`, producing
+        // `"WebSocket connect: HTTP error: <status> <reason>"`. Each
+        // sustained-outage threshold escalation routes the formatted reason
+        // through `report_error_or_expected`, which must classify as
+        // transient so the per-client noise stops reaching Sentry.
+        for raw in [
+            "WebSocket connect: HTTP error: 502 Bad Gateway",
+            "WebSocket connect: HTTP error: 503 Service Unavailable",
+            "WebSocket connect: HTTP error: 504 Gateway Timeout",
+            "[socket] Connection failed (sustained outage after 5 attempts): \
+             WebSocket connect: HTTP error: 502 Bad Gateway",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::TransientUpstreamHttp),
+                "should classify as transient upstream HTTP (socket shape): {raw}"
+            );
+        }
+
+        // Trailing-colon separator (chained error formatting).
+        // Note: avoid words like "connection refused" or "timeout" in the
+        // suffix — those would also match `is_network_unreachable_message` /
+        // `TRANSIENT_TRANSPORT_PHRASES` and the order in `expected_error_kind`
+        // would route through `NetworkUnreachable` first, defeating the
+        // assertion. Both classifications silence the event so production
+        // behavior is identical, but the test is anchored on the canonical
+        // socket shape so a future regression in `is_transient_upstream_http_message`
+        // surfaces here, not behind another classifier.
+        assert_eq!(
+            expected_error_kind("WebSocket connect: HTTP error: 502: upstream returned bad gateway"),
+            Some(ExpectedErrorKind::TransientUpstreamHttp)
+        );
+
+        // Trailing-newline separator (multi-line error chain).
+        assert_eq!(
+            expected_error_kind("WebSocket connect: HTTP error: 504\nupstream gateway"),
+            Some(ExpectedErrorKind::TransientUpstreamHttp)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_http_error_text_as_transient_socket() {
+        // Bare numeric "HTTP error: 5023" (port number, runbook ID) without
+        // a separator must NOT silence — pin the matcher to space/newline/colon.
+        assert_eq!(expected_error_kind("HTTP error: 5023"), None);
+        // Non-transient HTTP statuses must not match — `WsError::Http` for
+        // a 401 / 403 / 404 is genuinely actionable (auth / routing bug).
+        for raw in [
+            "WebSocket connect: HTTP error: 401 Unauthorized",
+            "WebSocket connect: HTTP error: 403 Forbidden",
+            "WebSocket connect: HTTP error: 404 Not Found",
+            "WebSocket connect: HTTP error: 500 Internal Server Error",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "must NOT silence actionable socket HTTP error: {raw}"
+            );
+        }
     }
 
     #[test]
