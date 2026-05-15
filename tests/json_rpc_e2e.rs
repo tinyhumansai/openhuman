@@ -2678,6 +2678,158 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
     rpc_join.abort();
 }
 
+#[tokio::test]
+async fn json_rpc_local_ai_lm_studio_config_diagnostics_and_prompt() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _tier_guard = EnvVarGuard::unset("OPENHUMAN_LOCAL_AI_TIER");
+    let _lm_env_guard = EnvVarGuard::unset("OPENHUMAN_LM_STUDIO_BASE_URL");
+    let _lm_alias_env_guard = EnvVarGuard::unset("LM_STUDIO_BASE_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let lm_app = Router::new()
+        .route(
+            "/v1/models",
+            get(|| async {
+                Json(json!({
+                    "object": "list",
+                    "data": [
+                        { "id": "local-model", "object": "model", "owned_by": "lm-studio" }
+                    ]
+                }))
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(|Json(body): Json<Value>| async move {
+                assert_eq!(
+                    body.get("model").and_then(Value::as_str),
+                    Some("local-model")
+                );
+                let roles: Vec<&str> = body
+                    .get("messages")
+                    .and_then(Value::as_array)
+                    .map(|messages| {
+                        messages
+                            .iter()
+                            .filter_map(|message| message.get("role").and_then(Value::as_str))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                assert_eq!(roles, vec!["system", "user"]);
+                Json(json!({
+                    "id": "chatcmpl-e2e",
+                    "object": "chat.completion",
+                    "choices": [{
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "hello from lm studio e2e"
+                        },
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {
+                        "prompt_tokens": 7,
+                        "completion_tokens": 5,
+                        "total_tokens": 12
+                    }
+                }))
+            }),
+        );
+    let (lm_addr, lm_join) = serve_on_ephemeral(lm_app).await;
+    let lm_base = format!("http://{lm_addr}/v1");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let update = post_json_rpc(
+        &rpc_base,
+        36,
+        "openhuman.config_update_local_ai_settings",
+        json!({
+            "runtime_enabled": true,
+            "opt_in_confirmed": true,
+            "provider": "lm_studio",
+            "base_url": lm_base,
+            "model_id": "local-model",
+            "chat_model_id": "local-model"
+        }),
+    )
+    .await;
+    let update_result = assert_no_jsonrpc_error(&update, "update_local_ai_settings");
+    let config = update_result
+        .get("result")
+        .and_then(|value| value.get("config"))
+        .expect("config snapshot should be wrapped with logs");
+    assert_eq!(
+        config
+            .get("local_ai")
+            .and_then(|local_ai| local_ai.get("provider"))
+            .and_then(Value::as_str),
+        Some("lm_studio")
+    );
+    assert_eq!(
+        config
+            .get("local_ai")
+            .and_then(|local_ai| local_ai.get("opt_in_confirmed"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let diagnostics =
+        post_json_rpc(&rpc_base, 37, "openhuman.local_ai_diagnostics", json!({})).await;
+    let diagnostics_result = assert_no_jsonrpc_error(&diagnostics, "lm_studio_diagnostics");
+    assert_eq!(
+        diagnostics_result.get("provider").and_then(Value::as_str),
+        Some("lm_studio")
+    );
+    assert_eq!(
+        diagnostics_result
+            .get("lm_studio_running")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        diagnostics_result
+            .get("expected")
+            .and_then(|expected| expected.get("chat_found"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let prompt = post_json_rpc(
+        &rpc_base,
+        38,
+        "openhuman.local_ai_prompt",
+        json!({
+            "prompt": "hello",
+            "max_tokens": 16,
+            "no_think": true
+        }),
+    )
+    .await;
+    let prompt_result = assert_no_jsonrpc_error(&prompt, "lm_studio_prompt");
+    assert_eq!(
+        extract_string_outcome(prompt_result),
+        "hello from lm studio e2e"
+    );
+
+    lm_join.abort();
+    mock_join.abort();
+    rpc_join.abort();
+}
+
 // ── Billing & Team E2E tests ──────────────────────────────────────────────────
 
 /// End-to-end test for billing RPC methods.

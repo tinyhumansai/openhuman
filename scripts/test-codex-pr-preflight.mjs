@@ -10,10 +10,10 @@ function run(cmd, cwd) {
 
 function makeRepo(branchName) {
   const dir = mkdtempSync(path.join(tmpdir(), 'codex-preflight-'));
-  mkdirSync(path.join(dir, 'docs/src'), { recursive: true });
+  mkdirSync(path.join(dir, 'gitbooks/developing'), { recursive: true });
   mkdirSync(path.join(dir, 'app'), { recursive: true });
   writeFileSync(path.join(dir, 'AGENTS.md'), '# test\n');
-  writeFileSync(path.join(dir, 'docs/src/README.md'), 'ok\n');
+  writeFileSync(path.join(dir, 'gitbooks/developing/README.md'), 'ok\n');
   writeFileSync(path.join(dir, 'Cargo.toml'), '[package]\nname="x"\nversion="0.1.0"\n');
   writeFileSync(path.join(dir, 'app/package.json'), '{"name":"x"}\n');
   run('git init', dir);

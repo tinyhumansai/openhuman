@@ -112,6 +112,24 @@ export function isComposerInteractionBlocked(args: {
   return !args.rustChat || Boolean(args.activeThreadId) || args.welcomePending;
 }
 
+interface ImeKeyboardEventLike {
+  isComposing?: boolean;
+  keyCode?: number;
+  which?: number;
+  nativeEvent?: { isComposing?: boolean; keyCode?: number; which?: number };
+}
+
+export function isImeCompositionKeyEvent(event: ImeKeyboardEventLike): boolean {
+  return (
+    event.isComposing === true ||
+    event.nativeEvent?.isComposing === true ||
+    event.nativeEvent?.keyCode === 229 ||
+    event.nativeEvent?.which === 229 ||
+    event.keyCode === 229 ||
+    event.which === 229
+  );
+}
+
 /**
  * Normalise the value thrown out of `dispatch(loadThreads()).unwrap()` into a
  * displayable string. `createAsyncThunk` re-throws Redux's `SerializedError`
@@ -239,6 +257,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   });
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingTextRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -817,6 +836,8 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
   }, [messages, replyMode, rustChat]);
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isComposingTextRef.current || isImeCompositionKeyEvent(e)) return;
+
     const inlineSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
     const textarea = e.currentTarget;
     const caretAtEnd =
@@ -1695,6 +1716,12 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
                   ref={textInputRef}
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value)}
+                  onCompositionStart={() => {
+                    isComposingTextRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingTextRef.current = false;
+                  }}
                   onKeyDown={handleInputKeyDown}
                   placeholder="Type a message..."
                   rows={1}

@@ -48,6 +48,101 @@ fn resolve_client(config: &Config) -> OpResult<ComposioClient> {
     })
 }
 
+/// Defense-in-depth Sentry funnel for composio op-layer errors.
+///
+/// The shared [`crate::openhuman::integrations::IntegrationClient`]
+/// (which fronts every `client.list_*` / `client.execute_tool` /
+/// `client.authorize` call) already reports its own failures under
+/// `domain="integrations"` with `failure="non_2xx" | "transport"` tags,
+/// and the Sentry `before_send` filter (`is_transient_integrations_failure`)
+/// drops the transient subset. This helper re-classifies the same
+/// anyhow chain at the **op layer** under `domain="composio"` so:
+///
+/// 1. Future call sites that bypass `IntegrationClient` (the existing
+///    `raw_delete` path, or any new bespoke HTTP client added under
+///    `composio/`) still funnel through the same classifier.
+/// 2. Op-layer-specific failures — provider sync errors, history archive
+///    errors, profile-resolution errors — get tagged consistently rather
+///    than reaching Sentry as bare `Err(String)` returned via RPC.
+///
+/// The classifier (`expected_error_kind`) is purely message-substring
+/// based — `Backend returned 502 …`, `error sending request for url …`,
+/// `operation timed out` etc. all resolve to a warn/info breadcrumb
+/// without a Sentry event. Genuine bugs (404s, 500s with bug-shape
+/// payloads, envelope errors) still surface.
+///
+/// `failure="non_2xx"` is the default tag because that is the dominant
+/// shape in the leak set (OPENHUMAN-TAURI-35 / -2H: backend 502 from
+/// `Backend returned …`). When the message contains a recognized
+/// transport phrase (`operation timed out`, `connection refused`, `tls
+/// handshake eof`, …), we tag `failure="transport"` instead so the
+/// `before_send` filter's transport-phrase branch fires — and keep the
+/// status tag absent (transport failures don't carry a status).
+fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err: &E) {
+    // `{err:#}` renders the full anyhow chain when applicable; for plain
+    // `String` / `&str` errors it falls back to the Display impl.
+    let rendered = format!("{err:#}");
+    let failure_tag = classify_composio_failure_tag(rendered.as_str());
+    if failure_tag == "non_2xx" {
+        if let Some(status) = extract_backend_returned_status(&rendered) {
+            crate::core::observability::report_error_or_expected(
+                rendered.as_str(),
+                "composio",
+                operation,
+                &[("failure", failure_tag), ("status", status.as_str())],
+            );
+            return;
+        }
+    }
+    crate::core::observability::report_error_or_expected(
+        rendered.as_str(),
+        "composio",
+        operation,
+        &[("failure", failure_tag)],
+    );
+}
+
+/// Pick the `failure` tag for a composio op-layer error message based on
+/// shape inspection. Transport-level reqwest chains (timeout, connection
+/// reset, TLS handshake EOF, "error sending request for url") tag as
+/// `"transport"` so the `before_send` filter's transport-phrase branch
+/// fires; everything else (the dominant `Backend returned <status> …`
+/// shape from the integrations layer) tags as `"non_2xx"`.
+///
+/// Extracted so tests can pin the routing without a Sentry test client.
+fn classify_composio_failure_tag(rendered: &str) -> &'static str {
+    let lower = rendered.to_ascii_lowercase();
+    // `rendered`: pass to callee-normalised checks
+    //   (`contains_transient_transport_phrase` handles casing internally).
+    // `lower`: pre-lowered copy reused for literal substring matches that
+    //   intentionally do their own case-folding here.
+    // A future contributor adding a new condition should extend the side
+    // that matches the new check's normaliser contract.
+    let is_transport = crate::core::observability::contains_transient_transport_phrase(rendered)
+        || lower.contains("error sending request");
+    if is_transport {
+        "transport"
+    } else {
+        "non_2xx"
+    }
+}
+
+/// Extract the HTTP status code from a `Backend returned <status> ...`
+/// rendering produced by the integrations layer. Returns `None` when no
+/// numeric status follows the anchor phrase (e.g. envelope-only errors).
+///
+/// Surfacing the status as a Sentry tag gives the `before_send` filter's
+/// transient-status branch (`is_transient_integrations_failure`) a precise
+/// signal to drop the dominant 5xx leak shape (OPENHUMAN-TAURI-35 / -2H)
+/// without also dropping genuine 4xx bug-shape failures that share the
+/// `failure="non_2xx"` tag.
+fn extract_backend_returned_status(rendered: &str) -> Option<String> {
+    let lower = rendered.to_ascii_lowercase();
+    let rest = lower.split_once("backend returned ")?.1;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    (!digits.is_empty()).then_some(digits)
+}
+
 // ── Toolkits ────────────────────────────────────────────────────────
 
 pub async fn composio_list_toolkits(
@@ -55,10 +150,10 @@ pub async fn composio_list_toolkits(
 ) -> OpResult<RpcOutcome<ComposioToolkitsResponse>> {
     tracing::debug!("[composio] rpc list_toolkits");
     let client = resolve_client(config)?;
-    let resp = client
-        .list_toolkits()
-        .await
-        .map_err(|e| format!("[composio] list_toolkits failed: {e:#}"))?;
+    let resp = client.list_toolkits().await.map_err(|e| {
+        report_composio_op_error("list_toolkits", &e);
+        format!("[composio] list_toolkits failed: {e:#}")
+    })?;
     let count = resp.toolkits.len();
     Ok(RpcOutcome::new(
         resp,
@@ -73,10 +168,10 @@ pub async fn composio_list_connections(
 ) -> OpResult<RpcOutcome<ComposioConnectionsResponse>> {
     tracing::debug!("[composio] rpc list_connections");
     let client = resolve_client(config)?;
-    let resp = client
-        .list_connections()
-        .await
-        .map_err(|e| format!("[composio] list_connections failed: {e:#}"))?;
+    let resp = client.list_connections().await.map_err(|e| {
+        report_composio_op_error("list_connections", &e);
+        format!("[composio] list_connections failed: {e:#}")
+    })?;
     let active = resp.connections.iter().filter(|c| c.is_active()).count();
     let total = resp.connections.len();
     // Reconcile the chat-runtime integrations cache against this fresh
@@ -101,10 +196,10 @@ pub async fn composio_authorize(
 ) -> OpResult<RpcOutcome<ComposioAuthorizeResponse>> {
     tracing::debug!(toolkit = %toolkit, has_extra_params = extra_params.is_some(), "[composio] rpc authorize");
     let client = resolve_client(config)?;
-    let resp = client
-        .authorize(toolkit, extra_params)
-        .await
-        .map_err(|e| format!("[composio] authorize failed: {e:#}"))?;
+    let resp = client.authorize(toolkit, extra_params).await.map_err(|e| {
+        report_composio_op_error("authorize", &e);
+        format!("[composio] authorize failed: {e:#}")
+    })?;
 
     // Publish an event so any interested subscribers (e.g. UI refreshers,
     // analytics) can react to the new connection handoff.
@@ -131,10 +226,10 @@ pub async fn composio_delete_connection(
     let toolkit = resolve_toolkit_for_connection(&client, connection_id)
         .await
         .ok();
-    let resp = client
-        .delete_connection(connection_id)
-        .await
-        .map_err(|e| format!("[composio] delete_connection failed: {e:#}"))?;
+    let resp = client.delete_connection(connection_id).await.map_err(|e| {
+        report_composio_op_error("delete_connection", &e);
+        format!("[composio] delete_connection failed: {e:#}")
+    })?;
     if let Some(toolkit) = toolkit.as_deref() {
         let deleted =
             super::providers::profile::delete_connected_identity_facets(toolkit, connection_id);
@@ -209,10 +304,10 @@ pub async fn composio_list_tools(
 ) -> OpResult<RpcOutcome<ComposioToolsResponse>> {
     tracing::debug!(?toolkits, "[composio] rpc list_tools");
     let client = resolve_client(config)?;
-    let resp = client
-        .list_tools(toolkits.as_deref())
-        .await
-        .map_err(|e| format!("[composio] list_tools failed: {e:#}"))?;
+    let resp = client.list_tools(toolkits.as_deref()).await.map_err(|e| {
+        report_composio_op_error("list_tools", &e);
+        format!("[composio] list_tools failed: {e:#}")
+    })?;
     let count = resp.tools.len();
     Ok(RpcOutcome::new(
         resp,
@@ -265,6 +360,7 @@ pub async fn composio_execute(
                     elapsed_ms,
                 },
             );
+            report_composio_op_error("execute", &e);
             Err(format!("[composio] execute failed: {e:#}"))
         }
     }
@@ -281,7 +377,10 @@ pub async fn composio_list_github_repos(
     let resp = client
         .list_github_repos(connection_id.as_deref())
         .await
-        .map_err(|e| format!("[composio] list_github_repos failed: {e:#}"))?;
+        .map_err(|e| {
+            report_composio_op_error("list_github_repos", &e);
+            format!("[composio] list_github_repos failed: {e:#}")
+        })?;
     let count = resp.repositories.len();
     let connection_id = resp.connection_id.clone();
     Ok(RpcOutcome::new(
@@ -303,7 +402,10 @@ pub async fn composio_create_trigger(
     let resp = client
         .create_trigger(slug, connection_id.as_deref(), trigger_config)
         .await
-        .map_err(|e| format!("[composio] create_trigger failed: {e:#}"))?;
+        .map_err(|e| {
+            report_composio_op_error("create_trigger", &e);
+            format!("[composio] create_trigger failed: {e:#}")
+        })?;
     let trigger_id = resp.trigger_id.clone();
     Ok(RpcOutcome::new(
         resp,
@@ -325,7 +427,10 @@ pub async fn composio_list_available_triggers(
     let resp = client
         .list_available_triggers(toolkit, connection_id.as_deref())
         .await
-        .map_err(|e| format!("[composio] list_available_triggers failed: {e:#}"))?;
+        .map_err(|e| {
+            report_composio_op_error("list_available_triggers", &e);
+            format!("[composio] list_available_triggers failed: {e:#}")
+        })?;
     let count = resp.triggers.len();
     Ok(RpcOutcome::new(
         resp,
@@ -344,7 +449,10 @@ pub async fn composio_list_triggers(
     let resp = client
         .list_active_triggers(toolkit.as_deref())
         .await
-        .map_err(|e| format!("[composio] list_triggers failed: {e:#}"))?;
+        .map_err(|e| {
+            report_composio_op_error("list_triggers", &e);
+            format!("[composio] list_triggers failed: {e:#}")
+        })?;
     let count = resp.triggers.len();
     Ok(RpcOutcome::new(
         resp,
@@ -363,7 +471,10 @@ pub async fn composio_enable_trigger(
     let resp = client
         .enable_trigger(connection_id, slug, trigger_config)
         .await
-        .map_err(|e| format!("[composio] enable_trigger failed: {e:#}"))?;
+        .map_err(|e| {
+            report_composio_op_error("enable_trigger", &e);
+            format!("[composio] enable_trigger failed: {e:#}")
+        })?;
     let trigger_id = resp.trigger_id.clone();
     Ok(RpcOutcome::new(
         resp,
@@ -377,10 +488,10 @@ pub async fn composio_disable_trigger(
 ) -> OpResult<RpcOutcome<ComposioDisableTriggerResponse>> {
     tracing::debug!(trigger_id = %trigger_id, "[composio] rpc disable_trigger");
     let client = resolve_client(config)?;
-    let resp = client
-        .disable_trigger(trigger_id)
-        .await
-        .map_err(|e| format!("[composio] disable_trigger failed: {e:#}"))?;
+    let resp = client.disable_trigger(trigger_id).await.map_err(|e| {
+        report_composio_op_error("disable_trigger", &e);
+        format!("[composio] disable_trigger failed: {e:#}")
+    })?;
     let message = if resp.deleted {
         format!("composio: disabled trigger {trigger_id}")
     } else {
@@ -445,10 +556,10 @@ async fn resolve_toolkit_for_connection(
     connection_id: &str,
 ) -> OpResult<String> {
     tracing::debug!(connection_id = %connection_id, "[composio] resolve_toolkit_for_connection");
-    let resp = client
-        .list_connections()
-        .await
-        .map_err(|e| format!("[composio] list_connections failed: {e:#}"))?;
+    let resp = client.list_connections().await.map_err(|e| {
+        report_composio_op_error("resolve_toolkit_for_connection", &e);
+        format!("[composio] list_connections failed: {e:#}")
+    })?;
     let conn = resp
         .connections
         .into_iter()
@@ -479,10 +590,10 @@ pub async fn composio_get_user_profile(
         connection_id: Some(connection_id.to_string()),
     };
 
-    let profile = provider
-        .fetch_user_profile(&ctx)
-        .await
-        .map_err(|e| format!("[composio] get_user_profile({toolkit}) failed: {e}"))?;
+    let profile = provider.fetch_user_profile(&ctx).await.map_err(|e| {
+        report_composio_op_error("get_user_profile", &e);
+        format!("[composio] get_user_profile({toolkit}) failed: {e}")
+    })?;
 
     // Side-effect: persist profile fields into the local user_profile
     // facet table so any RPC call also refreshes the local store.
@@ -515,10 +626,10 @@ pub async fn composio_refresh_all_identities(
 ) -> OpResult<RpcOutcome<RefreshIdentitiesReport>> {
     tracing::info!("[composio] rpc refresh_all_identities");
     let client = resolve_client(config)?;
-    let conns = client
-        .list_connections()
-        .await
-        .map_err(|e| format!("[composio] list_connections failed: {e:#}"))?;
+    let conns = client.list_connections().await.map_err(|e| {
+        report_composio_op_error("refresh_all_identities", &e);
+        format!("[composio] list_connections failed: {e:#}")
+    })?;
 
     let mut report = RefreshIdentitiesReport::default();
     let mut messages: Vec<String> = Vec::with_capacity(conns.connections.len() + 1);
@@ -634,10 +745,10 @@ pub async fn composio_sync(
         connection_id: Some(connection_id.to_string()),
     };
 
-    let outcome = provider
-        .sync(&ctx, reason)
-        .await
-        .map_err(|e| format!("[composio] sync({toolkit}) failed: {e}"))?;
+    let outcome = provider.sync(&ctx, reason).await.map_err(|e| {
+        report_composio_op_error("sync", &e);
+        format!("[composio] sync({toolkit}) failed: {e}")
+    })?;
 
     let summary = outcome.summary.clone();
     Ok(RpcOutcome::new(outcome, vec![summary]))

@@ -44,6 +44,19 @@ vi.mock('../../../../services/api/voiceInstallApi', () => ({
   piperInstallStatus: vi.fn(),
 }));
 
+// Mascot voice preview path (issue #1762) goes through the existing
+// `synthesizeSpeech` TTS RPC, which is heavy + makes real network calls
+// in production. Mocked here so the Preview button click is observable
+// without standing up a backend. Other ttsClient exports are
+// passed-through so transitive importers (e.g. `useHumanMascot`) still
+// resolve their cleanup paths.
+vi.mock('../../../../features/human/voice/ttsClient', async () => {
+  const actual = await vi.importActual<typeof import('../../../../features/human/voice/ttsClient')>(
+    '../../../../features/human/voice/ttsClient'
+  );
+  return { ...actual, synthesizeSpeech: vi.fn() };
+});
+
 type RuntimeHarness = {
   settings: VoiceServerSettings;
   serverStatus: VoiceServerStatus;
@@ -496,5 +509,143 @@ describe('VoicePanel', () => {
         expect.objectContaining({ tts_voice: 'en_US-ryan-medium' })
       )
     );
+  });
+
+  // Issue #1762 — Mascot Voice picker tests. Nested inside the outer
+  // describe so the runtime mocks (openhumanVoiceStatus seeded with
+  // tts_provider='cloud', etc.) are inherited. The section only renders
+  // when the cloud (ElevenLabs proxy) TTS provider is active; local
+  // Piper has its own picker above. The slice handles validation +
+  // persistence; these tests pin the UI surface that drives it.
+  describe('Mascot Voice picker (#1762)', () => {
+    beforeEach(async () => {
+      // Stub a fast successful TTS so the Preview happy-path doesn't
+      // wedge on a hanging promise. Individual tests override per case.
+      const { synthesizeSpeech } = await import('../../../../features/human/voice/ttsClient');
+      vi.mocked(synthesizeSpeech).mockResolvedValue({
+        audio_base64: 'AAAA',
+        audio_mime: 'audio/mpeg',
+        visemes: [],
+      });
+    });
+
+    it('omits the Mascot Voice section when TTS provider is piper', async () => {
+      // Bias the voice status snapshot so the panel mounts in piper mode
+      // — the section should be hidden in that case (local voices use the
+      // Piper picker above, not the ElevenLabs one).
+      const { default: VoicePanel } = await import('../VoicePanel');
+      vi.mocked(openhumanVoiceStatus).mockResolvedValueOnce({
+        stt_available: true,
+        tts_available: true,
+        stt_model_id: 'ggml-tiny-q5_1.bin',
+        tts_voice_id: 'en_US-lessac-medium',
+        whisper_binary: null,
+        piper_binary: null,
+        stt_model_path: '/tmp/stt.bin',
+        tts_voice_path: '/tmp/tts.onnx',
+        whisper_in_process: true,
+        llm_cleanup_enabled: true,
+        stt_provider: 'cloud',
+        tts_provider: 'piper',
+      });
+      renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+      // Give the panel a tick to read provider state before asserting.
+      await waitFor(() => {
+        expect(screen.queryByTestId('mascot-voice-section')).toBeNull();
+      });
+    });
+
+    it('renders the Mascot Voice section under cloud TTS with the default voice selected', async () => {
+      const { default: VoicePanel } = await import('../VoicePanel');
+      renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+      // Wait for the panel to load and seed ttsProvider so the section
+      // appears. The dropdown is the gate-keeper of the section.
+      const section = await screen.findByTestId('mascot-voice-section');
+      // DEBUG: full DOM if section appears empty
+      // eslint-disable-next-line no-console
+      console.log('SECTION HTML:', section.outerHTML.slice(0, 2000));
+      const select = (await screen.findByTestId('mascot-voice-select')) as HTMLSelectElement;
+      // With no override stored, the picker reflects the build-time default.
+      expect(select.value).toBe('ljX1ZrXuDIIRVcmiVSyR');
+      const reset = await screen.findByTestId('mascot-voice-reset');
+      expect(reset).toBeDisabled();
+    });
+
+    it('switching to a preset voice updates the picker + enables Reset', async () => {
+      const { default: VoicePanel } = await import('../VoicePanel');
+      renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+      const select = (await screen.findByTestId('mascot-voice-select')) as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: '21m00Tcm4TlvDq8ikWAM' } });
+      await waitFor(() => expect(select.value).toBe('21m00Tcm4TlvDq8ikWAM'));
+      expect(screen.getByTestId('mascot-voice-reset')).not.toBeDisabled();
+      expect(screen.getByTestId('mascot-voice-current').textContent).toContain(
+        '21m00Tcm4TlvDq8ikWAM'
+      );
+    });
+
+    it('selecting "Other (paste voice id)" reveals the custom paste input', async () => {
+      const { default: VoicePanel } = await import('../VoicePanel');
+      renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+      const select = (await screen.findByTestId('mascot-voice-select')) as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: '__custom__' } });
+      expect(await screen.findByTestId('mascot-voice-input')).toBeInTheDocument();
+    });
+
+    it('Save commits the pasted voice id and surfaces it as current', async () => {
+      const { default: VoicePanel } = await import('../VoicePanel');
+      renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+      const select = (await screen.findByTestId('mascot-voice-select')) as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: '__custom__' } });
+      const input = (await screen.findByTestId('mascot-voice-input')) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'custom-paste-id' } });
+      fireEvent.click(screen.getByTestId('mascot-voice-save-paste'));
+      await waitFor(() =>
+        expect(screen.getByTestId('mascot-voice-current').textContent).toContain('custom-paste-id')
+      );
+    });
+
+    it('Preview calls synthesizeSpeech with the effective voice id', async () => {
+      const { synthesizeSpeech } = await import('../../../../features/human/voice/ttsClient');
+      const { default: VoicePanel } = await import('../VoicePanel');
+      renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+      const select = (await screen.findByTestId('mascot-voice-select')) as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: 'pNInz6obpgDQGcFmaJgB' } }); // Adam
+      fireEvent.click(screen.getByTestId('mascot-voice-preview'));
+      await waitFor(() =>
+        expect(vi.mocked(synthesizeSpeech)).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({ voiceId: 'pNInz6obpgDQGcFmaJgB' })
+        )
+      );
+    });
+
+    it('Preview failure surfaces a recoverable error banner without dropping the selection', async () => {
+      const { synthesizeSpeech } = await import('../../../../features/human/voice/ttsClient');
+      vi.mocked(synthesizeSpeech).mockRejectedValueOnce(new Error('Backend unreachable'));
+      const { default: VoicePanel } = await import('../VoicePanel');
+      renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+      const select = (await screen.findByTestId('mascot-voice-select')) as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: 'EXAVITQu4vr4xnSDxMaL' } }); // Bella
+      fireEvent.click(screen.getByTestId('mascot-voice-preview'));
+      const banner = await screen.findByTestId('mascot-voice-preview-error');
+      expect(banner.textContent).toContain('Backend unreachable');
+      expect(banner.textContent).toContain('fall back');
+      // Selection survived the failed preview — fallback only applies to
+      // the next reply if the chosen voice itself proves unavailable.
+      expect((screen.getByTestId('mascot-voice-select') as HTMLSelectElement).value).toBe(
+        'EXAVITQu4vr4xnSDxMaL'
+      );
+    });
+
+    it('Reset clears the override and reflects the build-time default in the picker', async () => {
+      const { default: VoicePanel } = await import('../VoicePanel');
+      renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+      const select = (await screen.findByTestId('mascot-voice-select')) as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: 'pNInz6obpgDQGcFmaJgB' } });
+      await waitFor(() => expect(select.value).toBe('pNInz6obpgDQGcFmaJgB'));
+      fireEvent.click(screen.getByTestId('mascot-voice-reset'));
+      await waitFor(() => expect(select.value).toBe('ljX1ZrXuDIIRVcmiVSyR'));
+      expect(screen.getByTestId('mascot-voice-reset')).toBeDisabled();
+    });
   });
 });

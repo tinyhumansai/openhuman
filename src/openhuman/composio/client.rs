@@ -150,6 +150,38 @@ impl ComposioClient {
 
     // ── Execute ─────────────────────────────────────────────────────
 
+    /// `POST /agent-integrations/composio/execute` — single, non-retrying
+    /// HTTP round-trip. Use this when the caller owns the retry loop
+    /// (e.g. `auth_retry`) to avoid double-retry.
+    pub(crate) async fn execute_tool_once(
+        &self,
+        tool: &str,
+        arguments: Option<serde_json::Value>,
+    ) -> Result<ComposioExecuteResponse> {
+        let tool = tool.trim();
+        if tool.is_empty() {
+            anyhow::bail!("composio.execute_tool_once: tool slug must not be empty");
+        }
+        let arguments = arguments.unwrap_or(serde_json::Value::Object(Default::default()));
+        tracing::debug!(tool = %tool, "[composio] execute_tool_once (no built-in retry)");
+        let body = json!({ "tool": tool, "arguments": arguments });
+        let result = self.post_execute_tool(&body).await;
+        match &result {
+            Ok(resp) => tracing::debug!(
+                tool = %tool,
+                successful = resp.successful,
+                has_error = resp.error.is_some(),
+                "[composio] execute_tool_once completed"
+            ),
+            Err(err) => tracing::error!(
+                tool = %tool,
+                error = %err,
+                "[composio] execute_tool_once failed"
+            ),
+        }
+        result
+    }
+
     /// `POST /agent-integrations/composio/execute` — run a Composio
     /// action and return the provider result + cost.
     pub async fn execute_tool(
@@ -231,46 +263,6 @@ impl ComposioClient {
         self.inner
             .post::<ComposioExecuteResponse>("/agent-integrations/composio/execute", body)
             .await
-    }
-
-    /// Single-shot `execute_tool` — same body construction and slug validation
-    /// as [`Self::execute_tool`], but **without** the inner post-OAuth retry
-    /// that [`Self::execute_tool_with_post_oauth_retry`] performs. Reserved
-    /// for callers that already own a higher-level retry policy and would
-    /// otherwise stack two retry layers (4 hits to the gateway instead of 2).
-    /// In particular, [`super::auth_retry::execute_with_auth_retry`] uses
-    /// this entry point so its `must retry exactly once` contract still
-    /// holds after PR #1707 introduced the inner retry.
-    pub(crate) async fn execute_tool_once(
-        &self,
-        tool: &str,
-        arguments: Option<serde_json::Value>,
-    ) -> Result<ComposioExecuteResponse> {
-        let tool = tool.trim();
-        if tool.is_empty() {
-            anyhow::bail!("composio.execute_tool_once: tool slug must not be empty");
-        }
-        let arguments = arguments.unwrap_or(serde_json::Value::Object(Default::default()));
-        tracing::debug!(
-            tool = %tool,
-            "[composio] execute_tool_once start"
-        );
-        let body = json!({ "tool": tool, "arguments": arguments });
-        let result = self.post_execute_tool(&body).await;
-        match &result {
-            Ok(resp) => tracing::debug!(
-                tool = %tool,
-                successful = resp.successful,
-                has_error = resp.error.is_some(),
-                "[composio] execute_tool_once completed"
-            ),
-            Err(err) => tracing::debug!(
-                tool = %tool,
-                error = %err,
-                "[composio] execute_tool_once failed"
-            ),
-        }
-        result
     }
 
     /// `GET /agent-integrations/composio/github/repos` — list repositories
@@ -489,7 +481,13 @@ impl ComposioClient {
             let msg = envelope
                 .error
                 .unwrap_or_else(|| "unknown backend error".into());
-            crate::core::observability::report_error(
+            // Mirrors the integrations envelope-error sites — route through
+            // the observability classifier so user-state envelope failures
+            // (composio "Toolkit X is not enabled" / "Trigger type …
+            // not found" / "Missing required fields: …" — OPENHUMAN-TAURI-3R
+            // / -3S / -34 / -97) demote to a breadcrumb instead of firing
+            // a Sentry event. Genuine backend bugs still surface.
+            crate::core::observability::report_error_or_expected(
                 msg.as_str(),
                 "composio",
                 "delete",

@@ -3,7 +3,7 @@
 //! [`IntelligentRoutingProvider`] implements the [`Provider`] trait. On each call:
 //!
 //! 1. Classifies the `hint:*` model string → [`TaskCategory`].
-//! 2. Checks local Ollama health (cached, non-blocking).
+//! 2. Checks selected local-provider health (cached, non-blocking).
 //! 3. Applies routing policy (task category + [`RoutingHints`]).
 //! 4. Calls the chosen provider; captures latency and token usage.
 //! 5. If local was chosen and:
@@ -58,8 +58,9 @@ fn should_fallback(
     }
 }
 
-/// Provider that routes requests between a local Ollama instance and the remote
-/// OpenHuman backend based on task complexity, local health, and routing hints.
+/// Provider that routes requests between a local provider instance and the
+/// remote OpenHuman backend based on task complexity, local health, and
+/// routing hints.
 pub struct IntelligentRoutingProvider {
     remote: Box<dyn Provider>,
     local: Box<dyn Provider>,
