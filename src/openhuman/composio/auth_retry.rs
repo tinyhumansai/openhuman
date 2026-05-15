@@ -1,5 +1,14 @@
-//! Single-shot retry wrapper around [`ComposioClient::execute_tool`] for
-//! the post-OAuth token-propagation gap (issue #1688).
+//! Single-shot retry wrapper around [`ComposioClient::execute_tool_once`]
+//! for the post-OAuth token-propagation gap (issue #1688).
+//!
+//! NOTE: PR #1707 later added an in-client retry inside
+//! [`ComposioClient::execute_tool`] keyed on the same auth-readiness
+//! error string. To avoid stacking two retry layers (which would issue
+//! up to four backend calls per logical retry — see the
+//! `retries_once_only_even_when_second_call_still_errors` regression),
+//! this wrapper calls the non-retrying [`ComposioClient::execute_tool_once`]
+//! primitive instead. Direct callers of `execute_tool` (LinkedIn enrichment,
+//! heartbeat collectors, tool schemas) still get #1707's inner retry.
 //!
 //! Composio reports `connection.status == ACTIVE` ~1-2s after the user
 //! finishes OAuth, but its action-execution gateway can take another
@@ -66,7 +75,7 @@ pub(crate) async fn execute_with_auth_retry_inner(
         has_args = args.is_some(),
         "[composio][auth_retry] execute start"
     );
-    let first = client.execute_tool(slug, args.clone()).await?;
+    let first = client.execute_tool_once(slug, args.clone()).await?;
     if first.successful {
         tracing::debug!(
             target: "composio",
@@ -98,7 +107,7 @@ pub(crate) async fn execute_with_auth_retry_inner(
         "[composio] post-OAuth auth error on first action call; sleeping and retrying once (#1688)"
     );
     tokio::time::sleep(backoff).await;
-    let second = client.execute_tool(slug, args).await?;
+    let second = client.execute_tool_once(slug, args).await?;
     tracing::debug!(
         target: "composio",
         slug = %slug,

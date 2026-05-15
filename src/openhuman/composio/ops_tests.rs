@@ -931,3 +931,165 @@ async fn composio_disable_trigger_propagates_backend_error() {
         .unwrap_err();
     assert!(err.contains("disable_trigger failed"), "unexpected: {err}");
 }
+
+// ── classify_composio_failure_tag ──────────────────────────────
+//
+// Pin the failure-tag routing for `report_composio_op_error` so the
+// `before_send` filter (`is_transient_integrations_failure` extended to
+// `domain="composio"` in the same #1608 patch series) matches. The tag
+// drives which branch of the filter fires:
+//   - `failure="non_2xx"` + transient `status` (set by the integrations
+//     wrapper) → dropped
+//   - `failure="transport"` + transient transport phrase in the message
+//     → dropped
+// Any drift between the helper's classification and the filter's
+// expectations would silently re-open the leak path.
+
+#[test]
+fn composio_failure_tag_is_non_2xx_for_backend_returned_502() {
+    // OPENHUMAN-TAURI-35 / -2H wire shape — the dominant leak. The
+    // integrations layer renders this on a 5xx response; composio's op
+    // layer wraps the chain and re-reports under `domain=composio`. The
+    // tag MUST be `non_2xx` so the existing transient-status filter
+    // branch matches.
+    let rendered = "Backend returned 502 Bad Gateway for POST \
+                    https://api.tinyhumans.ai/agent-integrations/composio/connections: \
+                    upstream temporarily unavailable";
+    assert_eq!(classify_composio_failure_tag(rendered), "non_2xx");
+}
+
+#[test]
+fn composio_failure_tag_is_non_2xx_for_envelope_error() {
+    // Envelope errors don't carry a transport phrase or "error sending
+    // request" anchor; default to non_2xx.
+    let rendered = "Backend error for POST https://api.tinyhumans.ai/x: \
+                    unknown backend error";
+    assert_eq!(classify_composio_failure_tag(rendered), "non_2xx");
+}
+
+#[test]
+fn composio_failure_tag_is_transport_for_operation_timed_out() {
+    // OPENHUMAN-TAURI-18 / -G shape — `composio/execute` reqwest chain
+    // surfaces `operation timed out` (one of `TRANSIENT_TRANSPORT_PHRASES`).
+    // Tag MUST be `transport` so the filter's transport-phrase branch fires
+    // even though the report carries no `status`.
+    let rendered = "POST https://api.tinyhumans.ai/agent-integrations/composio/execute \
+                    failed: error sending request for url \
+                    (https://api.tinyhumans.ai/agent-integrations/composio/execute) → \
+                    client error (SendRequest) → connection error → \
+                    Operation timed out (os error 60)";
+    assert_eq!(classify_composio_failure_tag(rendered), "transport");
+}
+
+#[test]
+fn composio_failure_tag_is_transport_for_dns_and_tls_phrases() {
+    for raw in [
+        "POST /v1/foo failed: error sending request for url (https://api.example.com/x)",
+        "GET /agent-integrations/composio/connections failed: tls handshake eof",
+        "POST /agent-integrations/composio/triggers failed: connection reset by peer",
+        "GET /agent-integrations/composio/toolkits failed: connection forcibly closed (os 10054)",
+    ] {
+        assert_eq!(
+            classify_composio_failure_tag(raw),
+            "transport",
+            "should classify as transport: {raw}"
+        );
+    }
+}
+
+#[test]
+fn composio_failure_tag_does_not_misclassify_unrelated_messages() {
+    // A bare error string with no transport / "error sending request"
+    // anchor must default to non_2xx — the safe choice for the dominant
+    // leak shape.
+    for raw in [
+        "[composio] no connection with id 'abc'",
+        "[composio] no native provider registered for toolkit 'foo'",
+        "fetch_user_profile failed: invalid JSON in profile facet",
+    ] {
+        assert_eq!(
+            classify_composio_failure_tag(raw),
+            "non_2xx",
+            "should default to non_2xx: {raw}"
+        );
+    }
+}
+
+// ── extract_backend_returned_status ───────────────────────────
+//
+// Pin status extraction so the `report_composio_op_error` Sentry tag
+// stays in lockstep with the `Backend returned <status> ...` rendering
+// the integrations layer produces. Without the digit anchor the
+// `before_send` filter's transient-status branch can't distinguish a 502
+// from a 401, and the dominant leak shape (OPENHUMAN-TAURI-35 / -2H)
+// re-opens.
+
+#[test]
+fn extract_backend_returned_status_parses_three_digit_status() {
+    let rendered = "Backend returned 502 Bad Gateway for POST \
+                    https://api.tinyhumans.ai/agent-integrations/composio/connections: \
+                    upstream temporarily unavailable";
+    assert_eq!(
+        extract_backend_returned_status(rendered),
+        Some("502".to_string())
+    );
+}
+
+#[test]
+fn extract_backend_returned_status_returns_none_when_no_status() {
+    // Envelope-style error with no HTTP status digits after the anchor.
+    let rendered = "Backend returned bad gateway (envelope-only error)";
+    assert_eq!(extract_backend_returned_status(rendered), None);
+}
+
+#[test]
+fn extract_backend_returned_status_handles_mixed_case() {
+    // Some renders upper-case the prefix; the helper lowercases before
+    // matching so both shapes resolve to the same status string.
+    let rendered = "BACKEND RETURNED 429 Too Many Requests for GET \
+                    https://api.tinyhumans.ai/agent-integrations/composio/triggers";
+    assert_eq!(
+        extract_backend_returned_status(rendered),
+        Some("429".to_string())
+    );
+}
+
+// ── before_send filter integration ─────────────────────────────
+//
+// Belt-and-suspenders: re-assert the cross-module contract from the
+// composio side. If `is_transient_integrations_failure` ever stops
+// matching `domain="composio"` (e.g. accidental revert), the
+// `report_composio_op_error` events flood Sentry again with no test in
+// the composio crate to catch it. These guards make the link explicit.
+
+#[test]
+fn composio_domain_502_is_dropped_by_before_send() {
+    let mut event = sentry::protocol::Event::default();
+    let mut tags: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    tags.insert("domain".into(), "composio".into());
+    tags.insert("failure".into(), "non_2xx".into());
+    tags.insert("status".into(), "502".into());
+    event.tags = tags;
+    assert!(
+        crate::core::observability::is_transient_integrations_failure(&event),
+        "composio non_2xx 502 must be dropped by integrations filter (#1608)"
+    );
+}
+
+#[test]
+fn composio_transport_timeout_is_dropped_by_before_send() {
+    let mut event = sentry::protocol::Event::default();
+    let mut tags: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    tags.insert("domain".into(), "composio".into());
+    tags.insert("failure".into(), "transport".into());
+    event.tags = tags;
+    event.message = Some(
+        "POST /agent-integrations/composio/execute failed: error sending request → \
+         operation timed out"
+            .to_string(),
+    );
+    assert!(
+        crate::core::observability::is_transient_integrations_failure(&event),
+        "composio transport timeout must be dropped by integrations filter (#1608)"
+    );
+}

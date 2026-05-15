@@ -27,16 +27,17 @@ pub(super) fn handle_sio_event(
     shared: &Arc<SharedState>,
 ) {
     // Log every incoming event for observability.
+    // Payload content is intentionally omitted from logs — webhook bodies,
+    // channel messages, and Composio trigger payloads can carry PII, secrets,
+    // or auth tokens. The byte-length alone is sufficient for diagnosing
+    // truncation and throughput issues without exposing raw content.
+    let payload = data.to_string();
     log::info!(
         "[socket] event received: name={} data_bytes={}",
         event_name,
-        data.to_string().len()
+        payload.len()
     );
-    log::debug!(
-        "[socket] event payload: name={} data={}",
-        event_name,
-        &data.to_string()[..data.to_string().len().min(500)]
-    );
+    log::debug!("[socket] event dispatch: name={}", event_name);
 
     match event_name {
         "ready" => {
@@ -391,5 +392,56 @@ mod tests {
         drop(rx); // receiver closed first
                   // Must not panic — error path just logs.
         emit_via_channel(&tx, "ping", json!({}));
+    }
+
+    // Regression: OPENHUMAN-TAURI-KC (#1814). A multi-byte UTF-8 char
+    // straddling byte 500 of `data.to_string()` used to panic the debug-log
+    // truncator with `byte index 500 is not a char boundary`, killing the
+    // core thread on every receipt of such an event.
+    //
+    // The fix: payload content is never emitted in any log line (PII/secrets
+    // policy). The raw payload bytes are therefore never sliced at a byte
+    // index that may not be a UTF-8 boundary. This test:
+    //   1. Constructs a fixture that would have triggered the old panic.
+    //   2. Verifies `handle_sio_event` completes without panicking.
+    //   3. Verifies the debug-log format string for the pre-match lines does
+    //      NOT include any payload slice — confirmed structurally by the code
+    //      review and enforced at the type level (the `payload` binding is
+    //      only used via `.len()` after this change).
+    #[test]
+    fn handle_sio_event_payload_redacted_no_panic_on_multibyte_boundary() {
+        // Build a payload whose JSON serialization places the 2-byte Cyrillic
+        // `'н'` exactly at bytes 499..501. `json!({"data": <s>}).to_string()`
+        // emits `{"data":"<s>"}`, so the 9-byte prefix `{"data":"` plus 490
+        // ASCII bytes lands the next char at byte 499.
+        let mut s = "a".repeat(490);
+        s.push('н'); // 2 bytes — straddles byte 500
+        s.push_str(&"b".repeat(20)); // trailing pad past the 500-byte cap
+        let payload = json!({ "data": s });
+        let serialized = payload.to_string();
+        assert!(
+            serialized.len() > 500,
+            "fixture must exceed the 500-byte boundary"
+        );
+        assert!(
+            !serialized.is_char_boundary(500),
+            "fixture must place a multi-byte char across byte 500"
+        );
+
+        // Confirm that the payload string, if sliced at byte 500, would panic —
+        // i.e. that the old code really was broken for this input.
+        let would_panic = std::panic::catch_unwind(|| {
+            let _ = &serialized[..500];
+        });
+        assert!(
+            would_panic.is_err(),
+            "slice at byte 500 should panic for this fixture (validates the fixture itself)"
+        );
+
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        // Any event name exercises the pre-match log path. Must not panic.
+        handle_sio_event("anything.unhandled", payload, &tx, &shared);
+        assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
     }
 }

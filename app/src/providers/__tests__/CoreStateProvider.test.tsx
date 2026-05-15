@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as coreStateApi from '../../services/coreStateApi';
 import * as tauriCommands from '../../utils/tauriCommands';
 import { setCoreStateSnapshot } from '../../lib/coreState/store';
-import CoreStateProvider, { useCoreState } from '../CoreStateProvider';
+import { setActiveUserId } from '../../store/userScopedStorage';
+import CoreStateProvider, {
+  coreStatePollFailureWarningMessage,
+  useCoreState,
+} from '../CoreStateProvider';
 
 vi.mock('../../services/coreStateApi');
 vi.mock('../../services/analytics', () => ({ syncAnalyticsConsent: vi.fn() }));
@@ -101,6 +105,7 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     getTeamMembers.mockReset();
     getTeamInvites.mockReset();
     resetCoreStateStore();
+    setActiveUserId(null);
   });
 
   it('clears teams/members/invites when the userId changes between refreshes', async () => {
@@ -214,6 +219,28 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
 
     expect(screen.getByTestId('ready').textContent).toBe('boot');
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+  });
+
+  it('warns when the initial core state poll fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      fetchSnapshot.mockRejectedValue(new Error('core offline'));
+
+      render(
+        <CoreStateProvider>
+          <Consumer />
+        </CoreStateProvider>
+      );
+
+      await waitFor(() =>
+        expect(warnSpy).toHaveBeenCalledWith('[core-state] poll failed (attempt 1/5):', {
+          message: 'core offline',
+        })
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('backfills snapshot.currentUser from auth.user when currentUser is missing', async () => {
@@ -348,5 +375,17 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     expect(vi.mocked(tauriCommands.openhumanUpdateMeetSettings)).toHaveBeenCalledWith({
       auto_orchestrator_handoff: false,
     });
+  });
+});
+
+describe('coreStatePollFailureWarningMessage', () => {
+  it('logs bounded bootstrap failures and one suppression notice', () => {
+    expect(coreStatePollFailureWarningMessage(0)).toBeNull();
+    expect(coreStatePollFailureWarningMessage(1)).toBe('[core-state] poll failed (attempt 1/5):');
+    expect(coreStatePollFailureWarningMessage(5)).toBe('[core-state] poll failed (attempt 5/5):');
+    expect(coreStatePollFailureWarningMessage(6)).toBe(
+      '[core-state] poll failed repeatedly; suppressing further warnings until core state recovers:'
+    );
+    expect(coreStatePollFailureWarningMessage(7)).toBeNull();
   });
 });

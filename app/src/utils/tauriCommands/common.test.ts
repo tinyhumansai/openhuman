@@ -15,7 +15,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isTauri } from './common';
+import { isTauri, parseServiceCliOutput } from './common';
 
 const coreIsTauriMock = vi.fn();
 
@@ -88,5 +88,66 @@ describe('isTauri (tauriCommands/common)', () => {
     };
 
     expect(isTauri()).toBe(false);
+  });
+});
+
+// `parseServiceCliOutput` runs against raw CLI stdout from the `openhuman`
+// sidecar. The core process can crash mid-write, return a partial response, or
+// drift from the expected JSON schema across versions — any of which produces
+// malformed input. The guard must reject those cases with a descriptive error
+// rather than handing typed garbage back to callers.
+describe('parseServiceCliOutput (tauriCommands/common)', () => {
+  it('returns the parsed response when shape matches CommandResponse', () => {
+    const raw = JSON.stringify({ result: { value: 42 }, logs: ['ok'] });
+
+    const parsed = parseServiceCliOutput<{ value: number }>(raw);
+
+    expect(parsed.result).toEqual({ value: 42 });
+    expect(parsed.logs).toEqual(['ok']);
+  });
+
+  it('accepts null result and empty logs (valid CommandResponse shape)', () => {
+    const raw = JSON.stringify({ result: null, logs: [] });
+
+    const parsed = parseServiceCliOutput<null>(raw);
+
+    expect(parsed.result).toBeNull();
+    expect(parsed.logs).toEqual([]);
+  });
+
+  it('throws a descriptive error when the input is not valid JSON', () => {
+    expect(() => parseServiceCliOutput('not-json')).toThrow(/Failed to parse service CLI output/);
+  });
+
+  it('throws when the parsed value is null', () => {
+    expect(() => parseServiceCliOutput('null')).toThrow(/CommandResponse shape/);
+  });
+
+  it('throws when the parsed value is an array (not an object)', () => {
+    expect(() => parseServiceCliOutput('[]')).toThrow(/CommandResponse shape/);
+  });
+
+  it('throws when required `logs` field is missing', () => {
+    expect(() => parseServiceCliOutput(JSON.stringify({ result: 1 }))).toThrow(
+      /CommandResponse shape/
+    );
+  });
+
+  it('throws when required `result` field is missing', () => {
+    expect(() => parseServiceCliOutput(JSON.stringify({ logs: [] }))).toThrow(
+      /CommandResponse shape/
+    );
+  });
+
+  it('throws when `logs` is not an array', () => {
+    expect(() => parseServiceCliOutput(JSON.stringify({ result: 1, logs: 'oops' }))).toThrow(
+      /CommandResponse shape/
+    );
+  });
+
+  it('throws when `logs` contains non-string entries', () => {
+    expect(() => parseServiceCliOutput(JSON.stringify({ result: 1, logs: [1, 2] }))).toThrow(
+      /CommandResponse shape/
+    );
   });
 });

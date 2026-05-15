@@ -20,7 +20,7 @@ git status --porcelain
 git branch --show-current
 git remote -v
 test -f AGENTS.md
-test -f gitbooks/developing/frontend/README.md
+test -f gitbooks/developing/README.md
 test -f Cargo.toml
 test -f app/package.json
 ```

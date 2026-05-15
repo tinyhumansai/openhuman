@@ -9,8 +9,9 @@
 //! and aggregate `all_exhausted` events still surface.
 
 use openhuman_core::core::observability::{
-    is_budget_event, is_transient_backend_api_failure, is_transient_integrations_failure,
-    is_transient_provider_http_failure, is_updater_transient_event,
+    is_budget_event, is_session_expired_event, is_transient_backend_api_failure,
+    is_transient_integrations_failure, is_transient_provider_http_failure,
+    is_updater_transient_event,
 };
 use sentry::protocol::Event;
 use std::collections::BTreeMap;
@@ -61,6 +62,7 @@ fn count_captured(events: Vec<Event<'static>>) -> usize {
                 || is_transient_integrations_failure(&event)
                 || is_budget_event(&event)
                 || is_updater_transient_event(&event)
+                || is_session_expired_event(&event)
             {
                 None
             } else {

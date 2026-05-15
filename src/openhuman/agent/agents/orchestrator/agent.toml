@@ -61,14 +61,15 @@ subagents = [
 ]
 
 [model]
-# `reasoning-quick` (Kimi K2.6 Turbo on Fireworks via backend PR #760)
-# is tuned for low time-to-first-token on conversational turns. The
-# orchestrator is a planner/router that mostly picks a delegate and
-# synthesises sub-agent output — workload that doesn't benefit from
-# the slower deep-reasoning tier. Sub-agents that need heavier
-# reasoning can still opt into `reasoning-v1` (DeepSeek V4 Pro) via
+# Front-line conversational agent: TTFT dominates UX. `hint:chat` resolves
+# to the fast chat tier (`reasoning-quick-v1` / Kimi K2.6 Turbo on
+# Fireworks via backend PR #760, 128k context, `supportsThinking: false`).
+# The orchestrator is a planner/router that picks a delegate and
+# synthesises sub-agent output — workload that doesn't benefit from the
+# slower deep-reasoning tier. Sub-agents that need heavier reasoning
+# can still opt into `reasoning-v1` (DeepSeek V4 Pro) via
 # `ModelSpec::Hint("reasoning")` in their own definitions.
-hint = "reasoning-quick"
+hint = "chat"
 
 [tools]
 # Direct tools — things the orchestrator calls itself rather than

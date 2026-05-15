@@ -623,9 +623,22 @@ async fn sync_directory(_path: &Path) -> Result<()> {
 impl Config {
     pub async fn load_or_init() -> Result<Self> {
         let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+        Self::load_or_init_with_env_lookup(
+            &default_openhuman_dir,
+            &default_workspace_dir,
+            &ProcessEnv,
+        )
+        .await
+    }
 
+    async fn load_or_init_with_env_lookup(
+        default_openhuman_dir: &Path,
+        default_workspace_dir: &Path,
+        env: &(dyn EnvLookup + Send + Sync),
+    ) -> Result<Self> {
         let (openhuman_dir, workspace_dir, resolution_source) =
-            resolve_runtime_config_dirs(&default_openhuman_dir, &default_workspace_dir).await?;
+            resolve_runtime_config_dirs_with(default_openhuman_dir, default_workspace_dir, env)
+                .await?;
 
         let config_path = openhuman_dir.join("config.toml");
 
@@ -869,6 +882,27 @@ impl Config {
                 "1" | "true" | "yes" | "on" => self.runtime.reasoning_enabled = Some(true),
                 "0" | "false" | "no" | "off" => self.runtime.reasoning_enabled = Some(false),
                 _ => {}
+            }
+        }
+
+        // Seltz direct-API search.
+        if let Some(key) = env.get_any(&["OPENHUMAN_SELTZ_API_KEY", "SELTZ_API_KEY"]) {
+            if !key.is_empty() {
+                self.seltz.api_key = Some(key);
+                // Auto-enable when the key is set via env.
+                self.seltz.enabled = true;
+            }
+        }
+        if let Some(url) = env.get_any(&["OPENHUMAN_SELTZ_API_URL", "SELTZ_API_URL"]) {
+            if !url.is_empty() {
+                self.seltz.api_url = Some(url);
+            }
+        }
+        if let Some(max) = env.get_any(&["OPENHUMAN_SELTZ_MAX_RESULTS", "SELTZ_MAX_RESULTS"]) {
+            if let Ok(n) = max.parse::<usize>() {
+                if (1..=20).contains(&n) {
+                    self.seltz.max_results = n;
+                }
             }
         }
 
