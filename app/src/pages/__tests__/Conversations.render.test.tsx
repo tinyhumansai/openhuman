@@ -846,6 +846,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         threadId: thread.id,
         message: 'enter send',
         model: 'reasoning-v1',
+        profileId: 'default',
       });
     });
   });
@@ -919,6 +920,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         threadId: thread.id,
         message: '안녕',
         model: 'reasoning-v1',
+        profileId: 'default',
       });
     });
   });

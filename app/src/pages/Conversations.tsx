@@ -436,7 +436,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       })
       .catch(err => {
         if (cancelled) return;
-        console.warn('[conversations] loadThreads failed on mount:', formatThreadLoadError(err));
+        debug('loadThreads failed on mount: %s', formatThreadLoadError(err));
       });
 
     return () => {
@@ -457,7 +457,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
           }
         })
         .catch(error => {
-          console.warn('[conversations] getTaskBoard failed:', error);
+          debug('getTaskBoard failed: %o', error);
         });
     }
   }, [selectedThreadId, dispatch]);
@@ -537,7 +537,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
     if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
     sendingThreadIdRef.current = threadId;
     sendingTimeoutRef.current = setTimeout(() => {
-      console.warn('[chat] silence timeout: no inference signal for 120s');
+      debug('armSilenceTimer: no inference signal for 120s — clearing runtime');
       setSendError(
         chatSendError(
           'safety_timeout',
@@ -1111,7 +1111,7 @@ const Conversations = ({ variant = 'page', composer = 'text' }: ConversationsPro
       }
       dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: saved }));
     } catch (error) {
-      console.warn('[conversations] putTaskBoard failed:', error);
+      debug('putTaskBoard failed: %o', error);
       setSendAdvisory('Could not move task; changes were not saved.');
       dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: selectedTaskBoard }));
     }
